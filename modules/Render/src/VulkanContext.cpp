@@ -627,7 +627,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     // swapchain creation far below with a message about NVRHI rather than about the
     // surface, and an _SRGB format maps fine but makes the hardware apply the sRGB
     // transfer function to values the fragment shader has *already* gamma encoded
-    // (cube_min.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
+    // (mesh.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
     // Lighting stage L2 moves that encode into a tonemap pass, at which point an
     // sRGB surface becomes the correct choice; until then linear (UNORM) is.
     const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };

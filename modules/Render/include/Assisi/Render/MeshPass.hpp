@@ -11,7 +11,7 @@
 /// parameters, the material's glTF metallic-roughness factors fetched from the
 /// AssetCache's material table (and its textures from the bindless table) by that
 /// id, and clustered point/spot/directional lighting (see ClusterGrid) read
-/// directly from cube_min.frag. Nothing binds per-draw — the whole span draws
+/// directly from mesh.frag. Nothing binds per-draw — the whole span draws
 /// against one binding set + the bindless table as instanced indirect commands,
 /// built either on the CPU (Submit) or by a MeshCuller (SubmitIndirect).
 
@@ -34,7 +34,7 @@ namespace Assisi::Render
 /// @brief Which material channel the mesh pass visualizes instead of the lit
 /// result. None = the normal render; the rest short-circuit the shader to one
 /// channel for debugging. Values must match the `kDebug*` constants in
-/// cube_min.frag (packed into FrameConstants).
+/// mesh.frag (packed into FrameConstants).
 enum class MaterialDebugView : uint32_t
 {
     None = 0,
@@ -126,7 +126,7 @@ public:
 
     /// @brief One per-object record: uploaded into the instance buffer each frame
     /// and indexed in the vertex shader by gl_InstanceIndex (each draw sets its
-    /// startInstanceLocation). Mirrors cube_min.vert's `InstanceData` std430
+    /// startInstanceLocation). Mirrors mesh.vert's `InstanceData` std430
     /// struct — mat4 (0..63) + uint (64), padded to the 16-byte array stride
     /// std430 gives the struct.
     ///

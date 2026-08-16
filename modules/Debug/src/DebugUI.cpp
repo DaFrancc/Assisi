@@ -75,6 +75,10 @@ std::uint64_t s_frameIndex = 0;
 // (NVRHI's Vulkan backend only calls vkCmdBeginRendering from inside
 // setGraphicsState) so there's always something bound for ImGui to draw into
 // — including when the scene has nothing to draw this frame.
+// Compiled under the asset root by the build; resolved through Core::AssetSystem.
+constexpr const char *kOpenerVertexShader = "shaders/imgui_opener.vert.spv";
+constexpr const char *kOpenerPixelShader = "shaders/imgui_opener.frag.spv";
+
 nvrhi::GraphicsPipelineHandle s_openerPipeline;
 
 // Kept alive for VkPipelineRenderingCreateInfoKHR::pColorAttachmentFormats,
@@ -305,9 +309,9 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
 
     nvrhi::IDevice *device = vulkanContext.GetDevice();
     const nvrhi::ShaderHandle vertexShader =
-        Render::LoadSpirvShader(device, "shaders/imgui_opener.vert.spv", nvrhi::ShaderType::Vertex);
+        Render::LoadSpirvShader(device, kOpenerVertexShader, nvrhi::ShaderType::Vertex);
     const nvrhi::ShaderHandle pixelShader =
-        Render::LoadSpirvShader(device, "shaders/imgui_opener.frag.spv", nvrhi::ShaderType::Pixel);
+        Render::LoadSpirvShader(device, kOpenerPixelShader, nvrhi::ShaderType::Pixel);
 
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;

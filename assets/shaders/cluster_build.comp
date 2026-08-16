@@ -45,7 +45,7 @@ layout(push_constant) uniform PushConstants
 // (see MeshPass.cpp's comment). One consequence here: screen Y=0 (top of the
 // window) maps to NDC Y=+1, not the "standard" unflipped -1, so the Y NDC term
 // below is inverted relative to X's. Getting this wrong mirrors the cluster
-// grid's rows relative to what cube_min.frag's ClusterIndex() actually reads.
+// grid's rows relative to what mesh.frag's ClusterIndex() actually reads.
 vec3 screenToViewNear(vec2 screenPos)
 {
     vec2 uv   = screenPos / pc.screenSizeNearFar.xy;
@@ -79,7 +79,7 @@ void main()
         return;
 
     // Unpack the linear thread index back into grid coordinates. Must be the
-    // exact inverse of the `idx` packing below (and of cube_min.frag's
+    // exact inverse of the `idx` packing below (and of mesh.frag's
     // ClusterIndex()), or the AABBs land in the wrong cluster slots.
     uvec3 gid = uvec3(linearIdx % gridDim.x,
                       (linearIdx / gridDim.x) % gridDim.y,

@@ -126,7 +126,7 @@ file(GLOB_RECURSE _sandbox_vk_shader_sources
 set(_sandbox_shader_copies "")
 
 foreach(_shader_in ${_sandbox_vk_shader_sources})
-    # A shader keeps its path relative to assets/ (e.g. shaders/cube_min.vert or
+    # A shader keeps its path relative to assets/ (e.g. shaders/mesh.vert or
     # editor/shaders/outline_edge.frag) through compilation and into the copied
     # asset root, so editor-only shaders live under assets/editor/ and still
     # resolve by their virtual path. Intermediate names in the binary dir flatten

@@ -18,7 +18,17 @@ void Material::Create(nvrhi::IDevice * /*device*/, uint32_t id, const Geometry::
     _constants.emissiveFactorNormalScale = glm::vec4(source.EmissiveFactor, source.NormalScale);
     _constants.metalRoughOcclusion =
         glm::vec4(source.MetallicFactor, source.RoughnessFactor, source.OcclusionStrength, 0.f);
-    _constants.flags = glm::uvec4(textures.hasNormalTexture ? 1u : 0u, 0u, 0u, 0u);
+    _constants.specularColorIor = glm::vec4(source.SpecularColor, source.SpecularIor);
+    _constants.openPbrParams = glm::vec4(source.BaseWeight, source.SpecularWeight, source.BaseDiffuseRoughness, 0.f);
+
+    uint32_t flags = 0u;
+    if (textures.hasNormalTexture)
+        flags |= kMaterialFlagHasNormalTexture;
+    // The EON lobe costs per light, so it is opt-in per material: a zero
+    // diffuse roughness is exactly Lambert and skips it.
+    if (source.BaseDiffuseRoughness > 0.f)
+        flags |= kMaterialFlagEnergyPreservingDiffuse;
+    _constants.flags = glm::uvec4(flags, 0u, 0u, 0u);
     _constants.texIndices =
         glm::uvec4(textures.baseColor, textures.normal, textures.metallicRoughness, textures.occlusion);
     _constants.texIndicesEmissive = glm::uvec4(textures.emissive, 0u, 0u, 0u);

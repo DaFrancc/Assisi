@@ -33,6 +33,18 @@ namespace Assisi::Geometry
 /// Colour space is a fixed property of each channel, never per-file
 /// configuration: baseColor and emissive are sRGB; normal, metallic-roughness,
 /// and occlusion are linear.
+///
+/// OpenPBR: this is the base + specular + emission subset of the OpenPBR
+/// Surface base layer, and deliberately nothing more. Coat, fuzz, anisotropy,
+/// thin-film, transmission, subsurface, and dispersion are out of scope by
+/// decision, not oversight — the schema is default-on-missing, so each can
+/// land later as a one-field-plus-one-lobe increment with zero content
+/// migration. Coat/fuzz are the only candidates worth revisiting, and only
+/// once reflection probes (lighting L5) give them an environment to reflect.
+/// The pre-OpenPBR field names stay (BaseColorFactor ≡ base_color,
+/// MetallicFactor ≡ base_metalness, RoughnessFactor ≡ specular_roughness):
+/// renaming is silent data loss under the schema's ignore-unknown-keys rule,
+/// for zero benefit.
 AASSET()
 struct MaterialData
 {
@@ -43,6 +55,16 @@ struct MaterialData
     AFIELD() float NormalScale = 1.f;
     AFIELD() float OcclusionStrength = 1.f;
     AFIELD() glm::vec3 EmissiveFactor{0.f, 0.f, 0.f};
+
+    // --- Factors (OpenPBR base layer) ---
+    // Defaults reproduce the pre-OpenPBR shading exactly: weights 1,
+    // specular_ior 1.5 -> F0 0.04, diffuse roughness 0 = Lambert. A material
+    // that never sets them renders unchanged.
+    AFIELD() float BaseWeight = 1.f;                  ///< OpenPBR base_weight.
+    AFIELD() float SpecularWeight = 1.f;              ///< OpenPBR specular_weight.
+    AFIELD() glm::vec3 SpecularColor{1.f, 1.f, 1.f};  ///< OpenPBR specular_color; the F82 edge tint on metals.
+    AFIELD() float SpecularIor = 1.5f;                ///< OpenPBR specular_ior.
+    AFIELD() float BaseDiffuseRoughness = 0.f;        ///< OpenPBR base_diffuse_roughness; > 0 enables EON diffuse.
 
     // --- Texture channels (GUID references; nil = factor-only) ---
     AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.
