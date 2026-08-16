@@ -8,12 +8,12 @@
 /// A compute pass builds view-space AABBs once per resize, and a second
 /// compute pass assigns lights to clusters every frame.  The resulting
 /// buffers are read directly by the mesh fragment shader (see MeshPass /
-/// cube_min.frag) so it only evaluates the lights that touch each
+/// mesh.frag) so it only evaluates the lights that touch each
 /// fragment's cluster.
 ///
 /// Usage (per frame):
 ///   1. grid.CullLights(commandList, pointLights, spotLights, dirLights, viewMatrix);
-///   2. DrawScene(...)  — cube_min.frag reads the buffers step 1 just wrote.
+///   2. DrawScene(...)  — mesh.frag reads the buffers step 1 just wrote.
 
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Buffer.hpp>
@@ -30,7 +30,7 @@ namespace Assisi::Render
 // ---- GPU-side light structs (std430 layout) --------------------------------
 // All vec3 fields are stored in vec4 to satisfy std430 alignment rules.
 // The C++ structs must have identical memory layout to the GLSL structs in
-// cluster_cull.comp / cube_min.frag.
+// cluster_cull.comp / mesh.frag.
 
 struct PointLightGPU
 {
@@ -83,7 +83,7 @@ public:
     /// Maximum light indices stored in the global list, per light type.
     /// Point indices occupy [0, kMaxLightIndices) and spot indices occupy
     /// [kMaxLightIndices, 2 * kMaxLightIndices) in the same buffer. Must match
-    /// cluster_cull.comp's MAX_LIGHT_INDICES and cube_min.frag's kSpotIndexBase.
+    /// cluster_cull.comp's MAX_LIGHT_INDICES and mesh.frag's kSpotIndexBase.
     ///
     /// Sized generously: cluster_cull.comp writes every intersecting light with no
     /// per-cluster cap, so the total across all clusters is the only bound. A

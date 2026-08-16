@@ -10,7 +10,7 @@ layout(location = 0) out vec4 FragColor;
 
 // Texture_SRV/Sampler are separate descriptors in NVRHI's Vulkan backend,
 // offset by VulkanBindingOffsets: shaderResource at +0, sampler at +128 — see
-// MeshPass::Initialize / cube_min.frag for the same convention.
+// MeshPass::Initialize / mesh.frag for the same convention.
 layout(binding = 0)   uniform texture2D uScreenTexture;
 layout(binding = 128) uniform sampler   uScreenSampler;
 

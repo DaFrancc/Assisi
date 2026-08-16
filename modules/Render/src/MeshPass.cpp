@@ -20,7 +20,7 @@ namespace
 {
 // Per-instance data: one record per drawn submesh, uploaded to the instance
 // buffer each frame and indexed in the vertex shader by gl_InstanceIndex (each
-// draw sets startInstanceLocation to its record). Mirrors cube_min.vert's
+// draw sets startInstanceLocation to its record). Mirrors mesh.vert's
 // `InstanceData` std430 struct — mat4 (0..63) + uint (64), padded to the 16-byte
 // array stride std430 gives the struct.
 // (Declared as MeshPass::InstanceData in the header so the pass can hold a
@@ -41,7 +41,7 @@ static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
 // Per-frame data (view-projection + camera + cluster-grid parameters), uploaded
 // once per frame via UpdateFrameConstants() into a constant buffer. viewProjection
 // leads so the vertex shader can form clip position from each instance's world
-// matrix. Mirrors cube_min.vert/frag's matching `uniform FrameConstants` block.
+// matrix. Mirrors mesh.vert/frag's matching `uniform FrameConstants` block.
 struct FrameConstants
 {
     glm::mat4 viewProjection;
@@ -53,7 +53,7 @@ struct FrameConstants
     /// fragment: it is constant across the frame, but view is a uniform, so the
     /// shader compiler cannot hoist the -transpose(mat3(view)) * view[3] out.
     glm::vec4 cameraPosition;
-    /// Froxel lookup scale/bias, so cube_min.frag's ClusterIndex() is FMAs and a
+    /// Froxel lookup scale/bias, so mesh.frag's ClusterIndex() is FMAs and a
     /// single log instead of three divides and two logs (the Doom-2016 form):
     ///   xy = gridDim.xy / screenSize        (screen pixel -> cluster column/row)
     ///   z  = gridDim.z / log(farZ / nearZ)  (log-depth slice scale)
@@ -115,7 +115,7 @@ bool MeshPass::Initialize(const InitParams &params)
     // Set 0 — the one binding set every draw shares (stage D). Texture_SRV/Sampler
     // are separate descriptors in NVRHI's Vulkan backend (HLSL t/s split, not
     // GLSL's combined sampler2D); StructuredBuffer_SRV shares the t-register space
-    // with Texture_SRV. Slot map (see cube_min.vert/frag's matching `binding = N`):
+    // with Texture_SRV. Slot map (see mesh.vert/frag's matching `binding = N`):
     //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
     //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data
     //   s0 = shared sampler

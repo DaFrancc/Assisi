@@ -28,7 +28,7 @@ static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
               "DrawIndexedIndirectArguments must match VkDrawIndexedIndirectCommand's packed layout.");
 constexpr uint32_t kIndirectStride = 20u;
 
-// Output instance-record stride — must match Render's InstanceData / cube_min.vert
+// Output instance-record stride — must match Render's InstanceData / mesh.vert
 // (mat4 + uint, 80-byte std430 array stride). MeshPass.cpp static_asserts the C++ side.
 constexpr uint32_t kInstanceStride = 80u;
 

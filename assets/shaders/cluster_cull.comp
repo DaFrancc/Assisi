@@ -23,7 +23,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 // Flat buffer offset where spot light indices start, and the per-type capacity
 // of the shared index list. Must match Render::ClusterGrid::kMaxLightIndices
-// and cube_min.frag's kSpotIndexBase.
+// and mesh.frag's kSpotIndexBase.
 #define MAX_LIGHT_INDICES 262144
 
 // ---- Structs (must match ClusterGrid GPU structs) ----
@@ -88,7 +88,7 @@ void main()
     uvec3 gridDim      = pc.gridDim.xyz;
     uint  clusterCount = gridDim.x * gridDim.y * gridDim.z;
 
-    // One cluster per thread, in the same linear order cube_min.frag's
+    // One cluster per thread, in the same linear order mesh.frag's
     // ClusterIndex() reconstructs (x + y*nx + z*nx*ny).
     uint clusterIdx = gl_GlobalInvocationID.x;
     uint tid        = gl_LocalInvocationID.x;

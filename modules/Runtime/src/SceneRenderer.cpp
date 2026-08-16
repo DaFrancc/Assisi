@@ -19,8 +19,8 @@ namespace
 {
 // Engine default scene shaders (opaque lit geometry, clustered forward). Compiled
 // under the asset root by the build; resolved through Core::AssetSystem.
-constexpr const char *kSceneVertexShader = "shaders/cube_min.vert.spv";
-constexpr const char *kScenePixelShader = "shaders/cube_min.frag.spv";
+constexpr const char *kSceneVertexShader = "shaders/mesh.vert.spv";
+constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
 
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
