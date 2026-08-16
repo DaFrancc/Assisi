@@ -13,6 +13,8 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/PerfCapture.hpp>
+
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -55,7 +57,76 @@ constexpr const char *kUsage =
     "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
     "                          error, fatal (default trace; info in a shipping\n"
     "                          build)\n"
-    "  -h, --help              show this help and exit\n";
+    "  --gpu-cull              start with the GPU-driven cull path on (off by\n"
+    "                          default; the CPU path is the reference)\n"
+    "  -h, --help              show this help and exit\n"
+    "\n"
+    " performance capture — run a scene, print medians, exit:\n"
+    "  --capture [frames]      measure this many frames and exit (default 600;\n"
+    "                          the protocol asks for at least 500). Snaps to the\n"
+    "                          level's active Camera, turns pacing off and\n"
+    "                          per-pass GPU timers on, and renders undecorated\n"
+    "                          so the framebuffer is exactly the size asked for\n"
+    "  --capture-warmup <n>    frames to discard first (default 120), covering\n"
+    "                          pipeline compilation and first-use uploads\n"
+    "  --capture-size <WxH>    resolution to render at, e.g. 2560x1440 or\n"
+    "                          1920x1080. Defaults to game.json's window size\n"
+    "  --capture-out <path>    write the JSON report here as well as the log\n"
+    "  --capture-passes        also time each pass separately. OFF by default:\n"
+    "                          per-pass timers force render-pass breaks, so a\n"
+    "                          run with them on measures a frame that differs\n"
+    "                          from the one that ships. Publish the default;\n"
+    "                          use this to find which pass moved\n"
+    "\n"
+    "  e.g. Assisi-Sandbox -l levels/PerfBlank.alvl --capture 600 \\\n"
+    "                      --capture-size 2560x1440 --capture-out blank-1440p.json\n";
+
+// Parses a strictly positive integer argument, reporting the flag by name on
+// failure. Zero is rejected along with negatives: a capture of no frames and a
+// capture nobody asked for are different intentions, and the flag's presence
+// already expressed one of them.
+bool ParsePositive(std::string_view text, const char *flag, std::int32_t &out)
+{
+    std::int32_t value  = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value <= 0)
+    {
+        std::fprintf(stderr, "%s expects a positive integer, got '%.*s'\n\n%s", flag,
+                     static_cast<int>(text.size()), text.data(), kUsage);
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+// Parses "<width>x<height>". Both halves must be positive; anything else is a
+// typo worth refusing rather than silently rendering at some other size and
+// publishing the number under the resolution that was asked for.
+bool ParseResolution(std::string_view text, std::int32_t &width, std::int32_t &height)
+{
+    const std::size_t separator = text.find('x');
+    if (separator == std::string_view::npos)
+    {
+        return false;
+    }
+
+    const std::string_view left  = text.substr(0, separator);
+    const std::string_view right = text.substr(separator + 1);
+
+    std::int32_t parsedWidth  = 0;
+    std::int32_t parsedHeight = 0;
+    const auto first  = std::from_chars(left.data(), left.data() + left.size(), parsedWidth);
+    const auto second = std::from_chars(right.data(), right.data() + right.size(), parsedHeight);
+    if (first.ec != std::errc{} || first.ptr != left.data() + left.size() || second.ec != std::errc{} ||
+        second.ptr != right.data() + right.size() || parsedWidth <= 0 || parsedHeight <= 0)
+    {
+        return false;
+    }
+
+    width  = parsedWidth;
+    height = parsedHeight;
+    return true;
+}
 
 // Parses "addr", "addr:port", or ":port" into its parts, leaving whichever it
 // does not find untouched. IPv6 literals are not handled here — --connect takes
@@ -88,7 +159,8 @@ bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t 
 // printed when the arguments are malformed; sets shouldExit when --help was
 // handled (a clean early exit, not an error).
 bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
-               Sandbox::ServerOptions &serverOptions, bool &pieClient, bool &shouldExit)
+               Sandbox::ServerOptions &serverOptions, bool &pieClient, bool &shouldExit,
+               Assisi::App::PerfCaptureConfig &capture, bool &gpuCulling)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -216,6 +288,61 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
                 return false;
             }
         }
+        else if (arg == "--capture")
+        {
+            // Frame count is optional, like --host's port: the default is the
+            // protocol's own figure, so the common case is just "--capture".
+            capture.frames = 600;
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
+                if (!ParsePositive(argv[++i], "--capture", capture.frames))
+                {
+                    return false;
+                }
+            }
+        }
+        else if (arg == "--capture-warmup")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--capture-warmup requires a frame count\n\n%s", kUsage);
+                return false;
+            }
+            if (!ParsePositive(argv[++i], "--capture-warmup", capture.warmupFrames))
+            {
+                return false;
+            }
+        }
+        else if (arg == "--capture-size")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--capture-size requires a resolution like 2560x1440\n\n%s", kUsage);
+                return false;
+            }
+            if (!ParseResolution(argv[++i], capture.width, capture.height))
+            {
+                std::fprintf(stderr, "--capture-size expects <width>x<height>, e.g. 2560x1440\n\n%s", kUsage);
+                return false;
+            }
+        }
+        else if (arg == "--gpu-cull")
+        {
+            gpuCulling = true;
+        }
+        else if (arg == "--capture-passes")
+        {
+            capture.perPassTiming = true;
+        }
+        else if (arg == "--capture-out")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--capture-out requires a path\n\n%s", kUsage);
+                return false;
+            }
+            capture.outputPath = argv[++i];
+        }
         else
         {
             std::fprintf(stderr, "Unknown argument '%.*s'\n\n%s", static_cast<int>(arg.size()), arg.data(), kUsage);
@@ -235,7 +362,11 @@ int main(int argc, char **argv)
     bool pieClient     = false;
     bool shouldExit    = false;
     Sandbox::ServerOptions serverOptions;
-    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit))
+    Assisi::App::PerfCaptureConfig capture;
+    capture.frames  = 0; // 0 means "not a capture run"; --capture sets it
+    bool gpuCulling = false;
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit, capture,
+                   gpuCulling))
     {
         return EXIT_FAILURE;
     }
@@ -281,10 +412,13 @@ int main(int argc, char **argv)
         return serverApp.StartupFailed() ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
+    capture.levelPath = std::string(startupLevel);
     Assisi::Editor::EditorApp app({.startupLevel        = std::string(startupLevel),
                                    .autoJoinEndpoint    = autoJoinEndpoint,
                                    .restrictedViewer    = pieClient,
-                                   .enableEditorVisuals = editorVisuals});
+                                   .enableEditorVisuals = editorVisuals,
+                                   .perfCapture         = capture,
+                                   .gpuCulling          = gpuCulling});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

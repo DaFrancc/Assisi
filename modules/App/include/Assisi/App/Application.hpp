@@ -7,10 +7,12 @@
 
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/InputContext.hpp>
@@ -83,6 +85,20 @@ public:
     void SetRestrictedViewer(bool restricted) { _restrictedViewer = restricted; }
 
     [[nodiscard]] bool IsRestrictedViewer() const { return _restrictedViewer; }
+
+    /// @brief Run as a performance capture: measure a fixed number of frames,
+    /// print the medians, write the report, and exit. Must be called before
+    /// Initialize().
+    ///
+    /// This is what makes a performance gate one command rather than a person
+    /// watching an ImGui graph and forming an impression. It also forces the
+    /// pacing off — a capture under vsync measures the display, not the
+    /// renderer — and turns per-pass timing on, since a capture is exactly the
+    /// case where the render-pass splits those cost are worth paying.
+    void SetPerfCapture(const PerfCaptureConfig &config);
+
+    /// @brief Whether this process is a capture run.
+    [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
 
     /// @brief Brings up the engine (asset system, window, renderer, ImGui,
     /// input, post-process). Must be called once, after construction and before
@@ -184,6 +200,10 @@ protected:
     [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
 
     void      RequestClose();
+
+    /// @brief Feed one frame to the running capture, and close the app once it
+    /// has the frames it asked for.
+    void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
     int32_t   GetFps()             const { return _fps; }
 
     /// @brief Averaged CPU main-thread work per frame, in milliseconds —
@@ -282,6 +302,26 @@ private:
     /// the windowed loop is cleaner asking one flag than dereferencing a pointer
     /// that may not exist.
     bool _closeRequested = false;
+
+    /// Null unless this process is a capture run — see SetPerfCapture. Held by
+    /// pointer so a normal run carries no sample buffers at all, which is the
+    /// same pay-for-what-you-place rule the thing exists to check.
+    std::unique_ptr<PerfCapture> _perfCapture;
+
+    /// Resolution a capture asked to render at, 0 when it did not ask. Applied
+    /// in InitializePresentation rather than at SetPerfCapture, because
+    /// Initialize() reloads _config from game.json in between.
+    int32_t _captureWidth  = 0;
+    int32_t _captureHeight = 0;
+
+    /// Whether the capture asked for per-pass timers. Off by default because
+    /// they change the frame's render-pass structure — see PerfCaptureConfig.
+    bool _capturePerPassTiming = false;
+
+    /// NVML readings taken alongside a capture's frame times. Its worker spins
+    /// up on the first Poll(), so a non-capture run never initialises NVML —
+    /// the F11 overlay keeps its own for the same reason.
+    Render::GpuTelemetry _captureTelemetry;
 
     /// See GetSimTick(). Monotonic for the process's lifetime; never reset.
     std::uint64_t _simTick = 0;

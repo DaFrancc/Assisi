@@ -168,6 +168,16 @@ bool Application::InitializeCore()
     _config  = AppConfig::LoadFromJson();
     _options = OptionsConfig::LoadFromJson();
 
+    // A capture must not be paced. Under vsync the frame time is the display's
+    // refresh interval and the GPU idles between presents — which both hides the
+    // renderer's real cost and lets the driver drop the core clock, so the
+    // measurement is taken on hardware that is no longer at speed.
+    if (_perfCapture)
+    {
+        _options.frameSync = FrameSyncMode::FpsLimit;
+        _options.fpsLimit  = -1;
+    }
+
     // Retention runs here rather than in the constructor because it is game.json
     // that says how many to keep. The counts are totals including this run.
     //
@@ -195,10 +205,23 @@ bool Application::InitializeCore()
 
 bool Application::InitializePresentation()
 {
+    // A capture's requested resolution wins over game.json — the ledger needs
+    // both 1440p and 1080p from the same committed config.
+    if (_captureWidth > 0 && _captureHeight > 0)
+    {
+        _config.width  = _captureWidth;
+        _config.height = _captureHeight;
+    }
+
     Window::WindowConfiguration winCfg;
     winCfg.Width  = _config.width;
     winCfg.Height = _config.height;
     winCfg.Title  = _config.title.c_str();
+    // Undecorated for a capture, so the framebuffer is exactly the size asked
+    // for: 1440p on a 1440p display does not fit once a title bar is added, and
+    // a report labelled 1440p that rendered 2560x1400 is quoting a workload
+    // nobody ran.
+    winCfg.Undecorated = _perfCapture != nullptr;
 
     _window = std::make_unique<Window::WindowContext>(winCfg);
     if (!_window->IsValid())
@@ -234,6 +257,15 @@ bool Application::InitializePresentation()
             return false;
         }
         ConfigurePostProcess();
+
+        // A capture is exactly the case the per-pass render-pass splits are
+        // worth paying for: nobody is looking at this frame, and the whole point
+        // of the run is to find out where the time went. Interactive runs leave
+        // it to the F11 checkbox.
+        if (_perfCapture && _capturePerPassTiming)
+        {
+            vulkanContext->SetPassTimingEnabled(true);
+        }
     }
 
     _presentationInitialized = true;
@@ -287,6 +319,79 @@ void Application::RequestClose()
 bool Application::ShouldClose() const
 {
     return _closeRequested || (_window && _window->ShouldClose());
+}
+
+void Application::SetPerfCapture(const PerfCaptureConfig &config)
+{
+    _perfCapture = std::make_unique<PerfCapture>(config);
+
+    // A capture under vsync measures the display's refresh, not the renderer, so
+    // the pacing comes off here rather than being left to whatever options.json
+    // happens to say. Written into _options so the rest of the loop and the
+    // vsync reconcile above both see one answer.
+    // Neither the pacing nor the resolution is applied here, and for the same
+    // reason: Initialize() replaces _options from options.json and _config from
+    // game.json, both of which run after this. Setting them now looks right and
+    // is silently undone — which is exactly what happened, and is why every
+    // early capture ran vsync-locked to the display and reported frame times
+    // taken while the GPU sat idle between presents. They are applied after
+    // those loads instead.
+    _captureWidth         = config.width;
+    _captureHeight        = config.height;
+    _capturePerPassTiming = config.perPassTiming;
+}
+
+void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
+                                     Render::Vulkan::VulkanContext *context)
+{
+    PerfSample sample;
+    sample.cpuMs        = cpuMs;
+    sample.gpuMs        = gpuMs;
+    sample.frameDeltaMs = rawDt * 1000.0;
+
+    // Polled every frame rather than once: the clock guard's whole job is to
+    // notice the hardware moving mid-run, and a single reading at either end
+    // could not. Poll() returns the background worker's latest published sample
+    // and never touches the driver, so this costs a copy.
+    const Render::GpuTelemetrySample &telemetry = _captureTelemetry.Poll();
+    sample.telemetryValid                       = telemetry.valid;
+    sample.coreClockMhz                         = telemetry.coreClockMhz;
+    sample.temperatureC                         = telemetry.temperatureC;
+    sample.telemetrySequence                    = telemetry.sequence;
+
+    _perfCapture->AddSample(sample);
+
+    // After AddSample, which is what decides whether this frame counts.
+    if (context != nullptr)
+    {
+        for (const Render::Vulkan::VulkanContext::PassTiming &pass : context->GetPassTimings())
+        {
+            _perfCapture->AddPassTiming(pass.name, static_cast<double>(pass.milliseconds));
+        }
+    }
+
+    if (!_perfCapture->IsComplete())
+    {
+        return;
+    }
+
+    _perfCapture->SetDeviceName(telemetry.valid ? telemetry.name : std::string{});
+
+    // The extent actually rendered, read off the framebuffer rather than the
+    // size that was requested: a window manager is free to hand back something
+    // else, and a report quoting the request would be quoting a resolution that
+    // was never drawn.
+    if (_window)
+    {
+        const Window::WindowSize size = _window->GetFramebufferSize();
+        _perfCapture->SetRenderExtent(static_cast<uint32_t>(size.Width), static_cast<uint32_t>(size.Height));
+    }
+    Core::Log::Info("{}", _perfCapture->FormatReport());
+    if (!_perfCapture->WriteReport())
+    {
+        Core::Log::Error("PerfCapture: the report could not be written.");
+    }
+    RequestClose();
 }
 
 namespace
@@ -620,6 +725,11 @@ void Application::Run()
             ++_frameSampleCount;
         }
 
+        if (_perfCapture)
+        {
+            RecordCaptureFrame(cpuMs, gpuMs, rawDt, vulkanContext);
+        }
+
         fpsAccum += rawDt;
         cpuMsAccum += cpuMs;
         gpuMsAccum += gpuMs;
@@ -730,7 +840,7 @@ void Application::RenderFrame()
     {
         // The last unscoped thing inside `render` — small, but an unnamed gap
         // between two slices is exactly what sends you looking in the wrong place.
-        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "clear-targets");
+        ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
         sceneFrame.commandList->clearTextureFloat(
             sceneFrame.colorTexture, nvrhi::AllSubresources,
             nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
@@ -749,7 +859,7 @@ void Application::RenderFrame()
     {
         // No-op if AA is off (the scene already rendered directly into `frame`
         // above); otherwise resolves/FXAA's the offscreen render into it.
-        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "post-process");
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
         _postProcess.Resolve(frame->commandList, *frame);
     }
 
@@ -759,7 +869,7 @@ void Application::RenderFrame()
         // `imgui-panels` is the app's own panel code (the part a game controls),
         // and `imgui-render` is building + recording the draw data, which scales
         // with how much got drawn rather than with how much code ran.
-        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui");
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "imgui");
         {
             ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-begin");
             Debug::DebugUI::BeginFrame(*frame);

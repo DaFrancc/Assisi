@@ -137,6 +137,24 @@ struct EditorConfig
     /// editor binary. Distinct from the F11 "Editor overlays" checkbox, which
     /// only hides the overlays per frame.
     bool enableEditorVisuals = true;
+
+    /// Run as a performance capture rather than interactively: measure a fixed
+    /// number of frames, print the medians, write the report, exit. Set by
+    /// `--capture`; `frames == 0` means an ordinary interactive run.
+    ///
+    /// The editor is the measurement harness rather than a separate program,
+    /// because a separate one would measure a renderer nobody ships. What the
+    /// capture does change is the camera: it snaps to the level's active Camera
+    /// entity, so the view is the scene's own rather than the editor's default
+    /// fly-camera pose. A measurement scene that could not choose what its
+    /// numbers are a picture of would not be a contract.
+    App::PerfCaptureConfig perfCapture;
+
+    /// Start with the GPU-driven cull path on. Off by default, matching
+    /// SceneRenderer — the CPU path is the reference implementation. Exposed
+    /// here so the two can be A/B'd by a capture run rather than only by
+    /// clicking the F11 checkbox, which is not something a measurement can do.
+    bool gpuCulling = false;
 };
 
 class EditorOptionsPanel;
@@ -187,6 +205,15 @@ private:
     // --- Setup ---
     void SetupCamera();
     void SetupScene();
+
+    /// @brief Move the editor camera onto the loaded level's active Camera
+    /// entity, and adopt its projection. No-op when the level has none, which
+    /// leaves the editor's default pose.
+    ///
+    /// Used by capture runs so the scene decides what its numbers are a picture
+    /// of. Deliberately not applied interactively: an author opening a level
+    /// wants their fly camera where they left it.
+    void AdoptLevelCamera();
 
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();

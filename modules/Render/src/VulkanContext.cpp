@@ -564,6 +564,15 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
             }
             context->_frameQueries[i] = context->_nvrhiDevice->createEventQuery();
             context->_timerQueries[i] = context->_nvrhiDevice->createTimerQuery();
+
+            // The per-pass pool is created up front even though pass timing
+            // starts off: creating queries on the first frame someone ticks the
+            // profiling box would put the allocation inside the frame they are
+            // about to measure. Idle queries cost a handle each.
+            for (nvrhi::TimerQueryHandle &query : context->_passTimers[i].queries)
+            {
+                query = context->_nvrhiDevice->createTimerQuery();
+            }
         }
     }
 
@@ -956,6 +965,23 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
         // beginTimerQuery() below can reuse it.
         _lastGpuFrameMs = _nvrhiDevice->getTimerQueryTime(_timerQueries[slot]) * 1000.0f;
         _frameQueryPending[slot] = false;
+
+        // Same argument for the pass timers: the slot's frame is proven done, so
+        // resolving them here cannot block either. They are published as a set
+        // rather than incrementally, so a reader never sees half of one frame's
+        // passes next to half of the previous one's.
+        PassTimerSlot &timers = _passTimers[slot];
+        if (timers.pending)
+        {
+            _resolvedPassTimings.clear();
+            for (uint32_t i = 0; i < timers.used; ++i)
+            {
+                _resolvedPassTimings.push_back(
+                    PassTiming{timers.names[i], _nvrhiDevice->getTimerQueryTime(timers.queries[i]) * 1000.0f});
+            }
+            timers.pending = false;
+        }
+        timers.used = 0;
     }
 
     // vkAcquireNextImageKHR blocks the CPU until the presentation engine hands
@@ -988,6 +1014,15 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
 
     _commandList->open();
     _commandList->beginTimerQuery(_timerQueries[slot]); // spans the whole frame; ended in EndFrame()
+
+    // Latch the enable for the frame's duration. Flipping the checkbox mid-frame
+    // would otherwise leave a BeginPassTimer without its End, or vice versa.
+    _passTimingActive = _passTimingEnabled;
+    _openPassTimer    = kMaxTimedPasses;
+    if (!_passTimingActive)
+    {
+        _resolvedPassTimings.clear();
+    }
     _commandList->setTextureState(_swapchainTextures[_currentImageIndex], nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::RenderTarget);
 
@@ -999,6 +1034,61 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     frame.width = _swapchainExtent.width;
     frame.height = _swapchainExtent.height;
     return frame;
+}
+
+void VulkanContext::BeginPassTimer(const char *name)
+{
+    if (!_passTimingActive || _commandList == nullptr)
+    {
+        return;
+    }
+
+    const uint32_t slot     = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
+    PassTimerSlot &timers = _passTimers[slot];
+
+    if (_openPassTimer != kMaxTimedPasses)
+    {
+        // Nesting would time a range containing another render-pass break, so
+        // the inner reading would be of the break rather than the work.
+        Core::Log::Warn("VulkanContext: pass timer '{}' opened inside '{}'; ignoring the inner one.", name,
+                        timers.names[_openPassTimer]);
+        return;
+    }
+    if (timers.used >= kMaxTimedPasses)
+    {
+        if (!_passCapacityWarned)
+        {
+            Core::Log::Warn("VulkanContext: more than {} timed passes in a frame; the rest go unmeasured.",
+                            kMaxTimedPasses);
+            _passCapacityWarned = true;
+        }
+        return;
+    }
+
+    _openPassTimer            = timers.used;
+    timers.names[timers.used] = name;
+    _commandList->beginTimerQuery(timers.queries[timers.used]);
+}
+
+void VulkanContext::EndPassTimer()
+{
+    if (!_passTimingActive || _commandList == nullptr || _openPassTimer == kMaxTimedPasses)
+    {
+        return;
+    }
+
+    const uint32_t slot     = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
+    PassTimerSlot &timers = _passTimers[slot];
+
+    _commandList->endTimerQuery(timers.queries[_openPassTimer]);
+    ++timers.used;
+    timers.pending = true;
+    _openPassTimer = kMaxTimedPasses;
+}
+
+std::span<const VulkanContext::PassTiming> VulkanContext::GetPassTimings() const
+{
+    return _resolvedPassTimings;
 }
 
 void VulkanContext::EndFrame()
@@ -1100,6 +1190,11 @@ VulkanContext::~VulkanContext()
             query = nullptr;
         for (nvrhi::TimerQueryHandle &query : _timerQueries)
             query = nullptr;
+        for (PassTimerSlot &timers : _passTimers)
+        {
+            for (nvrhi::TimerQueryHandle &query : timers.queries)
+                query = nullptr;
+        }
         DestroySwapchainResources(); // also frees the per-image render-finished semaphores
         _nvrhiDevice = nullptr;
         _nvrhiDeviceHandle = nullptr;

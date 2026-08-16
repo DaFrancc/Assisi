@@ -202,7 +202,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     {
         // Scoped even though it is rare: it is a full grid rebuild, so the one
         // frame that pays it should say so rather than look like a random spike.
-        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "cluster-rebuild");
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "cluster-rebuild");
         RebuildClusterGrid(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height), camera, projection);
     }
 
@@ -235,7 +235,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     ASSISI_PROFILE_COUNTER("render/culled-meshes", static_cast<double>(_lastDrawStats.culledMeshes));
 
     {
-        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "editor-icons");
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "editor-icons");
         DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
     }
 
@@ -246,7 +246,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
         // One scope for both outline sources (submitted groups + the highlight):
         // same pass, same per-group cost, so a split would name the caller rather
         // than the cost.
-        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "outlines");
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "outlines");
         if (_outlinePass.IsValid())
         {
             for (const OutlineGroup &group : _outlineGroups)
@@ -263,7 +263,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // depth-tested batch first (occluded by the scene), then the on-top batch
     // (x-ray). Both are cleared afterwards so the caller re-submits each frame.
     {
-        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "overlay-lines");
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "overlay-lines");
         if (_linePass.IsValid())
         {
             _linePass.Draw(frame, projection * view, _overlayLinesDepthTested, /*onTop=*/ false);

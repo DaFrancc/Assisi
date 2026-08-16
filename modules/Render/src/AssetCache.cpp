@@ -27,6 +27,40 @@ namespace
 /// @brief The fallback mesh path used for empty/unrecognised mesh references.
 const Core::AssetPath kCubePrimitive{std::string_view{"prim://cube"}};
 
+// The primitive-shape ladder. Paths mirror Core/AssetId.cpp's built-in table;
+// tessellations come from Geometry::PrimitiveTessellation rather than the
+// factory defaults, which are tuned for editor collider silhouettes (see the
+// note there). Registered eagerly but built lazily — ResolvePrimitive only
+// invokes a factory on first use, so a level that names none of these pays for
+// none of them.
+struct PrimitiveDesc
+{
+    std::string_view path;
+    Geometry::MeshData (*factory)();
+};
+
+const std::array<PrimitiveDesc, 8> kShapePrimitives = {{
+    {"prim://sphere-low",
+     [] { return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereLowSlices,
+                                                Geometry::PrimitiveTessellation::kSphereLowStacks); }},
+    {"prim://sphere",
+     [] { return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereSlices,
+                                                Geometry::PrimitiveTessellation::kSphereStacks); }},
+    {"prim://sphere-high",
+     [] { return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereHighSlices,
+                                                Geometry::PrimitiveTessellation::kSphereHighStacks); }},
+    {"prim://icosphere-low",
+     [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereLowSubdivisions); }},
+    {"prim://icosphere",
+     [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereSubdivisions); }},
+    {"prim://icosphere-high",
+     [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereHighSubdivisions); }},
+    {"prim://cylinder",
+     [] { return Geometry::CreateUnitCylinderMesh(Geometry::PrimitiveTessellation::kCylinderSlices); }},
+    {"prim://cylinder-high",
+     [] { return Geometry::CreateUnitCylinderMesh(Geometry::PrimitiveTessellation::kCylinderHighSlices); }},
+}};
+
 // `prim://` solid-colour texture primitives — a material's per-channel defaults,
 // owned by the cache like any other engine-generated asset so a device rebuild
 // regenerates them uniformly (see AssetCache.hpp). Each carries its own fixed
@@ -118,6 +152,10 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Color
                           "AssetCache::MaterialTable");
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
+    for (const PrimitiveDesc &primitive : kShapePrimitives)
+    {
+        _primitiveFactories.emplace(Core::AssetPath{primitive.path}, primitive.factory);
+    }
 
     // White sRGB stands in for empty baseColor/emissive channels; white *linear*
     // for metallic-roughness/occlusion (sampling 1.0 leaves the per-material

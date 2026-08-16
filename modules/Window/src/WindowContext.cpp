@@ -15,6 +15,7 @@ WindowContext::WindowContext(const WindowConfiguration &configuration) : _glfwLi
 
     /* Vulkan owns presentation — GLFW must not create a client API context. */
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_DECORATED, configuration.Undecorated ? GLFW_FALSE : GLFW_TRUE);
 
     _nativeWindowHandle =
         glfwCreateWindow(configuration.Width, configuration.Height, configuration.Title, nullptr, nullptr);

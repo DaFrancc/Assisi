@@ -35,6 +35,16 @@ struct WindowConfiguration
     int Width = 1280;             ///< Initial window width in pixels.
     int Height = 720;             ///< Initial window height in pixels.
     const char *Title = "Assisi"; ///< Window title bar text.
+
+    /// @brief Create without a title bar or borders.
+    ///
+    /// For measurement runs, where the framebuffer must be exactly the
+    /// requested size. A decorated window asking for its display's full
+    /// resolution gets shrunk to leave room for the decorations, so a capture
+    /// labelled 1440p would in fact have rendered something slightly smaller —
+    /// and comparing that against a real 1440p number is comparing two
+    /// different workloads.
+    bool Undecorated = false;
 };
 
 /// @brief RAII owner of a GLFW window and the single source of truth for its
