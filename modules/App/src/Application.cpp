@@ -168,6 +168,16 @@ bool Application::InitializeCore()
     _config  = AppConfig::LoadFromJson();
     _options = OptionsConfig::LoadFromJson();
 
+    // A capture must not be paced. Under vsync the frame time is the display's
+    // refresh interval and the GPU idles between presents — which both hides the
+    // renderer's real cost and lets the driver drop the core clock, so the
+    // measurement is taken on hardware that is no longer at speed.
+    if (_perfCapture)
+    {
+        _options.frameSync = FrameSyncMode::FpsLimit;
+        _options.fpsLimit  = -1;
+    }
+
     // Retention runs here rather than in the constructor because it is game.json
     // that says how many to keep. The counts are totals including this run.
     //
@@ -319,13 +329,13 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     // the pacing comes off here rather than being left to whatever options.json
     // happens to say. Written into _options so the rest of the loop and the
     // vsync reconcile above both see one answer.
-    _options.frameSync = FrameSyncMode::FpsLimit;
-    _options.fpsLimit  = -1;
-
-    // The resolution is deliberately *not* applied to _config here: Initialize()
-    // replaces _config wholesale from game.json, which runs after this and would
-    // silently put the window back to the configured size. It is applied in
-    // InitializePresentation instead, after that load.
+    // Neither the pacing nor the resolution is applied here, and for the same
+    // reason: Initialize() replaces _options from options.json and _config from
+    // game.json, both of which run after this. Setting them now looks right and
+    // is silently undone — which is exactly what happened, and is why every
+    // early capture ran vsync-locked to the display and reported frame times
+    // taken while the GPU sat idle between presents. They are applied after
+    // those loads instead.
     _captureWidth         = config.width;
     _captureHeight        = config.height;
     _capturePerPassTiming = config.perPassTiming;

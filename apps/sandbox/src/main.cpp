@@ -57,6 +57,8 @@ constexpr const char *kUsage =
     "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
     "                          error, fatal (default trace; info in a shipping\n"
     "                          build)\n"
+    "  --gpu-cull              start with the GPU-driven cull path on (off by\n"
+    "                          default; the CPU path is the reference)\n"
     "  -h, --help              show this help and exit\n"
     "\n"
     " performance capture — run a scene, print medians, exit:\n"
@@ -158,7 +160,7 @@ bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t 
 // handled (a clean early exit, not an error).
 bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
                Sandbox::ServerOptions &serverOptions, bool &pieClient, bool &shouldExit,
-               Assisi::App::PerfCaptureConfig &capture)
+               Assisi::App::PerfCaptureConfig &capture, bool &gpuCulling)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -324,6 +326,10 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
                 return false;
             }
         }
+        else if (arg == "--gpu-cull")
+        {
+            gpuCulling = true;
+        }
         else if (arg == "--capture-passes")
         {
             capture.perPassTiming = true;
@@ -357,8 +363,10 @@ int main(int argc, char **argv)
     bool shouldExit    = false;
     Sandbox::ServerOptions serverOptions;
     Assisi::App::PerfCaptureConfig capture;
-    capture.frames = 0; // 0 means "not a capture run"; --capture sets it
-    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit, capture))
+    capture.frames  = 0; // 0 means "not a capture run"; --capture sets it
+    bool gpuCulling = false;
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit, capture,
+                   gpuCulling))
     {
         return EXIT_FAILURE;
     }
@@ -409,7 +417,8 @@ int main(int argc, char **argv)
                                    .autoJoinEndpoint    = autoJoinEndpoint,
                                    .restrictedViewer    = pieClient,
                                    .enableEditorVisuals = editorVisuals,
-                                   .perfCapture         = capture});
+                                   .perfCapture         = capture,
+                                   .gpuCulling          = gpuCulling});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

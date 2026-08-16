@@ -713,6 +713,8 @@ void EditorApp::SetupScene()
         RequestClose();
         return;
     }
+    _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
+
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
     _thumbnailCache.Initialize(device, &Jobs(), Assisi::Render::ColorSpace::Linear);

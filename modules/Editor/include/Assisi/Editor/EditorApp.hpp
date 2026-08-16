@@ -149,6 +149,12 @@ struct EditorConfig
     /// fly-camera pose. A measurement scene that could not choose what its
     /// numbers are a picture of would not be a contract.
     App::PerfCaptureConfig perfCapture;
+
+    /// Start with the GPU-driven cull path on. Off by default, matching
+    /// SceneRenderer — the CPU path is the reference implementation. Exposed
+    /// here so the two can be A/B'd by a capture run rather than only by
+    /// clicking the F11 checkbox, which is not something a measurement can do.
+    bool gpuCulling = false;
 };
 
 class EditorOptionsPanel;
