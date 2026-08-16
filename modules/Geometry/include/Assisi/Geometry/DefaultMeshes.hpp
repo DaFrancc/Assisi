@@ -195,6 +195,10 @@ inline MeshData CreateUnitSphereMesh(uint32_t slices = 48, uint32_t stacks = 24)
         }
     }
 
+    // Wound counter-clockwise seen from outside, which is what MeshPass
+    // rasterises as front-facing. Stacks run from the +Y pole downwards and
+    // slices anticlockwise about +Y, so the quad (a, a+1, b, b+1) faces outward
+    // as (a, a+1, b) + (a+1, b+1, b).
     const uint32_t stride = slices + 1;
     for (uint32_t i = 0; i < stacks; ++i)
     {
@@ -202,7 +206,7 @@ inline MeshData CreateUnitSphereMesh(uint32_t slices = 48, uint32_t stacks = 24)
         {
             const uint32_t a = i * stride + j;
             const uint32_t b = a + stride;
-            mesh.Indices.insert(mesh.Indices.end(), {a, b, a + 1, a + 1, b, b + 1});
+            mesh.Indices.insert(mesh.Indices.end(), {a, a + 1, b, a + 1, b + 1, b});
         }
     }
 
@@ -233,11 +237,12 @@ inline MeshData CreateUnitCylinderMesh(uint32_t slices = 48)
         mesh.Vertices.push_back({{x, 1.0f, z}, {x, 0.0f, z}, {u, 0.0f}});
         mesh.Vertices.push_back({{x, -1.0f, z}, {x, 0.0f, z}, {u, 1.0f}});
     }
+    // Counter-clockwise from outside, as on the sphere above.
     for (uint32_t j = 0; j < slices; ++j)
     {
         const uint32_t top = j * 2;
         const uint32_t bot = top + 1;
-        mesh.Indices.insert(mesh.Indices.end(), {top, bot, top + 2, top + 2, bot, bot + 2});
+        mesh.Indices.insert(mesh.Indices.end(), {top, top + 2, bot, top + 2, bot + 2, bot});
     }
 
     // Cap fans: a centre vertex for each end, fanned over its own rim ring.
@@ -252,9 +257,20 @@ inline MeshData CreateUnitCylinderMesh(uint32_t slices = 48)
                                 const float z     = std::sin(theta);
                                 mesh.Vertices.push_back({{x, y, z}, {0.0f, ny, 0.0f}, {0.5f + 0.5f * x, 0.5f + 0.5f * z}});
                             }
+                            // The two caps face opposite ways, so one fan has to
+                            // run the other way round to stay outward-facing.
+                            // The rim is generated anticlockwise about +Y, which
+                            // is already correct seen from below (-Y).
                             for (uint32_t j = 0; j < slices; ++j)
                             {
-                                mesh.Indices.insert(mesh.Indices.end(), {center, first + j, first + j + 1});
+                                if (ny > 0.0f)
+                                {
+                                    mesh.Indices.insert(mesh.Indices.end(), {center, first + j + 1, first + j});
+                                }
+                                else
+                                {
+                                    mesh.Indices.insert(mesh.Indices.end(), {center, first + j, first + j + 1});
+                                }
                             }
                         };
     addCap(1.0f, 1.0f);

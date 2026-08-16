@@ -84,6 +84,70 @@ void CheckTangentFrame(const MeshData &mesh)
 // zero area in UV space, so the accumulated tangent is exactly zero and
 // normalising it would put NaN in the vertex buffer. Checked at the coarsest
 // tessellation too, where the poles are the largest share of the mesh.
+namespace
+{
+// Every primitive here is convex and centred on the origin, so a triangle faces
+// outward exactly when its counter-clockwise winding normal agrees with the
+// direction from the origin to its centroid. MeshPass rasterises with
+// frontCounterClockwise = true and back-face culling, so a triangle that fails
+// this is culled when it should be drawn — the surface renders inside-out, and
+// you see the far wall of the object through the near one.
+//
+// This went unchecked for as long as these meshes were only ever drawn as
+// collider silhouettes, where winding is irrelevant. Promoting them to prim://
+// scene geometry is what made it matter.
+void CheckOutwardWinding(const MeshData &mesh, std::size_t expectedDegenerate = 0)
+{
+    REQUIRE(mesh.Indices.size() % 3 == 0);
+    REQUIRE(!mesh.Indices.empty());
+
+    std::size_t degenerate = 0;
+    for (std::size_t i = 0; i < mesh.Indices.size(); i += 3)
+    {
+        CAPTURE(i);
+        const Vertex &v0 = mesh.Vertices[mesh.Indices[i]];
+        const Vertex &v1 = mesh.Vertices[mesh.Indices[i + 1]];
+        const Vertex &v2 = mesh.Vertices[mesh.Indices[i + 2]];
+
+        const glm::vec3 faceNormal = glm::cross(v1.Position - v0.Position, v2.Position - v0.Position);
+        const glm::vec3 centroid   = (v0.Position + v1.Position + v2.Position) / 3.0f;
+
+        // A UV sphere's pole quads collapse to zero area — two of their three
+        // corners are the same point. They have no orientation to check, and the
+        // rasteriser discards them. Counted rather than ignored, so a change
+        // that degenerates a mesh wholesale cannot hide behind this skip.
+        if (glm::length(faceNormal) < 1e-6f)
+        {
+            ++degenerate;
+            continue;
+        }
+
+        CHECK(glm::dot(faceNormal, centroid) > 0.0f);
+
+        // ...and the shading normals must agree with the winding, or lighting
+        // contradicts the silhouette even where the triangle survives culling.
+        CHECK(glm::dot(faceNormal, v0.Normal) > 0.0f);
+    }
+    CHECK(degenerate == expectedDegenerate);
+}
+} // namespace
+
+TEST_CASE("Primitives wind counter-clockwise when seen from outside")
+{
+    CheckOutwardWinding(CreateUnitCubeMesh());
+
+    // A UV sphere's pole rows are one degenerate triangle per slice at each end.
+    CheckOutwardWinding(CreateUnitSphereMesh(48, 24), 2 * 48);
+    CheckOutwardWinding(CreateUnitSphereMesh(5, 3), 2 * 5);
+
+    CheckOutwardWinding(CreateUnitCylinderMesh());
+    CheckOutwardWinding(CreateUnitCylinderMesh(5));
+
+    // The icosphere has no poles, so none of its triangles collapse.
+    CheckOutwardWinding(CreateIcosphereMesh(0));
+    CheckOutwardWinding(CreateIcosphereMesh(2));
+}
+
 TEST_CASE("CreateUnitSphereMesh: every vertex carries a usable tangent frame")
 {
     CheckTangentFrame(CreateUnitSphereMesh());

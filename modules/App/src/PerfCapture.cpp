@@ -64,10 +64,16 @@ ClockGuard EvaluateClockGuard(std::span<const PerfSample> samples)
 {
     ClockGuard guard;
 
+    // One entry per *distinct* NVML reading rather than per frame. Frames
+    // sharing a sequence share a reading, so keeping the duplicates would let a
+    // fast run claim hundreds of clock samples it never took, and weight the
+    // trend by frame rate rather than by time.
     std::vector<double> clocks;
     uint32_t firstTemperature = 0;
     uint32_t lastTemperature  = 0;
     bool haveTemperature    = false;
+    uint64_t lastSequence     = 0;
+    bool haveSequence       = false;
 
     for (const PerfSample &sample : samples)
     {
@@ -75,6 +81,13 @@ ClockGuard EvaluateClockGuard(std::span<const PerfSample> samples)
         {
             continue;
         }
+        if (haveSequence && sample.telemetrySequence == lastSequence)
+        {
+            continue;
+        }
+        lastSequence = sample.telemetrySequence;
+        haveSequence = true;
+
         clocks.push_back(static_cast<double>(sample.coreClockMhz));
         if (!haveTemperature)
         {
@@ -83,6 +96,7 @@ ClockGuard EvaluateClockGuard(std::span<const PerfSample> samples)
         }
         lastTemperature = sample.temperatureC;
     }
+    guard.telemetrySamples = static_cast<int32_t>(clocks.size());
 
     if (clocks.empty())
     {
@@ -95,17 +109,48 @@ ClockGuard EvaluateClockGuard(std::span<const PerfSample> samples)
         return guard;
     }
 
+    if (guard.telemetrySamples < kMinTelemetrySamples)
+    {
+        // Not a verdict either way. The run was too short for NVML to have
+        // sampled the clock enough times to say whether it held, and inventing a
+        // trend from a handful of readings is worse than admitting the gap.
+        guard.reason = std::format("only {} independent GPU telemetry readings (need {}): the run was too short "
+                                   "to judge clock stability - measure for longer, not for more frames",
+                                   guard.telemetrySamples, kMinTelemetrySamples);
+        return guard;
+    }
+
     const double medianClock = Percentile(clocks, 0.5);
     const double lowest      = *std::min_element(clocks.begin(), clocks.end());
     const double highest     = *std::max_element(clocks.begin(), clocks.end());
-    guard.clockDrift         = medianClock > 0.0 ? (highest - lowest) / medianClock : 0.0;
+
+    // Drift is a *trend*, measured as the first quarter's median against the
+    // last quarter's — not peak to peak.
+    //
+    // Peak to peak was the first attempt and it discarded every run on real
+    // hardware, which is how the distinction got found. An unpinned desktop GPU
+    // varies its boost clock by well over 5% from frame to frame even under
+    // sustained load, and a scene light enough to leave it partly idle swings
+    // from its idle floor to full boost and back. None of that biases a median
+    // over hundreds of frames. What does bias it is the clock being
+    // systematically different at the end of the run than at the start — warm-up
+    // or throttle — and comparing the two ends is what detects that.
+    const std::size_t quarter = std::max<std::size_t>(clocks.size() / 4, 1);
+    const std::span<const double> early{clocks.data(), quarter};
+    const std::span<const double> late{clocks.data() + clocks.size() - quarter, quarter};
+    const double earlyMedian = Percentile(early, 0.5);
+    const double lateMedian  = Percentile(late, 0.5);
+
+    guard.clockDrift  = medianClock > 0.0 ? std::abs(lateMedian - earlyMedian) / medianClock : 0.0;
+    guard.clockSpread = medianClock > 0.0 ? (highest - lowest) / medianClock : 0.0;
     guard.temperatureRiseC =
         static_cast<int32_t>(lastTemperature) - static_cast<int32_t>(firstTemperature);
 
     if (guard.clockDrift > kMaxClockDrift)
     {
-        guard.reason = std::format("core clock drifted {:.1f}% ({:.0f}-{:.0f} MHz), over the {:.0f}% limit",
-                                   guard.clockDrift * 100.0, lowest, highest, kMaxClockDrift * 100.0);
+        guard.reason = std::format("core clock trended {:.1f}% across the run ({:.0f} -> {:.0f} MHz), over the "
+                                   "{:.0f}% limit",
+                                   guard.clockDrift * 100.0, earlyMedian, lateMedian, kMaxClockDrift * 100.0);
         return guard;
     }
     if (guard.temperatureRiseC > kMaxTemperatureRiseC)
@@ -142,6 +187,7 @@ void PerfCapture::AddSample(const PerfSample &sample)
     _cpuMs.push_back(sample.cpuMs);
     _gpuMs.push_back(sample.gpuMs);
     _samples.push_back(sample);
+    _elapsedMs += sample.frameDeltaMs;
     _lastSampleAccepted = true;
 }
 
@@ -195,7 +241,8 @@ std::string PerfCapture::FormatReport() const
     report += std::format("\n=== perf capture: {} ===\n", _config.levelPath.empty() ? "(no level)" : _config.levelPath);
     report += std::format("  device      {}\n", _deviceName.empty() ? "(unknown)" : _deviceName);
     report += std::format("  resolution  {}x{}\n", _width, _height);
-    report += std::format("  frames      {} measured, {} warm-up\n", cpu.count, _warmupSeen);
+    report += std::format("  frames      {} measured, {} warm-up, over {:.2f} s\n", cpu.count, _warmupSeen,
+                          _elapsedMs / 1000.0);
 
     // The protocol asks for at least 500 frames. A shorter run is legitimate
     // while iterating but must never be quoted, so it says so in the report
@@ -212,8 +259,9 @@ std::string PerfCapture::FormatReport() const
 
     if (guard.trustworthy)
     {
-        report += std::format("  clock guard PASS (drift {:.2f}%, temp {:+d} C)\n", guard.clockDrift * 100.0,
-                              guard.temperatureRiseC);
+        report += std::format("  clock guard PASS (trend {:.2f}%, spread {:.1f}%, temp {:+d} C, {} readings)\n",
+                              guard.clockDrift * 100.0, guard.clockSpread * 100.0, guard.temperatureRiseC,
+                              guard.telemetrySamples);
     }
     else
     {
@@ -261,10 +309,13 @@ bool PerfCapture::WriteReport() const
     report["width"]           = _width;
     report["height"]          = _height;
     report["warmupFrames"]    = _warmupSeen;
+    report["elapsedSeconds"]  = _elapsedMs / 1000.0;
     report["gpuFrameMs"]      = describe(gpu);
     report["cpuFrameMs"]      = describe(cpu);
     report["clockGuard"]      = {{"trustworthy", guard.trustworthy},
                                  {"clockDrift", guard.clockDrift},
+                                 {"clockSpread", guard.clockSpread},
+                                 {"telemetrySamples", guard.telemetrySamples},
                                  {"temperatureRiseC", guard.temperatureRiseC},
                                  {"reason", guard.reason}};
 

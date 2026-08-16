@@ -203,7 +203,7 @@ protected:
 
     /// @brief Feed one frame to the running capture, and close the app once it
     /// has the frames it asked for.
-    void RecordCaptureFrame(double cpuMs, double gpuMs, Render::Vulkan::VulkanContext *context);
+    void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
     int32_t   GetFps()             const { return _fps; }
 
     /// @brief Averaged CPU main-thread work per frame, in milliseconds —

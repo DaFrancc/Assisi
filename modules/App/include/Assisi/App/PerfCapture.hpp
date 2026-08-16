@@ -49,12 +49,22 @@ struct PerfSample
     double cpuMs = 0.0;
     double gpuMs = 0.0;
 
+    /// Wall-clock length of this frame, including any wait. Summed into the
+    /// run's duration, which is what the clock guard's usefulness actually
+    /// depends on — see PerfCapture::MinimumUsefulSeconds.
+    double frameDeltaMs = 0.0;
+
     /// NVML readings taken alongside. `telemetryValid` is false on a non-NVIDIA
     /// GPU or a driver without NVML, in which case the clock guard reports that
     /// it could not run rather than pretending the hardware was steady.
     bool telemetryValid   = false;
     uint32_t coreClockMhz   = 0;
     uint32_t temperatureC   = 0;
+
+    /// GpuTelemetrySample::sequence, which only advances on a fresh driver
+    /// query. Frames sharing a sequence share one reading, so counting distinct
+    /// values is how many independent clock samples the guard actually saw.
+    uint64_t telemetrySequence = 0;
 };
 
 /// @brief The distribution of one measured series.
@@ -89,9 +99,19 @@ struct ClockGuard
     /// but it must not become a ledger entry.
     bool trustworthy = false;
 
-    /// Peak-to-peak core clock as a fraction of the median. A GPU boosting or
-    /// throttling mid-run shows up here before it shows up anywhere else.
+    /// How much the core clock *trended* across the run: the first quarter's
+    /// median against the last quarter's, as a fraction of the run's median.
+    /// This is what a throttle or an incomplete warm-up looks like, and it is
+    /// what the guard gates on.
     double clockDrift = 0.0;
+
+    /// Peak-to-peak core clock as a fraction of the median — reported, not
+    /// gated. On an unpinned GPU this is routinely enormous (a light scene lets
+    /// the clock fall to its idle floor between bursts) without biasing a median
+    /// over hundreds of frames, so failing on it discards every honest run. It
+    /// is published because a large spread does mean the frame times are noisy,
+    /// which a reader should weigh even when the trend is flat.
+    double clockSpread = 0.0;
 
     /// Temperature at the end of the run minus at the start, in Celsius. Rising
     /// temperature is the leading indicator of a throttle that has not yet
@@ -99,13 +119,30 @@ struct ClockGuard
     /// late frames are not.
     int32_t temperatureRiseC = 0;
 
+    /// How many *independent* NVML readings the verdict rests on. NVML is polled
+    /// on its own throttle (~5 Hz), so a run lasting under a second yields a
+    /// handful whatever its frame count — and a trend computed from four
+    /// readings is not evidence of anything.
+    int32_t telemetrySamples = 0;
+
     /// Human-readable reason when `trustworthy` is false; empty when it is true.
     std::string reason;
 };
 
-/// @brief Peak-to-peak core clock drift above this fraction of the median fails
-/// the guard. 5% of a 1.3 ms frame is 0.065 ms — larger than several of the
-/// features this instrument exists to measure.
+/// @brief Below this many independent NVML readings the guard cannot conclude
+/// anything, so it reports that instead of a verdict.
+///
+/// Twenty is ~4 seconds at NVML's ~5 Hz. The frame-count minimum in the protocol
+/// does not imply this: at an uncapped few hundred microseconds a frame, 600
+/// frames is under a second of wall clock, and the "trend" it measures is the
+/// driver dropping to its idle clock because the work ran out — not anything
+/// about the workload.
+inline constexpr int32_t kMinTelemetrySamples = 20;
+
+/// @brief Core-clock *trend* above this fraction of the median fails the guard.
+/// 5% of a 1.3 ms frame is 0.065 ms — larger than several of the features this
+/// instrument exists to measure. Applied to the trend rather than the spread;
+/// see ClockGuard::clockSpread for why that distinction is load-bearing.
 inline constexpr double kMaxClockDrift = 0.05;
 
 /// @brief Temperature rise across the capture, in Celsius, above which the run
@@ -220,6 +257,8 @@ private:
 
     /// Whether the most recent AddSample kept its frame — see AddPassTiming.
     bool _lastSampleAccepted = false;
+
+    double _elapsedMs = 0.0; ///< Wall-clock length of the measured window.
 
     std::vector<double> _cpuMs;
     std::vector<double> _gpuMs;

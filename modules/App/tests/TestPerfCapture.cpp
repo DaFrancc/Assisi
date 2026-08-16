@@ -20,14 +20,21 @@ using namespace Assisi::App;
 namespace
 {
 
+// Each call advances the NVML sequence, so a sample is a fresh driver reading
+// unless a test deliberately reuses one. Real NVML is polled far slower than the
+// frame rate — see FramesPerReading below for the case that models.
+uint64_t g_sequence = 0;
+
 PerfSample Sample(double gpuMs, uint32_t clockMhz = 1900, uint32_t temperatureC = 60, bool valid = true)
 {
     PerfSample sample;
-    sample.cpuMs          = gpuMs * 0.5;
-    sample.gpuMs          = gpuMs;
-    sample.coreClockMhz   = clockMhz;
-    sample.temperatureC   = temperatureC;
-    sample.telemetryValid = valid;
+    sample.cpuMs             = gpuMs * 0.5;
+    sample.gpuMs             = gpuMs;
+    sample.frameDeltaMs      = gpuMs;
+    sample.coreClockMhz      = clockMhz;
+    sample.temperatureC      = temperatureC;
+    sample.telemetryValid    = valid;
+    sample.telemetrySequence = ++g_sequence;
     return sample;
 }
 
@@ -147,6 +154,31 @@ TEST_CASE("The clock guard rejects a run whose core clock drifted")
     CHECK_FALSE(guard.trustworthy);
     CHECK(guard.clockDrift > kMaxClockDrift);
     CHECK(guard.reason.find("clock") != std::string::npos);
+}
+
+// The distinction that makes the guard usable at all. A desktop GPU on a scene
+// light enough to leave it partly idle swings between its idle floor and full
+// boost every few frames, with no trend at all — the median over hundreds of
+// frames is unaffected. Gating on peak-to-peak discarded every honest run on
+// real hardware, which is how this case got written.
+TEST_CASE("The clock guard tolerates boost jitter that does not trend")
+{
+    std::vector<PerfSample> samples;
+    for (int32_t i = 0; i < 600; ++i)
+    {
+        // Alternating idle floor and full boost: a 69% peak-to-peak spread whose
+        // two ends are statistically identical.
+        const uint32_t clock = (i % 3 == 0) ? 555u : 1815u;
+        samples.push_back(Sample(1.30, clock, /*temperatureC=*/ 61));
+    }
+
+    const ClockGuard guard = EvaluateClockGuard(samples);
+    CHECK(guard.trustworthy);
+    CHECK(guard.clockDrift < kMaxClockDrift);
+
+    // The spread is still reported, because it does mean the frame times are
+    // noisy even though the median is sound.
+    CHECK(guard.clockSpread > 0.5);
 }
 
 TEST_CASE("The clock guard rejects a run whose temperature climbed")

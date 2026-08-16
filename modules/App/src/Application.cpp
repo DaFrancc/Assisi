@@ -331,11 +331,13 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     _capturePerPassTiming = config.perPassTiming;
 }
 
-void Application::RecordCaptureFrame(double cpuMs, double gpuMs, Render::Vulkan::VulkanContext *context)
+void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
+                                     Render::Vulkan::VulkanContext *context)
 {
     PerfSample sample;
-    sample.cpuMs = cpuMs;
-    sample.gpuMs = gpuMs;
+    sample.cpuMs        = cpuMs;
+    sample.gpuMs        = gpuMs;
+    sample.frameDeltaMs = rawDt * 1000.0;
 
     // Polled every frame rather than once: the clock guard's whole job is to
     // notice the hardware moving mid-run, and a single reading at either end
@@ -345,6 +347,7 @@ void Application::RecordCaptureFrame(double cpuMs, double gpuMs, Render::Vulkan:
     sample.telemetryValid                       = telemetry.valid;
     sample.coreClockMhz                         = telemetry.coreClockMhz;
     sample.temperatureC                         = telemetry.temperatureC;
+    sample.telemetrySequence                    = telemetry.sequence;
 
     _perfCapture->AddSample(sample);
 
@@ -714,7 +717,7 @@ void Application::Run()
 
         if (_perfCapture)
         {
-            RecordCaptureFrame(cpuMs, gpuMs, vulkanContext);
+            RecordCaptureFrame(cpuMs, gpuMs, rawDt, vulkanContext);
         }
 
         fpsAccum += rawDt;

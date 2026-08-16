@@ -34,12 +34,15 @@
 using namespace Assisi;
 using Assisi::Runtime::SceneSerializer;
 
+// These read the committed levels straight out of the source tree, which a
+// Release build deliberately does not have (the staged copy beside the binary is
+// its durable one). So the gate compiles out there rather than failing the
+// build, and says so rather than vanishing silently — a suite that quietly drops
+// cases in one configuration is how a gate stops being one.
+#ifdef ASSISI_SOURCE_ASSET_ROOT
+
 namespace
 {
-
-#ifndef ASSISI_SOURCE_ASSET_ROOT
-#    error "The perf scene gate needs the source asset tree; it is absent only in Release."
-#endif
 
 std::filesystem::path LevelPath(const std::string &name)
 {
@@ -213,3 +216,13 @@ TEST_CASE("Lights.alvl still carries the light counts it is quoted for")
     CHECK(stats.spotLights == 29);
     CHECK(stats.directionalLights == 1);
 }
+
+#else // !ASSISI_SOURCE_ASSET_ROOT
+
+TEST_CASE("The perf scene gate needs the source asset tree" * doctest::skip())
+{
+    MESSAGE("Built without ASSISI_SOURCE_ASSET_ROOT (a Release configuration), so the committed "
+            "levels are not reachable and the contract gate did not run. Run it in debug or dev.");
+}
+
+#endif // ASSISI_SOURCE_ASSET_ROOT
