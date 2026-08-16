@@ -13,21 +13,22 @@ one for the next issue.
 CONTEXT YOU WILL NOT HAVE
 -------------------------
 
-Assisi is a C++ game engine. These issues are all remediation on one long-lived
-branch:
+Assisi is a C++ game engine. These issues are the rendering push, all on one
+long-lived branch:
 
-  - Work happens on 'blueprints', not main and not dev. PRs merge into
-    'blueprints'. Do not target anything else.
+  - Work happens on 'render', not main and not dev. PRs merge into
+    'render'. Do not target anything else.
 
-  - The worklist of record is docs/blueprint-review-round7-findings.md,
-    section 9. Read §9 before starting anything. It supersedes §7, it reorders
-    the work into tiers (§9.2), it lists which findings depend on each other
-    (§9.3), and §9.5 drops the findings that turned out to be wrong. Issues cite
-    finding IDs — B9, S26, T12 — and those are looked up in that document.
-    Fixing something §9.5 already dropped is how this branch wasted effort once.
+  - The worklist of record is the Linear project "Rendering". Its project
+    description carries the plan of record — a dependency-ordered list of the
+    issues — and the milestone descriptions carry the scope decisions. Read
+    both before starting anything; the issue descriptions are self-contained
+    beyond that. The out-of-scope lists (coat, fuzz, anisotropy, thin-film,
+    transmission, subsurface, dispersion, OIT, ray tracing) are decisions,
+    not oversights — do not build any of it, however natural it looks while
+    in there.
 
-  - Linear: team "Engine", project "Blueprint Remediation". Estimates are in
-    points.
+  - Linear: team "Engine", project "Rendering". Estimates are in points.
 
   - The Linear issues are synced to GitHub issues. Every Linear issue carries a
     link to its GitHub twin in its attachments — that is where the GitHub issue
@@ -70,8 +71,10 @@ WHICH ISSUE
 If the programmer named one, that is the issue. If they did not, pick the next
 one and say which you picked before you start.
 
-Roughly by issue number, but it is not a rule. Dependencies win: if an issue is
-blocked, or another has to land first, do whatever order actually works.
+The default order is the plan of record in the Rendering project description.
+It is already dependency-ordered, but check the issue's blocking relations
+anyway: if an issue is blocked, or another has to land first, do whatever
+order actually works.
 
 
 PART 1 — SETUP
@@ -85,19 +88,19 @@ PART 1 — SETUP
  4. Read the issue description in full.
  5. Get the branch name from the issue (Linear supplies it, e.g. feature/eng-98),
     and the GitHub issue number from the issue's attachments.
- 6. Fetch first, and make sure local 'blueprints' is level with the remote. The
-    branch is cut from it, and a stale 'blueprints' cuts from the wrong tip.
-    Verify it — `git rev-list --left-right --count origin/blueprints...blueprints`
+ 6. Fetch first, and make sure local 'render' is level with the remote. The
+    branch is cut from it, and a stale 'render' cuts from the wrong tip.
+    Verify it — `git rev-list --left-right --count origin/render...render`
     must be 0 0 before you cut. Do not take "already up to date" on faith; this
     has silently cut a branch eight commits behind before now, and the work had
     to be rebased across a refactor that had landed in between.
 
     Then create the branch as a linked branch on that GitHub issue:
 
-      gh issue develop <github-issue-number> --base blueprints \
+      gh issue develop <github-issue-number> --base render \
           --name <branch-name-from-linear> --checkout
 
-    One command creates it off 'blueprints', pushes it, links it to the issue,
+    One command creates it off 'render', pushes it, links it to the issue,
     and checks it out. Do not create the branch with git and push it by hand:
     that produces a branch GitHub does not associate with the issue, so the
     association never reaches Linear.
@@ -146,16 +149,16 @@ PART 4 — LANDING IT (only after approval)
 -----------------------------------------
 
 16. Push the commits.
-17. Open a PR with gh, merging into 'blueprints'.
+17. Open a PR with gh, merging into 'render'.
 18. Title the PR "Fixes ENG-#". Same reason as the commit title — belt and
     braces on closing the Linear issue.
 19. The PR has no description.
 20. Set the PR assignee in gh to DaFrancc. If that is not possible, skip it.
 21. Merge the PR.
 22. Delete the feature branch, locally and on the remote.
-23. Pull the merge into local 'blueprints': check it out, fast-forward it from
+23. Pull the merge into local 'render': check it out, fast-forward it from
     origin, and confirm the work is actually in it — not just merged on GitHub.
-    Leave the repo sitting on an up-to-date 'blueprints', which is what the next
+    Leave the repo sitting on an up-to-date 'render', which is what the next
     issue branches from.
 24. Say the issue is landed and stop. Do not start the next one — the programmer
     opens a new conversation for that.
