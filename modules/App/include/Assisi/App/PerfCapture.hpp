@@ -139,6 +139,23 @@ struct PerfCaptureConfig
     /// The level the numbers belong to, recorded in the report so a stray file
     /// can still say what it measured.
     std::string levelPath;
+
+    /// Resolution to render at, overriding game.json. 0 leaves the configured
+    /// size alone. The ledger wants both 1440p (the dev machine) and 1080p (the
+    /// modal Steam display), so switching between them has to be a flag rather
+    /// than an edit to a committed config file.
+    int32_t width  = 0;
+    int32_t height = 0;
+
+    /// Measure each pass separately as well as the frame.
+    ///
+    /// **Off by default, and the default is the one to publish.** Per-pass
+    /// timers force render-pass breaks (see VulkanContext's per-pass timing
+    /// section), so a capture taken with them on is of a frame whose structure
+    /// differs from the one that ships. The headline ledger number must come
+    /// from a run with this off; turn it on for the separate, more invasive run
+    /// that answers "which pass moved".
+    bool perPassTiming = false;
 };
 
 /// @brief Accumulates a capture run and reports on it.

@@ -51,9 +51,13 @@ namespace Assisi::Editor
 EditorApp::EditorApp(EditorConfig config)
     : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
 {
-    // Application reads this during Initialize(), which runs before OnStart, so
-    // it cannot wait for a hook — hence the constructor body.
+    // Application reads these during Initialize(), which runs before OnStart, so
+    // they cannot wait for a hook — hence the constructor body.
     SetRestrictedViewer(_editorConfig.restrictedViewer);
+    if (_editorConfig.perfCapture.frames > 0)
+    {
+        SetPerfCapture(_editorConfig.perfCapture);
+    }
 }
 
 EditorApp::~EditorApp() = default;
@@ -103,6 +107,40 @@ void EditorApp::SetupCamera()
     // Projection is left at the member initialiser in EditorApp.hpp: 60 deg FOV,
     // 0.1..200 clip, active.
     RefreshCameraMatrix();
+}
+
+void EditorApp::AdoptLevelCamera()
+{
+    if (_scene == nullptr)
+    {
+        return;
+    }
+
+    for (auto [entity, camera] : _scene->Query<Assisi::Runtime::Camera>())
+    {
+        if (!camera.isActive)
+        {
+            continue;
+        }
+        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
+        if (transform == nullptr)
+        {
+            continue;
+        }
+
+        _cameraTransform.position = transform->position;
+        _cameraTransform.rotation = transform->rotation;
+        _camera                   = camera;
+        // The editor's own camera is never the level's, so it must not be left
+        // marked active — two active cameras is a state nothing else expects.
+        _camera.isActive = false;
+        SyncYawPitchFromRotation();
+        RefreshCameraMatrix();
+        return;
+    }
+
+    Assisi::Core::Log::Warn("Capture: the level has no active Camera; using the editor's default view. "
+                            "The numbers will be of whatever sits near the origin.");
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +256,17 @@ void EditorApp::OnStart()
         {
             Assisi::Core::Log::Warn("Startup level '{}' could not be loaded.", _editorConfig.startupLevel);
         }
+    }
+
+    // A capture looks at what the scene says to look at. The editor's own camera
+    // is a fixed pose aimed at the origin, which is reproducible but arbitrary —
+    // it frames whatever happens to be near the origin rather than what the
+    // scene was composed to show. Snapping to the level's active Camera makes
+    // the view part of the committed contract, so two captures of the same
+    // scene are pictures of the same thing.
+    if (IsCapturing())
+    {
+        AdoptLevelCamera();
     }
 
     // A play-in-editor client: enter Play as a joiner straight away. Nothing else
