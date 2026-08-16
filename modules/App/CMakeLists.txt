@@ -26,6 +26,7 @@ target_sources(Assisi-App
     "src/CrashReport.cpp"
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
+    "src/PerfCapture.cpp"
     "src/MotionSystems.cpp"
     "src/PhysicsSystems.cpp"
     "src/SystemCatalog.cpp"

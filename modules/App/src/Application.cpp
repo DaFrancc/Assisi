@@ -730,7 +730,7 @@ void Application::RenderFrame()
     {
         // The last unscoped thing inside `render` — small, but an unnamed gap
         // between two slices is exactly what sends you looking in the wrong place.
-        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "clear-targets");
+        ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
         sceneFrame.commandList->clearTextureFloat(
             sceneFrame.colorTexture, nvrhi::AllSubresources,
             nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
@@ -749,7 +749,7 @@ void Application::RenderFrame()
     {
         // No-op if AA is off (the scene already rendered directly into `frame`
         // above); otherwise resolves/FXAA's the offscreen render into it.
-        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "post-process");
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
         _postProcess.Resolve(frame->commandList, *frame);
     }
 
@@ -759,7 +759,7 @@ void Application::RenderFrame()
         // `imgui-panels` is the app's own panel code (the part a game controls),
         // and `imgui-render` is building + recording the draw data, which scales
         // with how much got drawn rather than with how much code ran.
-        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui");
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "imgui");
         {
             ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-begin");
             Debug::DebugUI::BeginFrame(*frame);

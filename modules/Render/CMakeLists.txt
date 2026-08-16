@@ -30,6 +30,7 @@ target_sources(Assisi-Render
     "src/Material.cpp"
     "src/MeshCuller.cpp"
     "src/Frustum.cpp"
+    "src/GpuMarker.cpp"
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
     "src/OutlinePass.cpp"

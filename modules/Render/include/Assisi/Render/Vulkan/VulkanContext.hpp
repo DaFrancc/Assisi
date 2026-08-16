@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include <Assisi/Render/RenderFrame.hpp>
@@ -80,6 +81,52 @@ public:
     /// frame-time figure; 0 when the CPU didn't have to wait (GPU-idle, i.e.
     /// CPU-bound).
     [[nodiscard]] double GetLastGpuWaitMs() const { return _lastGpuWaitMs; }
+
+    /// @name Per-pass GPU timing
+    /// Off by default, and that is a correctness requirement rather than a
+    /// performance preference. nvrhi's `beginTimerQuery`/`endTimerQuery` each
+    /// call `endRenderPass()` (see nvrhi's vulkan-queries.cpp), so bracketing a
+    /// pass **splits the render pass it sits in**. Left always-on, the shipping
+    /// frame would carry a different render-pass structure than the one being
+    /// measured, and the measurement would be of a frame nobody ships.
+    ///
+    /// So: whole-frame cost (GetLastGpuFrameTimeMs) stays the primary number and
+    /// is always available, because its single bracket spans the entire command
+    /// list and splits nothing. Per-pass numbers are opt-in, for the times the
+    /// question is *which* pass moved.
+    ///@{
+
+    /// @brief Turn per-pass timing on or off. Takes effect on the next frame;
+    /// timings from before a disable stay readable until then.
+    void SetPassTimingEnabled(bool enabled) { _passTimingEnabled = enabled; }
+
+    [[nodiscard]] bool IsPassTimingEnabled() const { return _passTimingEnabled; }
+
+    /// @brief Open a timer around the pass named @p name, on this frame's
+    /// command list. No-op when pass timing is off, when called outside a frame,
+    /// or once the per-frame slot capacity is exhausted (a one-time warning).
+    ///
+    /// @warning Must not nest. A nested pair would time a range that contains
+    /// another render-pass break, which measures the breaks rather than the
+    /// work. Prefer Render::GpuPassTimerScope, which pairs the calls for you.
+    void BeginPassTimer(const char *name);
+
+    /// @brief Close the timer opened by the matching BeginPassTimer().
+    void EndPassTimer();
+
+    /// @brief One pass's resolved GPU time.
+    struct PassTiming
+    {
+        const char *name = nullptr; ///< The literal handed to BeginPassTimer; not owned.
+        float milliseconds = 0.f;
+    };
+
+    /// @brief The most recently *resolved* frame's per-pass timings — which is
+    /// kFramesInFlight frames behind the one being recorded, since a query
+    /// cannot be read until its frame has finished on the GPU. Empty while pass
+    /// timing is off. The span is invalidated by the next BeginFrame().
+    [[nodiscard]] std::span<const PassTiming> GetPassTimings() const;
+    ///@}
 
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 
@@ -209,6 +256,27 @@ private:
     std::array<nvrhi::TimerQueryHandle, kFramesInFlight> _timerQueries;
     float _lastGpuFrameMs = 0.0f;
     double _lastGpuWaitMs = 0.0;
+
+    // Per-pass timing. Capacity is fixed and generous against the ~8 passes the
+    // frame records today; a pass past it is dropped with one warning rather
+    // than growing the pool mid-frame, since allocating a query between
+    // BeginFrame and EndFrame would be a hitch inside the thing being measured.
+    static constexpr uint32_t kMaxTimedPasses = 24;
+
+    struct PassTimerSlot
+    {
+        std::array<nvrhi::TimerQueryHandle, kMaxTimedPasses> queries;
+        std::array<const char *, kMaxTimedPasses> names{};
+        uint32_t used = 0;   ///< Timers opened this frame.
+        bool pending = false; ///< Recorded and awaiting resolve.
+    };
+
+    std::array<PassTimerSlot, kFramesInFlight> _passTimers;
+    std::vector<PassTiming> _resolvedPassTimings;
+    bool _passTimingEnabled = false;
+    bool _passTimingActive  = false; ///< The enable this frame opened with, so a mid-frame flip cannot unbalance the pairs.
+    uint32_t _openPassTimer = kMaxTimedPasses; ///< Index of the open timer, or capacity when none.
+    bool _passCapacityWarned = false;
 
     nvrhi::CommandListHandle _commandList;
 

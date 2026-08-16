@@ -64,7 +64,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     {
         // Recording the compute dispatch, not running it — the cull's real cost is
         // GPU-side. A CPU spike here means buffer uploads, not culling.
-        ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "cull-dispatch");
+        ASSISI_PROFILE_GPU_PASS(params.frame.commandList, "cull-dispatch");
         params.culler->Cull(params.frame.commandList, frustum.Planes(), tables, params.frustumCulling);
     }
 
@@ -97,7 +97,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
 
 DrawStats DrawScene(const DrawSceneParams &params)
 {
-    ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-scene");
+    ASSISI_PROFILE_GPU_PASS(params.frame.commandList, "draw-scene");
 
     Assisi::ECS::Scene &scene    = params.scene;
     const Assisi::Render::MeshPass &meshPass = params.meshPass;

@@ -49,7 +49,7 @@ glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const
 
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
-    ASSISI_PROFILE_GPU_SCOPE(commandList, "lighting");
+    ASSISI_PROFILE_GPU_PASS(commandList, "lighting");
 
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
     _pointLights.clear();

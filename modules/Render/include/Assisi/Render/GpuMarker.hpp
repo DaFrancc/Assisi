@@ -84,6 +84,51 @@ private:
 /// @brief Times the enclosing block on the CPU (Chiara) and labels it on the GPU
 /// (debug-utils), from a single name. The preferred form at any site that
 /// records commands.
+///
+/// Note what this does **not** measure: Chiara times the CPU spent recording the
+/// commands, and the marker is a label for RenderDoc/Nsight. Neither is GPU
+/// execution time. For a pass whose cost is on the GPU, add
+/// ASSISI_PROFILE_GPU_PASS instead.
 #define ASSISI_PROFILE_GPU_SCOPE(commandList, name)                                                             \
         ASSISI_PROFILE_SCOPE(name);                                                                                 \
         ASSISI_GPU_MARKER((commandList), (name))
+
+namespace Assisi::Render
+{
+
+/// @brief Opens a GPU timer around a pass on construction, closes it on
+/// destruction. Inert unless per-pass timing has been switched on.
+///
+/// Separate from GpuMarkerScope because the two answer different questions and
+/// have different costs. A marker is free and always on; a timer forces a
+/// render-pass break (nvrhi's begin/endTimerQuery each call endRenderPass), so
+/// it is opt-in — see VulkanContext's per-pass timing section.
+///
+/// Resolves the context itself rather than taking one, so a pass site that only
+/// has a command list needs no new plumbing.
+class GpuPassTimerScope
+{
+public:
+    explicit GpuPassTimerScope(const char *name);
+    ~GpuPassTimerScope();
+
+    GpuPassTimerScope(const GpuPassTimerScope &)            = delete;
+    GpuPassTimerScope &operator=(const GpuPassTimerScope &) = delete;
+    GpuPassTimerScope(GpuPassTimerScope &&)                 = delete;
+    GpuPassTimerScope &operator=(GpuPassTimerScope &&)      = delete;
+
+private:
+    bool _opened = false;
+};
+
+} // namespace Assisi::Render
+
+/// @brief Everything ASSISI_PROFILE_GPU_SCOPE does, plus a GPU **timer** when
+/// per-pass timing is enabled. Use at the pass boundaries whose GPU cost the
+/// measurement ledger quotes; use the plain scope everywhere else.
+///
+/// Must not nest — a timer spanning another timer measures the render-pass break
+/// between them as much as the work. The inner one is dropped with a warning.
+#define ASSISI_PROFILE_GPU_PASS(commandList, name)                                                              \
+        ASSISI_PROFILE_GPU_SCOPE((commandList), (name));                                                            \
+        const ::Assisi::Render::GpuPassTimerScope ASSISI_CHIARA_UNIQUE(gpuPassTimer_) { (name) }
