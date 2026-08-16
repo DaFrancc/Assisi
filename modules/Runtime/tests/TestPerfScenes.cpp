@@ -117,6 +117,55 @@ SceneStats LoadStats(const std::string &name)
 
 } // namespace
 
+// Every scene's camera must start level and looking at the content.
+//
+// A capture adopts the level's active Camera, so this rotation *is* the view the
+// published numbers are of. It is worth pinning because the failure hides
+// itself: an inverted `right` vector rolls the camera 180 degrees, and the
+// editor's fly controller re-derives the rotation from yaw and pitch the moment
+// anyone touches the mouse — so the scene looks correct to anyone who
+// interacts with it, and wrong only to a capture, which never does.
+TEST_CASE("Perf scene cameras start level and face the scene")
+{
+    for (const std::string &name : {std::string{"PerfBlank"}, std::string{"PerfReferenceManyInstances"},
+                                    std::string{"PerfReferenceFewInstances"}, std::string{"PerfStress"},
+                                    std::string{"PerfGeometryStress"}})
+    {
+        CAPTURE(name);
+        ECS::Scene scene;
+        REQUIRE(SceneSerializer::LoadFromDisk(scene, LevelPath(name)).has_value());
+
+        int32_t activeCameras = 0;
+        for (auto [entity, camera] : scene.Query<Runtime::Camera>())
+        {
+            if (!camera.isActive)
+            {
+                continue;
+            }
+            ++activeCameras;
+
+            const ECS::Transform *transform = scene.Get<ECS::Transform>(entity);
+            REQUIRE(transform != nullptr);
+
+            // Not upside down: the camera's own up must share a hemisphere with
+            // world up.
+            const glm::vec3 up = transform->rotation * glm::vec3{0.f, 1.f, 0.f};
+            CHECK(up.y > 0.5f);
+
+            // No roll: its right must be level, or the horizon tilts.
+            const glm::vec3 right = transform->rotation * glm::vec3{1.f, 0.f, 0.f};
+            CHECK(std::abs(right.y) < 0.01f);
+
+            // ...and it must actually look at the origin, which is where every
+            // scene is built around. -Z is forward in view space.
+            const glm::vec3 forward = transform->rotation * glm::vec3{0.f, 0.f, -1.f};
+            const glm::vec3 toOrigin = glm::normalize(-transform->position);
+            CHECK(glm::dot(forward, toOrigin) > 0.99f);
+        }
+        CHECK(activeCameras == 1);
+    }
+}
+
 // The pay-for-what-you-place gate runs here forever: an empty world, so a stage
 // that costs anything in this scene costs it when its feature is unused.
 TEST_CASE("PerfBlank is empty but for the camera that defines the view")

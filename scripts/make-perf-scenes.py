@@ -79,8 +79,12 @@ def look_at_rotation(position, target):
     length = math.sqrt(fx * fx + fy * fy + fz * fz)
     fx, fy, fz = fx / length, fy / length, fz / length
 
-    # right = normalize(cross(forward, worldUp)), worldUp = +Y
-    rx, ry, rz = fz, 0.0, -fx
+    # right = normalize(cross(forward, worldUp)), worldUp = +Y.
+    # cross(f, +Y) is (-f.z, 0, f.x). Getting this sign backwards inverts `right`,
+    # and with it `up`, so the camera starts rolled 180 degrees — and the fly
+    # controller silently rights it the instant anyone touches the mouse, which
+    # is what makes the bug easy to author and hard to notice.
+    rx, ry, rz = -fz, 0.0, fx
     length = math.sqrt(rx * rx + ry * ry + rz * rz)
     rx, ry, rz = rx / length, ry / length, rz / length
 
