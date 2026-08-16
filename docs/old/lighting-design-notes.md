@@ -1,5 +1,26 @@
 # Lighting — design notes & implementation plan
 
+> **SUPERSEDED 2026-08-15 by [`../lighting-and-shadows-plan.md`](../lighting-and-shadows-plan.md).**
+> That document replaces this one rather than amending it. Kept for history only — do not
+> follow anything below.
+>
+> What the successor changed, in brief:
+> - **Frame budgets removed as a gating concept.** Nothing is excluded on cost; every
+>   feature is a knob with a measured, published cost. The per-stage ms budgets below are void.
+> - **Mobility trichotomy cut** from shadows — cache invalidation is inferred from the
+>   tracked-Transform change ticks the engine already computes. Mobility returns only for
+>   baked GI, where "will this ever move" genuinely cannot be inferred.
+> - **L0 test suite cut from seven scenes to three** plus `Lights.alvl`; the pinned-clock
+>   ±0.05 ms protocol replaced with within-session A/B deltas guarded by NVML clock readings,
+>   because clocks cannot be pinned without root.
+> - **Ray tracing and the whole temporal family (TAA, temporal upscaling, frame generation)
+>   are out by standing decision**, with no reopening trigger — a firmer position than this
+>   document's.
+> - **SSAO and PCSS restored**; **quality tiers** promoted to core scope; **sky and ambient
+>   moved ahead of the local-light atlas**.
+> - **GI direction chosen**: hybrid precomputed transfer, dynamically relit — and repositioned
+>   from indefinite deferral to the next major project after shadows.
+
 Captured 2026-07-21. v2 2026-07-22 (research sweep, 12 primary-source
 verification checks). v3 2026-07-22 (two adversarial reviews at 6.5/10 and
 7/10 + blind adjudication of 6 disputes). **v4 2026-07-22** after a third
