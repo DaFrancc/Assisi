@@ -22,6 +22,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -32,11 +33,14 @@
 
 using namespace Assisi;
 using Assisi::Runtime::Camera;
+using Assisi::Runtime::DirectionalLight;
 using Assisi::Runtime::LevelError;
 using Assisi::Runtime::LevelResult;
 using Assisi::Runtime::MeshRenderer;
 using Assisi::Runtime::Parent;
+using Assisi::Runtime::PointLight;
 using Assisi::Runtime::SceneSerializer;
+using Assisi::Runtime::SpotLight;
 using Assisi::Runtime::Transform;
 
 TEST_CASE("SceneSerializer: transform values survive a round-trip")
@@ -305,6 +309,57 @@ TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't
     // back empty and get re-resolved from the ids at load time.
     CHECK(mrc->meshBuffer == nullptr);
     CHECK(mrc->materials.empty());
+}
+
+TEST_CASE("SceneSerializer: shadow-casting flags round-trip on every caster type")
+{
+    // Only the OFF value proves anything: ON is the default, so a flag that never
+    // serialized at all would still read back ON and pass.
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, DirectionalLight{.castsShadows = false}) != nullptr);
+    REQUIRE(scene.Add(e, PointLight{.castsShadows = false}) != nullptr);
+    REQUIRE(scene.Add(e, SpotLight{.castsShadows = false}) != nullptr);
+    MeshRenderer renderer;
+    renderer.castsShadows = false;
+    REQUIRE(scene.Add(e, renderer) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+
+    const ECS::Entity le{.index = 0, .generation = 0};
+    REQUIRE(loaded.Get<DirectionalLight>(le) != nullptr);
+    REQUIRE(loaded.Get<PointLight>(le) != nullptr);
+    REQUIRE(loaded.Get<SpotLight>(le) != nullptr);
+    REQUIRE(loaded.Get<MeshRenderer>(le) != nullptr);
+    CHECK(loaded.Get<DirectionalLight>(le)->castsShadows == false);
+    CHECK(loaded.Get<PointLight>(le)->castsShadows == false);
+    CHECK(loaded.Get<SpotLight>(le)->castsShadows == false);
+    CHECK(loaded.Get<MeshRenderer>(le)->castsShadows == false);
+}
+
+TEST_CASE("SceneSerializer: a level saved before the shadow flags existed casts shadows")
+{
+    // The compatibility half: every level in the tree predates these fields, and
+    // each one must load as a shadow caster rather than as silently unshadowed.
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "lamp"},
+                                               {"components",
+                                                {{"PointLight", {{"intensity", 3.f}}},
+                                                    {"MeshRenderer", nlohmann::json::object()}}}}})}};
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
+
+    const ECS::Entity le{.index = 0, .generation = 0};
+    const PointLight *light      = loaded.Get<PointLight>(le);
+    const MeshRenderer *renderer = loaded.Get<MeshRenderer>(le);
+    REQUIRE(light != nullptr);
+    REQUIRE(renderer != nullptr);
+    CHECK(light->intensity == doctest::Approx(3.f));
+    CHECK(light->castsShadows == true);
+    CHECK(renderer->castsShadows == true);
 }
 
 TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")

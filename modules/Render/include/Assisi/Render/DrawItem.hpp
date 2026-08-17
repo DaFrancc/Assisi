@@ -31,6 +31,11 @@ struct DrawItem
     uint64_t sortKey      = 0;
     const MeshBuffer *mesh         = nullptr;
     uint32_t submeshIndex = 0;          ///< Index into mesh->SubMeshes().
+    /// Whether a shadow pass should draw this item. Sits in the padding after
+    /// `submeshIndex`, so carrying it costs nothing. It is not part of `sortKey`:
+    /// the main pass draws casters and non-casters alike, so splitting runs on it
+    /// would only break up material batches.
+    bool castsShadows = true;
     const Material *material     = nullptr;
     glm::mat4 model{1.f};
 };

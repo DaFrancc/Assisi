@@ -24,6 +24,11 @@ glm::vec3 SafeDirection(const glm::vec3 &direction)
     const float lengthSq = glm::dot(direction, direction);
     return lengthSq > 0.f ? direction / glm::sqrt(lengthSq) : kFallbackLightDirection;
 }
+
+constexpr ShadowCaster AsShadowCaster(bool castsShadows)
+{
+    return castsShadows ? ShadowCaster::Yes : ShadowCaster::No;
+}
 } // namespace
 
 bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int32_t width,
@@ -55,6 +60,9 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     _pointLights.clear();
     _spotLights.clear();
     _dirLights.clear();
+    _pointShadowFlags.clear();
+    _spotShadowFlags.clear();
+    _dirShadowFlags.clear();
 
     // World position comes from the propagated worldMatrix, not transform.position:
     // a parented light's local position is relative to its parent. For a root,
@@ -77,6 +85,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
                     .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
                     .colorIntensity = {light.color, light.intensity},
                 });
+            _pointShadowFlags.push_back(AsShadowCaster(light.castsShadows));
         }
 
         for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
@@ -89,6 +98,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
                     .colorIntensity = {light.color, light.intensity},
                     .outerCutoff    = outerCos,
                 });
+            _spotShadowFlags.push_back(AsShadowCaster(light.castsShadows));
         }
 
         for (auto [entity, light] : scene.Query<DirectionalLight>())
@@ -97,6 +107,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
                     .directionIntensity = {SafeDirection(light.direction), light.intensity},
                     .colorPad           = {light.color, 0.f},
                 });
+            _dirShadowFlags.push_back(AsShadowCaster(light.castsShadows));
         }
     }
 
