@@ -174,6 +174,7 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
 
     ClearSelection();
     _blueprintHistory.emplace(world.scene, MakeEditRebindHook(), &world.instances);
+    InstallHistoryHooks(*_blueprintHistory);
     _blueprintSavedToken = 0; // freshly loaded == what is on disk
 
     Assisi::Core::Log::Info("Blueprint editor: editing '{}' (world '{}').", source, world.name);

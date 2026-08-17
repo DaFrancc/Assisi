@@ -29,10 +29,80 @@
 #include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp> // AssetIdResolver, MeshImportError
 
 namespace Assisi::Geometry
 {
+
+// --- Authoring a `.amat` by hand -------------------------------------------
+//
+// The passes above materialize materials *from a glTF*. These two back the
+// editor's material panel, where the author is the source: they write a body and
+// nothing else. Sidecars stay the reconcile pass's job — an authored material
+// gets its GUID from the next database rebuild, exactly as any other new file
+// does, so there is one place that mints ids rather than two.
+
+/// @brief Why writing an authored `.amat` failed.
+enum class MaterialWriteError : std::uint8_t
+{
+    SerializeFailed,  ///< MaterialData's reflection isn't linked, so there is nothing to write.
+    PathUnresolvable, ///< The virtual path is malformed, or escapes the asset root.
+    WriteFailed,      ///< The bytes could not be written.
+    TargetExists,     ///< A rename's destination is taken; nothing was moved.
+};
+
+std::string_view ToString(MaterialWriteError error) noexcept;
+
+/// @brief Write @p material to @p virtualPath under the asset root, replacing any
+///        existing body.
+///
+/// Deliberately a clobber: the author edited *this* material and asked to save
+/// it, so reconcile-not-clobber does not apply. The `.aast` beside it is never
+/// read or written, which is what preserves the asset's identity across a save —
+/// every level referencing it holds that GUID and nothing else.
+///
+/// The body is also mirrored into the authoring root when one is configured
+/// (dev builds — see AssetSystem::SetAuthoringRoot). Without that an authored
+/// material would live only in the staged asset copy, which the next clean build
+/// deletes. This differs from the sidecar mirror, which declines to write a file
+/// the durable tree does not already have: a sidecar may describe a build
+/// artifact, whereas an authored `.amat` *is* source.
+[[nodiscard]] std::expected<void, MaterialWriteError> SaveMaterial(std::string_view virtualPath,
+                                                                   const MaterialData &material);
+
+/// @brief A free `<dirVirtualPath>/<stem>.amat`, suffixing `_1`, `_2`, … until
+///        nothing is at that path.
+///
+/// For the New / Duplicate actions, so neither silently overwrites a material.
+/// An empty @p dirVirtualPath names the asset root. Advisory rather than a
+/// reservation — nothing holds the name between this call and the write — which
+/// is sound here because the editor is the only writer and is single-threaded.
+[[nodiscard]] std::string UniqueMaterialPath(std::string_view dirVirtualPath, std::string_view stem);
+
+/// @brief Move a material from @p oldVirtualPath to @p newVirtualPath, taking
+///        its `.aast` sidecar with it.
+///
+/// A material has no name of its own — `MaterialData::Name` never enters the
+/// file — so renaming one *is* moving its file, and the sidecar has to travel or
+/// the GUID is lost and every reference to the material stops resolving. That
+/// the id survives a move is the property AssetDatabase::Rebuild is built on;
+/// this is the operation that has to honour it.
+///
+/// Refuses rather than clobbers when the destination exists: overwriting would
+/// destroy an unrelated material to answer "that name is taken". On a partial
+/// failure the payload is moved back, so a rename either happens or does not.
+/// The authoring-root copy moves too, or the old name returns on the next build.
+[[nodiscard]] std::expected<void, MaterialWriteError> RenameMaterial(std::string_view oldVirtualPath,
+                                                                     std::string_view newVirtualPath);
+
+/// @brief Delete a material and its `.aast` sidecar, in the asset root and in
+///        the authoring root. Returns whether the material itself was removed.
+///
+/// References to it are deliberately not chased down: a mesh slot holding the
+/// dead GUID falls back to the default material and keeps the id, so restoring
+/// the file from version control restores the binding.
+bool DeleteMaterialFile(std::string_view virtualPath);
 
 /// @brief Explode @p gltfVirtualPath's materials into sibling `.amat` files and
 ///        write its `.aast` slot→material manifest.

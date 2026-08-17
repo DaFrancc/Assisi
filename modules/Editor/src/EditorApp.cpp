@@ -231,6 +231,7 @@ void EditorApp::OnStart()
     // transaction, or undo takes the value back and leaves the record claiming the
     // instance changed it.
     _history.emplace(*_scene, MakeEditRebindHook(), &_world->instances);
+    InstallHistoryHooks(*_history);
 
     // Give every asset a `.aast` GUID sidecar and build the GUID→path database.
     // Editor-only, hence here and not in Application: a shipped game consumes a
@@ -377,8 +378,10 @@ void EditorApp::ReimportAssets()
     }
 
     // Force the browser to re-read on next open: a reimport may have created files
-    // it lists (it filters by extension and never shows `.aast` itself).
+    // it lists (it filters by extension and never shows `.aast` itself). The
+    // Material panel's picker is rebuilt from the database for the same reason.
     _assetBrowserDirty = true;
+    _materialListDirty = true;
 }
 
 bool EditorApp::ReconcileMeshMaterials()
@@ -1139,6 +1142,12 @@ void EditorApp::FlushDeferred()
 // Undo/redo (editor-only)
 // ---------------------------------------------------------------------------
 
+void EditorApp::InstallHistoryHooks(Assisi::Editor::EditHistory &history)
+{
+    history.SetAssetApplyHook([this](std::string_view typeName, const Assisi::Core::AssetPath &path,
+                                     const nlohmann::json &state) { ApplyAssetState(typeName, path, state); });
+}
+
 Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
@@ -1552,6 +1561,7 @@ void EditorApp::OnImGui()
         { ASSISI_PROFILE_SCOPE("panel/hello-image"); DrawHelloImageWindow(); }
     }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
+    { ASSISI_PROFILE_SCOPE("panel/material");      DrawMaterialEditor(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
     { ASSISI_PROFILE_SCOPE("panel/save-confirm-modal"); DrawSaveConfirmModal(); }
 #if defined(ASSISI_NETWORKING)

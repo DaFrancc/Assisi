@@ -235,6 +235,7 @@ private:
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
+    void DrawMaterialEditor();   // reflection-driven `.amat` property editor
     void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7)
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump
@@ -387,6 +388,13 @@ private:
     /// field (a MeshRenderer material slot), listing only materials, and opens it.
     void OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
                                  int32_t slot);
+    /// @brief Arms the browser to write into the open material's texture channel
+    /// at @p fieldOffset, listing only images, and opens it.
+    ///
+    /// The material panel edits a MaterialData the editor owns rather than a
+    /// component in a pool, so the target is the panel itself — see
+    /// AssetBrowserTarget.
+    void OpenAssetBrowserForMaterialField(std::size_t fieldOffset);
     /// @brief Resolves @p vpath to an AssetId, writes it into the pinned browser
     /// target field, and closes.
     void SelectAsset(std::string_view vpath);
@@ -398,8 +406,108 @@ private:
     /// lists. Called only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
 
+    // --- Material authoring ---
+    /// @brief Load @p vpath into the material editor and open it. A material
+    /// already open with unsaved edits is replaced — the panel edits one at a
+    /// time, and the working copy is not a document stack.
+    void OpenMaterialEditor(std::string_view vpath);
+
+    /// @brief Push the working material into the live asset cache so the open
+    /// scene shows it immediately.
+    ///
+    /// @p channelsChanged selects which half of the mutation contract applies: a
+    /// factor edit rewrites the constants row under the same id, while a texture
+    /// change has to evict and reload, which mints a new id and re-resolves every
+    /// scene pointer. Deciding it here (rather than diffing inside the cache)
+    /// keeps the expensive path something a caller opts into knowingly.
+    void ApplyMaterialEdit(bool channelsChanged);
+
+    /// @brief Write the working material to its path and adopt it as the saved
+    /// state. Returns false (having logged) if the write failed, in which case
+    /// the editor stays dirty rather than pretending the edit landed.
+    bool SaveOpenMaterial();
+
+    /// @brief Write @p seed as a new `.amat` under @p dirVirtualPath, named from
+    /// @p stem with a free suffix, reimport so the reconcile pass mints its GUID
+    /// sidecar, and open it in the editor. Backs both New and Duplicate — they
+    /// differ only in the seed.
+    void CreateMaterial(std::string_view dirVirtualPath, std::string_view stem,
+                        const Assisi::Geometry::MaterialData &seed);
+
+    /// @brief Clear the panel, ending any preview. The panel window stays.
+    void CloseMaterialEditor();
+
+    /// @brief Rebuild _materialList from the asset database.
+    void RefreshMaterialList();
+
+    /// @brief Rename the open material to @p stem, keeping it in its current
+    /// folder, and re-point the panel at the new path. Returns false (having
+    /// logged) if the name is taken or the move failed, leaving the panel where
+    /// it was.
+    bool RenameOpenMaterial(std::string_view stem);
+
+    /// @brief Bind the open material to the mesh slot the panel was opened from,
+    /// remembering what that slot held. No-op without a captured target.
+    void BeginMaterialPreview();
+
+    /// @brief Drop the preview binding. @p restore puts the remembered slot list
+    /// back; pass false when a real assignment has superseded the preview, where
+    /// restoring would undo the author's actual choice.
+    void EndMaterialPreview(bool restore);
+
+    /// @brief Open @p vpath with a preview target: the mesh slot it was reached
+    /// from, which is the object the author is authoring this material *for*.
+    ///
+    /// The target outlives the material, so New/Duplicate from the panel preview
+    /// onto the same slot — that is the whole point of arriving from one.
+    void OpenMaterialEditorForSlot(std::string_view vpath, Assisi::ECS::Entity entity, std::size_t fieldOffset,
+                                   int32_t slot);
+
+    /// @brief Forget the preview slot, ending any preview on it. For opening a
+    /// material with no object context — the picker, or the browser's menu.
+    void ClearMaterialPreviewTarget();
+
+    /// @brief Adopt @p state as the live value of asset @p path — the replay end
+    /// of an EditHistory AssetDelta. Updates the open panel if it is that asset,
+    /// and pushes the value to the renderer either way, so undoing an edit to a
+    /// material you have since closed still changes what you see.
+    void ApplyAssetState(std::string_view typeName, const Assisi::Core::AssetPath &path,
+                         const nlohmann::json &state);
+
+    /// @brief Close the open material-edit gesture, pushing one transaction for
+    /// the whole of it. No-op when nothing is open or the value did not move.
+    ///
+    /// A gesture spans a drag: it opens on the first edited frame and closes once
+    /// no widget is active, so scrubbing a slider is one undo step rather than
+    /// one per frame — the same coalescing the Inspector's end-of-frame sweep
+    /// gives component fields.
+    void CommitMaterialGesture();
+
+    /// @brief The preview target's material-slot list, or null when the target is
+    /// gone (no target captured, entity destroyed, MeshRenderer removed).
+    std::vector<Assisi::Core::AssetId> *MaterialPreviewSlots();
+
+    /// @brief Delete @p vpath and its `.aast` sidecar, then reimport.
+    ///
+    /// References to it are deliberately not chased down: a MeshRenderer slot
+    /// holding the dead GUID resolves to the fallback material and keeps the id,
+    /// so restoring the file from version control restores the binding. Rewriting
+    /// every referrer to nil would make the deletion unrecoverable.
+    void DeleteMaterial(std::string_view vpath);
+
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+
+    /// @brief Draw the widget for one reflected field at @p fp, chosen by its
+    /// type alone, and return whether the value changed.
+    ///
+    /// The half of the field renderer that needs no owner, so it serves any
+    /// FieldMeta list — a component's or a reflected asset's (see
+    /// DrawMaterialEditor). Types that cannot be drawn from a value alone (an
+    /// AssetId's browse target, an EntityRef's scene, an AssetIdVector's mesh)
+    /// are the caller's to handle before delegating here; they land on the
+    /// "unsupported" label if it does not.
+    bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field);
     // The inspector's replication surfaces. Every one reads or writes a
     // NetSync::Replicated marker, so without networking there is no component
     // for them to be about and the inspector has no replication block.
@@ -500,6 +608,11 @@ private:
     void ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present);
     /// @brief Builds the rebind hook bound to this app (shared by both histories).
     Assisi::Editor::EditHistory::RebindHook MakeEditRebindHook();
+
+    /// @brief Wire the hooks a freshly constructed history needs beyond its
+    /// rebind. Called at every construction site so a new one cannot quietly
+    /// lose asset undo.
+    void InstallHistoryHooks(Assisi::Editor::EditHistory &history);
     /// @brief The history that captures and applies edits *right now*, or nullptr
     /// when editing must not be captured. Editing -> the persistent main history;
     /// Paused -> a scratch history discarded when play resumes or stops; Playing ->
@@ -1504,14 +1617,43 @@ private:
     // directory and writes the picked path back into the field. The target is
     // pinned by (entity, component meta, field offset) and re-resolved at write
     // time — same anti-dangling scheme as the eyedropper above.
+    /// @brief Which of the two things a pick writes into.
+    ///
+    /// A component field is addressed indirectly, by (entity, meta, offset),
+    /// because its pool can move while the browser sits open. The material
+    /// panel's working copy is owned by this object and cannot move, so it is
+    /// addressed by field offset alone.
+    enum class AssetBrowserTarget : std::uint8_t
+    {
+        ComponentField,
+        MaterialField,
+    };
+
+    /// @brief What the browser lists. Independent of the write target: picking a
+    /// material slot and picking a material's texture channel are both scalar
+    /// writes, and differ only in what is worth showing.
+    enum class AssetBrowserFilter : std::uint8_t
+    {
+        All,       ///< Images, meshes and materials.
+        Materials, ///< `.amat` only — a mesh's material slot.
+        Textures,  ///< Images only — a material's texture channel.
+    };
+
     bool _assetBrowserOpen        = false;
+    AssetBrowserTarget _assetBrowserTarget = AssetBrowserTarget::ComponentField;
+    AssetBrowserFilter _assetBrowserFilter = AssetBrowserFilter::All;
     Assisi::ECS::Entity _assetBrowserEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
     std::size_t _assetBrowserFieldOffset = 0;
     /// @brief -1 when the target field is a scalar asset field; >= 0 when it is
-    /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot). In
-    /// the latter mode the browser lists only materials (and folders).
+    /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot).
     int32_t _assetBrowserVectorSlot  = -1;
+    /// @brief Which material a MaterialField pick was armed for. The browser
+    /// stays open across frames, and the panel can be pointed at a different
+    /// `.amat` in between — without this, the pick would land at the same field
+    /// offset in whatever material happened to be open. The component path pins
+    /// its target by entity for the same reason.
+    Assisi::Core::AssetPath _assetBrowserMaterialPath;
     std::string _assetBrowserDir;                                 ///< Current dir, relative to the asset root ("" = root).
 
     // Cached listing of _assetBrowserDir — re-read only on navigation / open /
@@ -1527,6 +1669,55 @@ private:
     // Textures loaded to thumbnail the browser's image entries. Separate from
     // _assetCache so a level load (which Clears that) doesn't drop thumbnails.
     Assisi::Render::AssetCache _thumbnailCache;
+
+    // --- Material editor ---
+    // Edits one `.amat` at a time, reflection-driven off MaterialData's field
+    // table. Two copies are kept: the working one every widget writes, and the
+    // last saved one, which is what makes both "is it dirty" and Revert exact
+    // rather than a flag that can drift from the data.
+    /// Whether the panel window is up. Opened from a material slot's Edit button
+    /// or the browser's context menu, closed by its own X — it is a tool you
+    /// reach for, not a permanent fixture.
+    bool _materialEditorOpen = false;
+    /// Virtual path of the open `.amat`, empty when none.
+    Assisi::Core::AssetPath _materialEditorPath;
+    /// Every `.amat` the database knows, for the panel's picker. Cached because
+    /// AssetDatabase::Assets() builds its vector per call and is a reimport-cold
+    /// path, not a per-frame one.
+    std::vector<Assisi::Core::AssetPath> _materialList;
+    bool _materialListDirty = true;
+    Assisi::Geometry::MaterialData _materialEditorData;    ///< Working copy; the panel's widgets write this.
+    Assisi::Geometry::MaterialData _materialEditorSaved;   ///< Last state written to disk; Revert restores it.
+    /// Rename box contents. Held separately from the path so a half-typed name is
+    /// not a rename — the move happens when the button is pressed, not per key.
+    char _materialEditorNameBuf[128] = {};
+
+    // The open edit gesture, if any: the material's reflected JSON as it stood
+    // when the drag started. Held as JSON rather than as a MaterialData because
+    // that is what an AssetDelta carries, so the transaction is assembled from
+    // it without a second conversion.
+    bool _materialGestureOpen = false;
+    nlohmann::json _materialGestureBefore;
+
+    // --- Material live preview ---
+    // A material being authored is normally on nothing: it was created from a
+    // mesh slot's browse button, and until it is actually picked, that slot still
+    // holds whatever it held before. The preview binds it to that slot anyway, so
+    // there is something on screen to judge the edits against.
+    //
+    // Provisional in both directions: the binding is not an edit (it records no
+    // undo, because the restore below is what reverses it) and it never outlives
+    // the panel.
+    bool _materialPreviewActive = false;
+    /// The slot the browser was opened for, captured when the panel took over —
+    /// the browser's own target is overwritten the next time it opens.
+    Assisi::ECS::Entity _materialPreviewEntity = Assisi::ECS::NullEntity;
+    std::size_t _materialPreviewFieldOffset = 0;
+    int32_t _materialPreviewSlot = -1;   ///< -1 when the panel was not opened from a slot.
+    /// The slot list exactly as it was before the preview overwrote it. Stored
+    /// whole rather than as one entry: the list is sparse (short means "mesh
+    /// default"), so restoring one element cannot undo a resize.
+    std::vector<Assisi::Core::AssetId> _materialPreviewRestore;
 
     // --- Levels panel ---
     std::vector<std::string> _levelFiles;

@@ -591,6 +591,16 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
                     _instances->Remove(idl->instanceId);
             });
 
+        // Phase 1c — assets. Not scene data at all, so it neither orders against
+        // the phases around it nor touches the scene; grouped with the other
+        // bookkeeping rather than given a phase of its own at the end.
+        ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
+                const auto *ad = std::get_if<AssetDelta>(&cmd);
+                if (ad == nullptr || !_assetApply)
+                    return;
+                _assetApply(ad->typeName, ad->path, undo ? ad->before : ad->after);
+            });
+
         // Phase 2 — components: restore/remove standalone component deltas, and add
         // the full component set of every just-revived entity.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
@@ -599,7 +609,7 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
                     RestoreComponent(cd->entity, cd->id, undo ? cd->before : cd->after);
                     return;
                 }
-                if (std::holds_alternative<InstanceDelta>(cmd))
+                if (std::holds_alternative<InstanceDelta>(cmd) || std::holds_alternative<AssetDelta>(cmd))
                     return; // handled above
                 const auto &ed    = std::get<EntityDelta>(cmd);
                 const auto &state  = undo ? ed.before : ed.after;

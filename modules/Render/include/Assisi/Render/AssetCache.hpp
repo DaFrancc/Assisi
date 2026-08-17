@@ -165,6 +165,60 @@ public:
     /// material is still loading. Never null.
     const Material *FallbackMaterial() const { return &_fallbackMaterial; }
 
+    // --- Live editing (the editor's material panel) -----------------------
+    //
+    // A material's factors and its texture channels are edited by the same panel
+    // but cannot be applied the same way, because a channel change is the one
+    // thing that invalidates the resolved bindless slots baked into the row.
+    // Hence the split: the cheap path stays cheap, and the expensive path is
+    // named so a caller cannot take it by accident.
+
+    /// @brief Rewrite a resident material's constants row from @p data, keeping
+    /// its id and its already-resolved textures. Returns false if @p id names no
+    /// resident material (nothing is written).
+    ///
+    /// For factor edits only — @p data's texture channels are ignored, since the
+    /// bindless slots in the row come from the resolved textures rather than
+    /// from the ids. The material's id is its row, so every draw already
+    /// referencing it picks the new values up with no re-resolve, and no binding
+    /// set is touched. That is what makes a drag in the editor land on screen
+    /// the same frame.
+    ///
+    /// Unlike a load-time row write, this rewrites a row the scene is actively
+    /// drawing from, on its own immediately-submitted command list. Ordering
+    /// against an in-flight frame's reads is not fenced, so a value can land one
+    /// frame late; it cannot tear a row, because a row is one write.
+    bool UpdateMaterialFactors(const Core::AssetId &id, const Geometry::MaterialData &data);
+
+    /// @brief Build @p data as the material for @p id under a **fresh id**,
+    /// resolving its texture channels, creating the cache entry if @p id is not
+    /// resident yet. Returns false only if @p id names no asset at all.
+    ///
+    /// For texture-channel edits, where the bindless slots baked into the row are
+    /// stale and the new channels have to be loaded and registered. Takes the
+    /// material by value rather than re-reading the `.amat`, so an unsaved edit
+    /// is as live as a saved one.
+    ///
+    /// Creating the entry is what makes a *newly authored* material editable at
+    /// all: nothing has resolved it yet, and the ordinary resolve path only kicks
+    /// an async load and hands back the fallback meanwhile, so an editor waiting
+    /// for residency would wait for a disk read of a file the edits have not
+    /// reached.
+    ///
+    /// A new row rather than the old one, deliberately: the row's texture indices
+    /// are changing, and rewriting them in place would change them underneath an
+    /// in-flight frame already reading that row. The old row is abandoned — ids
+    /// are dense and never recycled, so a session that rewires channels thousands
+    /// of times can exhaust the table and saturate onto the fallback (see
+    /// MintMaterialId). Clear() resets that.
+    ///
+    /// The cache entry is rebuilt in place, so pointers previously handed out for
+    /// this material stay valid and pick the new id up on their own — no scene
+    /// re-resolve is needed. Channel textures load **synchronously** here, unlike
+    /// the async first resolve: this runs on an explicit authoring action, where a
+    /// brief stall is better than a frame of the fallback material.
+    bool ReloadMaterial(const Core::AssetId &id, const Geometry::MaterialData &data);
+
     /// @brief Whether any async mesh/material load is still in flight — decoding on
     /// a worker, OR decoded and waiting in the publish queue for its GPU upload (a
     /// path stays in _meshLoading/_materialLoading until it is actually resident, so
@@ -279,6 +333,10 @@ private:
     /// @brief (Re)build the id-0 fallback material from the engine defaults.
     void BuildFallbackMaterial();
 
+    /// @brief Record that the editor's copy of @p path outranks the file's, so a
+    /// load already in flight cannot publish over it.
+    void MarkMaterialAuthored(const Core::AssetPath &path);
+
     // A texture cache key: the same file may be resident once per colour space.
     struct TextureKey
     {
@@ -376,6 +434,11 @@ private:
     // Mesh paths that failed to load (see ResolveMesh): warn once, and don't
     // re-parse a broken path every frame. Reset by Clear().
     std::unordered_set<Core::AssetPath> _missingMeshWarned;
+    // Material paths the editor has authored live. Their resident material is
+    // newer than the file, so an async load still in flight for one must not
+    // publish over it. Reset by Clear() with everything else.
+    std::unordered_set<Core::AssetPath> _authoredMaterials;
+
     // Material paths that failed to load/parse: same rationale.
     std::unordered_set<Core::AssetPath> _missingMaterialWarned;
 

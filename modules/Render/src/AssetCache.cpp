@@ -520,6 +520,49 @@ const Material *AssetCache::ResolveMaterial(const Core::AssetId &id)
     return ResolveMaterialPath(PathForId(id));
 }
 
+bool AssetCache::UpdateMaterialFactors(const Core::AssetId &id, const Geometry::MaterialData &data)
+{
+    const std::unordered_map<Core::AssetPath, Material>::iterator it = _materials.find(PathForId(id));
+    if (it == _materials.end())
+    {
+        return false;
+    }
+
+    Material &material = it->second;
+    MarkMaterialAuthored(it->first);
+    // Copied, not aliased: Create writes through to _textures, and passing its
+    // own member back in by reference would be a self-assignment mid-rebuild.
+    const MaterialTextures textures = material.Textures();
+    material.Create(_device, material.Id(), data, textures);
+    WriteMaterialToTable(material);
+    return true;
+}
+
+bool AssetCache::ReloadMaterial(const Core::AssetId &id, const Geometry::MaterialData &data)
+{
+    const Core::AssetPath path = PathForId(id);
+    if (path.Empty())
+    {
+        return false;
+    }
+
+    // Built in place under a new id: the same map entry, so every pointer already
+    // handed out for this material stays valid and reads the new id from it. A
+    // path with no entry yet gets one here rather than waiting for a load.
+    MarkMaterialAuthored(path);
+    BuildMaterial(_materials[path], data, MintMaterialId());
+    return true;
+}
+
+void AssetCache::MarkMaterialAuthored(const Core::AssetPath &path)
+{
+    // The editor's copy now outranks the file's. A load kicked before this may
+    // still be in flight, and its publish would overwrite the live material with
+    // what is on disk — which is exactly the state the author has not saved yet.
+    _authoredMaterials.insert(path);
+    _missingMaterialWarned.erase(path);
+}
+
 const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
 {
     if (path.Empty())
@@ -808,6 +851,15 @@ void AssetCache::PublishMesh(PendingPublish publish)
 void AssetCache::PublishMaterial(PendingPublish publish)
 {
     _materialLoading.erase(publish.path);
+
+    // A load kicked before the editor took this material over. Its payload is the
+    // file's contents, which are older than the live edits — publishing it would
+    // silently revert whatever has not been saved yet. The decoded textures go
+    // out of scope here; the recorded upload list is simply not submitted.
+    if (_authoredMaterials.contains(publish.path))
+    {
+        return;
+    }
 
     // The channel textures were created + recorded on the decode worker; hand its
     // closed list to the batch so FlushUploads submits it (the memcpy already ran).
@@ -1186,6 +1238,7 @@ void AssetCache::Clear()
     _materials.clear();
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();
+    _authoredMaterials.clear();
 
     // Cancel any in-flight thumbnail decodes and drop resident thumbnails too, so a
     // full reset leaves nothing behind. The editor's thumbnail cache is a separate

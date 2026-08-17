@@ -219,6 +219,12 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::Vec4:
         WriteFloats(writer, address, kVec4Floats);
         return true;
+    case FieldType::Color3:
+        WriteFloats(writer, address, kVec3Floats);
+        return true;
+    case FieldType::Color4:
+        WriteFloats(writer, address, kVec4Floats);
+        return true;
     case FieldType::Quat:
         // Whole-value for v1. The smallest-three encoding (2 + 9 + 9 + 9 = 29
         // bits) is the obvious next quantizer and needs no format break — only a
@@ -346,6 +352,12 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     case FieldType::Vec4:
         ReadFloats(reader, address, kVec4Floats);
         return true;
+    case FieldType::Color3:
+        ReadFloats(reader, address, kVec3Floats);
+        return true;
+    case FieldType::Color4:
+        ReadFloats(reader, address, kVec4Floats);
+        return true;
     case FieldType::Quat:
         ReadFloats(reader, address, kQuatFloats);
         return true;
@@ -457,6 +469,11 @@ const char *FieldTypeName(FieldType type)
     case FieldType::Vec2: return "vec2";
     case FieldType::Vec3: return "vec3";
     case FieldType::Vec4: return "vec4";
+    // Distinct from "vec3"/"vec4" on purpose. The bytes are identical, but the
+    // name is hashed, so a field that changes between a vector and a colour is a
+    // protocol change two builds must agree on rather than a silent reinterpret.
+    case FieldType::Color3: return "color3";
+    case FieldType::Color4: return "color4";
     case FieldType::Quat: return "quat";
     case FieldType::Mat4: return "mat4";
     case FieldType::Enum: return "enum";

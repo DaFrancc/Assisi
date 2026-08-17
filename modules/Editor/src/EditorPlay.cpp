@@ -258,6 +258,7 @@ void EditorApp::PausePlay()
     if (Assisi::App::World *edited = _worlds.Edited())
     {
         _pausedHistory.emplace(edited->scene, MakeEditRebindHook(), &edited->instances);
+        InstallHistoryHooks(*_pausedHistory);
     }
     SetPlayState(PlayState::Paused);
 }

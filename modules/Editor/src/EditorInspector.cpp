@@ -200,6 +200,185 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
 
 } // namespace
 
+bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field)
+{
+    using namespace Assisi::Core::Reflect;
+
+    bool edited = false;
+    switch (field.type)
+    {
+    case FieldType::Float:
+    {
+        // AFIELD(min=/max=) hints. DragFloat reads min==max==0 as "no clamp",
+        // so an open side substitutes ±FLT_MAX; AlwaysClamp is what makes the
+        // bounds hold for Ctrl+click text entry too.
+        const float minBound = field.hasMin ? field.minValue : -FLT_MAX;
+        const float maxBound = field.hasMax ? field.maxValue : FLT_MAX;
+        edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
+                                  "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Double:
+    {
+        edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
+        // InputDouble cannot clamp, so the bounds are applied after the edit.
+        if (edited)
+        {
+            double &value = *static_cast<double *>(fp);
+            if (field.hasMin)
+            {
+                value = std::max(value, static_cast<double>(field.minValue));
+            }
+            if (field.hasMax)
+            {
+                value = std::min(value, static_cast<double>(field.maxValue));
+            }
+        }
+        break;
+    }
+    case FieldType::Int32:
+    {
+        // reflectgen guarantees an integer field's bounds are integral and in
+        // range, so these casts are exact.
+        const int32_t minBound = field.hasMin ? static_cast<int32_t>(field.minValue) : INT32_MIN;
+        const int32_t maxBound = field.hasMax ? static_cast<int32_t>(field.maxValue) : INT32_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt32:
+    {
+        const uint32_t minBound = field.hasMin ? static_cast<uint32_t>(field.minValue) : 0u;
+        const uint32_t maxBound = field.hasMax ? static_cast<uint32_t>(field.maxValue) : UINT32_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Int64:
+    {
+        // Bounds arrive as double, exact only to 2^53. Past that a bound would
+        // silently round, so the open range stops at what is representable
+        // rather than pretending to honour it.
+        constexpr int64_t kExact   = 1LL << 53;
+        const int64_t minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
+        const int64_t maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt64:
+    {
+        constexpr uint64_t kExact   = 1ULL << 53;
+        const uint64_t minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
+        const uint64_t maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Bool:
+        edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
+        break;
+    case FieldType::Enum:
+    {
+        // Stored as the underlying integer, whose width varies per AENUM —
+        // hence the read/write at field.enumSize rather than a plain int.
+        const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
+        const char *preview = "(unknown)";
+        for (const auto &constant : field.enumConstants)
+        {
+            if (constant.value == value)
+            {
+                preview = constant.name.c_str();
+                break;
+            }
+        }
+        if (ImGui::BeginCombo(field.name.c_str(), preview))
+        {
+            for (const auto &constant : field.enumConstants)
+            {
+                const bool selected = (constant.value == value);
+                if (ImGui::Selectable(constant.name.c_str(), selected))
+                {
+                    WriteEnumValue(fp, field.enumSize, constant.value);
+                    edited = true;
+                }
+                if (selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        break;
+    }
+    case FieldType::String:
+    {
+        // Core::ShortString is the only String type today.
+        auto *str = static_cast<Assisi::Core::ShortString *>(fp);
+        char buf[Assisi::Core::kShortStringMax + 1];
+        str->ToCStr(buf, sizeof(buf));
+        if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+        {
+            str->Assign(buf);
+            edited = true;
+        }
+        break;
+    }
+    case FieldType::EntityName:
+    {
+        // The String box over the wider buffer. Not the entity's own Name —
+        // that one has to stay unique, so the rename box above owns it.
+        auto *name = static_cast<Assisi::Core::EntityName *>(fp);
+        char buf[Assisi::Core::kEntityNameMax + 1];
+        name->ToCStr(buf, sizeof(buf));
+        if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+        {
+            name->Assign(buf);
+            edited = true;
+        }
+        break;
+    }
+    case FieldType::Vec2:
+        edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        break;
+    case FieldType::Vec3:
+        edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        break;
+    case FieldType::Vec4:
+        edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        break;
+    // Colours are linear and may exceed 1 (an emissive factor is a radiance
+    // multiplier, not a display colour), so the picker runs in float/HDR mode
+    // — the default 8-bit mode would quantize the value and clamp the range.
+    case FieldType::Color3:
+        edited = ImGui::ColorEdit3(field.name.c_str(), static_cast<float *>(fp),
+                                   ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        break;
+    case FieldType::Color4:
+        edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
+                                   ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
+                                       ImGuiColorEditFlags_AlphaPreviewHalf);
+        break;
+    case FieldType::Quat:
+    {
+        auto *quat  = static_cast<glm::quat *>(fp);
+        glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
+        if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
+        {
+            *quat  = glm::normalize(glm::quat(glm::radians(euler)));
+            edited = true;
+        }
+        break;
+    }
+    default:
+        // Either a type only an owning component can draw (the caller handles
+        // those before delegating here) or one nothing draws yet.
+        ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
+        break;
+    }
+    return edited;
+}
+
 bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     using namespace Assisi::Core::Reflect;
@@ -233,160 +412,14 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             ImGui::BeginDisabled();
         }
 
+        // The cases here are the ones that need the *owning component* — a
+        // browse target pinned as (entity, meta, offset), a scene to list
+        // entities from, or a sibling field. Everything decided by the field's
+        // type alone falls through to EditFieldValue, which the material panel
+        // shares.
         bool edited = false;
         switch (field.type)
         {
-        case FieldType::Float:
-        {
-            // AFIELD(min=/max=) hints. DragFloat reads min==max==0 as "no clamp",
-            // so an open side substitutes ±FLT_MAX; AlwaysClamp is what makes the
-            // bounds hold for Ctrl+click text entry too.
-            const float minBound = field.hasMin ? field.minValue : -FLT_MAX;
-            const float maxBound = field.hasMax ? field.maxValue : FLT_MAX;
-            edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
-                                      "%.3f", ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::Double:
-        {
-            edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
-            // InputDouble cannot clamp, so the bounds are applied after the edit.
-            if (edited)
-            {
-                double &value = *static_cast<double *>(fp);
-                if (field.hasMin)
-                {
-                    value = std::max(value, static_cast<double>(field.minValue));
-                }
-                if (field.hasMax)
-                {
-                    value = std::min(value, static_cast<double>(field.maxValue));
-                }
-            }
-            break;
-        }
-        case FieldType::Int32:
-        {
-            // reflectgen guarantees an integer field's bounds are integral and in
-            // range, so these casts are exact.
-            const int32_t minBound = field.hasMin ? static_cast<int32_t>(field.minValue) : INT32_MIN;
-            const int32_t maxBound = field.hasMax ? static_cast<int32_t>(field.maxValue) : INT32_MAX;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::UInt32:
-        {
-            const uint32_t minBound = field.hasMin ? static_cast<uint32_t>(field.minValue) : 0u;
-            const uint32_t maxBound = field.hasMax ? static_cast<uint32_t>(field.maxValue) : UINT32_MAX;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::Int64:
-        {
-            // Bounds arrive as double, exact only to 2^53. Past that a bound would
-            // silently round, so the open range stops at what is representable
-            // rather than pretending to honour it.
-            constexpr int64_t kExact   = 1LL << 53;
-            const int64_t minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
-            const int64_t maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::UInt64:
-        {
-            constexpr uint64_t kExact   = 1ULL << 53;
-            const uint64_t minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
-            const uint64_t maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::Bool:
-            edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
-            break;
-        case FieldType::Enum:
-        {
-            // Stored as the underlying integer, whose width varies per AENUM —
-            // hence the read/write at field.enumSize rather than a plain int.
-            const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
-            const char *preview = "(unknown)";
-            for (const auto &constant : field.enumConstants)
-            {
-                if (constant.value == value)
-                {
-                    preview = constant.name.c_str();
-                    break;
-                }
-            }
-            if (ImGui::BeginCombo(field.name.c_str(), preview))
-            {
-                for (const auto &constant : field.enumConstants)
-                {
-                    const bool selected = (constant.value == value);
-                    if (ImGui::Selectable(constant.name.c_str(), selected))
-                    {
-                        WriteEnumValue(fp, field.enumSize, constant.value);
-                        edited = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            break;
-        }
-        case FieldType::String:
-        {
-            // Core::ShortString is the only String type today.
-            auto *str = static_cast<Assisi::Core::ShortString *>(fp);
-            char buf[Assisi::Core::kShortStringMax + 1];
-            str->ToCStr(buf, sizeof(buf));
-            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
-            {
-                str->Assign(buf);
-                edited = true;
-            }
-            break;
-        }
-        case FieldType::EntityName:
-        {
-            // The String box over the wider buffer. Not the entity's own Name —
-            // that one has to stay unique, so the rename box above owns it.
-            auto *name = static_cast<Assisi::Core::EntityName *>(fp);
-            char buf[Assisi::Core::kEntityNameMax + 1];
-            name->ToCStr(buf, sizeof(buf));
-            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
-            {
-                name->Assign(buf);
-                edited = true;
-            }
-            break;
-        }
-        case FieldType::Vec2:
-            edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-            break;
-        case FieldType::Vec3:
-            edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-            break;
-        case FieldType::Vec4:
-            edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-            break;
-        case FieldType::Quat:
-        {
-            auto *quat  = static_cast<glm::quat *>(fp);
-            glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
-            if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
-            {
-                *quat  = glm::normalize(glm::quat(glm::radians(euler)));
-                edited = true;
-            }
-            break;
-        }
         case FieldType::AssetPath:
         {
             auto *ap = static_cast<Assisi::Core::AssetPath *>(fp);
@@ -549,7 +582,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             break;
         }
         default:
-            ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
+            edited = EditFieldValue(fp, field);
             break;
         }
 
@@ -646,6 +679,32 @@ bool EditorApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
             OpenAssetBrowserForSlot(meta, fieldOffset, static_cast<int32_t>(slot));
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Browse materials (.amat)");
+        ImGui::SameLine();
+
+        // Edit what this slot actually draws: its override, or — when there is
+        // none — the material the mesh imported for the slot, which is the thing
+        // on screen. Both are ordinary `.amat` files, and the panel shows the
+        // path, so editing a shared mesh default is visible rather than implied.
+        const Assisi::Core::AssetId effectiveId =
+            slotId.IsNil() ? _assetDatabase.SlotMaterial(mrc.mesh, static_cast<std::uint32_t>(slot)) : slotId;
+        const std::optional<std::string> effectivePath = _assetDatabase.PathFor(effectiveId);
+        ImGui::BeginDisabled(!effectivePath.has_value());
+        if (ImGui::Button("Edit"))
+        {
+            OpenMaterialEditorForSlot(*effectivePath, _selectedEntity, fieldOffset, static_cast<int32_t>(slot));
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            if (!effectivePath.has_value())
+                ImGui::SetTooltip("This slot has no material file to edit.");
+            else if (slotId.IsNil())
+                ImGui::SetTooltip("Edit '%s' — the mesh's own material for this slot, shared by everything "
+                                  "that uses this mesh.",
+                                  effectivePath->c_str());
+            else
+                ImGui::SetTooltip("Edit '%s' in the Material panel.", effectivePath->c_str());
+        }
         ImGui::SameLine();
 
         // Labelled by the mesh's imported material name, index if it has none.
