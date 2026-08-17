@@ -167,6 +167,8 @@ bool SameMaterialFields(const MaterialData &a, const MaterialData &b)
            a.BaseWeight == b.BaseWeight && a.SpecularWeight == b.SpecularWeight &&
            a.SpecularColor == b.SpecularColor && a.SpecularIor == b.SpecularIor &&
            a.BaseDiffuseRoughness == b.BaseDiffuseRoughness &&
+           a.SpecularAntiAliasing == b.SpecularAntiAliasing &&
+           a.SpecularAaVarianceClamp == b.SpecularAaVarianceClamp &&
            a.BaseColorTexture == b.BaseColorTexture && a.NormalTexture == b.NormalTexture &&
            a.MetallicRoughnessTexture == b.MetallicRoughnessTexture && a.OcclusionTexture == b.OcclusionTexture &&
            a.EmissiveTexture == b.EmissiveTexture;

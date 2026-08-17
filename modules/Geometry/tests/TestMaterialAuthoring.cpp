@@ -93,6 +93,8 @@ MaterialData MakeFullMaterial()
     m.SpecularColor        = {0.9f, 0.8f, 0.6f};
     m.SpecularIor          = 1.33f;
     m.BaseDiffuseRoughness = 0.4f;
+    m.SpecularAntiAliasing    = false;
+    m.SpecularAaVarianceClamp = 0.35f;
     m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
     m.NormalTexture            = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
     m.MetallicRoughnessTexture = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000003");
@@ -123,6 +125,8 @@ void CheckSameMaterial(const MaterialData &actual, const MaterialData &expected)
     CHECK(actual.SpecularColor.z == doctest::Approx(expected.SpecularColor.z));
     CHECK(actual.SpecularIor == doctest::Approx(expected.SpecularIor));
     CHECK(actual.BaseDiffuseRoughness == doctest::Approx(expected.BaseDiffuseRoughness));
+    CHECK(actual.SpecularAntiAliasing == expected.SpecularAntiAliasing);
+    CHECK(actual.SpecularAaVarianceClamp == doctest::Approx(expected.SpecularAaVarianceClamp));
     CHECK(actual.BaseColorTexture == expected.BaseColorTexture);
     CHECK(actual.NormalTexture == expected.NormalTexture);
     CHECK(actual.MetallicRoughnessTexture == expected.MetallicRoughnessTexture);
@@ -202,8 +206,10 @@ TEST_CASE("An old .amat opened and re-saved loses no fields")
     CHECK(text.find("SpecularIor") != std::string::npos);
     CHECK(text.find("BaseWeight") != std::string::npos);
     CHECK(text.find("BaseDiffuseRoughness") != std::string::npos);
+    CHECK(text.find("SpecularAntiAliasing") != std::string::npos);
     CHECK(resaved->SpecularIor == doctest::Approx(1.5f));
     CHECK(resaved->BaseWeight == doctest::Approx(1.f));
+    CHECK(resaved->SpecularAntiAliasing == true);
 }
 
 TEST_CASE("SaveMaterial refuses a path that escapes the asset root")

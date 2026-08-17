@@ -38,7 +38,7 @@ struct MaterialRow
 {
     vec4  baseColorFactor;
     vec4  emissiveFactorNormalScale; // xyz = emissive, w = normalScale
-    vec4  metalRoughOcclusion;       // x = metallic, y = roughness, z = occlusion strength, w = reserved
+    vec4  metalRoughOcclusion;       // x = metallic, y = roughness, z = occlusion strength, w = specular AA variance clamp
     vec4  specularColorIor;          // rgb = specularColor, w = specularIor
     vec4  openPbrParams;             // x = baseWeight, y = specularWeight, z = baseDiffuseRoughness, w = reserved
     uvec4 flags;                     // x = material flag bits below; yzw reserved
@@ -49,6 +49,7 @@ struct MaterialRow
 // Material flag bits (mirror Render::MaterialFlagBits).
 const uint kMatFlagHasNormalTexture        = 1u;
 const uint kMatFlagEnergyPreservingDiffuse = 2u;
+const uint kMatFlagSpecularAntiAliasing    = 4u;
 
 layout(std430, binding = 0) readonly buffer Materials
 {
@@ -120,6 +121,11 @@ const uint kSpotIndexBase = 262144u;
 
 const float PI = 3.14159265359;
 
+// Variance of the pixel-reconstruction filter the specular AA kernel assumes,
+// in pixels squared. Not a knob: it describes the rasterizer's footprint, which
+// no material knows anything about. The per-material clamp is the knob.
+const float kSpecAaScreenSpaceVariance = 0.5;
+
 // ---- Material sample ---------------------------------------------------
 // Everything that reads the material's textures + factors lives here, so the
 // lighting code below is agnostic to how the surface was authored. A later
@@ -190,6 +196,33 @@ Surface SampleMaterial()
     else
     {
         s.normal = N;
+    }
+
+    // Geometric specular antialiasing (Kaplanyan / Tokuyoshi). Where the shading
+    // normal swings by more than a pixel's worth across the quad, the specular
+    // lobe it implies is narrower than the pixel that has to sample it, and the
+    // highlight blinks in and out as the surface moves. Convolving the NDF with
+    // the footprint's own normal distribution is the same fix a history buffer
+    // would smear over, done in one fragment: variances add, so the filtered
+    // lobe is sqrt(a^2 + kernel) in GGX alpha.
+    //
+    // Derivatives are legal inside this branch because the flag comes from
+    // vMaterialIndex, which is per-instance, and a quad never spans two
+    // instances — every fragment in it takes the same side. Keeping them inside
+    // the branch is what leaves a material with the filter off paying nothing
+    // but the flag test.
+    if ((mat.flags.x & kMatFlagSpecularAntiAliasing) != 0u)
+    {
+        vec3  dNdx     = dFdx(s.normal);
+        vec3  dNdy     = dFdy(s.normal);
+        float variance = kSpecAaScreenSpaceVariance * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
+        // The clamp is what keeps a high-curvature surface from being driven to
+        // fully rough, which reads as the material turning to chalk.
+        float kernel   = min(2.0 * variance, mat.metalRoughOcclusion.w);
+        float a        = s.roughness * s.roughness;
+        // Widening only ever raises roughness, so the [0.04, 1] range above
+        // still holds: the kernel is non-negative and the clamp caps the top.
+        s.roughness    = sqrt(sqrt(clamp(a * a + kernel, 0.0, 1.0)));
     }
 
     return s;

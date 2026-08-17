@@ -73,6 +73,19 @@ struct MaterialData
     AFIELD(min = 1, max = 3) float SpecularIor = 1.5f;
     AFIELD(min = 0, max = 1) float BaseDiffuseRoughness = 0.f;        ///< OpenPBR base_diffuse_roughness; > 0 enables EON diffuse.
 
+    // --- Geometric specular antialiasing ---
+    // Not an OpenPBR parameter: a filtering decision about how the specular lobe
+    // is sampled, not a property of the surface. On by default because a glossy
+    // normal-mapped surface sparkles without it, and the engine has no temporal
+    // accumulation to hide that.
+    AFIELD() bool SpecularAntiAliasing = true;
+    /// Ceiling on the roughness variance the filter may add (GGX alpha-squared
+    /// units). It bounds how far a high-curvature surface can be blurred toward
+    /// matte: without it, a normal map at a grazing angle drives the lobe to
+    /// fully rough and the material stops looking like metal. Zero disables the
+    /// filter as surely as clearing SpecularAntiAliasing does.
+    AFIELD(min = 0, max = 1) float SpecularAaVarianceClamp = 0.2f;
+
     // --- Texture channels (GUID references; nil = factor-only) ---
     AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.
     AFIELD() Assisi::Core::AssetId NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.

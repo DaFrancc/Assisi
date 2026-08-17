@@ -27,6 +27,7 @@ enum MaterialFlagBits : uint32_t
 {
     kMaterialFlagHasNormalTexture = 1u << 0,
     kMaterialFlagEnergyPreservingDiffuse = 1u << 1, ///< EON diffuse; set when BaseDiffuseRoughness > 0.
+    kMaterialFlagSpecularAntiAliasing = 1u << 2,    ///< Geometric specular AA; set when the enable is on and the clamp > 0.
 };
 
 /// @brief Per-material constants — one row of the shared material table.
@@ -43,7 +44,7 @@ struct MaterialConstants
 {
     glm::vec4 baseColorFactor{1.f, 1.f, 1.f, 1.f};
     glm::vec4 emissiveFactorNormalScale{0.f, 0.f, 0.f, 1.f};  ///< xyz = emissive, w = normalScale.
-    glm::vec4 metalRoughOcclusion{1.f, 1.f, 1.f, 0.f};        ///< x = metallic, y = roughness, z = occlusion, w = reserved.
+    glm::vec4 metalRoughOcclusion{1.f, 1.f, 1.f, 0.2f};       ///< x = metallic, y = roughness, z = occlusion, w = specular AA variance clamp.
     glm::vec4 specularColorIor{1.f, 1.f, 1.f, 1.5f};          ///< rgb = specularColor, w = specularIor.
     glm::vec4 openPbrParams{1.f, 1.f, 0.f, 0.f};   ///< x = baseWeight, y = specularWeight, z = baseDiffuseRoughness, w = reserved.
     glm::uvec4 flags{0u, 0u, 0u, 0u};              ///< x = MaterialFlagBits; yzw reserved.
