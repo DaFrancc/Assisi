@@ -23,10 +23,13 @@ long-lived branch:
     description carries the plan of record — a dependency-ordered list of the
     issues — and the milestone descriptions carry the scope decisions. Read
     both before starting anything; the issue descriptions are self-contained
-    beyond that. The out-of-scope lists (coat, fuzz, anisotropy, thin-film,
-    transmission, subsurface, dispersion, OIT, ray tracing) are decisions,
-    not oversights — do not build any of it, however natural it looks while
-    in there.
+    beyond that. Ray tracing and the temporal family (TAA, temporal
+    upscaling, frame generation) are out by standing decision — do not build
+    any of it, however natural it looks while in there. The material lobes
+    (coat, fuzz, anisotropy, thin-film, subsurface, transmission,
+    dispersion) and OIT were on that list until the decision was reversed;
+    they are ordinary planned work now, each with its own issue, so build
+    them when their issue comes up and not before.
 
   - Linear: team "Engine", project "Rendering". Estimates are in points.
 
