@@ -5,12 +5,15 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <string_view>
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
+
+#include "LogCapture.hpp"
 
 using Assisi::Core::AssetSystem;
 using Assisi::Geometry::ImportMesh;
@@ -480,6 +483,269 @@ TEST_CASE("ImportMesh: a mirrored (negative-scale) node flips winding back to CC
     CHECK(result->Indices[0] == 0);
     CHECK(result->Indices[1] == 2);
     CHECK(result->Indices[2] == 1);
+
+    fs::remove_all(root);
+}
+
+namespace
+{
+// One triangle with one material carrying every KHR_materials_* extension the
+// OpenPBR base layer can express, alongside three it cannot. The unsupported
+// three are listed in extensionsUsed the way a real exporter writes them, which
+// is what the importer reads to warn: the parser's extension mask strips their
+// material blocks, so nothing else is left to notice them by.
+constexpr std::string_view kKhrGltf = R"({
+  "asset": { "version": "2.0" },
+  "extensionsUsed": [
+    "KHR_materials_ior", "KHR_materials_specular", "KHR_materials_emissive_strength",
+    "KHR_materials_transmission", "KHR_materials_clearcoat", "KHR_materials_sheen"
+  ],
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ {
+    "name": "lacquer",
+    "emissiveFactor": [0.5, 0.25, 0.0],
+    "extensions": {
+      "KHR_materials_ior": { "ior": 1.8 },
+      "KHR_materials_specular": { "specularFactor": 0.6, "specularColorFactor": [0.9, 0.8, 0.7] },
+      "KHR_materials_emissive_strength": { "emissiveStrength": 4.0 },
+      "KHR_materials_transmission": { "transmissionFactor": 1.0 },
+      "KHR_materials_clearcoat": { "clearcoatFactor": 1.0 },
+      "KHR_materials_sheen": { "sheenColorFactor": [1.0, 1.0, 1.0] }
+    }
+  } ],
+  "buffers": [ { "uri": "khr.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+// A material extension the engine cannot express, marked *required* — which is
+// what a real exporter writes for transmission. glTF says a renderer that cannot
+// honour a required extension should refuse the file, and fastgltf enforces that
+// by aborting the parse for anything outside the parser's mask. Masking to only
+// the extensions we read would therefore lose a whole model over one material
+// parameter it was never going to use.
+constexpr std::string_view kRequiredUnsupportedGltf = R"({
+  "asset": { "version": "2.0" },
+  "extensionsUsed": [ "KHR_materials_transmission" ],
+  "extensionsRequired": [ "KHR_materials_transmission" ],
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ { "name": "glass", "extensions": {
+    "KHR_materials_transmission": { "transmissionFactor": 1.0 } } } ],
+  "buffers": [ { "uri": "khr.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+// One material whose KHR_materials_specular carries a texture as well as its
+// factors. There is no specular texture channel to put it in.
+constexpr std::string_view kSpecularTextureGltf = R"({
+  "asset": { "version": "2.0" },
+  "extensionsUsed": [ "KHR_materials_specular" ],
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ { "name": "brushed", "extensions": { "KHR_materials_specular": {
+    "specularFactor": 0.3, "specularTexture": { "index": 0 } } } } ],
+  "textures": [ { "source": 0 } ],
+  "images": [ { "uri": "spec.png" } ],
+  "buffers": [ { "uri": "khr.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+// The same triangle with one material whose only extension is
+// KHR_materials_ior, carrying @p iorLiteral verbatim.
+std::string MakeIorGltf(std::string_view iorLiteral)
+{
+    constexpr std::string_view kHead = R"({
+  "asset": { "version": "2.0" },
+  "extensionsUsed": [ "KHR_materials_ior" ],
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ { "name": "refractive", "extensions": { "KHR_materials_ior": { "ior": )";
+    constexpr std::string_view kTail = R"( } } } ],
+  "buffers": [ { "uri": "khr.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+    return std::string{kHead} + std::string{iorLiteral} + std::string{kTail};
+}
+
+fs::path WriteKhrAssets(std::string_view gltfText)
+{
+    const fs::path root = fs::temp_directory_path() / "assisi_geometry_test_khr";
+    fs::remove_all(root);
+    fs::create_directories(root);
+
+    {
+        std::ofstream gltf(root / "khr.gltf", std::ios::binary);
+        gltf.write(gltfText.data(), static_cast<std::streamsize>(gltfText.size()));
+    }
+    {
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const uint16_t indices[3]   = {0, 1, 2};
+        std::ofstream bin(root / "khr.bin", std::ios::binary);
+        bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
+        bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
+    }
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    return root;
+}
+} // namespace
+
+TEST_CASE("ImportMesh: KHR_materials ior/specular/emissive_strength reach the OpenPBR fields")
+{
+    const fs::path root = WriteKhrAssets(kKhrGltf);
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+    const Assisi::Geometry::MaterialData &material = result->Materials[0];
+
+    CHECK(material.SpecularIor == doctest::Approx(1.8f));
+    CHECK(material.SpecularWeight == doctest::Approx(0.6f));
+    CHECK(material.SpecularColor.r == doctest::Approx(0.9f));
+    CHECK(material.SpecularColor.g == doctest::Approx(0.8f));
+    CHECK(material.SpecularColor.b == doctest::Approx(0.7f));
+
+    // emissiveStrength scales the emissive factor, and past 1: an HDR emissive
+    // is the entire point of the extension.
+    CHECK(material.EmissiveFactor.r == doctest::Approx(2.0f));
+    CHECK(material.EmissiveFactor.g == doctest::Approx(1.0f));
+    CHECK(material.EmissiveFactor.b == doctest::Approx(0.0f));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: a KHR_materials extension the engine cannot express is named in a warning")
+{
+    const fs::path root = WriteKhrAssets(kKhrGltf);
+    const Assisi::Tests::LogCapture log;
+
+    REQUIRE(ImportMesh("khr.gltf").has_value());
+
+    CHECK(log.Mentions("KHR_materials_transmission"));
+    CHECK(log.Mentions("KHR_materials_clearcoat"));
+    CHECK(log.Mentions("KHR_materials_sheen"));
+
+    // The three that are mapped are not dropped, so they must not be warned about.
+    CHECK_FALSE(log.Mentions("KHR_materials_ior"));
+    CHECK_FALSE(log.Mentions("KHR_materials_specular"));
+    CHECK_FALSE(log.Mentions("KHR_materials_emissive_strength"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: an ior outside SpecularIor's authoring range is imported as authored")
+{
+    // SpecularIor's [1, 3] is a slider range, not a validity bound: F0 =
+    // ((ior-1)/(ior+1))^2 is continuous and within [0, 1] for every positive
+    // ior, so narrowing either end here would only discard what was authored.
+    // glTF puts no ceiling on ior at all, and its ior of 0 is the special case
+    // requiring a Fresnel of 1 — which is what that expression returns for it.
+    const float iors[] = {0.0f, 0.4f, 4.0f};
+    for (const float authored : iors)
+    {
+        CAPTURE(authored);
+        const fs::path root = WriteKhrAssets(MakeIorGltf(std::to_string(authored)));
+        const Assisi::Tests::LogCapture log;
+
+        const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+        REQUIRE(result.has_value());
+        REQUIRE(result->Materials.size() == 1);
+
+        CHECK(result->Materials[0].SpecularIor == doctest::Approx(authored));
+        CHECK_FALSE(log.Mentions("KHR_materials_ior")); // authored, not salvaged
+
+        fs::remove_all(root);
+    }
+}
+
+TEST_CASE("ImportMesh: a required unsupported extension warns instead of failing the import")
+{
+    const fs::path root = WriteKhrAssets(kRequiredUnsupportedGltf);
+    const Assisi::Tests::LogCapture log;
+
+    // The geometry is the point: one unsupported material parameter must not cost
+    // the whole model. A parse failure here also names nothing, because the
+    // warning is read off the asset and a failed parse leaves no asset to read.
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    CHECK(result->Vertices.size() == 3);
+
+    CHECK(log.Mentions("KHR_materials_transmission"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: a KHR_materials_specular texture is named as dropped, factors kept")
+{
+    const fs::path root = WriteKhrAssets(kSpecularTextureGltf);
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    // The texture is what is unsupported, not the extension: the factors it
+    // shipped alongside still land.
+    CHECK(result->Materials[0].SpecularWeight == doctest::Approx(0.3f));
+    CHECK(log.Mentions("KHR_materials_specular"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: a negative ior is refused and named")
+{
+    // The one value the shader cannot take: F0's denominator (ior + 1) is zero
+    // at -1, and no index of refraction is negative to begin with.
+    const fs::path root = WriteKhrAssets(MakeIorGltf("-1.0"));
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    CHECK(result->Materials[0].SpecularIor == doctest::Approx(1.5f)); // the default, untouched
+    CHECK(log.Mentions("KHR_materials_ior"));
 
     fs::remove_all(root);
 }

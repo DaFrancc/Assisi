@@ -154,11 +154,19 @@ std::optional<std::uint64_t> HashGltfSource(std::string_view gltfVirtualPath)
 ///        (factors + channel GUIDs) — deliberately ignoring `Name`, which never
 ///        enters a `.amat`. This is the "did the material change?" test the
 ///        reconciler classifies with.
+///
+/// Every serialized field has to be here. A field left out reads as unchanged,
+/// so a re-export that touched only that field is classified geometry-only, the
+/// source hash is refreshed, and the new value is lost with nothing left to
+/// report it as stale.
 bool SameMaterialFields(const MaterialData &a, const MaterialData &b)
 {
     return a.BaseColorFactor == b.BaseColorFactor && a.MetallicFactor == b.MetallicFactor &&
            a.RoughnessFactor == b.RoughnessFactor && a.NormalScale == b.NormalScale &&
            a.OcclusionStrength == b.OcclusionStrength && a.EmissiveFactor == b.EmissiveFactor &&
+           a.BaseWeight == b.BaseWeight && a.SpecularWeight == b.SpecularWeight &&
+           a.SpecularColor == b.SpecularColor && a.SpecularIor == b.SpecularIor &&
+           a.BaseDiffuseRoughness == b.BaseDiffuseRoughness &&
            a.BaseColorTexture == b.BaseColorTexture && a.NormalTexture == b.NormalTexture &&
            a.MetallicRoughnessTexture == b.MetallicRoughnessTexture && a.OcclusionTexture == b.OcclusionTexture &&
            a.EmissiveTexture == b.EmissiveTexture;

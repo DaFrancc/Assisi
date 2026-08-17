@@ -12,6 +12,7 @@
 #include <fastgltf/types.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -140,7 +141,53 @@ struct ImportWarnings
     bool doubleSided = false;
     bool embeddedImage = false;
     bool secondaryTexCoord = false;
+    bool negativeIor = false;
+    bool specularTexture = false;
 };
+
+/* The KHR_materials_* extensions ExtractMaterial reads into MaterialData. */
+constexpr std::array<std::string_view, 3> kMappedMaterialExtensions = {
+    "KHR_materials_ior",
+    "KHR_materials_specular",
+    "KHR_materials_emissive_strength",
+};
+
+/* Every KHR_materials_* extension fastgltf knows, which is wider than the set
+   above on purpose. glTF lets a file mark an extension *required*, and fastgltf
+   aborts the whole parse when a required one is outside the mask — so masking to
+   only what we read would drop an entire model on the floor over a material
+   parameter, with no Asset left to name the reason from. Parsing them all and
+   discarding what we cannot express is what keeps a required extension a
+   warning instead of a dead import.
+   Geometry extensions (Draco, meshopt, quantization) stay out: those change how
+   vertices decode, so accepting one we cannot decode yields garbage geometry
+   rather than a dropped material parameter. Failing the parse is right there. */
+constexpr fastgltf::Extensions kMaterialExtensionMask =
+    fastgltf::Extensions::KHR_materials_ior | fastgltf::Extensions::KHR_materials_specular |
+    fastgltf::Extensions::KHR_materials_emissive_strength | fastgltf::Extensions::KHR_materials_iridescence |
+    fastgltf::Extensions::KHR_materials_volume | fastgltf::Extensions::KHR_materials_transmission |
+    fastgltf::Extensions::KHR_materials_clearcoat | fastgltf::Extensions::KHR_materials_sheen |
+    fastgltf::Extensions::KHR_materials_unlit | fastgltf::Extensions::KHR_materials_anisotropy |
+    fastgltf::Extensions::KHR_materials_dispersion | fastgltf::Extensions::KHR_materials_variants |
+    fastgltf::Extensions::KHR_materials_diffuse_transmission;
+
+/* Warns once for every KHR_materials_* extension the file declares that the
+   material model cannot express — whether the parser kept it or not, since
+   extensionsUsed is filled either way. */
+void WarnUnmappedMaterialExtensions(const fastgltf::Asset &asset, std::string_view virtualPath)
+{
+    for (const auto &used : asset.extensionsUsed)
+    {
+        const std::string_view name{used};
+        if (!name.starts_with("KHR_materials_") ||
+            std::ranges::find(kMappedMaterialExtensions, name) != kMappedMaterialExtensions.end())
+        {
+            continue;
+        }
+        Core::Log::Warn("MeshImporter: '{}' uses {}, which is not supported; its material parameters are dropped.",
+                        virtualPath, name);
+    }
+}
 
 /* Replaces every external-file buffer (left as a URI because the parser is not
    given Options::LoadExternalBuffers) with bytes read through AssetSystem, so
@@ -227,9 +274,10 @@ Core::AssetId ResolveImageId(const fastgltf::Asset &asset, size_t textureIndex, 
     return resolveId ? resolveId(sibling) : Core::AssetId{};
 }
 
-/* Maps one glTF material to CPU MaterialData: pbrMetallicRoughness factors plus
-   virtual asset paths for each texture channel. Unsupported authoring (alpha
-   modes, double-sided, secondary UV sets) is flattened with a warning — never
+/* Maps one glTF material to CPU MaterialData: pbrMetallicRoughness factors, the
+   KHR_materials_* extensions in kMappedMaterialExtensions, and virtual asset
+   paths for each texture channel. Unsupported authoring (alpha modes,
+   double-sided, secondary UV sets) is flattened with a warning — never
    silently. */
 MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex, std::string_view virtualPath,
                              const std::string &parent, const AssetIdResolver &resolveId, ImportWarnings &warnings)
@@ -243,7 +291,56 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
         glm::vec4(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
     data.MetallicFactor = pbr.metallicFactor;
     data.RoughnessFactor = pbr.roughnessFactor;
-    data.EmissiveFactor = glm::vec3(material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]);
+
+    // KHR_materials_emissive_strength scales the emissive factor, and past 1 on
+    // purpose: an emissive brighter than white is the whole point of the
+    // extension, so this must not clamp.
+    data.EmissiveFactor =
+        glm::vec3(material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]) *
+        static_cast<float>(material.emissiveStrength);
+
+    // KHR_materials_ior, passed through as authored. SpecularIor's [1, 3] is an
+    // authoring range, not a validity bound: F0 = ((ior-1)/(ior+1))^2 squares
+    // away the sign, so it is continuous and within [0, 1] for every positive
+    // ior. glTF's ior of 0 needs no special case either — that expression
+    // already yields the Fresnel of 1 the extension requires of it.
+    //
+    // A negative ior means nothing, and the pole at -1 sits inside that range,
+    // so it flattens to the default rather than reaching the shader.
+    const float ior = static_cast<float>(material.ior);
+    if (ior < 0.f)
+    {
+        if (!warnings.negativeIor)
+        {
+            warnings.negativeIor = true;
+            Core::Log::Warn("MeshImporter: '{}' has a material ('{}') whose KHR_materials_ior is {}; an index of "
+                            "refraction cannot be negative — importing the default {}.",
+                            virtualPath, data.Name, ior, data.SpecularIor);
+        }
+    }
+    else
+    {
+        data.SpecularIor = ior;
+    }
+
+    // KHR_materials_specular. Absent when the file does not use the extension,
+    // in which case MaterialData's defaults (weight 1, white) already mean the
+    // same thing the extension's own defaults do.
+    if (material.specular != nullptr)
+    {
+        const fastgltf::MaterialSpecular &specular = *material.specular;
+        data.SpecularWeight = static_cast<float>(specular.specularFactor);
+        data.SpecularColor  = glm::vec3(specular.specularColorFactor[0], specular.specularColorFactor[1],
+                                        specular.specularColorFactor[2]);
+        if ((specular.specularTexture.has_value() || specular.specularColorTexture.has_value()) &&
+            !warnings.specularTexture)
+        {
+            warnings.specularTexture = true;
+            Core::Log::Warn("MeshImporter: '{}' has a material ('{}') with a KHR_materials_specular texture; there is "
+                            "no specular texture channel — importing its factors only.",
+                            virtualPath, data.Name);
+        }
+    }
 
     const auto texCoordCheck = [&](size_t texCoordIndex)
                                {
@@ -484,7 +581,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
 
     // No LoadExternalBuffers: fastgltf must not touch the filesystem itself.
     // Sibling .bin files are resolved by ResolveExternalBuffers() via AssetSystem.
-    fastgltf::Parser parser;
+    fastgltf::Parser parser{kMaterialExtensionMask};
     constexpr fastgltf::Options options = fastgltf::Options::GenerateMeshIndices;
     fastgltf::Expected<fastgltf::Asset> assetResult =
         parser.loadGltf(dataBuffer.get(), std::filesystem::path{}, options);
@@ -493,6 +590,8 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         return std::unexpected(MeshImportError::ParseFailed);
     }
     fastgltf::Asset &asset = assetResult.get();
+
+    WarnUnmappedMaterialExtensions(asset, virtualPath);
 
     if (!ResolveExternalBuffers(asset, virtualPath))
     {
