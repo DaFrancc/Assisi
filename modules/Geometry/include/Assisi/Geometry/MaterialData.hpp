@@ -36,12 +36,12 @@ namespace Assisi::Geometry
 /// and occlusion are linear.
 ///
 /// OpenPBR: this is the base + specular + emission subset of the OpenPBR
-/// Surface base layer, and deliberately nothing more. Coat, fuzz, anisotropy,
-/// thin-film, transmission, subsurface, and dispersion are out of scope by
-/// decision, not oversight — the schema is default-on-missing, so each can
-/// land later as a one-field-plus-one-lobe increment with zero content
-/// migration. Coat/fuzz are the only candidates worth revisiting, and only
-/// once reflection probes (lighting L5) give them an environment to reflect.
+/// Surface base layer. The remaining lobes — coat, fuzz, anisotropy,
+/// thin-film, subsurface, transmission, and dispersion — are planned rather
+/// than excluded. The schema is default-on-missing, which is what keeps that
+/// cheap: each arrives as one field plus one lobe, and a material authored
+/// before a lobe exists deserializes identically once it lands, so no
+/// content migrates.
 /// The pre-OpenPBR field names stay (BaseColorFactor ≡ base_color,
 /// MetallicFactor ≡ base_metalness, RoughnessFactor ≡ specular_roughness):
 /// renaming is silent data loss under the schema's ignore-unknown-keys rule,
