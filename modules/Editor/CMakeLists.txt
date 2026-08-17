@@ -25,6 +25,7 @@ target_sources(Assisi-Editor
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"
     "src/EditorLevels.cpp"
+    "src/EditorMaterialPanel.cpp"
     "src/EditorOptions.cpp"
     "src/EditorOptionsPanel.hpp"
     "src/EditorPlay.cpp"

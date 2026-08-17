@@ -163,6 +163,42 @@ class CodegenTest(unittest.TestCase):
         self.assertIn('ReadString(j, _comp, "name", _s)', cpp)     # deserialize, type-checked
         self.assertIn("comp.name.Assign(_s)", cpp)                 # ...then assigned
 
+    def test_colour_is_its_own_field_type_over_the_vector_codec(self):
+        # A colour must carry a distinct FieldType (that is what gets an editor to
+        # offer a picker) while emitting the *same* JSON as its vector, so a field
+        # that changes between the two loads every file written under the other
+        # spelling. Both halves are asserted, because either alone would pass a
+        # broken implementation.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Math::Color3 tint;\n"
+            "  AFIELD() Assisi::Math::Color4 albedo;\n"
+            "  AFIELD() glm::vec3 dir;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"tint", Assisi::Core::Reflect::FieldType::Color3', cpp)
+        self.assertIn('"albedo", Assisi::Core::Reflect::FieldType::Color4', cpp)
+        self.assertIn('"dir", Assisi::Core::Reflect::FieldType::Vec3', cpp)
+        # Same array shape as the vector it shadows: three components for Color3,
+        # four for Color4, read back through the same float-array helper.
+        self.assertIn("{ c.tint.x, c.tint.y, c.tint.z }", cpp)
+        self.assertIn("{ c.albedo.x, c.albedo.y, c.albedo.z, c.albedo.w }", cpp)
+        self.assertIn('ReadFloatArray(j, _comp, "tint", 3, _v)', cpp)
+        self.assertIn('ReadFloatArray(j, _comp, "albedo", 4, _v)', cpp)
+
+    def test_unqualified_colour_spelling_is_accepted(self):
+        # Both spellings, as for ECS::Entity: a header inside Assisi:: writes the
+        # short one, and an unrecognised type is a hard generation error rather
+        # than a silently unserialized field.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Math::Color3 tint;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"tint", Assisi::Core::Reflect::FieldType::Color3', cpp)
+
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(
             "namespace N {\nACOMP()\nstruct Ref {\n"

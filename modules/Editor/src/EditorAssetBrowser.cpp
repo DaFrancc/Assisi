@@ -4,7 +4,9 @@
 
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -274,6 +276,8 @@ void DrawStaleBadge(const ImVec2 &origin, float size)
 void EditorApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
 {
     _assetBrowserOpen        = true;
+    _assetBrowserTarget      = AssetBrowserTarget::ComponentField;
+    _assetBrowserFilter      = AssetBrowserFilter::All;
     _assetBrowserEntity      = _selectedEntity;
     _assetBrowserMeta        = &meta;
     _assetBrowserFieldOffset = fieldOffset;
@@ -286,12 +290,41 @@ void EditorApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMe
                                         int32_t slot)
 {
     OpenAssetBrowserFor(meta, fieldOffset);
-    // A non-negative slot also narrows the listing to materials: see DrawAssetBrowser.
     _assetBrowserVectorSlot = slot;
+    _assetBrowserFilter     = AssetBrowserFilter::Materials;
 }
 
 void EditorApp::SelectAsset(std::string_view vpath)
 {
+    // A material's texture channel: the target is this object's own working copy,
+    // which cannot move, so there is nothing to re-resolve. Handled before the
+    // component path, which would otherwise reject it for having no meta.
+    if (_assetBrowserTarget == AssetBrowserTarget::MaterialField)
+    {
+        // Dropped, not misapplied, if the panel moved to another material while
+        // the browser sat open: the offset would name the right field of the
+        // wrong file.
+        if (_materialEditorPath == _assetBrowserMaterialPath && !_materialEditorPath.Empty())
+        {
+            auto *field = reinterpret_cast<Assisi::Core::AssetId *>(reinterpret_cast<char *>(&_materialEditorData) +
+                                                                    _assetBrowserFieldOffset);
+            *field = _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{});
+            ApplyMaterialEdit(true); // a channel changed: rebuild, don't rewrite the row
+        }
+        _assetBrowserOpen = false;
+        _assetBrowserMeta = nullptr;
+        return;
+    }
+
+    // An assignment to the slot being previewed supersedes the preview: the
+    // author has now really chosen this material, so dropping the binding without
+    // restoring is what keeps the choice. Restoring here would silently undo it.
+    if (_materialPreviewActive && _assetBrowserEntity == _materialPreviewEntity &&
+        _assetBrowserFieldOffset == _materialPreviewFieldOffset && _assetBrowserVectorSlot == _materialPreviewSlot)
+    {
+        EndMaterialPreview(false);
+    }
+
     // Re-resolve the target from (entity, meta, offset): the component pool may have
     // moved since the browser was opened. The inspector's eyedropper pins its target
     // the same way, for the same reason.
@@ -492,9 +525,9 @@ void EditorApp::DrawAssetBrowser()
             ImGui::SameLine();
     }
 
-    // Images and meshes, hidden entirely while picking for a material slot, where
-    // a .amat is the only valid choice.
-    if (_assetBrowserVectorSlot < 0)
+    // Images and meshes, hidden while picking for a material slot, where a .amat
+    // is the only valid choice.
+    if (_assetBrowserFilter != AssetBrowserFilter::Materials)
     {
         for (const std::string &img : _assetBrowserImages)
         {
@@ -579,7 +612,7 @@ void EditorApp::DrawAssetBrowser()
             if (++col % cols != 0)
                 ImGui::SameLine();
         }
-    } // end (_assetBrowserVectorSlot < 0)
+    } // end (filter != Materials)
 
     // Materials are listed in both modes, and are the only tiles left when the
     // browser was opened for a material slot.
@@ -596,8 +629,21 @@ void EditorApp::DrawAssetBrowser()
         ImGui::TextWrapped("%s", material.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
+
+        // A shortcut into the Material panel, not a second home for authoring:
+        // creating, duplicating and deleting all live there, so browsing for a
+        // mesh never puts a material-authoring action in front of the author.
+        if (ImGui::BeginPopupContextItem("##materialactions"))
+        {
+            if (ImGui::MenuItem("Edit in Material panel"))
+                OpenMaterialEditor(vpath);
+            ImGui::EndPopup();
+        }
         ImGui::PopID();
 
+        // A left click always assigns: the browser is only ever opened to fill a
+        // field. Editing a material is the right-click action above, so the two
+        // cannot be confused with each other.
         if (clicked)
             SelectAsset(vpath);
 

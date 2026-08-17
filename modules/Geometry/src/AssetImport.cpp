@@ -51,6 +51,22 @@ bool WriteWholeFile(const fs::path &path, std::string_view text)
     return stream.good();
 }
 
+/// @brief The authoring-root twin of an already-resolved asset path, or an empty
+///        path when no authoring root is configured.
+///
+/// Derived from the resolved path rather than by normalizing the virtual path
+/// again: Resolve has already rejected anything escaping the read root, so the
+/// twin cannot land outside the mirror either.
+fs::path AuthoringTwin(const fs::path &absolute)
+{
+    const fs::path &authoringRoot = Core::AssetSystem::GetAuthoringRoot();
+    if (authoringRoot.empty())
+    {
+        return {};
+    }
+    return authoringRoot / absolute.lexically_relative(Core::AssetSystem::GetRoot());
+}
+
 /// @brief The `.aast` path for a payload file ("model.gltf" -> "model.gltf.aast").
 fs::path SidecarPathOf(const fs::path &payload)
 {
@@ -222,6 +238,163 @@ Core::AssetId OverwriteMaterialFile(const fs::path &amatAbs, const MaterialData 
 }
 
 } // namespace
+
+std::string_view ToString(MaterialWriteError error) noexcept
+{
+    switch (error)
+    {
+    case MaterialWriteError::SerializeFailed:
+        return "material reflection is not registered";
+    case MaterialWriteError::PathUnresolvable:
+        return "path does not resolve under the asset root";
+    case MaterialWriteError::WriteFailed:
+        return "the file could not be written";
+    case MaterialWriteError::TargetExists:
+        return "a material of that name already exists";
+    }
+    return "unknown error";
+}
+
+std::expected<void, MaterialWriteError> SaveMaterial(std::string_view virtualPath, const MaterialData &material)
+{
+    const std::expected<std::string, MaterialFileError> text = SerializeMaterial(material);
+    if (!text)
+    {
+        Core::Log::Error("SaveMaterial: cannot serialize '{}' ({}).", virtualPath, ToString(text.error()));
+        return std::unexpected(MaterialWriteError::SerializeFailed);
+    }
+
+    // Resolve before writing: this is what rejects a traversal out of the tree.
+    // weakly_canonical does not require the file to exist, so a brand-new
+    // material resolves the same way an existing one does.
+    const std::expected<fs::path, Core::AssetError> absolute = Core::AssetSystem::Resolve(virtualPath);
+    if (!absolute)
+    {
+        return std::unexpected(MaterialWriteError::PathUnresolvable);
+    }
+
+    std::error_code ec;
+    fs::create_directories(absolute->parent_path(), ec);
+    if (!WriteWholeFile(*absolute, *text))
+    {
+        Core::Log::Warn("SaveMaterial: failed to write '{}'.", absolute->generic_string());
+        return std::unexpected(MaterialWriteError::WriteFailed);
+    }
+
+    // Mirror into the durable tree so the edit survives the next clean build.
+    // A failure here loses no work — the material is saved and usable this run —
+    // so it warns rather than failing the save.
+    if (const fs::path mirror = AuthoringTwin(*absolute); !mirror.empty())
+    {
+        fs::create_directories(mirror.parent_path(), ec);
+        if (!WriteWholeFile(mirror, *text))
+        {
+            Core::Log::Warn("SaveMaterial: saved '{}' but could not mirror it to the authoring root at '{}'.",
+                            virtualPath, mirror.generic_string());
+        }
+    }
+    return {};
+}
+
+std::expected<void, MaterialWriteError> RenameMaterial(std::string_view oldVirtualPath,
+                                                       std::string_view newVirtualPath)
+{
+    const std::expected<fs::path, Core::AssetError> from = Core::AssetSystem::Resolve(oldVirtualPath);
+    const std::expected<fs::path, Core::AssetError> to   = Core::AssetSystem::Resolve(newVirtualPath);
+    if (!from || !to)
+    {
+        return std::unexpected(MaterialWriteError::PathUnresolvable);
+    }
+
+    std::error_code ec;
+    if (fs::exists(*to, ec))
+    {
+        return std::unexpected(MaterialWriteError::TargetExists);
+    }
+
+    fs::create_directories(to->parent_path(), ec);
+    fs::rename(*from, *to, ec);
+    if (ec)
+    {
+        Core::Log::Warn("RenameMaterial: could not move '{}' to '{}'.", oldVirtualPath, newVirtualPath);
+        return std::unexpected(MaterialWriteError::WriteFailed);
+    }
+
+    // The sidecar carries the GUID. If it cannot follow, put the payload back
+    // rather than leave a material whose id is attached to a name that no longer
+    // exists — a half-rename is worse than none, because the next reconcile mints
+    // a *new* id and silently breaks every reference.
+    const fs::path fromSidecar = SidecarPathOf(*from);
+    if (fs::exists(fromSidecar, ec))
+    {
+        fs::rename(fromSidecar, SidecarPathOf(*to), ec);
+        if (ec)
+        {
+            std::error_code rollbackEc;
+            fs::rename(*to, *from, rollbackEc);
+            Core::Log::Warn("RenameMaterial: could not move the sidecar of '{}'; the rename was undone.",
+                            oldVirtualPath);
+            return std::unexpected(MaterialWriteError::WriteFailed);
+        }
+    }
+
+    // The durable tree, best-effort: failing here costs the rename on the next
+    // build, not this session's work, so it warns rather than rolling back.
+    const fs::path mirrorFrom = AuthoringTwin(*from);
+    const fs::path mirrorTo   = AuthoringTwin(*to);
+    if (!mirrorFrom.empty() && fs::exists(mirrorFrom, ec))
+    {
+        fs::create_directories(mirrorTo.parent_path(), ec);
+        fs::rename(mirrorFrom, mirrorTo, ec);
+        fs::rename(SidecarPathOf(mirrorFrom), SidecarPathOf(mirrorTo), ec);
+        if (ec)
+        {
+            Core::Log::Warn("RenameMaterial: renamed '{}' but could not move the authoring-root copy.",
+                            oldVirtualPath);
+        }
+    }
+    return {};
+}
+
+bool DeleteMaterialFile(std::string_view virtualPath)
+{
+    const std::expected<fs::path, Core::AssetError> absolute = Core::AssetSystem::Resolve(virtualPath);
+    if (!absolute)
+    {
+        return false;
+    }
+
+    std::error_code ec;
+    const bool removed = fs::remove(*absolute, ec);
+    fs::remove(SidecarPathOf(*absolute), ec);
+
+    // The durable copy too, or the next build stages the material back and the
+    // deletion silently undoes itself.
+    if (const fs::path mirror = AuthoringTwin(*absolute); !mirror.empty())
+    {
+        fs::remove(mirror, ec);
+        fs::remove(SidecarPathOf(mirror), ec);
+    }
+    return removed;
+}
+
+std::string UniqueMaterialPath(std::string_view dirVirtualPath, std::string_view stem)
+{
+    const std::string prefix = dirVirtualPath.empty() ? std::string{} : std::string{dirVirtualPath} + "/";
+    const std::string safe   = SanitizeName(stem);
+
+    std::string candidate = prefix + safe + ".amat";
+    // No iteration cap: the returned name must be free, because SaveMaterial
+    // overwrites what it is given — a capped search that gave up would hand New
+    // or Duplicate an existing material to destroy. Each pass tries a suffix no
+    // earlier pass did, and the search stops at the first free name, so it ends
+    // once the directory has any gap at all.
+    for (std::size_t suffix = 1; Core::AssetSystem::Exists(candidate); ++suffix)
+    {
+        candidate = prefix + safe + '_' + std::to_string(suffix) + ".amat";
+    }
+    return candidate;
+}
 
 std::expected<std::size_t, MeshImportError> ExplodeGltfMaterials(std::string_view gltfVirtualPath,
                                                                  const AssetIdResolver &resolveTextureId)

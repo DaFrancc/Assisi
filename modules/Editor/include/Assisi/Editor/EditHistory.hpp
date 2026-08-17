@@ -25,6 +25,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
@@ -93,8 +94,28 @@ struct InstanceDelta
     std::optional<Assisi::Runtime::BlueprintInstance> after;
 };
 
+/// @brief One reflected **asset** file's reversible change — a `.amat` edited in
+/// the Material panel.
+///
+/// The only edit kind that is not scene data: an asset belongs to no entity, so
+/// none of the deltas above can express it and replay cannot go through the
+/// scene. It travels as its reflected JSON on each side, and is applied through
+/// the hook the editor installs (see EditHistory::SetAssetApplyHook) — this
+/// class knows what an asset edit *is*, never what a material *means*.
+///
+/// Undo restores the live value, not the file. Material edits are live before
+/// they are saved, so reverting one leaves the panel dirty or clean exactly as
+/// the value warrants; writing the file back would turn an undo into a save.
+struct AssetDelta
+{
+    Assisi::Core::AssetPath path;   ///< The asset file this is about.
+    std::string typeName;           ///< AssetTypeMeta::name — which codec replays it.
+    nlohmann::json before;
+    nlohmann::json after;
+};
+
 /// @brief The tagged union of edit kinds.
-using EditCommand = std::variant<ComponentDelta, EntityDelta, InstanceDelta>;
+using EditCommand = std::variant<ComponentDelta, EntityDelta, InstanceDelta, AssetDelta>;
 
 /// @brief One user gesture (a gizmo drag, a slider drag, one add-component) —
 /// the atom of undo. Applying it toward `before` is undo; toward `after` is redo.
@@ -130,6 +151,22 @@ public:
     /// whether the component now exists.
     using RebindHook = std::function<void (Assisi::ECS::Entity entity,
                                            Assisi::Core::Reflect::ComponentId id, bool present)>;
+
+    /// @brief Called to put a replayed AssetDelta's state back into whatever
+    /// holds that asset live — the open editor panel, the renderer's cache.
+    ///
+    /// A hook for the same reason RebindHook is one: this class replays scene
+    /// data itself because it owns the scene, but it owns no asset and has no
+    /// business knowing what a `.amat` is. Arguments are the asset's reflected
+    /// type name, its path, and the state to adopt.
+    using AssetApplyHook =
+        std::function<void (std::string_view typeName, const Assisi::Core::AssetPath &path,
+                            const nlohmann::json &state)>;
+
+    /// @brief Install the asset replay hook. Without one, an AssetDelta replays
+    /// as a no-op rather than an error: a history holding asset edits is still a
+    /// valid history, it simply has nowhere to put them (a test with no panel).
+    void SetAssetApplyHook(AssetApplyHook hook) { _assetApply = std::move(hook); }
 
     /// @param scene     The scene edits apply to. Must outlive this history.
     /// @param rebind    Transient-rebuild dispatch (may be empty — then a no-op).
@@ -358,6 +395,7 @@ private:
     Assisi::ECS::Scene &_scene;
     Assisi::Runtime::InstanceTable *_instances = nullptr;
     RebindHook _rebind;
+    AssetApplyHook _assetApply;
     std::vector<Transaction> _undo;
     std::vector<Transaction> _redo;
     std::vector<OpenGesture> _open; ///< Capture gestures awaiting commit.

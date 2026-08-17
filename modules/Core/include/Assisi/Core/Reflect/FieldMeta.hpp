@@ -49,6 +49,13 @@ enum class FieldType : std::uint8_t
     /// String would truncate it. Appended rather than inserted, so no existing
     /// value shifts.
     EntityName,
+    /// Math::Color3 / Math::Color4 — linear RGB(A). Identical to Vec3/Vec4 in
+    /// memory and in every codec; separate types so an editor offers a colour
+    /// picker for a colour and drag boxes for a direction, without a per-field
+    /// hint that could be attached to the wrong vector. Appended rather than
+    /// inserted, so no existing value shifts.
+    Color3,
+    Color4,
     Unknown,
 };
 

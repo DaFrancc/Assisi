@@ -15,6 +15,7 @@
 ///     Transform (see LightingSystem::WorldSpotDirection).
 
 #include <Assisi/Prelude.hpp>
+#include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::Runtime
@@ -46,7 +47,7 @@ struct DirectionalLight
 ACOMP()
 struct PointLight
 {
-    AFIELD() glm::vec3 color{1.f, 1.f, 1.f}; ///< Linear-RGB colour.
+    AFIELD() Assisi::Math::Color3 color{1.f, 1.f, 1.f};
     AFIELD() float intensity = 1.f;           ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius = 10.f;      ///< Maximum influence range in world units; never negative.
 };

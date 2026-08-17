@@ -14,6 +14,7 @@
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
+#include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::Geometry
@@ -49,22 +50,28 @@ AASSET()
 struct MaterialData
 {
     // --- Factors (glTF pbrMetallicRoughness + friends) ---
-    AFIELD() glm::vec4 BaseColorFactor{1.f, 1.f, 1.f, 1.f};
-    AFIELD() float MetallicFactor = 1.f;
-    AFIELD() float RoughnessFactor = 1.f;
-    AFIELD() float NormalScale = 1.f;
-    AFIELD() float OcclusionStrength = 1.f;
-    AFIELD() glm::vec3 EmissiveFactor{0.f, 0.f, 0.f};
+    // The min/max are editor clamps, not load-time validation: an importer may
+    // still deliver an out-of-range value, and the renderer's math is what has
+    // to survive that. They exist so an author cannot *create* one by dragging.
+    AFIELD() Assisi::Math::Color4 BaseColorFactor{1.f, 1.f, 1.f, 1.f};
+    AFIELD(min = 0, max = 1) float MetallicFactor = 1.f;
+    AFIELD(min = 0, max = 1) float RoughnessFactor = 1.f;
+    AFIELD(min = 0) float NormalScale = 1.f;
+    AFIELD(min = 0, max = 1) float OcclusionStrength = 1.f;
+    AFIELD() Assisi::Math::Color3 EmissiveFactor{0.f, 0.f, 0.f};
 
     // --- Factors (OpenPBR base layer) ---
     // Defaults reproduce the pre-OpenPBR shading exactly: weights 1,
     // specular_ior 1.5 -> F0 0.04, diffuse roughness 0 = Lambert. A material
     // that never sets them renders unchanged.
-    AFIELD() float BaseWeight = 1.f;                  ///< OpenPBR base_weight.
-    AFIELD() float SpecularWeight = 1.f;              ///< OpenPBR specular_weight.
-    AFIELD() glm::vec3 SpecularColor{1.f, 1.f, 1.f};  ///< OpenPBR specular_color; the F82 edge tint on metals.
-    AFIELD() float SpecularIor = 1.5f;                ///< OpenPBR specular_ior.
-    AFIELD() float BaseDiffuseRoughness = 0.f;        ///< OpenPBR base_diffuse_roughness; > 0 enables EON diffuse.
+    AFIELD(min = 0, max = 1) float BaseWeight = 1.f;                  ///< OpenPBR base_weight.
+    AFIELD(min = 0, max = 1) float SpecularWeight = 1.f;              ///< OpenPBR specular_weight.
+    AFIELD() Assisi::Math::Color3 SpecularColor{1.f, 1.f, 1.f};       ///< OpenPBR specular_color; the F82 edge tint on metals.
+    /// OpenPBR specular_ior. Bounded to the spec's [1, 3]: below 1 inverts the
+    /// Fresnel the F0 derivation assumes, and no dielectric this model covers
+    /// reaches 3.
+    AFIELD(min = 1, max = 3) float SpecularIor = 1.5f;
+    AFIELD(min = 0, max = 1) float BaseDiffuseRoughness = 0.f;        ///< OpenPBR base_diffuse_roughness; > 0 enables EON diffuse.
 
     // --- Texture channels (GUID references; nil = factor-only) ---
     AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.
