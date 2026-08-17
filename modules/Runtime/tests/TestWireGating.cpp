@@ -62,14 +62,15 @@ TEST_CASE("MeshRenderer puts its durable ids on the wire and its resolved pointe
     const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(typeid(Assisi::Runtime::MeshRenderer));
     REQUIRE(meta != nullptr);
 
-    // mesh + materialOverrides travel; meshBuffer + materials are transient
-    // process-local pointers, and a resolved pointer is meaningless in another
-    // process even when the id behind it is not.
-    CHECK(Assisi::Core::Reflect::CountCodecFields(*meta) == 2);
+    // mesh + materialOverrides + castsShadows travel; meshBuffer + materials are
+    // transient process-local pointers, and a resolved pointer is meaningless in
+    // another process even when the id behind it is not.
+    CHECK(Assisi::Core::Reflect::CountCodecFields(*meta) == 3);
     for (const Assisi::Core::Reflect::FieldMeta &field : meta->fields)
     {
         CAPTURE(field.name);
-        const bool durable = field.name == "mesh" || field.name == "materialOverrides";
+        const bool durable =
+            field.name == "mesh" || field.name == "materialOverrides" || field.name == "castsShadows";
         CHECK(Assisi::Core::Reflect::IsWireField(field) == durable);
     }
 }

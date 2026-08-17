@@ -188,6 +188,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
                 items.push_back(Assisi::Render::DrawItem{.sortKey      = sortKey,
                                                          .mesh         = mesh,
                                                          .submeshIndex = submeshIndex,
+                                                         .castsShadows = meshRenderer.castsShadows,
                                                          .material     = material,
                                                          .model        = transform.worldMatrix});
             }

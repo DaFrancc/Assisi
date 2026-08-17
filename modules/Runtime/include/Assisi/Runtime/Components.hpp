@@ -60,6 +60,15 @@ struct MeshRenderer
     AFIELD() Assisi::Core::AssetId mesh;
     AFIELD() std::vector<Assisi::Core::AssetId> materialOverrides;
 
+    /// Whether this mesh is drawn into shadow maps. Defaults ON: a piece of
+    /// geometry that lights the room through itself is a bug the author opts
+    /// into, not out of. Turning it off is the cheap fix for a caster whose
+    /// shadow nobody sees — small props, interior detail, backfaces.
+    ///
+    /// Replicated with the mesh reference for the same reason: a spawned mirror
+    /// that casts when the original does not is a visible desync.
+    AFIELD() bool castsShadows = true;
+
     AFIELD(transient) const Assisi::Render::MeshBuffer *meshBuffer = nullptr;
     AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
 };

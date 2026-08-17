@@ -17,12 +17,25 @@
 #include <Assisi/Render/ClusterGrid.hpp>
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
 
 namespace Assisi::Runtime
 {
+
+/// @brief One light's `castsShadows`, as the gathered light arrays carry it.
+///
+/// A named enum rather than a bare byte so a reader of `std::span<const
+/// ShadowCaster>` cannot mistake it for a count, an index, or a bitmask — and
+/// `uint8_t` rather than `bool` because std::vector<bool> is a bitset whose
+/// elements have no address, so no span can point at one.
+enum class ShadowCaster : uint8_t
+{
+    No  = 0,
+    Yes = 1,
+};
 
 class LightingSystem
 {
@@ -60,6 +73,28 @@ public:
     /// @brief Number of directional lights found in the last Update() call.
     uint32_t DirLightCount() const { return _dirLightCount; }
 
+    /// @name Shadow-casting flags from the last Update()
+    ///
+    /// One entry per light, in the same order as the buffers uploaded to the GPU
+    /// — element `i` is the light the shaders see at index `i` of its type. That
+    /// parallelism is the point: a shadow pass picks which lights get a map and
+    /// hands the shader a slot per light index, so both halves must agree on what
+    /// index `i` means without re-querying the scene and re-deriving the order.
+    ///
+    /// Kept beside the GPU structs rather than inside them because no shader reads
+    /// this yet; widening the std430 layout is the shadow pass's change to make.
+    ///
+    /// Valid until the next Update().
+    /// @{
+    [[nodiscard]] std::span<const ShadowCaster> PointLightShadowFlags() const { return _pointShadowFlags; }
+    [[nodiscard]] std::span<const ShadowCaster> SpotLightShadowFlags() const { return _spotShadowFlags; }
+    /// Truncated to DirLightCount(), matching the directional buffer the shader reads.
+    [[nodiscard]] std::span<const ShadowCaster> DirLightShadowFlags() const
+    {
+        return std::span<const ShadowCaster>(_dirShadowFlags).first(_dirLightCount);
+    }
+    /// @}
+
     const Assisi::Render::ClusterGrid &Grid() const { return _grid; }
 
 private:
@@ -72,6 +107,11 @@ private:
     std::vector<Assisi::Render::PointLightGPU> _pointLights;
     std::vector<Assisi::Render::SpotLightGPU>  _spotLights;
     std::vector<Assisi::Render::DirLightGPU>   _dirLights;
+
+    // Index-parallel to the three above; same reuse, same lifetime.
+    std::vector<ShadowCaster> _pointShadowFlags;
+    std::vector<ShadowCaster> _spotShadowFlags;
+    std::vector<ShadowCaster> _dirShadowFlags;
 };
 
 } // namespace Assisi::Runtime
