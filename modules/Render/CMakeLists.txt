@@ -76,3 +76,7 @@ if (ASSISI_ENABLE_GPU_MARKERS)
 endif()
 
 add_library(Assisi::Render ALIAS Assisi-Render)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

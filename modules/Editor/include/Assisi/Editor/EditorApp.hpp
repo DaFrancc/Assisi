@@ -194,6 +194,11 @@ public:
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
     void OnRender(Assisi::Render::RenderFrame &frame) override;
+    void OnRenderOverlays(Assisi::Render::RenderFrame &frame) override;
+    /// The editor's chrome is exactly what the overlay seam is for. It rides on
+    /// the same switch as the overlay passes themselves, so a viewer build with
+    /// them off pays for neither.
+    [[nodiscard]] bool UsesOverlayStage() const override { return _editorConfig.enableEditorVisuals; }
     void OnImGui() override;
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;

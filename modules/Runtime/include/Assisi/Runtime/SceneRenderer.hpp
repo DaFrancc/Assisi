@@ -65,6 +65,10 @@ public:
         /// Format/sample-count the mesh pipeline targets
         /// (e.g. Application::GetSceneFramebufferInfo()).
         nvrhi::FramebufferInfo framebufferInfo;
+        /// Format/sample-count the overlay pipelines target
+        /// (e.g. Application::GetOverlayFramebufferInfo()). Display-encoded, so
+        /// it differs from framebufferInfo. Only read when enableEditorVisuals.
+        nvrhi::FramebufferInfo overlayFramebufferInfo;
         /// Viewport size in pixels, for the initial cluster grid.
         int32_t width  = 0;
         int32_t height = 0;
@@ -98,7 +102,8 @@ public:
     /// @brief Rebuild just the graphics pipeline after the render-target format
     /// changes (e.g. an MSAA toggle); binding sets and shaders are reused.
     /// @return false if the pipeline failed to rebuild. No-op (true) before Initialize().
-    [[nodiscard]] bool OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo);
+    [[nodiscard]] bool OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo,
+                                              const nvrhi::FramebufferInfo &overlayFramebufferInfo);
 
     /// @brief Draw `scene` from the given camera into `frame`. Propagates the
     /// scene's transforms, refreshes lighting, rebuilds the froxel grid if the
@@ -122,6 +127,17 @@ public:
     /// keeps the renderer's own for the single-scene case.
     void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
                 const Camera &camera, uint64_t &propagationTick);
+
+    /// @brief Draw the editor overlays — selection outline, entity icons, collider
+    /// wireframes — for the scene Render() just drew.
+    ///
+    /// Separate from Render() because these are display-referred: their colours
+    /// are already what they should look like on screen, so they belong after the
+    /// tone map rather than in the HDR scene target it reads. `frame` must name a
+    /// display-encoded target carrying the depth the scene wrote (see
+    /// Application::OnRenderOverlays). No-op without editor visuals.
+    void RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+                        const Camera &camera);
 
     [[nodiscard]] bool IsValid() const { return _meshPass.IsValid(); }
 

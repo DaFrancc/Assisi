@@ -4,20 +4,55 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 
 namespace Assisi::Render
 {
+namespace
+{
+// Push constants for the tone map. `passthrough` non-zero makes it a copy — see
+// PostProcess::SetTonemapPassthrough, and the Blit step, which is the same
+// shader wired to always copy.
+struct TonemapConstants
+{
+    uint32_t passthrough = 0;
+};
+
+const char *SurfaceName(ChainSurface surface)
+{
+    switch (surface)
+    {
+    case ChainSurface::SceneMultisample:   return "SceneMultisample";
+    case ChainSurface::SceneHdr:           return "SceneHdr";
+    case ChainSurface::OverlayMultisample: return "OverlayMultisample";
+    case ChainSurface::Ldr:                return "Ldr";
+    case ChainSurface::Swapchain:          break;
+    }
+    return "Swapchain";
+}
+} // namespace
 
 void PostProcess::Shutdown()
 {
     // Drop every NVRHI handle so the underlying GPU objects are freed now, while
     // the device is still alive. Order-independent — they're ref-counted.
-    _fxaaBindingSet = nullptr;
-    _fxaaPipeline = nullptr;
-    _fxaaSampler = nullptr;
+    for (StepResources &step : _stepResources)
+    {
+        step.bindingSet = nullptr;
+        step.pipeline = nullptr;
+    }
     _fxaaBindingLayout = nullptr;
+    _tonemapBindingLayout = nullptr;
+    _sampler = nullptr;
+    _fxaaShader = nullptr;
+    _tonemapShader = nullptr;
+    _fullscreenVertexShader = nullptr;
+    _ldrFramebuffer = nullptr;
+    _ldrColor = nullptr;
+    _overlayMsaaFramebuffer = nullptr;
+    _overlayMsaaColor = nullptr;
     _sceneFramebuffer = nullptr;
     _sceneDepth = nullptr;
     _sceneColor = nullptr;
@@ -27,63 +62,49 @@ void PostProcess::Shutdown()
     _device = nullptr;
 }
 
-bool PostProcess::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &swapchainFramebufferInfo,
-                             const std::string &vertexShaderSpvPath, const std::string &fragmentShaderSpvPath)
+bool PostProcess::Initialize(const InitParams &params)
 {
-    _device = device;
-    _swapchainInfo = swapchainFramebufferInfo;
+    _device = params.device;
+    _swapchainInfo = params.swapchainFramebufferInfo;
 
-    const nvrhi::ShaderHandle vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
-    const nvrhi::ShaderHandle fragmentShader =
-        LoadSpirvShader(device, fragmentShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!vertexShader || !fragmentShader)
+    _fullscreenVertexShader = LoadSpirvShader(_device, params.vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _tonemapShader = LoadSpirvShader(_device, params.tonemapShaderSpvPath, nvrhi::ShaderType::Pixel);
+    _fxaaShader = LoadSpirvShader(_device, params.fxaaShaderSpvPath, nvrhi::ShaderType::Pixel);
+    if (!_fullscreenVertexShader || !_tonemapShader || !_fxaaShader)
     {
         return false;
     }
 
-    // Only the fragment shader has bindings (a fullscreen triangle needs no
-    // vertex buffer or per-vertex bindings) — see fullscreen.vert/fxaa.frag.
-    nvrhi::BindingLayoutDesc bindingLayoutDesc;
-    bindingLayoutDesc.visibility = nvrhi::ShaderType::Pixel;
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::vec2)));
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
-    _fxaaBindingLayout = device->createBindingLayout(bindingLayoutDesc);
+    // Only the fragment shaders have bindings (a fullscreen triangle needs no
+    // vertex buffer or per-vertex bindings) — see fullscreen.vert. The two
+    // layouts differ only in push-constant size, which the shaders disagree on.
+    const auto makeLayout = [this](size_t pushConstantSize) {
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Pixel;
+        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, pushConstantSize));
+        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+        desc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+        return _device->createBindingLayout(desc);
+    };
+    _tonemapBindingLayout = makeLayout(sizeof(TonemapConstants));
+    _fxaaBindingLayout = makeLayout(sizeof(glm::vec2));
 
     nvrhi::SamplerDesc samplerDesc;
     samplerDesc.setAllFilters(true);
     samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
-    _fxaaSampler = device->createSampler(samplerDesc);
+    _sampler = _device->createSampler(samplerDesc);
 
-    nvrhi::GraphicsPipelineDesc pipelineDesc;
-    pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
-    pipelineDesc.VS = vertexShader;
-    pipelineDesc.PS = fragmentShader;
-    pipelineDesc.addBindingLayout(_fxaaBindingLayout);
-    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
-    pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
-    pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
-
-    // FXAA always draws its final output into the real swapchain framebuffer
-    // (see Resolve()), regardless of what fed it — so its pipeline is built
-    // against the swapchain's FramebufferInfo, not whatever offscreen target
-    // produced its input.
-    _fxaaPipeline = device->createGraphicsPipeline(pipelineDesc, _swapchainInfo);
-    if (_fxaaPipeline == nullptr)
-    {
-        Core::Log::Error("PostProcess: failed to create the FXAA graphics pipeline.");
-        return false;
-    }
     return true;
 }
 
-void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32_t msaaSamples)
+void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32_t msaaSamples, ChainOptions options)
 {
     if (width == 0 || height == 0)
     {
         return; // minimized — keep whatever targets already exist
     }
-    if (_width == width && _height == height && _mode == mode && _msaaSamples == msaaSamples)
+    if (_width == width && _height == height && _mode == mode && _msaaSamples == msaaSamples &&
+        _options.overlays == options.overlays)
     {
         return; // nothing that affects offscreen targets has changed
     }
@@ -92,180 +113,311 @@ void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32
     _height = height;
     _mode = mode;
     _msaaSamples = msaaSamples;
+    _options = options;
+    _plan = PlanChain(mode, options);
     Rebuild();
 }
 
 void PostProcess::Rebuild()
 {
+    for (StepResources &step : _stepResources)
+    {
+        step.bindingSet = nullptr;
+        step.pipeline = nullptr;
+    }
     _msaaColor = nullptr;
     _msaaDepth = nullptr;
     _msaaFramebuffer = nullptr;
     _sceneColor = nullptr;
     _sceneDepth = nullptr;
     _sceneFramebuffer = nullptr;
-    _fxaaBindingSet = nullptr;
+    _overlayMsaaColor = nullptr;
+    _overlayMsaaFramebuffer = nullptr;
+    _ldrColor = nullptr;
+    _ldrFramebuffer = nullptr;
 
-    const bool needsMsaa = (_mode == AaMode::MSAA || _mode == AaMode::MSAA_FXAA);
-    const bool needsScene = (_mode == AaMode::FXAA || _mode == AaMode::MSAA_FXAA);
-
-    const nvrhi::Format colorFormat =
+    const nvrhi::Format ldrFormat =
         _swapchainInfo.colorFormats.empty() ? nvrhi::Format::UNKNOWN : _swapchainInfo.colorFormats[0];
     const nvrhi::Format depthFormat = _swapchainInfo.depthFormat;
 
-    if (needsMsaa)
+    // Which surfaces this chain actually touches. Allocating from the plan is
+    // what keeps an app that asked for no overlays from paying for the seam.
+    const auto uses = [this](ChainSurface surface) {
+        if (_plan.sceneTarget == surface)
+        {
+            return true;
+        }
+        for (uint32_t i = 0; i < _plan.stepCount; ++i)
+        {
+            if (_plan.steps[i].source == surface || _plan.steps[i].destination == surface)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const auto makeColor = [this](nvrhi::Format format, uint32_t sampleCount, bool shaderResource,
+                                  const char *debugName) {
+        nvrhi::TextureDesc desc;
+        desc.width = _width;
+        desc.height = _height;
+        desc.format = format;
+        desc.sampleCount = sampleCount;
+        desc.isRenderTarget = true;
+        desc.isShaderResource = shaderResource;
+        desc.debugName = debugName;
+        desc.initialState = nvrhi::ResourceStates::RenderTarget;
+        desc.keepInitialState = true;
+        return _device->createTexture(desc);
+    };
+
+    const auto makeDepth = [this, depthFormat](uint32_t sampleCount, const char *debugName) {
+        nvrhi::TextureDesc desc;
+        desc.width = _width;
+        desc.height = _height;
+        desc.format = depthFormat;
+        desc.sampleCount = sampleCount;
+        desc.isRenderTarget = true;
+        desc.debugName = debugName;
+        desc.initialState = nvrhi::ResourceStates::DepthWrite;
+        desc.keepInitialState = true;
+        return _device->createTexture(desc);
+    };
+
+    const auto makeFramebuffer = [this](nvrhi::ITexture *color, nvrhi::ITexture *depth) {
+        nvrhi::FramebufferDesc desc;
+        desc.addColorAttachment(color);
+        if (depth != nullptr)
+        {
+            desc.setDepthAttachment(depth);
+        }
+        return _device->createFramebuffer(desc);
+    };
+
+    if (uses(ChainSurface::SceneMultisample))
     {
-        nvrhi::TextureDesc colorDesc;
-        colorDesc.width = _width;
-        colorDesc.height = _height;
-        colorDesc.format = colorFormat;
-        colorDesc.sampleCount = _msaaSamples;
-        colorDesc.isRenderTarget = true;
-        colorDesc.debugName = "PostProcess::MSAAColor";
-        colorDesc.initialState = nvrhi::ResourceStates::RenderTarget;
-        colorDesc.keepInitialState = true;
-        _msaaColor = _device->createTexture(colorDesc);
-
-        nvrhi::TextureDesc depthDesc;
-        depthDesc.width = _width;
-        depthDesc.height = _height;
-        depthDesc.format = depthFormat;
-        depthDesc.sampleCount = _msaaSamples;
-        depthDesc.isRenderTarget = true;
-        depthDesc.debugName = "PostProcess::MSAADepth";
-        depthDesc.initialState = nvrhi::ResourceStates::DepthWrite;
-        depthDesc.keepInitialState = true;
-        _msaaDepth = _device->createTexture(depthDesc);
-
-        nvrhi::FramebufferDesc fbDesc;
-        fbDesc.addColorAttachment(_msaaColor);
-        fbDesc.setDepthAttachment(_msaaDepth);
-        _msaaFramebuffer = _device->createFramebuffer(fbDesc);
+        _msaaColor = makeColor(kSceneColorFormat, _msaaSamples, /*shaderResource=*/false, "PostProcess::MSAAColor");
+        _msaaDepth = makeDepth(_msaaSamples, "PostProcess::MSAADepth");
+        _msaaFramebuffer = makeFramebuffer(_msaaColor, _msaaDepth);
     }
 
-    if (needsScene)
+    // Always present: the tone map reads it in every configuration. It only needs
+    // its own depth when the scene draws into it, which is when MSAA is off.
+    const bool sceneDrawsHere = (_plan.sceneTarget == ChainSurface::SceneHdr);
+    _sceneColor = makeColor(kSceneColorFormat, 1, /*shaderResource=*/true, "PostProcess::SceneColor");
+    if (sceneDrawsHere)
     {
-        nvrhi::TextureDesc colorDesc;
-        colorDesc.width = _width;
-        colorDesc.height = _height;
-        colorDesc.format = colorFormat;
-        colorDesc.isRenderTarget = true;
-        colorDesc.isShaderResource = true;
-        colorDesc.debugName = "PostProcess::SceneColor";
-        colorDesc.initialState = nvrhi::ResourceStates::RenderTarget;
-        colorDesc.keepInitialState = true;
-        _sceneColor = _device->createTexture(colorDesc);
+        _sceneDepth = makeDepth(1, "PostProcess::SceneDepth");
+    }
+    _sceneFramebuffer = makeFramebuffer(_sceneColor, _sceneDepth);
 
-        nvrhi::TextureDesc depthDesc;
-        depthDesc.width = _width;
-        depthDesc.height = _height;
-        depthDesc.format = depthFormat;
-        depthDesc.isRenderTarget = true;
-        depthDesc.debugName = "PostProcess::SceneDepth";
-        depthDesc.initialState = nvrhi::ResourceStates::DepthWrite;
-        depthDesc.keepInitialState = true;
-        _sceneDepth = _device->createTexture(depthDesc);
+    if (uses(ChainSurface::OverlayMultisample))
+    {
+        // Shares the scene's depth buffer rather than owning one: overlays must
+        // test against what the scene wrote, and a depth buffer cannot be copied
+        // between sample counts.
+        _overlayMsaaColor =
+            makeColor(ldrFormat, _msaaSamples, /*shaderResource=*/false, "PostProcess::OverlayMSAAColor");
+        _overlayMsaaFramebuffer = makeFramebuffer(_overlayMsaaColor, _msaaDepth);
+    }
 
-        nvrhi::FramebufferDesc fbDesc;
-        fbDesc.addColorAttachment(_sceneColor);
-        fbDesc.setDepthAttachment(_sceneDepth);
-        _sceneFramebuffer = _device->createFramebuffer(fbDesc);
+    if (uses(ChainSurface::Ldr))
+    {
+        _ldrColor = makeColor(ldrFormat, 1, /*shaderResource=*/true, "PostProcess::LdrColor");
+        // Depth only where overlays draw straight into it (no MSAA), for the same
+        // reason the multisample overlay target has one.
+        const bool overlaysDrawHere = _plan.OverlaySurface() == ChainSurface::Ldr;
+        _ldrFramebuffer = makeFramebuffer(_ldrColor, overlaysDrawHere ? _sceneDepth.Get() : nullptr);
+    }
+
+    // One pipeline and binding set per fullscreen step: each is built against the
+    // framebuffer it draws into and bound to the texture it reads.
+    for (uint32_t i = 0; i < _plan.stepCount; ++i)
+    {
+        const ChainStep &step = _plan.steps[i];
+        if (step.stage == ChainStage::Resolve || step.stage == ChainStage::Overlays)
+        {
+            continue; // no pipeline of ours
+        }
+
+        const bool isFxaa = (step.stage == ChainStage::Fxaa);
+        nvrhi::IBindingLayout *layout = isFxaa ? _fxaaBindingLayout.Get() : _tonemapBindingLayout.Get();
+
+        nvrhi::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+        pipelineDesc.VS = _fullscreenVertexShader;
+        pipelineDesc.PS = isFxaa ? _fxaaShader : _tonemapShader;
+        pipelineDesc.addBindingLayout(layout);
+        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+        // The overlay target carries the scene's depth buffer, which these passes
+        // must leave exactly as the scene wrote it — the overlays still need it.
+        pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
+        pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+
+        _stepResources[i].pipeline = _device->createGraphicsPipeline(pipelineDesc, InfoFor(step.destination));
+        if (_stepResources[i].pipeline == nullptr)
+        {
+            Core::Log::Error("PostProcess: failed to create the pipeline for the pass writing {}.",
+                             SurfaceName(step.destination));
+            continue;
+        }
 
         nvrhi::BindingSetDesc bindingSetDesc;
-        bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::vec2)));
-        bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, _sceneColor));
-        bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _fxaaSampler));
-        _fxaaBindingSet = _device->createBindingSet(bindingSetDesc, _fxaaBindingLayout);
+        bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(
+            0, isFxaa ? sizeof(glm::vec2) : sizeof(TonemapConstants)));
+        bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, TextureFor(step.source, nullptr)));
+        bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
+        _stepResources[i].bindingSet = _device->createBindingSet(bindingSetDesc, layout);
     }
+}
+
+nvrhi::FramebufferInfo PostProcess::InfoFor(ChainSurface surface) const
+{
+    if (surface == ChainSurface::Swapchain)
+    {
+        return _swapchainInfo;
+    }
+
+    nvrhi::FramebufferInfo info = _swapchainInfo;
+    if (IsHdrSurface(surface))
+    {
+        info.colorFormats.resize(1);
+        info.colorFormats[0] = kSceneColorFormat;
+    }
+    info.sampleCount = IsMultisampleSurface(surface) ? _msaaSamples : 1;
+    // Only the targets the scene or the overlays draw into carry depth; the tone
+    // map's own output does not when nothing after it depth-tests.
+    const bool hasDepth = (surface == _plan.sceneTarget) || (surface == _plan.OverlaySurface());
+    info.depthFormat = hasDepth ? _swapchainInfo.depthFormat : nvrhi::Format::UNKNOWN;
+    return info;
 }
 
 nvrhi::IFramebuffer *PostProcess::SceneFramebuffer() const
 {
-    switch (_mode)
-    {
-    case AaMode::MSAA:      return _msaaFramebuffer;
-    case AaMode::FXAA:      return _sceneFramebuffer;
-    case AaMode::MSAA_FXAA: return _msaaFramebuffer;
-    case AaMode::None:      default: return nullptr;
-    }
+    return FramebufferFor(_plan.sceneTarget, nullptr);
 }
 
 nvrhi::ITexture *PostProcess::SceneColorTexture() const
 {
-    switch (_mode)
-    {
-    case AaMode::MSAA:      return _msaaColor;
-    case AaMode::FXAA:      return _sceneColor;
-    case AaMode::MSAA_FXAA: return _msaaColor;
-    case AaMode::None:      default: return nullptr;
-    }
+    return _plan.sceneTarget == ChainSurface::SceneMultisample ? _msaaColor.Get() : _sceneColor.Get();
 }
 
 nvrhi::ITexture *PostProcess::SceneDepthTexture() const
 {
-    switch (_mode)
-    {
-    case AaMode::MSAA:      return _msaaDepth;
-    case AaMode::FXAA:      return _sceneDepth;
-    case AaMode::MSAA_FXAA: return _msaaDepth;
-    case AaMode::None:      default: return nullptr;
-    }
+    return _plan.sceneTarget == ChainSurface::SceneMultisample ? _msaaDepth.Get() : _sceneDepth.Get();
 }
 
 nvrhi::FramebufferInfo PostProcess::SceneFramebufferInfo() const
 {
-    if (_mode == AaMode::MSAA || _mode == AaMode::MSAA_FXAA)
-    {
-        nvrhi::FramebufferInfo info = _swapchainInfo;
-        info.sampleCount = _msaaSamples;
-        return info;
-    }
-    // None and FXAA both render at sampleCount=1 with the swapchain's own
-    // color/depth formats — FXAA's offscreen target is deliberately built to
-    // exactly match the swapchain's FramebufferInfo, so scene pipelines never
-    // need to be rebuilt for it.
-    return _swapchainInfo;
+    return InfoFor(_plan.sceneTarget);
 }
 
-void PostProcess::Resolve(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
+nvrhi::IFramebuffer *PostProcess::OverlayFramebuffer() const
 {
-    switch (_mode)
+    if (!_plan.Has(ChainStage::Overlays))
     {
-    case AaMode::None:
-        return; // scene already rendered directly into the swapchain
-    case AaMode::MSAA:
-        commandList->resolveTexture(frame.colorTexture, nvrhi::AllSubresources, _msaaColor, nvrhi::AllSubresources);
-        return;
-    case AaMode::FXAA:
-        RunFxaa(commandList, frame);
-        return;
-    case AaMode::MSAA_FXAA:
-        commandList->resolveTexture(_sceneColor, nvrhi::AllSubresources, _msaaColor, nvrhi::AllSubresources);
-        RunFxaa(commandList, frame);
-        return;
+        return nullptr;
     }
+    return _plan.OverlaySurface() == ChainSurface::OverlayMultisample ? _overlayMsaaFramebuffer.Get()
+                                                                      : _ldrFramebuffer.Get();
 }
 
-void PostProcess::RunFxaa(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
+nvrhi::FramebufferInfo PostProcess::OverlayFramebufferInfo() const
 {
-    if (!_fxaaPipeline || !_fxaaBindingSet)
+    return InfoFor(_plan.OverlaySurface());
+}
+
+// `frame` may be null when the caller is asking about an offscreen surface —
+// the swapchain is the one surface this class does not own.
+nvrhi::IFramebuffer *PostProcess::FramebufferFor(ChainSurface surface, const RenderFrame *frame) const
+{
+    switch (surface)
     {
-        return;
+    case ChainSurface::SceneMultisample:   return _msaaFramebuffer;
+    case ChainSurface::SceneHdr:           return _sceneFramebuffer;
+    case ChainSurface::OverlayMultisample: return _overlayMsaaFramebuffer;
+    case ChainSurface::Ldr:                return _ldrFramebuffer;
+    case ChainSurface::Swapchain:          break;
     }
+    return frame != nullptr ? frame->framebuffer : nullptr;
+}
 
-    nvrhi::GraphicsState state;
-    state.pipeline = _fxaaPipeline;
-    state.framebuffer = frame.framebuffer;
-    state.addBindingSet(_fxaaBindingSet);
-    state.viewport.addViewportAndScissorRect(
-        nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
-    commandList->setGraphicsState(state);
+nvrhi::ITexture *PostProcess::TextureFor(ChainSurface surface, const RenderFrame *frame) const
+{
+    switch (surface)
+    {
+    case ChainSurface::SceneMultisample:   return _msaaColor;
+    case ChainSurface::SceneHdr:           return _sceneColor;
+    case ChainSurface::OverlayMultisample: return _overlayMsaaColor;
+    case ChainSurface::Ldr:                return _ldrColor;
+    case ChainSurface::Swapchain:          break;
+    }
+    return frame != nullptr ? frame->colorTexture : nullptr;
+}
 
-    const glm::vec2 texelSize(1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height));
-    commandList->setPushConstants(&texelSize, sizeof(texelSize));
+void PostProcess::RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
+{
+    RunSteps(commandList, frame, 0, _plan.IndexOf(ChainStage::Overlays));
+}
 
-    nvrhi::DrawArguments drawArgs;
-    drawArgs.vertexCount = 3;
-    commandList->draw(drawArgs);
+void PostProcess::RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
+{
+    const uint32_t overlays = _plan.IndexOf(ChainStage::Overlays);
+    // IndexOf returns stepCount when there is no overlay seam, which makes this
+    // an empty range — RunBeforeOverlays already ran the whole chain.
+    RunSteps(commandList, frame, overlays < _plan.stepCount ? overlays + 1 : _plan.stepCount, _plan.stepCount);
+}
+
+void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first,
+                           uint32_t last) const
+{
+    for (uint32_t i = first; i < last; ++i)
+    {
+        const ChainStep &step = _plan.steps[i];
+        if (step.stage == ChainStage::Overlays)
+        {
+            continue; // the app's, not ours
+        }
+        if (step.stage == ChainStage::Resolve)
+        {
+            commandList->resolveTexture(TextureFor(step.destination, &frame), nvrhi::AllSubresources,
+                                        TextureFor(step.source, &frame), nvrhi::AllSubresources);
+            continue;
+        }
+
+        const StepResources &resources = _stepResources[i];
+        if (!resources.pipeline || !resources.bindingSet)
+        {
+            continue;
+        }
+
+        nvrhi::GraphicsState state;
+        state.pipeline = resources.pipeline;
+        state.framebuffer = FramebufferFor(step.destination, &frame);
+        state.addBindingSet(resources.bindingSet);
+        state.viewport.addViewportAndScissorRect(
+            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+        commandList->setGraphicsState(state);
+
+        if (step.stage == ChainStage::Fxaa)
+        {
+            const glm::vec2 texelSize(1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height));
+            commandList->setPushConstants(&texelSize, sizeof(texelSize));
+        }
+        else
+        {
+            // A Blit is the tone map shader told to copy: by the time it runs, the
+            // image it is moving has already been mapped.
+            const TonemapConstants constants{
+                .passthrough = (step.stage == ChainStage::Blit || _tonemapPassthrough) ? 1u : 0u};
+            commandList->setPushConstants(&constants, sizeof(constants));
+        }
+
+        nvrhi::DrawArguments drawArgs;
+        drawArgs.vertexCount = 3;
+        commandList->draw(drawArgs);
+    }
 }
 
 } // namespace Assisi::Render

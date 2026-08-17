@@ -123,6 +123,15 @@ protected:
     /// Not pure: a headless app never receives this call and should not have to
     /// write an empty override to say so.
     virtual void OnRender(Render::RenderFrame & /*frame*/) {}
+    /// @brief Called after the tone map, into a display-encoded target that still
+    /// carries the depth the scene wrote. For content whose colours are already
+    /// what they should look like on screen — editor chrome — so the tone map
+    /// does not restate them. Only called by apps that answer UsesOverlayStage().
+    virtual void OnRenderOverlays(Render::RenderFrame & /*frame*/) {}
+    /// @brief Whether this app draws display-referred content after the tone map.
+    /// The seam costs a target and a copy, so it exists only where it is used.
+    /// Read during Initialize(), so it must answer from constructor-set state.
+    [[nodiscard]] virtual bool UsesOverlayStage() const { return false; }
     virtual void OnImGui() {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
@@ -219,6 +228,16 @@ protected:
     /// not the swapchain's own FramebufferInfo directly, so they're already
     /// correct if an anti-aliasing mode is active from a saved options.json.
     nvrhi::FramebufferInfo GetSceneFramebufferInfo() const { return _postProcess.SceneFramebufferInfo(); }
+
+    /// @brief The FramebufferInfo OnRenderOverlays()'s `frame` is compatible
+    /// with. Build overlay pipelines against this: it differs from the scene's,
+    /// which is HDR.
+    nvrhi::FramebufferInfo GetOverlayFramebufferInfo() const { return _postProcess.OverlayFramebufferInfo(); }
+
+    /// @brief Tells the post chain that this frame's scene target holds display
+    /// values rather than radiance, so the tone map must copy it through. For the
+    /// material debug views, which show a channel raw.
+    void SetTonemapPassthrough(bool passthrough) { _postProcess.SetTonemapPassthrough(passthrough); }
 
     /// @brief The persisted user options (AA mode, MSAA samples, frame-sync
     /// mode, FPS cap) the engine consumes each frame in Run(). Exposed mutable

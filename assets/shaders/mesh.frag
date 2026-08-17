@@ -454,6 +454,11 @@ void main()
     // material's inputs can be inspected in isolation. Colour channels (base /
     // emissive) are linear here, so gamma-encode them for display; the scalar
     // data channels show raw, and the normal is mapped to [0,1] as an RGB.
+    //
+    // These are display values, not radiance — the point is to read the number
+    // off the screen. The tone map copies the frame through untouched while a
+    // debug view is on (PostProcess::SetTonemapPassthrough), so what is written
+    // here is what is shown.
     uint debugMode = uFrame.lightCounts.y;
     if (debugMode != kDebugNone)
     {
@@ -557,9 +562,9 @@ void main()
     vec3 ambient = uFrame.ambient.rgb * uFrame.ambient.w;
     vec3 color = ambient * albedo * surf.occlusion + Lo + surf.emissive;
 
-    // Reinhard tone map + gamma correction
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0 / 2.2));
-
+    // Linear radiance, unbounded. The scene target is float and the tone map is
+    // its own pass (tonemap.frag), so nothing here clamps or encodes: a value
+    // over 1 is a real highlight until something downstream decides what it
+    // looks like, and the MSAA resolve averages radiance rather than perception.
     outColor = vec4(color, 1.0);
 }
