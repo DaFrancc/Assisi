@@ -357,7 +357,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::Color4:
         edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
                                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
-                                       ImGuiColorEditFlags_AlphaPreviewHalf);
+                                   ImGuiColorEditFlags_AlphaPreviewHalf);
         break;
     case FieldType::Quat:
     {
@@ -545,16 +545,16 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Named by source and id rather than by id alone: the number is a
             // per-world counter and means nothing to the author on its own.
             const auto describe = [this](Assisi::ECS::InstanceId id) -> std::string
-            {
-                if (!id.IsValid())
-                    return "(none)";
-                if (_world == nullptr)
-                    return std::format("instance {}", id.value);
-                const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
-                if (row == nullptr)
-                    return std::format("instance {} (missing)", id.value);
-                return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
-            };
+                                  {
+                                      if (!id.IsValid())
+                                          return "(none)";
+                                      if (_world == nullptr)
+                                          return std::format("instance {}", id.value);
+                                      const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
+                                      if (row == nullptr)
+                                          return std::format("instance {} (missing)", id.value);
+                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+                                  };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
             {

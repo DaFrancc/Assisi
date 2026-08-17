@@ -36,7 +36,7 @@ namespace Assisi::Runtime
 inline std::vector<std::string> ParseSystemNames(const nlohmann::json &doc)
 {
     std::vector<std::string> out;
-    const auto               systems = doc.find("systems");
+    const auto systems = doc.find("systems");
     if (systems == doc.end() || !systems->is_array())
         return out;
 

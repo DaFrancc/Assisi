@@ -41,14 +41,20 @@ struct PrimitiveDesc
 
 const std::array<PrimitiveDesc, 8> kShapePrimitives = {{
     {"prim://sphere-low",
-     [] { return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereLowSlices,
-                                                Geometry::PrimitiveTessellation::kSphereLowStacks); }},
+     [] {
+         return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereLowSlices,
+                                               Geometry::PrimitiveTessellation::kSphereLowStacks);
+     }},
     {"prim://sphere",
-     [] { return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereSlices,
-                                                Geometry::PrimitiveTessellation::kSphereStacks); }},
+     [] {
+         return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereSlices,
+                                               Geometry::PrimitiveTessellation::kSphereStacks);
+     }},
     {"prim://sphere-high",
-     [] { return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereHighSlices,
-                                                Geometry::PrimitiveTessellation::kSphereHighStacks); }},
+     [] {
+         return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereHighSlices,
+                                               Geometry::PrimitiveTessellation::kSphereHighStacks);
+     }},
     {"prim://icosphere-low",
      [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereLowSubdivisions); }},
     {"prim://icosphere",

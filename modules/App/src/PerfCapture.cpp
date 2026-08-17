@@ -299,8 +299,8 @@ bool PerfCapture::WriteReport() const
     const auto describe = [](const Distribution &d)
                           {
                               return nlohmann::json{{"median", d.median}, {"p25", d.p25},   {"p75", d.p75},
-                                                    {"iqr", d.Iqr()},     {"min", d.min},   {"max", d.max},
-                                                    {"count", d.count}};
+                                  {"iqr", d.Iqr()},     {"min", d.min},   {"max", d.max},
+                                  {"count", d.count}};
                           };
 
     nlohmann::json report;
@@ -313,11 +313,11 @@ bool PerfCapture::WriteReport() const
     report["gpuFrameMs"]      = describe(gpu);
     report["cpuFrameMs"]      = describe(cpu);
     report["clockGuard"]      = {{"trustworthy", guard.trustworthy},
-                                 {"clockDrift", guard.clockDrift},
-                                 {"clockSpread", guard.clockSpread},
-                                 {"telemetrySamples", guard.telemetrySamples},
-                                 {"temperatureRiseC", guard.temperatureRiseC},
-                                 {"reason", guard.reason}};
+        {"clockDrift", guard.clockDrift},
+        {"clockSpread", guard.clockSpread},
+        {"telemetrySamples", guard.telemetrySamples},
+        {"temperatureRiseC", guard.temperatureRiseC},
+        {"reason", guard.reason}};
 
     nlohmann::json passes = nlohmann::json::object();
     for (const PassSeries &series : _passes)

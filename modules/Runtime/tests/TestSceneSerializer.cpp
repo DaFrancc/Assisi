@@ -976,7 +976,7 @@ TEST_CASE("SceneSerializer: nested contexts restore in order, and the outermost 
 {
     ECS::Scene scene;
     const ECS::Entity e    = scene.Create();
-    const uint64_t     key = Runtime::EntityKey(e.index, e.generation);
+    const uint64_t key = Runtime::EntityKey(e.index, e.generation);
 
     // Which context is live, read the way the generated code reads it.
     const auto liveName = [&]

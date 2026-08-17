@@ -210,16 +210,16 @@ TEST_CASE("Authoring: a save renumbers the rows it wrote to match the file it wr
     // An editor placement is authored the moment it is made, but carries no file
     // position: nothing has written it into one yet.
     const auto place = [&](const char *name, float x)
-    {
-        const Runtime::LevelInstance entry{.name      = name,
-                                           .source    = "crate.abp",
-                                           .transform = At(x, 0.f, 0.f),
-                                           .overrides = nlohmann::json::object(),
-                                           .removed   = {}};
-        const auto placed = SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/ true);
-        REQUIRE(placed.has_value());
-        return placed->instanceId;
-    };
+                       {
+                           const Runtime::LevelInstance entry{.name      = name,
+                                                              .source    = "crate.abp",
+                                                              .transform = At(x, 0.f, 0.f),
+                                                              .overrides = nlohmann::json::object(),
+                                                              .removed   = {}};
+                           const auto placed = SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/ true);
+                           REQUIRE(placed.has_value());
+                           return placed->instanceId;
+                       };
 
     const ECS::InstanceId first  = place("crate_1", 4.f);
     const ECS::InstanceId second = place("crate_2", 8.f);

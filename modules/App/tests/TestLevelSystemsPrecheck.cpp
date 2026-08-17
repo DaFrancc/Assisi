@@ -81,11 +81,11 @@ void WriteLevel(const std::filesystem::path &root, std::string_view name, const 
 struct Verdicts
 {
     /// The pre-check, and the list it reached it from.
-    bool                     precheck = false;
+    bool precheck = false;
     std::vector<std::string> precheckNames;
 
     /// ApplySystems over the header Load filled, and the list *it* saw.
-    bool                     applied = false;
+    bool applied = false;
     std::vector<std::string> headerNames;
 };
 
@@ -100,13 +100,13 @@ Verdicts RunBothChecks(std::string_view virtualPath)
     verdicts.precheckNames = *wanted;
     verdicts.precheck      = LevelSystemsAreDeclared(virtualPath);
 
-    LevelHeader        header;
+    LevelHeader header;
     Assisi::ECS::Scene scene;
     REQUIRE(SceneSerializer::LoadFromFile(scene, virtualPath, {.header = &header}).has_value());
     verdicts.headerNames = header.systems;
 
     WorldManager worlds;
-    World       &world = worlds.Create("Precheck");
+    World &world = worlds.Create("Precheck");
     verdicts.applied   = worlds.ApplySystems(world, header.systems, virtualPath);
 
     return verdicts;
@@ -209,12 +209,12 @@ TEST_CASE("A level the pre-check cleared installs exactly what it named")
 
     REQUIRE(LevelSystemsAreDeclared("levels/Runs.alvl"));
 
-    LevelHeader        header;
+    LevelHeader header;
     Assisi::ECS::Scene scene;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "levels/Runs.alvl", {.header = &header}).has_value());
 
     WorldManager worlds;
-    World       &world = worlds.Create("Runs");
+    World &world = worlds.Create("Runs");
     REQUIRE(worlds.ApplySystems(world, header.systems, "levels/Runs.alvl"));
 
     CHECK(world.systems.Has("Counter"));

@@ -141,15 +141,15 @@ TEST_CASE("Material: the three material flags occupy distinct bits")
 
     // All three on at once: a bit collision would read as one knob silently
     // moving another, and each of these gates a different shader path.
-    CHECK((all & Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
-    CHECK((all & Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
-    CHECK((all & Assisi::Render::kMaterialFlagSpecularAntiAliasing) != 0u);
+    CHECK((all &Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
+    CHECK((all &Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
+    CHECK((all &Assisi::Render::kMaterialFlagSpecularAntiAliasing) != 0u);
 
     // Turning specular AA off must leave the other two standing.
     src.SpecularAntiAliasing = false;
     material.Create(nullptr, 0, src, textures);
     const uint32_t withoutAa = material.Constants().flags.x;
-    CHECK((withoutAa & Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
-    CHECK((withoutAa & Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
-    CHECK((withoutAa & Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
+    CHECK((withoutAa &Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
+    CHECK((withoutAa &Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
+    CHECK((withoutAa &Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
 }

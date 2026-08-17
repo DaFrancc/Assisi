@@ -114,10 +114,10 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
     WorldManager worlds;
     World &world                = worlds.Create("Bounded");
     const Assisi::ECS::Entity entity = SpawnOscillator(world, {.origin        = origin,
-                                                                .axis          = {1.f, 0.f, 0.f},
-                                                                .amplitude     = kAmplitude,
-                                                                .periodSeconds = 2.f,
-                                                                .phase         = 0.f});
+                                                               .axis          = {1.f, 0.f, 0.f},
+                                                               .amplitude     = kAmplitude,
+                                                               .periodSeconds = 2.f,
+                                                               .phase         = 0.f});
 
     Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
