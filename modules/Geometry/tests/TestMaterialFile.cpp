@@ -31,6 +31,8 @@ MaterialData MakeFullMaterial()
     m.SpecularColor = {0.9f, 0.8f, 0.6f};
     m.SpecularIor = 1.33f;
     m.BaseDiffuseRoughness = 0.4f;
+    m.SpecularAntiAliasing = false;
+    m.SpecularAaVarianceClamp = 0.35f;
     // Distinct GUIDs per channel so a round-trip that swapped or dropped one is
     // caught.
     m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
@@ -65,6 +67,10 @@ TEST_CASE("MaterialFile: a full material survives a serialize -> deserialize rou
     CHECK(restored->SpecularColor.z == doctest::Approx(0.6f));
     CHECK(restored->SpecularIor == doctest::Approx(1.33f));
     CHECK(restored->BaseDiffuseRoughness == doctest::Approx(0.4f));
+    // The enable is the one field whose default is true, so a round-trip that
+    // dropped it would restore the opposite of what was saved.
+    CHECK(restored->SpecularAntiAliasing == false);
+    CHECK(restored->SpecularAaVarianceClamp == doctest::Approx(0.35f));
     CHECK(restored->BaseColorTexture == original.BaseColorTexture);
     CHECK(restored->NormalTexture == original.NormalTexture);
     CHECK(restored->MetallicRoughnessTexture == original.MetallicRoughnessTexture);
@@ -104,6 +110,11 @@ TEST_CASE("MaterialFile: absent fields keep their default (forward-compatible lo
     CHECK(restored->SpecularColor.z == doctest::Approx(1.0f));
     CHECK(restored->SpecularIor == doctest::Approx(1.5f));
     CHECK(restored->BaseDiffuseRoughness == doctest::Approx(0.0f));
+    // Specular AA is the opposite case: its default is *on*, so an .amat written
+    // before it existed gains the filter on load rather than keeping the
+    // sparkling it was authored against.
+    CHECK(restored->SpecularAntiAliasing == true);
+    CHECK(restored->SpecularAaVarianceClamp == doctest::Approx(0.2f));
 }
 
 TEST_CASE("MaterialFile: invalid JSON and wrong type are rejected")

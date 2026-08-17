@@ -26,6 +26,11 @@ TEST_CASE("Material: a default MaterialData packs OpenPBR defaults that reproduc
     // BaseDiffuseRoughness 0 must leave the EON diffuse lobe off entirely.
     CHECK((c.flags.x & Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) == 0u);
 
+    // Geometric specular AA is on by default, so content that predates it stops
+    // sparkling without being re-authored.
+    CHECK((c.flags.x & Assisi::Render::kMaterialFlagSpecularAntiAliasing) != 0u);
+    CHECK(c.metalRoughOcclusion.w == doctest::Approx(0.2f));
+
     // The F0 the shader derives from these lanes must be the 0.04 the BRDF
     // hardcoded before OpenPBR — that identity is what keeps every existing
     // level pixel-identical.
@@ -94,4 +99,57 @@ TEST_CASE("Material: the legacy lanes are untouched by the OpenPBR additions")
     CHECK(c.texIndicesEmissive.x == 15u);
     CHECK((c.flags.x & Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
     CHECK((c.flags.x & Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) == 0u);
+}
+
+TEST_CASE("Material: the specular AA clamp lands in its lane and the flag follows the enable")
+{
+    MaterialData src;
+    src.SpecularAaVarianceClamp = 0.35f;
+
+    Material material;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Constants().metalRoughOcclusion.w == doctest::Approx(0.35f));
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagSpecularAntiAliasing) != 0u);
+
+    // The enable is what the shader branches on: with it clear, the fragment
+    // never takes the derivatives and the material shades exactly as it did
+    // before this lobe existed.
+    src.SpecularAntiAliasing = false;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
+
+    // A zero clamp admits no widening at all, so leaving the flag set would buy
+    // four screen-space derivatives per fragment for a guaranteed no-op.
+    src.SpecularAntiAliasing = true;
+    src.SpecularAaVarianceClamp = 0.f;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
+}
+
+TEST_CASE("Material: the three material flags occupy distinct bits")
+{
+    MaterialData src;
+    src.BaseDiffuseRoughness = 0.5f;
+    src.SpecularAntiAliasing = true;
+
+    MaterialTextures textures;
+    textures.hasNormalTexture = true;
+
+    Material material;
+    material.Create(nullptr, 0, src, textures);
+    const uint32_t all = material.Constants().flags.x;
+
+    // All three on at once: a bit collision would read as one knob silently
+    // moving another, and each of these gates a different shader path.
+    CHECK((all & Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
+    CHECK((all & Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
+    CHECK((all & Assisi::Render::kMaterialFlagSpecularAntiAliasing) != 0u);
+
+    // Turning specular AA off must leave the other two standing.
+    src.SpecularAntiAliasing = false;
+    material.Create(nullptr, 0, src, textures);
+    const uint32_t withoutAa = material.Constants().flags.x;
+    CHECK((withoutAa & Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
+    CHECK((withoutAa & Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
+    CHECK((withoutAa & Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
 }

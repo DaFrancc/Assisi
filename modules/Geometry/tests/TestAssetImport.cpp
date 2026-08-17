@@ -508,6 +508,40 @@ TEST_CASE("DiffGltfMaterials: a changed factor is reported as a per-slot conflic
     fs::remove_all(root);
 }
 
+TEST_CASE("DiffGltfMaterials: an authored specular-AA setting counts as a change")
+{
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    // Nothing in glTF says anything about specular AA, so a re-import always
+    // produces the default. Turning it off is therefore *only* ever an authored
+    // decision, and a diff that missed it would report the slot unchanged — the
+    // reconciler would refresh the source hash and the author's choice would be
+    // overwritten with nothing left to report it as stale.
+    std::expected<Assisi::Geometry::MaterialData, Assisi::Geometry::MaterialFileError> stored =
+        DeserializeMaterial(ReadFile(root / "model_Wood.amat"));
+    REQUIRE(stored.has_value());
+    stored->SpecularAntiAliasing = false;
+    const std::expected<std::string, Assisi::Geometry::MaterialFileError> text =
+        Assisi::Geometry::SerializeMaterial(*stored);
+    REQUIRE(text.has_value());
+    {
+        std::ofstream amat(root / "model_Wood.amat", std::ios::binary | std::ios::trunc);
+        amat.write(text->data(), static_cast<std::streamsize>(text->size()));
+    }
+
+    const MaterialDiff diff = DiffGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(diff.valid);
+    REQUIRE(diff.slots.size() == 1);
+    CHECK(diff.slots[0].change == SlotChange::Changed);
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Removed")
 {
     const AssetId gltfId = MintAssetId();
