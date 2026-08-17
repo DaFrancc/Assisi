@@ -635,10 +635,10 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     // just formats[0]: an unmappable format (ToNvrhiFormat -> UNKNOWN) fails
     // swapchain creation far below with a message about NVRHI rather than about the
     // surface, and an _SRGB format maps fine but makes the hardware apply the sRGB
-    // transfer function to values the fragment shader has *already* gamma encoded
-    // (mesh.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
-    // Lighting stage L2 moves that encode into a tonemap pass, at which point an
-    // sRGB surface becomes the correct choice; until then linear (UNORM) is.
+    // transfer function to values the tone map has *already* encoded
+    // (tonemap.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
+    // The last stage of the post chain writes display values, so the surface must
+    // be the one that passes them through: linear (UNORM).
     const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };
 
     const VkSurfaceFormatKHR *ideal = nullptr;
@@ -679,8 +679,8 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     if (pick == srgbFallback)
     {
         Core::Log::Warn("VulkanContext: no linear (UNORM) surface format available; falling back to an sRGB "
-                        "one. The shader also gamma-encodes, so the image will look washed out until the "
-                        "tonemap pass (lighting stage L2) takes over that encode.");
+                        "one. The tone map pass already encodes, so the hardware will encode a second time "
+                        "and the image will look washed out.");
     }
     const VkSurfaceFormatKHR chosenFormat = *pick;
 

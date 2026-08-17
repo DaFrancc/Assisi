@@ -104,9 +104,12 @@ bool SceneRenderer::Initialize(const InitParams &params)
     // Opt-in: a game never builds these pipelines or touches assets/editor/**;
     // the editor asks for them. Failures inside the opted-in path stay
     // non-fatal — each overlay warns and is dropped, never the renderer.
+    //
+    // They target the overlay framebuffer, not the scene's: overlay colours are
+    // display values and are drawn after the tone map.
     if (_editorVisuals)
     {
-        if (!_outlinePass.Initialize(_device, params.framebufferInfo, static_cast<uint32_t>(params.width),
+        if (!_outlinePass.Initialize(_device, params.overlayFramebufferInfo, static_cast<uint32_t>(params.width),
                                      static_cast<uint32_t>(params.height), kOutlineMaskVertexShader,
                                      kOutlineMaskPixelShader, kOutlineEdgeVertexShader, kOutlineEdgePixelShader,
                                      kIconVertexShader, kIconMaskPixelShader))
@@ -114,13 +117,13 @@ bool SceneRenderer::Initialize(const InitParams &params)
             Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
         }
 
-        if (!_iconPass.Initialize(_device, params.framebufferInfo, kIconVertexShader, kIconPixelShader,
+        if (!_iconPass.Initialize(_device, params.overlayFramebufferInfo, kIconVertexShader, kIconPixelShader,
                                   kEntityIconTexture))
         {
             Core::Log::Warn("SceneRenderer: entity icons unavailable (icon pass failed to initialise).");
         }
 
-        if (!_linePass.Initialize(_device, params.framebufferInfo, kLineVertexShader, kLinePixelShader))
+        if (!_linePass.Initialize(_device, params.overlayFramebufferInfo, kLineVertexShader, kLinePixelShader))
         {
             Core::Log::Warn("SceneRenderer: overlay lines unavailable (line pass failed to initialise).");
         }
@@ -151,23 +154,24 @@ void SceneRenderer::Resize(int32_t width, int32_t height, const Camera &camera)
     RebuildClusterGrid(width, height, camera, ProjectionMatrix(camera, AspectRatio(width, height)));
 }
 
-bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
+bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo,
+                                           const nvrhi::FramebufferInfo &overlayFramebufferInfo)
 {
     if (!_meshPass.IsValid())
     {
         return true; // nothing built yet — nothing to rebuild
     }
-    // Rebuild the outline pipelines against the new format too; a failure there
-    // only drops the highlight, so it doesn't fail the render-target change.
-    if (!_outlinePass.RebuildPipeline(framebufferInfo))
+    // Rebuild the overlay pipelines against the new format too; a failure there
+    // only drops the overlay, so it doesn't fail the render-target change.
+    if (!_outlinePass.RebuildPipeline(overlayFramebufferInfo))
     {
         Core::Log::Warn("SceneRenderer: selection outline pipeline rebuild failed; highlight disabled.");
     }
-    if (!_iconPass.RebuildPipeline(framebufferInfo))
+    if (!_iconPass.RebuildPipeline(overlayFramebufferInfo))
     {
         Core::Log::Warn("SceneRenderer: entity-icon pipeline rebuild failed; icons disabled.");
     }
-    if (!_linePass.RebuildPipeline(framebufferInfo))
+    if (!_linePass.RebuildPipeline(overlayFramebufferInfo))
     {
         Core::Log::Warn("SceneRenderer: overlay-line pipeline rebuild failed; collider wireframes disabled.");
     }
@@ -234,9 +238,27 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     ASSISI_PROFILE_COUNTER("render/drawn-items", static_cast<double>(_lastDrawStats.drawnItems));
     ASSISI_PROFILE_COUNTER("render/culled-meshes", static_cast<double>(_lastDrawStats.culledMeshes));
 
+}
+
+void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,
+                                   const Transform &cameraTransform, const Camera &camera)
+{
+    if (!_meshPass.IsValid())
+    {
+        return;
+    }
+
+    // Recomputed rather than carried over from Render(): both are two matrix
+    // builds from state neither of them changes, and a cached pair is one more
+    // thing that can go stale between the two calls.
+    const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width),
+                                                                      static_cast<int32_t>(frame.height)));
+    const glm::mat4 view = ViewMatrix(cameraTransform);
+    const glm::mat4 viewProjection = projection * view;
+
     {
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "editor-icons");
-        DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
+        DrawEditorIcons(frame, viewProjection, view, cameraTransform.position, scene);
     }
 
     // Submitted silhouette outlines (the selected object's collider + mesh). Each
@@ -251,12 +273,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
         {
             for (const OutlineGroup &group : _outlineGroups)
             {
-                _outlinePass.DrawOutlines(frame, projection * view, group.items, group.color);
+                _outlinePass.DrawOutlines(frame, viewProjection, group.items, group.color);
             }
         }
         _outlineGroups.clear();
 
-        DrawHighlightOutline(frame, projection * view, view, scene);
+        DrawHighlightOutline(frame, viewProjection, view, scene);
     }
 
     // Overlay lines (collider wireframes) sit on top of everything else: the
@@ -266,8 +288,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "overlay-lines");
         if (_linePass.IsValid())
         {
-            _linePass.Draw(frame, projection * view, _overlayLinesDepthTested, /*onTop=*/ false);
-            _linePass.Draw(frame, projection * view, _overlayLinesOnTop, /*onTop=*/ true);
+            _linePass.Draw(frame, viewProjection, _overlayLinesDepthTested, /*onTop=*/ false);
+            _linePass.Draw(frame, viewProjection, _overlayLinesOnTop, /*onTop=*/ true);
         }
         _overlayLinesDepthTested.clear();
         _overlayLinesOnTop.clear();

@@ -21,6 +21,7 @@
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Core/Platform.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
@@ -250,8 +251,11 @@ bool Application::InitializePresentation()
 
     if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
-        if (!_postProcess.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo(),
-                                     "shaders/fullscreen.vert.spv", "shaders/fxaa.frag.spv"))
+        if (!_postProcess.Initialize({.device = vulkanContext->GetDevice(),
+                                      .swapchainFramebufferInfo = vulkanContext->GetFramebufferInfo(),
+                                      .vertexShaderSpvPath = "shaders/fullscreen.vert.spv",
+                                      .tonemapShaderSpvPath = "shaders/tonemap.frag.spv",
+                                      .fxaaShaderSpvPath = "shaders/fxaa.frag.spv"}))
         {
             Core::Log::Fatal("Failed to initialize post-process pipeline.");
             return false;
@@ -826,24 +830,25 @@ void Application::RenderFrame()
         return; // minimized, or swapchain is stale and about to be resized
     }
 
-    // When an AA mode is active, the scene renders into PostProcess's offscreen
-    // target instead of the swapchain directly — everything else about `frame`
-    // (commandList, width, height) stays the same either way.
+    // The scene always renders into PostProcess's HDR offscreen target — the
+    // swapchain cannot hold radiance. Everything else about `frame` (commandList,
+    // width, height) is unchanged.
     Render::RenderFrame sceneFrame = *frame;
-    if (nvrhi::IFramebuffer *offscreenFramebuffer = _postProcess.SceneFramebuffer())
-    {
-        sceneFrame.framebuffer = offscreenFramebuffer;
-        sceneFrame.colorTexture = _postProcess.SceneColorTexture();
-        sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
-    }
+    sceneFrame.framebuffer = _postProcess.SceneFramebuffer();
+    sceneFrame.colorTexture = _postProcess.SceneColorTexture();
+    sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
 
     {
         // The last unscoped thing inside `render` — small, but an unnamed gap
         // between two slices is exactly what sends you looking in the wrong place.
         ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
+        // The configured clear colour is an sRGB colour, and the scene target
+        // holds radiance, so it is decoded on the way in — same treatment any
+        // sRGB texture gets. The tone map puts it back where it was.
+        const glm::vec3 clearLinear = glm::pow(glm::vec3(_config.clearColor), glm::vec3(2.2f));
         sceneFrame.commandList->clearTextureFloat(
             sceneFrame.colorTexture, nvrhi::AllSubresources,
-            nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
+            nvrhi::Color(clearLinear.r, clearLinear.g, clearLinear.b, _config.clearColor.a));
         if (sceneFrame.depthTexture)
         {
             sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true,
@@ -857,10 +862,29 @@ void Application::RenderFrame()
     }
 
     {
-        // No-op if AA is off (the scene already rendered directly into `frame`
-        // above); otherwise resolves/FXAA's the offscreen render into it.
+        // Resolve, then tone map: the chain's HDR half.
         ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
-        _postProcess.Resolve(frame->commandList, *frame);
+        _postProcess.RunBeforeOverlays(frame->commandList, *frame);
+    }
+
+    // Display-referred content, drawn into the tone-mapped image rather than
+    // through the tone map. The target still carries the scene's depth, so
+    // overlays occlude against the scene exactly as they did.
+    if (nvrhi::IFramebuffer *overlayFramebuffer = _postProcess.OverlayFramebuffer())
+    {
+        Render::RenderFrame overlayFrame = *frame;
+        overlayFrame.framebuffer = overlayFramebuffer;
+        overlayFrame.depthTexture = _postProcess.SceneDepthTexture();
+
+        // A scope, not a pass: the overlay passes open their own pass timers.
+        ASSISI_PROFILE_GPU_SCOPE(overlayFrame.commandList, "overlays");
+        OnRenderOverlays(overlayFrame);
+    }
+
+    {
+        // Whatever is left: the overlay resolve, and FXAA or the final copy.
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process-output");
+        _postProcess.RunAfterOverlays(frame->commandList, *frame);
     }
 
     {
@@ -914,7 +938,7 @@ void Application::ConfigurePostProcess()
 
     const nvrhi::FramebufferInfo before = _postProcess.SceneFramebufferInfo();
     _postProcess.Configure(static_cast<uint32_t>(fb.Width), static_cast<uint32_t>(fb.Height), _options.aaMode,
-                           msaaSamples);
+                           msaaSamples, {.overlays = UsesOverlayStage()});
     const nvrhi::FramebufferInfo after = _postProcess.SceneFramebufferInfo();
 
     // Only fires for an actual sample-count change (F11 toggling into/out of

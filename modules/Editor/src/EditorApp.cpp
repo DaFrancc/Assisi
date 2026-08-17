@@ -704,6 +704,7 @@ void EditorApp::SetupScene()
     // assets/editor/**.
     if (!_sceneRenderer.Initialize({.device = device,
                                     .framebufferInfo = GetSceneFramebufferInfo(),
+                                    .overlayFramebufferInfo = GetOverlayFramebufferInfo(),
                                     .width = fbSize.Width,
                                     .height = fbSize.Height,
                                     .camera = _camera,
@@ -736,7 +737,9 @@ void EditorApp::OnResize(int32_t width, int32_t height)
 
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
+    // The overlay target's sample count moves with the scene's, so the same
+    // notification covers both.
+    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo, GetOverlayFramebufferInfo()))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
     }
@@ -805,9 +808,23 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // and an unmarked origin is also an unclickable one.
         SubmitInstanceIcons();
     }
+    // A material debug view puts channel values in the scene target instead of
+    // radiance, and the tone map must not rescale numbers meant to be read off
+    // the screen.
+    SetTonemapPassthrough(_sceneRenderer.DebugView() != Assisi::Render::MaterialDebugView::None);
+
     // The propagation bookmark comes from the world, not the renderer: one renderer
     // serves several worlds once more than one is resident.
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
+}
+
+void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
+{
+    if (!_sceneRenderer.IsValid() || !_scene)
+    {
+        return;
+    }
+    _sceneRenderer.RenderOverlays(frame, *_scene, _cameraTransform, _camera);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
