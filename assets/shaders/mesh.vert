@@ -47,6 +47,10 @@ layout(binding = 256) uniform FrameConstants
     vec4  cameraPosition;
     vec4  clusterScale;
     vec4  ambient;
+    uvec4 shadowCounts;
+    vec4  shadowParams;
+    vec4  shadowCascade[8];
+    mat4  shadowViewProjection[8];
 } uFrame;
 
 void main()

@@ -17,6 +17,9 @@ target_sources(Assisi-Render
     "include/Assisi/Render/RenderFrame.hpp"
     "include/Assisi/Render/RenderSystem.hpp"
     "include/Assisi/Render/ShaderModule.hpp"
+    "include/Assisi/Render/ShadowCascades.hpp"
+    "include/Assisi/Render/ShadowPass.hpp"
+    "include/Assisi/Render/ShadowSettings.hpp"
     "include/Assisi/Render/Texture.hpp"
     "include/Assisi/Render/Tonemap.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
@@ -38,6 +41,8 @@ target_sources(Assisi-Render
     "src/IconPass.cpp"
     "src/LinePass.cpp"
     "src/PostProcess.cpp"
+    "src/ShadowCascades.cpp"
+    "src/ShadowPass.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )

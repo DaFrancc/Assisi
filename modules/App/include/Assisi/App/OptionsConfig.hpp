@@ -5,6 +5,7 @@
 /// @brief User-facing runtime options persisted to options.json.
 
 #include <Assisi/Render/PostProcess.hpp>
+#include <Assisi/Render/ShadowSettings.hpp>
 
 #include <cstdint>
 
@@ -28,6 +29,11 @@ struct OptionsConfig
     /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
     /// hand-editable and these lanes reach a shader.
     Render::TonemapSettings tonemap;
+
+    /// @brief The sun's cascade knobs. Sanitized on load for the same reason,
+    /// and one more: these size a GPU allocation, so a hand-typed resolution
+    /// reaches createTexture if nothing clamps it.
+    Render::ShadowSettings shadows;
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 

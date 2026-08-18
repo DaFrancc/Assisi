@@ -29,6 +29,7 @@
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
@@ -191,6 +192,26 @@ public:
     [[nodiscard]] glm::vec3 AmbientColor() const { return _ambientColor; }
     [[nodiscard]] float     AmbientIntensity() const { return _ambientIntensity; }
 
+    /// @brief The sun's shadow knobs. Applied on the next Render(): a cascade
+    /// count, resolution or format change reallocates the array there, and
+    /// everything else rides into the shader as a frame constant.
+    ///
+    /// Nothing is allocated until a shadow-casting directional light exists, so
+    /// a scene with no sun in it pays neither the memory nor the pass whatever
+    /// these say.
+    void SetShadowSettings(const Render::ShadowSettings &settings) { _shadowSettings = settings; }
+    [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
+
+    /// @brief Tint the lit image by which cascade shadowed each pixel — the view
+    /// that makes a split distance and a blend band visible. Runtime only.
+    void SetCascadeDebugView(bool enabled) { _cascadeDebugView = enabled; }
+    [[nodiscard]] bool CascadeDebugView() const { return _cascadeDebugView; }
+
+    /// @brief What the shadow pass drew in the most recent Render(); all zero
+    /// when nothing casts. Read against the draw stats: cascades at 0 with a sun
+    /// in the scene means the pass is inactive, not that it found nothing.
+    [[nodiscard]] Render::ShadowPass::Stats LastShadowStats() const { return _lastShadowStats; }
+
     /// @brief Drawn/culled counts from the most recent Render(); zero before the
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
@@ -295,6 +316,16 @@ public:
     void SubmitOutline(const Render::MeshBuffer *mesh, const glm::mat4 &model, const glm::vec3 &color);
 
 private:
+    /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
+    /// them. Returns what the mesh shader needs to sample the result — a null
+    /// fit when nothing casts, which is what makes the lookup free.
+    ///
+    /// Called after LightingSystem::Update, which is where the shadow-casting
+    /// sun comes from, and before UpdateFrameConstants, which borrows the fit.
+    [[nodiscard]] Render::MeshPass::ShadowFrameData RenderSunShadows(const Render::RenderFrame &frame,
+                                                                     ECS::Scene &scene, const Camera &camera,
+                                                                     const glm::mat4 &view);
+
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
@@ -329,6 +360,11 @@ private:
     // path uses them only when _gpuCulling is on (else the CPU path runs).
     Render::MeshCuller _meshCuller;
     Render::CullTableBuilder _cullBuilder;
+    // The sun's cascades, and this frame's fit. The fit is a member because
+    // UpdateFrameConstants borrows it after the pass has drawn with it.
+    Render::ShadowPass _shadowPass;
+    Render::CascadeFit _cascadeFit;
+    ShadowCasterGather _shadowCasters;
     Render::OutlinePass _outlinePass;
     Render::IconPass _iconPass;
     Render::LinePass _linePass;
@@ -382,7 +418,10 @@ private:
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
     float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
+    Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
+    bool _cascadeDebugView = false;                                         // tint the image by cascade
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
+    Render::ShadowPass::Stats _lastShadowStats; // what the shadow pass drew, for the same overlay
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene
     // Render() overload: the scene tick at the end of the last propagation. 0

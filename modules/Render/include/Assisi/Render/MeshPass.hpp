@@ -28,6 +28,8 @@
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/ShadowCascades.hpp>
+#include <Assisi/Render/ShadowSettings.hpp>
 
 namespace Assisi::Render
 {
@@ -95,19 +97,59 @@ public:
     /// @pre IsValid() — call Initialize() first.
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
 
-    /// @brief Updates the per-frame constant buffer (view-projection + camera view
-    /// matrix + cluster-grid parameters). Call once per frame, before Submit. The
-    /// vertex shader multiplies @p viewProjection by each instance's world matrix
-    /// for clip position, so the model matrix never leaves the GPU.
+    /// @brief What the mesh shader needs to sample the sun's cascades.
     ///
-    /// @p ambientColor / @p ambientIntensity are the uniform term every surface
-    /// receives regardless of what lights it. The editor turns it up to inspect a
-    /// model without having to light one.
-    void UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection, const glm::mat4 &view,
-                              uint32_t screenWidth, uint32_t screenHeight, float nearZ, float farZ,
-                              uint32_t dirLightCount, MaterialDebugView debugView = MaterialDebugView::None,
-                              const glm::vec3 &ambientColor = glm::vec3(1.f, 1.f, 1.f),
-                              float ambientIntensity = kDefaultAmbientIntensity) const;
+    /// A null @ref fit — or one whose count is zero — means no shadowing sun
+    /// this frame, and the shader skips the lookup on a frame constant rather
+    /// than sampling a map that holds nothing.
+    struct ShadowFrameData
+    {
+        /// This frame's fitted cascades. Not retained past the call.
+        const CascadeFit *fit = nullptr;
+        /// The knobs the fit was made with; the filter, blend band and biases
+        /// ride into the shader from here.
+        ShadowSettings settings;
+        /// Which directional light the cascades belong to, as an index into the
+        /// buffer the shader reads. Only that light's radiance is shadowed.
+        uint32_t sunLightIndex = 0;
+        /// Tint the lit result by which cascade each pixel sampled — the view
+        /// that makes a split distance or a blend band visible.
+        bool cascadeDebugView = false;
+    };
+
+    /// @brief Everything the per-frame constant buffer carries. Grouped so the
+    /// call site names what it sets rather than counting a dozen arguments.
+    struct FrameConstantsParams
+    {
+        glm::mat4 viewProjection{1.f};
+        glm::mat4 view{1.f};
+        uint32_t screenWidth = 0;
+        uint32_t screenHeight = 0;
+        float nearZ = 0.f;
+        float farZ = 0.f;
+        uint32_t dirLightCount = 0;
+        MaterialDebugView debugView = MaterialDebugView::None;
+        /// The uniform term every surface receives regardless of what lights it.
+        /// The editor turns it up to inspect a model without having to light one.
+        glm::vec3 ambientColor{1.f, 1.f, 1.f};
+        float ambientIntensity = kDefaultAmbientIntensity;
+        ShadowFrameData shadows;
+    };
+
+    /// @brief Updates the per-frame constant buffer (view-projection + camera view
+    /// matrix + cluster-grid parameters + the sun's cascades). Call once per
+    /// frame, before Submit. The vertex shader multiplies the view-projection by
+    /// each instance's world matrix for clip position, so the model matrix never
+    /// leaves the GPU.
+    void UpdateFrameConstants(nvrhi::ICommandList *commandList, const FrameConstantsParams &params) const;
+
+    /// @brief Point the shader at the sun's cascade array (ShadowPass owns it).
+    ///
+    /// Never null in practice — the shadow pass keeps a one-texel placeholder
+    /// bound while it is inactive, so the binding set never has a hole in it.
+    /// A different handle invalidates the cached set, which is what a resolution
+    /// or cascade-count change produces.
+    void SetShadowMap(nvrhi::ITexture *cascades);
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). They describe the batching
@@ -204,9 +246,10 @@ public:
 private:
     /// @brief Builds (once, then caches) the pass's single binding set: frame
     /// constants, the shared sampler, the clustered-light buffers, the material
-    /// table, and the per-instance buffer at t6 — @p instanceBuffer, which is the
-    /// pass's own (CPU path) or the MeshCuller's (GPU path). Rebuilt when that
-    /// buffer handle changes (a growth, or a switch between paths) or after
+    /// table, the per-instance buffer at t6 — @p instanceBuffer, which is the
+    /// pass's own (CPU path) or the MeshCuller's (GPU path) — and the sun's
+    /// cascade array at t7. Rebuilt when either handle changes (a growth, a
+    /// switch between paths, a cascade reallocation) or after
     /// InvalidateBindingSets().
     nvrhi::IBindingSet *GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const;
 
@@ -224,8 +267,16 @@ private:
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::SamplerHandle _sampler;
+    // Depth-comparison sampler for the cascades: the hardware compares the
+    // reference against four texels and blends the results, so even a one-tap
+    // lookup comes back filtered rather than as a hard 0 or 1.
+    nvrhi::SamplerHandle _shadowSampler;
     nvrhi::GraphicsPipelineHandle _pipeline;
     nvrhi::BufferHandle _frameConstantsBuffer;
+
+    // The sun's cascade array (ShadowPass owns it). Non-owning: a reallocation
+    // swaps the handle, which invalidates the cached global set.
+    nvrhi::ITexture *_shadowMap = nullptr;
 
     // The AssetCache's bindless material-texture table + its layout, and its
     // material table (stage D). Non-owning: the AssetCache owns them and keeps the
@@ -244,9 +295,10 @@ private:
     // by the pass, unlike the AssetCache-owned tables above.
     mutable Buffer _instanceBuffer;
     mutable nvrhi::BindingSetHandle _globalBindingSet;
-    // The instance-buffer handle _globalBindingSet was built against; a mismatch
-    // means the buffer grew and the set must be rebuilt.
+    // The instance-buffer and cascade-array handles _globalBindingSet was built
+    // against; a mismatch in either means the set must be rebuilt.
     mutable const nvrhi::IBuffer *_globalSetInstanceBuffer = nullptr;
+    mutable const nvrhi::ITexture *_globalSetShadowMap = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn

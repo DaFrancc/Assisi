@@ -17,6 +17,7 @@
 #include <Assisi/Render/ClusterGrid.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -73,6 +74,25 @@ public:
     /// @brief Number of directional lights found in the last Update() call.
     uint32_t DirLightCount() const { return _dirLightCount; }
 
+    /// @brief The directional light the sun's cascades are rendered for.
+    struct ShadowSun
+    {
+        /// Index into the directional-light buffer the shader reads, so both
+        /// halves name the same light without either re-deriving the order.
+        uint32_t index = 0;
+        /// The direction the light travels, normalised.
+        glm::vec3 direction{0.f, -1.f, 0.f};
+    };
+
+    /// @brief The first shadow-casting directional light of the last Update(),
+    /// or nothing when none of them casts.
+    ///
+    /// One sun, not all of them: a second shadowed directional light would
+    /// double the cascade array and every depth draw in the frame, and a scene
+    /// with two suns in it is not one this engine has been asked for. The rest
+    /// still light; they just do not occlude.
+    [[nodiscard]] std::optional<ShadowSun> ShadowCastingSun() const;
+
     /// @name Shadow-casting flags from the last Update()
     ///
     /// One entry per light, in the same order as the buffers uploaded to the GPU
@@ -81,8 +101,10 @@ public:
     /// hands the shader a slot per light index, so both halves must agree on what
     /// index `i` means without re-querying the scene and re-deriving the order.
     ///
-    /// Kept beside the GPU structs rather than inside them because no shader reads
-    /// this yet; widening the std430 layout is the shadow pass's change to make.
+    /// Kept beside the GPU structs rather than inside them because no shader
+    /// reads a flag: the sun's shadow reaches the mesh shader as the single
+    /// light index ShadowCastingSun() reports, and one index costs less than a
+    /// byte on every light in the buffer.
     ///
     /// Valid until the next Update().
     /// @{
