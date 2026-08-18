@@ -32,6 +32,23 @@ static const char *AaModeToString(Render::AaMode mode)
     }
 }
 
+static Render::TonemapOperator TonemapOperatorFromString(const std::string &str)
+{
+    if (str == "aces")     return Render::TonemapOperator::Aces;
+    if (str == "reinhard") return Render::TonemapOperator::Reinhard;
+    return Render::TonemapOperator::AgX;
+}
+
+static const char *TonemapOperatorToString(Render::TonemapOperator op)
+{
+    switch (op)
+    {
+    case Render::TonemapOperator::Aces:     return "aces";
+    case Render::TonemapOperator::Reinhard: return "reinhard";
+    default:                                return "agx";
+    }
+}
+
 OptionsConfig OptionsConfig::LoadFromJson()
 {
     OptionsConfig cfg;
@@ -63,6 +80,29 @@ OptionsConfig OptionsConfig::LoadFromJson()
                     cfg.msaaSamples = samples;
                 }
             }
+        }
+
+        if (json.contains("toneMap"))
+        {
+            const auto &tm = json.at("toneMap");
+            if (tm.contains("operator"))
+            {
+                cfg.tonemap.op = TonemapOperatorFromString(tm.at("operator").get<std::string>());
+            }
+            if (tm.contains("exposureStops"))
+            {
+                cfg.tonemap.exposureStops = tm.at("exposureStops").get<float>();
+            }
+            if (tm.contains("contrast"))
+            {
+                cfg.tonemap.contrast = tm.at("contrast").get<float>();
+            }
+            if (tm.contains("saturation"))
+            {
+                cfg.tonemap.saturation = tm.at("saturation").get<float>();
+            }
+            // Whatever the file said, the shader only ever sees values in range.
+            cfg.tonemap = Render::Sanitized(cfg.tonemap);
         }
 
         if (json.contains("frameSync"))
@@ -98,6 +138,10 @@ void OptionsConfig::SaveToJson() const
     nlohmann::json json;
     json["antiAliasing"]["mode"]        = AaModeToString(aaMode);
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
+    json["toneMap"]["operator"]         = TonemapOperatorToString(tonemap.op);
+    json["toneMap"]["exposureStops"]    = tonemap.exposureStops;
+    json["toneMap"]["contrast"]         = tonemap.contrast;
+    json["toneMap"]["saturation"]       = tonemap.saturation;
     json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"]       = fpsLimit;
 

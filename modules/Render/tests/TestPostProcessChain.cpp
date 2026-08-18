@@ -192,6 +192,37 @@ TEST_CASE("An app without overlays pays for no seam")
     }
 }
 
+TEST_CASE("A Blit only ever moves an image the tone map has already mapped")
+{
+    // The Blit is the tone map shader told to copy, so it shares its push
+    // constants. A chain that blitted an HDR surface would be asking that shader
+    // to map radiance while it was told to copy — and one that ran two Tonemap
+    // steps would expose and grade the frame twice.
+    for (const AaMode mode : kAllModes)
+    {
+        CAPTURE(static_cast<int>(mode));
+        for (const ChainOptions options : {kWithoutOverlays, kWithOverlays})
+        {
+            const ChainPlan plan = PlanChain(mode, options);
+
+            uint32_t tonemaps = 0;
+            for (uint32_t i = 0; i < plan.stepCount; ++i)
+            {
+                if (plan.steps[i].stage == ChainStage::Tonemap)
+                {
+                    ++tonemaps;
+                }
+                if (plan.steps[i].stage == ChainStage::Blit)
+                {
+                    CHECK_FALSE(IsHdrSurface(plan.steps[i].source));
+                    CHECK(i > plan.IndexOf(ChainStage::Tonemap));
+                }
+            }
+            CHECK(tonemaps == 1);
+        }
+    }
+}
+
 TEST_CASE("Every chain ends on the swapchain, and only at the end")
 {
     for (const AaMode mode : kAllModes)

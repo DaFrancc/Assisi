@@ -25,6 +25,10 @@ struct OptionsConfig
     Render::AaMode aaMode      = Render::AaMode::None;
     int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
 
+    /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
+    /// hand-editable and these lanes reach a shader.
+    Render::TonemapSettings tonemap;
+
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
     /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel

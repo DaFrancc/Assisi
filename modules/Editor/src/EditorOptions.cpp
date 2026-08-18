@@ -331,6 +331,50 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
 
         OptionsConfig &options = frame.options;
 
+        // The look. Nothing here rebuilds a target — the values ride in the tone
+        // map's push constants, so every edit lands on the next frame, which is
+        // what makes these usable for comparing one against another.
+        //
+        // **Indexed by the enum value** — this list must stay in
+        // Render::TonemapOperator's order.
+        static const char *kOperatorNames[] = {"AgX", "ACES", "Reinhard"};
+        int32_t operatorIndex = static_cast<int32_t>(options.tonemap.op);
+        if (ImGui::Combo("Tone Map", &operatorIndex, kOperatorNames, IM_ARRAYSIZE(kOperatorNames)))
+        {
+            options.tonemap.op = static_cast<Assisi::Render::TonemapOperator>(operatorIndex);
+            options.SaveToJson();
+        }
+
+        bool lookChanged = ImGui::SliderFloat("Exposure", &options.tonemap.exposureStops,
+                                              Assisi::Render::kMinExposureStops,
+                                              Assisi::Render::kMaxExposureStops, "%.2f stops");
+        lookChanged |= ImGui::SliderFloat("Contrast", &options.tonemap.contrast, Assisi::Render::kMinContrast,
+                                          Assisi::Render::kMaxContrast, "%.2f");
+        lookChanged |= ImGui::SliderFloat("Saturation", &options.tonemap.saturation, Assisi::Render::kMinSaturation,
+                                          Assisi::Render::kMaxSaturation, "%.2f");
+        if (lookChanged)
+        {
+            options.SaveToJson();
+        }
+
+        // AgX is neutral by design and reads flat ungraded, so "no grade" is a
+        // comparison point rather than a default worth returning to.
+        if (ImGui::SmallButton("Punchy"))
+        {
+            options.tonemap.contrast   = Assisi::Render::kPunchyContrast;
+            options.tonemap.saturation = Assisi::Render::kPunchySaturation;
+            options.SaveToJson();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Neutral"))
+        {
+            options.tonemap.contrast   = 1.0f;
+            options.tonemap.saturation = 1.0f;
+            options.SaveToJson();
+        }
+
+        ImGui::Separator();
+
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
         int modeIndex    = static_cast<int>(options.aaMode);
         if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))

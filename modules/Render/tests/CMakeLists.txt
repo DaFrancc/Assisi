@@ -1,6 +1,7 @@
 add_executable(Assisi-Render-Tests
   main.cpp
   TestPostProcessChain.cpp
+  TestTonemap.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Render-Tests)

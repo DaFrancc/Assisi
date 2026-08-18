@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <string>
 
+#include <Assisi/Render/Tonemap.hpp>
+
 #include <nvrhi/nvrhi.h>
 
 namespace Assisi::Render
@@ -238,6 +240,10 @@ public:
     /// a channel raw. Mapping those would rescale the very numbers being read.
     void SetTonemapPassthrough(bool passthrough) { _tonemapPassthrough = passthrough; }
 
+    /// @brief The operator, exposure and grade the tone map applies. Takes effect
+    /// on the next frame — nothing is rebuilt, the values ride in push constants.
+    void SetTonemapSettings(const TonemapSettings &settings) { _tonemap = settings; }
+
     [[nodiscard]] AaMode Mode() const { return _mode; }
 
     /// @brief Releases all GPU resources this owns. Call during app shutdown,
@@ -261,6 +267,7 @@ private:
     uint32_t _msaaSamples = 4;
     uint32_t _width = 0;
     uint32_t _height = 0;
+    TonemapSettings _tonemap;
     bool _tonemapPassthrough = false;
 
     // Multisample HDR scene target — used by MSAA and MSAA_FXAA. Its depth is
