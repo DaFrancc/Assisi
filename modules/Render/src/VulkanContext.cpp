@@ -635,8 +635,9 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     // just formats[0]: an unmappable format (ToNvrhiFormat -> UNKNOWN) fails
     // swapchain creation far below with a message about NVRHI rather than about the
     // surface, and an _SRGB format maps fine but makes the hardware apply the sRGB
-    // transfer function to values the tone map has *already* encoded
-    // (tonemap.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
+    // transfer function to values the tone map has *already* encoded (tonemap.frag
+    // owns the encode, whichever operator is selected) — a washed-out image with
+    // no error anywhere.
     // The last stage of the post chain writes display values, so the surface must
     // be the one that passes them through: linear (UNORM).
     const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };

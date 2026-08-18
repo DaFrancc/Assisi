@@ -12,14 +12,6 @@ namespace Assisi::Render
 {
 namespace
 {
-// Push constants for the tone map. `passthrough` non-zero makes it a copy — see
-// PostProcess::SetTonemapPassthrough, and the Blit step, which is the same
-// shader wired to always copy.
-struct TonemapConstants
-{
-    uint32_t passthrough = 0;
-};
-
 const char *SurfaceName(ChainSurface surface)
 {
     switch (surface)
@@ -408,9 +400,9 @@ void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &
         else
         {
             // A Blit is the tone map shader told to copy: by the time it runs, the
-            // image it is moving has already been mapped.
-            const TonemapConstants constants{
-                .passthrough = (step.stage == ChainStage::Blit || _tonemapPassthrough) ? 1u : 0u};
+            // image it is moving has already been mapped, exposed and graded.
+            const bool copyThrough = (step.stage == ChainStage::Blit) || _tonemapPassthrough;
+            const TonemapConstants constants = MakeTonemapConstants(_tonemap, copyThrough);
             commandList->setPushConstants(&constants, sizeof(constants));
         }
 

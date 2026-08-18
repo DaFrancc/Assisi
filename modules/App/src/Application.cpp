@@ -862,8 +862,11 @@ void Application::RenderFrame()
     }
 
     {
-        // Resolve, then tone map: the chain's HDR half.
+        // Resolve, then tone map: the chain's HDR half. The look rides in push
+        // constants, so handing it over per frame is what makes an editor slider
+        // land on the next frame with nothing to rebuild.
         ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
+        _postProcess.SetTonemapSettings(_options.tonemap);
         _postProcess.RunBeforeOverlays(frame->commandList, *frame);
     }
 

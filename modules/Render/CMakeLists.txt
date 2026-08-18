@@ -18,6 +18,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/RenderSystem.hpp"
     "include/Assisi/Render/ShaderModule.hpp"
     "include/Assisi/Render/Texture.hpp"
+    "include/Assisi/Render/Tonemap.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
     "include/Assisi/Render/ClusterGrid.hpp"
     "include/Assisi/Render/Vulkan/VulkanContext.hpp"
