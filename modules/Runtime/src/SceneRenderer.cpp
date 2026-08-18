@@ -3,7 +3,9 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include <Assisi/Chiara/Profile.hpp>
@@ -21,6 +23,10 @@ namespace
 // under the asset root by the build; resolved through Core::AssetSystem.
 constexpr const char *kSceneVertexShader = "shaders/mesh.vert.spv";
 constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
+
+// The sun's cascade depth pass — a vertex stage and nothing else, since the
+// pipeline writes depth and no colour (see Render::ShadowPass).
+constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
@@ -80,6 +86,15 @@ bool SceneRenderer::Initialize(const InitParams &params)
     }
     _clusterProjection = projection;
 
+    // Before the mesh pass: it binds the cascade array into every binding set it
+    // builds, and the pass keeps a placeholder there until a sun turns up. A
+    // failure is non-fatal — the scene renders unshadowed rather than not at all.
+    if (!_shadowPass.Initialize(Render::ShadowPass::InitParams{.device = _device,
+                                                               .vertexShaderSpvPath = kShadowVertexShader}))
+    {
+        Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
+    }
+
     if (!_meshPass.Initialize(Render::MeshPass::InitParams{.device = _device,
                                                            .framebufferInfo = params.framebufferInfo,
                                                            .vertexShaderSpvPath = kSceneVertexShader,
@@ -92,6 +107,7 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
     }
+    _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
 
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
     // build, the "GPU Cull" toggle stays a no-op and the CPU draw path runs.
@@ -211,11 +227,24 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     }
 
     _lighting.Update(frame.commandList, scene, view);
+
+    const Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
+
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
-        _meshPass.UpdateFrameConstants(frame.commandList, projection * view, view, frame.width, frame.height,
-                                       camera.nearZ, camera.farZ, _lighting.DirLightCount(), _debugView,
-                                       _ambientColor, _ambientIntensity);
+        const Render::MeshPass::FrameConstantsParams frameConstants{
+            .viewProjection   = projection * view,
+            .view             = view,
+            .screenWidth      = frame.width,
+            .screenHeight     = frame.height,
+            .nearZ            = camera.nearZ,
+            .farZ             = camera.farZ,
+            .dirLightCount    = _lighting.DirLightCount(),
+            .debugView        = _debugView,
+            .ambientColor     = _ambientColor,
+            .ambientIntensity = _ambientIntensity,
+            .shadows          = shadows};
+        _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
     _lastDrawStats = DrawScene(DrawSceneParams{.scene          = scene,
                                                .meshPass       = _meshPass,
@@ -238,6 +267,64 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     ASSISI_PROFILE_COUNTER("render/drawn-items", static_cast<double>(_lastDrawStats.drawnItems));
     ASSISI_PROFILE_COUNTER("render/culled-meshes", static_cast<double>(_lastDrawStats.culledMeshes));
 
+    // The shadow pass on its own tracks, for the same reason: a jump in
+    // `shadow-cascades` is explained by one of these or by none of them, and
+    // "none of them" is the interesting answer.
+    ASSISI_PROFILE_COUNTER("shadows/cascades", static_cast<double>(_lastShadowStats.cascades));
+    ASSISI_PROFILE_COUNTER("shadows/instances", static_cast<double>(_lastShadowStats.instances));
+    ASSISI_PROFILE_COUNTER("shadows/batches", static_cast<double>(_lastShadowStats.batches));
+    ASSISI_PROFILE_COUNTER("shadows/culled", static_cast<double>(_lastShadowStats.culled));
+}
+
+Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame,
+                                                                  ECS::Scene &scene, const Camera &camera,
+                                                                  const glm::mat4 &view)
+{
+    Render::MeshPass::ShadowFrameData shadows;
+    _lastShadowStats = Render::ShadowPass::Stats{};
+    _cascadeFit = Render::CascadeFit{};
+
+    // No shadow-casting sun means no allocation and no pass — which is the
+    // blank-scene rule, and the reason `active` is a scene fact rather than a
+    // settings one.
+    const std::optional<LightingSystem::ShadowSun> sun = _lighting.ShadowCastingSun();
+    const bool active = _shadowSettings.enabled && sun.has_value();
+    if (!_shadowPass.Configure(_shadowSettings, active))
+    {
+        Core::Log::Warn("SceneRenderer: sun shadows disabled (the cascade targets failed to rebuild).");
+        _shadowSettings.enabled = false;
+    }
+    // After Configure: a reallocation swaps the texture handle, and the mesh
+    // pass rebuilds its binding set when it notices.
+    _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
+
+    if (!_shadowPass.IsActive() || !sun.has_value())
+    {
+        return shadows;
+    }
+
+    GatherShadowCasters(scene, sun->direction, _shadowCasters);
+
+    Render::CascadeFitParams fitParams;
+    fitParams.cameraView = view;
+    fitParams.tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
+    fitParams.aspectRatio = AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
+    fitParams.nearZ = camera.nearZ;
+    fitParams.farZ = camera.farZ;
+    fitParams.lightDirection = sun->direction;
+    fitParams.casterNearAlongLight = _shadowCasters.nearAlongLight;
+    // The pass's own copy, not ours: Configure sanitized it, and the fit has to
+    // agree with the array that was actually allocated.
+    fitParams.settings = _shadowPass.Settings();
+    _cascadeFit = Render::FitCascades(fitParams);
+
+    _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, _shadowCasters.casters);
+
+    shadows.fit = &_cascadeFit;
+    shadows.settings = _shadowPass.Settings();
+    shadows.sunLightIndex = sun->index;
+    shadows.cascadeDebugView = _cascadeDebugView;
+    return shadows;
 }
 
 void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,

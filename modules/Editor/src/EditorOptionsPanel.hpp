@@ -71,6 +71,14 @@ public:
     [[nodiscard]] bool Draw(const Frame &frame);
 
 private:
+    /// @brief The sun-shadow section of the overlay: the tier presets, the
+    /// cascade knobs, the biases, and the cascade debug view.
+    ///
+    /// Split out because it is a third of the panel on its own, and because the
+    /// two halves of it persist differently — the knobs are saved settings, the
+    /// cascade view is a runtime look.
+    static void DrawShadowSettings(const Frame &frame);
+
     bool _showOptions = false;
 
     /// NVIDIA GPU telemetry (clocks/power/util/temp). Initialises NVML on first

@@ -5,6 +5,8 @@
 /// @brief ECS-driven draw pass: iterates Transform + MeshRenderer.
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include <nvrhi/nvrhi.h>
 
@@ -12,6 +14,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/ShadowPass.hpp>
 
 namespace Assisi::Render
 {
@@ -90,5 +93,32 @@ struct DrawSceneParams
 ///
 /// @return Drawn/culled counts and the submission's state-change tally.
 DrawStats DrawScene(const DrawSceneParams &params);
+
+/// @brief One frame's shadow casters, and how far up-light they reach.
+///
+/// Reused across frames by the caller — the vector's capacity survives a
+/// re-gather, so a steady-state scene allocates nothing here.
+struct ShadowCasterGather
+{
+    /// Sorted by (mesh, submesh), which is what lets consecutive entries
+    /// coalesce into one instanced draw in the shadow pass.
+    std::vector<Assisi::Render::ShadowPass::Caster> casters;
+
+    /// The smallest `dot(p, lightDirection)` any caster's bounding sphere
+    /// reaches — the point up-light past which nothing can cast into the view.
+    /// Absent when nothing casts.
+    std::optional<float> nearAlongLight;
+};
+
+/// @brief Collect every shadow-casting submesh in the scene, for the sun.
+///
+/// A caster is any resolved mesh whose MeshRenderer has `castsShadows` set. The
+/// material is not consulted: an opaque caster's shadow is a property of its
+/// geometry, and the alpha-tested case is a separate variant that does not
+/// exist yet. Nothing is frustum-culled here — that is per cascade, and this
+/// list feeds all of them.
+///
+/// @p out is cleared and refilled; pass the same object every frame.
+void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection, ShadowCasterGather &out);
 
 } // namespace Assisi::Runtime

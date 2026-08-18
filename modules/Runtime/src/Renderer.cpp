@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <algorithm>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -218,6 +219,69 @@ DrawStats DrawScene(const DrawSceneParams &params)
     stats.batches    = submitStats.batches;
     stats.drawCalls  = submitStats.drawCalls;
     return stats;
+}
+
+void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection, ShadowCasterGather &out)
+{
+    ASSISI_PROFILE_SCOPE("shadow-gather");
+
+    out.casters.clear();
+    out.nearAlongLight.reset();
+
+    float nearAlongLight = std::numeric_limits<float>::max();
+
+    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+    {
+        const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+        if (mesh == nullptr || !meshRenderer.castsShadows)
+        {
+            continue;
+        }
+
+        const Assisi::Geometry::BoundingSphere worldSphere =
+            Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
+
+        // How far up-light this caster reaches. Every cascade's near plane is
+        // pulled back to the smallest of these, which is what stops geometry
+        // behind the camera from being clipped out of the map it shadows into.
+        nearAlongLight = std::min(nearAlongLight, glm::dot(worldSphere.center, lightDirection) - worldSphere.radius);
+
+        // LOD0, matching the draw path: a shadow cast by a different silhouette
+        // than the one on screen is worse than a slightly expensive one.
+        const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
+        const std::vector<Assisi::Geometry::LodRange> &lods = mesh->Lods();
+        const Assisi::Geometry::LodRange lod0 =
+            !lods.empty() ? lods.front()
+                          : Assisi::Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+
+        for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+        {
+            out.casters.push_back(Assisi::Render::ShadowPass::Caster{.mesh = mesh,
+                                                                     .submeshIndex = lod0.FirstSubMesh + i,
+                                                                     .model = transform.worldMatrix,
+                                                                     .worldSphere = worldSphere});
+        }
+    }
+
+    if (out.casters.empty())
+    {
+        return;
+    }
+    out.nearAlongLight = nearAlongLight;
+
+    // Geometry-major, so a run of identical (mesh, submesh) entries coalesces
+    // into one instanced draw in every cascade that keeps them. Mesh id rather
+    // than pointer: the same ordering every frame, whatever the allocator did.
+    ASSISI_PROFILE_SCOPE("shadow-sort");
+    std::sort(out.casters.begin(), out.casters.end(),
+              [](const Assisi::Render::ShadowPass::Caster &lhs, const Assisi::Render::ShadowPass::Caster &rhs)
+        {
+            if (lhs.mesh->Id() != rhs.mesh->Id())
+            {
+                return lhs.mesh->Id() < rhs.mesh->Id();
+            }
+            return lhs.submeshIndex < rhs.submeshIndex;
+        });
 }
 
 } // namespace Assisi::Runtime

@@ -49,6 +49,65 @@ static const char *TonemapOperatorToString(Render::TonemapOperator op)
     }
 }
 
+static Render::ShadowFilter ShadowFilterFromString(const std::string &str)
+{
+    if (str == "point") return Render::ShadowFilter::Point;
+    if (str == "pcf5x5") return Render::ShadowFilter::Pcf5x5;
+    if (str == "vogel")  return Render::ShadowFilter::Vogel;
+    return Render::ShadowFilter::Pcf3x3;
+}
+
+static const char *ShadowFilterToString(Render::ShadowFilter filter)
+{
+    switch (filter)
+    {
+    case Render::ShadowFilter::Point:  return "point";
+    case Render::ShadowFilter::Pcf5x5: return "pcf5x5";
+    case Render::ShadowFilter::Vogel:  return "vogel";
+    default:                           return "pcf3x3";
+    }
+}
+
+static Render::ShadowMapFormat ShadowFormatFromString(const std::string &str)
+{
+    return str == "d16" ? Render::ShadowMapFormat::D16 : Render::ShadowMapFormat::D32;
+}
+
+static const char *ShadowFormatToString(Render::ShadowMapFormat format)
+{
+    return format == Render::ShadowMapFormat::D16 ? "d16" : "d32";
+}
+
+/// @brief Reads @p key into @p field when the object has it, and leaves the
+/// default when it does not.
+///
+/// A missing key is the normal case — options.json only ever holds what someone
+/// changed — so absence is not an error. A key of the wrong type throws, which
+/// the caller's handler turns into one warning and a whole-file fallback; that
+/// is deliberate, since a file that has been mangled badly enough to have a
+/// string where a float goes is not one to trust field by field.
+template <typename T>
+void ReadField(const nlohmann::json &json, const char *key, T &field)
+{
+    if (const auto entry = json.find(key); entry != json.end())
+    {
+        field = entry->get<T>();
+    }
+}
+
+/// @brief The same, for a field stored as a string and mapped by @p parse.
+///
+/// Each parse function falls back to its own default for an unrecognised
+/// string, so a typo costs that one field rather than the file.
+template <typename T, typename Parse>
+void ReadMapped(const nlohmann::json &json, const char *key, T &field, Parse parse)
+{
+    if (const auto entry = json.find(key); entry != json.end())
+    {
+        field = parse(entry->get<std::string>());
+    }
+}
+
 OptionsConfig OptionsConfig::LoadFromJson()
 {
     OptionsConfig cfg;
@@ -85,24 +144,33 @@ OptionsConfig OptionsConfig::LoadFromJson()
         if (json.contains("toneMap"))
         {
             const auto &tm = json.at("toneMap");
-            if (tm.contains("operator"))
-            {
-                cfg.tonemap.op = TonemapOperatorFromString(tm.at("operator").get<std::string>());
-            }
-            if (tm.contains("exposureStops"))
-            {
-                cfg.tonemap.exposureStops = tm.at("exposureStops").get<float>();
-            }
-            if (tm.contains("contrast"))
-            {
-                cfg.tonemap.contrast = tm.at("contrast").get<float>();
-            }
-            if (tm.contains("saturation"))
-            {
-                cfg.tonemap.saturation = tm.at("saturation").get<float>();
-            }
+            ReadMapped(tm, "operator", cfg.tonemap.op, TonemapOperatorFromString);
+            ReadField(tm, "exposureStops", cfg.tonemap.exposureStops);
+            ReadField(tm, "contrast", cfg.tonemap.contrast);
+            ReadField(tm, "saturation", cfg.tonemap.saturation);
             // Whatever the file said, the shader only ever sees values in range.
             cfg.tonemap = Render::Sanitized(cfg.tonemap);
+        }
+
+        if (json.contains("shadows"))
+        {
+            const auto &sh = json.at("shadows");
+            Render::ShadowSettings &shadows = cfg.shadows;
+            ReadField(sh, "enabled", shadows.enabled);
+            ReadField(sh, "cascades", shadows.cascadeCount);
+            ReadField(sh, "resolution", shadows.resolution);
+            ReadMapped(sh, "format", shadows.format, ShadowFormatFromString);
+            ReadField(sh, "maxDistance", shadows.maxDistance);
+            ReadField(sh, "splitLambda", shadows.splitLambda);
+            ReadMapped(sh, "filter", shadows.filter, ShadowFilterFromString);
+            ReadField(sh, "depthBiasTexels", shadows.depthBiasTexels);
+            ReadField(sh, "slopeBias", shadows.slopeBias);
+            ReadField(sh, "normalOffsetTexels", shadows.normalOffsetTexels);
+            ReadField(sh, "cascadeBlend", shadows.cascadeBlend);
+            ReadField(sh, "cullFrontFaces", shadows.cullFrontFaces);
+            // Whatever the file said, nothing downstream sees an out-of-range
+            // value — and here that is a texture allocation, not only a shader.
+            shadows = Render::Sanitized(shadows);
         }
 
         if (json.contains("frameSync"))
@@ -142,6 +210,21 @@ void OptionsConfig::SaveToJson() const
     json["toneMap"]["exposureStops"]    = tonemap.exposureStops;
     json["toneMap"]["contrast"]         = tonemap.contrast;
     json["toneMap"]["saturation"]       = tonemap.saturation;
+
+    nlohmann::json &sh = json["shadows"];
+    sh["enabled"]            = shadows.enabled;
+    sh["cascades"]           = shadows.cascadeCount;
+    sh["resolution"]         = shadows.resolution;
+    sh["format"]             = ShadowFormatToString(shadows.format);
+    sh["maxDistance"]        = shadows.maxDistance;
+    sh["splitLambda"]        = shadows.splitLambda;
+    sh["filter"]             = ShadowFilterToString(shadows.filter);
+    sh["depthBiasTexels"]    = shadows.depthBiasTexels;
+    sh["slopeBias"]          = shadows.slopeBias;
+    sh["normalOffsetTexels"] = shadows.normalOffsetTexels;
+    sh["cascadeBlend"]       = shadows.cascadeBlend;
+    sh["cullFrontFaces"]     = shadows.cullFrontFaces;
+
     json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"]       = fpsLimit;
 

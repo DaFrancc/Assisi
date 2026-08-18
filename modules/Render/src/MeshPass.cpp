@@ -64,6 +64,32 @@ struct FrameConstants
     /// rather than a shader constant so a scene can be turned up for inspection;
     /// the default is white × kDefaultAmbientIntensity.
     glm::vec4 ambient;
+
+    /// x = cascade count (0 = nothing shadows this frame, and the shader takes
+    /// no lookup at all), y = which directional light the cascades belong to,
+    /// z = ShadowFilter, w = 1 to tint by cascade.
+    glm::uvec4 shadowCounts;
+    /// x = the UV step between PCF taps — a texel up to the reference
+    /// resolution and fixed above it, so a bigger map sharpens the occluder
+    /// without narrowing the blur (see kFilterReferenceResolution),
+    /// y = the fraction of each cascade spent fading into the next, zw unused.
+    glm::vec4 shadowParams;
+    /// One record per cascade: x = the view-space distance it ends at (what the
+    /// shader selects on), y = its constant depth bias already in the [0, 1]
+    /// depth the shader compares in, z = its normal offset in world units,
+    /// w unused. Both biases are scaled CPU-side by that cascade's texel size,
+    /// which is why one setting holds across cascades whose texels differ by an
+    /// order of magnitude (see CascadeDepthBiasNdc).
+    ///
+    /// One array of records rather than three arrays of scalars: std140 pads a
+    /// float array to a 16-byte stride anyway, so three of them would cost the
+    /// same and read as three places to keep in step instead of one. Entries
+    /// past the live count are unread.
+    glm::vec4 shadowCascade[kMaxShadowCascades];
+    /// World space to each cascade's clip space. Last because it is the only
+    /// member whose size is not one lane, and appending keeps every offset
+    /// above it fixed.
+    glm::mat4 shadowViewProjection[kMaxShadowCascades];
 };
 } // namespace
 
@@ -117,8 +143,9 @@ bool MeshPass::Initialize(const InitParams &params)
     // GLSL's combined sampler2D); StructuredBuffer_SRV shares the t-register space
     // with Texture_SRV. Slot map (see mesh.vert/frag's matching `binding = N`):
     //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
-    //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data
-    //   s0 = shared sampler
+    //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data,
+    //   t7 = the sun's cascade array
+    //   s0 = shared sampler, s1 = the cascades' depth-comparison sampler
     // No push constants: per-object data (world matrix + material id) is read from
     // the instance buffer (t6) by gl_InstanceIndex, and the material's textures
     // from the bindless table (register space 1).
@@ -133,6 +160,8 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lightIndexList
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(5)); // lightGrid
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(6)); // per-instance data
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(7));          // sun cascade array
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));              // cascade comparison sampler
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -147,6 +176,24 @@ bool MeshPass::Initialize(const InitParams &params)
         samplerDesc.maxAnisotropy = context->GetMaxAnisotropy();
     }
     _sampler = device->createSampler(samplerDesc);
+
+    // The cascades are compared, not read: the hardware tests the reference
+    // depth against four texels and returns the blended result, so one fetch is
+    // already a 2x2 PCF and the kernel sizes below it are that many again.
+    // Clamped, because a lookup outside a cascade must not wrap to the far side
+    // of the map — the shader rejects those before they get here, and the clamp
+    // is what keeps a rounding error at the border from shadowing anything.
+    nvrhi::SamplerDesc shadowSamplerDesc;
+    shadowSamplerDesc.setAllFilters(true);
+    shadowSamplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::ClampToBorder);
+    shadowSamplerDesc.setBorderColor(nvrhi::Color(1.f));
+    shadowSamplerDesc.setReductionType(nvrhi::SamplerReductionType::Comparison);
+    _shadowSampler = device->createSampler(shadowSamplerDesc);
+    if (_shadowSampler == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the shadow comparison sampler.");
+        return false;
+    }
 
     nvrhi::BufferDesc frameConstantsDesc;
     frameConstantsDesc.byteSize = sizeof(FrameConstants);
@@ -191,51 +238,81 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     return true;
 }
 
-void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection,
-                                    const glm::mat4 &view, uint32_t screenWidth, uint32_t screenHeight, float nearZ,
-                                    float farZ, uint32_t dirLightCount, MaterialDebugView debugView,
-                                    const glm::vec3 &ambientColor, float ambientIntensity) const
+void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const FrameConstantsParams &params) const
 {
     FrameConstants constants;
-    constants.viewProjection = viewProjection;
-    constants.view = view;
+    constants.viewProjection = params.viewProjection;
+    constants.view = params.view;
     constants.gridDim = glm::uvec4(ClusterGrid::kNumX, ClusterGrid::kNumY, ClusterGrid::kNumZ, 0u);
-    constants.screenSizeNearFar =
-        glm::vec4(static_cast<float>(screenWidth), static_cast<float>(screenHeight), nearZ, farZ);
-    constants.lightCounts = glm::uvec4(dirLightCount, static_cast<uint32_t>(debugView), 0u, 0u);
+    constants.screenSizeNearFar = glm::vec4(static_cast<float>(params.screenWidth),
+                                            static_cast<float>(params.screenHeight), params.nearZ, params.farZ);
+    constants.lightCounts =
+        glm::uvec4(params.dirLightCount, static_cast<uint32_t>(params.debugView), 0u, 0u);
 
     // View is a rigid transform (View = R | t, t = -R * cameraPos), so the camera
     // position is -R^-1 * t, and R^-1 == transpose(R) because R is orthonormal.
-    constants.cameraPosition = glm::vec4(-glm::transpose(glm::mat3(view)) * glm::vec3(view[3]), 0.f);
+    constants.cameraPosition =
+        glm::vec4(-glm::transpose(glm::mat3(params.view)) * glm::vec3(params.view[3]), 0.f);
 
     // Guard the logs: a zero/negative near or far plane would make these inf/NaN
     // and poison every cluster lookup. Both come from the camera, which validates
     // them, so this is belt-and-braces rather than an expected path.
-    const float safeNear = nearZ > 0.f ? nearZ : 0.001f;
-    const float safeFar  = farZ > safeNear ? farZ : safeNear * 2.f;
+    const float safeNear = params.nearZ > 0.f ? params.nearZ : 0.001f;
+    const float safeFar  = params.farZ > safeNear ? params.farZ : safeNear * 2.f;
     const float logRatio = std::log(safeFar / safeNear);
     const float sliceScale = static_cast<float>(ClusterGrid::kNumZ) / logRatio;
     constants.clusterScale =
-        glm::vec4(static_cast<float>(ClusterGrid::kNumX) / static_cast<float>(screenWidth),
-                  static_cast<float>(ClusterGrid::kNumY) / static_cast<float>(screenHeight), sliceScale,
+        glm::vec4(static_cast<float>(ClusterGrid::kNumX) / static_cast<float>(params.screenWidth),
+                  static_cast<float>(ClusterGrid::kNumY) / static_cast<float>(params.screenHeight), sliceScale,
                   -sliceScale * std::log(safeNear));
 
-    constants.ambient = glm::vec4(ambientColor, ambientIntensity);
+    constants.ambient = glm::vec4(params.ambientColor, params.ambientIntensity);
+
+    // Shadows. A zero cascade count is the whole of "nothing shadows this frame"
+    // as far as the shader is concerned: it takes no lookup, so an unshadowed
+    // scene pays one comparison against a constant.
+    const ShadowFrameData &shadows = params.shadows;
+    const uint32_t cascadeCount = shadows.fit != nullptr ? shadows.fit->count : 0u;
+    constants.shadowCounts = glm::uvec4(cascadeCount, shadows.sunLightIndex,
+                                        static_cast<uint32_t>(shadows.settings.filter),
+                                        shadows.cascadeDebugView ? 1u : 0u);
+    for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
+    {
+        constants.shadowCascade[i] = glm::vec4(0.f);
+        constants.shadowViewProjection[i] = glm::mat4(1.f);
+    }
+    for (uint32_t i = 0; i < cascadeCount && i < kMaxShadowCascades; ++i)
+    {
+        const ShadowCascade &cascade = shadows.fit->cascades[i];
+        constants.shadowCascade[i] = glm::vec4(cascade.splitFarView,
+                                               CascadeDepthBiasNdc(cascade, shadows.settings),
+                                               CascadeNormalOffsetWorld(cascade, shadows.settings), 0.f);
+        constants.shadowViewProjection[i] = cascade.viewProjection;
+    }
+    constants.shadowParams =
+        glm::vec4(FilterTapStepUv(shadows.settings), shadows.settings.cascadeBlend, 0.f, 0.f);
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 
+void MeshPass::SetShadowMap(nvrhi::ITexture *cascades)
+{
+    _shadowMap = cascades;
+}
+
 nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const
 {
-    if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer)
+    if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
+        _globalSetShadowMap == _shadowMap)
     {
         return _globalBindingSet;
     }
 
-    // Every referenced handle but the instance buffer is stable for the pass's
-    // lifetime (frame CB / sampler owned here; the light buffers, though rebuilt
-    // on a viewport change, keep their handles; the material table is fixed
-    // capacity). So this rebuilds only on an instance-buffer growth or an explicit
+    // Every referenced handle but the instance buffer and the cascade array is
+    // stable for the pass's lifetime (frame CB / samplers owned here; the light
+    // buffers, though rebuilt on a viewport change, keep their handles; the
+    // material table is fixed capacity). So this rebuilds only on an
+    // instance-buffer growth, a cascade reallocation, or an explicit
     // InvalidateBindingSets() — not per frame.
     nvrhi::BindingSetDesc bindingSetDesc;
     bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _frameConstantsBuffer));
@@ -252,8 +329,11 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(5, _clusterGrid->LightGridBuffer().NativeBuffer()));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(6, instanceBuffer));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(7, _shadowMap));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(1, _shadowSampler));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;
+    _globalSetShadowMap = _shadowMap;
     return _globalBindingSet;
 }
 

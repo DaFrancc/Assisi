@@ -52,6 +52,21 @@ glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const
     return SafeDirection(glm::mat3(worldMatrix) * localDirection);
 }
 
+std::optional<LightingSystem::ShadowSun> LightingSystem::ShadowCastingSun() const
+{
+    // Bounded by _dirLightCount rather than the vector's size: lights past the
+    // buffer's capacity were dropped on upload, so the shader has no index for
+    // them and a shadow map for one would light nothing.
+    for (uint32_t i = 0; i < _dirLightCount; ++i)
+    {
+        if (_dirShadowFlags[i] == ShadowCaster::Yes)
+        {
+            return ShadowSun{.index = i, .direction = glm::vec3(_dirLights[i].directionIntensity)};
+        }
+    }
+    return std::nullopt;
+}
+
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
     ASSISI_PROFILE_GPU_PASS(commandList, "lighting");

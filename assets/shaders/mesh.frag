@@ -72,6 +72,13 @@ layout(binding = 256) uniform FrameConstants
     // screenSize, z = gridDim.z / log(farZ/nearZ), w = -z * log(nearZ).
     vec4  clusterScale;
     vec4  ambient;            // rgb = linear colour, w = intensity
+    // Sun shadows (see Render::FrameConstants and ShadowCascades.hpp).
+    uvec4 shadowCounts;       // x = cascade count (0 = no shadows), y = shadowed dir light, z = filter, w = cascade view
+    vec4  shadowParams;       // x = UV step between PCF taps, y = blend-band fraction
+    // Per cascade: x = view-space distance it ends at, y = constant depth bias
+    // in [0,1] depth, z = normal offset in world units.
+    vec4  shadowCascade[8];
+    mat4  shadowViewProjection[8];
 } uFrame;
 
 // Debug view modes (must match Render::MaterialDebugView). 0 = normal lit render;
@@ -419,6 +426,182 @@ float AttenuationSq(float d2, float radiusSq)
     return (numer * numer) / (d2 + 1.0);
 }
 
+// ---- Sun shadows ---------------------------------------------------------
+//
+// One texture array, one slice per cascade, sampled through a depth-comparison
+// sampler: the hardware tests the reference against four texels and returns the
+// blended result, so even the one-tap filter comes back soft to a texel.
+//
+// Two biases, both scaled CPU-side by the cascade's world-per-texel so one
+// setting holds across cascades whose texels differ by an order of magnitude.
+// They do different jobs and neither replaces the other: the constant depth bias
+// lies about how deep the surface is, which detaches contact shadows if it is
+// large; the normal offset moves the lookup out of the surface instead, which is
+// what actually fixes acne where the sun grazes.
+
+layout(binding = 7) uniform texture2DArray uShadowCascades;
+layout(binding = 129) uniform samplerShadow uShadowSampler;
+
+// Must match Render::ShadowFilter.
+const uint kShadowFilterPoint = 0u;
+const uint kShadowFilterPcf3  = 1u;
+const uint kShadowFilterPcf5  = 2u;
+const uint kShadowFilterVogel = 3u;
+
+// 16 rather than a dozen because the disk it has to fill is quoted against a
+// reference resolution, so on a map above that size it spans twice as many
+// texels and twelve taps start leaving holes in it.
+const uint  kVogelTaps          = 16u;
+const float kVogelRadiusSteps   = 2.5;
+const float kGoldenAngle        = 2.39996323;
+
+float ShadowFetch(vec2 uv, uint cascade, float reference)
+{
+    return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
+}
+
+// Rotates the Vogel disk per pixel so its 12 taps read as noise rather than as
+// 12 repeated copies of the same rosette.
+float InterleavedGradientNoise(vec2 position)
+{
+    return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
+}
+
+/// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
+float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+{
+    // The offset is scaled by how far from head-on the light is. At normal
+    // incidence a surface cannot shadow itself and needs none; at grazing
+    // incidence a texel spans a long stretch of the surface and needs all of it.
+    float slope = clamp(1.0 - NdotL, 0.0, 1.0);
+    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * slope);
+
+    vec4 lightClip = uFrame.shadowViewProjection[cascade] * vec4(biasedPos, 1.0);
+    vec3 ndc = lightClip.xyz / lightClip.w;
+
+    // The backend draws with a flipped viewport, so the map's first texel row is
+    // ndc.y == +1 — hence the negative y scale rather than the usual 0.5.
+    vec2  uv        = ndc.xy * vec2(0.5, -0.5) + 0.5;
+    float reference = ndc.z - uFrame.shadowCascade[cascade].y;
+
+    // Outside the cascade nothing was recorded, so nothing may be claimed. The
+    // sampler's white border would answer "lit" anyway; rejecting here also skips
+    // the taps.
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || reference > 1.0)
+    {
+        return 1.0;
+    }
+
+    // The UV distance between taps. Deliberately not one texel of this map: a
+    // radius quoted in the cascade's own texels would shrink every time the
+    // resolution went up, so raising the quality setting would harden the
+    // shadow rather than improve it. See Render::FilterTapStepUv.
+    float step = uFrame.shadowParams.x;
+    uint  filterMode = uFrame.shadowCounts.z;
+
+    if (filterMode == kShadowFilterPoint)
+    {
+        return ShadowFetch(uv, cascade, reference);
+    }
+
+    if (filterMode == kShadowFilterVogel)
+    {
+        // A dozen taps on a disk, rotated per pixel. Trades the grid's banding
+        // for noise, which reads as a softer edge at a third of 5x5's taps.
+        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
+        float sum = 0.0;
+        for (uint i = 0u; i < kVogelTaps; ++i)
+        {
+            float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
+            float theta = float(i) * kGoldenAngle + phi;
+            sum += ShadowFetch(uv + vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference);
+        }
+        return sum / float(kVogelTaps);
+    }
+
+    if (filterMode == kShadowFilterPcf5)
+    {
+        float sum = 0.0;
+        for (int y = -2; y <= 2; ++y)
+        {
+            for (int x = -2; x <= 2; ++x)
+            {
+                sum += ShadowFetch(uv + vec2(float(x), float(y)) * step, cascade, reference);
+            }
+        }
+        return sum * (1.0 / 25.0);
+    }
+
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            sum += ShadowFetch(uv + vec2(float(x), float(y)) * step, cascade, reference);
+        }
+    }
+    return sum * (1.0 / 9.0);
+}
+
+/// The sun's visibility at this fragment, blended across the cascade seam.
+/// Reports which cascade it read in @p outCascade, for the debug view.
+/// Which cascade covers this fragment. A compare chain over frame constants —
+/// cheap enough to run even where the shadow itself is never looked up, which
+/// is what lets the debug view still colour a surface the sun cannot reach.
+uint SelectCascade(float viewDepth)
+{
+    uint cascadeCount = uFrame.shadowCounts.x;
+    // The last cascade is the fallback: past its split there is nothing further
+    // out, and SampleCascade's own bounds check answers "lit" there.
+    for (uint i = 0u; i < cascadeCount; ++i)
+    {
+        if (viewDepth < uFrame.shadowCascade[i].x)
+        {
+            return i;
+        }
+    }
+    return cascadeCount - 1u;
+}
+
+float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
+{
+    uint  cascadeCount = uFrame.shadowCounts.x;
+    float viewDepth    = abs(vViewZ);
+
+    // Past the outermost cascade the band below has already faded to full light,
+    // so a lookup out here can only confirm it — at the cost of a matrix
+    // multiply and a fetch on every pixel of a distant view.
+    if (viewDepth >= uFrame.shadowCascade[cascadeCount - 1u].x)
+    {
+        return 1.0;
+    }
+
+    float visibility = SampleCascade(cascade, vWorldPos, N, NdotL);
+
+    // Fade over the end of the cascade's range, into the next one where there is
+    // one and into full light where there is not — so neither the seam between
+    // two cascades nor the edge of the last one is a visible line.
+    float splitFar  = uFrame.shadowCascade[cascade].x;
+    float splitNear = cascade == 0u ? 0.0 : uFrame.shadowCascade[cascade - 1u].x;
+    float band      = (splitFar - splitNear) * uFrame.shadowParams.y;
+    if (band > 0.0 && viewDepth > splitFar - band)
+    {
+        float t    = clamp((viewDepth - (splitFar - band)) / band, 0.0, 1.0);
+        float next = cascade + 1u < cascadeCount ? SampleCascade(cascade + 1u, vWorldPos, N, NdotL) : 1.0;
+        visibility = mix(visibility, next, t);
+    }
+    return visibility;
+}
+
+/// Flat tints for the cascade debug view, one per slice.
+vec3 CascadeTint(uint cascade)
+{
+    if (cascade == 0u) return vec3(1.0, 0.45, 0.45);
+    if (cascade == 1u) return vec3(0.45, 1.0, 0.45);
+    if (cascade == 2u) return vec3(0.45, 0.6, 1.0);
+    return vec3(1.0, 0.95, 0.45);
+}
+
 // ---- Cluster index -------------------------------------------------------
 
 uint ClusterIndex()
@@ -495,6 +678,13 @@ void main()
     // Everything the BRDF needs that does not vary per light, computed once.
     BrdfContext brdf = MakeBrdfContext(N, V, surf, F0);
 
+    // Only one directional light casts — the sun. Which one it is arrives as an
+    // index into the same buffer this loop walks, so the two halves agree on what
+    // index i means without either re-deriving the order.
+    uint shadowCascadeCount = uFrame.shadowCounts.x;
+    uint shadowLightIndex   = uFrame.shadowCounts.y;
+    uint shadowCascade      = 0u;
+
     uint dirLightCount = uFrame.lightCounts.x;
     for (uint i = 0u; i < dirLightCount; i++)
     {
@@ -502,6 +692,21 @@ void main()
         // (SafeDirection), so this only needs the negation.
         vec3 L        = -dirLights[i].directionIntensity.xyz;
         vec3 radiance = dirLights[i].colorPad.xyz * dirLights[i].directionIntensity.w;
+        if (shadowCascadeCount > 0u && i == shadowLightIndex)
+        {
+            shadowCascade = SelectCascade(abs(vViewZ));
+
+            // A surface turned away from the sun is already dark by its own
+            // geometry: CookTorrance multiplies by N.L and throws the whole term
+            // away a line later. Sampling the cascade first told it something it
+            // already knew, at sixteen comparison fetches a fragment — and about
+            // half the surfaces in any scene face away from a given light.
+            float NdotL = dot(N, L);
+            if (NdotL > 0.0)
+            {
+                radiance *= SunVisibility(N, L, shadowCascade, NdotL);
+            }
+        }
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
@@ -561,6 +766,15 @@ void main()
     // visibility via N·L); emissive is added on top, unlit.
     vec3 ambient = uFrame.ambient.rgb * uFrame.ambient.w;
     vec3 color = ambient * albedo * surf.occlusion + Lo + surf.emissive;
+
+    // Cascade view: tint the lit result rather than replacing it, so a split
+    // distance and a blend band are readable against the geometry that provoked
+    // them. Goes through the tone map like any other radiance — these are bands
+    // to look at, not numbers to read off the screen.
+    if (uFrame.shadowCounts.w != 0u && shadowCascadeCount > 0u)
+    {
+        color *= CascadeTint(shadowCascade);
+    }
 
     // Linear radiance, unbounded. The scene target is float and the tone map is
     // its own pass (tonemap.frag), so nothing here clamps or encodes: a value
