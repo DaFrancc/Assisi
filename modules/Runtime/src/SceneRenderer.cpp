@@ -23,6 +23,9 @@ namespace
 // under the asset root by the build; resolved through Core::AssetSystem.
 constexpr const char *kSceneVertexShader = "shaders/mesh.vert.spv";
 constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
+// The same pixel shader built with its alpha-test discard enabled, for the mesh
+// pass's masked pipeline (see MeshPass::InitParams).
+constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
 
 // The sun's cascade depth pass — a vertex stage and nothing else, since the
 // pipeline writes depth and no colour (see Render::ShadowPass).
@@ -99,6 +102,7 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                            .framebufferInfo = params.framebufferInfo,
                                                            .vertexShaderSpvPath = kSceneVertexShader,
                                                            .pixelShaderSpvPath = kScenePixelShader,
+                                                           .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
                                                            .clusterGrid = &_lighting.Grid(),
                                                            .bindlessLayout = params.bindlessLayout,
                                                            .bindlessTable = params.bindlessTable,

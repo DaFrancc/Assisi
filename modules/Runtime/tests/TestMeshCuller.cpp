@@ -11,6 +11,7 @@
 using Assisi::Render::CullTableBuilder;
 using Assisi::Render::CullTables;
 using Assisi::Render::GpuSubMesh;
+using Assisi::Render::kCullMaterialMaskedBit;
 using Assisi::Render::kNoMaterial;
 using Assisi::Render::MeshGeometry;
 
@@ -207,6 +208,108 @@ TEST_CASE("Finalize reserves per-mesh instance regions and advances bases across
     CHECK(tables.batchTemplates[2].vertexOffset == 50);
     // Total reserved == drawCapacity (2×2 + 1×1).
     CHECK(tables.drawCapacity == 5);
+}
+
+TEST_CASE("An all-opaque frame keeps one command per batch and no masked half")
+{
+    // The pay-for-what-you-place case: with no cutout material placed, the command
+    // table and the instance reservations must be exactly what they were before
+    // masked draws existed.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 2> submeshes{GpuSubMesh{0, 6, 0, 0}, GpuSubMesh{6, 6, 1, 0}};
+    const std::array<uint32_t, 2>   materials{10u, 20u};
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), materials);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    CHECK_FALSE(tables.hasMaskedMaterials);
+    CHECK(tables.BatchCount() == 2);
+    CHECK(tables.batchTemplates.size() == 2);
+    CHECK(tables.MaskedCommandCount() == 0);
+    CHECK(tables.OpaqueCommandCount() == 2);
+}
+
+TEST_CASE("A masked material adds a second command half the masked pipeline draws")
+{
+    // Two objects of one mesh, one opaque and one cutout. A batch is one draw and
+    // a draw is one pipeline, so the (mesh, submesh) they share cannot be one
+    // batch — the table grows a masked half for the second to land in.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1>   opaque{7u};
+    const std::array<uint32_t, 1>   masked{8u | kCullMaterialMaskedBit};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), opaque);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    CHECK(tables.hasMaskedMaterials);
+    REQUIRE(tables.BatchCount() == 1);
+    REQUIRE(tables.batchTemplates.size() == 2);
+    CHECK(tables.OpaqueCommandCount() == 1);
+    CHECK(tables.MaskedCommandCount() == 1);
+
+    // Both halves draw the same geometry; only the pipeline and the instance
+    // region they pack into differ.
+    CHECK(tables.batchTemplates[0].indexCount == 3);
+    CHECK(tables.batchTemplates[1].indexCount == 3);
+    CHECK(tables.batchTemplates[0].firstIndex == tables.batchTemplates[1].firstIndex);
+
+    // One object each, so the two reserved regions are one slot apiece and do not
+    // overlap — an overlap would have the two pipelines writing the same record.
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 1);
+}
+
+TEST_CASE("Reservations are exact, so a pipeline nothing uses reserves nothing")
+{
+    // Reserving one slot per object in both halves would double the instance
+    // buffer for every scene that has a cutout material anywhere in it. The counts
+    // are what each half will actually hold.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1>   masked{4u | kCullMaterialMaskedBit};
+    const std::array<uint32_t, 1>   opaque{5u};
+
+    // Three masked objects of mesh A, one opaque object of mesh B.
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshB, MakeGeometry(submeshes, 50, 60), glm::mat4(1.f), opaque);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.BatchCount() == 2);   // (A,s0) and (B,s0)
+    REQUIRE(tables.batchTemplates.size() == 4);
+
+    // Opaque half: A reserves nothing (all three of its objects are cutouts), B one.
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 0);
+    // Masked half follows B's single opaque slot: A takes three, B reserves none.
+    CHECK(tables.batchTemplates[2].firstInstance == 1);
+    CHECK(tables.batchTemplates[3].firstInstance == 4);
+
+    // Every reservation fits inside the instance buffer drawCapacity sizes.
+    CHECK(tables.drawCapacity == 4);
+}
+
+TEST_CASE("The masked bit never reaches the material id the shader indexes with")
+{
+    // The bit rides in the id's top bit, which the cull shader strips before
+    // writing the instance record. Leaving it in would index a million rows past
+    // the material table.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1>   masked{9u | kCullMaterialMaskedBit};
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+
+    // The tables carry it packed — stripping is the shader's job, and it needs the
+    // bit to pick its half.
+    CHECK(builder.Tables().objectMaterials[0] == (9u | kCullMaterialMaskedBit));
+    CHECK((builder.Tables().objectMaterials[0] & Assisi::Render::kCullMaterialIdMask) == 9u);
+    // The sentinel must keep reading as "no material" rather than as a masked one.
+    CHECK((kNoMaterial & Assisi::Render::kCullMaterialIdMask) != 9u);
 }
 
 TEST_CASE("Reset clears the tables and the mesh dedup map")

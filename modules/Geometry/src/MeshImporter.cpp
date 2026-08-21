@@ -137,7 +137,7 @@ struct ImportWarnings
     bool secondUvSet = false;
     bool vertexColor = false;
     bool skinning = false;
-    bool alphaMode = false;
+    bool alphaBlend = false;
     bool doubleSided = false;
     bool embeddedImage = false;
     bool secondaryTexCoord = false;
@@ -386,11 +386,18 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
             ResolveImageId(asset, material.emissiveTexture->textureIndex, virtualPath, parent, resolveId, warnings);
     }
 
-    if (material.alphaMode != fastgltf::AlphaMode::Opaque && !warnings.alphaMode)
+    if (material.alphaMode == fastgltf::AlphaMode::Mask)
     {
-        warnings.alphaMode = true;
-        Core::Log::Warn("MeshImporter: '{}' has a non-opaque material ('{}'); alpha modes are not supported yet — "
-                        "importing as opaque.",
+        data.Alpha = AlphaMode::Mask;
+        data.AlphaCutoff = static_cast<float>(material.alphaCutoff);
+    }
+    else if (material.alphaMode == fastgltf::AlphaMode::Blend && !warnings.alphaBlend)
+    {
+        // Blending has no pass to draw in. Opaque is the honest fallback: importing
+        // it as a cutout instead would punch holes in a surface authored to fade.
+        warnings.alphaBlend = true;
+        Core::Log::Warn("MeshImporter: '{}' has an alphaMode BLEND material ('{}'); blended transparency is not "
+                        "supported yet — importing as opaque.",
                         virtualPath, data.Name);
     }
     if (material.doubleSided && !warnings.doubleSided)

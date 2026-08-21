@@ -40,7 +40,7 @@ struct MaterialRow
     vec4  emissiveFactorNormalScale; // xyz = emissive, w = normalScale
     vec4  metalRoughOcclusion;       // x = metallic, y = roughness, z = occlusion strength, w = specular AA variance clamp
     vec4  specularColorIor;          // rgb = specularColor, w = specularIor
-    vec4  openPbrParams;             // x = baseWeight, y = specularWeight, z = baseDiffuseRoughness, w = reserved
+    vec4  openPbrParams;             // x = baseWeight, y = specularWeight, z = baseDiffuseRoughness, w = alphaCutoff (0 unless masked)
     uvec4 flags;                     // x = material flag bits below; yzw reserved
     uvec4 texIndices;                // bindless slots: x=baseColor y=normal z=metalRough w=occlusion
     uvec4 texIndicesEmissive;        // x = emissive bindless slot
@@ -150,6 +150,8 @@ struct Surface
     float specIor;
     float diffuseRoughness; // OpenPBR base_diffuse_roughness
     bool  eonDiffuse;       // material opted into the EON diffuse lobe
+    float alpha;            // base colour alpha; read only by the ASSISI_ALPHA_MASK build
+    float alphaCutoff;      // alpha below this kills the fragment; 0 unless the material is masked
 };
 
 Surface SampleMaterial()
@@ -163,6 +165,8 @@ Surface SampleMaterial()
     // (filtered/mip-blended in linear space); multiply by the linear factor.
     vec4 base = sampleMaterialTex(mat.texIndices.x, vTexCoord) * mat.baseColorFactor;
     s.albedo = base.rgb * mat.openPbrParams.x; // baseWeight
+    s.alpha = base.a;
+    s.alphaCutoff = mat.openPbrParams.w;
 
     // glTF metallic-roughness packing: G = roughness, B = metallic. The texture
     // is linear data (empty channel = white = 1, leaving the factor untouched).
@@ -632,6 +636,19 @@ uint ClusterIndex()
 void main()
 {
     Surface surf = SampleMaterial();
+
+#ifdef ASSISI_ALPHA_MASK
+    // The cutout test, and the only difference between this build of the shader
+    // and the one the opaque pipeline uses. It lives behind the define because a
+    // fragment shader that *can* discard loses early depth rejection for every
+    // draw through its pipeline — including the opaque geometry that has no alpha
+    // to test. Before the lighting and before the debug views: a killed fragment
+    // is not part of the surface in either.
+    if (surf.alpha < surf.alphaCutoff)
+    {
+        discard;
+    }
+#endif
 
     // Debug views short-circuit the lighting: output one channel straight, so the
     // material's inputs can be inspected in isolation. Colour channels (base /

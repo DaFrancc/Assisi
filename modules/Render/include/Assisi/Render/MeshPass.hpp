@@ -68,6 +68,11 @@ public:
         /// Compiled-SPIR-V shader paths (see ShaderModule.hpp).
         std::string vertexShaderSpvPath;
         std::string pixelShaderSpvPath;
+        /// The same pixel shader built with its alpha-test discard enabled — the
+        /// MeshPipeline::Mask pipeline's. It is a separate build rather than a
+        /// branch because a shader that can discard costs its whole pipeline
+        /// early depth rejection, which opaque geometry must not pay for.
+        std::string maskedPixelShaderSpvPath;
         /// Must outlive the pass — its light buffers bind into every binding set.
         const ClusterGrid *clusterGrid = nullptr;
         /// The AssetCache's bindless material-texture table + layout (stage D):
@@ -212,12 +217,17 @@ public:
         /// t6 in place of the CPU path's own instance buffer.
         nvrhi::IBuffer *instanceBuffer = nullptr;
         /// The batch draw commands (one DrawIndexedIndirectArguments per distinct
-        /// (mesh, submesh)); the cull pass grew each one's instanceCount. Empty
-        /// batches carry instanceCount 0 and draw nothing.
+        /// (mesh, submesh, pipeline)); the cull pass grew each one's instanceCount.
+        /// Empty batches carry instanceCount 0 and draw nothing.
         nvrhi::IBuffer *indirectBuffer = nullptr;
-        /// Number of batch commands to draw (CPU-known — every batch has a command,
-        /// so this is the count for a plain drawIndexedIndirect; no count buffer).
-        uint32_t commandCount = 0;
+        /// The buffer's opaque commands, which lead it. CPU-known — every batch has
+        /// a command, so this is the count for a plain drawIndexedIndirect; no count
+        /// buffer.
+        uint32_t opaqueCommandCount = 0;
+        /// The masked commands that follow them, drawn through the discard-carrying
+        /// pipeline. Zero when the frame placed no cutout material, and then the
+        /// buffer holds nothing but the opaque half.
+        uint32_t maskedCommandCount = 0;
         /// The shared GeometryArena's vertex/index buffers every draw addresses.
         /// F1 assumes a single arena (as stage E does — one drawIndexedIndirect
         /// group); a second arena would need per-arena count buffers.
@@ -227,14 +237,14 @@ public:
 
     /// @brief Draws a GPU-culled frame: binds the global set against @p in's
     /// instance buffer, points the pipeline at the cull pass's batch-command
-    /// buffer, and issues one `drawIndexedIndirect` over @p in.commandCount
-    /// commands (empty batches draw 0 instances). Reports the API call in
-    /// `drawCalls`; the caller reports the survivor/batch tallies from the culler.
+    /// buffer, and issues one `drawIndexedIndirect` per pipeline half (empty
+    /// batches draw 0 instances). Reports the API calls in `drawCalls`; the caller
+    /// reports the survivor/batch tallies from the culler.
     /// @pre IsValid(), UpdateFrameConstants() this frame, and a MeshCuller::Cull
     ///      recorded into the same command list ahead of this call.
     [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const;
 
-    bool IsValid() const { return _pipeline != nullptr; }
+    bool IsValid() const { return _pipelines[0] != nullptr && _pipelines[1] != nullptr; }
 
     /// @brief Drops the cached global binding set so the next Submit rebuilds it.
     /// Called on level unload (SceneRenderer::InvalidateAssetBindings). Every handle
@@ -263,7 +273,9 @@ private:
     const ClusterGrid *_clusterGrid = nullptr;
 
     nvrhi::ShaderHandle _vertexShader;
-    nvrhi::ShaderHandle _pixelShader;
+    // One pixel shader per MeshPipeline: the same GLSL, built with and without
+    // the alpha-test discard.
+    nvrhi::ShaderHandle _pixelShaders[kMeshPipelineCount];
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::SamplerHandle _sampler;
@@ -271,7 +283,9 @@ private:
     // reference against four texels and blends the results, so even a one-tap
     // lookup comes back filtered rather than as a hard 0 or 1.
     nvrhi::SamplerHandle _shadowSampler;
-    nvrhi::GraphicsPipelineHandle _pipeline;
+    // One pipeline per MeshPipeline, differing only in which pixel shader they
+    // carry. A draw run selects its own off the sort key.
+    nvrhi::GraphicsPipelineHandle _pipelines[kMeshPipelineCount];
     nvrhi::BufferHandle _frameConstantsBuffer;
 
     // The sun's cascade array (ShadowPass owns it). Non-owning: a reallocation
@@ -313,5 +327,6 @@ private:
     mutable std::vector<InstanceData>                        _scratchInstances;
     mutable std::vector<nvrhi::DrawIndexedIndirectArguments> _scratchCommands;
     mutable std::vector<const MeshBuffer *>                  _scratchBatchMeshes;
+    mutable std::vector<MeshPipeline>                        _scratchBatchPipelines;
 };
 } /* namespace Assisi::Render */

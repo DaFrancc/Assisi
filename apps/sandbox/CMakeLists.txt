@@ -125,21 +125,33 @@ file(GLOB_RECURSE _sandbox_vk_shader_sources
 
 set(_sandbox_shader_copies "")
 
-foreach(_shader_in ${_sandbox_vk_shader_sources})
-    # A shader keeps its path relative to assets/ (e.g. shaders/mesh.vert or
-    # editor/shaders/outline_edge.frag) through compilation and into the copied
-    # asset root, so editor-only shaders live under assets/editor/ and still
-    # resolve by their virtual path. Intermediate names in the binary dir flatten
-    # the slashes to stay unique and path-safe.
-    file(RELATIVE_PATH _shader_rel "${CMAKE_SOURCE_DIR}/assets" "${_shader_in}")
-    get_filename_component(_shader_rel_dir "${_shader_rel}" DIRECTORY)
-    string(REPLACE "/" "_" _shader_flat "${_shader_rel}")
-    set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.spv")
+# Compiles one GLSL source to SPIR-V and stages it under the app's asset root.
+#
+# _shader_in   absolute path to the .vert/.frag/.comp
+# _spv_rel     where the .spv lands, relative to assets/ — normally
+#              "<source>.spv", and "<source>.<variant>.spv" for a variant built
+#              from the same source with different defines
+# ARGN         preprocessor defines for this build of the shader
+#
+# A shader keeps its path relative to assets/ (e.g. shaders/mesh.vert or
+# editor/shaders/outline_edge.frag) through compilation and into the copied
+# asset root, so editor-only shaders live under assets/editor/ and still
+# resolve by their virtual path. Intermediate names in the binary dir flatten
+# the slashes to stay unique and path-safe.
+function(assisi_sandbox_compile_shader _shader_in _spv_rel)
+    set(_defines "")
+    foreach(_define ${ARGN})
+        list(APPEND _defines "-D${_define}")
+    endforeach()
+
+    get_filename_component(_spv_rel_dir "${_spv_rel}" DIRECTORY)
+    string(REPLACE "/" "_" _shader_flat "${_spv_rel}")
+    set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}")
     add_custom_command(
         OUTPUT "${_shader_out}"
-        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 "${_shader_in}" -o "${_shader_out}"
+        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 ${_defines} "${_shader_in}" -o "${_shader_out}"
         DEPENDS "${_shader_in}" glslang-standalone
-        COMMENT "Compiling ${_shader_rel} to SPIR-V"
+        COMMENT "Compiling ${_spv_rel}"
         VERBATIM
     )
 
@@ -149,18 +161,33 @@ foreach(_shader_in ${_sandbox_vk_shader_sources})
     # that's fine inside COMMAND.
     # Compiled .spv lands beside its GLSL source under the copied asset root, so it
     # resolves through Core::AssetSystem exactly like every other asset.
-    set(_shader_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.spv.copied")
+    set(_shader_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.copied")
     add_custom_command(
         OUTPUT "${_shader_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_shader_rel_dir}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_shader_out}" "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_shader_rel}.spv"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_spv_rel_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_shader_out}" "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_spv_rel}"
         COMMAND ${CMAKE_COMMAND} -E touch "${_shader_stamp}"
         DEPENDS "${_shader_out}"
-        COMMENT "Copying ${_shader_rel}.spv into the Assisi-Sandbox asset root"
+        COMMENT "Copying ${_spv_rel} into the Assisi-Sandbox asset root"
         VERBATIM
     )
-    list(APPEND _sandbox_shader_copies "${_shader_stamp}")
+    set(_copies ${_sandbox_shader_copies})
+    list(APPEND _copies "${_shader_stamp}")
+    set(_sandbox_shader_copies "${_copies}" PARENT_SCOPE)
+endfunction()
+
+foreach(_shader_in ${_sandbox_vk_shader_sources})
+    file(RELATIVE_PATH _shader_rel "${CMAKE_SOURCE_DIR}/assets" "${_shader_in}")
+    assisi_sandbox_compile_shader("${_shader_in}" "${_shader_rel}.spv")
 endforeach()
+
+# Shader variants: the same source compiled again with a define, landing beside
+# the base .spv as <source>.<variant>.spv. The mesh pass needs mesh.frag both
+# with and without its alpha-test discard, because a shader that can discard
+# costs its whole pipeline early depth rejection — so the opaque geometry draws
+# through the build that cannot.
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.masked.spv"
+    ASSISI_ALPHA_MASK)
 
 add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

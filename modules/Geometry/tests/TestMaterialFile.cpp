@@ -33,6 +33,8 @@ MaterialData MakeFullMaterial()
     m.BaseDiffuseRoughness = 0.4f;
     m.SpecularAntiAliasing = false;
     m.SpecularAaVarianceClamp = 0.35f;
+    m.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    m.AlphaCutoff = 0.25f;
     // Distinct GUIDs per channel so a round-trip that swapped or dropped one is
     // caught.
     m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
@@ -71,6 +73,10 @@ TEST_CASE("MaterialFile: a full material survives a serialize -> deserialize rou
     // dropped it would restore the opposite of what was saved.
     CHECK(restored->SpecularAntiAliasing == false);
     CHECK(restored->SpecularAaVarianceClamp == doctest::Approx(0.35f));
+    // The enum rides the wire as its underlying integer, so a round-trip that
+    // lost it would restore Opaque and the material would stop being a cutout.
+    CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Mask);
+    CHECK(restored->AlphaCutoff == doctest::Approx(0.25f));
     CHECK(restored->BaseColorTexture == original.BaseColorTexture);
     CHECK(restored->NormalTexture == original.NormalTexture);
     CHECK(restored->MetallicRoughnessTexture == original.MetallicRoughnessTexture);
@@ -115,6 +121,45 @@ TEST_CASE("MaterialFile: absent fields keep their default (forward-compatible lo
     // sparkling it was authored against.
     CHECK(restored->SpecularAntiAliasing == true);
     CHECK(restored->SpecularAaVarianceClamp == doctest::Approx(0.2f));
+    // Every .amat committed today predates the alpha fields. Opaque is what the
+    // renderer treated them as, so loading them as anything else would change
+    // how existing content draws.
+    CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Opaque);
+    CHECK(restored->AlphaCutoff == doctest::Approx(0.5f));
+}
+
+TEST_CASE("MaterialFile: an .amat written before the alpha fields existed still loads")
+{
+    // The exact envelope + key set an .amat carried before this change, verbatim.
+    // It is the whole non-breaking claim: the schema addition is per-field, so
+    // the fields the file does have must land unchanged and the two it lacks must
+    // take defaults rather than failing the parse.
+    const std::string legacy = R"({
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [0.8, 0.7, 0.6, 1.0],
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.6,
+  "NormalScale": 1.0,
+  "OcclusionStrength": 1.0,
+  "EmissiveFactor": [0.0, 0.0, 0.0],
+  "BaseWeight": 1.0,
+  "SpecularWeight": 1.0,
+  "SpecularColor": [1.0, 1.0, 1.0],
+  "SpecularIor": 1.5,
+  "BaseDiffuseRoughness": 0.0,
+  "SpecularAntiAliasing": true,
+  "SpecularAaVarianceClamp": 0.2,
+  "BaseColorTexture": "aaaaaaaa-0000-4000-8000-00000000000a"
+})";
+
+    const auto restored = DeserializeMaterial(legacy);
+    REQUIRE(restored.has_value());
+    CHECK(restored->BaseColorFactor.x == doctest::Approx(0.8f));
+    CHECK(restored->RoughnessFactor == doctest::Approx(0.6f));
+    CHECK(restored->BaseColorTexture == *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-00000000000a"));
+    CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Opaque);
+    CHECK(restored->AlphaCutoff == doctest::Approx(0.5f));
 }
 
 TEST_CASE("MaterialFile: invalid JSON and wrong type are rejected")
