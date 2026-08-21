@@ -608,6 +608,32 @@ std::string MakeIorGltf(std::string_view iorLiteral)
     return std::string{kHead} + std::string{iorLiteral} + std::string{kTail};
 }
 
+// The same triangle with one material whose alphaMode is @p mode, plus whatever
+// @p extraKeys adds (an alphaCutoff, or nothing).
+std::string MakeAlphaGltf(std::string_view mode, std::string_view extraKeys)
+{
+    constexpr std::string_view kHead = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ { "name": "foliage", "alphaMode": ")";
+    constexpr std::string_view kTail = R"( } ],
+  "buffers": [ { "uri": "khr.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+    return std::string{kHead} + std::string{mode} + "\"" + std::string{extraKeys} + std::string{kTail};
+}
+
 fs::path WriteKhrAssets(std::string_view gltfText)
 {
     const fs::path root = fs::temp_directory_path() / "assisi_geometry_test_khr";
@@ -729,6 +755,57 @@ TEST_CASE("ImportMesh: a KHR_materials_specular texture is named as dropped, fac
     // shipped alongside still land.
     CHECK(result->Materials[0].SpecularWeight == doctest::Approx(0.3f));
     CHECK(log.Mentions("KHR_materials_specular"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: alphaMode MASK imports as a cutout with its authored cutoff")
+{
+    const fs::path root = WriteKhrAssets(MakeAlphaGltf("MASK", R"(, "alphaCutoff": 0.25)"));
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    CHECK(result->Materials[0].Alpha == Assisi::Geometry::AlphaMode::Mask);
+    CHECK(result->Materials[0].AlphaCutoff == doctest::Approx(0.25f));
+    // Nothing was dropped, so nothing may be warned about.
+    CHECK_FALSE(log.Mentions("alpha"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: alphaMode MASK without an explicit cutoff takes the glTF default")
+{
+    // glTF's alphaCutoff defaults to 0.5, and exporters routinely omit it. Taking
+    // the engine's own default instead would only agree by coincidence.
+    const fs::path root = WriteKhrAssets(MakeAlphaGltf("MASK", ""));
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    CHECK(result->Materials[0].Alpha == Assisi::Geometry::AlphaMode::Mask);
+    CHECK(result->Materials[0].AlphaCutoff == doctest::Approx(0.5f));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: alphaMode BLEND still imports as opaque, and says so")
+{
+    // There is no blended pass yet, so BLEND has nowhere to go. Importing it as a
+    // cutout would be worse than opaque: it would punch holes in a surface the
+    // author meant to see through smoothly.
+    const fs::path root = WriteKhrAssets(MakeAlphaGltf("BLEND", ""));
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    CHECK(result->Materials[0].Alpha == Assisi::Geometry::AlphaMode::Opaque);
+    CHECK(log.Mentions("BLEND"));
 
     fs::remove_all(root);
 }

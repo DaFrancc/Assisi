@@ -19,7 +19,13 @@ void Material::Create(nvrhi::IDevice * /*device*/, uint32_t id, const Geometry::
     _constants.metalRoughOcclusion = glm::vec4(source.MetallicFactor, source.RoughnessFactor,
                                                source.OcclusionStrength, source.SpecularAaVarianceClamp);
     _constants.specularColorIor = glm::vec4(source.SpecularColor, source.SpecularIor);
-    _constants.openPbrParams = glm::vec4(source.BaseWeight, source.SpecularWeight, source.BaseDiffuseRoughness, 0.f);
+    // The cutoff rides in openPbrParams.w, and is zero unless the material is
+    // masked: the masked shader tests `alpha < cutoff`, so zero kills nothing and
+    // an opaque material stays solid even if that pipeline ever draws it.
+    const float alphaCutoff =
+        source.Alpha == Geometry::AlphaMode::Mask ? source.AlphaCutoff : 0.f;
+    _constants.openPbrParams =
+        glm::vec4(source.BaseWeight, source.SpecularWeight, source.BaseDiffuseRoughness, alphaCutoff);
 
     uint32_t flags = 0u;
     if (textures.hasNormalTexture)

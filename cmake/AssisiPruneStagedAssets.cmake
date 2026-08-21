@@ -35,8 +35,15 @@ foreach(_rel IN LISTS _staged)
     # is gone. Compare against that instead of exempting .spv outright: renaming or
     # moving a shader is the case that strands an old .spv next to the new one,
     # where it still resolves through AssetSystem and can be loaded instead.
+    #
+    # The probe is everything up to and including the shader-stage extension, so a
+    # variant built from the same GLSL with different defines
+    # (shaders/mesh.frag.masked.spv) resolves to its source the same way the plain
+    # build does, rather than looking like an orphan and being deleted.
     set(_probe "${_rel}")
-    if (_rel MATCHES "\\.spv$")
+    if (_rel MATCHES "\\.(vert|frag|comp)\\..*spv$")
+        string(REGEX REPLACE "\\.(vert|frag|comp)\\..*spv$" ".\\1" _probe "${_rel}")
+    elseif (_rel MATCHES "\\.spv$")
         string(REGEX REPLACE "\\.spv$" "" _probe "${_rel}")
     endif()
 

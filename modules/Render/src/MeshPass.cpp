@@ -98,7 +98,6 @@ bool MeshPass::Initialize(const InitParams &params)
     nvrhi::IDevice *const device = params.device;
     const nvrhi::FramebufferInfo &framebufferInfo = params.framebufferInfo;
     const std::string &vertexShaderSpvPath = params.vertexShaderSpvPath;
-    const std::string &pixelShaderSpvPath = params.pixelShaderSpvPath;
 
     _device = device;
     _clusterGrid = params.clusterGrid;
@@ -107,8 +106,13 @@ bool MeshPass::Initialize(const InitParams &params)
     _materialTable = params.materialTable;
 
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
-    _pixelShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !_pixelShader)
+    _pixelShaders[static_cast<uint32_t>(MeshPipeline::Opaque)] =
+        LoadSpirvShader(device, params.pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    // The masked build is not optional: without it a cutout material would draw
+    // solid, which is a wrong image rather than a missing feature.
+    _pixelShaders[static_cast<uint32_t>(MeshPipeline::Mask)] =
+        LoadSpirvShader(device, params.maskedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    if (!_vertexShader || !_pixelShaders[0] || !_pixelShaders[1])
     {
         return false;
     }
@@ -213,11 +217,14 @@ bool MeshPass::Initialize(const InitParams &params)
 
 bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 {
+    // The pipelines are identical but for their pixel shader — same input layout,
+    // binding layouts, raster and depth state. Building them from one desc is what
+    // keeps them that way: a cutout surface must shade and depth-test exactly as
+    // the opaque one does, or the two would diverge in more than their alpha.
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     pipelineDesc.inputLayout = _inputLayout;
     pipelineDesc.VS = _vertexShader;
-    pipelineDesc.PS = _pixelShader;
     pipelineDesc.addBindingLayout(_bindingLayout);  // set 0: CBs, sampler, light buffers
     pipelineDesc.addBindingLayout(_bindlessLayout);  // set 1: bindless material textures
     pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
@@ -229,11 +236,15 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 
-    _pipeline = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-    if (_pipeline == nullptr)
+    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
-        Core::Log::Error("MeshPass: failed to create the graphics pipeline.");
-        return false;
+        pipelineDesc.PS = _pixelShaders[i];
+        _pipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+        if (_pipelines[i] == nullptr)
+        {
+            Core::Log::Error("MeshPass: failed to create the graphics pipeline.");
+            return false;
+        }
     }
     return true;
 }
@@ -365,24 +376,29 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     // the (already sorted) items. Each valid item appends one instance record — the
     // vertex shader reads it via gl_InstanceIndex — and either extends the current
     // batch or opens a new one. A batch is a maximal run of consecutive items with
-    // the same geometry (mesh + submesh); its records are contiguous (instanceIndex
-    // increments per item), so one instanced draw covers them. Material differs per
-    // instance (read from the record), so it never splits a batch.
+    // the same geometry (mesh + submesh) *and* the same pipeline; its records are
+    // contiguous (instanceIndex increments per item), so one instanced draw covers
+    // them. Material differs per instance (read from the record), so it never splits
+    // a batch — but the pipeline is one draw's worth of state, so it must.
     //
     // Reused members, not locals: clear() keeps the capacity, so a steady-state
     // scene allocates nothing here.
     std::vector<InstanceData> &instances   = _scratchInstances;
     std::vector<nvrhi::DrawIndexedIndirectArguments> &commands    = _scratchCommands;
     // Parallel to `commands`: the mesh each batch draws, for the arena vertex/index
-    // buffers at record time (they bind via GraphicsState, not the indirect args).
+    // buffers at record time (they bind via GraphicsState, not the indirect args),
+    // and the pipeline it draws through.
     std::vector<const MeshBuffer *> &batchMeshes = _scratchBatchMeshes;
+    std::vector<MeshPipeline> &batchPipelines = _scratchBatchPipelines;
     instances.clear();
     commands.clear();
     batchMeshes.clear();
+    batchPipelines.clear();
     instances.reserve(items.size());
 
     const MeshBuffer *prevMesh    = nullptr;
     uint32_t prevSubmesh = UINT32_MAX;
+    MeshPipeline prevPipeline = MeshPipeline::Opaque;
     uint32_t instanceIndex = 0;
     for (const DrawItem &item : items)
     {
@@ -399,9 +415,16 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
                       "material id indexes past the material table — the shader read would be out of bounds");
         instances.push_back(InstanceData{item.model, item.material->Id()});
 
-        if (!commands.empty() && item.mesh == prevMesh && item.submeshIndex == prevSubmesh)
+        const MeshPipeline pipeline = SortKeyPipeline(item.sortKey);
+        // The key's pipeline field is 8 bits wide but names only kMeshPipelineCount
+        // of them, so a key built by hand rather than by MakeOpaqueSortKey could
+        // index past the pipeline array. Catch that here rather than at the bind.
+        ASSISI_ASSERT(static_cast<uint32_t>(pipeline) < kMeshPipelineCount,
+                      "draw item's sort key names a pipeline the pass does not have");
+        if (!commands.empty() && item.mesh == prevMesh && item.submeshIndex == prevSubmesh &&
+            pipeline == prevPipeline)
         {
-            ++commands.back().instanceCount; // same geometry as the run — coalesce
+            ++commands.back().instanceCount; // same geometry and pipeline as the run — coalesce
         }
         else
         {
@@ -418,8 +441,10 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
             cmd.startInstanceLocation = instanceIndex;
             commands.push_back(cmd);
             batchMeshes.push_back(item.mesh);
-            prevMesh    = item.mesh;
-            prevSubmesh = item.submeshIndex;
+            batchPipelines.push_back(pipeline);
+            prevMesh     = item.mesh;
+            prevSubmesh  = item.submeshIndex;
+            prevPipeline = pipeline;
         }
         ++instanceIndex;
     }
@@ -451,24 +476,26 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(_instanceBuffer.NativeBuffer());
 
     // Multi-draw each maximal run of batches that share the same arena vertex/index
-    // buffers with one drawIndexedIndirect. Stage C keeps every mesh in one arena,
-    // so this is a single call spanning all batches; the per-buffer grouping stays
-    // correct if a second arena (divergent vertex format) is ever added.
+    // buffers *and* pipeline with one drawIndexedIndirect. Stage C keeps every mesh
+    // in one arena, so an all-opaque frame is a single call spanning all batches;
+    // the grouping stays correct if a second arena (divergent vertex format) is ever
+    // added, and a frame with cutouts costs one extra call for the masked run.
     const uint32_t commandCount = static_cast<uint32_t>(commands.size());
     uint32_t runStart     = 0;
     while (runStart < commandCount)
     {
         nvrhi::IBuffer *const vertexBuffer = batchMeshes[runStart]->VertexBuffer();
         nvrhi::IBuffer *const indexBuffer  = batchMeshes[runStart]->IndexBuffer();
+        const MeshPipeline pipeline = batchPipelines[runStart];
         uint32_t runEnd       = runStart + 1;
         while (runEnd < commandCount && batchMeshes[runEnd]->VertexBuffer() == vertexBuffer &&
-               batchMeshes[runEnd]->IndexBuffer() == indexBuffer)
+               batchMeshes[runEnd]->IndexBuffer() == indexBuffer && batchPipelines[runEnd] == pipeline)
         {
             ++runEnd;
         }
 
         nvrhi::GraphicsState state;
-        state.pipeline = _pipeline;
+        state.pipeline = _pipelines[static_cast<uint32_t>(pipeline)];
         state.framebuffer = frame.framebuffer;
         state.addBindingSet(globalBindingSet); // set 0: frame/sampler/lights/material table/instances
         state.addBindingSet(_bindlessTable);   // set 1: bindless textures
@@ -492,7 +519,7 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
 {
     SubmitStats stats;
     if (in.indirectBuffer == nullptr || in.instanceBuffer == nullptr || in.vertexBuffer == nullptr ||
-        in.indexBuffer == nullptr || in.commandCount == 0)
+        in.indexBuffer == nullptr || (in.opaqueCommandCount + in.maskedCommandCount) == 0)
     {
         return stats; // nothing culled this frame (or the culler is unavailable)
     }
@@ -503,11 +530,12 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     // records it wrote are read by gl_InstanceIndex just like the CPU path's.
     nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(in.instanceBuffer);
 
-    // One multi-draw over every batch command. Single arena → all batches share the
-    // arena's vertex/index buffers (stage C/E), so one drawIndexedIndirect covers
-    // them; empty batches carry instanceCount 0 and draw nothing.
+    // One multi-draw per pipeline half. Single arena → all batches share the
+    // arena's vertex/index buffers (stage C/E), so each half is one
+    // drawIndexedIndirect over a contiguous command range; empty batches carry
+    // instanceCount 0 and draw nothing. A frame with no cutout material has no
+    // masked half at all and issues exactly the one call it always did.
     nvrhi::GraphicsState state;
-    state.pipeline     = _pipeline;
     state.framebuffer  = frame.framebuffer;
     state.addBindingSet(globalBindingSet); // set 0
     state.addBindingSet(_bindlessTable);   // set 1: bindless textures
@@ -516,12 +544,29 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     state.addVertexBuffer(nvrhi::VertexBufferBinding{in.vertexBuffer, 0, 0});
     state.indexBuffer    = nvrhi::IndexBufferBinding{in.indexBuffer, nvrhi::Format::R32_UINT, 0};
     state.indirectParams = in.indirectBuffer;
-    commandList->setGraphicsState(state);
 
-    commandList->drawIndexedIndirect(/*offsetBytes=*/ 0, in.commandCount);
+    const struct
+    {
+        MeshPipeline pipeline;
+        uint32_t first;
+        uint32_t count;
+    } halves[] = {
+        {MeshPipeline::Opaque, 0, in.opaqueCommandCount},
+        {MeshPipeline::Mask, in.opaqueCommandCount, in.maskedCommandCount},
+    };
+    for (const auto &half : halves)
+    {
+        if (half.count == 0)
+        {
+            continue;
+        }
+        state.pipeline = _pipelines[static_cast<uint32_t>(half.pipeline)];
+        commandList->setGraphicsState(state);
+        commandList->drawIndexedIndirect(half.first * sizeof(nvrhi::DrawIndexedIndirectArguments), half.count);
+        ++stats.drawCalls;
+    }
 
-    // Survivor/batch tallies come from the culler's readback; report the one call.
-    stats.drawCalls = 1;
+    // Survivor/batch tallies come from the culler's readback; report the calls.
     return stats;
 }
 

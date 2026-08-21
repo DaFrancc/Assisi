@@ -126,6 +126,48 @@ TEST_CASE("Material: the specular AA clamp lands in its lane and the flag follow
     CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
 }
 
+TEST_CASE("Material: the alpha cutoff reaches the shader only for a masked material")
+{
+    MaterialData src;
+    src.AlphaCutoff = 0.75f;
+
+    // An opaque material packs a zero cutoff, whatever it was authored with. The
+    // masked shader tests `alpha < cutoff`, so zero is the value that discards
+    // nothing — which is what keeps an opaque material solid if it is ever drawn
+    // by that pipeline.
+    Material material;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Constants().openPbrParams.w == 0.f);
+    CHECK_FALSE(material.IsAlphaMasked());
+    CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Opaque);
+
+    src.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Constants().openPbrParams.w == doctest::Approx(0.75f));
+    CHECK(material.IsAlphaMasked());
+    CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Mask);
+}
+
+TEST_CASE("Material: the cutoff lane does not disturb the OpenPBR lanes beside it")
+{
+    // The cutoff claims openPbrParams.w, which sits alongside the three weights.
+    // A packing slip here would move a weight rather than fail visibly.
+    MaterialData src;
+    src.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    src.AlphaCutoff = 0.3f;
+    src.BaseWeight = 0.5f;
+    src.SpecularWeight = 0.25f;
+    src.BaseDiffuseRoughness = 0.125f;
+
+    Material material;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    const auto &c = material.Constants();
+    CHECK(c.openPbrParams.x == doctest::Approx(0.5f));
+    CHECK(c.openPbrParams.y == doctest::Approx(0.25f));
+    CHECK(c.openPbrParams.z == doctest::Approx(0.125f));
+    CHECK(c.openPbrParams.w == doctest::Approx(0.3f));
+}
+
 TEST_CASE("Material: the three material flags occupy distinct bits")
 {
     MaterialData src;

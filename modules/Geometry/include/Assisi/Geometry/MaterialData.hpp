@@ -10,6 +10,7 @@
 /// tools, and tests can produce/consume materials without linking the
 /// renderer.
 
+#include <cstdint>
 #include <string>
 
 #include <Assisi/Core/AssetId.hpp>
@@ -19,6 +20,24 @@
 
 namespace Assisi::Geometry
 {
+
+/// @brief How a surface's alpha is resolved.
+///
+/// Opaque ignores alpha entirely. Mask is a per-fragment kill test against
+/// MaterialData::AlphaCutoff — the cutout of foliage, chain-link and decals —
+/// and draws through its own pipeline, because a shader that can discard costs
+/// the whole pipeline its early depth rejection.
+///
+/// glTF's third mode, BLEND, is deliberately absent: there is no blended pass to
+/// draw it in, and an enumerator that silently rendered opaque would be a field
+/// that lies. It arrives with the pass. Enumerators serialize as their integer
+/// value, so appending one leaves every existing .amat reading the same.
+AENUM()
+enum class AlphaMode : std::uint8_t
+{
+    Opaque, ///< Alpha is ignored; the surface is solid.
+    Mask,   ///< Alpha below AlphaCutoff kills the fragment.
+};
 
 /// @brief One material: PBR factors plus a GUID reference for each texture
 ///        channel. A nil id means "channel is factor-only" — the renderer
@@ -85,6 +104,15 @@ struct MaterialData
     /// fully rough and the material stops looking like metal. Zero disables the
     /// filter as surely as clearing SpecularAntiAliasing does.
     AFIELD(min = 0, max = 1) float SpecularAaVarianceClamp = 0.2f;
+
+    // --- Alpha ---
+    // OpenPBR's geometry_opacity, cutout half. Opaque is the default, so every
+    // material authored before these existed keeps drawing solid.
+    AFIELD() AlphaMode Alpha = AlphaMode::Opaque;
+    /// Fragments whose base-colour alpha falls below this are killed. Read only
+    /// when Alpha is Mask; the glTF default, so an import that omits it agrees
+    /// with the exporter rather than with us.
+    AFIELD(min = 0, max = 1) float AlphaCutoff = 0.5f;
 
     // --- Texture channels (GUID references; nil = factor-only) ---
     AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.

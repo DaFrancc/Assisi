@@ -17,6 +17,7 @@
 
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/DrawItem.hpp>
 
 namespace Assisi::Render
 {
@@ -46,7 +47,10 @@ struct MaterialConstants
     glm::vec4 emissiveFactorNormalScale{0.f, 0.f, 0.f, 1.f};  ///< xyz = emissive, w = normalScale.
     glm::vec4 metalRoughOcclusion{1.f, 1.f, 1.f, 0.2f};       ///< x = metallic, y = roughness, z = occlusion, w = specular AA variance clamp.
     glm::vec4 specularColorIor{1.f, 1.f, 1.f, 1.5f};          ///< rgb = specularColor, w = specularIor.
-    glm::vec4 openPbrParams{1.f, 1.f, 0.f, 0.f};   ///< x = baseWeight, y = specularWeight, z = baseDiffuseRoughness, w = reserved.
+    /// x = baseWeight, y = specularWeight, z = baseDiffuseRoughness,
+    /// w = alphaCutoff — zero on anything but a masked material, which is the
+    /// value that discards nothing.
+    glm::vec4 openPbrParams{1.f, 1.f, 0.f, 0.f};
     glm::uvec4 flags{0u, 0u, 0u, 0u};              ///< x = MaterialFlagBits; yzw reserved.
     glm::uvec4 texIndices{0u, 0u, 0u, 0u};         ///< bindless slots: x=baseColor y=normal z=metalRough w=occlusion.
     glm::uvec4 texIndicesEmissive{0u, 0u, 0u, 0u}; ///< x = emissive bindless slot; yzw reserved.
@@ -92,6 +96,14 @@ public:
 
     /// @brief The CPU material data this was built from (for the editor / re-save).
     const Geometry::MaterialData &Source() const { return _source; }
+
+    /// @brief Whether this material's fragments are alpha-tested.
+    bool IsAlphaMasked() const { return _source.Alpha == Geometry::AlphaMode::Mask; }
+
+    /// @brief Which mesh-pass pipeline this material's draws belong in. The one
+    /// place the mapping lives, so the CPU draw list and the GPU cull tables
+    /// cannot disagree about where a material draws.
+    MeshPipeline Pipeline() const { return IsAlphaMasked() ? MeshPipeline::Mask : MeshPipeline::Opaque; }
 
     bool IsValid() const { return _created; }
 

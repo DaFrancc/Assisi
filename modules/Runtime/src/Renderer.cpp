@@ -70,11 +70,12 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     }
 
     Assisi::Render::MeshPass::IndirectDrawInputs inputs;
-    inputs.instanceBuffer = params.culler->InstanceBuffer();
-    inputs.indirectBuffer = params.culler->IndirectBuffer();
-    inputs.commandCount   = params.culler->IndirectCommandCount();
-    inputs.vertexBuffer   = anyMesh->VertexBuffer();
-    inputs.indexBuffer    = anyMesh->IndexBuffer();
+    inputs.instanceBuffer     = params.culler->InstanceBuffer();
+    inputs.indirectBuffer     = params.culler->IndirectBuffer();
+    inputs.opaqueCommandCount = params.culler->OpaqueCommandCount();
+    inputs.maskedCommandCount = params.culler->MaskedCommandCount();
+    inputs.vertexBuffer       = anyMesh->VertexBuffer();
+    inputs.indexBuffer        = anyMesh->IndexBuffer();
 
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
@@ -185,7 +186,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
                 }
 
                 const uint64_t sortKey =
-                    Assisi::Render::MakeOpaqueSortKey(0, material->Id(), mesh->Id(), depth);
+                    Assisi::Render::MakeOpaqueSortKey(material->Pipeline(), material->Id(), mesh->Id(), depth);
                 items.push_back(Assisi::Render::DrawItem{.sortKey      = sortKey,
                                                          .mesh         = mesh,
                                                          .submeshIndex = submeshIndex,

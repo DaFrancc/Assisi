@@ -18,7 +18,7 @@ namespace
 struct CullPushConstants
 {
     glm::vec4 planes[6];
-    glm::uvec4 counts; // x = object count, y = cull enabled (0/1), zw unused
+    glm::uvec4 counts; // x = object count, y = cull enabled (0/1), z = masked-half batch offset, w unused
 };
 static_assert(sizeof(CullPushConstants) == 112, "CullPushConstants must match mesh_cull.comp's push_constant block.");
 
@@ -51,13 +51,14 @@ void CullTables::Clear()
     objectMaterials.clear();
     batchTemplates.clear();
     drawCapacity = 0;
+    hasMaskedMaterials = false;
 }
 
 void CullTableBuilder::Reset()
 {
     _tables.Clear();
     _meshIndex.clear();
-    _meshObjectCount.clear();
+    _batchReserve.clear();
 }
 
 void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
@@ -90,10 +91,8 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
 
         meshDescIndex = static_cast<uint32_t>(_tables.meshDescs.size());
         _tables.meshDescs.push_back(desc);
-        _meshObjectCount.push_back(0u); // parallel to meshDescs; bumped per instance below
         _meshIndex.emplace(meshKey, meshDescIndex);
     }
-    ++_meshObjectCount[meshDescIndex];
 
     GpuObject obj;
     obj.model         = model;
@@ -104,6 +103,16 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
     // length is the resolved-material count.
     obj.materialCount = static_cast<uint32_t>(materialIds.size());
     _tables.objectMaterials.insert(_tables.objectMaterials.end(), materialIds.begin(), materialIds.end());
+    for (const uint32_t packed : materialIds)
+    {
+        // The sentinel has every bit set, so it must be excluded before the flag is
+        // read off the top one — otherwise an unresolved slot would look masked and
+        // grow the command table for a submesh that draws nothing.
+        if (packed != kNoMaterial && (packed & kCullMaterialMaskedBit) != 0u)
+        {
+            _tables.hasMaskedMaterials = true;
+        }
+    }
 
     _tables.objects.push_back(obj);
     _tables.drawCapacity += lod0Count;
@@ -111,28 +120,58 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
 
 void CullTableBuilder::Finalize()
 {
-    // One draw-command template per batch (== per submeshes[] entry). Each mesh's
-    // submeshes get contiguous instance regions sized to that mesh's object count,
-    // laid out end to end — so the whole instance buffer is partitioned into
-    // per-batch regions the cull pass packs survivors into. The running offset ends
-    // at drawCapacity (Σ mesh objectCount × submeshCount == Σ object submeshCount).
-    _tables.batchTemplates.assign(_tables.submeshes.size(), GpuDrawArgs{});
-    uint32_t instanceOffset = 0;
-    for (size_t m = 0; m < _tables.meshDescs.size(); ++m)
+    // One draw-command template per (batch, live pipeline), batches being the
+    // submeshes[] entries. Each gets a contiguous instance region, laid out end to
+    // end — so the whole instance buffer is partitioned into regions the cull pass
+    // packs survivors into. Opaque commands lead and masked ones follow, each half
+    // in batch order, so a pipeline's commands draw in one multi-draw.
+    const uint32_t batchCount = _tables.BatchCount();
+    const uint32_t pipelineCount = _tables.hasMaskedMaterials ? kMeshPipelineCount : 1u;
+    _tables.batchTemplates.assign(static_cast<size_t>(batchCount) * pipelineCount, GpuDrawArgs{});
+
+    // Count what each region will actually hold. Reserving one slot per object in
+    // both halves instead would double the instance buffer for any scene with a
+    // single cutout material in it, most of it never written.
+    _batchReserve.assign(_tables.batchTemplates.size(), 0u);
+    for (const GpuObject &obj : _tables.objects)
     {
-        const GpuMeshDesc &desc        = _tables.meshDescs[m];
-        const uint32_t objectCount = _meshObjectCount[m];
+        const GpuMeshDesc &desc = _tables.meshDescs[obj.meshDescIndex];
         for (uint32_t s = 0; s < desc.submeshCount; ++s)
         {
-            const uint32_t g  = desc.firstSubmesh + s;
-            const GpuSubMesh &sm = _tables.submeshes[g];
-            GpuDrawArgs &t  = _tables.batchTemplates[g];
-            t.indexCount    = sm.indexCount;
-            t.instanceCount = 0u; // grown atomically by the cull pass
-            t.firstIndex    = desc.indexBase + sm.indexOffset;
-            t.vertexOffset  = static_cast<int32_t>(desc.vertexBase);
-            t.firstInstance = instanceOffset; // this batch's reserved instance base
-            instanceOffset += objectCount;    // reserve one slot per object of this mesh
+            const uint32_t g = desc.firstSubmesh + s;
+            const uint32_t slot = _tables.submeshes[g].materialSlot;
+            if (slot >= obj.materialCount)
+            {
+                continue; // out of range — the cull shader skips it, as the CPU path does
+            }
+            const uint32_t packed = _tables.objectMaterials[obj.materialBase + slot];
+            if (packed == kNoMaterial)
+            {
+                continue; // unresolved — drawn by neither pipeline
+            }
+            const uint32_t pipeline = (packed & kCullMaterialMaskedBit) != 0u ? 1u : 0u;
+            ++_batchReserve[pipeline * batchCount + g];
+        }
+    }
+
+    uint32_t instanceOffset = 0;
+    for (uint32_t p = 0; p < pipelineCount; ++p)
+    {
+        for (const GpuMeshDesc &desc : _tables.meshDescs)
+        {
+            for (uint32_t s = 0; s < desc.submeshCount; ++s)
+            {
+                const uint32_t g = desc.firstSubmesh + s;
+                const uint32_t command = p * batchCount + g;
+                const GpuSubMesh &sm = _tables.submeshes[g];
+                GpuDrawArgs &t  = _tables.batchTemplates[command];
+                t.indexCount    = sm.indexCount;
+                t.instanceCount = 0u; // grown atomically by the cull pass
+                t.firstIndex    = desc.indexBase + sm.indexOffset;
+                t.vertexOffset  = static_cast<int32_t>(desc.vertexBase);
+                t.firstInstance = instanceOffset; // this command's reserved instance base
+                instanceOffset += _batchReserve[command];
+            }
         }
     }
 }
@@ -165,7 +204,11 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     _materialScratch.clear();
     for (const Material *mat : slotMaterials)
     {
-        _materialScratch.push_back(mat != nullptr ? mat->Id() : kNoMaterial);
+        // Material::Pipeline is the one place the alpha mode decides where a
+        // material draws; carrying its answer here is what keeps this path and the
+        // CPU draw list from disagreeing about the same material.
+        _materialScratch.push_back(mat == nullptr ? kNoMaterial
+                                                  : mat->Id() | (mat->IsAlphaMasked() ? kCullMaterialMaskedBit : 0u));
     }
 
     MeshGeometry geometry;
@@ -313,10 +356,12 @@ void MeshCuller::RebuildBindingSet()
 void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::vec4, 6> &frustumPlanes,
                       const CullTables &tables, bool frustumCull)
 {
-    if (!IsValid() || tables.Empty() || tables.batchTemplates.size() != tables.submeshes.size())
+    const uint32_t commandCount = tables.OpaqueCommandCount() + tables.MaskedCommandCount();
+    if (!IsValid() || tables.Empty() || tables.batchTemplates.size() != commandCount)
     {
-        _lastMaxDraws   = 0;
-        _lastBatchCount = 0;
+        _lastMaxDraws       = 0;
+        _lastOpaqueCommands = 0;
+        _lastMaskedCommands = 0;
         return; // empty, or Finalize() wasn't called — nothing to draw
     }
 
@@ -332,7 +377,7 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
                 std::max<uint32_t>(1u, static_cast<uint32_t>(tables.objectMaterials.size())),
                 "MeshCuller::ObjectMaterials");
     EnsureInstanceCapacity(std::max<uint32_t>(1u, tables.drawCapacity));
-    EnsureIndirectCapacity(std::max<uint32_t>(1u, batchCount));
+    EnsureIndirectCapacity(std::max<uint32_t>(1u, commandCount));
     if (_bindingSetDirty)
     {
         RebuildBindingSet();
@@ -351,7 +396,7 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     // geometry range + reserved instance base AND resets instanceCount to 0 (the
     // cull pass grows it), so no separate clear of the indirect buffer is needed.
     commandList->writeBuffer(_indirectBuffer, tables.batchTemplates.data(),
-                             static_cast<size_t>(batchCount) * kIndirectStride);
+                             static_cast<size_t>(commandCount) * kIndirectStride);
 
     // Read back the stats {instances, batches} written kReadbackFrames ago (the
     // slot about to be overwritten — safely retired), before this frame's copy.
@@ -369,12 +414,17 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     // Reset the stats counters before the pass grows them.
     commandList->clearBufferUInt(_statsBuffer, 0u);
 
-    _lastMaxDraws   = tables.drawCapacity;
-    _lastBatchCount = batchCount;
+    _lastMaxDraws       = tables.drawCapacity;
+    _lastOpaqueCommands = tables.OpaqueCommandCount();
+    _lastMaskedCommands = tables.MaskedCommandCount();
 
     CullPushConstants pc;
     std::copy(frustumPlanes.begin(), frustumPlanes.end(), pc.planes);
-    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u, 0u, 0u);
+    // counts.z is what a masked instance adds to its batch index to reach the
+    // masked half — and it is zero when there is no masked half, which is the whole
+    // of "a frame with no cutout material behaves as it always did".
+    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u,
+                           tables.MaskedCommandCount() != 0u ? batchCount : 0u, 0u);
 
     const uint32_t groups = (static_cast<uint32_t>(tables.objects.size()) + 63u) / 64u;
     _cullShader.Dispatch(commandList, _cullBindingSet, groups, 1u, 1u, &pc, sizeof(pc));
@@ -397,9 +447,10 @@ uint32_t MeshCuller::SurvivorInstanceCount() const
 
 uint32_t MeshCuller::SurvivorBatchCount() const
 {
-    // Before priming, the live-batch count is unknown; report the total batch
+    // Before priming, the live-batch count is unknown; report the total command
     // count (all potentially non-empty) as the stand-in.
-    return _readbackPrimed >= kReadbackFrames ? _lastSurvivorBatches : _lastBatchCount;
+    return _readbackPrimed >= kReadbackFrames ? _lastSurvivorBatches
+                                              : _lastOpaqueCommands + _lastMaskedCommands;
 }
 
 } // namespace Assisi::Render

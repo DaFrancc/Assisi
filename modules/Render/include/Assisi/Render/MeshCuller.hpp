@@ -86,6 +86,17 @@ static_assert(sizeof(GpuSubMesh) == 16, "GpuSubMesh must match mesh_cull.comp's 
 /// mesh_cull.comp's NO_MATERIAL.
 inline constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 
+/// @brief Set in a CullTables::objectMaterials entry when that slot's material is
+/// alpha-masked. It is how the cull shader picks which half of the batch table an
+/// instance packs into, since a batch is one draw and a draw is one pipeline. The
+/// shader strips it before the id reaches the instance record. Must match
+/// mesh_cull.comp's MASKED_BIT.
+///
+/// It rides in the top bit, which no material id reaches (AssetCache::kMaxMaterials
+/// is orders below it) and which the kNoMaterial sentinel is checked for first.
+inline constexpr uint32_t kCullMaterialMaskedBit = 1u << 31;
+inline constexpr uint32_t kCullMaterialIdMask    = kCullMaterialMaskedBit - 1u;
+
 /// @brief One indirect draw command == VkDrawIndexedIndirectCommand /
 /// nvrhi::DrawIndexedIndirectArguments (five packed 32-bit fields). The CPU builds
 /// one per distinct (mesh, submesh) batch as a template (instanceCount 0,
@@ -102,27 +113,39 @@ struct GpuDrawArgs
 static_assert(sizeof(GpuDrawArgs) == 20, "GpuDrawArgs must match VkDrawIndexedIndirectCommand's packed layout.");
 
 /// @brief The flat host arrays the culler uploads, built once per frame.
-/// After Finalize(): one @ref batchTemplates entry per
-/// distinct (mesh, submesh) — i.e. per @ref submeshes entry — sizes the indirect
-/// buffer, and @ref drawCapacity (the reserved instance total) sizes the instance
-/// buffer.
+/// After Finalize(): @ref batchTemplates sizes the indirect buffer, and
+/// @ref drawCapacity (the pre-cull instance upper bound) sizes the instance buffer.
 struct CullTables
 {
     std::vector<GpuObject>   objects;
     std::vector<GpuMeshDesc> meshDescs;
     std::vector<GpuSubMesh>  submeshes;
     std::vector<uint32_t>    objectMaterials;
-    /// One draw-command template per submeshes[] entry (== per batch), filled by
-    /// Finalize. The indirect buffer is uploaded from this each frame; the cull
-    /// pass grows each template's instanceCount and the CPU draws all of them.
+    /// The draw-command templates, filled by Finalize: one per (batch, pipeline).
+    /// The opaque commands lead and the masked ones follow, each half in batch
+    /// order, so a pipeline's commands are contiguous and draw in one multi-draw.
+    /// The indirect buffer is uploaded from this each frame; the cull pass grows
+    /// each template's instanceCount.
     std::vector<GpuDrawArgs> batchTemplates;
-    /// Sum of every object's LOD0 submesh count — the total instance records the
-    /// batches reserve (batch g reserves its mesh's object count), so it sizes the
-    /// instance buffer.
+    /// Sum of every object's LOD0 submesh count — the pre-cull upper bound on
+    /// instance records, so it sizes the instance buffer. Each (object, submesh)
+    /// pair reserves a slot in exactly one pipeline half, so the halves' reserved
+    /// regions together never exceed this.
     uint32_t drawCapacity = 0;
+    /// Whether any gathered material is alpha-masked. False is the common case and
+    /// costs nothing: the table then has no masked half at all.
+    bool hasMaskedMaterials = false;
 
-    /// @brief Number of batches (draw commands) == distinct (mesh, submesh) pairs.
+    /// @brief Number of batches == distinct (mesh, submesh) pairs. Each becomes one
+    /// draw command per live pipeline.
     [[nodiscard]] uint32_t BatchCount() const { return static_cast<uint32_t>(submeshes.size()); }
+
+    /// @brief Draw commands in the opaque half — always every batch, since a mesh
+    /// cannot be known to have no opaque instance until the cull has run.
+    [[nodiscard]] uint32_t OpaqueCommandCount() const { return BatchCount(); }
+    /// @brief Draw commands in the masked half: every batch again when a cutout
+    /// material was placed, none at all when one wasn't.
+    [[nodiscard]] uint32_t MaskedCommandCount() const { return hasMaskedMaterials ? BatchCount() : 0u; }
 
     bool Empty() const { return objects.empty(); }
     void Clear();
@@ -154,9 +177,10 @@ public:
     /// @brief Packing core (no device types). Interns @p meshKey's @p geometry into
     /// the descriptor table on first sight (reusing it for later instances of the
     /// same key), then appends one object at @p model whose material slots are
-    /// @p materialIds (element i = slot i's Material::Id, or kNoMaterial when
-    /// unresolved → that submesh is skipped by the cull shader). No-op if @p geometry
-    /// has no LOD0 submeshes. @p meshKey is any stable per-mesh identity.
+    /// @p materialIds (element i = slot i's Material::Id, or'd with
+    /// kCullMaterialMaskedBit when that material is alpha-masked, or kNoMaterial
+    /// when unresolved → that submesh is skipped by the cull shader). No-op if
+    /// @p geometry has no LOD0 submeshes. @p meshKey is any stable per-mesh identity.
     void AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
                         std::span<const uint32_t> materialIds);
 
@@ -168,11 +192,14 @@ public:
     void AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
                      std::span<const Material *const> slotMaterials);
 
-    /// @brief Builds the per-batch draw-command templates from the gathered
-    /// tables. Must be called once after all AddInstance* calls and before the
-    /// tables are uploaded: each distinct (mesh, submesh) becomes one template with
-    /// instanceCount 0 and a reserved contiguous instance region sized to that
-    /// mesh's object count, so the cull pass can atomically pack instances into it.
+    /// @brief Builds the draw-command templates from the gathered tables. Must be
+    /// called once after all AddInstance* calls and before the tables are uploaded:
+    /// each (distinct (mesh, submesh), pipeline) becomes one template with
+    /// instanceCount 0 and a reserved contiguous instance region, so the cull pass
+    /// can atomically pack instances into it. The regions are sized to what each
+    /// one will actually hold rather than to the mesh's whole object count, so a
+    /// scene with one cutout material does not reserve a second instance buffer's
+    /// worth of slots that nothing writes.
     void Finalize();
 
     [[nodiscard]] const CullTables &Tables() const { return _tables; }
@@ -180,9 +207,9 @@ public:
 private:
     CullTables _tables;
     std::unordered_map<const void *, uint32_t> _meshIndex;
-    // Object count per mesh descriptor (parallel to _tables.meshDescs), for
-    // Finalize's per-batch instance-region sizing.
-    std::vector<uint32_t> _meshObjectCount;
+    // Instance slots each command template needs, parallel to
+    // _tables.batchTemplates. Reused scratch, filled by Finalize.
+    std::vector<uint32_t> _batchReserve;
 
     // Reused scratch so the MeshBuffer overload doesn't allocate per instance:
     // the extracted LOD0 submeshes and material ids fed to AddInstanceRaw.
@@ -214,12 +241,15 @@ public:
     /// reads by gl_InstanceIndex (SRV). Handle stable unless a growth swapped it.
     [[nodiscard]] nvrhi::IBuffer *InstanceBuffer() const { return _instanceBuffer.NativeBuffer(); }
     /// @brief The indirect-command buffer: one DrawIndexedIndirectArguments per
-    /// batch, uploaded as templates each frame and grown (instanceCount) by the
-    /// cull pass. Drawn with a plain drawIndexedIndirect over IndirectCommandCount().
+    /// (batch, pipeline), uploaded as templates each frame and grown (instanceCount)
+    /// by the cull pass. Drawn as one plain drawIndexedIndirect per pipeline half.
     [[nodiscard]] nvrhi::IBuffer *IndirectBuffer() const { return _indirectBuffer; }
-    /// @brief Number of indirect commands to draw (== batch count == distinct
-    /// (mesh, submesh)); empty batches draw 0 instances. CPU-known, so no count buffer.
-    [[nodiscard]] uint32_t IndirectCommandCount() const { return _lastBatchCount; }
+    /// @brief Indirect commands in the buffer's leading opaque half; empty batches
+    /// draw 0 instances. CPU-known, so no count buffer.
+    [[nodiscard]] uint32_t OpaqueCommandCount() const { return _lastOpaqueCommands; }
+    /// @brief Indirect commands in the masked half that follows it — zero unless the
+    /// frame placed a cutout material.
+    [[nodiscard]] uint32_t MaskedCommandCount() const { return _lastMaskedCommands; }
 
     /// @brief Instances the cull pass actually emitted (survivors), read back from
     /// the GPU stats buffer with a few frames' latency — so culling is observable
@@ -272,8 +302,9 @@ private:
     nvrhi::BindingSetHandle _cullBindingSet;
     bool _bindingSetDirty = true;
 
-    uint32_t _lastMaxDraws   = 0; // candidate instance total (drawCapacity) of the last Cull
-    uint32_t _lastBatchCount = 0; // indirect command count (batch count) of the last Cull
+    uint32_t _lastMaxDraws       = 0; // candidate instance total (drawCapacity) of the last Cull
+    uint32_t _lastOpaqueCommands = 0; // indirect commands in the opaque half of the last Cull
+    uint32_t _lastMaskedCommands = 0; // and in the masked half (0 when nothing was masked)
 
     // GPU→CPU readback of the survivor stats {instances, batches}, for the overlay.
     // A small ring of CPU-readable 2-uint buffers: each frame copies _statsBuffer

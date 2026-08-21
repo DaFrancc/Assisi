@@ -76,6 +76,14 @@ struct DrawArgs
 
 #define NO_MATERIAL 0xFFFFFFFFu
 
+// Set in an objectMaterials[] entry when that slot's material is alpha-masked
+// (Render::kCullMaterialMaskedBit). A batch is one draw and a draw is one
+// pipeline, so a masked instance packs into the masked half of the command table
+// instead of the opaque one. Stripped before the id reaches the instance record,
+// which the shader uses to index the material table.
+#define MASKED_BIT 0x80000000u
+#define MATERIAL_ID_MASK 0x7FFFFFFFu
+
 // ---- SSBOs ---- (SRV +0, UAV +384; see cluster_cull.comp)
 
 layout(std430, binding = 0) readonly buffer Objects         { Object       objects[];         };
@@ -90,7 +98,7 @@ layout(std430, binding = 386) coherent  buffer Stats        { uint statsInstance
 layout(push_constant) uniform PushConstants
 {
     vec4  planes[6];    // frustum planes (nx,ny,nz,d), inward normals, normalised
-    uvec4 counts;       // x = object count, y = cull enabled (0/1), zw unused
+    uvec4 counts;       // x = object count, y = cull enabled (0/1), z = masked-half batch offset, w unused
 } pc;
 
 // ---- Culling helpers (mirror Render::Frustum + Geometry bounds transforms) ----
@@ -144,28 +152,35 @@ void main()
     }
 
     // Survivor: append this instance to each of its LOD0 submeshes' batch. The
-    // batch index IS the global submesh index (meshDesc.firstSubmesh + s), the
-    // slot into the pre-built draw-command / batch tables. A submesh whose slot
-    // has no resolved material is skipped (mirrors the CPU path).
+    // batch index IS the global submesh index (meshDesc.firstSubmesh + s); the
+    // draw command it grows is that index within its material's pipeline half of
+    // the pre-built command table. A submesh whose slot has no resolved material is
+    // skipped (mirrors the CPU path).
     for (uint s = 0u; s < mesh.submeshCount; ++s)
     {
         uint g = mesh.firstSubmesh + s;
 
-        uint materialIndex = NO_MATERIAL;
+        uint packed = NO_MATERIAL;
         if (subMeshes[g].materialSlot < obj.materialCount)
-            materialIndex = objectMaterials[obj.materialBase + subMeshes[g].materialSlot];
-        if (materialIndex == NO_MATERIAL)
+            packed = objectMaterials[obj.materialBase + subMeshes[g].materialSlot];
+        if (packed == NO_MATERIAL)
             continue;
 
-        // Grow this batch's instance count and take the old value as our index
-        // within its reserved region [firstInstance, firstInstance + maxInstances).
-        // maxInstances (set by the CPU) == the object count of this mesh, so the
-        // region never overflows: every object of the mesh draws the same submesh.
-        uint old  = atomicAdd(outDraws[g].instanceCount, 1u);
-        uint slot = outDraws[g].firstInstance + old;
+        // An alpha-masked material draws through a different pipeline, so it grows
+        // a different command: the same batch shifted into the masked half. The
+        // offset is 0 when this frame placed no cutout material, and then there is
+        // only ever the one half.
+        uint command = g + ((packed & MASKED_BIT) != 0u ? pc.counts.z : 0u);
+
+        // Grow this command's instance count and take the old value as our index
+        // within its reserved region [firstInstance, firstInstance + reserved). The
+        // CPU sized that region by counting exactly the instances that reach this
+        // command, so it never overflows.
+        uint old  = atomicAdd(outDraws[command].instanceCount, 1u);
+        uint slot = outDraws[command].firstInstance + old;
 
         outInstances[slot].model         = model;
-        outInstances[slot].materialIndex = materialIndex;
+        outInstances[slot].materialIndex = packed & MATERIAL_ID_MASK;
 
         atomicAdd(statsInstances, 1u);
         if (old == 0u)
