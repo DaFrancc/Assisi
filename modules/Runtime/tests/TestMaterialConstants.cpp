@@ -148,6 +148,53 @@ TEST_CASE("Material: the alpha cutoff reaches the shader only for a masked mater
     CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Mask);
 }
 
+TEST_CASE("Material: alpha mode and double-sidedness each pick their own pipeline")
+{
+    // The two properties are independent, and the pipeline has to carry both: a
+    // cutout that is also double-sided needs the discard *and* the cull mode off,
+    // and getting either from the other's pipeline draws the wrong image.
+    MaterialData src;
+    Material material;
+
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Opaque);
+    CHECK_FALSE(material.IsDoubleSided());
+
+    src.DoubleSided = true;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::OpaqueDoubleSided);
+    CHECK(material.IsDoubleSided());
+
+    src.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::MaskDoubleSided);
+
+    src.DoubleSided = false;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Mask);
+}
+
+TEST_CASE("Material: double-sidedness is not a shading parameter")
+{
+    // It is rasterizer state, so it must not disturb the constants row — a
+    // material that only differs in cull mode shades identically.
+    MaterialData src;
+    Material single;
+    single.Create(nullptr, 0, src, MaterialTextures{});
+    const Assisi::Render::MaterialConstants before = single.Constants();
+
+    src.DoubleSided = true;
+    Material both;
+    both.Create(nullptr, 0, src, MaterialTextures{});
+    const Assisi::Render::MaterialConstants after = both.Constants();
+
+    CHECK(before.baseColorFactor == after.baseColorFactor);
+    CHECK(before.metalRoughOcclusion == after.metalRoughOcclusion);
+    CHECK(before.specularColorIor == after.specularColorIor);
+    CHECK(before.openPbrParams == after.openPbrParams);
+    CHECK(before.flags == after.flags);
+}
+
 TEST_CASE("Material: the cutoff lane does not disturb the OpenPBR lanes beside it")
 {
     // The cutoff claims openPbrParams.w, which sits alongside the three weights.

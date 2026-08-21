@@ -18,9 +18,14 @@ namespace
 struct CullPushConstants
 {
     glm::vec4 planes[6];
-    glm::uvec4 counts; // x = object count, y = cull enabled (0/1), z = masked-half batch offset, w unused
+    glm::uvec4 counts; // x = object count, y = cull enabled (0/1), zw unused
+    /// Where each MeshPipeline's command block starts, indexed by the pipeline
+    /// packed into a material entry. One lane per pipeline, which is why the enum
+    /// is capped at four.
+    glm::uvec4 pipelineBase;
 };
-static_assert(sizeof(CullPushConstants) == 112, "CullPushConstants must match mesh_cull.comp's push_constant block.");
+static_assert(kMeshPipelineCount == 4, "pipelineBase is a uvec4, one lane per pipeline.");
+static_assert(sizeof(CullPushConstants) == 128, "CullPushConstants must match mesh_cull.comp's push_constant block.");
 
 // The DrawArgs the cull shader writes == VkDrawIndexedIndirectCommand (5 packed
 // 32-bit fields), so the output indirect buffer's element stride is 20.
@@ -31,6 +36,11 @@ constexpr uint32_t kIndirectStride = 20u;
 // Output instance-record stride — must match Render's InstanceData / mesh.vert
 // (mat4 + uint, 80-byte std430 array stride). MeshPass.cpp static_asserts the C++ side.
 constexpr uint32_t kInstanceStride = 80u;
+
+// Threads per cull workgroup — one per scene object. Must equal mesh_cull.comp's
+// local_size_x: too small and the tail of the object table is never dispatched,
+// too large and the surplus threads return on the bounds check.
+constexpr uint32_t kCullWorkgroupSize = 64u;
 
 // Generous initial capacities so typical scenes never grow a buffer mid-frame
 // (a growth swaps a handle and forces a binding-set rebuild). Grown geometrically.
@@ -51,7 +61,7 @@ void CullTables::Clear()
     objectMaterials.clear();
     batchTemplates.clear();
     drawCapacity = 0;
-    hasMaskedMaterials = false;
+    pipelineMask = 0;
 }
 
 void CullTableBuilder::Reset()
@@ -105,12 +115,13 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
     _tables.objectMaterials.insert(_tables.objectMaterials.end(), materialIds.begin(), materialIds.end());
     for (const uint32_t packed : materialIds)
     {
-        // The sentinel has every bit set, so it must be excluded before the flag is
-        // read off the top one — otherwise an unresolved slot would look masked and
-        // grow the command table for a submesh that draws nothing.
-        if (packed != kNoMaterial && (packed & kCullMaterialMaskedBit) != 0u)
+        // The sentinel has every bit set, so it must be excluded before the
+        // pipeline is read off the top ones — otherwise an unresolved slot would
+        // light a pipeline and grow the command table for a submesh that draws
+        // nothing.
+        if (packed != kNoMaterial)
         {
-            _tables.hasMaskedMaterials = true;
+            _tables.pipelineMask |= 1u << static_cast<uint32_t>(CullMaterialPipeline(packed));
         }
     }
 
@@ -123,15 +134,14 @@ void CullTableBuilder::Finalize()
     // One draw-command template per (batch, live pipeline), batches being the
     // submeshes[] entries. Each gets a contiguous instance region, laid out end to
     // end — so the whole instance buffer is partitioned into regions the cull pass
-    // packs survivors into. Opaque commands lead and masked ones follow, each half
-    // in batch order, so a pipeline's commands draw in one multi-draw.
-    const uint32_t batchCount = _tables.BatchCount();
-    const uint32_t pipelineCount = _tables.hasMaskedMaterials ? kMeshPipelineCount : 1u;
-    _tables.batchTemplates.assign(static_cast<size_t>(batchCount) * pipelineCount, GpuDrawArgs{});
+    // packs survivors into. A pipeline's commands form one contiguous block, in
+    // pipeline order, so a block draws in one multi-draw; a pipeline nothing uses
+    // has no block at all.
+    _tables.batchTemplates.assign(_tables.TotalCommandCount(), GpuDrawArgs{});
 
     // Count what each region will actually hold. Reserving one slot per object in
-    // both halves instead would double the instance buffer for any scene with a
-    // single cutout material in it, most of it never written.
+    // every block instead would multiply the instance buffer by the number of live
+    // pipelines, most of it never written.
     _batchReserve.assign(_tables.batchTemplates.size(), 0u);
     for (const GpuObject &obj : _tables.objects)
     {
@@ -147,22 +157,27 @@ void CullTableBuilder::Finalize()
             const uint32_t packed = _tables.objectMaterials[obj.materialBase + slot];
             if (packed == kNoMaterial)
             {
-                continue; // unresolved — drawn by neither pipeline
+                continue; // unresolved — drawn by no pipeline
             }
-            const uint32_t pipeline = (packed & kCullMaterialMaskedBit) != 0u ? 1u : 0u;
-            ++_batchReserve[pipeline * batchCount + g];
+            ++_batchReserve[_tables.CommandBase(CullMaterialPipeline(packed)) + g];
         }
     }
 
     uint32_t instanceOffset = 0;
-    for (uint32_t p = 0; p < pipelineCount; ++p)
+    for (uint32_t p = 0; p < kMeshPipelineCount; ++p)
     {
+        const MeshPipeline pipeline = static_cast<MeshPipeline>(p);
+        if (!_tables.UsesPipeline(pipeline))
+        {
+            continue;
+        }
+        const uint32_t base = _tables.CommandBase(pipeline);
         for (const GpuMeshDesc &desc : _tables.meshDescs)
         {
             for (uint32_t s = 0; s < desc.submeshCount; ++s)
             {
                 const uint32_t g = desc.firstSubmesh + s;
-                const uint32_t command = p * batchCount + g;
+                const uint32_t command = base + g;
                 const GpuSubMesh &sm = _tables.submeshes[g];
                 GpuDrawArgs &t  = _tables.batchTemplates[command];
                 t.indexCount    = sm.indexCount;
@@ -204,11 +219,11 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     _materialScratch.clear();
     for (const Material *mat : slotMaterials)
     {
-        // Material::Pipeline is the one place the alpha mode decides where a
-        // material draws; carrying its answer here is what keeps this path and the
-        // CPU draw list from disagreeing about the same material.
+        // Material::Pipeline is the one place a material's properties decide where
+        // it draws; carrying its answer here is what keeps this path and the CPU
+        // draw list from disagreeing about the same material.
         _materialScratch.push_back(mat == nullptr ? kNoMaterial
-                                                  : mat->Id() | (mat->IsAlphaMasked() ? kCullMaterialMaskedBit : 0u));
+                                                  : EncodeCullMaterial(mat->Id(), mat->Pipeline()));
     }
 
     MeshGeometry geometry;
@@ -356,12 +371,11 @@ void MeshCuller::RebuildBindingSet()
 void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::vec4, 6> &frustumPlanes,
                       const CullTables &tables, bool frustumCull)
 {
-    const uint32_t commandCount = tables.OpaqueCommandCount() + tables.MaskedCommandCount();
+    const uint32_t commandCount = tables.TotalCommandCount();
     if (!IsValid() || tables.Empty() || tables.batchTemplates.size() != commandCount)
     {
-        _lastMaxDraws       = 0;
-        _lastOpaqueCommands = 0;
-        _lastMaskedCommands = 0;
+        _lastMaxDraws = 0;
+        _lastCommandCounts.fill(0u);
         return; // empty, or Finalize() wasn't called — nothing to draw
     }
 
@@ -414,19 +428,26 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     // Reset the stats counters before the pass grows them.
     commandList->clearBufferUInt(_statsBuffer, 0u);
 
-    _lastMaxDraws       = tables.drawCapacity;
-    _lastOpaqueCommands = tables.OpaqueCommandCount();
-    _lastMaskedCommands = tables.MaskedCommandCount();
+    _lastMaxDraws = tables.drawCapacity;
+    for (uint32_t p = 0; p < kMeshPipelineCount; ++p)
+    {
+        _lastCommandCounts[p] = tables.CommandCount(static_cast<MeshPipeline>(p));
+    }
 
     CullPushConstants pc;
     std::copy(frustumPlanes.begin(), frustumPlanes.end(), pc.planes);
-    // counts.z is what a masked instance adds to its batch index to reach the
-    // masked half — and it is zero when there is no masked half, which is the whole
-    // of "a frame with no cutout material behaves as it always did".
-    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u,
-                           tables.MaskedCommandCount() != 0u ? batchCount : 0u, 0u);
+    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u, 0u, 0u);
+    // Each lane is where that pipeline's command block starts, which is what an
+    // instance adds to its batch index to reach its own command. A scene using only
+    // the opaque pipeline leaves every base at 0 and behaves exactly as it did
+    // before any other pipeline existed.
+    for (uint32_t p = 0; p < kMeshPipelineCount; ++p)
+    {
+        pc.pipelineBase[static_cast<glm::length_t>(p)] = tables.CommandBase(static_cast<MeshPipeline>(p));
+    }
 
-    const uint32_t groups = (static_cast<uint32_t>(tables.objects.size()) + 63u) / 64u;
+    const uint32_t objectCount = static_cast<uint32_t>(tables.objects.size());
+    const uint32_t groups = (objectCount + kCullWorkgroupSize - 1u) / kCullWorkgroupSize;
     _cullShader.Dispatch(commandList, _cullBindingSet, groups, 1u, 1u, &pc, sizeof(pc));
 
     // Snapshot this frame's stats into the ring for a later frame to read back.
@@ -449,8 +470,16 @@ uint32_t MeshCuller::SurvivorBatchCount() const
 {
     // Before priming, the live-batch count is unknown; report the total command
     // count (all potentially non-empty) as the stand-in.
-    return _readbackPrimed >= kReadbackFrames ? _lastSurvivorBatches
-                                              : _lastOpaqueCommands + _lastMaskedCommands;
+    if (_readbackPrimed >= kReadbackFrames)
+    {
+        return _lastSurvivorBatches;
+    }
+    uint32_t total = 0;
+    for (const uint32_t count : _lastCommandCounts)
+    {
+        total += count;
+    }
+    return total;
 }
 
 } // namespace Assisi::Render

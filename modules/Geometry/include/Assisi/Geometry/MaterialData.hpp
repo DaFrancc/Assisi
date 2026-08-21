@@ -114,6 +114,12 @@ struct MaterialData
     /// with the exporter rather than with us.
     AFIELD(min = 0, max = 1) float AlphaCutoff = 0.5f;
 
+    /// glTF doubleSided: rasterize back faces as well as front ones, so a surface
+    /// shows its inside. What a cutout hole looks through to, and what a leaf or a
+    /// single-quad flag needs to exist from behind. Off by default, because a
+    /// closed opaque mesh only pays fill for faces it will never show.
+    AFIELD() bool DoubleSided = false;
+
     // --- Texture channels (GUID references; nil = factor-only) ---
     AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.
     AFIELD() Assisi::Core::AssetId NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.

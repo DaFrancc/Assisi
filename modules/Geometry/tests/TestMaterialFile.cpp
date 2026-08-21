@@ -35,6 +35,7 @@ MaterialData MakeFullMaterial()
     m.SpecularAaVarianceClamp = 0.35f;
     m.Alpha = Assisi::Geometry::AlphaMode::Mask;
     m.AlphaCutoff = 0.25f;
+    m.DoubleSided = true;
     // Distinct GUIDs per channel so a round-trip that swapped or dropped one is
     // caught.
     m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
@@ -77,6 +78,7 @@ TEST_CASE("MaterialFile: a full material survives a serialize -> deserialize rou
     // lost it would restore Opaque and the material would stop being a cutout.
     CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Mask);
     CHECK(restored->AlphaCutoff == doctest::Approx(0.25f));
+    CHECK(restored->DoubleSided == true);
     CHECK(restored->BaseColorTexture == original.BaseColorTexture);
     CHECK(restored->NormalTexture == original.NormalTexture);
     CHECK(restored->MetallicRoughnessTexture == original.MetallicRoughnessTexture);
@@ -126,6 +128,7 @@ TEST_CASE("MaterialFile: absent fields keep their default (forward-compatible lo
     // how existing content draws.
     CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Opaque);
     CHECK(restored->AlphaCutoff == doctest::Approx(0.5f));
+    CHECK(restored->DoubleSided == false);
 }
 
 TEST_CASE("MaterialFile: an .amat written before the alpha fields existed still loads")
@@ -160,6 +163,7 @@ TEST_CASE("MaterialFile: an .amat written before the alpha fields existed still 
     CHECK(restored->BaseColorTexture == *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-00000000000a"));
     CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Opaque);
     CHECK(restored->AlphaCutoff == doctest::Approx(0.5f));
+    CHECK(restored->DoubleSided == false);
 }
 
 TEST_CASE("MaterialFile: invalid JSON and wrong type are rejected")

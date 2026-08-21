@@ -23,23 +23,54 @@ namespace Assisi::Render
 class MeshBuffer;
 class Material;
 
-/// @brief Which mesh-pass pipeline records a draw.
+/// @brief Which mesh-pass pipeline records a draw — one per combination of the
+/// two pieces of per-draw state the pass cannot fold into a material row.
 ///
 /// Masked draws need a pixel shader that can `discard`, and a shader that can
 /// discard costs its whole pipeline early depth rejection — so the cutout
-/// materials get a pipeline of their own rather than making every opaque draw
-/// pay for them. This is the sort key's top field, so a sorted span arrives
-/// already grouped into one run per pipeline, and Opaque leading means the solid
-/// geometry has laid its depth before any cutout is tested against it.
+/// materials get their own pipelines rather than making every opaque draw pay.
+/// Double-sided draws need the rasterizer's cull mode off, which is pipeline
+/// state and not something a shader can vary.
+///
+/// The value is two bits: kMeshPipelineDoubleSidedBit and kMeshPipelineMaskedBit.
+/// Masked is the *high* bit so every opaque pipeline sorts before every masked
+/// one whatever their cull modes — this is the sort key's top field, so a sorted
+/// span arrives grouped into one run per pipeline, with the solid geometry laying
+/// its depth before any cutout is tested against it.
 enum class MeshPipeline : uint32_t
 {
-    Opaque = 0, ///< AlphaMode::Opaque materials.
-    Mask   = 1, ///< AlphaMode::Mask materials; its shader can discard.
+    Opaque            = 0,
+    OpaqueDoubleSided = 1,
+    Mask              = 2, ///< Its shader can discard.
+    MaskDoubleSided   = 3,
 };
+
+inline constexpr uint32_t kMeshPipelineDoubleSidedBit = 1u;
+inline constexpr uint32_t kMeshPipelineMaskedBit      = 2u;
 
 /// @brief How many pipelines MeshPipeline names — the size of every per-pipeline
 /// array. Extending the enum without extending this would silently index past one.
-inline constexpr uint32_t kMeshPipelineCount = 2;
+inline constexpr uint32_t kMeshPipelineCount = 4;
+
+/// @brief The pipeline a draw with these two properties belongs in. The only
+/// place the mapping is written, so nothing can disagree about it.
+[[nodiscard]] inline constexpr MeshPipeline MeshPipelineFor(bool masked, bool doubleSided)
+{
+    return static_cast<MeshPipeline>((masked ? kMeshPipelineMaskedBit : 0u) |
+                                     (doubleSided ? kMeshPipelineDoubleSidedBit : 0u));
+}
+
+/// @brief Whether @p pipeline's shader carries the alpha-test discard.
+[[nodiscard]] inline constexpr bool MeshPipelineIsMasked(MeshPipeline pipeline)
+{
+    return (static_cast<uint32_t>(pipeline) & kMeshPipelineMaskedBit) != 0u;
+}
+
+/// @brief Whether @p pipeline rasterizes back faces.
+[[nodiscard]] inline constexpr bool MeshPipelineIsDoubleSided(MeshPipeline pipeline)
+{
+    return (static_cast<uint32_t>(pipeline) & kMeshPipelineDoubleSidedBit) != 0u;
+}
 
 /// @brief A single submesh of a single entity, ready to record. Non-owning:
 /// `mesh`/`material` point into the AssetCache and stay valid until it clears;

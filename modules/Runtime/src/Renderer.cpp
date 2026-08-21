@@ -70,12 +70,11 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     }
 
     Assisi::Render::MeshPass::IndirectDrawInputs inputs;
-    inputs.instanceBuffer     = params.culler->InstanceBuffer();
-    inputs.indirectBuffer     = params.culler->IndirectBuffer();
-    inputs.opaqueCommandCount = params.culler->OpaqueCommandCount();
-    inputs.maskedCommandCount = params.culler->MaskedCommandCount();
-    inputs.vertexBuffer       = anyMesh->VertexBuffer();
-    inputs.indexBuffer        = anyMesh->IndexBuffer();
+    inputs.instanceBuffer = params.culler->InstanceBuffer();
+    inputs.indirectBuffer = params.culler->IndirectBuffer();
+    inputs.vertexBuffer   = anyMesh->VertexBuffer();
+    inputs.indexBuffer    = anyMesh->IndexBuffer();
+    std::ranges::copy(params.culler->CommandCounts(), std::begin(inputs.commandCounts));
 
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {

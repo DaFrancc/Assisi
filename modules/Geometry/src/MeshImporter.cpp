@@ -138,7 +138,6 @@ struct ImportWarnings
     bool vertexColor = false;
     bool skinning = false;
     bool alphaBlend = false;
-    bool doubleSided = false;
     bool embeddedImage = false;
     bool secondaryTexCoord = false;
     bool negativeIor = false;
@@ -400,12 +399,7 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
                         "supported yet — importing as opaque.",
                         virtualPath, data.Name);
     }
-    if (material.doubleSided && !warnings.doubleSided)
-    {
-        warnings.doubleSided = true;
-        Core::Log::Warn("MeshImporter: '{}' has a double-sided material ('{}'); rendering single-sided.", virtualPath,
-                        data.Name);
-    }
+    data.DoubleSided = material.doubleSided;
 
     return data;
 }

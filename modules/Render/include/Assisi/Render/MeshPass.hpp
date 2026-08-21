@@ -220,14 +220,12 @@ public:
         /// (mesh, submesh, pipeline)); the cull pass grew each one's instanceCount.
         /// Empty batches carry instanceCount 0 and draw nothing.
         nvrhi::IBuffer *indirectBuffer = nullptr;
-        /// The buffer's opaque commands, which lead it. CPU-known — every batch has
-        /// a command, so this is the count for a plain drawIndexedIndirect; no count
-        /// buffer.
-        uint32_t opaqueCommandCount = 0;
-        /// The masked commands that follow them, drawn through the discard-carrying
-        /// pipeline. Zero when the frame placed no cutout material, and then the
-        /// buffer holds nothing but the opaque half.
-        uint32_t maskedCommandCount = 0;
+        /// Commands per MeshPipeline block, in pipeline order. The blocks are laid
+        /// out in that same order, so a block's offset is the sum of the counts
+        /// before it. Zero for a pipeline the frame placed no material for, which
+        /// costs it no commands and no draw call. CPU-known — every batch has a
+        /// command in its block — so no count buffer.
+        uint32_t commandCounts[kMeshPipelineCount] = {};
         /// The shared GeometryArena's vertex/index buffers every draw addresses.
         /// F1 assumes a single arena (as stage E does — one drawIndexedIndirect
         /// group); a second arena would need per-arena count buffers.
@@ -244,7 +242,17 @@ public:
     ///      recorded into the same command list ahead of this call.
     [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const;
 
-    bool IsValid() const { return _pipelines[0] != nullptr && _pipelines[1] != nullptr; }
+    bool IsValid() const
+    {
+        for (const nvrhi::GraphicsPipelineHandle &pipeline : _pipelines)
+        {
+            if (pipeline == nullptr)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /// @brief Drops the cached global binding set so the next Submit rebuilds it.
     /// Called on level unload (SceneRenderer::InvalidateAssetBindings). Every handle
@@ -272,10 +280,18 @@ private:
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
 
+    /// @brief Pixel-shader builds the pass loads: the same GLSL with and without
+    /// the alpha-test discard. Fewer than the pipelines, because cull mode is
+    /// rasterizer state — it needs a pipeline of its own but not a second shader.
+    enum PixelShaderVariant : uint32_t
+    {
+        kPixelShaderOpaque = 0,
+        kPixelShaderMasked = 1,
+        kPixelShaderVariantCount,
+    };
+
     nvrhi::ShaderHandle _vertexShader;
-    // One pixel shader per MeshPipeline: the same GLSL, built with and without
-    // the alpha-test discard.
-    nvrhi::ShaderHandle _pixelShaders[kMeshPipelineCount];
+    nvrhi::ShaderHandle _pixelShaders[kPixelShaderVariantCount];
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::SamplerHandle _sampler;
@@ -284,7 +300,8 @@ private:
     // lookup comes back filtered rather than as a hard 0 or 1.
     nvrhi::SamplerHandle _shadowSampler;
     // One pipeline per MeshPipeline, differing only in which pixel shader they
-    // carry. A draw run selects its own off the sort key.
+    // carry and whether they cull back faces. A draw run selects its own off the
+    // sort key.
     nvrhi::GraphicsPipelineHandle _pipelines[kMeshPipelineCount];
     nvrhi::BufferHandle _frameConstantsBuffer;
 

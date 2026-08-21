@@ -100,10 +100,13 @@ public:
     /// @brief Whether this material's fragments are alpha-tested.
     bool IsAlphaMasked() const { return _source.Alpha == Geometry::AlphaMode::Mask; }
 
+    /// @brief Whether this material rasterizes its back faces.
+    bool IsDoubleSided() const { return _source.DoubleSided; }
+
     /// @brief Which mesh-pass pipeline this material's draws belong in. The one
     /// place the mapping lives, so the CPU draw list and the GPU cull tables
     /// cannot disagree about where a material draws.
-    MeshPipeline Pipeline() const { return IsAlphaMasked() ? MeshPipeline::Mask : MeshPipeline::Opaque; }
+    MeshPipeline Pipeline() const { return MeshPipelineFor(IsAlphaMasked(), IsDoubleSided()); }
 
     bool IsValid() const { return _created; }
 

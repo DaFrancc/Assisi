@@ -810,6 +810,38 @@ TEST_CASE("ImportMesh: alphaMode BLEND still imports as opaque, and says so")
     fs::remove_all(root);
 }
 
+TEST_CASE("ImportMesh: doubleSided is imported rather than dropped")
+{
+    // The importer used to warn and discard this. Dropping it is what made a
+    // cutout hole look through the object to the background instead of its inside.
+    const fs::path root = WriteKhrAssets(MakeAlphaGltf("MASK", R"(, "doubleSided": true)"));
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    CHECK(result->Materials[0].DoubleSided == true);
+    CHECK_FALSE(log.Mentions("single-sided"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: a material that does not say doubleSided stays single-sided")
+{
+    // glTF's default is false, and a closed opaque mesh should not start paying
+    // fill for faces it will never show.
+    const fs::path root = WriteKhrAssets(MakeAlphaGltf("OPAQUE", ""));
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Materials.size() == 1);
+
+    CHECK(result->Materials[0].DoubleSided == false);
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("ImportMesh: a negative ior is refused and named")
 {
     // The one value the shader cannot take: F0's denominator (ior + 1) is zero

@@ -187,7 +187,16 @@ Surface SampleMaterial()
     s.diffuseRoughness = clamp(mat.openPbrParams.z, 0.0, 1.0);
     s.eonDiffuse = (mat.flags.x & kMatFlagEnergyPreservingDiffuse) != 0u;
 
+    // A back face only rasterizes at all under a double-sided pipeline, and its
+    // normal still points the way the front face does — away from whoever is
+    // looking at it. Flipping it here is what makes an interior read as a lit
+    // surface instead of a black shell. Unconditional because a single-sided
+    // pipeline has no back faces for it to catch.
     vec3 N = normalize(vNormal);
+    if (!gl_FrontFacing)
+    {
+        N = -N;
+    }
     if ((mat.flags.x & kMatFlagHasNormalTexture) != 0u)
     {
         // Re-orthonormalize the interpolated tangent against N (Gram-Schmidt),

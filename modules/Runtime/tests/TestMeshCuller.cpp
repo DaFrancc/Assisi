@@ -11,7 +11,8 @@
 using Assisi::Render::CullTableBuilder;
 using Assisi::Render::CullTables;
 using Assisi::Render::GpuSubMesh;
-using Assisi::Render::kCullMaterialMaskedBit;
+using Assisi::Render::EncodeCullMaterial;
+using Assisi::Render::MeshPipeline;
 using Assisi::Render::kNoMaterial;
 using Assisi::Render::MeshGeometry;
 
@@ -222,11 +223,11 @@ TEST_CASE("An all-opaque frame keeps one command per batch and no masked half")
     builder.Finalize();
 
     const CullTables &tables = builder.Tables();
-    CHECK_FALSE(tables.hasMaskedMaterials);
+    CHECK_FALSE(tables.UsesPipeline(MeshPipeline::Mask));
     CHECK(tables.BatchCount() == 2);
     CHECK(tables.batchTemplates.size() == 2);
-    CHECK(tables.MaskedCommandCount() == 0);
-    CHECK(tables.OpaqueCommandCount() == 2);
+    CHECK(tables.CommandCount(MeshPipeline::Mask) == 0);
+    CHECK(tables.CommandCount(MeshPipeline::Opaque) == 2);
 }
 
 TEST_CASE("A masked material adds a second command half the masked pipeline draws")
@@ -236,19 +237,19 @@ TEST_CASE("A masked material adds a second command half the masked pipeline draw
     // batch — the table grows a masked half for the second to land in.
     CullTableBuilder builder;
     const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
-    const std::array<uint32_t, 1>   opaque{7u};
-    const std::array<uint32_t, 1>   masked{8u | kCullMaterialMaskedBit};
+    const std::array<uint32_t, 1>   opaque{EncodeCullMaterial(7u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 1>   masked{EncodeCullMaterial(8u, MeshPipeline::Mask)};
 
     builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), opaque);
     builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
     builder.Finalize();
 
     const CullTables &tables = builder.Tables();
-    CHECK(tables.hasMaskedMaterials);
+    CHECK(tables.UsesPipeline(MeshPipeline::Mask));
     REQUIRE(tables.BatchCount() == 1);
     REQUIRE(tables.batchTemplates.size() == 2);
-    CHECK(tables.OpaqueCommandCount() == 1);
-    CHECK(tables.MaskedCommandCount() == 1);
+    CHECK(tables.CommandCount(MeshPipeline::Opaque) == 1);
+    CHECK(tables.CommandCount(MeshPipeline::Mask) == 1);
 
     // Both halves draw the same geometry; only the pipeline and the instance
     // region they pack into differ.
@@ -269,8 +270,8 @@ TEST_CASE("Reservations are exact, so a pipeline nothing uses reserves nothing")
     // are what each half will actually hold.
     CullTableBuilder builder;
     const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
-    const std::array<uint32_t, 1>   masked{4u | kCullMaterialMaskedBit};
-    const std::array<uint32_t, 1>   opaque{5u};
+    const std::array<uint32_t, 1>   masked{EncodeCullMaterial(4u, MeshPipeline::Mask)};
+    const std::array<uint32_t, 1>   opaque{EncodeCullMaterial(5u, MeshPipeline::Opaque)};
 
     // Three masked objects of mesh A, one opaque object of mesh B.
     builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
@@ -301,15 +302,76 @@ TEST_CASE("The masked bit never reaches the material id the shader indexes with"
     // the material table.
     CullTableBuilder builder;
     const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
-    const std::array<uint32_t, 1>   masked{9u | kCullMaterialMaskedBit};
+    const std::array<uint32_t, 1>   masked{EncodeCullMaterial(9u, MeshPipeline::Mask)};
     builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
 
     // The tables carry it packed — stripping is the shader's job, and it needs the
     // bit to pick its half.
-    CHECK(builder.Tables().objectMaterials[0] == (9u | kCullMaterialMaskedBit));
+    CHECK(builder.Tables().objectMaterials[0] == EncodeCullMaterial(9u, MeshPipeline::Mask));
     CHECK((builder.Tables().objectMaterials[0] & Assisi::Render::kCullMaterialIdMask) == 9u);
     // The sentinel must keep reading as "no material" rather than as a masked one.
     CHECK((kNoMaterial & Assisi::Render::kCullMaterialIdMask) != 9u);
+}
+
+TEST_CASE("Every pipeline a frame places gets its own contiguous command block")
+{
+    // Three of the four pipelines in one frame. Blocks must follow one another in
+    // pipeline order with no gap for the pipeline nobody used, or the offsets the
+    // draw calls are issued at would skip past live commands.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1> opaque{EncodeCullMaterial(1u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 1> mask{EncodeCullMaterial(2u, MeshPipeline::Mask)};
+    const std::array<uint32_t, 1> maskBoth{EncodeCullMaterial(3u, MeshPipeline::MaskDoubleSided)};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), opaque);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), mask);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), maskBoth);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.BatchCount() == 1);
+    CHECK(tables.UsesPipeline(MeshPipeline::Opaque));
+    CHECK(tables.UsesPipeline(MeshPipeline::Mask));
+    CHECK(tables.UsesPipeline(MeshPipeline::MaskDoubleSided));
+    // Nobody placed a double-sided opaque material, so that pipeline costs nothing.
+    CHECK_FALSE(tables.UsesPipeline(MeshPipeline::OpaqueDoubleSided));
+    CHECK(tables.CommandCount(MeshPipeline::OpaqueDoubleSided) == 0);
+
+    // Three live blocks of one batch each, packed with the dead one skipped.
+    CHECK(tables.TotalCommandCount() == 3);
+    REQUIRE(tables.batchTemplates.size() == 3);
+    CHECK(tables.CommandBase(MeshPipeline::Opaque) == 0);
+    CHECK(tables.CommandBase(MeshPipeline::OpaqueDoubleSided) == 1);
+    CHECK(tables.CommandBase(MeshPipeline::Mask) == 1);
+    CHECK(tables.CommandBase(MeshPipeline::MaskDoubleSided) == 2);
+
+    // One instance each, so the three reserved regions are one slot apiece and do
+    // not overlap.
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 1);
+    CHECK(tables.batchTemplates[2].firstInstance == 2);
+    CHECK(tables.drawCapacity == 3);
+}
+
+TEST_CASE("A double-sided material is a different pipeline from the same material single-sided")
+{
+    // The cull mode splits batches exactly as the alpha mode does — one draw is
+    // one pipeline either way.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1> single{EncodeCullMaterial(4u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 1> both{EncodeCullMaterial(5u, MeshPipeline::OpaqueDoubleSided)};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), single);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), both);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    CHECK(tables.TotalCommandCount() == 2);
+    CHECK_FALSE(tables.UsesPipeline(MeshPipeline::Mask));
+    // The packed id keeps the pipeline out of the material index the shader uses.
+    CHECK((tables.objectMaterials[1] & Assisi::Render::kCullMaterialIdMask) == 5u);
 }
 
 TEST_CASE("Reset clears the tables and the mesh dedup map")

@@ -106,13 +106,12 @@ bool MeshPass::Initialize(const InitParams &params)
     _materialTable = params.materialTable;
 
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
-    _pixelShaders[static_cast<uint32_t>(MeshPipeline::Opaque)] =
-        LoadSpirvShader(device, params.pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    _pixelShaders[kPixelShaderOpaque] = LoadSpirvShader(device, params.pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
     // The masked build is not optional: without it a cutout material would draw
     // solid, which is a wrong image rather than a missing feature.
-    _pixelShaders[static_cast<uint32_t>(MeshPipeline::Mask)] =
+    _pixelShaders[kPixelShaderMasked] =
         LoadSpirvShader(device, params.maskedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !_pixelShaders[0] || !_pixelShaders[1])
+    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderMasked])
     {
         return false;
     }
@@ -217,17 +216,16 @@ bool MeshPass::Initialize(const InitParams &params)
 
 bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    // The pipelines are identical but for their pixel shader — same input layout,
-    // binding layouts, raster and depth state. Building them from one desc is what
-    // keeps them that way: a cutout surface must shade and depth-test exactly as
-    // the opaque one does, or the two would diverge in more than their alpha.
+    // The pipelines differ only in their pixel shader and their cull mode. Building
+    // them from one desc is what keeps everything else identical: a cutout surface,
+    // or the inside of one, must shade and depth-test exactly as the opaque front
+    // face does, or they would diverge in more than the property that separates them.
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     pipelineDesc.inputLayout = _inputLayout;
     pipelineDesc.VS = _vertexShader;
     pipelineDesc.addBindingLayout(_bindingLayout);  // set 0: CBs, sampler, light buffers
     pipelineDesc.addBindingLayout(_bindlessLayout);  // set 1: bindless material textures
-    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
     // Meshes are authored CCW-front (standard convention). NVRHI's Vulkan backend
     // flips the viewport (VKViewportWithDXCoords) to undo Vulkan's native Y-down
     // clip space, which also flips the winding order the rasterizer perceives —
@@ -238,7 +236,10 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 
     for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
-        pipelineDesc.PS = _pixelShaders[i];
+        const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
+        pipelineDesc.PS = _pixelShaders[MeshPipelineIsMasked(pipeline) ? kPixelShaderMasked : kPixelShaderOpaque];
+        pipelineDesc.renderState.rasterState.cullMode =
+            MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
         _pipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
         if (_pipelines[i] == nullptr)
         {
@@ -518,8 +519,13 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
 MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const
 {
     SubmitStats stats;
+    uint32_t totalCommands = 0;
+    for (const uint32_t count : in.commandCounts)
+    {
+        totalCommands += count;
+    }
     if (in.indirectBuffer == nullptr || in.instanceBuffer == nullptr || in.vertexBuffer == nullptr ||
-        in.indexBuffer == nullptr || (in.opaqueCommandCount + in.maskedCommandCount) == 0)
+        in.indexBuffer == nullptr || totalCommands == 0)
     {
         return stats; // nothing culled this frame (or the culler is unavailable)
     }
@@ -530,11 +536,11 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     // records it wrote are read by gl_InstanceIndex just like the CPU path's.
     nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(in.instanceBuffer);
 
-    // One multi-draw per pipeline half. Single arena → all batches share the
-    // arena's vertex/index buffers (stage C/E), so each half is one
+    // One multi-draw per live pipeline block. Single arena → all batches share the
+    // arena's vertex/index buffers (stage C/E), so each block is one
     // drawIndexedIndirect over a contiguous command range; empty batches carry
-    // instanceCount 0 and draw nothing. A frame with no cutout material has no
-    // masked half at all and issues exactly the one call it always did.
+    // instanceCount 0 and draw nothing. A frame that places only ordinary opaque
+    // materials has one block and issues exactly the one call it always did.
     nvrhi::GraphicsState state;
     state.framebuffer  = frame.framebuffer;
     state.addBindingSet(globalBindingSet); // set 0
@@ -545,25 +551,19 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     state.indexBuffer    = nvrhi::IndexBufferBinding{in.indexBuffer, nvrhi::Format::R32_UINT, 0};
     state.indirectParams = in.indirectBuffer;
 
-    const struct
+    uint32_t firstCommand = 0;
+    for (uint32_t p = 0; p < kMeshPipelineCount; ++p)
     {
-        MeshPipeline pipeline;
-        uint32_t first;
-        uint32_t count;
-    } halves[] = {
-        {MeshPipeline::Opaque, 0, in.opaqueCommandCount},
-        {MeshPipeline::Mask, in.opaqueCommandCount, in.maskedCommandCount},
-    };
-    for (const auto &half : halves)
-    {
-        if (half.count == 0)
+        const uint32_t count = in.commandCounts[p];
+        if (count == 0)
         {
-            continue;
+            continue; // a pipeline nothing was placed for has no block to draw
         }
-        state.pipeline = _pipelines[static_cast<uint32_t>(half.pipeline)];
+        state.pipeline = _pipelines[p];
         commandList->setGraphicsState(state);
-        commandList->drawIndexedIndirect(half.first * sizeof(nvrhi::DrawIndexedIndirectArguments), half.count);
+        commandList->drawIndexedIndirect(firstCommand * sizeof(nvrhi::DrawIndexedIndirectArguments), count);
         ++stats.drawCalls;
+        firstCommand += count;
     }
 
     // Survivor/batch tallies come from the culler's readback; report the calls.
