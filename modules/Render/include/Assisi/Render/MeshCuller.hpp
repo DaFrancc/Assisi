@@ -34,6 +34,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ComputeShader.hpp>
+#include <Assisi/Render/DrawItem.hpp>
 
 namespace Assisi::Render
 {
@@ -86,16 +87,31 @@ static_assert(sizeof(GpuSubMesh) == 16, "GpuSubMesh must match mesh_cull.comp's 
 /// mesh_cull.comp's NO_MATERIAL.
 inline constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 
-/// @brief Set in a CullTables::objectMaterials entry when that slot's material is
-/// alpha-masked. It is how the cull shader picks which half of the batch table an
-/// instance packs into, since a batch is one draw and a draw is one pipeline. The
-/// shader strips it before the id reaches the instance record. Must match
-/// mesh_cull.comp's MASKED_BIT.
+/// @brief The MeshPipeline a slot's material draws through, packed into the top
+/// two bits of its CullTables::objectMaterials entry. It is how the cull shader
+/// picks which block of the command table an instance packs into, since a batch is
+/// one draw and a draw is one pipeline. The shader strips it before the id reaches
+/// the instance record. Must match mesh_cull.comp's PIPELINE_SHIFT / ID_MASK.
 ///
-/// It rides in the top bit, which no material id reaches (AssetCache::kMaxMaterials
-/// is orders below it) and which the kNoMaterial sentinel is checked for first.
-inline constexpr uint32_t kCullMaterialMaskedBit = 1u << 31;
-inline constexpr uint32_t kCullMaterialIdMask    = kCullMaterialMaskedBit - 1u;
+/// The field rides in the top bits, which no material id reaches
+/// (AssetCache::kMaxMaterials is orders below) and which the kNoMaterial sentinel
+/// is checked for first.
+inline constexpr uint32_t kCullMaterialPipelineShift = 30;
+inline constexpr uint32_t kCullMaterialIdMask        = (1u << kCullMaterialPipelineShift) - 1u;
+static_assert(kMeshPipelineCount <= 4, "the packed pipeline field is two bits wide");
+
+/// @brief Pack a material id with the pipeline its draws belong to.
+[[nodiscard]] inline constexpr uint32_t EncodeCullMaterial(uint32_t materialId, MeshPipeline pipeline)
+{
+    return (materialId & kCullMaterialIdMask) | (static_cast<uint32_t>(pipeline) << kCullMaterialPipelineShift);
+}
+
+/// @brief The pipeline packed into @p encoded. Undefined for kNoMaterial, which
+/// callers reject first.
+[[nodiscard]] inline constexpr MeshPipeline CullMaterialPipeline(uint32_t encoded)
+{
+    return static_cast<MeshPipeline>(encoded >> kCullMaterialPipelineShift);
+}
 
 /// @brief One indirect draw command == VkDrawIndexedIndirectCommand /
 /// nvrhi::DrawIndexedIndirectArguments (five packed 32-bit fields). The CPU builds
@@ -121,31 +137,61 @@ struct CullTables
     std::vector<GpuMeshDesc> meshDescs;
     std::vector<GpuSubMesh>  submeshes;
     std::vector<uint32_t>    objectMaterials;
-    /// The draw-command templates, filled by Finalize: one per (batch, pipeline).
-    /// The opaque commands lead and the masked ones follow, each half in batch
-    /// order, so a pipeline's commands are contiguous and draw in one multi-draw.
-    /// The indirect buffer is uploaded from this each frame; the cull pass grows
-    /// each template's instanceCount.
+    /// The draw-command templates, filled by Finalize: one per (batch, live
+    /// pipeline). Each live pipeline's commands form one contiguous block in
+    /// MeshPipeline order, so a block draws in one multi-draw. The indirect buffer
+    /// is uploaded from this each frame; the cull pass grows each instanceCount.
     std::vector<GpuDrawArgs> batchTemplates;
     /// Sum of every object's LOD0 submesh count — the pre-cull upper bound on
     /// instance records, so it sizes the instance buffer. Each (object, submesh)
-    /// pair reserves a slot in exactly one pipeline half, so the halves' reserved
+    /// pair reserves a slot in exactly one pipeline block, so the blocks' reserved
     /// regions together never exceed this.
     uint32_t drawCapacity = 0;
-    /// Whether any gathered material is alpha-masked. False is the common case and
-    /// costs nothing: the table then has no masked half at all.
-    bool hasMaskedMaterials = false;
+    /// Bit p set when some gathered material draws through MeshPipeline p. A scene
+    /// that places only ordinary opaque materials lights one bit and pays for one
+    /// block, exactly as it did before any of the others existed.
+    uint32_t pipelineMask = 0;
 
     /// @brief Number of batches == distinct (mesh, submesh) pairs. Each becomes one
     /// draw command per live pipeline.
     [[nodiscard]] uint32_t BatchCount() const { return static_cast<uint32_t>(submeshes.size()); }
 
-    /// @brief Draw commands in the opaque half — always every batch, since a mesh
-    /// cannot be known to have no opaque instance until the cull has run.
-    [[nodiscard]] uint32_t OpaqueCommandCount() const { return BatchCount(); }
-    /// @brief Draw commands in the masked half: every batch again when a cutout
-    /// material was placed, none at all when one wasn't.
-    [[nodiscard]] uint32_t MaskedCommandCount() const { return hasMaskedMaterials ? BatchCount() : 0u; }
+    /// @brief Whether any gathered material draws through @p pipeline.
+    [[nodiscard]] bool UsesPipeline(MeshPipeline pipeline) const
+    {
+        return (pipelineMask & (1u << static_cast<uint32_t>(pipeline))) != 0u;
+    }
+
+    /// @brief Draw commands in @p pipeline's block: every batch when it is live —
+    /// a mesh cannot be known to have no surviving instance until the cull has
+    /// run — and none at all when it is not.
+    [[nodiscard]] uint32_t CommandCount(MeshPipeline pipeline) const
+    {
+        return UsesPipeline(pipeline) ? BatchCount() : 0u;
+    }
+
+    /// @brief Where @p pipeline's block starts in batchTemplates: past every live
+    /// block below it, so a dead pipeline costs no commands and no gap.
+    [[nodiscard]] uint32_t CommandBase(MeshPipeline pipeline) const
+    {
+        uint32_t base = 0;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(pipeline); ++i)
+        {
+            base += CommandCount(static_cast<MeshPipeline>(i));
+        }
+        return base;
+    }
+
+    /// @brief Total draw commands across every live block.
+    [[nodiscard]] uint32_t TotalCommandCount() const
+    {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
+        {
+            total += CommandCount(static_cast<MeshPipeline>(i));
+        }
+        return total;
+    }
 
     bool Empty() const { return objects.empty(); }
     void Clear();
@@ -177,10 +223,10 @@ public:
     /// @brief Packing core (no device types). Interns @p meshKey's @p geometry into
     /// the descriptor table on first sight (reusing it for later instances of the
     /// same key), then appends one object at @p model whose material slots are
-    /// @p materialIds (element i = slot i's Material::Id, or'd with
-    /// kCullMaterialMaskedBit when that material is alpha-masked, or kNoMaterial
-    /// when unresolved → that submesh is skipped by the cull shader). No-op if
-    /// @p geometry has no LOD0 submeshes. @p meshKey is any stable per-mesh identity.
+    /// @p materialIds (element i = slot i's Material::Id packed with its pipeline
+    /// by EncodeCullMaterial, or kNoMaterial when unresolved → that submesh is
+    /// skipped by the cull shader). No-op if @p geometry has no LOD0 submeshes.
+    /// @p meshKey is any stable per-mesh identity.
     void AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
                         std::span<const uint32_t> materialIds);
 
@@ -244,12 +290,11 @@ public:
     /// (batch, pipeline), uploaded as templates each frame and grown (instanceCount)
     /// by the cull pass. Drawn as one plain drawIndexedIndirect per pipeline half.
     [[nodiscard]] nvrhi::IBuffer *IndirectBuffer() const { return _indirectBuffer; }
-    /// @brief Indirect commands in the buffer's leading opaque half; empty batches
-    /// draw 0 instances. CPU-known, so no count buffer.
-    [[nodiscard]] uint32_t OpaqueCommandCount() const { return _lastOpaqueCommands; }
-    /// @brief Indirect commands in the masked half that follows it — zero unless the
-    /// frame placed a cutout material.
-    [[nodiscard]] uint32_t MaskedCommandCount() const { return _lastMaskedCommands; }
+    /// @brief Indirect commands in each MeshPipeline's block, in pipeline order —
+    /// zero for a pipeline the frame placed no material for. The blocks are
+    /// contiguous and in the same order, so a block's offset is the sum of those
+    /// before it. CPU-known, so no count buffer.
+    [[nodiscard]] const std::array<uint32_t, kMeshPipelineCount> &CommandCounts() const { return _lastCommandCounts; }
 
     /// @brief Instances the cull pass actually emitted (survivors), read back from
     /// the GPU stats buffer with a few frames' latency — so culling is observable
@@ -302,9 +347,9 @@ private:
     nvrhi::BindingSetHandle _cullBindingSet;
     bool _bindingSetDirty = true;
 
-    uint32_t _lastMaxDraws       = 0; // candidate instance total (drawCapacity) of the last Cull
-    uint32_t _lastOpaqueCommands = 0; // indirect commands in the opaque half of the last Cull
-    uint32_t _lastMaskedCommands = 0; // and in the masked half (0 when nothing was masked)
+    uint32_t _lastMaxDraws = 0; // candidate instance total (drawCapacity) of the last Cull
+    // Indirect commands per pipeline block of the last Cull, in pipeline order.
+    std::array<uint32_t, kMeshPipelineCount> _lastCommandCounts{};
 
     // GPU→CPU readback of the survivor stats {instances, batches}, for the overlay.
     // A small ring of CPU-readable 2-uint buffers: each frame copies _statsBuffer

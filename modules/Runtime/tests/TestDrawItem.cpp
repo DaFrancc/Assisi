@@ -35,8 +35,9 @@ TEST_CASE("MakeOpaqueSortKey packs the fields into [pipeline|material|mesh|depth
     // Material sits above mesh (<< 36).
     CHECK(MakeOpaqueSortKey(kOpaque, 1, 0, 0) == (1ull << 36));
 
-    // Pipeline is the top byte (<< 56).
-    CHECK(MakeOpaqueSortKey(kMask, 0, 0, 0) == (1ull << 56));
+    // Pipeline is the top byte (<< 56), and the whole value lands there.
+    CHECK(MakeOpaqueSortKey(MeshPipeline::OpaqueDoubleSided, 0, 0, 0) == (1ull << 56));
+    CHECK(MakeOpaqueSortKey(kMask, 0, 0, 0) == (static_cast<uint64_t>(kMask) << 56));
 
     // Ids beyond their field width are masked, not allowed to bleed into the next.
     CHECK(MakeOpaqueSortKey(kOpaque, (1u << 20), 0, 0) == 0);       // material overflow wraps to 0
@@ -68,6 +69,57 @@ TEST_CASE("The pipeline field outranks every other, so opaque draws before maske
     // and depth must still sort after the very last opaque one.
     CHECK(MakeOpaqueSortKey(kMask, 0, 0, 0) >
           MakeOpaqueSortKey(kOpaque, (1u << 20) - 1, (1u << 20) - 1, 0xFFFF));
+}
+
+TEST_CASE("MeshPipelineFor round-trips both of the properties it packs")
+{
+    using Assisi::Render::MeshPipelineFor;
+    using Assisi::Render::MeshPipelineIsDoubleSided;
+    using Assisi::Render::MeshPipelineIsMasked;
+
+    // Four distinct pipelines, one per combination — a collision would silently
+    // draw a cutout through the pipeline that cannot discard, or a double-sided
+    // surface through the one that culls its back faces.
+    const MeshPipeline all[] = {MeshPipelineFor(false, false), MeshPipelineFor(true, false),
+                                MeshPipelineFor(false, true), MeshPipelineFor(true, true)};
+    for (const MeshPipeline lhs : all)
+    {
+        CHECK(static_cast<uint32_t>(lhs) < Assisi::Render::kMeshPipelineCount);
+        for (const MeshPipeline rhs : all)
+        {
+            CHECK(((lhs == rhs) == (MeshPipelineIsMasked(lhs) == MeshPipelineIsMasked(rhs) &&
+                                    MeshPipelineIsDoubleSided(lhs) == MeshPipelineIsDoubleSided(rhs))));
+        }
+    }
+
+    CHECK(MeshPipelineFor(false, false) == MeshPipeline::Opaque);
+    CHECK(MeshPipelineFor(true, false) == MeshPipeline::Mask);
+    CHECK(MeshPipelineFor(false, true) == MeshPipeline::OpaqueDoubleSided);
+    CHECK(MeshPipelineFor(true, true) == MeshPipeline::MaskDoubleSided);
+
+    for (const MeshPipeline pipeline : all)
+    {
+        CHECK(MeshPipelineIsMasked(pipeline) == (pipeline == MeshPipeline::Mask ||
+                                                 pipeline == MeshPipeline::MaskDoubleSided));
+        CHECK(MeshPipelineIsDoubleSided(pipeline) == (pipeline == MeshPipeline::OpaqueDoubleSided ||
+                                                      pipeline == MeshPipeline::MaskDoubleSided));
+    }
+}
+
+TEST_CASE("Both opaque pipelines sort before both masked ones")
+{
+    // The cull mode must not disturb the opaque-before-masked ordering: a
+    // double-sided opaque surface still lays depth that a cutout tests against.
+    const MeshPipeline opaques[] = {MeshPipeline::Opaque, MeshPipeline::OpaqueDoubleSided};
+    const MeshPipeline masked[] = {MeshPipeline::Mask, MeshPipeline::MaskDoubleSided};
+    for (const MeshPipeline solid : opaques)
+    {
+        for (const MeshPipeline cutout : masked)
+        {
+            CHECK(MakeOpaqueSortKey(cutout, 0, 0, 0) >
+                  MakeOpaqueSortKey(solid, (1u << 20) - 1, (1u << 20) - 1, 0xFFFF));
+        }
+    }
 }
 
 TEST_CASE("QuantizeDepthFrontToBack maps near->0, far->max, and clamps")

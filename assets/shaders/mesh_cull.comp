@@ -76,13 +76,13 @@ struct DrawArgs
 
 #define NO_MATERIAL 0xFFFFFFFFu
 
-// Set in an objectMaterials[] entry when that slot's material is alpha-masked
-// (Render::kCullMaterialMaskedBit). A batch is one draw and a draw is one
-// pipeline, so a masked instance packs into the masked half of the command table
-// instead of the opaque one. Stripped before the id reaches the instance record,
-// which the shader uses to index the material table.
-#define MASKED_BIT 0x80000000u
-#define MATERIAL_ID_MASK 0x7FFFFFFFu
+// The MeshPipeline a slot's material draws through, packed into the top two bits
+// of its objectMaterials[] entry (Render::kCullMaterialPipelineShift). A batch is
+// one draw and a draw is one pipeline, so an instance packs into its own
+// pipeline's block of the command table. Stripped before the id reaches the
+// instance record, which the shader uses to index the material table.
+#define PIPELINE_SHIFT 30u
+#define MATERIAL_ID_MASK ((1u << PIPELINE_SHIFT) - 1u)
 
 // ---- SSBOs ---- (SRV +0, UAV +384; see cluster_cull.comp)
 
@@ -98,7 +98,8 @@ layout(std430, binding = 386) coherent  buffer Stats        { uint statsInstance
 layout(push_constant) uniform PushConstants
 {
     vec4  planes[6];    // frustum planes (nx,ny,nz,d), inward normals, normalised
-    uvec4 counts;       // x = object count, y = cull enabled (0/1), z = masked-half batch offset, w unused
+    uvec4 counts;       // x = object count, y = cull enabled (0/1), zw unused
+    uvec4 pipelineBase; // lane p = where MeshPipeline p's command block starts
 } pc;
 
 // ---- Culling helpers (mirror Render::Frustum + Geometry bounds transforms) ----
@@ -166,11 +167,10 @@ void main()
         if (packed == NO_MATERIAL)
             continue;
 
-        // An alpha-masked material draws through a different pipeline, so it grows
-        // a different command: the same batch shifted into the masked half. The
-        // offset is 0 when this frame placed no cutout material, and then there is
-        // only ever the one half.
-        uint command = g + ((packed & MASKED_BIT) != 0u ? pc.counts.z : 0u);
+        // The material's pipeline decides which command this batch grows: the same
+        // batch index within that pipeline's own block. A frame using only the
+        // opaque pipeline leaves every base at 0, so this is the batch index itself.
+        uint command = pc.pipelineBase[packed >> PIPELINE_SHIFT] + g;
 
         // Grow this command's instance count and take the old value as our index
         // within its reserved region [firstInstance, firstInstance + reserved). The
