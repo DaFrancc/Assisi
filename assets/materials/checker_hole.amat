@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "BaseColorTexture": {
+    "guid": "e9178367-c718-4df6-8b43-25308bd7bbbd",
+    "path": "textures/checker_hole.png"
+  },
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.6,
+  "NormalScale": 1.0,
+  "OcclusionStrength": 1.0,
+  "EmissiveFactor": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "Alpha": 1,
+  "AlphaCutoff": 0.5,
+  "DoubleSided": true
+}
