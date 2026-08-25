@@ -33,6 +33,7 @@
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
 #include <cstdint>
+#include <tuple>
 #include <typeindex>
 #include <vector>
 
@@ -123,12 +124,12 @@ ECS::Entity SoleMirror(const Harness &harness)
     return harness.client.EntityOf(harness.server.NetIdOf(
                                        [&]
         {
-            for (auto [entity, marker] : const_cast<ECS::Scene &>(harness.serverScene).Query<Replicated>())
-            {
-                (void)marker;
-                return entity;
-            }
-            return ECS::NullEntity;
+            // begin()/end() rather than a range-for that returns on its first pass:
+            // MSVC reads the loop's increment as unreachable and /WX turns C4702 into
+            // an error in the debug preset. Same reason as EditorApp::BlueprintSunEntity.
+            auto replicated = const_cast<ECS::Scene &>(harness.serverScene).Query<Replicated>();
+            auto first      = replicated.begin();
+            return first == replicated.end() ? ECS::NullEntity : std::get<0>(*first);
         }()));
 }
 

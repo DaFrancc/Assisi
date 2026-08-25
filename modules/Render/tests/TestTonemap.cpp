@@ -6,6 +6,7 @@
 #include <Assisi/Render/Tonemap.hpp>
 
 #include <cmath>
+#include <limits>
 
 using namespace Assisi::Render;
 
@@ -106,13 +107,13 @@ TEST_CASE("Out-of-range and non-finite settings cannot reach the shader")
     // default rather than to the end of the slider: a config that says nothing
     // usable should look like one that says nothing.
     CHECK(ExposureScale(std::nanf("")) == doctest::Approx(1.0f));
-    CHECK(ExposureScale(INFINITY) == doctest::Approx(1.0f));
+    CHECK(ExposureScale(std::numeric_limits<float>::infinity()) == doctest::Approx(1.0f));
 
     TonemapSettings hostile;
     hostile.op = static_cast<TonemapOperator>(99u);
     hostile.exposureStops = std::nanf("");
     hostile.contrast = -5.0f;
-    hostile.saturation = INFINITY;
+    hostile.saturation = std::numeric_limits<float>::infinity();
 
     const TonemapSettings safe = Sanitized(hostile);
     CHECK(static_cast<std::uint32_t>(safe.op) < kTonemapOperatorCount);

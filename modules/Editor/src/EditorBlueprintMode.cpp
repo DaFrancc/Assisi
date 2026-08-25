@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <tuple>
 
 namespace Assisi::Editor
 {
@@ -81,14 +82,16 @@ Assisi::ECS::Entity EditorApp::BlueprintSunEntity() const
     // A query rather than a stored handle, for the same reason instance membership
     // is: the sun is an ordinary entity and the author may delete it. A handle
     // would go stale silently and the panel would edit a slot something else owns.
-    for (auto [entity, light, tag] :
-         _blueprintWorld->scene.Query<Assisi::Runtime::DirectionalLight, Assisi::Runtime::EditorOnly>())
-    {
-        (void)light;
-        (void)tag;
-        return entity;
-    }
-    return Assisi::ECS::NullEntity;
+    // begin()/end() and not a range-for that returns on its first pass: MSVC reads such
+    // a loop's increment as unreachable and /WX makes C4702 an error. Only the debug
+    // preset trips it — /O2 folds the loop away first — so the range-for form fails md
+    // while ms stays green, which is a nasty way to find out.
+    auto sunlit = _blueprintWorld->scene.Query<Assisi::Runtime::DirectionalLight, Assisi::Runtime::EditorOnly>();
+    auto first  = sunlit.begin();
+    if (first == sunlit.end())
+        return Assisi::ECS::NullEntity;
+
+    return std::get<0>(*first);
 }
 
 void EditorApp::AddBlueprintEditorRig(Assisi::App::World &world)
