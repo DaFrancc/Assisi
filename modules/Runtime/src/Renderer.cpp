@@ -258,6 +258,12 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
         {
             const uint32_t submeshIndex = lod0.FirstSubMesh + i;
             const Assisi::Geometry::SubMesh &subMesh = subMeshes[submeshIndex];
+            // An unresolved slot casts opaquely rather than not at all: row 0 is
+            // never read, because the alpha test that would read it is off.
+            const Assisi::Render::Material *material =
+                subMesh.MaterialSlot < meshRenderer.materials.size() ? meshRenderer.materials[subMesh.MaterialSlot]
+                                                                     : nullptr;
+            const bool alphaMasked = material != nullptr && material->IsAlphaMasked();
             out.casters.push_back(Assisi::Render::ShadowCaster{
                 .geometryKey = Assisi::Render::ShadowGeometryKey(mesh->Id(), submeshIndex),
                 .vertexBuffer = mesh->VertexBuffer(),
@@ -266,7 +272,9 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
                 .startIndexLocation = mesh->IndexBase() + subMesh.IndexOffset,
                 .baseVertexLocation = static_cast<int32_t>(mesh->VertexBase()),
                 .model = transform.worldMatrix,
-                .worldSphere = worldSphere});
+                .worldSphere = worldSphere,
+                .alphaMasked = alphaMasked,
+                .materialIndex = alphaMasked ? material->Id() : 0u});
         }
     }
 
@@ -276,14 +284,23 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
     }
     out.nearAlongLight = nearAlongLight;
 
-    // Geometry-major, so a run of identical (mesh, submesh) entries coalesces
-    // into one instanced draw in every view that keeps them. The key is built
+    // Alpha class first, then geometry-major within it, so a run of identical
+    // (mesh, submesh) entries coalesces into one instanced draw in every view
+    // that keeps them. The class leads because it decides the pipeline: a run
+    // that crossed from opaque into cutout could not coalesce whatever its
+    // geometry, so sorting on it is what keeps the runs whole. The key is built
     // from the mesh id rather than its address: the same ordering every frame,
     // whatever the allocator did.
     ASSISI_PROFILE_SCOPE("shadow-sort");
     std::sort(out.casters.begin(), out.casters.end(),
               [](const Assisi::Render::ShadowCaster &lhs, const Assisi::Render::ShadowCaster &rhs)
-        { return lhs.geometryKey < rhs.geometryKey; });
+        {
+            if (lhs.alphaMasked != rhs.alphaMasked)
+            {
+                return !lhs.alphaMasked;
+            }
+            return lhs.geometryKey < rhs.geometryKey;
+        });
 }
 
 } // namespace Assisi::Runtime

@@ -68,6 +68,10 @@ public:
         std::uint32_t cascades = 0;  ///< Cascades rendered (0 when inactive).
         std::uint32_t instances = 0; ///< Caster instances submitted, counted once per cascade they survive into.
         std::uint32_t batches = 0;   ///< Instanced draw commands after coalescing same-geometry runs.
+        /// How many of @ref batches drew through the alpha-testing pipeline.
+        /// Zero for a scene whose casters are all opaque, which is what makes
+        /// "the cutouts cost nothing here" a reading rather than a claim.
+        std::uint32_t maskedBatches = 0;
         std::uint32_t drawCalls = 0; ///< drawIndexedIndirect calls issued — one per cascade with anything in it.
         std::uint32_t culled = 0;    ///< Caster-cascade pairs the per-cascade frustum test rejected.
     };
@@ -107,6 +111,10 @@ private:
     const ShadowDepthRenderer *_depthRenderer = nullptr;
 
     nvrhi::GraphicsPipelineHandle _pipeline;
+    // The alpha-testing companion, built from the same settings and released
+    // with it. Null when the renderer has no variant to build it from, which
+    // leaves cutouts casting a solid silhouette rather than nothing.
+    nvrhi::GraphicsPipelineHandle _maskedPipeline;
 
     // The cascade array, and one framebuffer per slice. Empty while inactive.
     nvrhi::TextureHandle _cascadeTexture;

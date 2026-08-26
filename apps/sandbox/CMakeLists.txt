@@ -189,5 +189,11 @@ endforeach()
 assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.masked.spv"
     ASSISI_ALPHA_MASK)
 
+# The shadow depth stage the same way round: the base build reads position only
+# and has no fragment stage, and this one carries the UV and material row that
+# shadow_depth.frag alpha-tests against.
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/shadow_depth.vert"
+    "shaders/shadow_depth.vert.masked.spv" ASSISI_ALPHA_MASK)
+
 add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

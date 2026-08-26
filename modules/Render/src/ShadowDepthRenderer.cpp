@@ -27,55 +27,84 @@ void ShadowDrawList::Clear()
     commandVertexBuffers.clear();
     commandIndexBuffers.clear();
     viewCommandStart.clear();
+    viewMaskedStart.clear();
     culled = 0;
 }
+
+namespace
+{
+/// @brief Cull one view's casters of a single alpha class and append their
+/// commands, coalescing consecutive runs of the same geometry.
+///
+/// One class per sweep is what puts a view's commands in pipeline order without
+/// the caller having had to sort the span: the sweep that wants the other class
+/// rejects on the flag before the frustum test, so a caster is only ever culled
+/// — and only ever counted as culled — by the sweep that would have drawn it.
+void AppendViewCommands(const Frustum &frustum, std::span<const ShadowCaster> casters, bool alphaMasked,
+                        ShadowDrawList &out)
+{
+    const ShadowCaster *run = nullptr;
+    for (const ShadowCaster &caster : casters)
+    {
+        if (caster.alphaMasked != alphaMasked || caster.indexCount == 0)
+        {
+            continue;
+        }
+        if (!frustum.IntersectsSphere(caster.worldSphere))
+        {
+            ++out.culled;
+            run = nullptr; // a gap in the run: the next survivor opens a new batch
+            continue;
+        }
+
+        const auto instanceIndex = static_cast<std::uint32_t>(out.instances.size());
+        out.instances.push_back(ShadowInstanceData{.model = caster.model, .materialIndex = caster.materialIndex});
+
+        if (run != nullptr && SameShadowGeometry(*run, caster))
+        {
+            ++out.commands.back().instanceCount;
+        }
+        else
+        {
+            nvrhi::DrawIndexedIndirectArguments command;
+            command.indexCount = caster.indexCount;
+            command.instanceCount = 1;
+            command.startIndexLocation = caster.startIndexLocation;
+            command.baseVertexLocation = caster.baseVertexLocation;
+            command.startInstanceLocation = instanceIndex;
+            out.commands.push_back(command);
+            out.commandVertexBuffers.push_back(caster.vertexBuffer);
+            out.commandIndexBuffers.push_back(caster.indexBuffer);
+            run = &caster;
+        }
+    }
+}
+} // namespace
 
 void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters,
                          ShadowDrawList &out)
 {
     out.Clear();
     out.viewCommandStart.reserve(targets.size() + 1u);
+    out.viewMaskedStart.reserve(targets.size());
+
+    // One pass over the whole span, not one per view: a scene with no cutout in
+    // it — which is every scene until content has one — then skips the second
+    // sweep entirely and does exactly the work it did before this existed.
+    const bool anyMasked =
+        std::any_of(casters.begin(), casters.end(), [](const ShadowCaster &caster) { return caster.alphaMasked; });
 
     for (const ShadowDepthTarget &target : targets)
     {
         out.viewCommandStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
 
         const Frustum frustum = Frustum::FromViewProjection(target.view.viewProjection);
+        AppendViewCommands(frustum, casters, /*alphaMasked=*/ false, out);
 
-        const ShadowCaster *run = nullptr;
-        for (const ShadowCaster &caster : casters)
+        out.viewMaskedStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
+        if (anyMasked)
         {
-            if (caster.indexCount == 0)
-            {
-                continue;
-            }
-            if (!frustum.IntersectsSphere(caster.worldSphere))
-            {
-                ++out.culled;
-                run = nullptr; // a gap in the run: the next survivor opens a new batch
-                continue;
-            }
-
-            const auto instanceIndex = static_cast<std::uint32_t>(out.instances.size());
-            out.instances.push_back(ShadowInstanceData{.model = caster.model});
-
-            if (run != nullptr && SameShadowGeometry(*run, caster))
-            {
-                ++out.commands.back().instanceCount;
-            }
-            else
-            {
-                nvrhi::DrawIndexedIndirectArguments command;
-                command.indexCount = caster.indexCount;
-                command.instanceCount = 1;
-                command.startIndexLocation = caster.startIndexLocation;
-                command.baseVertexLocation = caster.baseVertexLocation;
-                command.startInstanceLocation = instanceIndex;
-                out.commands.push_back(command);
-                out.commandVertexBuffers.push_back(caster.vertexBuffer);
-                out.commandIndexBuffers.push_back(caster.indexBuffer);
-                run = &caster;
-            }
+            AppendViewCommands(frustum, casters, /*alphaMasked=*/ true, out);
         }
     }
 
@@ -122,7 +151,83 @@ bool ShadowDepthRenderer::Initialize(const InitParams &params)
         return false;
     }
 
+    InitializeAlphaTest(params);
     return true;
+}
+
+void ShadowDepthRenderer::InitializeAlphaTest(const InitParams &params)
+{
+    // Every failure below leaves the renderer usable with alpha-tested casters
+    // drawing solid, which is why none of them returns false: losing the hole in
+    // a shadow is a worse picture, but no shadows at all is a worse one still.
+    if (params.maskedVertexShaderSpvPath.empty() || params.maskedPixelShaderSpvPath.empty() ||
+        params.materialTable == nullptr || params.bindlessLayout == nullptr || params.bindlessTable == nullptr)
+    {
+        return;
+    }
+
+    _maskedVertexShader = LoadSpirvShader(_device, params.maskedVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _maskedPixelShader = LoadSpirvShader(_device, params.maskedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    if (!_maskedVertexShader || !_maskedPixelShader)
+    {
+        Core::Log::Warn("ShadowDepthRenderer: alpha-tested casters will cast solid (the variant failed to load).");
+        _maskedVertexShader = nullptr;
+        _maskedPixelShader = nullptr;
+        return;
+    }
+
+    // Position and the texture coordinate the alpha is sampled at. Still no
+    // normal or tangent: nothing here shades.
+    using Assisi::Geometry::Vertex;
+    const nvrhi::VertexAttributeDesc attributes[] = {
+        nvrhi::VertexAttributeDesc()
+        .setName("POSITION")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(Vertex, Position))
+        .setElementStride(sizeof(Vertex)),
+        nvrhi::VertexAttributeDesc()
+        .setName("TEXCOORD")
+        .setFormat(nvrhi::Format::RG32_FLOAT)
+        .setOffset(offsetof(Vertex, TextureCoordinates))
+        .setElementStride(sizeof(Vertex)),
+    };
+    _maskedInputLayout = _device->createInputLayout(attributes, static_cast<std::uint32_t>(std::size(attributes)),
+                                                    _maskedVertexShader);
+
+    // t0 = instances (vertex), t1 = the material table and s0 the sampler its
+    // base-colour slot is read through (fragment), plus the same view push
+    // constant. The bindless textures join as register space 1.
+    nvrhi::BindingLayoutDesc maskedLayoutDesc;
+    maskedLayoutDesc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
+    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::mat4)));
+    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
+    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
+    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+    _maskedBindingLayout = _device->createBindingLayout(maskedLayoutDesc);
+
+    // Repeat and trilinear, matching the mesh pass: the alpha the shadow tests
+    // has to be the alpha the surface shows, or the hole moves between them.
+    nvrhi::SamplerDesc samplerDesc;
+    samplerDesc.setAllFilters(true);
+    samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Repeat);
+    _maskedSampler = _device->createSampler(samplerDesc);
+
+    if (_maskedInputLayout == nullptr || _maskedBindingLayout == nullptr || _maskedSampler == nullptr)
+    {
+        Core::Log::Warn("ShadowDepthRenderer: alpha-tested casters will cast solid (a layout failed to build).");
+        _maskedVertexShader = nullptr;
+        _maskedPixelShader = nullptr;
+        return;
+    }
+
+    _materialTable = params.materialTable;
+    _bindlessLayout = params.bindlessLayout;
+    _bindlessTable = params.bindlessTable;
+}
+
+bool ShadowDepthRenderer::CanAlphaTest() const
+{
+    return IsReady() && _maskedPixelShader != nullptr && _materialTable != nullptr;
 }
 
 nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFramebuffer *prototype,
@@ -167,6 +272,61 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFrameb
     return pipeline;
 }
 
+nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreateMaskedPipeline(nvrhi::IFramebuffer *prototype,
+                                                                        float slopeBias) const
+{
+    if (!CanAlphaTest() || prototype == nullptr)
+    {
+        return nullptr;
+    }
+
+    nvrhi::GraphicsPipelineDesc pipelineDesc;
+    pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+    pipelineDesc.inputLayout = _maskedInputLayout;
+    pipelineDesc.VS = _maskedVertexShader;
+    pipelineDesc.PS = _maskedPixelShader;
+    pipelineDesc.addBindingLayout(_maskedBindingLayout);
+    pipelineDesc.addBindingLayout(_bindlessLayout);
+    // Both faces, where the opaque pipeline keeps the back one. Culling at all
+    // assumes a closed shell, and a cutout is characteristically a thin card
+    // whose front and back are one coincident surface — cull either and the
+    // caster disappears whenever its winding faces the wrong way for the light.
+    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+    pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
+    pipelineDesc.renderState.rasterState.depthClipEnable = true;
+    pipelineDesc.renderState.rasterState.slopeScaledDepthBias = slopeBias;
+    pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
+    pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
+
+    nvrhi::GraphicsPipelineHandle pipeline = _device->createGraphicsPipeline(pipelineDesc,
+                                                                            prototype->getFramebufferInfo());
+    if (pipeline == nullptr)
+    {
+        Core::Log::Error("ShadowDepthRenderer: failed to create the alpha-testing depth pipeline.");
+    }
+    return pipeline;
+}
+
+nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateMaskedBindingSet(nvrhi::IBuffer *instanceBuffer) const
+{
+    if (!CanAlphaTest())
+    {
+        return nullptr;
+    }
+    if (_maskedBindingSet != nullptr && _maskedBindingSetInstanceBuffer == instanceBuffer)
+    {
+        return _maskedBindingSet;
+    }
+    nvrhi::BindingSetDesc desc;
+    desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::mat4)));
+    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, instanceBuffer));
+    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _materialTable));
+    desc.addItem(nvrhi::BindingSetItem::Sampler(0, _maskedSampler));
+    _maskedBindingSet = _device->createBindingSet(desc, _maskedBindingLayout);
+    _maskedBindingSetInstanceBuffer = instanceBuffer;
+    return _maskedBindingSet;
+}
+
 nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateBindingSet(nvrhi::IBuffer *instanceBuffer) const
 {
     if (_bindingSet != nullptr && _bindingSetInstanceBuffer == instanceBuffer)
@@ -206,13 +366,13 @@ void ShadowDepthRenderer::BeginFrame()
 }
 
 ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *commandList,
-                                                       nvrhi::IGraphicsPipeline *pipeline,
+                                                       const ShadowPipelines &pipelines,
                                                        std::span<const ShadowDepthTarget> targets,
                                                        std::span<const ShadowCaster> casters) const
 {
     Stats stats;
     stats.firstView = static_cast<std::uint32_t>(_views.size());
-    if (!IsReady() || commandList == nullptr || pipeline == nullptr || targets.empty())
+    if (!IsReady() || commandList == nullptr || pipelines.opaque == nullptr || targets.empty())
     {
         return stats;
     }
@@ -259,36 +419,51 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
                              drawList.commands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
 
     nvrhi::IBindingSet *const bindingSet = GetOrCreateBindingSet(_instanceBuffer.NativeBuffer());
+    nvrhi::IBindingSet *const maskedBindingSet = GetOrCreateMaskedBindingSet(_instanceBuffer.NativeBuffer());
+    // Without a pipeline that can discard, or a set to feed it, the cutouts draw
+    // through the opaque one: a solid silhouette rather than no shadow at all.
+    const bool alphaTesting = pipelines.masked != nullptr && maskedBindingSet != nullptr;
 
     for (std::uint32_t index = 0; index < targets.size(); ++index)
     {
-        const std::uint32_t first = drawList.viewCommandStart[index];
-        const std::uint32_t last = drawList.viewCommandStart[index + 1u];
-        if (first == last || targets[index].framebuffer == nullptr)
+        if (targets[index].framebuffer == nullptr)
         {
-            continue; // nothing survived this view's cull, or it has nowhere to draw
+            continue; // this view has nowhere to draw
         }
+
+        const std::uint32_t viewEnd = drawList.viewCommandStart[index + 1u];
+        const std::uint32_t maskedStart = alphaTesting ? drawList.viewMaskedStart[index] : viewEnd;
+        stats.maskedBatches += viewEnd - maskedStart;
 
         const nvrhi::Viewport viewport = ShadowViewViewport(targets[index].view);
 
-        // One multi-draw per run of commands sharing an arena's buffers. Every
-        // mesh lives in one arena today, so this is a single call per view.
-        std::uint32_t runStart = first;
-        while (runStart < last)
+        // One multi-draw per run of commands sharing an arena's buffers, and a
+        // break at the alpha-test boundary because the two halves carry
+        // different pipelines. Every mesh lives in one arena today, so an
+        // all-opaque view is a single call.
+        std::uint32_t runStart = drawList.viewCommandStart[index];
+        while (runStart < viewEnd)
         {
+            const bool masked = runStart >= maskedStart;
+            const std::uint32_t halfEnd = masked ? viewEnd : maskedStart;
+
             nvrhi::IBuffer *const vertexBuffer = drawList.commandVertexBuffers[runStart];
             nvrhi::IBuffer *const indexBuffer = drawList.commandIndexBuffers[runStart];
             std::uint32_t runEnd = runStart + 1u;
-            while (runEnd < last && drawList.commandVertexBuffers[runEnd] == vertexBuffer &&
+            while (runEnd < halfEnd && drawList.commandVertexBuffers[runEnd] == vertexBuffer &&
                    drawList.commandIndexBuffers[runEnd] == indexBuffer)
             {
                 ++runEnd;
             }
 
             nvrhi::GraphicsState state;
-            state.pipeline = pipeline;
+            state.pipeline = masked ? pipelines.masked : pipelines.opaque;
             state.framebuffer = targets[index].framebuffer;
-            state.addBindingSet(bindingSet);
+            state.addBindingSet(masked ? maskedBindingSet : bindingSet);
+            if (masked)
+            {
+                state.addBindingSet(_bindlessTable);
+            }
             state.viewport.addViewportAndScissorRect(viewport);
             state.addVertexBuffer(nvrhi::VertexBufferBinding{vertexBuffer, 0, 0});
             state.indexBuffer = nvrhi::IndexBufferBinding{indexBuffer, nvrhi::Format::R32_UINT, 0};

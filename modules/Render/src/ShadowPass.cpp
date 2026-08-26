@@ -122,6 +122,9 @@ bool ShadowPass::RebuildPipeline()
     {
         return false;
     }
+    // Null when the renderer carries no alpha-testing variant. Not a failure:
+    // the cascades still render, with cutouts casting their full silhouette.
+    _maskedPipeline = _depthRenderer->CreateMaskedPipeline(_cascadeFramebuffers.front(), _settings.slopeBias);
     _builtSlopeBias = _settings.slopeBias;
     return true;
 }
@@ -141,6 +144,7 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
             // holding a 4-cascade array against a scene with no sun in it.
             ReleaseTargets();
             _pipeline = nullptr;
+            _maskedPipeline = nullptr;
             _active = false;
         }
         return true;
@@ -162,6 +166,7 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
     {
         ReleaseTargets();
         _pipeline = nullptr;
+        _maskedPipeline = nullptr;
         _active = false;
         return false;
     }
@@ -170,6 +175,7 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
     {
         ReleaseTargets();
         _pipeline = nullptr;
+        _maskedPipeline = nullptr;
         _active = false;
         return false;
     }
@@ -208,12 +214,14 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
                               .framebuffer = _cascadeFramebuffers[cascade]});
     }
 
-    const ShadowDepthRenderer::Stats drawn = _depthRenderer->Render(commandList, _pipeline, _scratchTargets, casters);
+    const ShadowDepthRenderer::Stats drawn = _depthRenderer->Render(
+        commandList, ShadowPipelines{.opaque = _pipeline, .masked = _maskedPipeline}, _scratchTargets, casters);
 
     _firstView = drawn.firstView;
     stats.cascades = drawn.views;
     stats.instances = drawn.instances;
     stats.batches = drawn.batches;
+    stats.maskedBatches = drawn.maskedBatches;
     stats.drawCalls = drawn.drawCalls;
     stats.culled = drawn.culled;
     return stats;

@@ -30,6 +30,11 @@ constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
 // The sun's cascade depth pass — a vertex stage and nothing else, since the
 // pipeline writes depth and no colour (see Render::ShadowPass).
 constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
+// The alpha-tested caster variant: the same vertex stage built to carry the UV
+// and material row, and the fragment stage that discards on them, so a cutout
+// material casts a shadow with its hole in it.
+constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
+constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
 
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
@@ -94,7 +99,12 @@ bool SceneRenderer::Initialize(const InitParams &params)
     // failure is non-fatal — the scene renders unshadowed rather than not at all.
     if (!_shadowDepthRenderer.Initialize(
             Render::ShadowDepthRenderer::InitParams{.device = _device,
-                                                    .vertexShaderSpvPath = kShadowVertexShader}) ||
+                                                    .vertexShaderSpvPath = kShadowVertexShader,
+                                                    .maskedVertexShaderSpvPath = kShadowMaskedVertexShader,
+                                                    .maskedPixelShaderSpvPath = kShadowMaskedPixelShader,
+                                                    .materialTable = params.materialTable,
+                                                    .bindlessLayout = params.bindlessLayout,
+                                                    .bindlessTable = params.bindlessTable}) ||
         !_shadowPass.Initialize(
             Render::ShadowPass::InitParams{.device = _device, .depthRenderer = &_shadowDepthRenderer}))
     {
@@ -280,6 +290,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     ASSISI_PROFILE_COUNTER("shadows/cascades", static_cast<double>(_lastShadowStats.cascades));
     ASSISI_PROFILE_COUNTER("shadows/instances", static_cast<double>(_lastShadowStats.instances));
     ASSISI_PROFILE_COUNTER("shadows/batches", static_cast<double>(_lastShadowStats.batches));
+    // Reads zero for a scene with no cutout caster in it, which is what turns
+    // "the alpha-tested variant costs nothing here" into something visible.
+    ASSISI_PROFILE_COUNTER("shadows/masked-batches", static_cast<double>(_lastShadowStats.maskedBatches));
     ASSISI_PROFILE_COUNTER("shadows/culled", static_cast<double>(_lastShadowStats.culled));
 }
 

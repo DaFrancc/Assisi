@@ -55,6 +55,14 @@ ShadowDepthTarget TargetOf(const ShadowView &view)
 {
     return ShadowDepthTarget{.view = view, .framebuffer = nullptr};
 }
+
+/// The same caster, alpha-tested against material row @p materialIndex.
+ShadowCaster Masked(ShadowCaster caster, std::uint32_t materialIndex)
+{
+    caster.alphaMasked = true;
+    caster.materialIndex = materialIndex;
+    return caster;
+}
 } // namespace
 
 TEST_CASE("A view owning its whole target samples with the identity transform")
@@ -411,4 +419,125 @@ TEST_CASE("Rebuilding the draw list leaves nothing of the last one")
     CHECK(list.culled == 1);
     REQUIRE(list.viewCommandStart.size() == 2);
     CHECK(list.viewCommandStart[1] == 0);
+}
+
+TEST_CASE("An alpha-tested caster does not merge with an opaque draw of the same geometry")
+{
+    // The two draw through different pipelines — one that can discard and one
+    // that must not — so merging them would submit both under whichever pipeline
+    // the batch happened to land in, and the cutout would cast solid.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const ShadowCaster opaque = CasterAt(glm::vec3(0.f), 1.f, 1);
+    const ShadowCaster cutout = Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 1), 7);
+    CHECK_FALSE(SameShadowGeometry(opaque, cutout));
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{opaque, cutout}, list);
+
+    REQUIRE(list.commands.size() == 2);
+    CHECK(list.commands[0].instanceCount == 1);
+    CHECK(list.commands[1].instanceCount == 1);
+}
+
+TEST_CASE("Alpha-tested commands sit in their own range after the view's opaque ones")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    // Deliberately interleaved: the split must come from the flag, not from the
+    // caller having sorted the span.
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 4),
+        CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 3),
+        Masked(CasterAt(glm::vec3(6.f, 0.f, 0.f), 1.f, 5), 9),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 2);
+    REQUIRE(list.viewMaskedStart.size() == 1);
+    CHECK(list.viewCommandStart[0] == 0);
+    CHECK(list.viewMaskedStart[0] == 2);
+    CHECK(list.viewCommandStart[1] == 4);
+
+    // Every command in the opaque range draws an opaque instance and every one
+    // in the masked range an alpha-tested one — checked through the instance the
+    // command starts at, which is what the shader actually reads.
+    for (std::uint32_t i = 0; i < list.viewMaskedStart[0]; ++i)
+    {
+        CHECK(list.instances[list.commands[i].startInstanceLocation].materialIndex == 0u);
+    }
+    CHECK(list.instances[list.commands[2].startInstanceLocation].materialIndex == 4u);
+    CHECK(list.instances[list.commands[3].startInstanceLocation].materialIndex == 9u);
+}
+
+TEST_CASE("An all-opaque span leaves every view's alpha-tested range empty")
+{
+    // The no-regression case: nothing is submitted through the discarding
+    // pipeline, so a scene with no cutout in it costs exactly what it did.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView(20.f)))};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewMaskedStart.size() == 2);
+    for (std::uint32_t view = 0; view < 2u; ++view)
+    {
+        CHECK(list.viewMaskedStart[view] == list.viewCommandStart[view + 1u]);
+    }
+}
+
+TEST_CASE("Every view splits its own commands, and each keeps its own instances")
+{
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView(20.f)))};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 3),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewMaskedStart.size() == 2);
+    REQUIRE(list.viewCommandStart.size() == 3);
+    CHECK(list.viewMaskedStart[0] == 1);
+    CHECK(list.viewCommandStart[1] == 2);
+    CHECK(list.viewMaskedStart[1] == 3);
+    CHECK(list.viewCommandStart[2] == 4);
+
+    // Four commands, four instances, and no command shares a record with
+    // another: a view's masked pass appends after its own opaque pass, so the
+    // ranges stay disjoint.
+    REQUIRE(list.instances.size() == 4);
+    for (std::uint32_t i = 0; i < 4u; ++i)
+    {
+        CHECK(list.commands[i].startInstanceLocation == i);
+    }
+}
+
+TEST_CASE("A rebuilt draw list keeps no alpha-tested range from the last one")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{Masked(CasterAt(glm::vec3(0.f), 1.f, 1), 2)}, list);
+    REQUIRE(list.viewMaskedStart.size() == 1);
+    REQUIRE(list.viewMaskedStart[0] == 0);
+    REQUIRE(list.commands.size() == 1);
+
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{CasterAt(glm::vec3(0.f), 1.f, 1)}, list);
+    REQUIRE(list.viewMaskedStart.size() == 1);
+    CHECK(list.viewMaskedStart[0] == 1);
+    CHECK(list.viewCommandStart[1] == 1);
 }

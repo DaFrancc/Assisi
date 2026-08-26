@@ -18,6 +18,13 @@
 /// Two things deliberately stay outside: the pipeline, because its raster state
 /// and target format belong to whoever owns the target, and clearing, because a
 /// cascade clears every frame while a cached atlas tile must specifically not.
+///
+/// A view draws in two halves. Casters with no alpha to test go through a
+/// pipeline with no fragment stage at all, which is what makes four cascades
+/// affordable; cutouts go through one that samples base-colour alpha and
+/// discards, so their shadow carries the hole. The split is the point — one
+/// shader for both would charge every opaque caster a texture fetch to cut
+/// holes in geometry that has none.
 
 #include <cstdint>
 #include <span>
@@ -68,6 +75,17 @@ struct ShadowCaster
     /// the mesh's local bounds and the instance's matrix, and every view tests
     /// against it.
     Geometry::BoundingSphere worldSphere;
+
+    /// Whether this caster's material alpha-tests, and so draws through a
+    /// fragment stage that can discard. Opaque casters must keep the pipeline
+    /// with no fragment stage at all — charging every one of them a texture
+    /// fetch to cut holes in geometry that has none is the cost this separation
+    /// exists to avoid.
+    bool alphaMasked = false;
+
+    /// Row into the material table, where the alpha-testing fragment stage
+    /// finds the base-colour slot and the cutoff. Unread for an opaque caster.
+    std::uint32_t materialIndex = 0;
 };
 
 /// @brief Whether two casters draw the same geometry, and so can be submitted
@@ -78,20 +96,31 @@ struct ShadowCaster
 /// cost is a handful of integer compares and the failure it prevents is silent:
 /// two casters wrongly merged draw one's geometry at the other's place, with
 /// nothing anywhere reporting that anything went wrong.
+///
+/// The alpha test is part of the answer because it decides the pipeline: an
+/// opaque and a cutout draw of one submesh cannot share a command without one
+/// of them being submitted through the other's fragment stage.
 [[nodiscard]] inline bool SameShadowGeometry(const ShadowCaster &lhs, const ShadowCaster &rhs)
 {
     return lhs.geometryKey == rhs.geometryKey && lhs.indexCount == rhs.indexCount &&
            lhs.startIndexLocation == rhs.startIndexLocation && lhs.baseVertexLocation == rhs.baseVertexLocation &&
-           lhs.vertexBuffer == rhs.vertexBuffer && lhs.indexBuffer == rhs.indexBuffer;
+           lhs.vertexBuffer == rhs.vertexBuffer && lhs.indexBuffer == rhs.indexBuffer &&
+           lhs.alphaMasked == rhs.alphaMasked;
 }
 
-/// @brief One per-object record. A bare world matrix: the depth pass has no
-/// material, no normal and no texture coordinate to carry.
+/// @brief One per-object record: the world matrix, and the material row the
+/// alpha test reads.
+///
+/// One record shape for both pipelines rather than two, because a frame's views
+/// share a single instance buffer and a second stride would need a second one.
+/// The opaque vertex stage declares the material index and never reads it.
 struct ShadowInstanceData
 {
     glm::mat4 model{1.f};
+    std::uint32_t materialIndex = 0;
+    std::uint32_t _pad0 = 0, _pad1 = 0, _pad2 = 0;
 };
-static_assert(sizeof(ShadowInstanceData) == 64, "ShadowInstanceData must match the shader's std430 array stride.");
+static_assert(sizeof(ShadowInstanceData) == 80, "ShadowInstanceData must match the shader's std430 array stride.");
 
 /// @brief One view and the target it draws into.
 struct ShadowDepthTarget
@@ -118,6 +147,12 @@ struct ShadowDrawList
     /// Where each view's run of commands starts, with a final entry holding the
     /// total — so view i owns [viewCommandStart[i], viewCommandStart[i + 1]).
     std::vector<std::uint32_t> viewCommandStart;
+    /// Where each view's alpha-tested commands begin, inside its own range: view
+    /// i draws [viewCommandStart[i], viewMaskedStart[i]) through the opaque
+    /// pipeline and [viewMaskedStart[i], viewCommandStart[i + 1]) through the
+    /// one that can discard. Equal to the view's end when nothing it kept is
+    /// alpha-tested, which is every view of a scene with no cutout in it.
+    std::vector<std::uint32_t> viewMaskedStart;
     /// Caster-view pairs the frustum test rejected.
     std::uint32_t culled = 0;
 
@@ -126,15 +161,30 @@ struct ShadowDrawList
 
 /// @brief Cull @p casters against every target's view and build the draw list.
 ///
-/// @p casters is expected sorted by @ref ShadowGeometryKey — consecutive items
-/// with the same key coalesce into one instanced draw, and an unsorted span
-/// merely produces more commands for the same picture. A caster the cull
-/// rejects also breaks the run, so the next survivor opens a new batch.
+/// @p casters is expected sorted opaque-first and by @ref ShadowGeometryKey
+/// within each half — consecutive items with the same key coalesce into one
+/// instanced draw, and an unsorted span merely produces more commands for the
+/// same picture. A caster the cull rejects also breaks the run, so the next
+/// survivor opens a new batch. The two halves are separated here whatever the
+/// ordering, so only the coalescing depends on it and never the picture.
 ///
 /// Device-free by construction: this is the whole of what the depth pass
 /// decides, and none of it needs a GPU to be checked.
 void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters,
                          ShadowDrawList &out);
+
+/// @brief The two pipelines a view draws through: one for casters with no alpha
+/// to test, one for the cutouts.
+///
+/// A null @ref masked means alpha-tested casters draw through @ref opaque —
+/// a solid silhouette, which is what a build without the alpha-testing variant
+/// falls back to. Losing the hole is worse than the shadow disappearing, so the
+/// caster is never simply dropped.
+struct ShadowPipelines
+{
+    nvrhi::IGraphicsPipeline *opaque = nullptr;
+    nvrhi::IGraphicsPipeline *masked = nullptr;
+};
 
 /// @brief The depth-only pipeline and the buffers that feed it, shared by every
 /// kind of shadow map.
@@ -148,6 +198,19 @@ public:
         nvrhi::IDevice *device = nullptr;
         /// Compiled-SPIR-V path of the depth-only vertex stage.
         std::string vertexShaderSpvPath = {};
+        /// The alpha-testing variant: a vertex stage that also carries the UV
+        /// and the material row, and the fragment stage that discards on them.
+        /// Leaving either empty, or either failing to load, leaves the renderer
+        /// working with alpha-tested casters drawing solid.
+        std::string maskedVertexShaderSpvPath = {};
+        std::string maskedPixelShaderSpvPath = {};
+        /// The AssetCache's material table and bindless texture table, which the
+        /// alpha test reads the cutoff and the base-colour texture from. Not
+        /// owned, and both must outlive the renderer. Absent, the alpha-testing
+        /// pipeline is not built.
+        nvrhi::IBuffer *materialTable = nullptr;
+        nvrhi::IBindingLayout *bindlessLayout = nullptr;
+        nvrhi::IDescriptorTable *bindlessTable = nullptr;
     };
 
     /// @brief Load the vertex stage and build the layouts every pipeline shares.
@@ -156,6 +219,10 @@ public:
     [[nodiscard]] bool Initialize(const InitParams &params);
 
     [[nodiscard]] bool IsReady() const { return _device != nullptr && _vertexShader != nullptr; }
+
+    /// @brief Whether the alpha-testing variant loaded, and so whether
+    /// CreateMaskedPipeline returns anything.
+    [[nodiscard]] bool CanAlphaTest() const;
 
     /// @brief A depth-only pipeline for targets shaped like @p prototype.
     ///
@@ -171,6 +238,17 @@ public:
     /// shader's receiver-plane bias handles the self-shadowing exactly and
     /// displaces nothing, so there is no longer a trade to expose.
     [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias) const;
+
+    /// @brief The alpha-testing pipeline for targets shaped like @p prototype,
+    /// or null when the variant did not load.
+    ///
+    /// It rasterizes both faces, where @ref CreatePipeline keeps the back one.
+    /// Culling at all assumes a closed shell; a cutout is characteristically a
+    /// thin card, where front and back are one coincident surface — cull either
+    /// and the caster disappears whenever its winding faces the wrong way for
+    /// the light.
+    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreateMaskedPipeline(nvrhi::IFramebuffer *prototype,
+                                                                     float slopeBias) const;
 
     /// @brief Start a frame's view table.
     ///
@@ -195,20 +273,30 @@ public:
         std::uint32_t views = 0;     ///< Views rendered.
         std::uint32_t instances = 0; ///< Caster instances submitted, counted once per view they survive into.
         std::uint32_t batches = 0;   ///< Instanced draw commands after coalescing same-geometry runs.
+        /// How many of @ref batches went through the alpha-testing pipeline.
+        /// Zero is what a scene with no cutout in it reports, which is how the
+        /// no-regression claim is checked rather than eyeballed.
+        std::uint32_t maskedBatches = 0;
         std::uint32_t drawCalls = 0; ///< drawIndexedIndirect calls issued.
         std::uint32_t culled = 0;    ///< Caster-view pairs the frustum test rejected.
     };
 
-    /// @brief Draw @p casters into every target, with @p pipeline.
+    /// @brief Draw @p casters into every target, with @p pipelines.
     ///
     /// The targets are not cleared: that is the target owner's policy, and it
     /// differs between a cascade redrawn every frame and an atlas tile kept
     /// from the last one.
-    Stats Render(nvrhi::ICommandList *commandList, nvrhi::IGraphicsPipeline *pipeline,
+    Stats Render(nvrhi::ICommandList *commandList, const ShadowPipelines &pipelines,
                  std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters) const;
 
 private:
+    /// @brief Load the alpha-testing variant and build what only it needs.
+    /// Never fails the renderer: what it cannot build leaves alpha-tested
+    /// casters drawing through the opaque pipeline.
+    void InitializeAlphaTest(const InitParams &params);
+
     [[nodiscard]] nvrhi::IBindingSet *GetOrCreateBindingSet(nvrhi::IBuffer *instanceBuffer) const;
+    [[nodiscard]] nvrhi::IBindingSet *GetOrCreateMaskedBindingSet(nvrhi::IBuffer *instanceBuffer) const;
     void EnsureIndirectCapacity(std::uint32_t commandCount) const;
 
     nvrhi::IDevice *_device = nullptr;
@@ -217,12 +305,25 @@ private:
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
 
+    // The alpha-testing variant. Every handle here is null when the variant did
+    // not load, which is what CanAlphaTest reports.
+    nvrhi::ShaderHandle _maskedVertexShader;
+    nvrhi::ShaderHandle _maskedPixelShader;
+    nvrhi::InputLayoutHandle _maskedInputLayout;
+    nvrhi::BindingLayoutHandle _maskedBindingLayout;
+    nvrhi::SamplerHandle _maskedSampler;
+    nvrhi::IBuffer *_materialTable = nullptr;
+    nvrhi::BindingLayoutHandle _bindlessLayout;
+    nvrhi::DescriptorTableHandle _bindlessTable;
+
     // Per-instance world matrices for every view in one buffer, rebuilt each
     // frame; grown geometrically, which swaps the handle and so invalidates the
     // cached binding set (GetOrCreateBindingSet notices).
     mutable Buffer _instanceBuffer;
     mutable nvrhi::BindingSetHandle _bindingSet;
     mutable const nvrhi::IBuffer *_bindingSetInstanceBuffer = nullptr;
+    mutable nvrhi::BindingSetHandle _maskedBindingSet;
+    mutable const nvrhi::IBuffer *_maskedBindingSetInstanceBuffer = nullptr;
 
     mutable nvrhi::BufferHandle _indirectBuffer;
     mutable std::uint32_t _indirectCapacity = 0; // in commands
