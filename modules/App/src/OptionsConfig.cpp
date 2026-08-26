@@ -108,21 +108,13 @@ void ReadMapped(const nlohmann::json &json, const char *key, T &field, Parse par
     }
 }
 
-OptionsConfig OptionsConfig::LoadFromJson()
+OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
 {
     OptionsConfig cfg;
 
-    // options.json is per-user writable state, so it lives under the user root
-    // (see SaveToJson), not the read-only asset root.
-    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
-    if (!text)
-    {
-        return cfg;
-    }
-
     try
     {
-        const nlohmann::json json = nlohmann::json::parse(*text);
+        const nlohmann::json json = nlohmann::json::parse(text);
 
         if (json.contains("antiAliasing"))
         {
@@ -156,18 +148,35 @@ OptionsConfig OptionsConfig::LoadFromJson()
         {
             const auto &sh = json.at("shadows");
             Render::ShadowSettings &shadows = cfg.shadows;
-            ReadField(sh, "enabled", shadows.enabled);
-            ReadField(sh, "cascades", shadows.cascadeCount);
-            ReadField(sh, "resolution", shadows.resolution);
-            ReadMapped(sh, "format", shadows.format, ShadowFormatFromString);
-            ReadField(sh, "maxDistance", shadows.maxDistance);
-            ReadField(sh, "splitLambda", shadows.splitLambda);
-            ReadMapped(sh, "filter", shadows.filter, ShadowFilterFromString);
-            ReadField(sh, "depthBiasTexels", shadows.depthBiasTexels);
-            ReadField(sh, "slopeBias", shadows.slopeBias);
-            ReadField(sh, "normalOffsetTexels", shadows.normalOffsetTexels);
-            ReadField(sh, "cascadeBlend", shadows.cascadeBlend);
-            ReadField(sh, "cullFrontFaces", shadows.cullFrontFaces);
+            if (sh.contains("sun"))
+            {
+                const auto &sun = sh.at("sun");
+                ReadField(sun, "enabled", shadows.sun.enabled);
+                ReadField(sun, "cascades", shadows.sun.cascadeCount);
+                ReadField(sun, "resolution", shadows.sun.resolution);
+                ReadMapped(sun, "format", shadows.sun.format, ShadowFormatFromString);
+                ReadField(sun, "maxDistance", shadows.sun.maxDistance);
+                ReadField(sun, "splitLambda", shadows.sun.splitLambda);
+                ReadMapped(sun, "filter", shadows.sun.filter, ShadowFilterFromString);
+                ReadField(sun, "depthBiasTexels", shadows.sun.depthBiasTexels);
+                ReadField(sun, "slopeBias", shadows.sun.slopeBias);
+                ReadField(sun, "normalOffsetTexels", shadows.sun.normalOffsetTexels);
+                ReadField(sun, "cascadeBlend", shadows.sun.cascadeBlend);
+                ReadField(sun, "cullFrontFaces", shadows.sun.cullFrontFaces);
+            }
+            if (sh.contains("local"))
+            {
+                const auto &local = sh.at("local");
+                ReadField(local, "enabled", shadows.local.enabled);
+                ReadField(local, "atlasResolution", shadows.local.atlasResolution);
+                ReadMapped(local, "format", shadows.local.format, ShadowFormatFromString);
+                ReadField(local, "faceResolution", shadows.local.faceResolution);
+                ReadMapped(local, "filter", shadows.local.filter, ShadowFilterFromString);
+                ReadField(local, "depthBiasTexels", shadows.local.depthBiasTexels);
+                ReadField(local, "slopeBias", shadows.local.slopeBias);
+                ReadField(local, "normalOffsetTexels", shadows.local.normalOffsetTexels);
+                ReadField(local, "cullFrontFaces", shadows.local.cullFrontFaces);
+            }
             // Whatever the file said, nothing downstream sees an out-of-range
             // value — and here that is a texture allocation, not only a shader.
             shadows = Render::Sanitized(shadows);
@@ -201,7 +210,19 @@ OptionsConfig OptionsConfig::LoadFromJson()
     return cfg;
 }
 
-void OptionsConfig::SaveToJson() const
+OptionsConfig OptionsConfig::LoadFromJson()
+{
+    // options.json is per-user writable state, so it lives under the user root
+    // (see SaveToJson), not the read-only asset root.
+    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
+    if (!text)
+    {
+        return OptionsConfig{};
+    }
+    return FromJsonText(*text);
+}
+
+std::string OptionsConfig::ToJsonText() const
 {
     nlohmann::json json;
     json["antiAliasing"]["mode"]        = AaModeToString(aaMode);
@@ -211,24 +232,40 @@ void OptionsConfig::SaveToJson() const
     json["toneMap"]["contrast"]         = tonemap.contrast;
     json["toneMap"]["saturation"]       = tonemap.saturation;
 
-    nlohmann::json &sh = json["shadows"];
-    sh["enabled"]            = shadows.enabled;
-    sh["cascades"]           = shadows.cascadeCount;
-    sh["resolution"]         = shadows.resolution;
-    sh["format"]             = ShadowFormatToString(shadows.format);
-    sh["maxDistance"]        = shadows.maxDistance;
-    sh["splitLambda"]        = shadows.splitLambda;
-    sh["filter"]             = ShadowFilterToString(shadows.filter);
-    sh["depthBiasTexels"]    = shadows.depthBiasTexels;
-    sh["slopeBias"]          = shadows.slopeBias;
-    sh["normalOffsetTexels"] = shadows.normalOffsetTexels;
-    sh["cascadeBlend"]       = shadows.cascadeBlend;
-    sh["cullFrontFaces"]     = shadows.cullFrontFaces;
+    nlohmann::json &sun = json["shadows"]["sun"];
+    sun["enabled"]            = shadows.sun.enabled;
+    sun["cascades"]           = shadows.sun.cascadeCount;
+    sun["resolution"]         = shadows.sun.resolution;
+    sun["format"]             = ShadowFormatToString(shadows.sun.format);
+    sun["maxDistance"]        = shadows.sun.maxDistance;
+    sun["splitLambda"]        = shadows.sun.splitLambda;
+    sun["filter"]             = ShadowFilterToString(shadows.sun.filter);
+    sun["depthBiasTexels"]    = shadows.sun.depthBiasTexels;
+    sun["slopeBias"]          = shadows.sun.slopeBias;
+    sun["normalOffsetTexels"] = shadows.sun.normalOffsetTexels;
+    sun["cascadeBlend"]       = shadows.sun.cascadeBlend;
+    sun["cullFrontFaces"]     = shadows.sun.cullFrontFaces;
+
+    nlohmann::json &local = json["shadows"]["local"];
+    local["enabled"]            = shadows.local.enabled;
+    local["atlasResolution"]    = shadows.local.atlasResolution;
+    local["format"]             = ShadowFormatToString(shadows.local.format);
+    local["faceResolution"]     = shadows.local.faceResolution;
+    local["filter"]             = ShadowFilterToString(shadows.local.filter);
+    local["depthBiasTexels"]    = shadows.local.depthBiasTexels;
+    local["slopeBias"]          = shadows.local.slopeBias;
+    local["normalOffsetTexels"] = shadows.local.normalOffsetTexels;
+    local["cullFrontFaces"]     = shadows.local.cullFrontFaces;
 
     json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"]       = fpsLimit;
 
-    const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", json.dump(4));
+    return json.dump(4);
+}
+
+void OptionsConfig::SaveToJson() const
+{
+    const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", ToJsonText());
     if (!result)
     {
         Core::Log::Warn("Could not write options.json (asset error {}).", static_cast<int32_t>(result.error()));

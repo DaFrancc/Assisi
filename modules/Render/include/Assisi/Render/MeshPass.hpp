@@ -113,7 +113,7 @@ public:
         const CascadeFit *fit = nullptr;
         /// The knobs the fit was made with; the filter, blend band and biases
         /// ride into the shader from here.
-        ShadowSettings settings;
+        SunShadowSettings settings;
         /// Which directional light the cascades belong to, as an index into the
         /// buffer the shader reads. Only that light's radiance is shadowed.
         uint32_t sunLightIndex = 0;

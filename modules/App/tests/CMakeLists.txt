@@ -23,6 +23,7 @@ add_executable(Assisi-App-Tests
   TestChildProcess.cpp
   TestInstanceViews.cpp
   TestLevelSystemsPrecheck.cpp
+  TestOptionsConfig.cpp
   TestSystemRegistry.cpp
   TestWorld.cpp
 )

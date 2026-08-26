@@ -256,10 +256,17 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
 
         for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
         {
-            out.casters.push_back(Assisi::Render::ShadowPass::Caster{.mesh = mesh,
-                                                                     .submeshIndex = lod0.FirstSubMesh + i,
-                                                                     .model = transform.worldMatrix,
-                                                                     .worldSphere = worldSphere});
+            const uint32_t submeshIndex = lod0.FirstSubMesh + i;
+            const Assisi::Geometry::SubMesh &subMesh = subMeshes[submeshIndex];
+            out.casters.push_back(Assisi::Render::ShadowCaster{
+                .geometryKey = Assisi::Render::ShadowGeometryKey(mesh->Id(), submeshIndex),
+                .vertexBuffer = mesh->VertexBuffer(),
+                .indexBuffer = mesh->IndexBuffer(),
+                .indexCount = subMesh.IndexCount,
+                .startIndexLocation = mesh->IndexBase() + subMesh.IndexOffset,
+                .baseVertexLocation = static_cast<int32_t>(mesh->VertexBase()),
+                .model = transform.worldMatrix,
+                .worldSphere = worldSphere});
         }
     }
 
@@ -270,18 +277,13 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
     out.nearAlongLight = nearAlongLight;
 
     // Geometry-major, so a run of identical (mesh, submesh) entries coalesces
-    // into one instanced draw in every cascade that keeps them. Mesh id rather
-    // than pointer: the same ordering every frame, whatever the allocator did.
+    // into one instanced draw in every view that keeps them. The key is built
+    // from the mesh id rather than its address: the same ordering every frame,
+    // whatever the allocator did.
     ASSISI_PROFILE_SCOPE("shadow-sort");
     std::sort(out.casters.begin(), out.casters.end(),
-              [](const Assisi::Render::ShadowPass::Caster &lhs, const Assisi::Render::ShadowPass::Caster &rhs)
-        {
-            if (lhs.mesh->Id() != rhs.mesh->Id())
-            {
-                return lhs.mesh->Id() < rhs.mesh->Id();
-            }
-            return lhs.submeshIndex < rhs.submeshIndex;
-        });
+              [](const Assisi::Render::ShadowCaster &lhs, const Assisi::Render::ShadowCaster &rhs)
+        { return lhs.geometryKey < rhs.geometryKey; });
 }
 
 } // namespace Assisi::Runtime

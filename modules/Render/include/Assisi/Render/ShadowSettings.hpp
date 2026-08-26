@@ -9,6 +9,14 @@
 /// and what a named tier sets. The cascade *math* is in ShadowCascades.hpp; the
 /// pass that renders with it is in ShadowPass.hpp.
 ///
+/// The knobs come in two halves. The sun's shadow is a set of cascades fitted
+/// to the camera, so it has a cascade count, a split distribution and a
+/// distance past which it stops. A spot light's shadow is a tile in an atlas
+/// and has none of those: nothing distributes, nothing splits, and the light's
+/// own range is how far it reaches. The halves therefore share their filter and
+/// bias vocabulary and nothing else, and a single struct holding both would
+/// have to say which of its fields a spot light ignores.
+///
 /// A tier is a preset, never a lock: selecting one writes the fields below and
 /// then the fields are editable. That is why Tier() reports Custom rather than
 /// storing which button was last pressed.
@@ -20,7 +28,7 @@
 namespace Assisi::Render
 {
 
-/// @brief The PCF kernel the sun's shadow is filtered with.
+/// @brief The PCF kernel a shadow is filtered with.
 ///
 /// These values are the wire encoding — mesh.frag switches on the integer, so
 /// reordering them changes the look of every saved options.json rather than
@@ -42,12 +50,12 @@ enum class ShadowFilter : std::uint8_t
 
 inline constexpr std::uint32_t kShadowFilterCount = 4;
 
-/// @brief Depth format of the cascade array.
+/// @brief Depth format of a shadow map.
 ///
 /// Wire encoding, like ShadowFilter: it is persisted.
 enum class ShadowMapFormat : std::uint8_t
 {
-    D16 = 0, ///< Half the memory and half the bandwidth, at 16 bits over the whole cascade depth range.
+    D16 = 0, ///< Half the memory and half the bandwidth, at 16 bits over the whole depth range.
     D32 = 1,
 };
 
@@ -86,14 +94,26 @@ inline constexpr std::uint32_t kMinShadowCascades = 1;
 inline constexpr std::uint32_t kMinShadowResolution = 256;
 inline constexpr std::uint32_t kMaxShadowResolution = 4096;
 
+/// @brief Local-light atlas bounds. Wider than a cascade's at the top because
+/// one atlas holds every spot and point face at once, where a cascade is one
+/// map among a handful.
+inline constexpr std::uint32_t kMinShadowAtlasResolution = 512;
+inline constexpr std::uint32_t kMaxShadowAtlasResolution = 8192;
+
+/// @brief Bounds on the tile one local light's face gets. The ceiling is a
+/// quarter of the largest atlas in each axis, so even the biggest face class
+/// leaves room for fifteen more.
+inline constexpr std::uint32_t kMinShadowFaceResolution = 128;
+inline constexpr std::uint32_t kMaxShadowFaceResolution = 2048;
+
 /// @brief The resolution a filter radius is quoted against.
 ///
-/// Kernel offsets are in texels, so a radius measured in the *cascade's own*
-/// texels shrinks as the map grows: doubling the resolution halves what one
-/// texel covers, and the blur collapses to half its width exactly when the
-/// quality setting went up. A tier that raises the resolution then delivers a
-/// sharper occluder edge and a narrower penumbra at once, and comes out looking
-/// harder than the tier below it rather than better.
+/// Kernel offsets are in texels, so a radius measured in the *map's own* texels
+/// shrinks as the map grows: doubling the resolution halves what one texel
+/// covers, and the blur collapses to half its width exactly when the quality
+/// setting went up. A tier that raises the resolution then delivers a sharper
+/// occluder edge and a narrower penumbra at once, and comes out looking harder
+/// than the tier below it rather than better.
 ///
 /// Quoting the radius against a fixed resolution decouples the two: the map
 /// governs how finely the occluder's silhouette is resolved, and the filter
@@ -126,8 +146,9 @@ inline constexpr float kMaxSplitLambda = 1.0f;
 /// distribution starts here. Nothing goes unshadowed for being closer.
 inline constexpr float kSplitDistributionNear = 1.5f;
 
-/// @brief Constant depth bias, in cascade texels. Auto-scaled per cascade by
-/// that cascade's world-units-per-texel, so one value holds across all of them.
+/// @brief Constant depth bias, in shadow-map texels. Auto-scaled per view by
+/// that view's world-units-per-texel, so one value holds across maps whose
+/// texels differ by an order of magnitude.
 inline constexpr float kMinDepthBiasTexels = 0.0f;
 inline constexpr float kMaxDepthBiasTexels = 8.0f;
 
@@ -137,9 +158,9 @@ inline constexpr float kMinSlopeBias = 0.0f;
 inline constexpr float kMaxSlopeBias = 8.0f;
 
 /// @brief How far along the surface normal a sample is pushed before it is
-/// looked up, in cascade texels. This is what fixes acne on surfaces the sun
-/// grazes, where a depth bias alone would have to be large enough to detach the
-/// contact shadow.
+/// looked up, in shadow-map texels. This is what fixes acne on surfaces the
+/// light grazes, where a depth bias alone would have to be large enough to
+/// detach the contact shadow.
 inline constexpr float kMinNormalOffsetTexels = 0.0f;
 inline constexpr float kMaxNormalOffsetTexels = 8.0f;
 
@@ -160,7 +181,7 @@ inline constexpr float kMinCascadeBlend = 0.0f;
 inline constexpr float kMaxCascadeBlend = 1.0f;
 
 /// @brief The sun's shadows, as the user edits them.
-struct ShadowSettings
+struct SunShadowSettings
 {
     /// Whether the sun casts at all. Off costs the shadow pass nothing: no
     /// cascade is fitted, no depth map is drawn, and the mesh shader's sampling
@@ -204,6 +225,48 @@ struct ShadowSettings
     bool cullFrontFaces = false;
 };
 
+/// @brief Spot and point lights' shadows, as the user edits them.
+///
+/// These are the knobs that decide what is *allocated*: how big the shared
+/// atlas is, what a light's face gets out of it, and how a lookup into it is
+/// filtered and biased. How lights compete for those tiles when there are more
+/// of them than there is atlas is selection policy, and it belongs with the
+/// selector that applies it rather than here.
+struct LocalShadowSettings
+{
+    /// Whether spot and point lights cast at all.
+    bool enabled = true;
+
+    /// One atlas for every local light's face. D16 by default and at every
+    /// tier: a local light's depth range is its own reach, metres rather than
+    /// the scene's extent, and 16 bits over metres is millimetres.
+    std::uint32_t atlasResolution = 4096;
+    ShadowMapFormat format = ShadowMapFormat::D16;
+
+    /// The tile one face gets before anything demotes it. A spot spends one of
+    /// these and a point light six, which is why a single count of "shadowed
+    /// lights" would mean six times the work depending on the mix.
+    std::uint32_t faceResolution = 512;
+
+    ShadowFilter filter = ShadowFilter::Pcf3x3;
+
+    float depthBiasTexels = 1.5f;
+    float slopeBias = 2.0f;
+    float normalOffsetTexels = 1.5f;
+
+    /// Same trade as the sun's, and separately settable because the geometry a
+    /// local light illuminates is usually interior — where the back face the
+    /// trick relies on is the one the light is on the wrong side of.
+    bool cullFrontFaces = false;
+};
+
+/// @brief Every shadow knob, in its two halves.
+struct ShadowSettings
+{
+    SunShadowSettings sun;
+    LocalShadowSettings local;
+};
+
 /// @brief Clamps to [low, high], substituting `fallback` for a non-finite value.
 ///
 /// std::clamp alone returns NaN unchanged — both of its comparisons are false —
@@ -213,14 +276,33 @@ struct ShadowSettings
     return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
 }
 
-/// @brief The same settings with every lane inside its range, and the
+/// @brief @p value clamped into [low, high] and then rounded down to a power of
+/// two.
+///
+/// Rounded down rather than merely clamped: a map whose width is not a power of
+/// two still allocates, but the texel grid a snap quantises to stops lining up
+/// with anything, an atlas's size classes stop tiling it exactly, and the memory
+/// figure in the tier table stops being predictable.
+[[nodiscard]] inline std::uint32_t ShadowResolutionPowerOfTwo(std::uint32_t value, std::uint32_t low,
+                                                              std::uint32_t high)
+{
+    value = std::clamp(value, low, high);
+    std::uint32_t power = low;
+    while (power * 2u <= value)
+    {
+        power *= 2u;
+    }
+    return power;
+}
+
+/// @brief The same settings with every lane inside its range, and every
 /// resolution rounded down to a power of two.
 ///
 /// options.json is hand-editable and these values size GPU allocations and
 /// reach a shader, so nothing downstream may assume they are sane.
-[[nodiscard]] inline ShadowSettings Sanitized(ShadowSettings settings)
+[[nodiscard]] inline SunShadowSettings Sanitized(SunShadowSettings settings)
 {
-    const ShadowSettings defaults;
+    const SunShadowSettings defaults;
 
     if (static_cast<std::uint32_t>(settings.filter) >= kShadowFilterCount)
     {
@@ -232,18 +314,7 @@ struct ShadowSettings
     }
 
     settings.cascadeCount = std::clamp(settings.cascadeCount, kMinShadowCascades, kMaxShadowCascades);
-
-    // Rounded down to a power of two rather than merely clamped: a cascade whose
-    // width is not a power of two still allocates, but the texel grid the snap
-    // quantises to stops lining up with anything and the memory figure in the
-    // tier table stops being predictable.
-    settings.resolution = std::clamp(settings.resolution, kMinShadowResolution, kMaxShadowResolution);
-    std::uint32_t power = kMinShadowResolution;
-    while (power * 2u <= settings.resolution)
-    {
-        power *= 2u;
-    }
-    settings.resolution = power;
+    settings.resolution = ShadowResolutionPowerOfTwo(settings.resolution, kMinShadowResolution, kMaxShadowResolution);
 
     settings.maxDistance = ClampFiniteShadow(settings.maxDistance, kMinShadowDistance, kMaxShadowDistance,
                                              defaults.maxDistance);
@@ -256,6 +327,44 @@ struct ShadowSettings
                                                     kMaxNormalOffsetTexels, defaults.normalOffsetTexels);
     settings.cascadeBlend = ClampFiniteShadow(settings.cascadeBlend, kMinCascadeBlend, kMaxCascadeBlend,
                                               defaults.cascadeBlend);
+    return settings;
+}
+
+/// @brief The local half, sanitized on the same terms as the sun's.
+[[nodiscard]] inline LocalShadowSettings Sanitized(LocalShadowSettings settings)
+{
+    const LocalShadowSettings defaults;
+
+    if (static_cast<std::uint32_t>(settings.filter) >= kShadowFilterCount)
+    {
+        settings.filter = defaults.filter;
+    }
+    if (static_cast<std::uint32_t>(settings.format) >= kShadowMapFormatCount)
+    {
+        settings.format = defaults.format;
+    }
+
+    settings.atlasResolution =
+        ShadowResolutionPowerOfTwo(settings.atlasResolution, kMinShadowAtlasResolution, kMaxShadowAtlasResolution);
+    settings.faceResolution =
+        ShadowResolutionPowerOfTwo(settings.faceResolution, kMinShadowFaceResolution, kMaxShadowFaceResolution);
+    // A face larger than the atlas it is cut from cannot be allocated at all,
+    // and the allocator would have nothing sensible to demote it to.
+    settings.faceResolution = std::min(settings.faceResolution, settings.atlasResolution);
+
+    settings.depthBiasTexels = ClampFiniteShadow(settings.depthBiasTexels, kMinDepthBiasTexels, kMaxDepthBiasTexels,
+                                                 defaults.depthBiasTexels);
+    settings.slopeBias = ClampFiniteShadow(settings.slopeBias, kMinSlopeBias, kMaxSlopeBias, defaults.slopeBias);
+    settings.normalOffsetTexels = ClampFiniteShadow(settings.normalOffsetTexels, kMinNormalOffsetTexels,
+                                                    kMaxNormalOffsetTexels, defaults.normalOffsetTexels);
+    return settings;
+}
+
+/// @brief Both halves, each sanitized on its own terms.
+[[nodiscard]] inline ShadowSettings Sanitized(ShadowSettings settings)
+{
+    settings.sun = Sanitized(settings.sun);
+    settings.local = Sanitized(settings.local);
     return settings;
 }
 
@@ -274,11 +383,14 @@ struct ShadowSettings
         // depth pass, and the machines this targets feel a submit before they
         // feel a seam. Its transitions are the most visible of the four, and
         // the blend band is the knob that costs nothing to widen.
-        settings.cascadeCount = 4;
-        settings.resolution = 1024;
-        settings.format = ShadowMapFormat::D16;
-        settings.maxDistance = 40.0f;
-        settings.filter = ShadowFilter::Point;
+        settings.sun.cascadeCount = 4;
+        settings.sun.resolution = 1024;
+        settings.sun.format = ShadowMapFormat::D16;
+        settings.sun.maxDistance = 40.0f;
+        settings.sun.filter = ShadowFilter::Point;
+        settings.local.atlasResolution = 2048;
+        settings.local.faceResolution = 256;
+        settings.local.filter = ShadowFilter::Point;
         break;
     case ShadowTier::High:
         // Resolution rather than cascades. Both buy a smaller seam, but a
@@ -287,27 +399,33 @@ struct ShadowSettings
         // measured, quadrupling the texels moved the depth pass by 0.3% and
         // each extra cascade moved it by about 0.09 ms. So this is a smaller
         // seam than six cascades at half the size, and cheaper.
-        settings.cascadeCount = 4;
-        settings.resolution = 4096;
-        settings.format = ShadowMapFormat::D32;
-        settings.maxDistance = 80.0f;
-        settings.filter = ShadowFilter::Pcf5x5;
+        settings.sun.cascadeCount = 4;
+        settings.sun.resolution = 4096;
+        settings.sun.format = ShadowMapFormat::D32;
+        settings.sun.maxDistance = 80.0f;
+        settings.sun.filter = ShadowFilter::Pcf5x5;
+        settings.local.atlasResolution = 4096;
+        settings.local.faceResolution = 512;
+        settings.local.filter = ShadowFilter::Pcf5x5;
         break;
     case ShadowTier::Ultra:
         // The only preset whose seams land at roughly one screen pixel at
         // 1080p, which is the point past which a cascade boundary stops being
         // something a display can resolve. Reaching further under that costs
         // another cascade at 4096, and the memory stops being defensible.
-        settings.cascadeCount = 6;
-        settings.resolution = 4096;
-        settings.format = ShadowMapFormat::D32;
-        settings.maxDistance = 100.0f;
-        settings.filter = ShadowFilter::Vogel;
+        settings.sun.cascadeCount = 6;
+        settings.sun.resolution = 4096;
+        settings.sun.format = ShadowMapFormat::D32;
+        settings.sun.maxDistance = 100.0f;
+        settings.sun.filter = ShadowFilter::Vogel;
+        settings.local.atlasResolution = 8192;
+        settings.local.faceResolution = 512;
+        settings.local.filter = ShadowFilter::Vogel;
         break;
     case ShadowTier::Medium:
     case ShadowTier::Custom:
     default:
-        break; // the struct's own defaults are Medium
+        break; // the structs' own defaults are Medium
     }
     return settings;
 }
@@ -323,9 +441,16 @@ struct ShadowSettings
     {
         const auto candidate = static_cast<ShadowTier>(i);
         const ShadowSettings preset = TierSettings(candidate);
-        if (preset.cascadeCount == settings.cascadeCount && preset.resolution == settings.resolution &&
-            preset.format == settings.format && preset.filter == settings.filter &&
-            preset.maxDistance == settings.maxDistance)
+        const bool sunMatches = preset.sun.cascadeCount == settings.sun.cascadeCount &&
+                                preset.sun.resolution == settings.sun.resolution &&
+                                preset.sun.format == settings.sun.format &&
+                                preset.sun.filter == settings.sun.filter &&
+                                preset.sun.maxDistance == settings.sun.maxDistance;
+        const bool localMatches = preset.local.atlasResolution == settings.local.atlasResolution &&
+                                  preset.local.format == settings.local.format &&
+                                  preset.local.faceResolution == settings.local.faceResolution &&
+                                  preset.local.filter == settings.local.filter;
+        if (sunMatches && localMatches)
         {
             return candidate;
         }
@@ -333,11 +458,10 @@ struct ShadowSettings
     return ShadowTier::Custom;
 }
 
-/// @brief Bytes the cascade array occupies at these settings. What the tier
-/// table's memory column is, computed rather than quoted.
-[[nodiscard]] inline std::uint64_t ShadowMemoryBytes(const ShadowSettings &settings)
+/// @brief Bytes the cascade array occupies at these settings.
+[[nodiscard]] inline std::uint64_t SunShadowMemoryBytes(const SunShadowSettings &settings)
 {
-    const ShadowSettings safe = Sanitized(settings);
+    const SunShadowSettings safe = Sanitized(settings);
     if (!safe.enabled)
     {
         return 0;
@@ -345,6 +469,27 @@ struct ShadowSettings
     const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
     const std::uint64_t texels = static_cast<std::uint64_t>(safe.resolution) * safe.resolution * safe.cascadeCount;
     return texels * bytesPerTexel;
+}
+
+/// @brief Bytes the local-light atlas occupies at these settings. One texture
+/// whatever the light count is — that is the point of an atlas.
+[[nodiscard]] inline std::uint64_t LocalShadowMemoryBytes(const LocalShadowSettings &settings)
+{
+    const LocalShadowSettings safe = Sanitized(settings);
+    if (!safe.enabled)
+    {
+        return 0;
+    }
+    const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
+    const std::uint64_t texels = static_cast<std::uint64_t>(safe.atlasResolution) * safe.atlasResolution;
+    return texels * bytesPerTexel;
+}
+
+/// @brief Bytes every shadow map occupies at these settings. What the tier
+/// table's memory column is, computed rather than quoted.
+[[nodiscard]] inline std::uint64_t ShadowMemoryBytes(const ShadowSettings &settings)
+{
+    return SunShadowMemoryBytes(settings.sun) + LocalShadowMemoryBytes(settings.local);
 }
 
 } // namespace Assisi::Render

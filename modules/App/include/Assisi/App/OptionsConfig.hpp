@@ -8,6 +8,8 @@
 #include <Assisi/Render/ShadowSettings.hpp>
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace Assisi::App
 {
@@ -30,9 +32,9 @@ struct OptionsConfig
     /// hand-editable and these lanes reach a shader.
     Render::TonemapSettings tonemap;
 
-    /// @brief The sun's cascade knobs. Sanitized on load for the same reason,
-    /// and one more: these size a GPU allocation, so a hand-typed resolution
-    /// reaches createTexture if nothing clamps it.
+    /// @brief The shadow knobs, in their sun and local halves. Sanitized on
+    /// load for the same reason, and one more: these size a GPU allocation, so
+    /// a hand-typed resolution reaches createTexture if nothing clamps it.
     Render::ShadowSettings shadows;
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
@@ -41,6 +43,17 @@ struct OptionsConfig
     /// values: -1 means unlimited (no CPU-side cap); 0 is invalid and never stored.
     /// Any positive value is the FPS cap the frame pacer targets.
     std::int16_t fpsLimit = -1;
+
+    /// @brief Parse @p text as an options document.
+    ///
+    /// Anything the document does not mention keeps its default, and a document
+    /// that will not parse at all yields defaults entire — a file someone
+    /// hand-edited into nonsense costs the settings, never the launch.
+    [[nodiscard]] static OptionsConfig FromJsonText(std::string_view text);
+
+    /// @brief The current settings as an options document. Round-trips through
+    /// FromJsonText: every field written here is a field read there.
+    [[nodiscard]] std::string ToJsonText() const;
 
     /// @brief Reads options.json from the user root.
     /// Returns defaults if the file is missing or malformed.

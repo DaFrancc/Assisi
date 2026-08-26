@@ -116,7 +116,7 @@ CascadeFit FitCascades(const CascadeFitParams &params)
 {
     CascadeFit fit;
 
-    const ShadowSettings settings = Sanitized(params.settings);
+    const SunShadowSettings settings = Sanitized(params.settings);
     if (!settings.enabled)
     {
         return fit;
@@ -194,7 +194,7 @@ CascadeFit FitCascades(const CascadeFitParams &params)
     return fit;
 }
 
-float CascadeDepthBiasNdc(const ShadowCascade &cascade, const ShadowSettings &settings)
+float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     if (!(cascade.depthRange > 0.f))
     {
@@ -222,7 +222,7 @@ float FilterRadiusTaps(ShadowFilter filter)
     }
 }
 
-float FilterTapStepUv(const ShadowSettings &settings)
+float FilterTapStepUv(const SunShadowSettings &settings)
 {
     const std::uint32_t resolution = std::max(Sanitized(settings).resolution, 1u);
     // Never finer than a texel: below the reference size there is nothing
@@ -243,9 +243,9 @@ float CascadeTexelScreenPixels(const ShadowCascade &cascade, float viewDistance,
     return cascade.worldUnitsPerTexel * screenHeight / denominator;
 }
 
-float CascadePenumbraWorld(const ShadowCascade &cascade, const ShadowSettings &settings)
+float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
-    const ShadowSettings safe = Sanitized(settings);
+    const SunShadowSettings safe = Sanitized(settings);
     const float boxWidth = 2.f * cascade.radius;
     const float kernelUv = FilterRadiusTaps(safe.filter) * FilterTapStepUv(safe);
     // The hardware compares against four texels and blends, so every filter —
@@ -255,7 +255,7 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const ShadowSettings &s
     return (kernelUv + bilinearUv) * boxWidth;
 }
 
-float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const ShadowSettings &settings)
+float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     return settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
 }

@@ -92,8 +92,11 @@ bool SceneRenderer::Initialize(const InitParams &params)
     // Before the mesh pass: it binds the cascade array into every binding set it
     // builds, and the pass keeps a placeholder there until a sun turns up. A
     // failure is non-fatal — the scene renders unshadowed rather than not at all.
-    if (!_shadowPass.Initialize(Render::ShadowPass::InitParams{.device = _device,
-                                                               .vertexShaderSpvPath = kShadowVertexShader}))
+    if (!_shadowDepthRenderer.Initialize(
+            Render::ShadowDepthRenderer::InitParams{.device = _device,
+                                                    .vertexShaderSpvPath = kShadowVertexShader}) ||
+        !_shadowPass.Initialize(
+            Render::ShadowPass::InitParams{.device = _device, .depthRenderer = &_shadowDepthRenderer}))
     {
         Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
     }
@@ -292,11 +295,11 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     // blank-scene rule, and the reason `active` is a scene fact rather than a
     // settings one.
     const std::optional<LightingSystem::ShadowSun> sun = _lighting.ShadowCastingSun();
-    const bool active = _shadowSettings.enabled && sun.has_value();
-    if (!_shadowPass.Configure(_shadowSettings, active))
+    const bool active = _shadowSettings.sun.enabled && sun.has_value();
+    if (!_shadowPass.Configure(_shadowSettings.sun, active))
     {
         Core::Log::Warn("SceneRenderer: sun shadows disabled (the cascade targets failed to rebuild).");
-        _shadowSettings.enabled = false;
+        _shadowSettings.sun.enabled = false;
     }
     // After Configure: a reallocation swaps the texture handle, and the mesh
     // pass rebuilds its binding set when it notices.
@@ -308,6 +311,10 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     }
 
     GatherShadowCasters(scene, sun->direction, _shadowCasters);
+
+    // Opens the frame's shadow view table. Every kind of shadow map appends to
+    // one table, so this belongs here rather than inside any one of them.
+    _shadowDepthRenderer.BeginFrame();
 
     Render::CascadeFitParams fitParams;
     fitParams.cameraView = view;
