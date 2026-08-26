@@ -14,7 +14,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
-#include <Assisi/Render/ShadowPass.hpp>
+#include <Assisi/Render/ShadowDepthRenderer.hpp>
 
 namespace Assisi::Render
 {
@@ -100,9 +100,9 @@ DrawStats DrawScene(const DrawSceneParams &params);
 /// re-gather, so a steady-state scene allocates nothing here.
 struct ShadowCasterGather
 {
-    /// Sorted by (mesh, submesh), which is what lets consecutive entries
+    /// Sorted by geometry key, which is what lets consecutive entries
     /// coalesce into one instanced draw in the shadow pass.
-    std::vector<Assisi::Render::ShadowPass::Caster> casters;
+    std::vector<Assisi::Render::ShadowCaster> casters;
 
     /// The smallest `dot(p, lightDirection)` any caster's bounding sphere
     /// reaches — the point up-light past which nothing can cast into the view.
@@ -115,8 +115,12 @@ struct ShadowCasterGather
 /// A caster is any resolved mesh whose MeshRenderer has `castsShadows` set. The
 /// material is not consulted: an opaque caster's shadow is a property of its
 /// geometry, and the alpha-tested case is a separate variant that does not
-/// exist yet. Nothing is frustum-culled here — that is per cascade, and this
-/// list feeds all of them.
+/// exist yet. Nothing is frustum-culled here — that is per view, and this list
+/// feeds all of them.
+///
+/// Each caster's geometry is resolved to its arena offsets here rather than at
+/// draw time: a caster is drawn once per view it survives into, and resolving
+/// per view would repeat the lookup for every one of them.
 ///
 /// @p out is cleared and refilled; pass the same object every frame.
 void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection, ShadowCasterGather &out);

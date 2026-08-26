@@ -192,9 +192,9 @@ public:
     [[nodiscard]] glm::vec3 AmbientColor() const { return _ambientColor; }
     [[nodiscard]] float     AmbientIntensity() const { return _ambientIntensity; }
 
-    /// @brief The sun's shadow knobs. Applied on the next Render(): a cascade
-    /// count, resolution or format change reallocates the array there, and
-    /// everything else rides into the shader as a frame constant.
+    /// @brief The shadow knobs, in both halves. Applied on the next Render():
+    /// a cascade count, resolution or format change reallocates the array
+    /// there, and everything else rides into the shader as a frame constant.
     ///
     /// Nothing is allocated until a shadow-casting directional light exists, so
     /// a scene with no sun in it pays neither the memory nor the pass whatever
@@ -360,8 +360,12 @@ private:
     // path uses them only when _gpuCulling is on (else the CPU path runs).
     Render::MeshCuller _meshCuller;
     Render::CullTableBuilder _cullBuilder;
-    // The sun's cascades, and this frame's fit. The fit is a member because
-    // UpdateFrameConstants borrows it after the pass has drawn with it.
+    // Every shadow map's depth drawing, and the sun's cascades over it. The
+    // renderer is separate because the local-light atlas draws through the same
+    // one, into the same view table, from the same instance buffer.
+    Render::ShadowDepthRenderer _shadowDepthRenderer;
+    // The fit is a member because UpdateFrameConstants borrows it after the
+    // pass has drawn with it.
     Render::ShadowPass _shadowPass;
     Render::CascadeFit _cascadeFit;
     ShadowCasterGather _shadowCasters;

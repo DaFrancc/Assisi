@@ -44,7 +44,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
 
     ImGui::TextUnformatted("Sun Shadows");
 
-    changed |= ImGui::Checkbox("Cast Shadows", &shadows.enabled);
+    changed |= ImGui::Checkbox("Cast Shadows", &shadows.sun.enabled);
 
     // The tier presets from the quality table. A tier is a preset over the knobs
     // below, never a lock on them: pressing one writes those knobs and they stay
@@ -67,29 +67,39 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
             // one survives a tier change.
             const Assisi::Render::ShadowSettings preset =
                 Assisi::Render::TierSettings(static_cast<Assisi::Render::ShadowTier>(i));
-            shadows.cascadeCount = preset.cascadeCount;
-            shadows.resolution   = preset.resolution;
-            shadows.format       = preset.format;
-            shadows.maxDistance  = preset.maxDistance;
-            shadows.filter       = preset.filter;
+            shadows.sun.cascadeCount = preset.sun.cascadeCount;
+            shadows.sun.resolution   = preset.sun.resolution;
+            shadows.sun.format       = preset.sun.format;
+            shadows.sun.maxDistance  = preset.sun.maxDistance;
+            shadows.sun.filter       = preset.sun.filter;
+            // The local half too, though nothing below edits it yet: a tier is
+            // one point in the whole knob space, and writing half of it would
+            // leave the readout reporting Custom the moment it was pressed.
+            shadows.local.atlasResolution = preset.local.atlasResolution;
+            shadows.local.format          = preset.local.format;
+            shadows.local.faceResolution  = preset.local.faceResolution;
+            shadows.local.filter          = preset.local.filter;
             changed = true;
         }
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
+    // The sun's own bytes, not the whole knob space's: this section is the sun,
+    // and quoting an atlas nothing has allocated would be a figure with no
+    // memory behind it.
     ImGui::TextDisabled("%s  (%.0f MiB)", tier == Assisi::Render::ShadowTier::Custom ? "Custom" : "",
-                        static_cast<double>(Assisi::Render::ShadowMemoryBytes(shadows)) / (1024.0 * 1024.0));
+                        static_cast<double>(Assisi::Render::SunShadowMemoryBytes(shadows.sun)) / (1024.0 * 1024.0));
 
-    if (!shadows.enabled)
+    if (!shadows.sun.enabled)
     {
         ImGui::BeginDisabled();
     }
 
-    int32_t cascadeCount = static_cast<int32_t>(shadows.cascadeCount);
+    int32_t cascadeCount = static_cast<int32_t>(shadows.sun.cascadeCount);
     if (ImGui::SliderInt("Cascades", &cascadeCount, static_cast<int32_t>(Assisi::Render::kMinShadowCascades),
                          static_cast<int32_t>(Assisi::Render::kMaxShadowCascades)))
     {
-        shadows.cascadeCount = static_cast<std::uint32_t>(cascadeCount);
+        shadows.sun.cascadeCount = static_cast<std::uint32_t>(cascadeCount);
         changed = true;
     }
 
@@ -100,64 +110,64 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     int32_t resolutionIndex = 2;
     for (int32_t i = 0; i < IM_ARRAYSIZE(kResolutions); ++i)
     {
-        if (kResolutions[i] == shadows.resolution)
+        if (kResolutions[i] == shadows.sun.resolution)
         {
             resolutionIndex = i;
         }
     }
     if (ImGui::Combo("Resolution", &resolutionIndex, kResolutionNames, IM_ARRAYSIZE(kResolutionNames)))
     {
-        shadows.resolution = kResolutions[resolutionIndex];
+        shadows.sun.resolution = kResolutions[resolutionIndex];
         changed = true;
     }
 
     // **Indexed by the enum value** — this list must stay in
     // Render::ShadowMapFormat's order.
     static const char *kFormatNames[] = {"D16", "D32"};
-    int32_t formatIndex = static_cast<int32_t>(shadows.format);
+    int32_t formatIndex = static_cast<int32_t>(shadows.sun.format);
     if (ImGui::Combo("Depth Format", &formatIndex, kFormatNames, IM_ARRAYSIZE(kFormatNames)))
     {
-        shadows.format = static_cast<Assisi::Render::ShadowMapFormat>(formatIndex);
+        shadows.sun.format = static_cast<Assisi::Render::ShadowMapFormat>(formatIndex);
         changed = true;
     }
 
     // **Indexed by the enum value** — this list must stay in
     // Render::ShadowFilter's order.
     static const char *kFilterNames[] = {"1 tap", "3x3 PCF", "5x5 PCF", "Vogel (12 tap)"};
-    int32_t filterIndex = static_cast<int32_t>(shadows.filter);
+    int32_t filterIndex = static_cast<int32_t>(shadows.sun.filter);
     if (ImGui::Combo("Filter", &filterIndex, kFilterNames, IM_ARRAYSIZE(kFilterNames)))
     {
-        shadows.filter = static_cast<Assisi::Render::ShadowFilter>(filterIndex);
+        shadows.sun.filter = static_cast<Assisi::Render::ShadowFilter>(filterIndex);
         changed = true;
     }
 
-    changed |= ImGui::SliderFloat("Distance", &shadows.maxDistance, Assisi::Render::kMinShadowDistance,
+    changed |= ImGui::SliderFloat("Distance", &shadows.sun.maxDistance, Assisi::Render::kMinShadowDistance,
                                   Assisi::Render::kMaxShadowDistance, "%.0f m");
     // 1 is fully logarithmic (near cascades get most of the resolution), 0 fully
     // uniform (they get almost none).
-    changed |= ImGui::SliderFloat("Split Lambda", &shadows.splitLambda, Assisi::Render::kMinSplitLambda,
+    changed |= ImGui::SliderFloat("Split Lambda", &shadows.sun.splitLambda, Assisi::Render::kMinSplitLambda,
                                   Assisi::Render::kMaxSplitLambda, "%.2f");
-    changed |= ImGui::SliderFloat("Cascade Blend", &shadows.cascadeBlend, Assisi::Render::kMinCascadeBlend,
+    changed |= ImGui::SliderFloat("Cascade Blend", &shadows.sun.cascadeBlend, Assisi::Render::kMinCascadeBlend,
                                   Assisi::Render::kMaxCascadeBlend, "%.2f");
 
     // Both biases are quoted in texels and scaled per cascade by that cascade's
     // world-per-texel, so one number holds across all of them. Raise the depth
     // bias until acne clears; if the shadow detaches at contact before it does,
     // that is the normal offset's job instead.
-    changed |= ImGui::SliderFloat("Depth Bias", &shadows.depthBiasTexels, Assisi::Render::kMinDepthBiasTexels,
+    changed |= ImGui::SliderFloat("Depth Bias", &shadows.sun.depthBiasTexels, Assisi::Render::kMinDepthBiasTexels,
                                   Assisi::Render::kMaxDepthBiasTexels, "%.2f texels");
-    changed |= ImGui::SliderFloat("Normal Offset", &shadows.normalOffsetTexels,
+    changed |= ImGui::SliderFloat("Normal Offset", &shadows.sun.normalOffsetTexels,
                                   Assisi::Render::kMinNormalOffsetTexels, Assisi::Render::kMaxNormalOffsetTexels,
                                   "%.2f texels");
-    changed |= ImGui::SliderFloat("Slope Bias", &shadows.slopeBias, Assisi::Render::kMinSlopeBias,
+    changed |= ImGui::SliderFloat("Slope Bias", &shadows.sun.slopeBias, Assisi::Render::kMinSlopeBias,
                                   Assisi::Render::kMaxSlopeBias, "%.2f");
 
     // Which faces the depth pass keeps. Front-face culling moves acne to
     // surfaces the camera cannot see, but it needs a back face to land on —
     // which single-sided geometry does not have. Worth measuring per scene.
-    changed |= ImGui::Checkbox("Cull Front Faces", &shadows.cullFrontFaces);
+    changed |= ImGui::Checkbox("Cull Front Faces", &shadows.sun.cullFrontFaces);
 
-    if (!shadows.enabled)
+    if (!shadows.sun.enabled)
     {
         ImGui::EndDisabled();
     }

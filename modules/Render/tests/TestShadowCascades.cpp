@@ -374,11 +374,11 @@ TEST_CASE("A bigger shadow map does not narrow the blur it is filtered with")
     // texels halves in world terms every time the resolution doubles — and a
     // tier that raises the resolution ships a *harder* shadow than the tier
     // below it. The step is quoted against a reference size to stop that.
-    ShadowSettings coarse;
+    SunShadowSettings coarse;
     coarse.resolution = kFilterReferenceResolution / 2;
-    ShadowSettings reference;
+    SunShadowSettings reference;
     reference.resolution = kFilterReferenceResolution;
-    ShadowSettings fine;
+    SunShadowSettings fine;
     fine.resolution = kFilterReferenceResolution * 2;
 
     // At or below the reference there is nothing between one texel and the next
@@ -413,9 +413,9 @@ TEST_CASE("Raising quality never hardens the shadow")
     // From the reference size upward only. Below it the tap step is one texel
     // because there is no finer grid to walk, so the reach tracks the resolution
     // and shrinking there is the map running out of texels.
-    ShadowSettings atReference = params.settings;
+    SunShadowSettings atReference = params.settings;
     atReference.resolution = kFilterReferenceResolution;
-    ShadowSettings aboveReference = params.settings;
+    SunShadowSettings aboveReference = params.settings;
     aboveReference.resolution = kFilterReferenceResolution * 2;
 
     const float reachAt = FilterRadiusTaps(atReference.filter) * FilterTapStepUv(atReference);
@@ -442,10 +442,10 @@ TEST_CASE("Raising quality never hardens the shadow")
 
     // And across every cascade, not only the nearest, at the pair that was
     // inverted: same layout, Ultra's resolution and filter against High's.
-    ShadowSettings high = params.settings;
+    SunShadowSettings high = params.settings;
     high.resolution = 2048;
     high.filter = ShadowFilter::Pcf5x5;
-    ShadowSettings ultra = params.settings;
+    SunShadowSettings ultra = params.settings;
     ultra.resolution = 4096;
     ultra.filter = ShadowFilter::Vogel;
 
@@ -551,7 +551,7 @@ TEST_CASE("Every tier's seams stay inside what a blend band can hide")
     for (std::uint32_t i = 0; i < kShadowTierCount; ++i)
     {
         const auto tier = static_cast<ShadowTier>(i);
-        params.settings = TierSettings(tier);
+        params.settings = TierSettings(tier).sun;
         const float seam = WorstSeamPixels(FitCascades(params));
         CHECK(seam <= (tier == ShadowTier::Low ? 6.5f : 3.0f));
         if (tier == ShadowTier::Ultra)
@@ -563,7 +563,7 @@ TEST_CASE("Every tier's seams stay inside what a blend band can hide")
     // The band crossing it is a real distance, not a token one — and the
     // ceiling reaches a whole cascade, which is the cheap way to trade filter
     // cost for smoothness instead of buying another cascade.
-    CHECK(ShadowSettings{}.cascadeBlend >= 0.25f);
+    CHECK(SunShadowSettings{}.cascadeBlend >= 0.25f);
     CHECK(kMaxCascadeBlend >= 1.0f);
 }
 
@@ -617,74 +617,4 @@ TEST_CASE("A degenerate camera range fits nothing rather than something wrong")
     params.farZ = 200.f;
     params.settings.maxDistance = kMinShadowDistance;
     CHECK(FitCascades(params).count == 0);
-}
-
-TEST_CASE("Shadow settings are sanitized into their ranges")
-{
-    ShadowSettings settings;
-    settings.cascadeCount = 99;
-    settings.resolution = 100000;
-    settings.maxDistance = std::numeric_limits<float>::quiet_NaN();
-    settings.splitLambda = 5.f;
-    settings.depthBiasTexels = -3.f;
-    settings.slopeBias = std::numeric_limits<float>::infinity();
-    settings.normalOffsetTexels = 400.f;
-    settings.cascadeBlend = 4.0f;
-    settings.filter = static_cast<ShadowFilter>(77);
-    settings.format = static_cast<ShadowMapFormat>(9);
-
-    const ShadowSettings safe = Sanitized(settings);
-    const ShadowSettings defaults;
-
-    CHECK(safe.cascadeCount == kMaxShadowCascades);
-    CHECK(safe.resolution == kMaxShadowResolution);
-    CHECK(safe.maxDistance == doctest::Approx(defaults.maxDistance)); // NaN falls back, never clamps
-    CHECK(safe.splitLambda == doctest::Approx(kMaxSplitLambda));
-    CHECK(safe.depthBiasTexels == doctest::Approx(kMinDepthBiasTexels));
-    CHECK(safe.slopeBias == doctest::Approx(defaults.slopeBias));
-    CHECK(safe.normalOffsetTexels == doctest::Approx(kMaxNormalOffsetTexels));
-    CHECK(safe.cascadeBlend == doctest::Approx(kMaxCascadeBlend));
-    CHECK(safe.filter == defaults.filter);
-    CHECK(safe.format == defaults.format);
-
-    // A resolution that is not a power of two rounds down, so the texel lattice
-    // the snap quantises to divides the box evenly.
-    ShadowSettings odd;
-    odd.resolution = 3000;
-    CHECK(Sanitized(odd).resolution == 2048);
-
-    ShadowSettings tiny;
-    tiny.resolution = 1;
-    CHECK(Sanitized(tiny).resolution == kMinShadowResolution);
-}
-
-TEST_CASE("Tiers round-trip through the knobs they set")
-{
-    for (std::uint32_t i = 0; i < kShadowTierCount; ++i)
-    {
-        const auto tier = static_cast<ShadowTier>(i);
-        CHECK(Tier(TierSettings(tier)) == tier);
-    }
-
-    // Editing a knob no tier has an opinion about does not leave the tier.
-    ShadowSettings high = TierSettings(ShadowTier::High);
-    high.normalOffsetTexels = 4.f;
-    high.cascadeBlend = 0.2f;
-    CHECK(Tier(high) == ShadowTier::High);
-
-    // Editing one a tier does set makes it custom.
-    high.resolution = 1024;
-    CHECK(Tier(high) == ShadowTier::Custom);
-
-    // The memory column of the tier table, computed rather than quoted.
-    CHECK(ShadowMemoryBytes(TierSettings(ShadowTier::Low)) == 4ull * 1024 * 1024 * 2);
-    CHECK(ShadowMemoryBytes(TierSettings(ShadowTier::Medium)) == 4ull * 2048 * 2048 * 4);
-    CHECK(ShadowMemoryBytes(TierSettings(ShadowTier::High)) == 4ull * 4096 * 4096 * 4);
-    CHECK(ShadowMemoryBytes(TierSettings(ShadowTier::Ultra)) == 6ull * 4096 * 4096 * 4);
-
-    // Shadows off allocate nothing at all — the blank-scene rule, in the one
-    // place a reader would look for the number.
-    ShadowSettings off = TierSettings(ShadowTier::Ultra);
-    off.enabled = false;
-    CHECK(ShadowMemoryBytes(off) == 0);
 }

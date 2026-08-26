@@ -100,7 +100,7 @@ struct CascadeFitParams
     /// any level this engine loads.
     std::optional<float> casterNearAlongLight;
 
-    ShadowSettings settings;
+    SunShadowSettings settings;
 };
 
 /// @brief View-space distance to split @p index of @p count, counting the near
@@ -147,7 +147,7 @@ struct CascadeFitParams
 /// The setting is in texels, so this is what auto-scales it: a cascade with
 /// metre-wide texels gets a metre-scale bias and a cascade with centimetre
 /// texels gets a centimetre-scale one, from the same number.
-[[nodiscard]] float CascadeDepthBiasNdc(const ShadowCascade &cascade, const ShadowSettings &settings);
+[[nodiscard]] float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 /// @brief Half-width of the PCF kernel, in tap steps.
 ///
@@ -162,7 +162,7 @@ struct CascadeFitParams
 /// raising the resolution sharpens the occluder's silhouette without narrowing
 /// the blur that softens it. See kFilterReferenceResolution for why that
 /// matters more than it sounds.
-[[nodiscard]] float FilterTapStepUv(const ShadowSettings &settings);
+[[nodiscard]] float FilterTapStepUv(const SunShadowSettings &settings);
 
 /// @brief How many screen pixels one of this cascade's texels covers, for a
 /// surface at @p viewDistance.
@@ -186,7 +186,7 @@ struct CascadeFitParams
 /// rather than hard-edged. Reported so a tier's softness is a number rather
 /// than an impression: a higher tier that comes out *narrower* here is the
 /// defect this exists to catch.
-[[nodiscard]] float CascadePenumbraWorld(const ShadowCascade &cascade, const ShadowSettings &settings);
+[[nodiscard]] float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 /// @brief How far along the surface normal a sample is pushed, in world units.
 ///
@@ -194,6 +194,6 @@ struct CascadeFitParams
 /// bias large enough to clear acne on a grazing surface is large enough to
 /// detach the shadow at contact, and an offset along the normal moves the
 /// lookup out of the surface's own depth instead of lying about its depth.
-[[nodiscard]] float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const ShadowSettings &settings);
+[[nodiscard]] float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 } // namespace Assisi::Render
