@@ -438,19 +438,70 @@ TEST_CASE("Every tier narrows the gap the normal offset can open")
     }
 }
 
-TEST_CASE("The texel size is the map's own, not the filter's reference step")
+TEST_CASE("A tap step is a texel at every resolution")
 {
-    // The two are equal only up to the reference resolution. Past it the tap
-    // step stops shrinking, deliberately, while a texel keeps going — and it is
-    // the texel the comparison sampler snaps to, so the half-texel term in the
-    // shader has to read this one.
-    SunShadowSettings settings;
-    settings.resolution = kFilterReferenceResolution;
-    CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(FilterTapStepUv(settings)));
+    // The step was once held at a reference resolution so a bigger map would not
+    // also narrow the penumbra. That made a tap stride several real texels, and
+    // a stride is a distance: once the kernel's reach passed the thickness of a
+    // wall, its outer taps landed beyond the caster's silhouette and voted lit,
+    // which put daylight inside a closed box at every tier. The two have to be
+    // the same number, and this is where that is stated.
+    for (const std::uint32_t resolution : {512u, 1024u, 2048u, 4096u})
+    {
+        SunShadowSettings settings;
+        settings.resolution = resolution;
+        CHECK(FilterTapStepUv(settings) == doctest::Approx(ShadowTexelSizeUv(settings)));
+        CHECK(FilterTapStepUv(settings) == doctest::Approx(1.f / static_cast<float>(resolution)));
+    }
+}
 
-    settings.resolution = kFilterReferenceResolution * 2u;
-    CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(FilterTapStepUv(settings) * 0.5f));
-    CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(1.f / static_cast<float>(settings.resolution)));
+TEST_CASE("A bigger map narrows what the filter can read through")
+{
+    // The property the leak fix turns on, and the one a quality setting is for:
+    // the kernel's reach is a distance in the world, and the whole of it has to
+    // shrink when the map grows. A tier that keeps the reach fixed keeps the
+    // leak fixed with it — raising the resolution then buys a sharper silhouette
+    // and exactly as much light through the wall as before.
+    CascadeFitParams params = DefaultParams();
+    params.settings.cascadeCount = 4;
+    params.settings.maxDistance = 80.f;
+    params.settings.filter = ShadowFilter::Pcf5x5;
+
+    float previous = std::numeric_limits<float>::max();
+    for (const std::uint32_t resolution : {1024u, 2048u, 4096u})
+    {
+        params.settings.resolution = resolution;
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
+
+        // In metres, because metres are what a wall is thick in.
+        const float reachWorld = CascadePenumbraWorld(fit.cascades[0], params.settings);
+        CHECK(reachWorld < previous);
+        previous = reachWorld;
+    }
+}
+
+TEST_CASE("No filter reads further than its own radius in texels")
+{
+    // The bound that keeps the reach tied to the map rather than to a constant
+    // chosen elsewhere: whatever the resolution, a kernel spans its radius in
+    // the map's own texels and the half one the hardware comparison adds. That
+    // is what lets the reach be reasoned about against scene geometry at all.
+    for (const std::uint32_t resolution : {1024u, 4096u})
+    {
+        for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
+                                          ShadowFilter::Vogel})
+        {
+            SunShadowSettings settings;
+            settings.resolution = resolution;
+            settings.filter = filter;
+
+            const float reachTexels = (FilterRadiusTaps(filter) * FilterTapStepUv(settings) +
+                                       0.5f * ShadowTexelSizeUv(settings)) /
+                                      ShadowTexelSizeUv(settings);
+            CHECK(reachTexels == doctest::Approx(FilterRadiusTaps(filter) + 0.5f));
+        }
+    }
 }
 
 TEST_CASE("The slope bias cannot open a gap wider than a few texels")
@@ -503,67 +554,18 @@ TEST_CASE("The caster's clamp is the same depth in every cascade")
     }
 }
 
-TEST_CASE("A bigger shadow map does not narrow the blur it is filtered with")
+TEST_CASE("Softness comes from the filter, not from the step")
 {
-    // Kernel offsets are in texels, so a radius measured in the cascade's own
-    // texels halves in world terms every time the resolution doubles — and a
-    // tier that raises the resolution ships a *harder* shadow than the tier
-    // below it. The step is quoted against a reference size to stop that.
-    SunShadowSettings coarse;
-    coarse.resolution = kFilterReferenceResolution / 2;
-    SunShadowSettings reference;
-    reference.resolution = kFilterReferenceResolution;
-    SunShadowSettings fine;
-    fine.resolution = kFilterReferenceResolution * 2;
-
-    // At or below the reference there is nothing between one texel and the next
-    // to sample, so the step is exactly a texel.
-    CHECK(FilterTapStepUv(coarse) == doctest::Approx(1.0f / static_cast<float>(coarse.resolution)));
-    CHECK(FilterTapStepUv(reference) == doctest::Approx(1.0f / static_cast<float>(reference.resolution)));
-
-    // Above it the step holds, so the footprint stays where it was.
-    CHECK(FilterTapStepUv(fine) == doctest::Approx(FilterTapStepUv(reference)));
-    CHECK(FilterTapStepUv(fine) > 1.0f / static_cast<float>(fine.resolution));
-}
-
-TEST_CASE("Raising quality never hardens the shadow")
-{
-    // The defect this exists to catch: Ultra came out sharper-edged than High
-    // at every cascade, because doubling its resolution halved the world size
-    // of the texels its filter radius was quoted in. Both axes a quality
-    // setting can move are checked at a fixed cascade layout, since a tier that
-    // also changes the layout changes the extents and with them the penumbra —
-    // which is the fit doing its job, not the filter failing to.
+    // A wider kernel is still what buys a wider penumbra — that much is
+    // unchanged, and it is the axis a filter setting is allowed to move. What no
+    // longer buys one is the step between taps, which is pinned to the map's
+    // texel: the two knobs used to multiply, and the product was a reach in
+    // metres that nothing shrank.
     CascadeFitParams params = DefaultParams();
-    params.settings.cascadeCount = 4;
-    params.settings.maxDistance = 80.f;
+    params.settings.resolution = 4096;
 
-    // Resolution: the kernel's reach is what the quoted radius controls, and it
-    // must not move when the map grows — that is the whole of the fix. What does
-    // still shrink is the hardware's own bilinear footprint, half a texel of a
-    // map that now has twice as many, and that is the map resolving better
-    // rather than the filter being quoted wrongly. So the kernel is asserted
-    // exactly and the total is left alone.
-    //
-    // From the reference size upward only. Below it the tap step is one texel
-    // because there is no finer grid to walk, so the reach tracks the resolution
-    // and shrinking there is the map running out of texels.
-    SunShadowSettings atReference = params.settings;
-    atReference.resolution = kFilterReferenceResolution;
-    SunShadowSettings aboveReference = params.settings;
-    aboveReference.resolution = kFilterReferenceResolution * 2;
-
-    const float reachAt = FilterRadiusTaps(atReference.filter) * FilterTapStepUv(atReference);
-    const float reachAbove = FilterRadiusTaps(aboveReference.filter) * FilterTapStepUv(aboveReference);
-    CHECK(reachAt > 0.f);
-    CHECK(reachAbove == doctest::Approx(reachAt));
-
-    // Filter: each kernel reaches further than the one below it, and the
-    // one-tap filter is still soft to the hardware's own bilinear rather than
-    // hard-edged.
-    params.settings.resolution = 2048;
     const CascadeFit fit = FitCascades(params);
-    REQUIRE(fit.count == params.settings.cascadeCount);
+    REQUIRE(fit.count > 0);
 
     float widest = 0.f;
     for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
@@ -574,28 +576,50 @@ TEST_CASE("Raising quality never hardens the shadow")
         CHECK(penumbra > widest);
         widest = penumbra;
     }
+}
 
-    // And across every cascade, not only the nearest, at the pair that was
-    // inverted: same layout, Ultra's resolution and filter against High's.
-    SunShadowSettings high = params.settings;
-    high.resolution = 2048;
-    high.filter = ShadowFilter::Pcf5x5;
-    SunShadowSettings ultra = params.settings;
-    ultra.resolution = 4096;
-    ultra.filter = ShadowFilter::Vogel;
+TEST_CASE("Raising quality narrows what the shadow reads through")
+{
+    // This case used to assert the opposite, and the reversal is the point.
+    //
+    // The old contract was that a tier raising the resolution must not also
+    // narrow the penumbra, so the tap step was quoted against a fixed reference
+    // and a tap came to stride several of the map's real texels. A stride is a
+    // distance, and once the kernel's reach in metres passed the thickness of a
+    // wall its outer taps landed beyond the caster's silhouette, read the map's
+    // cleared far value, and averaged in as light. Every tier leaked into a
+    // closed box, and the quality setting could not shrink the one term that
+    // mattered.
+    //
+    // A shadow that hardens as the map grows is a shadow resolving what is
+    // there. That is what a quality setting should buy.
+    CascadeFitParams params = DefaultParams();
+    params.settings.cascadeCount = 4;
+    params.settings.maxDistance = 80.f;
+    params.settings.filter = ShadowFilter::Pcf5x5;
 
-    CascadeFitParams ultraParams = DefaultParams();
-    ultraParams.settings = ultra;
-    const CascadeFit ultraFit = FitCascades(ultraParams);
-    CascadeFitParams highParams = DefaultParams();
-    highParams.settings = high;
-    const CascadeFit highFit = FitCascades(highParams);
-    REQUIRE(highFit.count == ultraFit.count);
-    for (std::uint32_t i = 0; i < highFit.count; ++i)
+    SunShadowSettings coarse = params.settings;
+    coarse.resolution = 2048;
+    SunShadowSettings fine = params.settings;
+    fine.resolution = 4096;
+
+    // The reach in UV halves with the map, where it used to hold.
+    CHECK(FilterRadiusTaps(fine.filter) * FilterTapStepUv(fine) ==
+          doctest::Approx(FilterRadiusTaps(coarse.filter) * FilterTapStepUv(coarse) * 0.5f));
+
+    // And in metres, at every cascade rather than only the nearest — a wall is
+    // the same thickness however far away it is.
+    CascadeFitParams coarseParams = DefaultParams();
+    coarseParams.settings = coarse;
+    CascadeFitParams fineParams = DefaultParams();
+    fineParams.settings = fine;
+    const CascadeFit coarseFit = FitCascades(coarseParams);
+    const CascadeFit fineFit = FitCascades(fineParams);
+    REQUIRE(coarseFit.count == fineFit.count);
+    for (std::uint32_t i = 0; i < coarseFit.count; ++i)
     {
-        CHECK(CascadePenumbraWorld(ultraFit.cascades[i], ultra) >
-              CascadePenumbraWorld(highFit.cascades[i], high));
-        CHECK(ultraFit.cascades[i].worldUnitsPerTexel < highFit.cascades[i].worldUnitsPerTexel);
+        CHECK(CascadePenumbraWorld(fineFit.cascades[i], fine) <
+              CascadePenumbraWorld(coarseFit.cascades[i], coarse));
     }
 }
 

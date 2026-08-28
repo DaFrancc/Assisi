@@ -106,21 +106,6 @@ inline constexpr std::uint32_t kMaxShadowAtlasResolution = 8192;
 inline constexpr std::uint32_t kMinShadowFaceResolution = 128;
 inline constexpr std::uint32_t kMaxShadowFaceResolution = 2048;
 
-/// @brief The resolution a filter radius is quoted against.
-///
-/// Kernel offsets are in texels, so a radius measured in the *map's own* texels
-/// shrinks as the map grows: doubling the resolution halves what one texel
-/// covers, and the blur collapses to half its width exactly when the quality
-/// setting went up. A tier that raises the resolution then delivers a sharper
-/// occluder edge and a narrower penumbra at once, and comes out looking harder
-/// than the tier below it rather than better.
-///
-/// Quoting the radius against a fixed resolution decouples the two: the map
-/// governs how finely the occluder's silhouette is resolved, and the filter
-/// footprint stays put. Below this size the step cannot be finer than a texel,
-/// so it is a texel; above it, the taps simply straddle more than one.
-inline constexpr std::uint32_t kFilterReferenceResolution = 2048;
-
 /// @brief How far from the camera the sun casts. Past the ceiling the outermost
 /// cascade's texels are metres wide and the shadow is a stain rather than a shape.
 inline constexpr float kMinShadowDistance = 5.0f;

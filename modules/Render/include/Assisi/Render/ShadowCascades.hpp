@@ -161,10 +161,21 @@ struct CascadeFitParams
 
 /// @brief UV distance between adjacent PCF taps.
 ///
-/// One texel at or below kFilterReferenceResolution, and fixed above it — so
-/// raising the resolution sharpens the occluder's silhouette without narrowing
-/// the blur that softens it. See kFilterReferenceResolution for why that
-/// matters more than it sounds.
+/// One texel of the map, always — so the kernel's world footprint halves every
+/// time the resolution doubles.
+///
+/// This was once quoted against a fixed reference resolution instead, to keep a
+/// tier that raised the resolution from also narrowing the penumbra and coming
+/// out looking harder than the tier below it. The cost of that was a kernel
+/// spanning several real texels, and a footprint has a reach in metres: where it
+/// exceeds the thickness of a wall, the outer taps fall past the caster's
+/// silhouette onto whatever the map holds beyond it, and vote lit. Light then
+/// reaches the inside of a closed box, at every resolution, because the
+/// footprint was the one thing resolution did not shrink.
+///
+/// A shadow that hardens as the map grows is a shadow resolving what is there.
+/// Softness that has to be bought with a wider footprint is bought from the
+/// occluders it reads through.
 [[nodiscard]] float FilterTapStepUv(const SunShadowSettings &settings);
 
 /// @brief The size of one of the map's texels, in UV.

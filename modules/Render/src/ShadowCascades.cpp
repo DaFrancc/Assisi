@@ -265,10 +265,9 @@ float FilterRadiusTaps(ShadowFilter filter)
 
 float FilterTapStepUv(const SunShadowSettings &settings)
 {
-    const std::uint32_t resolution = std::max(Sanitized(settings).resolution, 1u);
-    // Never finer than a texel: below the reference size there is nothing
-    // between one texel and the next to sample, so the step is the texel.
-    return 1.f / static_cast<float>(std::min(resolution, kFilterReferenceResolution));
+    // The map's own texel. The kernel walks the grid the map actually has, so
+    // its world footprint halves every time the resolution doubles.
+    return ShadowTexelSizeUv(settings);
 }
 
 float ShadowTexelSizeUv(const SunShadowSettings &settings)

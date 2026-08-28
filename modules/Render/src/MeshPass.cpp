@@ -69,9 +69,9 @@ struct FrameConstants
     /// no lookup at all), y = which directional light the cascades belong to,
     /// z = ShadowFilter, w = 1 to tint by cascade.
     glm::uvec4 shadowCounts;
-    /// x = the UV step between PCF taps — a texel up to the reference
-    /// resolution and fixed above it, so a bigger map sharpens the occluder
-    /// without narrowing the blur (see kFilterReferenceResolution),
+    /// x = the UV step between PCF taps, which is one texel of the map — so the
+    /// kernel's reach in metres halves when the resolution doubles, and cannot
+    /// grow past the thickness of what it reads through,
     /// y = the fraction of each cascade spent fading into the next, zw unused.
     glm::vec4 shadowParams;
     /// One record per cascade: x = the view-space distance it ends at (what the
