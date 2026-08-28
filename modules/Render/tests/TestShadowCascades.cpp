@@ -384,7 +384,7 @@ TEST_CASE("The constant biases are small enough not to leak on their own")
     CHECK(CascadeDepthBiasNdc(outermost, params.settings) * outermost.depthRange < 0.06f);
 }
 
-TEST_CASE("The receiver-plane clamp allows a steep plane and no more")
+TEST_CASE("The gradient limit is the slope a plane could have, in the map's own units")
 {
     CascadeFitParams params = DefaultParams();
     const CascadeFit fit = FitCascades(params);
@@ -393,21 +393,22 @@ TEST_CASE("The receiver-plane clamp allows a steep plane and no more")
     for (std::uint32_t i = 0; i < fit.count; ++i)
     {
         const ShadowCascade &cascade = fit.cascades[i];
-        const float clamped = CascadeReceiverBiasClampNdc(cascade, params.settings);
+        const float limit = CascadeReceiverGradientLimit(cascade, params.settings);
 
-        // What the outermost tap is owed by a plane at the steepest slope the
-        // gradient is trusted at, expressed in the depth the shader compares in.
-        const float reachWorld = CascadePenumbraWorld(cascade, params.settings);
-        CHECK(clamped * cascade.depthRange ==
-              doctest::Approx(kMaxReceiverPlaneSlope * reachWorld));
+        // A receiver at exactly the steepest trusted slope reads right at the
+        // limit: crossing the whole map is 2r of world per unit of UV, and
+        // depthRange of world per unit of the depth the shader compares in.
+        const float atLimit = kMaxReceiverPlaneSlope * (2.f * cascade.radius) / cascade.depthRange;
+        CHECK(limit == doctest::Approx(atLimit));
 
-        // It has to clear the constant bias it backs up, or a tap at the edge of
-        // the kernel would be corrected by less than the centre already was.
-        CHECK(clamped > CascadeDepthBiasNdc(cascade, params.settings));
+        // A plane at 45 degrees is an ordinary receiver and must survive the
+        // test, or the correction would be declined on a floor lit from above.
+        const float atFortyFive = (2.f * cascade.radius) / cascade.depthRange;
+        CHECK(atFortyFive < limit);
     }
 
-    // A degenerate cascade clamps to nothing rather than dividing by zero.
-    CHECK(CascadeReceiverBiasClampNdc(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
+    // A degenerate cascade trusts nothing rather than dividing by zero.
+    CHECK(CascadeReceiverGradientLimit(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
 }
 
 TEST_CASE("The texel size is the map's own, not the filter's reference step")

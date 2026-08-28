@@ -531,16 +531,15 @@ vec2 ReceiverPlaneDepthGradient(uint cascade, vec3 worldPos)
 /// One comparison tap, @p offset from the lookup centre, corrected onto the
 /// receiver's own plane.
 ///
-/// The correction is clamped because a gradient is only a slope while the quad
-/// it came from lies on one surface. Across a silhouette it spans two, and what
-/// it reports is the gap between them — enough to push a tap straight past the
-/// occluder and light the pixel, trading the leak this fixes for a worse one
-/// along every edge.
-float ShadowTap(vec2 uv, vec2 offset, uint cascade, float reference, vec2 gradient, float maxBias)
+/// @p gradient is already known to describe a surface — SampleCascade drops it
+/// where it does not — so the correction is applied whole. Bounding it here
+/// instead would be the wrong shape: a gradient too large to trust would still
+/// come through at the bound, which is the largest wrong answer available
+/// rather than none.
+float ShadowTap(vec2 uv, vec2 offset, uint cascade, float reference, vec2 gradient)
 {
-    float correction = clamp(dot(offset, gradient), -maxBias, maxBias);
     return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler),
-                   vec4(uv + offset, float(cascade), reference + correction));
+                   vec4(uv + offset, float(cascade), reference + dot(offset, gradient)));
 }
 
 // Rotates the Vogel disk per pixel so its 12 taps read as noise rather than as
@@ -570,16 +569,26 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         return 1.0;
     }
 
-    vec2  gradient = ReceiverPlaneDepthGradient(cascade, biasedPos);
-    float maxBias  = uFrame.shadowCascade[cascade].w;
+    vec2 gradient = ReceiverPlaneDepthGradient(cascade, biasedPos);
+
+    // Where the quad straddles two surfaces the fit reports the gap between them
+    // rather than a slope, and a correction built on that walks a tap past the
+    // occluder — a band of light along every inside corner, one or two taps of
+    // the kernel wide. That reading is indistinguishable from a receiver almost
+    // edge-on to the light, so the ambiguous case is declined rather than
+    // trusted: no correction, and the constants below carry the tap. Costs a
+    // little acne on a genuinely grazing plane, which is the cheaper mistake.
+    float limit = uFrame.shadowCascade[cascade].w;
+    if (dot(gradient, gradient) > limit * limit)
+    {
+        gradient = vec2(0.0);
+    }
 
     // The comparison sampler snaps to texel centres, so even the centre tap can
     // read half a texel off the plane. That much of the receiver's slope is owed
-    // before the kernel reaches anywhere, and it is the one part of the old
-    // constant bias that was doing real work.
-    float texel   = uFrame.shadowParams.z;
-    float centred = min(0.5 * texel * (abs(gradient.x) + abs(gradient.y)), maxBias);
-
+    // before the kernel reaches anywhere.
+    float texel     = uFrame.shadowParams.z;
+    float centred   = 0.5 * texel * (abs(gradient.x) + abs(gradient.y));
     float reference = coord.z - uFrame.shadowCascade[cascade].y - centred;
 
     // The UV distance between taps. Deliberately not one texel of this map: a
@@ -591,7 +600,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 
     if (filterMode == kShadowFilterPoint)
     {
-        return ShadowTap(uv, vec2(0.0), cascade, reference, gradient, maxBias);
+        return ShadowTap(uv, vec2(0.0), cascade, reference, gradient);
     }
 
     if (filterMode == kShadowFilterVogel)
@@ -604,7 +613,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
             float theta = float(i) * kGoldenAngle + phi;
-            sum += ShadowTap(uv, vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference, gradient, maxBias);
+            sum += ShadowTap(uv, vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference, gradient);
         }
         return sum / float(kVogelTaps);
     }
@@ -616,7 +625,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             for (int x = -2; x <= 2; ++x)
             {
-                sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient, maxBias);
+                sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient);
             }
         }
         return sum * (1.0 / 25.0);
@@ -627,7 +636,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     {
         for (int x = -1; x <= 1; ++x)
         {
-            sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient, maxBias);
+            sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient);
         }
     }
     return sum * (1.0 / 9.0);

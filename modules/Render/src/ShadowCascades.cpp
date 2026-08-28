@@ -289,17 +289,17 @@ float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSett
     return settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
 }
 
-float CascadeReceiverBiasClampNdc(const ShadowCascade &cascade, const SunShadowSettings &settings)
+float CascadeReceiverGradientLimit(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
+    (void)settings; // the limit is the cascade's geometry; the filter does not enter it
     if (!(cascade.depthRange > 0.f))
     {
         return 0.f;
     }
-    // What the outermost tap of the kernel is owed by a receiver at the steepest
-    // slope the gradient is trusted at. A plane needs no more than this, so
-    // anything past it is a gradient taken across a silhouette rather than along
-    // a surface.
-    return kMaxReceiverPlaneSlope * CascadePenumbraWorld(cascade, settings) / cascade.depthRange;
+    // A world slope becomes a gradient in UV by the box's width, and a gradient
+    // in comparison depth by its range: the full traverse of the map is 2r of
+    // world across one unit of UV, and depthRange of world across one of depth.
+    return kMaxReceiverPlaneSlope * (2.f * cascade.radius) / cascade.depthRange;
 }
 
 } // namespace Assisi::Render

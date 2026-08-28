@@ -299,7 +299,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
         constants.shadowCascade[i] = glm::vec4(cascade.splitFarView,
                                                CascadeDepthBiasNdc(cascade, shadows.settings),
                                                CascadeNormalOffsetWorld(cascade, shadows.settings),
-                                               CascadeReceiverBiasClampNdc(cascade, shadows.settings));
+                                               CascadeReceiverGradientLimit(cascade, shadows.settings));
         constants.shadowViewProjection[i] = cascade.viewProjection;
     }
     constants.shadowParams = glm::vec4(FilterTapStepUv(shadows.settings), shadows.settings.cascadeBlend,

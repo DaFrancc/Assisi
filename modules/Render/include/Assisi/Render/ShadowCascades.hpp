@@ -173,27 +173,33 @@ struct CascadeFitParams
 /// considered.
 [[nodiscard]] float ShadowTexelSizeUv(const SunShadowSettings &settings);
 
-/// @brief The steepest receiver the plane bias is allowed to describe, as depth
-/// gained per unit travelled across the map.
+/// @brief The steepest receiver the plane fit is trusted to describe, as world
+/// depth gained per world unit travelled across the map.
 ///
 /// A receiver-plane gradient is differenced from the fragment's screen-space
-/// quad, and is only a slope while that quad lies on one surface. Across a
-/// silhouette it spans two, and what it reports is the gap between them — a
-/// number large enough to correct a tap straight past the occluder and light
-/// the pixel, which is the artifact the plane bias would otherwise trade the
-/// leak for. Clamping costs a genuinely grazing receiver a little of its
-/// correction past about 84 degrees off face-on, and costs a silhouette its
-/// ability to erase the shadow entirely.
-inline constexpr float kMaxReceiverPlaneSlope = 10.0f;
-
-/// @brief The largest depth correction the receiver-plane bias may apply at the
-/// edge of the filter kernel, in the [0, 1] depth the shader compares.
+/// quad, and is only a slope while that quad lies on one surface. Where two
+/// meet — an inside corner, a silhouette — it spans both, and what it reports
+/// is the gap between them rather than any surface's slope.
 ///
-/// The kernel's own reach is what sets it: a tap that far out on a receiver at
-/// kMaxReceiverPlaneSlope needs this much, and nothing that is really a plane
-/// needs more. Scaled by the cascade, like every other bias here, because both
-/// the reach and the depth range it is expressed in are the cascade's own.
-[[nodiscard]] float CascadeReceiverBiasClampNdc(const ShadowCascade &cascade, const SunShadowSettings &settings);
+/// The two cases are indistinguishable from the gradient alone: a plane nearly
+/// edge-on to the light and a quad straddling a corner both report an enormous
+/// number. So the ambiguous case needs a default, and the default is to decline.
+/// Past this limit the gradient is dropped and the tap compares uncorrected,
+/// which costs a little acne where a very grazing receiver really was a plane.
+/// The alternative default — correcting by as much as the limit allows — spends
+/// that same ambiguity on lighting a band along every inside edge, which is the
+/// leak the plane bias exists to remove.
+///
+/// Four is a receiver about 76 degrees off face-on. Past that a texel spans
+/// enough of the surface that the kernel cannot resolve its slope anyway.
+inline constexpr float kMaxReceiverPlaneSlope = 4.0f;
+
+/// @brief The largest gradient the plane fit may report before it is treated as
+/// spanning a discontinuity, in comparison depth per unit of shadow-map UV.
+///
+/// A cascade's own quantity: a given world slope becomes a steeper gradient in
+/// UV the wider the cascade's box is, and a shallower one the deeper its range.
+[[nodiscard]] float CascadeReceiverGradientLimit(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 /// @brief How many screen pixels one of this cascade's texels covers, for a
 /// surface at @p viewDistance.
