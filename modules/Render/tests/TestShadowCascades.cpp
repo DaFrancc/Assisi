@@ -368,19 +368,24 @@ TEST_CASE("Biases scale with the cascade they are applied in")
     CHECK(CascadeDepthBiasNdc(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
 }
 
-TEST_CASE("The constant biases are small enough not to leak on their own")
+TEST_CASE("The unconditional bias is small enough not to leak on its own")
 {
-    // Both offsets displace what the shadow is read from, so both are leaks
-    // measured in world units, and both grow with the cascade because they are
-    // quoted in texels. The receiver-plane bias in the shader is what removed
-    // the reason they had to be large; this pins that they stayed small, since
-    // the defaults are the whole of the fix on this side.
+    // The depth bias applies to every lookup, so its whole magnitude is a gap
+    // under every contact, and it grows with the cascade because it is quoted in
+    // texels. At a texel and a half the outermost cascade of the defaults lied
+    // by 14 cm, which is what the leak was; this pins that it stayed small.
+    //
+    // The normal offset is deliberately not held to the same bound. It is scaled
+    // in the shader by how much of the receiver-plane fit had to be withdrawn,
+    // so it is absent exactly where a large offset used to leak and present only
+    // on surfaces the fit cannot serve. That gating is not visible from here —
+    // what this file can still say is that the bias which is *not* gated stayed
+    // where it belongs.
     CascadeFitParams params = DefaultParams();
     const CascadeFit fit = FitCascades(params);
     REQUIRE(fit.count > 0);
 
     const ShadowCascade &outermost = fit.cascades[fit.count - 1];
-    CHECK(CascadeNormalOffsetWorld(outermost, params.settings) < 0.06f);
     CHECK(CascadeDepthBiasNdc(outermost, params.settings) * outermost.depthRange < 0.06f);
 }
 

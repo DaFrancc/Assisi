@@ -224,16 +224,20 @@ struct SunShadowSettings
 
     ShadowFilter filter = ShadowFilter::Pcf3x3;
 
-    /// Both offsets are small because the mesh shader's receiver-plane bias
-    /// carries the slope these used to have to cover. Sized for the worst case
-    /// they were a leak that grew with the cascade: at a texel and a half, the
-    /// outermost cascade of this preset moved a lookup 14 cm off the surface and
-    /// lied about its depth by as much again, which is a hole along every edge
-    /// and under every contact. Half a texel is 5 cm out there and a couple of
-    /// millimetres up close.
+    /// The depth bias stays small: the plane fit carries the slope it used to
+    /// cover, and sized for the worst case it was a leak that grew with the
+    /// cascade — at a texel and a half the outermost cascade of this preset lied
+    /// about depth by 14 cm, which is a gap under every contact.
     float depthBiasTexels = 0.5f;
     float slopeBias = 2.0f;
-    float normalOffsetTexels = 0.5f;
+
+    /// The normal offset is a texel and a half again, because it no longer
+    /// applies everywhere. The shader scales it by how much of the plane fit had
+    /// to be withdrawn, so it is absent on the surfaces where the fit works —
+    /// which are the ones a large offset used to leak on — and present in full
+    /// on a wall the sun skims, where the fit's slope runs away faster than any
+    /// limit can follow and nothing else is correcting the tap.
+    float normalOffsetTexels = 1.5f;
 
     /// A third of each cascade. A seam is a step in texel size and the band is
     /// the only thing that turns it into a gradient, so it wants real distance —

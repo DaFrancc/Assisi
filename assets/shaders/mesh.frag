@@ -500,6 +500,10 @@ vec3 gWorldDdy = vec3(0.0);
 // to judge would be worse than none.
 float gTrust = 1.0;          // fraction of the plane correction that survived the fade
 float gGradientRatio = 0.0;  // gradient magnitude over the slope the cascade trusts
+// Whether a lookup happened at all. A surface facing away from the sun never
+// reaches one, and without this it would report the defaults above — reading as
+// a fully trusted fit on a surface the fit never saw.
+bool gSampled = false;
 
 /// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
 /// comparison is made against.
@@ -569,24 +573,12 @@ float InterleavedGradientNoise(vec2 position)
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
 float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 {
-    // The offset is scaled by how far from head-on the light is. At normal
-    // incidence a surface cannot shadow itself and needs none; at grazing
-    // incidence a texel spans a long stretch of the surface and needs all of it.
-    float slope = clamp(1.0 - NdotL, 0.0, 1.0);
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * slope);
-
-    vec3  coord = ShadowCoord(cascade, biasedPos);
-    vec2  uv    = coord.xy;
-
-    // Outside the cascade nothing was recorded, so nothing may be claimed. The
-    // sampler's white border would answer "lit" anyway; rejecting here also skips
-    // the taps.
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || coord.z > 1.0)
-    {
-        return 1.0;
-    }
-
-    vec2 gradient = ReceiverPlaneDepthGradient(cascade, biasedPos);
+    // The fit is read at the fragment's own position, before any offset moves it.
+    // The offset below is decided by what the fit is worth, so it cannot also be
+    // an input to it.
+    vec2  gradient = ReceiverPlaneDepthGradient(cascade, worldPos);
+    float limit    = uFrame.shadowCascade[cascade].w;
+    float mag      = length(gradient);
 
     // Where the quad straddles two surfaces the fit reports the gap between them
     // rather than a slope, and a correction built on that walks a tap past the
@@ -598,10 +590,37 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // straddle an inside corner all cross it together — which draws a line down
     // every corner in the scene, three pixels wide, exactly where the switch
     // flips. Fading leaves no edge for that line to form on.
-    float limit = uFrame.shadowCascade[cascade].w;
-    gTrust = 1.0 - smoothstep(limit, limit * kGradientFadeEnd, length(gradient));
-    gGradientRatio = limit > 0.0 ? length(gradient) / limit : 0.0;
-    gradient *= gTrust;
+    float trust = 1.0 - smoothstep(limit, limit * kGradientFadeEnd, mag);
+    gradient *= trust;
+
+    gTrust         = trust;
+    gGradientRatio = limit > 0.0 ? mag / limit : 0.0;
+    gSampled       = true;
+
+    // The two biases hand off rather than stack. The plane fit is exact while it
+    // holds and needs no help; where it is withdrawn — a wall the sun skims,
+    // whose slope runs away faster than any finite limit can follow — nothing
+    // else is correcting the tap, and the offset has to carry it alone.
+    //
+    // Gating it on the handover is what keeps it from leaking. Applied
+    // everywhere it walks the lookup out of an occluder at inside corners, which
+    // is the whole of the original bug; applied only where the fit has given up,
+    // it lands on surfaces the light barely reaches to begin with. The incidence
+    // term stays as a floor, because a receiver can be grazing before its
+    // gradient says so.
+    float slope     = max(clamp(1.0 - NdotL, 0.0, 1.0), 1.0 - trust);
+    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * slope);
+
+    vec3 coord = ShadowCoord(cascade, biasedPos);
+    vec2 uv    = coord.xy;
+
+    // Outside the cascade nothing was recorded, so nothing may be claimed. The
+    // sampler's white border would answer "lit" anyway; rejecting here also skips
+    // the taps.
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || coord.z > 1.0)
+    {
+        return 1.0;
+    }
 
     // The comparison sampler snaps to texel centres, so even the centre tap can
     // read half a texel off the plane. That much of the receiver's slope is owed
@@ -919,15 +938,18 @@ void main()
         else if (shadowDebug == kShadowDebugReceiverGradient)
         {
             // Black where the receiver is flat to the light, white at the slope
-            // the cascade still trusts, and saturated past it.
-            color = vec3(clamp(gGradientRatio, 0.0, 1.0));
+            // the cascade still trusts, and saturated past it. Blue where no
+            // lookup happened, so an unsampled surface cannot be mistaken for a
+            // flat one — both would otherwise be black.
+            color = gSampled ? vec3(clamp(gGradientRatio, 0.0, 1.0)) : vec3(0.1, 0.1, 0.4);
         }
         else if (shadowDebug == kShadowDebugGradientTrust)
         {
             // Green where the correction is applied whole, red where the fade
-            // has taken it away. Acne on red is the fade's doing; acne on green
-            // is something else, and that distinction is the whole point.
-            color = mix(vec3(1.0, 0.1, 0.1), vec3(0.1, 1.0, 0.1), gTrust);
+            // has taken it away, blue where nothing was sampled. Acne on red is
+            // the fade's doing; acne on green is something else, and that
+            // distinction is the whole point of the view.
+            color = gSampled ? mix(vec3(1.0, 0.1, 0.1), vec3(0.1, 1.0, 0.1), gTrust) : vec3(0.1, 0.1, 0.4);
         }
     }
 
