@@ -67,11 +67,12 @@ enum class ShadowDebugView : uint32_t
     /// the map holding the wrong occluder from it holding the right one at the
     /// wrong depth.
     Margin,
-    /// The filtered visibility against the centre tap's own answer: red where the
-    /// kernel reports light the centre does not. That is the footprint reaching
-    /// past the occluder's silhouette in the map — a receiver close enough to the
-    /// edge of what shades it that the filter samples around it. No bias can
-    /// reach it, because none of those taps is a depth error.
+    /// The visibility that shades the pixel, against the two narrower answers
+    /// inside it: red is what SunVisibility returns, green this cascade's own
+    /// filtered lookup, blue its centre tap. Black and white are the two correct
+    /// cases; red alone is the blend relighting what its cascade shadowed, and
+    /// yellow is the kernel finding light its centre did not. Every stage that
+    /// can add light is on screen at once, so a leak names its own stage.
     Taps,
 };
 
