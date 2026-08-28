@@ -207,15 +207,20 @@ struct CascadeFitParams
 /// large enough to do the same at grazing incidence would detach every shadow
 /// from its contact edge at head-on incidence.
 ///
-/// Scaled by the cascade's texel and by the filter's reach, because the tap
-/// that has to clear the surface is the outermost one. The setting is therefore
-/// a multiplier on "one kernel radius of texels" rather than an absolute count,
-/// so changing the filter does not silently require retuning it.
+/// Scaled by the cascade's texel and by nothing else — in particular not by the
+/// filter's reach. The offset moves the lookup sideways, and sideways is the one
+/// direction that walks it out from under a neighbouring occluder: at a concave
+/// corner it escapes the very surface that shades the receiver, so a leak is
+/// what it buys and a texel is all it may spend. Sizing it by the kernel instead
+/// makes the widest filter the leakiest tier, which inverts what a quality
+/// setting means. The taps' own self-shadowing belongs to the depth biases,
+/// which push along the light and leave the corner where it is.
 ///
 /// Its cost is bounded and worth stating: a lookup moved this far can read past
 /// an occluder that is nearer than the offset, so the offset is also the largest
 /// contact gap the shadow can show. That is why it is quoted in texels — the
-/// error it hides scales with a texel, so the leak it trades for should too.
+/// error it hides scales with a texel, so the leak it trades for should too, and
+/// raising the resolution then narrows both together.
 [[nodiscard]] float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 } // namespace Assisi::Render

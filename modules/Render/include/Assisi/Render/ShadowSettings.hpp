@@ -236,11 +236,13 @@ struct SunShadowSettings
     /// answer for that polygon's own tilt.
     float slopeBias = 2.0f;
 
-    /// One kernel radius of texels, which is the reach the outermost tap has to
-    /// clear. A multiplier rather than an absolute count — CascadeNormalOffsetWorld
-    /// scales it by the filter's reach and the cascade's texel — so a change of
-    /// filter or resolution carries its own bias instead of needing this retuned.
-    float normalOffsetTexels = 1.0f;
+    /// Texels of the cascade's own map, moved along the geometric normal. Half a
+    /// texel is the floor that means anything: the hardware comparison blends
+    /// four texels, so a lookup that has not cleared half a texel has not left
+    /// the surface it is standing on. It is also the ceiling worth paying — this
+    /// is the one bias that moves the lookup sideways, and sideways is what walks
+    /// a receiver out from under the occluder next to it.
+    float normalOffsetTexels = 0.5f;
 
     /// A third of each cascade. A seam is a step in texel size and the band is
     /// the only thing that turns it into a gradient, so it wants real distance —

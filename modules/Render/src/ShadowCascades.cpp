@@ -303,14 +303,17 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
 
 float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
+    // Texels of the cascade's own map, and nothing else. In particular not the
+    // filter's reach: a wider kernel is a wider penumbra, and a penumbra is
+    // supposed to soften a shadow's edge rather than pull it off its contact.
+    // Scaling the offset by the kernel does the second, and does it worst at a
+    // concave corner, where the lookup is pushed out of the corner and past the
+    // very occluder that shades it — so the tier with the widest filter leaks
+    // the most light into the inside of a box. The kernel's own taps are the
+    // depth biases' problem; they push along the light and leave the corner
+    // where it is.
     const SunShadowSettings safe = Sanitized(settings);
-    // The tap that has to clear the surface is the outermost one, not the
-    // centre, so the reach the offset must cover is the kernel's — plus the half
-    // texel the hardware's own bilinear comparison spreads over before any
-    // kernel is applied. A filter change then carries its own bias with it
-    // instead of silently needing the knob retuned.
-    const float reachTexels = FilterRadiusTaps(safe.filter) + 0.5f;
-    return safe.normalOffsetTexels * reachTexels * cascade.worldUnitsPerTexel;
+    return safe.normalOffsetTexels * cascade.worldUnitsPerTexel;
 }
 
 } // namespace Assisi::Render

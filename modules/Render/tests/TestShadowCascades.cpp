@@ -357,11 +357,8 @@ TEST_CASE("Biases scale with the cascade they are applied in")
     for (std::uint32_t i = 0; i < fit.count; ++i)
     {
         const ShadowCascade &cascade = fit.cascades[i];
-        // The offset carries the filter's reach as well as the setting; what
-        // this case is about is that both scale with the cascade's texel.
-        const float reach = FilterRadiusTaps(params.settings.filter) + 0.5f;
         CHECK(CascadeNormalOffsetWorld(cascade, params.settings) ==
-              doctest::Approx(3.f * reach * cascade.worldUnitsPerTexel));
+              doctest::Approx(3.f * cascade.worldUnitsPerTexel));
 
         // The depth bias is quoted in the same [0, 1] the shader compares in,
         // so the world distance it stands for is the texel scale times the setting.
@@ -394,29 +391,50 @@ TEST_CASE("The unconditional bias is small enough not to leak on its own")
     CHECK(CascadeDepthBiasNdc(outermost, params.settings) * outermost.depthRange < 0.06f);
 }
 
-TEST_CASE("The normal offset carries the filter's reach, not just a texel")
+TEST_CASE("The normal offset is a texel, whatever the filter is")
 {
-    // The tap that has to clear the surface is the outermost one, so an offset
-    // sized for the centre leaves a wide kernel acneing. Tying it to the filter
-    // is what keeps a change of filter from silently needing the knob retuned.
+    // The offset is the only bias that moves the lookup sideways, and sideways
+    // is what carries a receiver out from under the occluder beside it — so at a
+    // concave corner the offset is the leak. Sizing it by the kernel made the
+    // widest filter the leakiest, which is not a thing a quality setting may do.
     CascadeFitParams params = DefaultParams();
     const CascadeFit fit = FitCascades(params);
     REQUIRE(fit.count > 0);
     const ShadowCascade &cascade = fit.cascades[0];
 
-    float previous = 0.f;
-    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5})
+    const float expected = params.settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
+    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
+                                      ShadowFilter::Vogel})
     {
         params.settings.filter = filter;
-        const float offset = CascadeNormalOffsetWorld(cascade, params.settings);
+        CHECK(CascadeNormalOffsetWorld(cascade, params.settings) == doctest::Approx(expected));
+    }
+}
 
-        const float expected = params.settings.normalOffsetTexels * (FilterRadiusTaps(filter) + 0.5f) *
-                               cascade.worldUnitsPerTexel;
-        CHECK(offset == doctest::Approx(expected));
+TEST_CASE("Every tier narrows the gap the normal offset can open")
+{
+    // The tiers are the shipped combinations, and this is the property that
+    // makes them a ladder: a player who turns the setting up must not be handed
+    // more light inside a closed box than the tier below gave them. It is worth
+    // testing across whole tiers rather than one field, because the regression
+    // this replaces came from a formula that shrank with the resolution and grew
+    // with the filter — each half defensible, the product not monotonic.
+    float previous = std::numeric_limits<float>::max();
+    for (const ShadowTier tier : {ShadowTier::Low, ShadowTier::Medium, ShadowTier::High, ShadowTier::Ultra})
+    {
+        CascadeFitParams params = DefaultParams();
+        params.settings = Sanitized(TierSettings(tier).sun);
 
-        // A wider kernel always asks for more, never less.
-        CHECK(offset > previous);
-        previous = offset;
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
+
+        // Per texel of the cascade, so the comparison is of the formula rather
+        // than of how much world each tier's cascade zero happens to cover.
+        const float texels = CascadeNormalOffsetWorld(fit.cascades[0], params.settings) /
+                             fit.cascades[0].worldUnitsPerTexel;
+        const float uv = texels / static_cast<float>(params.settings.resolution);
+        CHECK(uv <= previous);
+        previous = uv;
     }
 }
 
