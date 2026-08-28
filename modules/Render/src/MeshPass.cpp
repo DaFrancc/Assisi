@@ -296,9 +296,13 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     for (uint32_t i = 0; i < cascadeCount && i < kMaxShadowCascades; ++i)
     {
         const ShadowCascade &cascade = shadows.fit->cascades[i];
+        // w is the cascade's depth range in world units, which is what turns the
+        // [0, 1] depths the shader compares back into metres. Only the margin
+        // debug view reads it; the comparison itself never needs the scale.
         constants.shadowCascade[i] = glm::vec4(cascade.splitFarView,
                                                CascadeDepthBiasNdc(cascade, shadows.settings),
-                                               CascadeNormalOffsetWorld(cascade, shadows.settings), 0.f);
+                                               CascadeNormalOffsetWorld(cascade, shadows.settings),
+                                               cascade.depthRange);
         constants.shadowViewProjection[i] = cascade.viewProjection;
     }
     constants.shadowParams =

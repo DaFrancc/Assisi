@@ -59,9 +59,16 @@ enum class ShadowDebugView : uint32_t
     /// Tint the lit result by which cascade each pixel sampled — the view that
     /// makes a split distance or a blend band visible.
     Cascades,
+    /// The distance, in metres, between the fragment and the occluder the map
+    /// recorded at its own lookup: green in front of it, red behind it, blue
+    /// where the lookup left the cascade. Reads the centre texel unfiltered,
+    /// because the comparison sampler returns a fraction and a fraction cannot
+    /// distinguish the map holding the wrong occluder from it holding the right
+    /// one at the wrong depth.
+    Margin,
 };
 
-inline constexpr uint32_t kShadowDebugViewCount = 2;
+inline constexpr uint32_t kShadowDebugViewCount = 3;
 
 /// @brief The ambient term every surface gets for free, when nobody says otherwise.
 ///

@@ -1,5 +1,10 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+// textureSize and texelFetch on a texture with no sampler bound to it, which is
+// how the margin debug view reads the shadow map's stored depth: every other
+// read of that texture goes through a comparison sampler and returns a fraction
+// rather than the depth itself.
+#extension GL_EXT_samplerless_texture_functions : require
 
 layout(location = 0) in vec3  vWorldPos;
 layout(location = 1) in vec3  vNormal;
@@ -464,6 +469,7 @@ layout(binding = 129) uniform samplerShadow uShadowSampler;
 
 // Must match Render::ShadowDebugView.
 const uint kShadowDebugCascades = 1u;
+const uint kShadowDebugMargin   = 2u;
 
 // Must match Render::ShadowFilter.
 const uint kShadowFilterPoint = 0u;
@@ -592,6 +598,38 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     return sum * (1.0 / 9.0);
 }
 
+
+/// What the map holds at this fragment's own lookup, against what the fragment
+/// compares — the two numbers the comparison sampler comes between and never
+/// shows. Both in the cascade's [0, 1] depth; the difference times its depth
+/// range is metres, and a positive one is how far in front of the receiver the
+/// recorded occluder sits.
+///
+/// The centre tap only, fetched rather than filtered: a filtered read answers
+/// what the shadow looks like, and the question here is what the map contains.
+struct ShadowProbe
+{
+    float stored;
+    float reference;
+    bool  outside;
+};
+
+ShadowProbe ProbeCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+{
+    ShadowProbe probe;
+    float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
+    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
+
+    vec3 coord     = ShadowCoord(cascade, biasedPos);
+    probe.outside  = any(lessThan(coord.xy, vec2(0.0))) || any(greaterThan(coord.xy, vec2(1.0))) || coord.z > 1.0;
+    probe.reference = coord.z - uFrame.shadowCascade[cascade].y;
+
+    ivec3 size = textureSize(uShadowCascades, 0);
+    ivec2 texel = ivec2(clamp(coord.xy, vec2(0.0), vec2(1.0)) * vec2(size.xy));
+    texel = clamp(texel, ivec2(0), size.xy - 1);
+    probe.stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
+    return probe;
+}
 
 /// The sun's visibility at this fragment, blended across the cascade seam.
 /// Reports which cascade it read in @p outCascade, for the debug view.
@@ -847,6 +885,32 @@ void main()
     if (uFrame.shadowCounts.w == kShadowDebugCascades && shadowCascadeCount > 0u)
     {
         color *= CascadeTint(shadowCascade);
+    }
+
+    // Margin view: how far in front of this fragment the map's recorded occluder
+    // sits, in metres, replacing the shading rather than tinting it. The one
+    // thing the comparison sampler cannot be asked — it returns a fraction, and
+    // a fraction is the same whether the map holds the wrong occluder or the
+    // right one at the wrong depth.
+    //
+    //   blue    the lookup left the cascade, so the map was never asked
+    //   green   an occluder in front of the fragment, brighter the further
+    //   red     nothing in front of it: the fragment is lit, and by how much
+    //   black   the two agree to within a millimetre, which is the ambiguous case
+    if (uFrame.shadowCounts.w == kShadowDebugMargin && shadowCascadeCount > 0u)
+    {
+        // The same lookup SampleCascade would make, so the number read here is
+        // the number the comparison was given.
+        vec3        Ng    = normalize(vNormal);
+        vec3        sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
+        ShadowProbe probe = ProbeCascade(shadowCascade, vWorldPos, Ng, dot(Ng, sunL));
+
+        const float kFullScaleMetres = 0.25;
+        float margin = (probe.stored - probe.reference) * uFrame.shadowCascade[shadowCascade].w;
+        float scaled = clamp(abs(margin) / kFullScaleMetres, 0.0, 1.0);
+
+        color = probe.outside ? vec3(0.0, 0.0, 1.0)
+                              : (margin >= 0.0 ? vec3(0.0, scaled, 0.0) : vec3(scaled, 0.0, 0.0));
     }
 
     // Linear radiance, unbounded. The scene target is float and the tone map is
