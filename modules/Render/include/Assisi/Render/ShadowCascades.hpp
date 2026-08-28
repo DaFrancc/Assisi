@@ -164,6 +164,37 @@ struct CascadeFitParams
 /// matters more than it sounds.
 [[nodiscard]] float FilterTapStepUv(const SunShadowSettings &settings);
 
+/// @brief The size of one of the map's texels, in UV.
+///
+/// Not the same as FilterTapStepUv, which is quoted against a fixed reference
+/// resolution and so stops shrinking once the map passes it. This is the real
+/// texel — what the comparison sampler snaps a tap onto, and therefore how far
+/// off the receiver's plane a tap can land before its kernel offset is even
+/// considered.
+[[nodiscard]] float ShadowTexelSizeUv(const SunShadowSettings &settings);
+
+/// @brief The steepest receiver the plane bias is allowed to describe, as depth
+/// gained per unit travelled across the map.
+///
+/// A receiver-plane gradient is differenced from the fragment's screen-space
+/// quad, and is only a slope while that quad lies on one surface. Across a
+/// silhouette it spans two, and what it reports is the gap between them — a
+/// number large enough to correct a tap straight past the occluder and light
+/// the pixel, which is the artifact the plane bias would otherwise trade the
+/// leak for. Clamping costs a genuinely grazing receiver a little of its
+/// correction past about 84 degrees off face-on, and costs a silhouette its
+/// ability to erase the shadow entirely.
+inline constexpr float kMaxReceiverPlaneSlope = 10.0f;
+
+/// @brief The largest depth correction the receiver-plane bias may apply at the
+/// edge of the filter kernel, in the [0, 1] depth the shader compares.
+///
+/// The kernel's own reach is what sets it: a tap that far out on a receiver at
+/// kMaxReceiverPlaneSlope needs this much, and nothing that is really a plane
+/// needs more. Scaled by the cascade, like every other bias here, because both
+/// the reach and the depth range it is expressed in are the cascade's own.
+[[nodiscard]] float CascadeReceiverBiasClampNdc(const ShadowCascade &cascade, const SunShadowSettings &settings);
+
 /// @brief How many screen pixels one of this cascade's texels covers, for a
 /// surface at @p viewDistance.
 ///
@@ -190,10 +221,12 @@ struct CascadeFitParams
 
 /// @brief How far along the surface normal a sample is pushed, in world units.
 ///
-/// The same auto-scaling as the depth bias, and the reason both exist: a depth
-/// bias large enough to clear acne on a grazing surface is large enough to
-/// detach the shadow at contact, and an offset along the normal moves the
-/// lookup out of the surface's own depth instead of lying about its depth.
+/// The same auto-scaling as the depth bias. Both are small by default and meant
+/// to stay that way: what used to justify a large one — a receiver sloped
+/// across the filter kernel — is corrected per tap by the mesh shader's
+/// receiver-plane bias, and the residue these cover does not grow with the
+/// angle to the light. Growing either buys a leak along every silhouette,
+/// widening with the cascade because a texel does.
 [[nodiscard]] float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 } // namespace Assisi::Render

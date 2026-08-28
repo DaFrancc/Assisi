@@ -445,12 +445,19 @@ float AttenuationSq(float d2, float radiusSq)
 // sampler: the hardware tests the reference against four texels and returns the
 // blended result, so even the one-tap filter comes back soft to a texel.
 //
-// Two biases, both scaled CPU-side by the cascade's world-per-texel so one
-// setting holds across cascades whose texels differ by an order of magnitude.
-// They do different jobs and neither replaces the other: the constant depth bias
-// lies about how deep the surface is, which detaches contact shadows if it is
-// large; the normal offset moves the lookup out of the surface instead, which is
-// what actually fixes acne where the sun grazes.
+// The bias that does the work is per tap and derived from the surface: each tap
+// is corrected onto the plane this fragment lies on, so a receiver at any angle
+// to the light compares against the depth its own geometry predicts. See
+// ReceiverPlaneDepthGradient.
+//
+// Two constants back it up, both scaled CPU-side by the cascade's world-per-texel
+// so one setting holds across cascades whose texels differ by an order of
+// magnitude. Both are small and must stay small. They cover only what the plane
+// cannot — depth quantisation, and a receiver curved across the kernel — and
+// every unit of either is a leak: the depth bias lies about how deep the surface
+// is, which detaches a shadow from its contact edge, and the normal offset moves
+// the lookup itself, which at a concave corner walks it out of the occluder's
+// shadow and lights the floor at the foot of the wall.
 
 layout(binding = 7) uniform texture2DArray uShadowCascades;
 layout(binding = 129) uniform samplerShadow uShadowSampler;
@@ -468,9 +475,72 @@ const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
 const float kGoldenAngle        = 2.39996323;
 
-float ShadowFetch(vec2 uv, uint cascade, float reference)
+// This fragment's world position differenced across its screen-space quad,
+// taken once in main() before anything branches.
+//
+// Hoisted out of the shadow code because a derivative is only defined where the
+// whole quad agrees to take it, and every shadow lookup sits behind N.L and
+// behind the cascade blend — branches whose lanes diverge.
+vec3 gWorldDdx = vec3(0.0);
+vec3 gWorldDdy = vec3(0.0);
+
+/// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
+/// comparison is made against.
+///
+/// The cascade projection is orthographic, so w is exactly 1 and this mapping is
+/// affine. That is what makes the plane fit below exact for a flat receiver
+/// rather than a first-order approximation of one.
+vec3 ShadowCoord(uint cascade, vec3 worldPos)
 {
-    return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
+    vec4 clip = uFrame.shadowViewProjection[cascade] * vec4(worldPos, 1.0);
+    vec3 ndc  = clip.xyz / clip.w;
+    // The backend draws with a flipped viewport, so the map's first texel row is
+    // ndc.y == +1 — hence the negative y scale rather than the usual 0.5.
+    return vec3(ndc.xy * vec2(0.5, -0.5) + 0.5, ndc.z);
+}
+
+/// How much the map's depth changes per unit of its UV, along the plane this
+/// fragment lies on.
+///
+/// A filter tap reads a texel away from the fragment's own lookup, and on a
+/// receiver the light does not strike head-on that texel is legitimately at a
+/// different depth. Comparing every tap against the centre's depth is therefore
+/// wrong by the receiver's own slope across the kernel, and the only way to keep
+/// that from reading as acne without this is a constant bias sized for the
+/// steepest surface in the scene — which is the bias that detaches contact
+/// shadows and opens a gap along every silhouette.
+///
+/// Returns zero where the quad projects to a line in the map, which is a
+/// receiver edge-on to the light: there is no plane there to recover a slope
+/// from, and the constants below are what covers it.
+vec2 ReceiverPlaneDepthGradient(uint cascade, vec3 worldPos)
+{
+    vec3 base = ShadowCoord(cascade, worldPos);
+    vec3 dx   = ShadowCoord(cascade, worldPos + gWorldDdx) - base;
+    vec3 dy   = ShadowCoord(cascade, worldPos + gWorldDdy) - base;
+
+    // Solving [dx.xy; dy.xy] * (ddepth/du, ddepth/dv) = (dx.z, dy.z) by Cramer.
+    float det = dx.x * dy.y - dx.y * dy.x;
+    if (abs(det) < 1e-9)
+    {
+        return vec2(0.0);
+    }
+    return vec2(dx.z * dy.y - dx.y * dy.z, dx.x * dy.z - dx.z * dy.x) / det;
+}
+
+/// One comparison tap, @p offset from the lookup centre, corrected onto the
+/// receiver's own plane.
+///
+/// The correction is clamped because a gradient is only a slope while the quad
+/// it came from lies on one surface. Across a silhouette it spans two, and what
+/// it reports is the gap between them — enough to push a tap straight past the
+/// occluder and light the pixel, trading the leak this fixes for a worse one
+/// along every edge.
+float ShadowTap(vec2 uv, vec2 offset, uint cascade, float reference, vec2 gradient, float maxBias)
+{
+    float correction = clamp(dot(offset, gradient), -maxBias, maxBias);
+    return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler),
+                   vec4(uv + offset, float(cascade), reference + correction));
 }
 
 // Rotates the Vogel disk per pixel so its 12 taps read as noise rather than as
@@ -489,21 +559,28 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     float slope = clamp(1.0 - NdotL, 0.0, 1.0);
     vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * slope);
 
-    vec4 lightClip = uFrame.shadowViewProjection[cascade] * vec4(biasedPos, 1.0);
-    vec3 ndc = lightClip.xyz / lightClip.w;
-
-    // The backend draws with a flipped viewport, so the map's first texel row is
-    // ndc.y == +1 — hence the negative y scale rather than the usual 0.5.
-    vec2  uv        = ndc.xy * vec2(0.5, -0.5) + 0.5;
-    float reference = ndc.z - uFrame.shadowCascade[cascade].y;
+    vec3  coord = ShadowCoord(cascade, biasedPos);
+    vec2  uv    = coord.xy;
 
     // Outside the cascade nothing was recorded, so nothing may be claimed. The
     // sampler's white border would answer "lit" anyway; rejecting here also skips
     // the taps.
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || reference > 1.0)
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || coord.z > 1.0)
     {
         return 1.0;
     }
+
+    vec2  gradient = ReceiverPlaneDepthGradient(cascade, biasedPos);
+    float maxBias  = uFrame.shadowCascade[cascade].w;
+
+    // The comparison sampler snaps to texel centres, so even the centre tap can
+    // read half a texel off the plane. That much of the receiver's slope is owed
+    // before the kernel reaches anywhere, and it is the one part of the old
+    // constant bias that was doing real work.
+    float texel   = uFrame.shadowParams.z;
+    float centred = min(0.5 * texel * (abs(gradient.x) + abs(gradient.y)), maxBias);
+
+    float reference = coord.z - uFrame.shadowCascade[cascade].y - centred;
 
     // The UV distance between taps. Deliberately not one texel of this map: a
     // radius quoted in the cascade's own texels would shrink every time the
@@ -514,7 +591,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 
     if (filterMode == kShadowFilterPoint)
     {
-        return ShadowFetch(uv, cascade, reference);
+        return ShadowTap(uv, vec2(0.0), cascade, reference, gradient, maxBias);
     }
 
     if (filterMode == kShadowFilterVogel)
@@ -527,7 +604,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
             float theta = float(i) * kGoldenAngle + phi;
-            sum += ShadowFetch(uv + vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference);
+            sum += ShadowTap(uv, vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference, gradient, maxBias);
         }
         return sum / float(kVogelTaps);
     }
@@ -539,7 +616,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             for (int x = -2; x <= 2; ++x)
             {
-                sum += ShadowFetch(uv + vec2(float(x), float(y)) * step, cascade, reference);
+                sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient, maxBias);
             }
         }
         return sum * (1.0 / 25.0);
@@ -550,7 +627,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     {
         for (int x = -1; x <= 1; ++x)
         {
-            sum += ShadowFetch(uv + vec2(float(x), float(y)) * step, cascade, reference);
+            sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient, maxBias);
         }
     }
     return sum * (1.0 / 9.0);
@@ -644,6 +721,12 @@ uint ClusterIndex()
 
 void main()
 {
+    // Before the discard below, and before every branch: a quad whose lanes have
+    // diverged cannot difference anything, and a lane killed by the alpha test
+    // still has to contribute its corner to its neighbours' derivative.
+    gWorldDdx = dFdx(vWorldPos);
+    gWorldDdy = dFdy(vWorldPos);
+
     Surface surf = SampleMaterial();
 
 #ifdef ASSISI_ALPHA_MASK

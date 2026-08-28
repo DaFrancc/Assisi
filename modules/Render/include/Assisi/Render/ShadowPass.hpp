@@ -122,7 +122,6 @@ private:
     std::uint32_t _builtResolution = 0;
     ShadowMapFormat _builtFormat = ShadowMapFormat::D32;
     float _builtSlopeBias = -1.f;
-    bool _builtCullFrontFaces = false;
 
     /// Where this frame's cascades start in the shared view table.
     mutable std::uint32_t _firstView = 0;

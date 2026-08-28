@@ -117,14 +117,12 @@ bool ShadowPass::RebuildPipeline()
         return false;
     }
 
-    _pipeline = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(), _settings.slopeBias,
-                                               _settings.cullFrontFaces);
+    _pipeline = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(), _settings.slopeBias);
     if (_pipeline == nullptr)
     {
         return false;
     }
     _builtSlopeBias = _settings.slopeBias;
-    _builtCullFrontFaces = _settings.cullFrontFaces;
     return true;
 }
 
@@ -151,8 +149,7 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
     const SunShadowSettings safe = Sanitized(settings);
     const bool targetsStale = _cascadeFramebuffers.empty() || safe.cascadeCount != _builtCascades ||
                               safe.resolution != _builtResolution || safe.format != _builtFormat;
-    const bool pipelineStale = _pipeline == nullptr || safe.slopeBias != _builtSlopeBias ||
-                               safe.cullFrontFaces != _builtCullFrontFaces;
+    const bool pipelineStale = _pipeline == nullptr || safe.slopeBias != _builtSlopeBias;
     _settings = safe;
 
     if (!targetsStale && !pipelineStale)

@@ -125,8 +125,8 @@ bool ShadowDepthRenderer::Initialize(const InitParams &params)
     return true;
 }
 
-nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
-                                                                  bool cullFrontFaces) const
+nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFramebuffer *prototype,
+                                                                  float slopeBias) const
 {
     if (!IsReady() || prototype == nullptr)
     {
@@ -139,8 +139,10 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFrameb
     pipelineDesc.VS = _vertexShader;
     // No PS: nothing but depth is written, so there is no fragment stage at all.
     pipelineDesc.addBindingLayout(_bindingLayout);
-    pipelineDesc.renderState.rasterState.cullMode =
-        cullFrontFaces ? nvrhi::RasterCullMode::Front : nvrhi::RasterCullMode::Back;
+    // Back faces, so what the map records is the surface the light actually
+    // reaches. Recording the far side instead would move every shadow back by
+    // the caster's own thickness and drop a caster that has no far side.
+    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
     // Same winding convention as the mesh pass: the Vulkan backend flips the
     // viewport, which flips the winding the rasterizer perceives.
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;

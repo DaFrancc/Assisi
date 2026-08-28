@@ -368,6 +368,63 @@ TEST_CASE("Biases scale with the cascade they are applied in")
     CHECK(CascadeDepthBiasNdc(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
 }
 
+TEST_CASE("The constant biases are small enough not to leak on their own")
+{
+    // Both offsets displace what the shadow is read from, so both are leaks
+    // measured in world units, and both grow with the cascade because they are
+    // quoted in texels. The receiver-plane bias in the shader is what removed
+    // the reason they had to be large; this pins that they stayed small, since
+    // the defaults are the whole of the fix on this side.
+    CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
+
+    const ShadowCascade &outermost = fit.cascades[fit.count - 1];
+    CHECK(CascadeNormalOffsetWorld(outermost, params.settings) < 0.06f);
+    CHECK(CascadeDepthBiasNdc(outermost, params.settings) * outermost.depthRange < 0.06f);
+}
+
+TEST_CASE("The receiver-plane clamp allows a steep plane and no more")
+{
+    CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
+
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        const ShadowCascade &cascade = fit.cascades[i];
+        const float clamped = CascadeReceiverBiasClampNdc(cascade, params.settings);
+
+        // What the outermost tap is owed by a plane at the steepest slope the
+        // gradient is trusted at, expressed in the depth the shader compares in.
+        const float reachWorld = CascadePenumbraWorld(cascade, params.settings);
+        CHECK(clamped * cascade.depthRange ==
+              doctest::Approx(kMaxReceiverPlaneSlope * reachWorld));
+
+        // It has to clear the constant bias it backs up, or a tap at the edge of
+        // the kernel would be corrected by less than the centre already was.
+        CHECK(clamped > CascadeDepthBiasNdc(cascade, params.settings));
+    }
+
+    // A degenerate cascade clamps to nothing rather than dividing by zero.
+    CHECK(CascadeReceiverBiasClampNdc(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
+}
+
+TEST_CASE("The texel size is the map's own, not the filter's reference step")
+{
+    // The two are equal only up to the reference resolution. Past it the tap
+    // step stops shrinking, deliberately, while a texel keeps going — and it is
+    // the texel the comparison sampler snaps to, so the half-texel term in the
+    // shader has to read this one.
+    SunShadowSettings settings;
+    settings.resolution = kFilterReferenceResolution;
+    CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(FilterTapStepUv(settings)));
+
+    settings.resolution = kFilterReferenceResolution * 2u;
+    CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(FilterTapStepUv(settings) * 0.5f));
+    CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(1.f / static_cast<float>(settings.resolution)));
+}
+
 TEST_CASE("A bigger shadow map does not narrow the blur it is filtered with")
 {
     // Kernel offsets are in texels, so a radius measured in the cascade's own

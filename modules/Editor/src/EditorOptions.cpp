@@ -162,11 +162,6 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     changed |= ImGui::SliderFloat("Slope Bias", &shadows.sun.slopeBias, Assisi::Render::kMinSlopeBias,
                                   Assisi::Render::kMaxSlopeBias, "%.2f");
 
-    // Which faces the depth pass keeps. Front-face culling moves acne to
-    // surfaces the camera cannot see, but it needs a back face to land on —
-    // which single-sided geometry does not have. Worth measuring per scene.
-    changed |= ImGui::Checkbox("Cull Front Faces", &shadows.sun.cullFrontFaces);
-
     if (!shadows.sun.enabled)
     {
         ImGui::EndDisabled();

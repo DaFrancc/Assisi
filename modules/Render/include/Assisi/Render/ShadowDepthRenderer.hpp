@@ -163,8 +163,14 @@ public:
     /// depth format belong to whoever owns the target: the sun's cascades and a
     /// local-light atlas differ in both and would otherwise thrash one pipeline
     /// between them.
-    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
-                                                               bool cullFrontFaces) const;
+    ///
+    /// Back faces are culled, always. Keeping the front ones instead was once
+    /// the way to stop a surface shadowing itself, and it worked by recording
+    /// the far side of the geometry — which displaces every shadow by the
+    /// caster's own thickness and drops single-sided casters entirely. The mesh
+    /// shader's receiver-plane bias handles the self-shadowing exactly and
+    /// displaces nothing, so there is no longer a trade to expose.
+    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias) const;
 
     /// @brief Start a frame's view table.
     ///

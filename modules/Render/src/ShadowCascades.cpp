@@ -96,6 +96,29 @@ glm::mat4 LightRotation(const glm::vec3 &lightDirection)
     return glm::lookAt(glm::vec3(0.f), direction, up);
 }
 
+namespace
+{
+/// How close to a lattice line counts as being on it, in texels.
+///
+/// The rotation is exact but the round trip through it is not: a point snapped
+/// to a whole texel comes back a few ulps to either side of one. Landing a
+/// hair below sends floor() to the texel beneath, so the snap moves a point
+/// that was already on the lattice — and the cascade lurches a texel between
+/// two frames whose input differed by nothing.
+///
+/// A thousandth of a texel is far below anything the shadow can resolve and far
+/// above the round trip's error over any coordinate a level reaches.
+constexpr float kSnapTexelTolerance = 1e-3f;
+
+/// @brief @p quotient rounded down to a whole texel, snapping to the nearest
+/// lattice line when it is within tolerance of one.
+[[nodiscard]] float FloorTexel(float quotient)
+{
+    const float nearest = std::round(quotient);
+    return std::abs(quotient - nearest) < kSnapTexelTolerance ? nearest : std::floor(quotient);
+}
+} // namespace
+
 glm::vec3 SnapToTexelGrid(const glm::vec3 &center, const glm::mat4 &lightRotation, float worldUnitsPerTexel)
 {
     if (!(worldUnitsPerTexel > 0.f) || !std::isfinite(worldUnitsPerTexel))
@@ -104,11 +127,12 @@ glm::vec3 SnapToTexelGrid(const glm::vec3 &center, const glm::mat4 &lightRotatio
     }
 
     glm::vec3 lightSpace = glm::vec3(lightRotation * glm::vec4(center, 1.f));
-    lightSpace.x = std::floor(lightSpace.x / worldUnitsPerTexel) * worldUnitsPerTexel;
-    lightSpace.y = std::floor(lightSpace.y / worldUnitsPerTexel) * worldUnitsPerTexel;
+    lightSpace.x = FloorTexel(lightSpace.x / worldUnitsPerTexel) * worldUnitsPerTexel;
+    lightSpace.y = FloorTexel(lightSpace.y / worldUnitsPerTexel) * worldUnitsPerTexel;
 
-    // The rotation has no translation, so its inverse is its transpose exactly
-    // — no round-trip error to un-snap what was just snapped.
+    // The rotation has no translation, so its inverse is its transpose exactly.
+    // What error there is comes from the two multiplies, which is what the
+    // tolerance above absorbs.
     return glm::vec3(glm::transpose(lightRotation) * glm::vec4(lightSpace, 1.f));
 }
 
@@ -230,6 +254,11 @@ float FilterTapStepUv(const SunShadowSettings &settings)
     return 1.f / static_cast<float>(std::min(resolution, kFilterReferenceResolution));
 }
 
+float ShadowTexelSizeUv(const SunShadowSettings &settings)
+{
+    return 1.f / static_cast<float>(std::max(Sanitized(settings).resolution, 1u));
+}
+
 float CascadeTexelScreenPixels(const ShadowCascade &cascade, float viewDistance, float screenHeight,
                                float tanHalfFovY)
 {
@@ -258,6 +287,19 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
 float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     return settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
+}
+
+float CascadeReceiverBiasClampNdc(const ShadowCascade &cascade, const SunShadowSettings &settings)
+{
+    if (!(cascade.depthRange > 0.f))
+    {
+        return 0.f;
+    }
+    // What the outermost tap of the kernel is owed by a receiver at the steepest
+    // slope the gradient is trusted at. A plane needs no more than this, so
+    // anything past it is a gradient taken across a silhouette rather than along
+    // a surface.
+    return kMaxReceiverPlaneSlope * CascadePenumbraWorld(cascade, settings) / cascade.depthRange;
 }
 
 } // namespace Assisi::Render
