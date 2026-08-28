@@ -485,6 +485,12 @@ const float kGoldenAngle        = 2.39996323;
 // so no pixel compares differently from the one beside it.
 const float kGradientFadeEnd    = 3.0;
 
+// Incidence below which the shadow is released rather than resolved, as N.L.
+// 0.2 is about 78 degrees off head-on, which is roughly where the plane fit
+// reaches its own limit — so the two give up together rather than leaving a
+// band of angles that neither serves.
+const float kGrazingShadowFadeNdotL = 0.2;
+
 // This fragment's world position differenced across its screen-space quad,
 // taken once in main() before anything branches.
 //
@@ -727,7 +733,18 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
         float next = cascade + 1u < cascadeCount ? SampleCascade(cascade + 1u, vWorldPos, N, NdotL) : 1.0;
         visibility = mix(visibility, next, t);
     }
-    return visibility;
+
+    // Release the shadow as the light goes edge-on. A surface the sun only
+    // skims cannot be shadow-mapped: the depth it must resolve across one texel
+    // grows without bound as the incidence approaches a right angle, so neither
+    // the plane fit nor the normal offset has a finite answer there, and what
+    // reaches the screen is the texel grid banding a dim surface.
+    //
+    // Free to give up, because the same angle that breaks the lookup is the one
+    // that removes the light: CookTorrance multiplies this by N.L a line later,
+    // so the band this releases carries almost nothing. Below the threshold the
+    // result would be a guess either way — this makes it a quiet one.
+    return mix(1.0, visibility, smoothstep(0.0, kGrazingShadowFadeNdotL, NdotL));
 }
 
 /// Flat tints for the cascade debug view, one per slice.
