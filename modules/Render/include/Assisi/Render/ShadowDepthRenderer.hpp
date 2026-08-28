@@ -234,10 +234,16 @@ public:
     /// Back faces are culled, always. Keeping the front ones instead was once
     /// the way to stop a surface shadowing itself, and it worked by recording
     /// the far side of the geometry — which displaces every shadow by the
-    /// caster's own thickness and drops single-sided casters entirely. The mesh
-    /// shader's receiver-plane bias handles the self-shadowing exactly and
-    /// displaces nothing, so there is no longer a trade to expose.
-    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias) const;
+    /// caster's own thickness and drops single-sided casters entirely. The slope
+    /// bias here and the normal offset the mesh shader applies cover the same
+    /// self-shadowing without displacing anything, so there is no trade to expose.
+    ///
+    /// @p slopeBias multiplies the polygon's own depth slope; @p slopeBiasClamp
+    /// caps the product, in the same [0, 1] depth the map stores. The cap is the
+    /// widest gap this side can open under a silhouette, so it belongs to the
+    /// map's resolution — see SlopeBiasClampNdc.
+    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
+                                                               float slopeBiasClamp) const;
 
     /// @brief The alpha-testing pipeline for targets shaped like @p prototype,
     /// or null when the variant did not load.
@@ -247,8 +253,8 @@ public:
     /// thin card, where front and back are one coincident surface — cull either
     /// and the caster disappears whenever its winding faces the wrong way for
     /// the light.
-    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreateMaskedPipeline(nvrhi::IFramebuffer *prototype,
-                                                                     float slopeBias) const;
+    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreateMaskedPipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
+                                                                     float slopeBiasClamp) const;
 
     /// @brief Start a frame's view table.
     ///

@@ -35,20 +35,14 @@ constexpr std::uint32_t kInitialCasterCapacity = 1024u;
 /// biases the sample side computes in units it knows.
 constexpr int kEnablingConstantBias = 1;
 
-/// @brief Ceiling on the biased depth, as a fraction of the view's range.
-///
-/// Slope scaling is unbounded: a polygon approaching edge-on to the light has a
-/// depth slope per pixel that runs away, and the bias with it, until the caster
-/// is pushed far enough behind itself to let light under its own shadow. The
-/// clamp is what makes the grazing case finite. Past it the sample side's normal
-/// offset is what carries the surface.
-constexpr float kSlopeBiasClampFraction = 0.01f;
-
-void ApplyDepthBias(nvrhi::RasterState &state, float slopeBias)
+void ApplyDepthBias(nvrhi::RasterState &state, float slopeBias, float slopeBiasClamp)
 {
     state.depthBias = kEnablingConstantBias;
     state.slopeScaledDepthBias = slopeBias;
-    state.depthBiasClamp = kSlopeBiasClampFraction;
+    // Vulkan takes this as a depth, not as a multiple of anything, and it is the
+    // largest gap the caster side can open under a silhouette. The caller sizes
+    // it against the map's texel so it shrinks when the texels do.
+    state.depthBiasClamp = slopeBiasClamp;
 }
 } // namespace
 
@@ -262,8 +256,8 @@ bool ShadowDepthRenderer::CanAlphaTest() const
     return IsReady() && _maskedPixelShader != nullptr && _materialTable != nullptr;
 }
 
-nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFramebuffer *prototype,
-                                                                  float slopeBias) const
+nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
+                                                                  float slopeBiasClamp) const
 {
     if (!IsReady() || prototype == nullptr)
     {
@@ -288,12 +282,12 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFrameb
     // the cascade fit assumes: it pulls each near plane back to the casters
     // precisely so nothing needs clamping to survive.
     pipelineDesc.renderState.rasterState.depthClipEnable = true;
-    ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias);
+    ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias, slopeBiasClamp);
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 
     nvrhi::GraphicsPipelineHandle pipeline = _device->createGraphicsPipeline(pipelineDesc,
-                                                                            prototype->getFramebufferInfo());
+                                                                             prototype->getFramebufferInfo());
     if (pipeline == nullptr)
     {
         Core::Log::Error("ShadowDepthRenderer: failed to create the depth-only pipeline.");
@@ -302,7 +296,7 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFrameb
 }
 
 nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreateMaskedPipeline(nvrhi::IFramebuffer *prototype,
-                                                                        float slopeBias) const
+                                                                        float slopeBias, float slopeBiasClamp) const
 {
     if (!CanAlphaTest() || prototype == nullptr)
     {
@@ -323,12 +317,12 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreateMaskedPipeline(nvrhi::I
     pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
     pipelineDesc.renderState.rasterState.depthClipEnable = true;
-    ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias);
+    ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias, slopeBiasClamp);
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 
     nvrhi::GraphicsPipelineHandle pipeline = _device->createGraphicsPipeline(pipelineDesc,
-                                                                            prototype->getFramebufferInfo());
+                                                                             prototype->getFramebufferInfo());
     if (pipeline == nullptr)
     {
         Core::Log::Error("ShadowDepthRenderer: failed to create the alpha-testing depth pipeline.");

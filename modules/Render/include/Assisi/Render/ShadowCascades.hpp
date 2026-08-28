@@ -132,6 +132,26 @@ struct CascadeFitParams
 /// texels gets a centimetre-scale one, from the same number.
 [[nodiscard]] float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
+/// @brief Ceiling on the rasterizer's slope-scaled bias, in the [0, 1] depth the
+/// shader compares against.
+///
+/// Slope scaling is unbounded: a polygon approaching edge-on to the light gains
+/// depth per pixel without limit, and the bias with it, until the caster sits far
+/// enough behind itself to let light under its own shadow. The clamp is what
+/// makes that finite, and it is therefore the largest contact gap the caster side
+/// can open — so it is quoted in texels, like every other bias here, rather than
+/// as a raw fraction of the depth range.
+///
+/// It needs no cascade because it does not vary by one. A cascade's texel is
+/// `2 * radius / resolution` and its depth range is `2 * radius`, so a texel's
+/// worth of depth is `1 / resolution` in every cascade alike — which is the same
+/// identity that lets one bias setting hold across all of them.
+///
+/// Past this the sample side's normal offset is what carries the surface. That
+/// hand-over is deliberate: the offset is bounded by the sine of the incidence
+/// and so cannot run away, where slope scaling can.
+[[nodiscard]] float SlopeBiasClampNdc(const SunShadowSettings &settings);
+
 /// @brief Half-width of the PCF kernel, in tap steps.
 ///
 /// The tap *count* is the filter's own business (the shader walks a grid or a

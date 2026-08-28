@@ -117,14 +117,19 @@ bool ShadowPass::RebuildPipeline()
         return false;
     }
 
-    _pipeline = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(), _settings.slopeBias);
+    // Sized against the map's texel, so raising the resolution narrows the gap
+    // the slope bias can open instead of widening it.
+    const float slopeBiasClamp = SlopeBiasClampNdc(_settings);
+
+    _pipeline = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(), _settings.slopeBias, slopeBiasClamp);
     if (_pipeline == nullptr)
     {
         return false;
     }
     // Null when the renderer carries no alpha-testing variant. Not a failure:
     // the cascades still render, with cutouts casting their full silhouette.
-    _maskedPipeline = _depthRenderer->CreateMaskedPipeline(_cascadeFramebuffers.front(), _settings.slopeBias);
+    _maskedPipeline = _depthRenderer->CreateMaskedPipeline(_cascadeFramebuffers.front(), _settings.slopeBias,
+                                                           slopeBiasClamp);
     _builtSlopeBias = _settings.slopeBias;
     return true;
 }

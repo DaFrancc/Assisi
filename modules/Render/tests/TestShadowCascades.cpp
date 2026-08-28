@@ -435,6 +435,56 @@ TEST_CASE("The texel size is the map's own, not the filter's reference step")
     CHECK(ShadowTexelSizeUv(settings) == doctest::Approx(1.f / static_cast<float>(settings.resolution)));
 }
 
+TEST_CASE("The slope bias cannot open a gap wider than a few texels")
+{
+    // The clamp is a depth, not a multiple of one, so a value picked as a
+    // fraction of the depth range is a fixed count of texels at one resolution
+    // and twice as many at the next — the caster-side leak then grows with the
+    // quality setting instead of shrinking. Quoted in texels it does the
+    // opposite, which is the only behaviour a quality setting may have.
+    SunShadowSettings coarse;
+    coarse.resolution = 1024u;
+    SunShadowSettings fine;
+    fine.resolution = 4096u;
+
+    CHECK(SlopeBiasClampNdc(fine) < SlopeBiasClampNdc(coarse));
+
+    // Whatever the resolution, the cap is worth the same few texels of depth —
+    // and few enough that the gap under a silhouette stays the size of the
+    // sampling error it exists to cover, not a visible detachment.
+    for (const SunShadowSettings &settings : {coarse, fine})
+    {
+        const float texelsOfDepth = SlopeBiasClampNdc(settings) * static_cast<float>(settings.resolution);
+        CHECK(texelsOfDepth <= 4.f);
+        CHECK(texelsOfDepth > 0.f);
+    }
+}
+
+TEST_CASE("The caster's clamp is the same depth in every cascade")
+{
+    // A cascade's texel is 2r/resolution and its depth range is 2r, so a texel's
+    // worth of depth is 1/resolution wherever it is measured. That identity is
+    // what lets one clamp serve every cascade from a single pipeline; if the fit
+    // ever stopped tying the two to the same radius, this is what would notice.
+    CascadeFitParams params = DefaultParams();
+    params.settings.cascadeCount = 4;
+    params.settings.resolution = 1024u;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 4);
+
+    const float clamp = SlopeBiasClampNdc(params.settings);
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        const float texelDepthNdc = fit.cascades[i].worldUnitsPerTexel / fit.cascades[i].depthRange;
+        CHECK(texelDepthNdc == doctest::Approx(1.f / static_cast<float>(params.settings.resolution)));
+        // So the clamp's worth in world units tracks the cascade it lands in,
+        // without the pipeline ever being told which cascade that is.
+        CHECK(clamp * fit.cascades[i].depthRange ==
+              doctest::Approx(2.f * fit.cascades[i].worldUnitsPerTexel));
+    }
+}
+
 TEST_CASE("A bigger shadow map does not narrow the blur it is filtered with")
 {
     // Kernel offsets are in texels, so a radius measured in the cascade's own

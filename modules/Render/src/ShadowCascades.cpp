@@ -230,6 +230,21 @@ float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings 
     return worldBias / cascade.depthRange;
 }
 
+float SlopeBiasClampNdc(const SunShadowSettings &settings)
+{
+    // Two texels. The slope term is there to cover the depth a caster gains
+    // across a texel, which is a real effect at moderate incidence and a runaway
+    // one past it; capping at two puts the hand-over to the normal offset near
+    // 45 degrees for a slope factor of 2, and bounds the caster-side leak at the
+    // same order as the offset's own. A larger cap does not buy less acne — the
+    // offset already covers the angles above the hand-over — it only widens the
+    // gap under every silhouette, at every resolution, since the cap is a depth
+    // and does not shrink when the texels do.
+    constexpr float kSlopeBiasClampTexels = 2.f;
+    const std::uint32_t resolution = std::max(Sanitized(settings).resolution, 1u);
+    return kSlopeBiasClampTexels / static_cast<float>(resolution);
+}
+
 float FilterRadiusTaps(ShadowFilter filter)
 {
     switch (filter)
