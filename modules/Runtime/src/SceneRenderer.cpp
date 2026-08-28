@@ -347,7 +347,7 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     shadows.fit = &_cascadeFit;
     shadows.settings = _shadowPass.Settings();
     shadows.sunLightIndex = sun->index;
-    shadows.cascadeDebugView = _cascadeDebugView;
+    shadows.debugView = _shadowDebugView;
     return shadows;
 }
 

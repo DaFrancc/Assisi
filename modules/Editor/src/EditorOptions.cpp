@@ -167,13 +167,17 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         ImGui::EndDisabled();
     }
 
-    // Tints the lit image by which cascade shadowed each pixel, so a split
-    // distance and a blend band are visible against the geometry. Runtime only,
-    // not persisted — it is a thing to look at, not a setting.
-    bool cascadeView = frame.renderer.CascadeDebugView();
-    if (ImGui::Checkbox("Cascade View", &cascadeView))
+    // Diagnostics, not settings: runtime only and never persisted. Each one
+    // changes the picture, which is why they are a list with an off entry rather
+    // than checkboxes that could be left on by accident.
+    static const char *const kShadowDebugNames[] = {"Off", "Cascades", "Receiver Gradient", "Gradient Trust"};
+    static_assert(std::size(kShadowDebugNames) == Assisi::Render::kShadowDebugViewCount,
+                  "The debug view list must name every ShadowDebugView.");
+    int debugView = static_cast<int>(frame.renderer.ShadowDebugView());
+    if (ImGui::Combo("Shadow View", &debugView, kShadowDebugNames,
+                     static_cast<int>(Assisi::Render::kShadowDebugViewCount)))
     {
-        frame.renderer.SetCascadeDebugView(cascadeView);
+        frame.renderer.SetShadowDebugView(static_cast<Assisi::Render::ShadowDebugView>(debugView));
     }
 
     const Assisi::Render::ShadowPass::Stats stats = frame.renderer.LastShadowStats();

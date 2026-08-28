@@ -202,10 +202,10 @@ public:
     void SetShadowSettings(const Render::ShadowSettings &settings) { _shadowSettings = settings; }
     [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
 
-    /// @brief Tint the lit image by which cascade shadowed each pixel — the view
-    /// that makes a split distance and a blend band visible. Runtime only.
-    void SetCascadeDebugView(bool enabled) { _cascadeDebugView = enabled; }
-    [[nodiscard]] bool CascadeDebugView() const { return _cascadeDebugView; }
+    /// @brief Which shadow diagnostic the mesh shader draws over the lit image.
+    /// Runtime only, and off by default — every one of these changes the picture.
+    void SetShadowDebugView(Render::ShadowDebugView view) { _shadowDebugView = view; }
+    [[nodiscard]] Render::ShadowDebugView ShadowDebugView() const { return _shadowDebugView; }
 
     /// @brief What the shadow pass drew in the most recent Render(); all zero
     /// when nothing casts. Read against the draw stats: cascades at 0 with a sun
@@ -423,7 +423,7 @@ private:
     glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
     float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
-    bool _cascadeDebugView = false;                                         // tint the image by cascade
+    Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats; // what the shadow pass drew, for the same overlay
 

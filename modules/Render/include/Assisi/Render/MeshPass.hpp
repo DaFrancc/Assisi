@@ -48,6 +48,29 @@ enum class MaterialDebugView : uint32_t
     Emissive,
 };
 
+/// @brief What the shadow lookup draws instead of shading, for diagnosis.
+///
+/// Wire encoding: the shader switches on the integer. Separate from
+/// MaterialDebugView because these describe the lookup rather than the surface,
+/// and because two of them have to run the lookup to have anything to report.
+enum class ShadowDebugView : uint32_t
+{
+    None = 0,
+    /// Tint the lit result by which cascade each pixel sampled — the view that
+    /// makes a split distance or a blend band visible.
+    Cascades,
+    /// The receiver-plane gradient against the slope the cascade trusts: black
+    /// at flat, white at the limit, and saturating past it. A surface that reads
+    /// white is one the plane fit has given up on.
+    ReceiverGradient,
+    /// How much of the plane correction survived the fade — green where it is
+    /// applied whole, red where it has been withdrawn. Acne on a red surface is
+    /// the fade's doing; acne on a green one is not.
+    GradientTrust,
+};
+
+inline constexpr uint32_t kShadowDebugViewCount = 4;
+
 /// @brief The ambient term every surface gets for free, when nobody says otherwise.
 ///
 /// Named rather than left as a literal in three places; anything that wants a
@@ -117,9 +140,8 @@ public:
         /// Which directional light the cascades belong to, as an index into the
         /// buffer the shader reads. Only that light's radiance is shadowed.
         uint32_t sunLightIndex = 0;
-        /// Tint the lit result by which cascade each pixel sampled — the view
-        /// that makes a split distance or a blend band visible.
-        bool cascadeDebugView = false;
+        /// Which diagnostic overlay the shadow lookup draws, if any.
+        ShadowDebugView debugView = ShadowDebugView::None;
     };
 
     /// @brief Everything the per-frame constant buffer carries. Grouped so the

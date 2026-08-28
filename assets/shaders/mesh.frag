@@ -462,6 +462,11 @@ float AttenuationSq(float d2, float radiusSq)
 layout(binding = 7) uniform texture2DArray uShadowCascades;
 layout(binding = 129) uniform samplerShadow uShadowSampler;
 
+// Must match Render::ShadowDebugView.
+const uint kShadowDebugCascades         = 1u;
+const uint kShadowDebugReceiverGradient = 2u;
+const uint kShadowDebugGradientTrust    = 3u;
+
 // Must match Render::ShadowFilter.
 const uint kShadowFilterPoint = 0u;
 const uint kShadowFilterPcf3  = 1u;
@@ -475,6 +480,11 @@ const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
 const float kGoldenAngle        = 2.39996323;
 
+// Where the receiver-plane fit has lost all trust, as a multiple of the limit
+// the cascade quotes. Between the two the correction is faded rather than cut,
+// so no pixel compares differently from the one beside it.
+const float kGradientFadeEnd    = 3.0;
+
 // This fragment's world position differenced across its screen-space quad,
 // taken once in main() before anything branches.
 //
@@ -483,6 +493,13 @@ const float kGoldenAngle        = 2.39996323;
 // behind the cascade blend — branches whose lanes diverge.
 vec3 gWorldDdx = vec3(0.0);
 vec3 gWorldDdy = vec3(0.0);
+
+// What the last cascade lookup made of its receiver, for the diagnostic views.
+// Written by SampleCascade and read only after shading, so nothing in the
+// lighting depends on them — a debug view that changed the picture it is used
+// to judge would be worse than none.
+float gTrust = 1.0;          // fraction of the plane correction that survived the fade
+float gGradientRatio = 0.0;  // gradient magnitude over the slope the cascade trusts
 
 /// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
 /// comparison is made against.
@@ -573,16 +590,18 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 
     // Where the quad straddles two surfaces the fit reports the gap between them
     // rather than a slope, and a correction built on that walks a tap past the
-    // occluder — a band of light along every inside corner, one or two taps of
-    // the kernel wide. That reading is indistinguishable from a receiver almost
-    // edge-on to the light, so the ambiguous case is declined rather than
-    // trusted: no correction, and the constants below carry the tap. Costs a
-    // little acne on a genuinely grazing plane, which is the cheaper mistake.
+    // occluder. That reading cannot be told from a receiver almost edge-on to
+    // the light, so trust is withdrawn as the gradient grows.
+    //
+    // Withdrawn over a range rather than at a threshold. A pixel either side of
+    // a hard cutoff compares differently from its neighbour, and the quads that
+    // straddle an inside corner all cross it together — which draws a line down
+    // every corner in the scene, three pixels wide, exactly where the switch
+    // flips. Fading leaves no edge for that line to form on.
     float limit = uFrame.shadowCascade[cascade].w;
-    if (dot(gradient, gradient) > limit * limit)
-    {
-        gradient = vec2(0.0);
-    }
+    gTrust = 1.0 - smoothstep(limit, limit * kGradientFadeEnd, length(gradient));
+    gGradientRatio = limit > 0.0 ? length(gradient) / limit : 0.0;
+    gradient *= gTrust;
 
     // The comparison sampler snaps to texel centres, so even the centre tap can
     // read half a texel off the plane. That much of the receiver's slope is owed
@@ -885,13 +904,31 @@ void main()
     vec3 ambient = uFrame.ambient.rgb * uFrame.ambient.w;
     vec3 color = ambient * albedo * surf.occlusion + Lo + surf.emissive;
 
-    // Cascade view: tint the lit result rather than replacing it, so a split
-    // distance and a blend band are readable against the geometry that provoked
-    // them. Goes through the tone map like any other radiance — these are bands
-    // to look at, not numbers to read off the screen.
-    if (uFrame.shadowCounts.w != 0u && shadowCascadeCount > 0u)
+    // Shadow diagnostics. The cascade view tints the lit result rather than
+    // replacing it, so a split distance and a blend band are readable against
+    // the geometry that provoked them. The two gradient views replace it: they
+    // answer what the plane fit did here, and a surface's own shading would only
+    // be in the way of reading that.
+    uint shadowDebug = uFrame.shadowCounts.w;
+    if (shadowDebug != 0u && shadowCascadeCount > 0u)
     {
-        color *= CascadeTint(shadowCascade);
+        if (shadowDebug == kShadowDebugCascades)
+        {
+            color *= CascadeTint(shadowCascade);
+        }
+        else if (shadowDebug == kShadowDebugReceiverGradient)
+        {
+            // Black where the receiver is flat to the light, white at the slope
+            // the cascade still trusts, and saturated past it.
+            color = vec3(clamp(gGradientRatio, 0.0, 1.0));
+        }
+        else if (shadowDebug == kShadowDebugGradientTrust)
+        {
+            // Green where the correction is applied whole, red where the fade
+            // has taken it away. Acne on red is the fade's doing; acne on green
+            // is something else, and that distinction is the whole point.
+            color = mix(vec3(1.0, 0.1, 0.1), vec3(0.1, 1.0, 0.1), gTrust);
+        }
     }
 
     // Linear radiance, unbounded. The scene target is float and the tone map is

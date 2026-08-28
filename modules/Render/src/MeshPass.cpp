@@ -287,7 +287,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     const uint32_t cascadeCount = shadows.fit != nullptr ? shadows.fit->count : 0u;
     constants.shadowCounts = glm::uvec4(cascadeCount, shadows.sunLightIndex,
                                         static_cast<uint32_t>(shadows.settings.filter),
-                                        shadows.cascadeDebugView ? 1u : 0u);
+                                        static_cast<uint32_t>(shadows.debugView));
     for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
     {
         constants.shadowCascade[i] = glm::vec4(0.f);
