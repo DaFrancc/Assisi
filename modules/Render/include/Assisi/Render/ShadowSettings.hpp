@@ -224,20 +224,23 @@ struct SunShadowSettings
 
     ShadowFilter filter = ShadowFilter::Pcf3x3;
 
-    /// The depth bias stays small: the plane fit carries the slope it used to
-    /// cover, and sized for the worst case it was a leak that grew with the
-    /// cascade — at a texel and a half the outermost cascade of this preset lied
-    /// about depth by 14 cm, which is a gap under every contact.
-    float depthBiasTexels = 0.5f;
+    /// A quarter texel, and it is not the mechanism. Everything angle-dependent
+    /// is covered by the rasterizer's slope bias on the caster and the normal
+    /// offset on the receiver; what is left for a constant is the depth format's
+    /// quantisation and a receiver curved across the kernel. Raising it past
+    /// that buys nothing and detaches every shadow from its contact edge.
+    float depthBiasTexels = 0.25f;
+
+    /// Slope-scaled, applied by the rasterizer as the map is drawn. The only
+    /// bias that sees the polygon being recorded, so it is the one that can
+    /// answer for that polygon's own tilt.
     float slopeBias = 2.0f;
 
-    /// The normal offset is a texel and a half again, because it no longer
-    /// applies everywhere. The shader scales it by how much of the plane fit had
-    /// to be withdrawn, so it is absent on the surfaces where the fit works —
-    /// which are the ones a large offset used to leak on — and present in full
-    /// on a wall the sun skims, where the fit's slope runs away faster than any
-    /// limit can follow and nothing else is correcting the tap.
-    float normalOffsetTexels = 1.5f;
+    /// One kernel radius of texels, which is the reach the outermost tap has to
+    /// clear. A multiplier rather than an absolute count — CascadeNormalOffsetWorld
+    /// scales it by the filter's reach and the cascade's texel — so a change of
+    /// filter or resolution carries its own bias instead of needing this retuned.
+    float normalOffsetTexels = 1.0f;
 
     /// A third of each cascade. A seam is a step in texel size and the band is
     /// the only thing that turns it into a gradient, so it wants real distance —

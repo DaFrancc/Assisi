@@ -52,4 +52,21 @@ void main()
     vMaterialIndex = instance.materialIndex;
 #endif
     gl_Position = pc.lightViewProjection * (instance.model * vec4(inPosition, 1.0));
+
+    // Pancaking: a caster upstream of the view's near plane is flattened onto it
+    // rather than clipped away. Without this a wall behind the camera stops
+    // casting into the frame the moment it crosses the near plane.
+    //
+    // The alternative is to pull every view's near plane back to the furthest
+    // upstream caster in the scene, which is what this replaces. That kept the
+    // geometry but spent the whole depth range on empty space above it: a view
+    // covering ten metres would carry a range of hundreds, and on a 16-bit map
+    // the quantisation step grows past the bias meant to cover it. Clamping
+    // costs the flattened caster its own depth ordering, which is no loss —
+    // nothing upstream of the near plane is a receiver in this view.
+    //
+    // Valid because the projection is orthographic and w is exactly 1, so this
+    // is a clamp in the depth the comparison will use. It needs no device
+    // feature, unlike disabling depth clip.
+    gl_Position.z = max(gl_Position.z, 0.0);
 }

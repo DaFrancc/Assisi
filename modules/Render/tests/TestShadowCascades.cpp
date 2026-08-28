@@ -296,41 +296,43 @@ TEST_CASE("Each cascade's matrix covers its own slice")
     }
 }
 
-TEST_CASE("A caster upstream of the slice is inside the cascade's depth range")
+TEST_CASE("A cascade's depth range is its own slice, whatever the scene holds")
 {
-    // Geometry behind the camera still shadows what is in front of it. The near
-    // plane has to reach back to it, because the depth clip that would
-    // otherwise clamp it is not something nvrhi can be relied on to disable.
+    // Every bias the shader applies is quoted against this range, and a 16-bit
+    // map's quantisation step is this range over 65536 — so a range stretched to
+    // reach the furthest caster in the scene puts the step above the bias meant
+    // to cover it. Casters upstream of the near plane reach the map by being
+    // flattened onto it in shadow_depth.vert, not by widening this.
     CascadeFitParams params = DefaultParams();
     params.settings.cascadeCount = 1;
     params.settings.maxDistance = 40.f;
 
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 1);
+    CHECK(fit.cascades[0].depthRange == doctest::Approx(2.f * fit.cascades[0].radius));
+
+    // A caster far upstream projects in front of the near plane, which is what
+    // the vertex stage clamps. What matters here is that its existence has not
+    // widened the range.
     const glm::vec3 lightDirection = glm::normalize(params.lightDirection);
+    const glm::vec3 upstream = fit.cascades[0].center - lightDirection * (fit.cascades[0].radius + 30.f);
+    CHECK(ToClip(fit.cascades[0], upstream).z < 0.f);
+}
 
-    const CascadeFit tight = FitCascades(params);
-    REQUIRE(tight.count == 1);
+TEST_CASE("Every cascade keeps a range proportional to the world it covers")
+{
+    // The near cascades are the ones a shared range hurt most: their own extent
+    // is metres while the scene's is hundreds, so they carried a range two
+    // orders of magnitude wider than the depth they actually resolve.
+    CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 1);
 
-    // A caster 30 m upstream of where the slice's own near plane sits.
-    const float sliceNear = glm::dot(tight.cascades[0].center, lightDirection) - tight.cascades[0].radius;
-    const float casterNear = sliceNear - 30.f;
-    params.casterNearAlongLight = casterNear;
-
-    const CascadeFit extended = FitCascades(params);
-    REQUIRE(extended.count == 1);
-
-    // The slice itself is unmoved — pulling the near plane back must not
-    // change which world the cascade covers, only how deep it reaches.
-    CHECK(extended.cascades[0].radius == doctest::Approx(tight.cascades[0].radius));
-    CHECK(glm::length(extended.cascades[0].center - tight.cascades[0].center) < 1e-3f);
-    CHECK(extended.cascades[0].depthRange == doctest::Approx(tight.cascades[0].depthRange + 30.f));
-
-    // A point at the caster's depth, over the middle of the slice, now projects
-    // inside the clip volume instead of in front of it.
-    const glm::vec3 caster =
-        tight.cascades[0].center - lightDirection * (glm::dot(tight.cascades[0].center, lightDirection) - casterNear);
-    CHECK(ToClip(tight.cascades[0], caster).z < 0.f);
-    CHECK(ToClip(extended.cascades[0], caster).z >= -0.001f);
-    CHECK(ToClip(extended.cascades[0], caster).z <= 1.001f);
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        CHECK(fit.cascades[i].depthRange == doctest::Approx(2.f * fit.cascades[i].radius));
+    }
+    CHECK(fit.cascades[0].depthRange < fit.cascades[fit.count - 1].depthRange);
 }
 
 TEST_CASE("Biases scale with the cascade they are applied in")
@@ -355,8 +357,11 @@ TEST_CASE("Biases scale with the cascade they are applied in")
     for (std::uint32_t i = 0; i < fit.count; ++i)
     {
         const ShadowCascade &cascade = fit.cascades[i];
+        // The offset carries the filter's reach as well as the setting; what
+        // this case is about is that both scale with the cascade's texel.
+        const float reach = FilterRadiusTaps(params.settings.filter) + 0.5f;
         CHECK(CascadeNormalOffsetWorld(cascade, params.settings) ==
-              doctest::Approx(3.f * cascade.worldUnitsPerTexel));
+              doctest::Approx(3.f * reach * cascade.worldUnitsPerTexel));
 
         // The depth bias is quoted in the same [0, 1] the shader compares in,
         // so the world distance it stands for is the texel scale times the setting.
@@ -389,31 +394,30 @@ TEST_CASE("The unconditional bias is small enough not to leak on its own")
     CHECK(CascadeDepthBiasNdc(outermost, params.settings) * outermost.depthRange < 0.06f);
 }
 
-TEST_CASE("The gradient limit is the slope a plane could have, in the map's own units")
+TEST_CASE("The normal offset carries the filter's reach, not just a texel")
 {
+    // The tap that has to clear the surface is the outermost one, so an offset
+    // sized for the centre leaves a wide kernel acneing. Tying it to the filter
+    // is what keeps a change of filter from silently needing the knob retuned.
     CascadeFitParams params = DefaultParams();
     const CascadeFit fit = FitCascades(params);
     REQUIRE(fit.count > 0);
+    const ShadowCascade &cascade = fit.cascades[0];
 
-    for (std::uint32_t i = 0; i < fit.count; ++i)
+    float previous = 0.f;
+    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5})
     {
-        const ShadowCascade &cascade = fit.cascades[i];
-        const float limit = CascadeReceiverGradientLimit(cascade, params.settings);
+        params.settings.filter = filter;
+        const float offset = CascadeNormalOffsetWorld(cascade, params.settings);
 
-        // A receiver at exactly the steepest trusted slope reads right at the
-        // limit: crossing the whole map is 2r of world per unit of UV, and
-        // depthRange of world per unit of the depth the shader compares in.
-        const float atLimit = kMaxReceiverPlaneSlope * (2.f * cascade.radius) / cascade.depthRange;
-        CHECK(limit == doctest::Approx(atLimit));
+        const float expected = params.settings.normalOffsetTexels * (FilterRadiusTaps(filter) + 0.5f) *
+                               cascade.worldUnitsPerTexel;
+        CHECK(offset == doctest::Approx(expected));
 
-        // A plane at 45 degrees is an ordinary receiver and must survive the
-        // test, or the correction would be declined on a floor lit from above.
-        const float atFortyFive = (2.f * cascade.radius) / cascade.depthRange;
-        CHECK(atFortyFive < limit);
+        // A wider kernel always asks for more, never less.
+        CHECK(offset > previous);
+        previous = offset;
     }
-
-    // A degenerate cascade trusts nothing rather than dividing by zero.
-    CHECK(CascadeReceiverGradientLimit(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
 }
 
 TEST_CASE("The texel size is the map's own, not the filter's reference step")

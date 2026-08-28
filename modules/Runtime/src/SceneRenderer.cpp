@@ -336,7 +336,6 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     fitParams.nearZ = camera.nearZ;
     fitParams.farZ = camera.farZ;
     fitParams.lightDirection = sun->direction;
-    fitParams.casterNearAlongLight = _shadowCasters.nearAlongLight;
     // The pass's own copy, not ours: Configure sanitized it, and the fit has to
     // agree with the array that was actually allocated.
     fitParams.settings = _shadowPass.Settings();

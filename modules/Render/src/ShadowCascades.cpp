@@ -185,18 +185,20 @@ CascadeFit FitCascades(const CascadeFitParams &params)
         const float worldUnitsPerTexel = 2.f * sphere.radius / static_cast<float>(settings.resolution);
         const glm::vec3 center = SnapToTexelGrid(sphere.center, lightRotation, worldUnitsPerTexel);
 
-        // Where the slice sits along the light, and how far upstream of it a
-        // caster can still be. Pulling the near plane back to the casters is
-        // what keeps geometry behind the camera from being clipped out of the
-        // map — nvrhi only honours a disabled depth clip where the device has
-        // EXT_depth_clip_enable, so clamping cannot be relied on to do it.
+        // The slice's own extent along the light, and nothing more. A caster
+        // upstream of the near plane still reaches the map: shadow_depth.vert
+        // flattens it onto the plane rather than letting it clip, which costs it
+        // an ordering it does not need — nothing upstream of the near plane is a
+        // receiver in this view.
+        //
+        // The range stays the slice's because every depth-unit bias is quoted
+        // against it. Stretching it to reach the furthest caster in the scene
+        // makes the range the scene's extent for every cascade, which a float
+        // map absorbs and a 16-bit one does not: the quantisation step grows
+        // with it until it passes the constant bias meant to cover it.
         const float centerAlongLight = glm::dot(center, lightDirection);
-        const float sliceNearAlongLight = centerAlongLight - sphere.radius;
-        const float nearAlongLight =
-            params.casterNearAlongLight.has_value() && std::isfinite(*params.casterNearAlongLight)
-                ? std::min(sliceNearAlongLight, *params.casterNearAlongLight)
-                : sliceNearAlongLight;
-        const float depthRange = (centerAlongLight + sphere.radius) - nearAlongLight;
+        const float nearAlongLight = centerAlongLight - sphere.radius;
+        const float depthRange = 2.f * sphere.radius;
 
         // The eye moves only along the light, so its light-space XY still match
         // the snapped centre's and the texel lattice survives the pull-back.
@@ -286,20 +288,14 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
 
 float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
-    return settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
-}
-
-float CascadeReceiverGradientLimit(const ShadowCascade &cascade, const SunShadowSettings &settings)
-{
-    (void)settings; // the limit is the cascade's geometry; the filter does not enter it
-    if (!(cascade.depthRange > 0.f))
-    {
-        return 0.f;
-    }
-    // A world slope becomes a gradient in UV by the box's width, and a gradient
-    // in comparison depth by its range: the full traverse of the map is 2r of
-    // world across one unit of UV, and depthRange of world across one of depth.
-    return kMaxReceiverPlaneSlope * (2.f * cascade.radius) / cascade.depthRange;
+    const SunShadowSettings safe = Sanitized(settings);
+    // The tap that has to clear the surface is the outermost one, not the
+    // centre, so the reach the offset must cover is the kernel's — plus the half
+    // texel the hardware's own bilinear comparison spreads over before any
+    // kernel is applied. A filter change then carries its own bias with it
+    // instead of silently needing the knob retuned.
+    const float reachTexels = FilterRadiusTaps(safe.filter) + 0.5f;
+    return safe.normalOffsetTexels * reachTexels * cascade.worldUnitsPerTexel;
 }
 
 } // namespace Assisi::Render

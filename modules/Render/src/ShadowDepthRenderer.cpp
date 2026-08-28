@@ -18,6 +18,38 @@ namespace
 /// Starting capacity of the instance and indirect-args buffers, in records.
 /// Grown geometrically past this; a first level typically fits without one.
 constexpr std::uint32_t kInitialCasterCapacity = 1024u;
+
+/// @brief Apply the caster-side depth bias to @p state.
+///
+/// The slope-scaled term is the one that matters: it is the polygon's own depth
+/// slope per pixel, which is format-independent and is what a surface tilted
+/// away from the light needs to stop shadowing itself.
+///
+/// The constant term has to be non-zero anyway, and that is not a tuning
+/// decision. Vulkan applies no bias at all unless depthBiasEnable is set, and
+/// nvrhi derives that flag from this field alone — a pipeline that sets only
+/// the slope factor gets neither. One unit is the smallest value that turns the
+/// state on: the spec scales it by an implementation-defined minimum resolvable
+/// difference, so a larger number would mean different things on different
+/// devices and formats, and anything that has to be portable belongs in the
+/// biases the sample side computes in units it knows.
+constexpr int kEnablingConstantBias = 1;
+
+/// @brief Ceiling on the biased depth, as a fraction of the view's range.
+///
+/// Slope scaling is unbounded: a polygon approaching edge-on to the light has a
+/// depth slope per pixel that runs away, and the bias with it, until the caster
+/// is pushed far enough behind itself to let light under its own shadow. The
+/// clamp is what makes the grazing case finite. Past it the sample side's normal
+/// offset is what carries the surface.
+constexpr float kSlopeBiasClampFraction = 0.01f;
+
+void ApplyDepthBias(nvrhi::RasterState &state, float slopeBias)
+{
+    state.depthBias = kEnablingConstantBias;
+    state.slopeScaledDepthBias = slopeBias;
+    state.depthBiasClamp = kSlopeBiasClampFraction;
+}
 } // namespace
 
 void ShadowDrawList::Clear()
@@ -256,10 +288,7 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFrameb
     // the cascade fit assumes: it pulls each near plane back to the casters
     // precisely so nothing needs clamping to survive.
     pipelineDesc.renderState.rasterState.depthClipEnable = true;
-    // Slope-scaled only. The constant half of the bias is applied per view at
-    // sample time, where it can be scaled by that view's texel size — which one
-    // rasterizer state, shared by every view, cannot do.
-    pipelineDesc.renderState.rasterState.slopeScaledDepthBias = slopeBias;
+    ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias);
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 
@@ -294,7 +323,7 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreateMaskedPipeline(nvrhi::I
     pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
     pipelineDesc.renderState.rasterState.depthClipEnable = true;
-    pipelineDesc.renderState.rasterState.slopeScaledDepthBias = slopeBias;
+    ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias);
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 

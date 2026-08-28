@@ -298,12 +298,11 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
         const ShadowCascade &cascade = shadows.fit->cascades[i];
         constants.shadowCascade[i] = glm::vec4(cascade.splitFarView,
                                                CascadeDepthBiasNdc(cascade, shadows.settings),
-                                               CascadeNormalOffsetWorld(cascade, shadows.settings),
-                                               CascadeReceiverGradientLimit(cascade, shadows.settings));
+                                               CascadeNormalOffsetWorld(cascade, shadows.settings), 0.f);
         constants.shadowViewProjection[i] = cascade.viewProjection;
     }
-    constants.shadowParams = glm::vec4(FilterTapStepUv(shadows.settings), shadows.settings.cascadeBlend,
-                                       ShadowTexelSizeUv(shadows.settings), 0.f);
+    constants.shadowParams =
+        glm::vec4(FilterTapStepUv(shadows.settings), shadows.settings.cascadeBlend, 0.f, 0.f);
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

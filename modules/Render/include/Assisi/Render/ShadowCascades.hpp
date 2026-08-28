@@ -23,7 +23,6 @@
 ///     half a texel resamples every edge in the map and the shadow crawls.
 
 #include <array>
-#include <optional>
 
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -83,22 +82,6 @@ struct CascadeFitParams
 
     /// The direction the light travels (not the direction toward it).
     glm::vec3 lightDirection{0.f, -1.f, 0.f};
-
-    /// The smallest `dot(p, lightDirection)` reached by any shadow caster, its
-    /// bounding radius included — how far upstream of the camera geometry still
-    /// throws shadows into view. Every cascade's near plane is pulled back to
-    /// it, so a wall behind the camera still shadows the ground in front of it.
-    ///
-    /// Absent means no casters were gathered, and each cascade keeps its own
-    /// sphere as its near plane.
-    ///
-    /// One value for every cascade rather than one each: a per-cascade minimum
-    /// would keep the near slices' depth ranges tight, at the cost of a second
-    /// pass over the casters. The cost of sharing is depth precision — the
-    /// range becomes the scene's extent along the light instead of the slice's
-    /// — which D32 absorbs completely and D16 absorbs down to millimetres over
-    /// any level this engine loads.
-    std::optional<float> casterNearAlongLight;
 
     SunShadowSettings settings;
 };
@@ -168,38 +151,8 @@ struct CascadeFitParams
 ///
 /// Not the same as FilterTapStepUv, which is quoted against a fixed reference
 /// resolution and so stops shrinking once the map passes it. This is the real
-/// texel — what the comparison sampler snaps a tap onto, and therefore how far
-/// off the receiver's plane a tap can land before its kernel offset is even
-/// considered.
+/// texel, which is what the comparison sampler snaps a tap onto.
 [[nodiscard]] float ShadowTexelSizeUv(const SunShadowSettings &settings);
-
-/// @brief The steepest receiver the plane fit is trusted to describe, as world
-/// depth gained per world unit travelled across the map.
-///
-/// A receiver-plane gradient is differenced from the fragment's screen-space
-/// quad, and is only a slope while that quad lies on one surface. Where two
-/// meet — an inside corner, a silhouette — it spans both, and what it reports
-/// is the gap between them rather than any surface's slope.
-///
-/// The two cases are indistinguishable from the gradient alone: a plane nearly
-/// edge-on to the light and a quad straddling a corner both report an enormous
-/// number. So the ambiguous case needs a default, and the default is to decline.
-/// Past this limit the gradient is dropped and the tap compares uncorrected,
-/// which costs a little acne where a very grazing receiver really was a plane.
-/// The alternative default — correcting by as much as the limit allows — spends
-/// that same ambiguity on lighting a band along every inside edge, which is the
-/// leak the plane bias exists to remove.
-///
-/// Four is a receiver about 76 degrees off face-on. Past that a texel spans
-/// enough of the surface that the kernel cannot resolve its slope anyway.
-inline constexpr float kMaxReceiverPlaneSlope = 4.0f;
-
-/// @brief The largest gradient the plane fit may report before it is treated as
-/// spanning a discontinuity, in comparison depth per unit of shadow-map UV.
-///
-/// A cascade's own quantity: a given world slope becomes a steeper gradient in
-/// UV the wider the cascade's box is, and a shallower one the deeper its range.
-[[nodiscard]] float CascadeReceiverGradientLimit(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 /// @brief How many screen pixels one of this cascade's texels covers, for a
 /// surface at @p viewDistance.
@@ -225,14 +178,24 @@ inline constexpr float kMaxReceiverPlaneSlope = 4.0f;
 /// defect this exists to catch.
 [[nodiscard]] float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
-/// @brief How far along the surface normal a sample is pushed, in world units.
+/// @brief How far along the surface normal a sample is pushed, in world units,
+/// before the shader scales it by the sine of the light's incidence.
 ///
-/// The same auto-scaling as the depth bias. Both are small by default and meant
-/// to stay that way: what used to justify a large one — a receiver sloped
-/// across the filter kernel — is corrected per tap by the mesh shader's
-/// receiver-plane bias, and the residue these cover does not grow with the
-/// angle to the light. Growing either buys a leak along every silhouette,
-/// widening with the cascade because a texel does.
+/// The main defence against acne on this side, and the one the constants above
+/// deliberately do not try to be. Moving the lookup off the surface covers a
+/// texel's worth of the surface's own depth at any angle, where a constant
+/// large enough to do the same at grazing incidence would detach every shadow
+/// from its contact edge at head-on incidence.
+///
+/// Scaled by the cascade's texel and by the filter's reach, because the tap
+/// that has to clear the surface is the outermost one. The setting is therefore
+/// a multiplier on "one kernel radius of texels" rather than an absolute count,
+/// so changing the filter does not silently require retuning it.
+///
+/// Its cost is bounded and worth stating: a lookup moved this far can read past
+/// an occluder that is nearer than the offset, so the offset is also the largest
+/// contact gap the shadow can show. That is why it is quoted in texels — the
+/// error it hides scales with a texel, so the leak it trades for should too.
 [[nodiscard]] float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 } // namespace Assisi::Render

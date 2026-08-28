@@ -445,27 +445,25 @@ float AttenuationSq(float d2, float radiusSq)
 // sampler: the hardware tests the reference against four texels and returns the
 // blended result, so even the one-tap filter comes back soft to a texel.
 //
-// The bias that does the work is per tap and derived from the surface: each tap
-// is corrected onto the plane this fragment lies on, so a receiver at any angle
-// to the light compares against the depth its own geometry predicts. See
-// ReceiverPlaneDepthGradient.
+// Three biases, in the order they do work. The rasterizer offsets each caster by
+// its own depth slope while the map is drawn, which is the only one that can see
+// the polygon being recorded. The sample side then moves the lookup along the
+// surface normal by the sine of the light's incidence, which is what covers a
+// texel's worth of surface at any angle without running away at the grazing end.
+// A small constant covers what is left: the depth format's quantisation, and a
+// receiver curved across the kernel.
 //
-// Two constants back it up, both scaled CPU-side by the cascade's world-per-texel
+// Both sample-side terms are scaled CPU-side by the cascade's world-per-texel,
 // so one setting holds across cascades whose texels differ by an order of
-// magnitude. Both are small and must stay small. They cover only what the plane
-// cannot — depth quantisation, and a receiver curved across the kernel — and
-// every unit of either is a leak: the depth bias lies about how deep the surface
-// is, which detaches a shadow from its contact edge, and the normal offset moves
-// the lookup itself, which at a concave corner walks it out of the occluder's
-// shadow and lights the floor at the foot of the wall.
+// magnitude. Neither is asked to cover slope — that is the rasterizer's job, and
+// a constant large enough to do it is a constant large enough to detach every
+// shadow from its contact edge.
 
 layout(binding = 7) uniform texture2DArray uShadowCascades;
 layout(binding = 129) uniform samplerShadow uShadowSampler;
 
 // Must match Render::ShadowDebugView.
-const uint kShadowDebugCascades         = 1u;
-const uint kShadowDebugReceiverGradient = 2u;
-const uint kShadowDebugGradientTrust    = 3u;
+const uint kShadowDebugCascades = 1u;
 
 // Must match Render::ShadowFilter.
 const uint kShadowFilterPoint = 0u;
@@ -479,37 +477,6 @@ const uint kShadowFilterVogel = 3u;
 const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
 const float kGoldenAngle        = 2.39996323;
-
-// Where the receiver-plane fit has lost all trust, as a multiple of the limit
-// the cascade quotes. Between the two the correction is faded rather than cut,
-// so no pixel compares differently from the one beside it.
-const float kGradientFadeEnd    = 3.0;
-
-// Incidence below which the shadow is released rather than resolved, as N.L.
-// 0.2 is about 78 degrees off head-on, which is roughly where the plane fit
-// reaches its own limit — so the two give up together rather than leaving a
-// band of angles that neither serves.
-const float kGrazingShadowFadeNdotL = 0.2;
-
-// This fragment's world position differenced across its screen-space quad,
-// taken once in main() before anything branches.
-//
-// Hoisted out of the shadow code because a derivative is only defined where the
-// whole quad agrees to take it, and every shadow lookup sits behind N.L and
-// behind the cascade blend — branches whose lanes diverge.
-vec3 gWorldDdx = vec3(0.0);
-vec3 gWorldDdy = vec3(0.0);
-
-// What the last cascade lookup made of its receiver, for the diagnostic views.
-// Written by SampleCascade and read only after shading, so nothing in the
-// lighting depends on them — a debug view that changed the picture it is used
-// to judge would be worse than none.
-float gTrust = 1.0;          // fraction of the plane correction that survived the fade
-float gGradientRatio = 0.0;  // gradient magnitude over the slope the cascade trusts
-// Whether a lookup happened at all. A surface facing away from the sun never
-// reaches one, and without this it would report the defaults above — reading as
-// a fully trusted fit on a surface the fit never saw.
-bool gSampled = false;
 
 /// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
 /// comparison is made against.
@@ -526,96 +493,42 @@ vec3 ShadowCoord(uint cascade, vec3 worldPos)
     return vec3(ndc.xy * vec2(0.5, -0.5) + 0.5, ndc.z);
 }
 
-/// How much the map's depth changes per unit of its UV, along the plane this
-/// fragment lies on.
-///
-/// A filter tap reads a texel away from the fragment's own lookup, and on a
-/// receiver the light does not strike head-on that texel is legitimately at a
-/// different depth. Comparing every tap against the centre's depth is therefore
-/// wrong by the receiver's own slope across the kernel, and the only way to keep
-/// that from reading as acne without this is a constant bias sized for the
-/// steepest surface in the scene — which is the bias that detaches contact
-/// shadows and opens a gap along every silhouette.
-///
-/// Returns zero where the quad projects to a line in the map, which is a
-/// receiver edge-on to the light: there is no plane there to recover a slope
-/// from, and the constants below are what covers it.
-vec2 ReceiverPlaneDepthGradient(uint cascade, vec3 worldPos)
+float ShadowTap(vec2 uv, uint cascade, float reference)
 {
-    vec3 base = ShadowCoord(cascade, worldPos);
-    vec3 dx   = ShadowCoord(cascade, worldPos + gWorldDdx) - base;
-    vec3 dy   = ShadowCoord(cascade, worldPos + gWorldDdy) - base;
-
-    // Solving [dx.xy; dy.xy] * (ddepth/du, ddepth/dv) = (dx.z, dy.z) by Cramer.
-    float det = dx.x * dy.y - dx.y * dy.x;
-    if (abs(det) < 1e-9)
-    {
-        return vec2(0.0);
-    }
-    return vec2(dx.z * dy.y - dx.y * dy.z, dx.x * dy.z - dx.z * dy.x) / det;
+    return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
 }
 
-/// One comparison tap, @p offset from the lookup centre, corrected onto the
-/// receiver's own plane.
-///
-/// @p gradient is already known to describe a surface — SampleCascade drops it
-/// where it does not — so the correction is applied whole. Bounding it here
-/// instead would be the wrong shape: a gradient too large to trust would still
-/// come through at the bound, which is the largest wrong answer available
-/// rather than none.
-float ShadowTap(vec2 uv, vec2 offset, uint cascade, float reference, vec2 gradient)
-{
-    return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler),
-                   vec4(uv + offset, float(cascade), reference + dot(offset, gradient)));
-}
-
-// Rotates the Vogel disk per pixel so its 12 taps read as noise rather than as
-// 12 repeated copies of the same rosette.
+// Rotates the Vogel disk per pixel so its taps read as noise rather than as
+// repeated copies of the same rosette.
 float InterleavedGradientNoise(vec2 position)
 {
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
+///
+/// @p N is the geometric normal, not the shaded one. The offset below has to
+/// move the lookup off the surface that is actually in the depth map, and a
+/// normal map describes a surface no caster ever rasterized: biasing along it
+/// tilts the lookup by whatever the texture says, which reads as lit speckle in
+/// the pattern of the normal map inside an otherwise correct shadow.
 float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 {
-    // The fit is read at the fragment's own position, before any offset moves it.
-    // The offset below is decided by what the fit is worth, so it cannot also be
-    // an input to it.
-    vec2  gradient = ReceiverPlaneDepthGradient(cascade, worldPos);
-    float limit    = uFrame.shadowCascade[cascade].w;
-    float mag      = length(gradient);
-
-    // Where the quad straddles two surfaces the fit reports the gap between them
-    // rather than a slope, and a correction built on that walks a tap past the
-    // occluder. That reading cannot be told from a receiver almost edge-on to
-    // the light, so trust is withdrawn as the gradient grows.
+    // Along the normal, scaled by the sine of the light's incidence.
     //
-    // Withdrawn over a range rather than at a threshold. A pixel either side of
-    // a hard cutoff compares differently from its neighbour, and the quads that
-    // straddle an inside corner all cross it together — which draws a line down
-    // every corner in the scene, three pixels wide, exactly where the switch
-    // flips. Fading leaves no edge for that line to form on.
-    float trust = 1.0 - smoothstep(limit, limit * kGradientFadeEnd, mag);
-    gradient *= trust;
-
-    gTrust         = trust;
-    gGradientRatio = limit > 0.0 ? mag / limit : 0.0;
-    gSampled       = true;
-
-    // The two biases hand off rather than stack. The plane fit is exact while it
-    // holds and needs no help; where it is withdrawn — a wall the sun skims,
-    // whose slope runs away faster than any finite limit can follow — nothing
-    // else is correcting the tap, and the offset has to carry it alone.
+    // Sine because that is the geometry: a texel covers a fixed distance across
+    // the map, and the depth the surface gains over it is that distance times
+    // the tangent of the incidence — but the offset only has to clear the
+    // surface, not match its depth, and moving along the normal covers the same
+    // error with the sine. The difference matters at the edge: tangent runs away
+    // to infinity as the light goes edge-on and needs clamping, sine tops out at
+    // one, so the offset is bounded by construction and the worst it can ever do
+    // is a filter radius of leak.
     //
-    // Gating it on the handover is what keeps it from leaking. Applied
-    // everywhere it walks the lookup out of an occluder at inside corners, which
-    // is the whole of the original bug; applied only where the fit has given up,
-    // it lands on surfaces the light barely reaches to begin with. The incidence
-    // term stays as a floor, because a receiver can be grazing before its
-    // gradient says so.
-    float slope     = max(clamp(1.0 - NdotL, 0.0, 1.0), 1.0 - trust);
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * slope);
+    // Scaled by the filter's reach as well as the texel, because the tap that
+    // has to clear the surface is the outermost one, not the centre.
+    float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
+    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
 
     vec3 coord = ShadowCoord(cascade, biasedPos);
     vec2 uv    = coord.xy;
@@ -628,36 +541,29 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         return 1.0;
     }
 
-    // The comparison sampler snaps to texel centres, so even the centre tap can
-    // read half a texel off the plane. That much of the receiver's slope is owed
-    // before the kernel reaches anywhere.
-    float texel     = uFrame.shadowParams.z;
-    float centred   = 0.5 * texel * (abs(gradient.x) + abs(gradient.y));
-    float reference = coord.z - uFrame.shadowCascade[cascade].y - centred;
+    // What is left for a constant to cover once the offset has moved the lookup
+    // and the rasterizer has biased the caster by its own slope: the depth
+    // format's quantisation, and a receiver curved across the kernel. Neither
+    // grows with the angle to the light, which is why this stays small.
+    float reference = coord.z - uFrame.shadowCascade[cascade].y;
 
-    // The UV distance between taps. Deliberately not one texel of this map: a
-    // radius quoted in the cascade's own texels would shrink every time the
-    // resolution went up, so raising the quality setting would harden the
-    // shadow rather than improve it. See Render::FilterTapStepUv.
-    float step = uFrame.shadowParams.x;
+    float step       = uFrame.shadowParams.x;
     uint  filterMode = uFrame.shadowCounts.z;
 
     if (filterMode == kShadowFilterPoint)
     {
-        return ShadowTap(uv, vec2(0.0), cascade, reference, gradient);
+        return ShadowTap(uv, cascade, reference);
     }
 
     if (filterMode == kShadowFilterVogel)
     {
-        // A dozen taps on a disk, rotated per pixel. Trades the grid's banding
-        // for noise, which reads as a softer edge at a third of 5x5's taps.
         float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
         float sum = 0.0;
         for (uint i = 0u; i < kVogelTaps; ++i)
         {
             float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
             float theta = float(i) * kGoldenAngle + phi;
-            sum += ShadowTap(uv, vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference, gradient);
+            sum += ShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference);
         }
         return sum / float(kVogelTaps);
     }
@@ -669,7 +575,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             for (int x = -2; x <= 2; ++x)
             {
-                sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient);
+                sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
             }
         }
         return sum * (1.0 / 25.0);
@@ -680,11 +586,12 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     {
         for (int x = -1; x <= 1; ++x)
         {
-            sum += ShadowTap(uv, vec2(float(x), float(y)) * step, cascade, reference, gradient);
+            sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
         }
     }
     return sum * (1.0 / 9.0);
 }
+
 
 /// The sun's visibility at this fragment, blended across the cascade seam.
 /// Reports which cascade it read in @p outCascade, for the debug view.
@@ -734,17 +641,7 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
         visibility = mix(visibility, next, t);
     }
 
-    // Release the shadow as the light goes edge-on. A surface the sun only
-    // skims cannot be shadow-mapped: the depth it must resolve across one texel
-    // grows without bound as the incidence approaches a right angle, so neither
-    // the plane fit nor the normal offset has a finite answer there, and what
-    // reaches the screen is the texel grid banding a dim surface.
-    //
-    // Free to give up, because the same angle that breaks the lookup is the one
-    // that removes the light: CookTorrance multiplies this by N.L a line later,
-    // so the band this releases carries almost nothing. Below the threshold the
-    // result would be a guess either way — this makes it a quiet one.
-    return mix(1.0, visibility, smoothstep(0.0, kGrazingShadowFadeNdotL, NdotL));
+    return visibility;
 }
 
 /// Flat tints for the cascade debug view, one per slice.
@@ -785,12 +682,6 @@ uint ClusterIndex()
 
 void main()
 {
-    // Before the discard below, and before every branch: a quad whose lanes have
-    // diverged cannot difference anything, and a lane killed by the alpha test
-    // still has to contribute its corner to its neighbours' derivative.
-    gWorldDdx = dFdx(vWorldPos);
-    gWorldDdy = dFdy(vWorldPos);
-
     Surface surf = SampleMaterial();
 
 #ifdef ASSISI_ALPHA_MASK
@@ -874,10 +765,19 @@ void main()
             // away a line later. Sampling the cascade first told it something it
             // already knew, at sixteen comparison fetches a fragment — and about
             // half the surfaces in any scene face away from a given light.
-            float NdotL = dot(N, L);
-            if (NdotL > 0.0)
+            //
+            // The shadow reads the geometric normal, not the shaded one. What is
+            // in the depth map is the geometry a caster rasterized; a normal map
+            // describes a surface that was never drawn into it, so biasing along
+            // it tilts the lookup by whatever the texture says and lights
+            // speckles in the pattern of the map inside a correct shadow. The
+            // lighting below keeps the shaded normal — that part is not geometry.
+            vec3  Ng          = normalize(vNormal);
+            float NgdotL      = dot(Ng, L);
+            float NdotL       = dot(N, L);
+            if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= SunVisibility(N, L, shadowCascade, NdotL);
+                radiance *= SunVisibility(Ng, L, shadowCascade, NgdotL);
             }
         }
         Lo += CookTorrance(brdf, N, V, L, radiance);
@@ -940,34 +840,13 @@ void main()
     vec3 ambient = uFrame.ambient.rgb * uFrame.ambient.w;
     vec3 color = ambient * albedo * surf.occlusion + Lo + surf.emissive;
 
-    // Shadow diagnostics. The cascade view tints the lit result rather than
-    // replacing it, so a split distance and a blend band are readable against
-    // the geometry that provoked them. The two gradient views replace it: they
-    // answer what the plane fit did here, and a surface's own shading would only
-    // be in the way of reading that.
-    uint shadowDebug = uFrame.shadowCounts.w;
-    if (shadowDebug != 0u && shadowCascadeCount > 0u)
+    // Cascade view: tint the lit result rather than replacing it, so a split
+    // distance and a blend band are readable against the geometry that provoked
+    // them. Goes through the tone map like any other radiance — these are bands
+    // to look at, not numbers to read off the screen.
+    if (uFrame.shadowCounts.w == kShadowDebugCascades && shadowCascadeCount > 0u)
     {
-        if (shadowDebug == kShadowDebugCascades)
-        {
-            color *= CascadeTint(shadowCascade);
-        }
-        else if (shadowDebug == kShadowDebugReceiverGradient)
-        {
-            // Black where the receiver is flat to the light, white at the slope
-            // the cascade still trusts, and saturated past it. Blue where no
-            // lookup happened, so an unsampled surface cannot be mistaken for a
-            // flat one — both would otherwise be black.
-            color = gSampled ? vec3(clamp(gGradientRatio, 0.0, 1.0)) : vec3(0.1, 0.1, 0.4);
-        }
-        else if (shadowDebug == kShadowDebugGradientTrust)
-        {
-            // Green where the correction is applied whole, red where the fade
-            // has taken it away, blue where nothing was sampled. Acne on red is
-            // the fade's doing; acne on green is something else, and that
-            // distinction is the whole point of the view.
-            color = gSampled ? mix(vec3(1.0, 0.1, 0.1), vec3(0.1, 1.0, 0.1), gTrust) : vec3(0.1, 0.1, 0.4);
-        }
+        color *= CascadeTint(shadowCascade);
     }
 
     // Linear radiance, unbounded. The scene target is float and the tone map is
