@@ -170,7 +170,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // Diagnostics, not settings: runtime only and never persisted. Each one
     // changes the picture, which is why they are a list with an off entry rather
     // than checkboxes that could be left on by accident.
-    static const char *const kShadowDebugNames[] = {"Off", "Cascades", "Occluder Margin"};
+    static const char *const kShadowDebugNames[] = {"Off", "Cascades", "Occluder Margin", "Filter Taps"};
     static_assert(std::size(kShadowDebugNames) == Assisi::Render::kShadowDebugViewCount,
                   "The debug view list must name every ShadowDebugView.");
     int debugView = static_cast<int>(frame.renderer.ShadowDebugView());

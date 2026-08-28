@@ -60,15 +60,22 @@ enum class ShadowDebugView : uint32_t
     /// makes a split distance or a blend band visible.
     Cascades,
     /// The distance, in metres, between the fragment and the occluder the map
-    /// recorded at its own lookup: green in front of it, red behind it, blue
-    /// where the lookup left the cascade. Reads the centre texel unfiltered,
-    /// because the comparison sampler returns a fraction and a fraction cannot
-    /// distinguish the map holding the wrong occluder from it holding the right
-    /// one at the wrong depth.
+    /// recorded at its own lookup: red where one sits nearer the light (which is
+    /// what shadow looks like), green where nothing does, blue where the lookup
+    /// left the cascade. Reads the centre texel unfiltered, because the
+    /// comparison sampler returns a fraction and a fraction cannot distinguish
+    /// the map holding the wrong occluder from it holding the right one at the
+    /// wrong depth.
     Margin,
+    /// The filtered visibility against the centre tap's own answer: red where the
+    /// kernel reports light the centre does not. That is the footprint reaching
+    /// past the occluder's silhouette in the map — a receiver close enough to the
+    /// edge of what shades it that the filter samples around it. No bias can
+    /// reach it, because none of those taps is a depth error.
+    Taps,
 };
 
-inline constexpr uint32_t kShadowDebugViewCount = 3;
+inline constexpr uint32_t kShadowDebugViewCount = 4;
 
 /// @brief The ambient term every surface gets for free, when nobody says otherwise.
 ///

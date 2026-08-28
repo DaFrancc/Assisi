@@ -470,6 +470,7 @@ layout(binding = 129) uniform samplerShadow uShadowSampler;
 // Must match Render::ShadowDebugView.
 const uint kShadowDebugCascades = 1u;
 const uint kShadowDebugMargin   = 2u;
+const uint kShadowDebugTaps     = 3u;
 
 // Must match Render::ShadowFilter.
 const uint kShadowFilterPoint = 0u;
@@ -894,8 +895,9 @@ void main()
     // right one at the wrong depth.
     //
     //   blue    the lookup left the cascade, so the map was never asked
-    //   green   an occluder in front of the fragment, brighter the further
-    //   red     nothing in front of it: the fragment is lit, and by how much
+    //   red     an occluder nearer the light than the fragment, brighter the
+    //           deeper it sits in front — this is what being shadowed looks like
+    //   green   nothing in front of the fragment: the map says it is lit
     //   black   the two agree to within a millimetre, which is the ambiguous case
     if (uFrame.shadowCounts.w == kShadowDebugMargin && shadowCascadeCount > 0u)
     {
@@ -911,6 +913,31 @@ void main()
 
         color = probe.outside ? vec3(0.0, 0.0, 1.0)
                               : (margin >= 0.0 ? vec3(0.0, scaled, 0.0) : vec3(scaled, 0.0, 0.0));
+    }
+
+    // Tap view: what the kernel answers against what its own centre answers.
+    // The margin view can only report the texel under the lookup; this reports
+    // whether the taps around it agree with it.
+    //
+    //   black   both shadowed — the ordinary case inside a shadow
+    //   yellow  both lit — the ordinary case outside one
+    //   red     the kernel finds light the centre does not, which is the
+    //           footprint reaching past the silhouette of what shades this
+    //           fragment. The width of a red band is the kernel's own radius.
+    if (uFrame.shadowCounts.w == kShadowDebugTaps && shadowCascadeCount > 0u)
+    {
+        vec3  Ng   = normalize(vNormal);
+        vec3  sunL = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
+        float NdotL = dot(Ng, sunL);
+
+        ShadowProbe probe    = ProbeCascade(shadowCascade, vWorldPos, Ng, NdotL);
+        float       filtered = SampleCascade(shadowCascade, vWorldPos, Ng, NdotL);
+        float       centre   = ShadowTap(ShadowCoord(shadowCascade,
+                                                     vWorldPos + Ng * (uFrame.shadowCascade[shadowCascade].z *
+                                                                       sqrt(max(0.0, 1.0 - NdotL * NdotL)))).xy,
+                                         shadowCascade, probe.reference);
+
+        color = probe.outside ? vec3(0.0, 0.0, 1.0) : vec3(filtered, centre, 0.0);
     }
 
     // Linear radiance, unbounded. The scene target is float and the tone map is
