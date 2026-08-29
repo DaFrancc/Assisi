@@ -516,30 +516,20 @@ float InterleavedGradientNoise(vec2 position)
 /// around @p uv, or @p reference itself where nothing is.
 ///
 /// Read rather than compared: the comparison sampler answers whether something
-/// is in front, and what is wanted here is how far in front. Five taps, because
-/// the answer only has to be good enough to size a kernel — the centre, which is
-/// the occluder actually shading the fragment, and a ring at the widest the
-/// kernel could be, which catches an occluder the fragment is beside rather than
-/// under and so keeps the lit edge of a shadow soft.
+/// is in front, and what is wanted here is how far in front.
 ///
-/// In front of the reference, and against the same biased one the comparison
-/// uses, because a surface lit at a glancing angle is recorded at very nearly
-/// its own depth: counted as its own occluder it would report a blocker no
-/// distance away, collapse the kernel that was averaging its self-shadowing into
-/// a single tap, and print that self-shadowing as stripes.
-float NearestBlockerDepth(vec2 uv, uint cascade, float searchStepUv, float reference)
+/// The fragment's own texel and no other. A wider search reads the receiver
+/// itself: a surface the light grazes recedes so fast in depth that its own
+/// neighbouring texels lie in front of this fragment's reference, and they
+/// qualify as occluders a hair away. Sizing a kernel from that collapses it to
+/// one tap on exactly the surfaces whose self-shadowing the kernel was averaging
+/// away, which prints as stripes. The one texel under the lookup cannot be the
+/// receiver, because the receiver is what the reference came from.
+float NearestBlockerDepth(vec2 uv, uint cascade, float reference)
 {
     ivec3 size = textureSize(uShadowCascades, 0);
-    float nearest = reference;
-    for (uint i = 0u; i < 5u; ++i)
-    {
-        const vec2 kRing[5] = vec2[5](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0),
-                                      vec2(0.0, -1.0));
-        vec2  at = clamp(uv + kRing[i] * searchStepUv, vec2(0.0), vec2(1.0));
-        ivec2 texel = clamp(ivec2(at * vec2(size.xy)), ivec2(0), size.xy - 1);
-        nearest = min(nearest, texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r);
-    }
-    return nearest;
+    ivec2 texel = clamp(ivec2(clamp(uv, vec2(0.0), vec2(1.0)) * vec2(size.xy)), ivec2(0), size.xy - 1);
+    return min(reference, texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r);
 }
 
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
@@ -607,7 +597,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // acne the full kernel is what averages away.
     float texelStep  = uFrame.shadowParams.x;
     float capStep    = min(texelStep, uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w);
-    float blockerNdc = reference - NearestBlockerDepth(uv, cascade, capStep, reference);
+    float blockerNdc = reference - NearestBlockerDepth(uv, cascade, reference);
     float step       = blockerNdc > 0.0 ? min(capStep, uFrame.shadowParams.w * blockerNdc) : capStep;
     uint  filterMode = uFrame.shadowCounts.z;
 
@@ -989,6 +979,16 @@ void main()
         vec3  Ng    = normalize(vNormal);
         vec3  sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
         float NdotL = dot(Ng, sunL);
+
+        // A surface turned away from the sun is never asked, so reporting an
+        // answer for it invents one: the shading gate below decides the colour
+        // before the lookup does, and the roof inside a box is dark because it
+        // faces down, not because of anything in the map.
+        if (NdotL <= 0.0)
+        {
+            outColor = vec4(0.08, 0.08, 0.12, 1.0);
+            return;
+        }
 
         ShadowProbe probe    = ProbeCascade(shadowCascade, vWorldPos, Ng, NdotL);
         float       blended  = SunVisibility(Ng, sunL, shadowCascade, NdotL);
