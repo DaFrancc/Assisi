@@ -45,6 +45,10 @@ DEFAULT_WINDOW_S = 1.0
 # microsecond the number is the timer, not the code.
 NOISE_MS = 0.0005
 
+# Every rule, table and wrapped legend line is this wide, so the sections stack
+# into one shape instead of a ragged edge.
+WIDTH = 104
+
 
 # --- terminal ---------------------------------------------------------------
 
@@ -372,7 +376,7 @@ def delta_cell(value, median, style, width=17):
     return style(f"{text:>{width}}", *colour)
 
 
-def rule(label, style, width=112):
+def rule(label, style, width=WIDTH):
     """A titled horizontal rule. The eye needs somewhere to stop between
     sections when the screen is otherwise a field of numbers."""
     head = f"── {label} " if label else ""
@@ -380,20 +384,17 @@ def rule(label, style, width=112):
 
 
 def share_bar(fraction, style, width=8):
-    """Filled proportion of a scope's frame. A number says how much; a bar says
-    how much compared to the row above it, without being read.
+    """Filled proportion of a scope's frame, on a dim track so a part-full bar
+    is judged against the whole it is part of.
 
-    Drawn on a dim track rather than on blank space, so a part-full bar is read
-    against the whole it is part of — the same shape the RANK column uses.
+    A scope too small to fill a cell gets blank space instead of an empty
+    track. Most scopes in a frame are that small, and eight characters of
+    texture on every one of them buries the handful that carry the time.
     """
     filled = int(round(fraction * width))
-    if filled:
-        head, used = style("█" * filled, Style.CYAN), filled
-    elif fraction > 0:
-        head, used = style("▏", Style.CYAN), 1  # under half a cell, still not none
-    else:
-        head, used = "", 0
-    return head + style("░" * (width - used), Style.DIM)
+    if not filled:
+        return " " * width
+    return style("█" * filled, Style.CYAN) + style("░" * (width - filled), Style.DIM)
 
 
 def plain_english(percentile_rank, what):
@@ -511,13 +512,24 @@ def print_standout(rows, stats, style, limit=8):
     print()
 
 
-def rank_cell(rank, style, width=6):
-    """The percentile as a number and a fill. Reading a row is then one glance:
-    a nearly-full bar is a scope having a worse frame than it usually does."""
-    filled = int(round(rank / 100 * width))
-    bar = "█" * filled + style("░" * (width - filled), Style.DIM)
+def print_legend(entries, style, label_w=15):
+    """Term-and-gloss lines, wrapped and hung under a common margin. A legend
+    that runs past the table it explains reads as a second, wider table."""
+    for term, gloss in entries:
+        for i, line in enumerate(textwrap.wrap(gloss, WIDTH - label_w - 3)):
+            head = f"  {term:<{label_w}}" if i == 0 else " " * (label_w + 2)
+            print(style(head + line, Style.DIM))
+
+
+def rank_cell(rank, style):
+    """The percentile, coloured by which tail it is in.
+
+    No bar: a linear fill saturates across p95..p100, which is the whole range
+    worth telling apart, and a second bar beside the share bar made a wall of
+    blocks that neither could be read through.
+    """
     colour = (Style.RED,) if rank >= 95 else (Style.GREEN,) if rank <= 5 else (Style.DIM,)
-    return style(f"p{rank:<3.0f}", *colour) + " " + bar
+    return style(f"{'p' + format(rank, '.0f'):>5}", *colour)
 
 
 def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
@@ -531,8 +543,8 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
     name_w = 32
 
     print(rule(style("EVERY SCOPE IN THIS FRAME", Style.BOLD), style))
-    print(style(f"    {'SCOPE':<{name_w}} {'ms':>8}  {'SHARE OF WORK':<14}"
-                f"{'Δ vs MEDIAN':>17}   {'RANK':<11}  "
+    print(style(f"    {'SCOPE':<{name_w}} {'ms':>8}  {'SHARE OF WORK':<13}  "
+                f"{'Δ vs MEDIAN':>17}  {'RANK':>5}  "
                 f"{'MEDIAN':>8}{'p90':>8}", Style.BOLD))
 
     partial = {}
@@ -551,53 +563,57 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
         mark = ("▲" if event["dur"] > median else "▼") if unusual else " "
         mark = style(mark, Style.RED if event["dur"] > median else Style.GREEN) if unusual else " "
 
+        # Most of a frame's scopes are both small and behaving. Printed at full
+        # weight they are sixty rows of identical texture with the interesting
+        # dozen buried in it, so they are dropped to background instead.
+        quiet = not unusual and not sleeping and share < 0.02
+
         # A scope that sits some frames out is marked where it is read rather
         # than given a column that says `·` on nine rows in ten.
         if len(sorted_v) < frame_count:
             partial[event["name"]] = len(sorted_v)
         label = "  " * depth + event["name"] + ("*" if len(sorted_v) < frame_count else "")
-        name = style(f"{label:<{name_w}.{name_w}}", Style.BOLD) if unusual \
-            else f"{label:<{name_w}.{name_w}}"
+        name = f"{label:<{name_w}.{name_w}}"
+        name = style(name, Style.BOLD) if unusual else name
 
         if sleeping:
-            pct_text = style("    —", Style.DIM)
+            pct_text = "    —"
         elif share >= 0.005:
             pct_text = f"{100 * share:4.0f}%"
         else:
-            pct_text = style("  <1%", Style.DIM)
+            pct_text = "  <1%"
 
-        print(f"  {mark} {name} "
-              f"{event['dur'] / 1000:8.3f}  "
-              # The frame and its sleep have no share of the work; an empty
-              # track would read as zero rather than as not applicable.
-              + (" " * 8 if sleeping else share_bar(share, style)) + pct_text + " "
-              + delta_cell(event["dur"], median, style)
-              + "   " + rank_cell(rank, style) + "  "
-              + style(f"{median / 1000:8.3f}{percentile(sorted_v, 90) / 1000:8.3f}",
-                      Style.DIM))
+        row = (f"  {mark} {name} "
+               f"{event['dur'] / 1000:8.3f}  "
+               # The frame and its sleep have no share of the work; an empty
+               # track would read as zero rather than as not applicable.
+               + (" " * 8 if sleeping else share_bar(share, style)) + pct_text + "  "
+               + delta_cell(event["dur"], median, style)
+               + "  " + rank_cell(rank, style) + "  "
+               + style(f"{median / 1000:8.3f}{percentile(sorted_v, 90) / 1000:8.3f}",
+                       Style.DIM))
+        print(style(row, Style.DIM) if quiet else row)
 
     print()
-    print(style("  ms             this scope in this frame", Style.DIM))
-    print(style(f"  SHARE OF WORK  its part of the frame's {work / 1000:.3f} ms of work "
-                "(the frame minus pacing-sleep, which is why the two of those show —)",
-                Style.DIM))
-    print(style("  Δ vs MEDIAN    how far this frame is from what this scope usually "
-                "costs; — when the median is under a microsecond", Style.DIM))
-    print(style("  RANK           where this frame lands among that scope's own frames: "
-                "p50 typical, p95+ slower than usual, p5- faster", Style.DIM))
-    print(style("  MEDIAN  p90    what this scope normally costs, and its ordinary upper "
-                "end — a p90 near the median is a steady", Style.DIM))
-    print(style("                 scope, a p90 well above it one that varies frame to "
-                "frame", Style.DIM))
-    print(style("  ▲ ▼            unusual for this scope — the same rows listed above",
-                Style.DIM))
+    entries = [
+        ("ms", "this scope in this frame"),
+        ("SHARE OF WORK", f"its part of the frame's {work / 1000:.3f} ms of work — the "
+                          "frame minus pacing-sleep, which is why those two show —"),
+        ("Δ vs MEDIAN", "how far this frame is from what this scope usually costs; "
+                        "— when the median is under a microsecond"),
+        ("RANK", "where this frame lands among that scope's own frames: p50 typical, "
+                 "p95+ slower than usual, p5- faster"),
+        ("MEDIAN  p90", "what this scope normally costs, and its ordinary upper end — a "
+                        "p90 near the median is a steady scope, one well above it a "
+                        "scope that varies frame to frame"),
+        ("▲ ▼", "unusual for this scope — the same rows listed above"),
+        ("dimmed", "under 2% of the work and behaving; nothing to look at"),
+    ]
     if partial:
         listed = ", ".join(f"{n} {c}" for n, c in sorted(partial.items()))
-        body = (f"did not run in every frame, so its MEDIAN and p90 are over the frames "
-                f"it did — {listed}, of {frame_count}")
-        for i, line in enumerate(textwrap.wrap(body, 96)):
-            label = f"  {'*':<15}" if i == 0 else " " * 17
-            print(style(label + line, Style.DIM))
+        entries.append(("*", "did not run in every frame, so its MEDIAN and p90 are over "
+                             f"the frames it did — {listed}, of {frame_count}"))
+    print_legend(entries, style)
     print()
 
 
@@ -655,10 +671,10 @@ def print_counters(counters, frames, index, style, min_frames):
         return
 
     end = frames[index]["ts"] + frames[index]["dur"]
-    name_w = 34
+    name_w = 30
     print(rule(style("COUNTERS AT THIS FRAME", Style.BOLD), style))
-    print(style(f"{'COUNTER':<{name_w}} {'VALUE':>12} {'Δ vs MEDIAN':>17}   {'RANK':<11}  "
-                f"{'MEDIAN':>12}{'p10':>12}{'p90':>12}", Style.BOLD))
+    print(style(f"{'COUNTER':<{name_w}} {'VALUE':>12} {'Δ vs MEDIAN':>16}   {'RANK':>5}  "
+                f"{'MEDIAN':>11}{'p10':>11}{'p90':>11}", Style.BOLD))
 
     constant = []
     for name in sorted(series):
@@ -697,14 +713,14 @@ def print_counters(counters, frames, index, style, min_frames):
         print(f"{name:<{name_w}.{name_w}} {value:12.4g} "
               + style(f"{delta:+9.4g} {ratio}", *colour)
               + "   " + rank_cell(rank, style) + "  "
-              + style(f"{median:12.4g}{low:12.4g}{high:12.4g}", Style.DIM)
+              + style(f"{median:11.4g}{low:11.4g}{high:11.4g}", Style.DIM)
               + stale)
 
     if constant:
         print()
         body = (f"{len(constant)} counter(s) never changed: "
                 + ", ".join(f"{n}={v:g}" for n, v in constant))
-        for line in textwrap.wrap(body, 110, subsequent_indent="  "):
+        for line in textwrap.wrap(body, WIDTH - 2, subsequent_indent="  "):
             print(style("  " + line, Style.DIM))
     print()
 
