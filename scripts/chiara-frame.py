@@ -21,9 +21,12 @@ is not in every frame reports how many frames it appeared in.
 """
 
 import argparse
+import array
 import bisect
 import difflib
+import hashlib
 import json
+import pickle
 import os
 import statistics
 import sys
@@ -161,6 +164,94 @@ def resolve_capture(args, root, style):
 
 
 # --- loading ----------------------------------------------------------------
+
+# Bumped whenever the cached shape changes, so a stale entry is a miss rather
+# than a crash — or worse, than an entry read as the wrong type.
+CACHE_VERSION = 2
+
+# Cached captures kept, newest first. Each is a few MB and a capture is usually
+# asked about several times and then never again.
+CACHE_KEEP = 8
+
+
+def cache_path(capture):
+    """A cache file keyed by the capture's identity and its mtime and size, so
+    a rewritten capture at the same path misses rather than answering stale."""
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    stat = os.stat(capture)
+    key = f"{os.path.abspath(capture)}:{stat.st_mtime_ns}:{stat.st_size}:{CACHE_VERSION}"
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return os.path.join(root, "chiara-frame", f"{digest}.pickle")
+
+
+def cache_read(capture):
+    """The parsed capture, or None. Any failure is a miss: a cache that can
+    raise is worse than no cache."""
+    try:
+        with open(cache_path(capture), "rb") as handle:
+            names, kinds, ids, stamps, values, dropped = pickle.load(handle)
+    except Exception:
+        return None
+
+    scopes, counters = [], []
+    for kind, name_id, ts, value in zip(kinds, ids, stamps, values):
+        if kind:
+            counters.append({"name": names[name_id], "ts": ts, "args": {"v": value}})
+        else:
+            scopes.append({"name": names[name_id], "ts": ts, "dur": value})
+    frames = [e for e in scopes if e["name"] == FRAME_SCOPE]
+    return scopes, counters, frames, dropped
+
+
+def cache_write(capture, ordered, counters, dropped):
+    """Scopes and counters as parallel typed arrays: 5 MB and a memcpy to read,
+    against 25 MB of pickled dictionaries and half a second to rebuild them."""
+    names, ids = {}, array.array("I")
+    kinds = array.array("B")
+    # Both doubles: Chiara timestamps carry fractional microseconds, and
+    # rounding them to integers collapses the nesting the whole tree is built
+    # from — a parent and its first child can end up starting at the same tick.
+    stamps, values = array.array("d"), array.array("d")
+
+    def add(kind, name, ts, value):
+        if name not in names:
+            names[name] = len(names)
+        kinds.append(kind)
+        ids.append(names[name])
+        stamps.append(float(ts))
+        values.append(float(value))
+
+    for event in ordered:
+        add(0, event["name"], event["ts"], event["dur"])
+    for event in counters:
+        value = event["args"].get("v", event["args"])
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            add(1, event["name"], event["ts"], value)
+
+    table = [n for n, _ in sorted(names.items(), key=lambda kv: kv[1])]
+    target = cache_path(capture)
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        # Written beside the target and renamed, so an interrupted write cannot
+        # leave a half-file that later reads as a hit.
+        temporary = target + f".{os.getpid()}.tmp"
+        with open(temporary, "wb") as handle:
+            pickle.dump((table, kinds, ids, stamps, values, dropped), handle, -1)
+        os.replace(temporary, target)
+        prune_cache(os.path.dirname(target))
+    except Exception:
+        pass  # a cache that cannot be written is not an error
+
+
+def prune_cache(directory):
+    entries = [os.path.join(directory, f) for f in os.listdir(directory)
+               if f.endswith(".pickle")]
+    for stale in sorted(entries, key=os.path.getmtime, reverse=True)[CACHE_KEEP:]:
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+
 
 def load(path):
     """One pass over the event array; the file is tens of MB and every extra
@@ -986,6 +1077,11 @@ CHOOSING A CAPTURE
   captures, then the captures in the one you pick. A single candidate is taken
   without asking, and so is the newest when stdin is not a terminal.
 
+  A parsed copy of each capture is kept under ~/.cache/chiara-frame, keyed by
+  the capture's path, size and mtime, which takes a second run from about a
+  second to about four tenths. The eight most recent are kept. --no-cache
+  parses afresh.
+
 EXAMPLES
 
   chiara-frame.py 15                        the frame nearest t=15 s
@@ -1037,6 +1133,9 @@ def main():
                         help=f"hide scopes under this in both value and median "
                              f"(default {NOISE_MS}) — below it the number is the timer, "
                              f"not the code")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="re-parse the capture instead of reading the parsed copy "
+                             "kept under ~/.cache/chiara-frame")
     parser.add_argument("--no-color", action="store_true",
                         help="plain text; also the default when stdout is not a terminal")
     args = parser.parse_args()
@@ -1054,9 +1153,15 @@ def main():
     path = resolve_capture(args, root, style)
 
     size_mb = os.path.getsize(path) / (1 << 20)
-    done = progress(f"reading {os.path.basename(path)} ({size_mb:.0f} MB)…", style)
-    ordered, counters, frames, dropped = load(path)
-    done()
+    cached = None if args.no_cache else cache_read(path)
+    if cached:
+        ordered, counters, frames, dropped = cached
+    else:
+        done = progress(f"reading {os.path.basename(path)} ({size_mb:.0f} MB)…", style)
+        ordered, counters, frames, dropped = load(path)
+        done()
+        if not args.no_cache:
+            cache_write(path, ordered, counters, dropped)
 
     done = progress(f"walking {len(frames)} frames…", style)
     work = cpu_work_per_frame(ordered, frames)
