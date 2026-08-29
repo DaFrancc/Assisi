@@ -100,7 +100,7 @@ TEST_CASE("A view into a sub-rect maps its own corners and nothing else")
     // The view's own [0, 1] maps onto exactly the tile, so a lookup at its edge
     // lands on the tile's edge rather than in a neighbour.
     const auto sample = [&scaleOffset](glm::vec2 uv)
-    { return uv * glm::vec2(scaleOffset.x, scaleOffset.y) + glm::vec2(scaleOffset.z, scaleOffset.w); };
+                        { return uv * glm::vec2(scaleOffset.x, scaleOffset.y) + glm::vec2(scaleOffset.z, scaleOffset.w); };
     CHECK(sample({0.f, 0.f}).x == doctest::Approx(1024.f / 4096.f));
     CHECK(sample({0.f, 0.f}).y == doctest::Approx(2048.f / 4096.f));
     CHECK(sample({1.f, 1.f}).x == doctest::Approx(1536.f / 4096.f));
@@ -203,6 +203,39 @@ TEST_CASE("A view culls the casters its frustum does not reach")
     REQUIRE(list.viewCommandStart.size() == 2);
     CHECK(list.viewCommandStart[0] == 0);
     CHECK(list.viewCommandStart[1] == 2);
+}
+
+TEST_CASE("A caster between the light and the slice still casts into it")
+{
+    // The view's eye sits at z = 50 looking down -Z, so its near plane is the
+    // world's z = 50 and anything beyond that is upstream of the view — nearer
+    // the light than everything the view shades.
+    //
+    // Such a caster shadows every surface in the slice, and shadow_depth.vert
+    // flattens it onto the near plane rather than letting it clip, precisely so
+    // that it can. Culling it here undoes that before the rasterizer sees it,
+    // and the shape of the bug is a shadow that disappears as the camera walks
+    // toward it: the nearest cascade's slice closes in around the viewer, its
+    // near plane rises past whatever is overhead, and the shadow of that thing
+    // goes out. Which casters survive depends on how far above the slice each
+    // one sits, so from outside it looks like no rule at all.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f, 0.f, 80.f), 1.f, 1),    // upstream of the near plane
+        CasterAt(glm::vec3(0.f, 0.f, 0.f), 1.f, 2),     // inside
+        CasterAt(glm::vec3(0.f, 0.f, -400.f), 1.f, 3),  // past the far plane
+        CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 4),   // outside sideways
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    // Only the near plane opens. The far plane and the sides still reject, or
+    // the cull would have stopped being a cull.
+    CHECK(list.culled == 2);
+    CHECK(list.instances.size() == 2);
 }
 
 TEST_CASE("Consecutive instances of one geometry coalesce into a single draw")

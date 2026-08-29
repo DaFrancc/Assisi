@@ -124,7 +124,15 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
     {
         out.viewCommandStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
 
-        const Frustum frustum = Frustum::FromViewProjection(target.view.viewProjection);
+        // Open at the near end. A caster between the light and this slice is
+        // upstream of the slice's near plane and still shadows every surface in
+        // it; shadow_depth.vert flattens such a caster onto that plane rather
+        // than letting it clip, and rejecting it here would undo that before the
+        // rasterizer ever saw it. The symptom is a shadow that vanishes as the
+        // camera approaches, because the nearest cascade's slice — and with it
+        // its near plane — closes in around the viewer until the caster
+        // overhead falls outside.
+        const Frustum frustum = Frustum::FromViewProjection(target.view.viewProjection).WithoutNearPlane();
         AppendViewCommands(frustum, casters, /*alphaMasked=*/ false, out);
 
         out.viewMaskedStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
