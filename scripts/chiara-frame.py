@@ -22,6 +22,7 @@ is not in every frame reports how many frames it appeared in.
 
 import argparse
 import bisect
+import difflib
 import json
 import os
 import statistics
@@ -218,8 +219,12 @@ def cpu_work_per_frame(ordered, frames):
     return work
 
 
-def analyze(ordered, want):
-    """Walks every frame once: per-path statistics, and the rows of one frame.
+def analyze(ordered, wants):
+    """Walks every frame once: per-path statistics, and the rows of some frames.
+
+    Every wanted frame is collected in the one walk so they share the path ids
+    interned here. Two separate walks would number the same path differently,
+    and comparing frames across them would compare unrelated scopes.
 
     Scopes are identified by their position in the tree rather than by name, so
     a chain that resolves twice keeps the two steps apart. Paths are interned to
@@ -230,7 +235,8 @@ def analyze(ordered, want):
     path_name = []     # path id -> scope name
     samples = defaultdict(list)
 
-    index, rows, selected = -1, None, None
+    wants = set(wants)
+    index, rows, selected = -1, None, {}
     per_frame = None
     sibling = {}       # (parent id, name) -> count, within the current frame
     stack_end, stack_id = [], []
@@ -249,9 +255,9 @@ def analyze(ordered, want):
             index += 1
             per_frame = {}
             sibling.clear()
-            rows = [] if index == want else None
+            rows = [] if index in wants else None
             if rows is not None:
-                selected = rows
+                selected[index] = rows
         if per_frame is None:
             continue  # a capture can open mid-frame; that fragment is not one
 
@@ -284,7 +290,7 @@ def analyze(ordered, want):
         middle = len(values) // 2
         median = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2
         stats[pid] = (median, values[0], values[-1], values)
-    return stats, selected or []
+    return stats, selected
 
 
 # --- frame selection --------------------------------------------------------
@@ -312,6 +318,13 @@ def select(frames, work, at_s, target, half_s):
     origin = frames[0]["ts"]
 
     if target == "nearest":
+        # With no timestamp there is nothing to be near; the middle of the
+        # capture is the reading that assumes least.
+        if at_s is None:
+            at_s = (frames[-1]["ts"] - origin) / 2e6
+            best = min(range(len(frames)),
+                       key=lambda i: abs((frames[i]["ts"] - origin) / 1e6 - at_s))
+            return best, f"nearest the middle of the capture (t={at_s:.3f} s)"
         best = min(range(len(frames)), key=lambda i: abs((frames[i]["ts"] - origin) / 1e6 - at_s))
         return best, f"nearest to t={at_s:g} s"
 
@@ -405,7 +418,7 @@ def plain_english(percentile_rank, what):
     return f"{what} than only {percentile_rank:.0f}% of frames"
 
 
-def print_header(path, frames, work, index, note, dropped, style):
+def print_capture(path, frames, work, dropped, style):
     origin = frames[0]["ts"]
     span = (frames[-1]["ts"] + frames[-1]["dur"] - origin) / 1e6
     durations = sorted(f["dur"] for f in frames)
@@ -428,6 +441,11 @@ def print_header(path, frames, work, index, note, dropped, style):
                     "(capture stopped mid-scope)", Style.DIM))
     print()
 
+
+def print_frame_card(frames, work, index, note, style):
+    origin = frames[0]["ts"]
+    durations = sorted(f["dur"] for f in frames)
+    ranked_work = sorted(work)
     frame = frames[index]
     at = (frame["ts"] - origin) / 1e6
     faster = 100 * bisect.bisect_left(durations, frame["dur"]) / len(durations)
@@ -532,7 +550,7 @@ def rank_cell(rank, style):
     return style(f"{'p' + format(rank, '.0f'):>5}", *colour)
 
 
-def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
+def print_tree(rows, stats, frame_count, style, max_depth, min_ms, other=None):
     # Shares are of the frame's work, not of the frame. A pacing-capped frame is
     # mostly sleep, against which every real scope rounds to nothing and a bar
     # of it is a blank column.
@@ -542,10 +560,22 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
     # five levels down — still reads as its own name rather than a prefix.
     name_w = 32
 
-    print(rule(style("EVERY SCOPE IN THIS FRAME", Style.BOLD), style))
+    # Against another frame, the two right-hand columns become that frame and
+    # the comparison is with it — the median of a scope over the whole run is
+    # not what you asked about once you named a frame to compare to.
+    if other:
+        vs_index, vs_note, vs_rows = other
+        baseline = {pid: e["dur"] for _, pid, e in vs_rows}
+        head_delta, head_right = f"Δ vs #{vs_index}", f"#{vs_index}"
+    else:
+        baseline, head_delta, head_right = None, "Δ vs MEDIAN", "MEDIAN"
+
+    print(rule(style("EVERY SCOPE IN THIS FRAME", Style.BOLD)
+               + (style(f"  against frame #{other[0]} ({other[1]})", Style.DIM)
+                  if other else ""), style))
     print(style(f"    {'SCOPE':<{name_w}} {'ms':>8}  {'SHARE OF WORK':<13}  "
-                f"{'Δ vs MEDIAN':>17}  {'RANK':>5}  "
-                f"{'MEDIAN':>8}{'p90':>8}", Style.BOLD))
+                f"{head_delta:>17}  {'RANK':>5}  "
+                f"{head_right:>8}" + ("" if other else f"{'p90':>8}"), Style.BOLD))
 
     partial = {}
     for depth, pid, event in rows:
@@ -583,15 +613,27 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
         else:
             pct_text = "  <1%"
 
+        if baseline is None:
+            against = median
+            right = f"{median / 1000:8.3f}{percentile(sorted_v, 90) / 1000:8.3f}"
+        elif pid in baseline:
+            against = baseline[pid]
+            right = f"{against / 1000:8.3f}"
+        else:
+            # The other frame did not run this scope at all, so there is
+            # nothing to subtract; the row still belongs in the tree.
+            against = None
+            right = style(f"{'—':>8}", Style.DIM)
+
         row = (f"  {mark} {name} "
                f"{event['dur'] / 1000:8.3f}  "
                # The frame and its sleep have no share of the work; an empty
                # track would read as zero rather than as not applicable.
                + (" " * 8 if sleeping else share_bar(share, style)) + pct_text + "  "
-               + delta_cell(event["dur"], median, style)
+               + (delta_cell(event["dur"], against, style) if against is not None
+                  else style(f"{'—':>17}", Style.DIM))
                + "  " + rank_cell(rank, style) + "  "
-               + style(f"{median / 1000:8.3f}{percentile(sorted_v, 90) / 1000:8.3f}",
-                       Style.DIM))
+               + style(right, Style.DIM))
         print(style(row, Style.DIM) if quiet else row)
 
     print()
@@ -655,6 +697,99 @@ def print_hot(rows, style, limit):
     print(style(f"  shares are of the frame's {total / 1000:.3f} ms of work; "
                 "pacing-sleep is left out so the scale belongs to the work",
                 Style.DIM))
+    print()
+
+
+def sparkline(values, width=88):
+    """The series bucketed to one column each, as eighth-blocks.
+
+    Bucketed by maximum rather than by mean: a spike that lasts one frame is
+    the thing worth seeing, and averaging it into its neighbours is exactly
+    how it disappears.
+    """
+    if not values:
+        return ""
+    blocks = " ▁▂▃▄▅▆▇█"
+    step = len(values) / width
+    peak = max(values) or 1
+    out = []
+    for column in range(width):
+        lo, hi = int(column * step), max(int((column + 1) * step), int(column * step) + 1)
+        chunk = values[lo:hi]
+        out.append(blocks[min(int(max(chunk) / peak * 8), 8)] if chunk else " ")
+    return "".join(out)
+
+
+def print_scope(name, ordered, frames, style, limit=8):
+    """One scope across the whole capture, rather than one frame across scopes.
+
+    The frame view answers "was this frame unusual"; it cannot answer "is this
+    scope always like that", which is the question a suspicious row provokes.
+    """
+    origin = frames[0]["ts"]
+    ends = [f["ts"] + f["dur"] for f in frames]
+    starts = [f["ts"] for f in frames]
+
+    # Each occurrence is charged to the frame containing it, so a scope that
+    # runs twice in a frame is one sample of their sum, matching the tree.
+    per_frame = defaultdict(float)
+    for event in ordered:
+        if event["name"] != name:
+            continue
+        at = bisect.bisect_right(starts, event["ts"]) - 1
+        if 0 <= at < len(frames) and event["ts"] < ends[at]:
+            per_frame[at] += event["dur"]
+
+    if not per_frame:
+        known = sorted({e["name"] for e in ordered})
+        near = [k for k in known if name.lower() in k.lower()]
+        near += [k for k in difflib.get_close_matches(name, known, 5, 0.5) if k not in near]
+        print(rule(style(f"NO SCOPE NAMED {name!r}", Style.BOLD, Style.RED), style))
+        if near:
+            print(style("  did you mean: " + ", ".join(near[:8]), Style.DIM))
+        else:
+            print(style(f"  the capture has {len(known)} scope names; "
+                        "--scope takes one of them exactly", Style.DIM))
+        print()
+        return
+
+    values = sorted(per_frame.values())
+    series = [per_frame.get(i, 0.0) for i in range(len(frames))]
+
+    print(rule(style(f"SCOPE  {name}", Style.BOLD)
+               + style(f"  across {len(frames)} frames", Style.DIM), style))
+    print(f"  ran in     {len(per_frame)} frames"
+          + style(f"  ({100 * len(per_frame) / len(frames):.0f}% of the capture)",
+                  Style.DIM))
+    print(f"  {'ms':<10}{'p50':>9}{'p90':>9}{'p99':>9}{'min':>9}{'max':>9}")
+    print(f"  {'':<10}" + "".join(f"{percentile(values, p) / 1000:9.3f}"
+                                  for p in (50, 90, 99))
+          + f"{values[0] / 1000:9.3f}{values[-1] / 1000:9.3f}")
+    spread = percentile(values, 90) / percentile(values, 50) if percentile(values, 50) else 0
+    print(style(f"  p90 is {spread:.1f}x the median — "
+                + ("steady" if spread < 1.5 else
+                   "varies frame to frame" if spread < 4 else
+                   "wildly uneven; the median is not the story"), Style.DIM))
+    print()
+
+    print(style(f"  over the capture, peak per column, 0..{values[-1] / 1000:.3f} ms",
+                Style.DIM))
+    print("  " + style(sparkline(series), Style.CYAN))
+    span = (frames[-1]["ts"] - origin) / 1e6
+    print(style(f"  {'0 s':<44}{f'{span:.0f} s':>44}", Style.DIM))
+    print()
+
+    worst = sorted(per_frame, key=lambda i: -per_frame[i])[:limit]
+    print(style("  worst frames", Style.BOLD))
+    for i in worst:
+        at = (frames[i]["ts"] - origin) / 1e6
+        rank = 100 * bisect.bisect_left(values, per_frame[i]) / len(values)
+        print(f"    #{i:<7} t=+{at:8.3f} s   {per_frame[i] / 1000:8.3f} ms   "
+              + style(f"p{rank:.0f}", Style.RED if rank >= 95 else Style.DIM)
+              + style(f"   ({per_frame[i] / percentile(values, 50):.1f}x the median)"
+                      if percentile(values, 50) else "", Style.DIM))
+    print(style(f"  re-run with `{(frames[worst[0]]['ts'] - origin) / 1e6:.3f} nearest` "
+                "to open the worst of them", Style.DIM))
     print()
 
 
@@ -729,14 +864,48 @@ def print_counters(counters, frames, index, style, min_frames):
 
 TARGETS = ["nearest", "median", "fastest", "slowest", "p90", "p99", "busiest", "idlest"]
 
+
+def parse_where(words, fail):
+    """Returns (seconds or None, target) from up to two free positionals.
+
+    Two optional positionals of different kinds cannot be told apart by
+    argparse, but they can be told apart by looking: one of them is a number.
+    That is what lets `slowest` and `15` and `15 slowest` all be typed.
+    """
+    seconds, target = None, None
+    for word in words:
+        try:
+            if seconds is not None:
+                raise ValueError
+            seconds = float(word)
+            continue
+        except ValueError:
+            pass
+        if target is not None or word not in TARGETS:
+            fail(f"unexpected argument {word!r}; expected a time in seconds and one of "
+                 + ", ".join(TARGETS))
+        target = word
+    if target is None:
+        # A bare timestamp asks for that moment; a bare target ranks the run,
+        # and `nearest` over a whole capture would be the first frame, which
+        # nobody means. The middle is the honest reading of "no preference".
+        target = "nearest" if seconds is not None else "median"
+    return seconds, target
+
 HELP = """
 SELECTING A FRAME
 
   SECONDS is where to look, counted from the capture's first frame. TARGET says
-  which frame to take from around there. Every target except `nearest` searches
-  a window centred on SECONDS, whose half-width is --window (1 s by default);
-  the window slides to stay inside the capture, so asking at 0.2 s reads
-  0..2 s rather than a second of nothing.
+  which frame to take from around there. Either may be given alone, in any
+  order: `15` is the frame at 15 s, `slowest` is the slowest in the whole run,
+  `15 slowest` the slowest near 15 s, and no argument at all is the median
+  frame of the capture.
+
+  With SECONDS, every target except `nearest` searches a window centred on it,
+  whose half-width is --window (1 s by default); the window slides to stay
+  inside the capture, so asking at 0.2 s reads 0..2 s rather than a second of
+  nothing. Without SECONDS there is nothing to centre on, so the search covers
+  everything.
 
     nearest   the frame whose start is closest to SECONDS. Ignores --window.
     median    the middle frame by duration. The one to reach for: a typical
@@ -796,6 +965,21 @@ READING THE TABLE
   Scopes are keyed by their position in the tree rather than by name, so the
   two `pp-resolve` steps of a post-process chain keep separate statistics.
 
+ONE SCOPE INSTEAD OF ONE FRAME
+
+  --scope NAME turns the question around: instead of one frame across every
+  scope, it shows one scope across every frame — how often it ran, its spread,
+  its shape over the capture, and the frames it was worst in. This is what
+  answers "is that row always like this, or was that one frame", which the
+  frame view provokes and cannot settle.
+
+COMPARING TWO FRAMES
+
+  --vs takes another frame, chosen exactly the way the first one is
+  (`--vs median`, `--vs "3 slowest"`), and puts it where the median columns
+  were, so Δ is against that frame rather than against each scope's own
+  history. A scope the other frame never ran shows —.
+
 CHOOSING A CAPTURE
 
   With no --capture, the script lists the builds under out/build that hold
@@ -821,15 +1005,23 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=HELP,
     )
-    parser.add_argument("seconds", type=float, metavar="SECONDS",
-                        help="where to look, in seconds from the capture's first frame")
-    parser.add_argument("target", nargs="?", default="nearest", choices=TARGETS,
-                        help="which frame to take from around there (default: nearest); "
-                             "see SELECTING A FRAME below")
-    parser.add_argument("--window", default=str(DEFAULT_WINDOW_S), metavar="SEC",
+    parser.add_argument("where", nargs="*", metavar="[SECONDS] [TARGET]",
+                        help="where to look, in seconds from the capture's first frame, "
+                             "and which frame to take from around there. Either may be "
+                             "given alone: with no SECONDS the search covers the whole "
+                             "capture, with no TARGET it is the nearest frame")
+    parser.add_argument("--scope", metavar="NAME",
+                        help="instead of a frame, show one scope across every frame — "
+                             "its spread, its shape over the capture, and the frames it "
+                             "was worst in")
+    parser.add_argument("--vs", metavar="[SECONDS] TARGET",
+                        help="compare against another frame, chosen the same way "
+                             "(--vs median, --vs '3 slowest'), in place of the median "
+                             "columns")
+    parser.add_argument("--window", default=None, metavar="SEC",
                         help=f"half-width of the search window, in seconds "
-                             f"(default {DEFAULT_WINDOW_S}); 'all' searches the whole "
-                             f"capture. Ignored by the nearest target")
+                             f"(default {DEFAULT_WINDOW_S} when SECONDS is given, the "
+                             f"whole capture when it is not); 'all' searches everything")
     parser.add_argument("--capture", metavar="PATH",
                         help="read this capture instead of asking")
     parser.add_argument("--build", metavar="NAME",
@@ -850,7 +1042,13 @@ def main():
     args = parser.parse_args()
 
     style = Style(not args.no_color and sys.stdout.isatty())
-    half = None if args.window == "all" else float(args.window)
+    seconds, target = parse_where(args.where, parser.error)
+    # No timestamp means no place to centre a window on, so the search is the
+    # whole capture: `slowest` on its own is the slowest frame in the run.
+    if args.window is None:
+        half = None if seconds is None else DEFAULT_WINDOW_S
+    else:
+        half = None if args.window == "all" else float(args.window)
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = resolve_capture(args, root, style)
@@ -862,14 +1060,31 @@ def main():
 
     done = progress(f"walking {len(frames)} frames…", style)
     work = cpu_work_per_frame(ordered, frames)
-    index, note = select(frames, work, args.seconds, args.target, half)
-    stats, rows = analyze(ordered, index)
+    index, note = select(frames, work, seconds, target, half)
+    wants = {index}
+    other = None
+    vs_index = vs_note = None
+    if args.vs:
+        vs_seconds, vs_target = parse_where(args.vs.split(), parser.error)
+        vs_index, vs_note = select(frames, work, vs_seconds, vs_target,
+                                   None if vs_seconds is None else half)
+        wants.add(vs_index)
+    stats, collected = analyze(ordered, wants)
+    rows = collected[index]
+    if vs_index is not None:
+        other = (vs_index, vs_note, collected[vs_index])
     done()
 
     print()
-    print_header(path, frames, work, index, note, dropped, style)
+    if args.scope:
+        print_capture(path, frames, work, dropped, style)
+        print_scope(args.scope, ordered, frames, style)
+        return
+
+    print_capture(path, frames, work, dropped, style)
+    print_frame_card(frames, work, index, note, style)
     print_standout(rows, stats, style)
-    print_tree(rows, stats, len(frames), style, args.depth, args.min_ms)
+    print_tree(rows, stats, len(frames), style, args.depth, args.min_ms, other)
     if args.hot:
         print_hot(rows, style, limit=20)
     if args.counters:
