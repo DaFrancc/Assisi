@@ -512,7 +512,8 @@ float InterleavedGradientNoise(vec2 position)
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
-/// The depth of the nearest thing the map recorded around @p uv, unfiltered.
+/// The depth of the nearest thing the map recorded in front of @p reference
+/// around @p uv, or @p reference itself where nothing is.
 ///
 /// Read rather than compared: the comparison sampler answers whether something
 /// is in front, and what is wanted here is how far in front. Five taps, because
@@ -520,10 +521,16 @@ float InterleavedGradientNoise(vec2 position)
 /// the occluder actually shading the fragment, and a ring at the widest the
 /// kernel could be, which catches an occluder the fragment is beside rather than
 /// under and so keeps the lit edge of a shadow soft.
-float NearestBlockerDepth(vec2 uv, uint cascade, float searchStepUv)
+///
+/// In front of the reference, and against the same biased one the comparison
+/// uses, because a surface lit at a glancing angle is recorded at very nearly
+/// its own depth: counted as its own occluder it would report a blocker no
+/// distance away, collapse the kernel that was averaging its self-shadowing into
+/// a single tap, and print that self-shadowing as stripes.
+float NearestBlockerDepth(vec2 uv, uint cascade, float searchStepUv, float reference)
 {
     ivec3 size = textureSize(uShadowCascades, 0);
-    float nearest = 1.0;
+    float nearest = reference;
     for (uint i = 0u; i < 5u; ++i)
     {
         const vec2 kRing[5] = vec2[5](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0),
@@ -595,11 +602,12 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // could close it, because none of them knew how far the occluder was.
     //
     // Where nothing is recorded in front of the fragment there is no occluder to
-    // measure, and the search widens to the cap so the lit side of an edge keeps
-    // its softness.
+    // measure, and the kernel stays at the cap: that is both the lit side of an
+    // edge, which keeps its softness, and a surface shadowing itself, whose
+    // acne the full kernel is what averages away.
     float texelStep  = uFrame.shadowParams.x;
     float capStep    = min(texelStep, uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w);
-    float blockerNdc = max(0.0, coord.z - NearestBlockerDepth(uv, cascade, capStep));
+    float blockerNdc = reference - NearestBlockerDepth(uv, cascade, capStep, reference);
     float step       = blockerNdc > 0.0 ? min(capStep, uFrame.shadowParams.w * blockerNdc) : capStep;
     uint  filterMode = uFrame.shadowCounts.z;
 
