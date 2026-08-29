@@ -830,8 +830,8 @@ def print_hot(rows, style, limit):
         print(f"  {event['name']:<30.30} {self_us / 1000:8.3f} ms "
               f"{100 * self_us / total if total else 0:5.1f}%  "
               + style(bar, Style.CYAN))
-    print(style(f"  shares are of the frame's {total / 1000:.3f} ms of work; "
-                "pacing-sleep is left out so the scale belongs to the work",
+    print(style(f"  shares are of the frame's {total / 1000:.3f} ms of active time; "
+                "the pacing sleep is left out so the scale belongs to the rest",
                 Style.DIM))
     print()
 
