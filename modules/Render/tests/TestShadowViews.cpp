@@ -51,6 +51,24 @@ ShadowCaster CasterAt(const glm::vec3 &center, float radius, std::uint64_t key, 
     return caster;
 }
 
+/// The same caster, drawn from both sides.
+ShadowCaster TwoSided(ShadowCaster caster)
+{
+    caster.doubleSided = true;
+    return caster;
+}
+
+/// Where view @p view's alpha-tested commands begin.
+///
+/// The classes run opaque, opaque-two-sided, masked, masked-two-sided, so the
+/// masked half starts where the third does. Spelled out here rather than in
+/// every case, because what most of these cases are about is the opaque/masked
+/// split and not the cull mode that now subdivides it.
+std::uint32_t MaskedStart(const ShadowDrawList &list, std::uint32_t view)
+{
+    return list.viewPipelineStart[view * kMeshPipelineCount + static_cast<std::uint32_t>(MeshPipeline::Mask)];
+}
+
 ShadowDepthTarget TargetOf(const ShadowView &view)
 {
     return ShadowDepthTarget{.view = view, .framebuffer = nullptr};
@@ -492,20 +510,77 @@ TEST_CASE("Alpha-tested commands sit in their own range after the view's opaque 
     BuildShadowDrawList(targets, casters, list);
 
     REQUIRE(list.viewCommandStart.size() == 2);
-    REQUIRE(list.viewMaskedStart.size() == 1);
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
     CHECK(list.viewCommandStart[0] == 0);
-    CHECK(list.viewMaskedStart[0] == 2);
+    CHECK(MaskedStart(list, 0) == 2);
     CHECK(list.viewCommandStart[1] == 4);
 
     // Every command in the opaque range draws an opaque instance and every one
     // in the masked range an alpha-tested one — checked through the instance the
     // command starts at, which is what the shader actually reads.
-    for (std::uint32_t i = 0; i < list.viewMaskedStart[0]; ++i)
+    for (std::uint32_t i = 0; i < MaskedStart(list, 0); ++i)
     {
         CHECK(list.instances[list.commands[i].startInstanceLocation].materialIndex == 0u);
     }
     CHECK(list.instances[list.commands[2].startInstanceLocation].materialIndex == 4u);
     CHECK(list.instances[list.commands[3].startInstanceLocation].materialIndex == 9u);
+}
+
+TEST_CASE("A caster's cull mode splits it as surely as its alpha test does")
+{
+    // Four classes, not two. The cull mode is pipeline state exactly as the
+    // fragment stage is, so a single-sided and a double-sided caster cannot
+    // share a draw however identical their geometry — and deciding the cull by
+    // the alpha test, as this once did, put a solid cutout crate and a
+    // double-sided plane in each other's pipelines.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    // One of each class, interleaved: the split must come from the material,
+    // not from the caller having sorted the span.
+    const std::vector<ShadowCaster> casters = {
+        Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 4),
+        TwoSided(CasterAt(glm::vec3(0.f), 1.f, 1)),
+        TwoSided(Masked(CasterAt(glm::vec3(6.f, 0.f, 0.f), 1.f, 5), 9)),
+        CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 3),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    REQUIRE(list.commands.size() == 4);
+
+    // One command per class, in MeshPipeline's order, whatever order they arrived in.
+    for (std::uint32_t klass = 0; klass < kMeshPipelineCount; ++klass)
+    {
+        CHECK(list.viewPipelineStart[klass] == klass);
+    }
+    CHECK(list.viewCommandStart[1] == 4);
+
+    // And each class drew the caster that belongs to it, checked through the
+    // material row the shader actually reads.
+    CHECK(list.instances[list.commands[0].startInstanceLocation].materialIndex == 0u); // opaque
+    CHECK(list.instances[list.commands[1].startInstanceLocation].materialIndex == 0u); // opaque, two-sided
+    CHECK(list.instances[list.commands[2].startInstanceLocation].materialIndex == 4u); // masked
+    CHECK(list.instances[list.commands[3].startInstanceLocation].materialIndex == 9u); // masked, two-sided
+}
+
+TEST_CASE("Two casters of one geometry do not merge across cull modes")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const ShadowCaster single = CasterAt(glm::vec3(0.f), 1.f, 1);
+    const ShadowCaster both = TwoSided(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 1));
+    CHECK_FALSE(SameShadowGeometry(single, both));
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{single, both}, list);
+
+    REQUIRE(list.commands.size() == 2);
+    CHECK(list.commands[0].instanceCount == 1);
+    CHECK(list.commands[1].instanceCount == 1);
 }
 
 TEST_CASE("An all-opaque span leaves every view's alpha-tested range empty")
@@ -522,10 +597,10 @@ TEST_CASE("An all-opaque span leaves every view's alpha-tested range empty")
     ShadowDrawList list;
     BuildShadowDrawList(targets, casters, list);
 
-    REQUIRE(list.viewMaskedStart.size() == 2);
+    REQUIRE(list.viewPipelineStart.size() == 2u * kMeshPipelineCount);
     for (std::uint32_t view = 0; view < 2u; ++view)
     {
-        CHECK(list.viewMaskedStart[view] == list.viewCommandStart[view + 1u]);
+        CHECK(MaskedStart(list, view) == list.viewCommandStart[view + 1u]);
     }
 }
 
@@ -541,11 +616,11 @@ TEST_CASE("Every view splits its own commands, and each keeps its own instances"
     ShadowDrawList list;
     BuildShadowDrawList(targets, casters, list);
 
-    REQUIRE(list.viewMaskedStart.size() == 2);
+    REQUIRE(list.viewPipelineStart.size() == 2u * kMeshPipelineCount);
     REQUIRE(list.viewCommandStart.size() == 3);
-    CHECK(list.viewMaskedStart[0] == 1);
+    CHECK(MaskedStart(list, 0) == 1);
     CHECK(list.viewCommandStart[1] == 2);
-    CHECK(list.viewMaskedStart[1] == 3);
+    CHECK(MaskedStart(list, 1) == 3);
     CHECK(list.viewCommandStart[2] == 4);
 
     // Four commands, four instances, and no command shares a record with
@@ -565,12 +640,12 @@ TEST_CASE("A rebuilt draw list keeps no alpha-tested range from the last one")
 
     ShadowDrawList list;
     BuildShadowDrawList(targets, std::vector<ShadowCaster>{Masked(CasterAt(glm::vec3(0.f), 1.f, 1), 2)}, list);
-    REQUIRE(list.viewMaskedStart.size() == 1);
-    REQUIRE(list.viewMaskedStart[0] == 0);
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    REQUIRE(MaskedStart(list, 0) == 0);
     REQUIRE(list.commands.size() == 1);
 
     BuildShadowDrawList(targets, std::vector<ShadowCaster>{CasterAt(glm::vec3(0.f), 1.f, 1)}, list);
-    REQUIRE(list.viewMaskedStart.size() == 1);
-    CHECK(list.viewMaskedStart[0] == 1);
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    CHECK(MaskedStart(list, 0) == 1);
     CHECK(list.viewCommandStart[1] == 1);
 }

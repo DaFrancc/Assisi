@@ -26,6 +26,7 @@
 /// shader for both would charge every opaque caster a texture fetch to cut
 /// holes in geometry that has none.
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -36,6 +37,7 @@
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Buffer.hpp>
+#include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/ShadowView.hpp>
 
 namespace Assisi::Render
@@ -83,6 +85,17 @@ struct ShadowCaster
     /// exists to avoid.
     bool alphaMasked = false;
 
+    /// Whether this caster's material is drawn from both sides, and so must be
+    /// recorded from both. A single-sided caster is a closed shell whose back
+    /// faces are its interior, and culling them is free and correct; a
+    /// double-sided one is a surface with no interior at all, and culling either
+    /// face of it drops the caster whenever its winding happens to face away.
+    ///
+    /// The mesh pass already decides this the same way, from the same flag. The
+    /// depth pass reading it too is what keeps the two from disagreeing about
+    /// what a piece of geometry is.
+    bool doubleSided = false;
+
     /// Row into the material table, where the alpha-testing fragment stage
     /// finds the base-colour slot and the cutoff. Unread for an opaque caster.
     std::uint32_t materialIndex = 0;
@@ -105,7 +118,7 @@ struct ShadowCaster
     return lhs.geometryKey == rhs.geometryKey && lhs.indexCount == rhs.indexCount &&
            lhs.startIndexLocation == rhs.startIndexLocation && lhs.baseVertexLocation == rhs.baseVertexLocation &&
            lhs.vertexBuffer == rhs.vertexBuffer && lhs.indexBuffer == rhs.indexBuffer &&
-           lhs.alphaMasked == rhs.alphaMasked;
+           lhs.alphaMasked == rhs.alphaMasked && lhs.doubleSided == rhs.doubleSided;
 }
 
 /// @brief One per-object record: the world matrix, and the material row the
@@ -147,12 +160,16 @@ struct ShadowDrawList
     /// Where each view's run of commands starts, with a final entry holding the
     /// total — so view i owns [viewCommandStart[i], viewCommandStart[i + 1]).
     std::vector<std::uint32_t> viewCommandStart;
-    /// Where each view's alpha-tested commands begin, inside its own range: view
-    /// i draws [viewCommandStart[i], viewMaskedStart[i]) through the opaque
-    /// pipeline and [viewMaskedStart[i], viewCommandStart[i + 1]) through the
-    /// one that can discard. Equal to the view's end when nothing it kept is
-    /// alpha-tested, which is every view of a scene with no cutout in it.
-    std::vector<std::uint32_t> viewMaskedStart;
+    /// Where each view's run of each pipeline class begins: kMeshPipelineCount
+    /// entries per view, in MeshPipeline's own order, so view i's class c owns
+    /// [viewPipelineStart[i * kMeshPipelineCount + c], next), and the last
+    /// class ends at viewCommandStart[i + 1].
+    ///
+    /// Four rather than two because a caster's cull mode is pipeline state as
+    /// much as its fragment stage is, and the two vary independently. Empty
+    /// classes cost an equal pair of bounds and no draw, which is every class
+    /// but the first in a scene of ordinary solid geometry.
+    std::vector<std::uint32_t> viewPipelineStart;
     /// Caster-view pairs the frustum test rejected.
     std::uint32_t culled = 0;
 
@@ -173,17 +190,21 @@ struct ShadowDrawList
 void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters,
                          ShadowDrawList &out);
 
-/// @brief The two pipelines a view draws through: one for casters with no alpha
-/// to test, one for the cutouts.
+/// @brief The pipeline a view draws each class of caster through, indexed by
+/// MeshPipeline.
 ///
-/// A null @ref masked means alpha-tested casters draw through @ref opaque —
-/// a solid silhouette, which is what a build without the alpha-testing variant
-/// falls back to. Losing the hole is worse than the shadow disappearing, so the
-/// caster is never simply dropped.
+/// A null masked entry means alpha-tested casters fall back to the opaque
+/// pipeline of the same cull mode — a solid silhouette, which is what a build
+/// without the alpha-testing variant gets. Losing the hole is worse than losing
+/// the shadow, so the caster is never simply dropped.
 struct ShadowPipelines
 {
-    nvrhi::IGraphicsPipeline *opaque = nullptr;
-    nvrhi::IGraphicsPipeline *masked = nullptr;
+    std::array<nvrhi::IGraphicsPipeline *, kMeshPipelineCount> byPipeline{};
+
+    [[nodiscard]] nvrhi::IGraphicsPipeline *For(MeshPipeline pipeline) const
+    {
+        return byPipeline[static_cast<std::uint32_t>(pipeline)];
+    }
 };
 
 /// @brief The depth-only pipeline and the buffers that feed it, shared by every
@@ -242,19 +263,12 @@ public:
     /// caps the product, in the same [0, 1] depth the map stores. The cap is the
     /// widest gap this side can open under a silhouette, so it belongs to the
     /// map's resolution — see SlopeBiasClampNdc.
-    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
-                                                               float slopeBiasClamp) const;
-
-    /// @brief The alpha-testing pipeline for targets shaped like @p prototype,
-    /// or null when the variant did not load.
-    ///
-    /// It rasterizes both faces, where @ref CreatePipeline keeps the back one.
-    /// Culling at all assumes a closed shell; a cutout is characteristically a
-    /// thin card, where front and back are one coincident surface — cull either
-    /// and the caster disappears whenever its winding faces the wrong way for
-    /// the light.
-    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreateMaskedPipeline(nvrhi::IFramebuffer *prototype, float slopeBias,
-                                                                     float slopeBiasClamp) const;
+    /// @p pipeline selects the fragment stage and the cull mode together: a
+    /// masked class carries the alpha test, a double-sided class rasterizes both
+    /// faces. Returns null for a masked class when the alpha-testing variant did
+    /// not load, which the caller falls back from rather than dropping casters.
+    [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, MeshPipeline pipeline,
+                                                               float slopeBias, float slopeBiasClamp) const;
 
     /// @brief Start a frame's view table.
     ///

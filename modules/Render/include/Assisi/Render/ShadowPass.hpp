@@ -15,6 +15,7 @@
 /// a one-texel placeholder so the mesh pass's binding set still has something
 /// to point at. A scene with no sun therefore pays a single texel and no pass.
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -87,7 +88,7 @@ public:
     /// caster behind the camera survives the test rather than being clipped.
     Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const ShadowCaster> casters) const;
 
-    [[nodiscard]] bool IsActive() const { return _active && _pipeline != nullptr; }
+    [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }
 
     /// @brief The cascade array the mesh shader samples. Never null after a
     /// successful Initialize() — it is the one-texel placeholder while the pass
@@ -103,6 +104,8 @@ public:
 private:
     [[nodiscard]] bool RebuildTargets();
     [[nodiscard]] bool RebuildPipeline();
+    /// @brief The handles as the renderer wants them, one per pipeline class.
+    [[nodiscard]] ShadowPipelines PipelineSet() const;
     void ReleaseTargets();
     /// @brief The one-texel array bound while the pass is inactive.
     [[nodiscard]] bool CreatePlaceholder();
@@ -110,11 +113,13 @@ private:
     nvrhi::IDevice *_device = nullptr;
     const ShadowDepthRenderer *_depthRenderer = nullptr;
 
-    nvrhi::GraphicsPipelineHandle _pipeline;
-    // The alpha-testing companion, built from the same settings and released
-    // with it. Null when the renderer has no variant to build it from, which
-    // leaves cutouts casting a solid silhouette rather than nothing.
-    nvrhi::GraphicsPipelineHandle _maskedPipeline;
+    // One per MeshPipeline class: the alpha test and the cull mode are both
+    // pipeline state and vary independently, so a caster's material decides
+    // which of the four it is drawn through. Built from the same settings and
+    // released together. A masked entry is null when the renderer has no
+    // alpha-testing variant to build it from, which leaves cutouts casting a
+    // solid silhouette rather than nothing.
+    std::array<nvrhi::GraphicsPipelineHandle, kMeshPipelineCount> _pipelines;
 
     // The cascade array, and one framebuffer per slice. Empty while inactive.
     nvrhi::TextureHandle _cascadeTexture;

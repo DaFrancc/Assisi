@@ -121,15 +121,20 @@ bool ShadowPass::RebuildPipeline()
     // the slope bias can open instead of widening it.
     const float slopeBiasClamp = SlopeBiasClampNdc(_settings);
 
-    _pipeline = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(), _settings.slopeBias, slopeBiasClamp);
-    if (_pipeline == nullptr)
+    for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
+    {
+        _pipelines[index] = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(),
+                                                           static_cast<MeshPipeline>(index), _settings.slopeBias,
+                                                           slopeBiasClamp);
+    }
+    // The opaque single-sided class is the one nothing can do without: it is
+    // what every other class falls back to. A null masked entry is not a
+    // failure — the renderer simply carries no alpha-testing variant, and the
+    // cascades still render with cutouts casting their full silhouette.
+    if (_pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr)
     {
         return false;
     }
-    // Null when the renderer carries no alpha-testing variant. Not a failure:
-    // the cascades still render, with cutouts casting their full silhouette.
-    _maskedPipeline = _depthRenderer->CreateMaskedPipeline(_cascadeFramebuffers.front(), _settings.slopeBias,
-                                                           slopeBiasClamp);
     _builtSlopeBias = _settings.slopeBias;
     return true;
 }
@@ -148,8 +153,7 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
             // Nothing wants shadows any more: give the memory back rather than
             // holding a 4-cascade array against a scene with no sun in it.
             ReleaseTargets();
-            _pipeline = nullptr;
-            _maskedPipeline = nullptr;
+            _pipelines = {};
             _active = false;
         }
         return true;
@@ -158,7 +162,8 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
     const SunShadowSettings safe = Sanitized(settings);
     const bool targetsStale = _cascadeFramebuffers.empty() || safe.cascadeCount != _builtCascades ||
                               safe.resolution != _builtResolution || safe.format != _builtFormat;
-    const bool pipelineStale = _pipeline == nullptr || safe.slopeBias != _builtSlopeBias;
+    const bool pipelineStale = _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr ||
+                               safe.slopeBias != _builtSlopeBias;
     _settings = safe;
 
     if (!targetsStale && !pipelineStale)
@@ -170,8 +175,7 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
     if (targetsStale && !RebuildTargets())
     {
         ReleaseTargets();
-        _pipeline = nullptr;
-        _maskedPipeline = nullptr;
+        _pipelines = {};
         _active = false;
         return false;
     }
@@ -179,14 +183,23 @@ bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
     if ((targetsStale || pipelineStale) && !RebuildPipeline())
     {
         ReleaseTargets();
-        _pipeline = nullptr;
-        _maskedPipeline = nullptr;
+        _pipelines = {};
         _active = false;
         return false;
     }
 
     _active = true;
     return true;
+}
+
+ShadowPipelines ShadowPass::PipelineSet() const
+{
+    ShadowPipelines set;
+    for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
+    {
+        set.byPipeline[index] = _pipelines[index];
+    }
+    return set;
 }
 
 ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const CascadeFit &fit,
@@ -220,7 +233,7 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
     }
 
     const ShadowDepthRenderer::Stats drawn = _depthRenderer->Render(
-        commandList, ShadowPipelines{.opaque = _pipeline, .masked = _maskedPipeline}, _scratchTargets, casters);
+        commandList, PipelineSet(), _scratchTargets, casters);
 
     _firstView = drawn.firstView;
     stats.cascades = drawn.views;
