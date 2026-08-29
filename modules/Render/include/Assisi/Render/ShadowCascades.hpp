@@ -175,6 +175,14 @@ struct CascadeFitParams
 /// A far cascade capped by this filters inside a single texel, so its shadows
 /// harden rather than leak. That is the right way round: an edge that aliases at
 /// eighty metres is a worse picture, and light through a wall is a wrong one.
+///
+/// This is the head-on figure. The band a kernel produces lies on the surface
+/// being shaded, and a surface the light grazes is crossed by a map that barely
+/// moves — so a map-space reach of r covers r / NdotL of it. The shader divides
+/// this allowance by the incidence for that reason, which is the same cap
+/// expressed where it is seen rather than where it is sampled. Bounding only the
+/// map-space reach leaves that magnification unbounded, and a band on a grazing
+/// wall then narrows with every reduction without ever closing.
 inline constexpr float kMaxPenumbraWorld = 0.05f;
 
 /// @brief UV distance between adjacent PCF taps, for one cascade.
@@ -183,6 +191,10 @@ inline constexpr float kMaxPenumbraWorld = 0.05f;
 /// further into the world than kMaxPenumbraWorld — there the step goes
 /// sub-texel, and the taps crowd inside one texel rather than spreading past
 /// what they are meant to be filtering.
+///
+/// The head-on step. The shader narrows it further by the light's incidence on
+/// the surface it is shading, which this cannot know; what is quoted here is the
+/// widest that surface will ever ask for.
 [[nodiscard]] float CascadeFilterTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
 /// @brief UV distance between adjacent PCF taps.

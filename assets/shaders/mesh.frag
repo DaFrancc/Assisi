@@ -554,13 +554,27 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // grows with the angle to the light, which is why this stays small.
     float reference = coord.z - uFrame.shadowCascade[cascade].y;
 
-    // A texel of the map, unless a texel's worth of kernel would reach further
-    // into the world than the penumbra is allowed to be. A far cascade's texel
-    // is tens of centimetres, and a kernel that wide stops filtering an occluder
-    // and starts reading past it — which is how a closed box fills with light
-    // while its own centre tap reads correctly shadowed.
+    // A texel of the map, unless a texel's worth of kernel would spread further
+    // across this surface than the penumbra is allowed to be.
+    //
+    // The cap is on the receiver, not on the map, and the difference is the
+    // whole of it. A kernel reaches a fixed distance in the map, but the band it
+    // produces lies on the surface being shaded, and the two are related by the
+    // cosine of the light's incidence: a surface the light grazes is crossed by
+    // a map that barely moves, so a map-space reach of r covers r / NdotL of it.
+    // At a tenth of a radian off parallel that is a factor of ten, and a few
+    // millimetres of reach past an occluder's silhouette becomes a hand's width
+    // of daylight on a wall that should be black. Bounding the map-space reach
+    // alone leaves that factor unbounded, which is why a cap on it narrows such
+    // a band without ever closing it.
+    //
+    // Dividing the allowance by the incidence is the same cap expressed where it
+    // is seen. Head-on surfaces are unaffected; grazing ones get a kernel that
+    // shrinks as fast as their magnification grows, which is what keeps the
+    // product — the width on the surface — fixed.
     float texelStep  = uFrame.shadowParams.x;
-    float step       = min(texelStep, uFrame.shadowParams.z / uFrame.shadowCascade[cascade].w);
+    float onReceiver = uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w;
+    float step       = min(texelStep, onReceiver);
     uint  filterMode = uFrame.shadowCounts.z;
 
     if (filterMode == kShadowFilterPoint)
