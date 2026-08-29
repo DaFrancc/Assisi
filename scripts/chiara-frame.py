@@ -431,6 +431,15 @@ def print_header(path, frames, work, index, note, dropped, style):
     print(f"  cpu work   {style(f'{work[index] / 1000:7.3f} ms', Style.BOLD)}   "
           + style(plain_english(busier, "busier"), Style.DIM))
     print(style(f"  chosen as  {note}", Style.DIM))
+    # A capped frame's duration is mostly how long it waited, so the two
+    # rankings come apart: the shortest frame in this capture is one of the
+    # busiest, having slept least. Saying so beats letting it mislead.
+    if abs(faster - busier) >= 25:
+        print(style(f"  note       this frame's duration and its work disagree "
+                    f"(p{faster:.0f} against p{busier:.0f}) — frame length here is "
+                    f"mostly pacing.", Style.YELLOW))
+        print(style("             `busiest` and `idlest` select on work instead.",
+                    Style.YELLOW))
     print()
 
 
@@ -591,9 +600,22 @@ def print_hot(rows, style, limit):
             children[stack[-1][1]] += event["dur"]
         stack.append((depth, pid, event))
 
-    ranked = sorted(((e["dur"] - children[p], e) for _, p, e in rows), key=lambda r: -r[0])
-    print(style("SELF TIME (excludes nested scopes)", Style.BOLD))
-    total = rows[0][2]["dur"]
+    # Ranked against the frame's work, not the frame. Leaving the sleep in puts
+    # it first at 96% and scales every real slice to a single block, which is
+    # the one thing this ranking exists to avoid.
+    ranked = sorted(((e["dur"] - children[p], e) for d, p, e in rows
+                     if not (d <= 1 and e["name"] in (SLEEP_SCOPE, FRAME_SCOPE))),
+                    key=lambda r: -r[0])
+    sleep = sum(e["dur"] for d, _, e in rows if d == 1 and e["name"] == SLEEP_SCOPE)
+    total = rows[0][2]["dur"] - sleep
+
+    print(rule(style("SELF TIME", Style.BOLD)
+               + style("  (a scope's own time, excluding the scopes nested in it)",
+                       Style.DIM), style))
+    if not ranked:
+        print(style("  nothing but the pacing sleep in this frame", Style.DIM))
+        print()
+        return
     for self_us, event in ranked[:limit]:
         if self_us / 1000 < NOISE_MS:
             continue
@@ -601,6 +623,9 @@ def print_hot(rows, style, limit):
         print(f"  {event['name']:<30.30} {self_us / 1000:8.3f} ms "
               f"{100 * self_us / total if total else 0:5.1f}%  "
               + style(bar, Style.CYAN))
+    print(style(f"  shares are of the frame's {total / 1000:.3f} ms of work; "
+                "pacing-sleep is left out so the scale belongs to the work",
+                Style.DIM))
     print()
 
 
