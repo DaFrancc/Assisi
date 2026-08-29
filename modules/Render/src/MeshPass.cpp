@@ -74,8 +74,11 @@ struct FrameConstants
     /// every cascade whose texels are small enough,
     /// y = the fraction of each cascade spent fading into the next,
     /// z = the penumbra cap over the filter's radius, which the shader divides
-    /// by a cascade's depth range to get the step that keeps that cascade's
-    /// kernel from reaching past what it is filtering, w unused.
+    /// by a cascade's depth range to get the widest step that cascade may use,
+    /// w = the sun's penumbra per world unit of blocker distance over the same
+    /// radius, which the shader multiplies by the distance it reads out of the
+    /// map to get the step the scene actually calls for. The cascade's depth
+    /// range cancels in that product, which is why no cascade term appears.
     glm::vec4 shadowParams;
     /// One record per cascade: x = the view-space distance it ends at (what the
     /// shader selects on), y = its constant depth bias already in the [0, 1]
@@ -317,8 +320,13 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     const float radiusTaps = FilterRadiusTaps(shadows.settings.filter);
     const float cappedStepNumerator =
         radiusTaps > 0.f ? kMaxPenumbraWorld / radiusTaps : std::numeric_limits<float>::max();
+    // The cascade's depth range cancels: a blocker distance read in the map's own
+    // [0, 1] depth, times this, is already the UV step that gives the penumbra
+    // the sun's angular radius calls for at that distance.
+    const float contactStepNumerator =
+        radiusTaps > 0.f ? kSunPenumbraPerWorldUnit / radiusTaps : std::numeric_limits<float>::max();
     constants.shadowParams = glm::vec4(ShadowTexelSizeUv(shadows.settings), shadows.settings.cascadeBlend,
-                                       cappedStepNumerator, 0.f);
+                                       cappedStepNumerator, contactStepNumerator);
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

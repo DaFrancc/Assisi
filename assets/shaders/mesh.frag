@@ -512,6 +512,29 @@ float InterleavedGradientNoise(vec2 position)
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
+/// The depth of the nearest thing the map recorded around @p uv, unfiltered.
+///
+/// Read rather than compared: the comparison sampler answers whether something
+/// is in front, and what is wanted here is how far in front. Five taps, because
+/// the answer only has to be good enough to size a kernel — the centre, which is
+/// the occluder actually shading the fragment, and a ring at the widest the
+/// kernel could be, which catches an occluder the fragment is beside rather than
+/// under and so keeps the lit edge of a shadow soft.
+float NearestBlockerDepth(vec2 uv, uint cascade, float searchStepUv)
+{
+    ivec3 size = textureSize(uShadowCascades, 0);
+    float nearest = 1.0;
+    for (uint i = 0u; i < 5u; ++i)
+    {
+        const vec2 kRing[5] = vec2[5](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0),
+                                      vec2(0.0, -1.0));
+        vec2  at = clamp(uv + kRing[i] * searchStepUv, vec2(0.0), vec2(1.0));
+        ivec2 texel = clamp(ivec2(at * vec2(size.xy)), ivec2(0), size.xy - 1);
+        nearest = min(nearest, texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r);
+    }
+    return nearest;
+}
+
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
 ///
 /// @p N is the geometric normal, not the shaded one. The offset below has to
@@ -554,27 +577,30 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // grows with the angle to the light, which is why this stays small.
     float reference = coord.z - uFrame.shadowCascade[cascade].y;
 
-    // A texel of the map, unless a texel's worth of kernel would spread further
-    // across this surface than the penumbra is allowed to be.
+    // How wide to filter, asked of the geometry rather than assumed.
     //
-    // The cap is on the receiver, not on the map, and the difference is the
-    // whole of it. A kernel reaches a fixed distance in the map, but the band it
-    // produces lies on the surface being shaded, and the two are related by the
-    // cosine of the light's incidence: a surface the light grazes is crossed by
-    // a map that barely moves, so a map-space reach of r covers r / NdotL of it.
-    // At a tenth of a radian off parallel that is a factor of ten, and a few
-    // millimetres of reach past an occluder's silhouette becomes a hand's width
-    // of daylight on a wall that should be black. Bounding the map-space reach
-    // alone leaves that factor unbounded, which is why a cap on it narrows such
-    // a band without ever closing it.
+    // The sun is not a point: it subtends about half a degree, so an occluder d
+    // away throws a penumbra of roughly d/216, and that — not a texel, not a
+    // constant — is how soft this fragment's shadow should be. The map knows d:
+    // it is the distance between what the map recorded and the fragment itself.
     //
-    // Dividing the allowance by the incidence is the same cap expressed where it
-    // is seen. Head-on surfaces are unaffected; grazing ones get a kernel that
-    // shrinks as fast as their magnification grows, which is what keeps the
-    // product — the width on the surface — fixed.
+    // This is what closes the leak rather than narrowing it. A kernel escapes an
+    // occluder's silhouette only if it reaches as far as the silhouette is away,
+    // and a fragment tucked under an occluder is by definition close to it — the
+    // inside of a box's ceiling is a hand's breadth from the wall beneath it, so
+    // the honest penumbra there is under a millimetre and there is nothing left
+    // to reach past. Every earlier width was a guess standing in for d: a texel
+    // count, then a constant in metres, then that constant over the incidence.
+    // Each narrowed the band, because each was smaller than the last, and none
+    // could close it, because none of them knew how far the occluder was.
+    //
+    // Where nothing is recorded in front of the fragment there is no occluder to
+    // measure, and the search widens to the cap so the lit side of an edge keeps
+    // its softness.
     float texelStep  = uFrame.shadowParams.x;
-    float onReceiver = uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w;
-    float step       = min(texelStep, onReceiver);
+    float capStep    = min(texelStep, uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w);
+    float blockerNdc = max(0.0, coord.z - NearestBlockerDepth(uv, cascade, capStep));
+    float step       = blockerNdc > 0.0 ? min(capStep, uFrame.shadowParams.w * blockerNdc) : capStep;
     uint  filterMode = uFrame.shadowCounts.z;
 
     if (filterMode == kShadowFilterPoint)

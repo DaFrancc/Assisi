@@ -159,7 +159,29 @@ struct CascadeFitParams
 /// soft the edge reads.
 [[nodiscard]] float FilterRadiusTaps(ShadowFilter filter);
 
+/// @brief Half the penumbra an occluder one world unit away casts, which is the
+/// tangent of the sun's angular radius.
+///
+/// The sun subtends about half a degree from the ground, so a metre of clearance
+/// under an occluder softens its shadow edge by a little over four millimetres.
+/// This is the figure that makes a shadow's softness a property of the scene
+/// rather than of the map: an occluder near its receiver casts a sharp edge and
+/// a distant one casts a broad edge, which is both what the eye expects and what
+/// keeps a filter from reaching past the very occluder it is filtering.
+///
+/// A fragment tucked under an occluder is by definition close to it — the inside
+/// of a box's ceiling is a hand's breadth from the wall beneath — so the width
+/// this yields there is well under a millimetre, and a kernel that narrow has
+/// nothing to reach past. That is the difference between narrowing a leak and
+/// ending one.
+inline constexpr float kSunPenumbraPerWorldUnit = 0.00463f;
+
 /// @brief The widest the sun's penumbra may be, in world units.
+///
+/// A ceiling on the figure above, for the fragment whose blocker is far enough
+/// that the honest penumbra would span more of the map than the map can spare —
+/// and for the lit side of an edge, where there is no blocker in front to
+/// measure and so no distance to derive a width from.
 ///
 /// A cascade's texel is a different size in every cascade — an order of
 /// magnitude across a frame — so a kernel quoted in texels has a reach in metres
