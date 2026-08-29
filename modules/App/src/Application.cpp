@@ -33,7 +33,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace Assisi::App
 {
@@ -264,8 +266,9 @@ bool Application::InitializePresentation()
 
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
-        // of the run is to find out where the time went. Interactive runs leave
-        // it to the F11 checkbox.
+        // of the run is to find out where the time went. An interactive run
+        // starts with them off and turns them on from the Chiara panel, once it
+        // is showing the thing worth measuring.
         if (_perfCapture && _capturePerPassTiming)
         {
             vulkanContext->SetPassTimingEnabled(true);
@@ -765,6 +768,26 @@ void Application::Run()
     OnShutdown();
 }
 
+namespace
+{
+/// @brief `gpu/<pass>` for a pass name, kept alive for the process.
+///
+/// A counter's name is stored by pointer and read long after the emit, so it
+/// must outlive the frame. Pass names are literals and there are a handful, so
+/// keying the table by the literal's address makes a repeat lookup a pointer
+/// compare and never builds the same string twice.
+[[nodiscard]] const char *GpuPassCounterName(const char *pass)
+{
+    static std::unordered_map<const char *, std::string> names;
+    auto [entry, inserted] = names.try_emplace(pass);
+    if (inserted)
+    {
+        entry->second = std::string("gpu/") + pass;
+    }
+    return entry->second.c_str();
+}
+} // namespace
+
 void Application::PumpChiaraCounters()
 {
     ASSISI_PROFILE_SCOPE("chiara-counters");
@@ -788,6 +811,18 @@ void Application::PumpChiaraCounters()
             const Window::WindowSize fb = _window->GetFramebufferSize();
             ASSISI_PROFILE_COUNTER("render/framebuffer-width", static_cast<double>(fb.Width));
             ASSISI_PROFILE_COUNTER("render/framebuffer-height", static_cast<double>(fb.Height));
+        }
+    }
+
+    // Per-pass GPU time, when the panel has asked for it. Empty otherwise, so
+    // this costs a load and a branch on a normal frame. These are the only
+    // numbers in a capture that describe the device rather than the thread that
+    // fed it, which is the half of a frame no scope tree can reach.
+    if (Render::Vulkan::VulkanContext *context = Render::RenderSystem::GetVulkanContext())
+    {
+        for (const Render::Vulkan::VulkanContext::PassTiming &pass : context->GetPassTimings())
+        {
+            ASSISI_PROFILE_COUNTER(GpuPassCounterName(pass.name), static_cast<double>(pass.milliseconds));
         }
     }
 

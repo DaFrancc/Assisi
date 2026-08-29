@@ -14,6 +14,8 @@
 #    include <Assisi/Chiara/Serializer.hpp>
 #    include <Assisi/Core/AssetSystem.hpp>
 #    include <Assisi/Core/Logger.hpp>
+#    include <Assisi/Render/RenderSystem.hpp>
+#    include <Assisi/Render/Vulkan/VulkanContext.hpp>
 
 #    include <imgui.h>
 
@@ -23,6 +25,7 @@
 #    include <ctime>
 #    include <filesystem>
 #    include <memory>
+#    include <span>
 #    include <string>
 
 namespace Assisi::App
@@ -160,6 +163,39 @@ void Application::DrawChiaraPanel()
         Chiara::SetRecording(recording);
     }
     ImGui::EndDisabled();
+
+    // The device's half of the frame. Off by default and not tied to the
+    // recording toggle: a timer splits every timed pass into its own render
+    // pass, so a frame measured this way is not the frame that ships, and
+    // leaving it on quietly changes the thing being measured.
+    if (Render::Vulkan::VulkanContext *context = Render::RenderSystem::GetVulkanContext())
+    {
+        bool passTiming = context->IsPassTimingEnabled();
+        if (ImGui::Checkbox("GPU per-pass timing", &passTiming))
+        {
+            context->SetPassTimingEnabled(passTiming);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Times each render pass on the GPU and writes them into the\n"
+                              "capture as gpu/<pass> counters.\n\n"
+                              "Costs a render-pass break per timed pass, so total frame time\n"
+                              "rises while this is on. Use it to find which pass moved, then\n"
+                              "turn it off before quoting a frame time.");
+        }
+
+        // Two frames behind the one being recorded, because a query cannot be
+        // read until its frame has finished on the device.
+        const std::span<const Render::Vulkan::VulkanContext::PassTiming> passes = context->GetPassTimings();
+        if (passTiming && passes.empty())
+        {
+            ImGui::TextDisabled("  waiting for the first timed frame…");
+        }
+        for (const Render::Vulkan::VulkanContext::PassTiming &pass : passes)
+        {
+            ImGui::Text("  %-22s %6.3f ms", pass.name, static_cast<double>(pass.milliseconds));
+        }
+    }
 
     ImGui::Text("Threads: %u   Events: %llu", stats.threadCount,
                 static_cast<unsigned long long>(stats.totalEventsWritten));
