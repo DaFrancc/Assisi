@@ -512,6 +512,20 @@ float InterleavedGradientNoise(vec2 position)
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
+/// The normal of the surface that was actually rasterized, facing the viewer.
+///
+/// The interpolated vertex normal, flipped for a back face exactly as the shaded
+/// normal is. Both have to agree about which way a surface faces or they disagree
+/// about whether the sun reaches it — and a double-sided shell is nothing but
+/// back faces from inside, so the disagreement is the whole of what one sees
+/// there. The one geometric normal in the shader, so a diagnostic cannot answer
+/// for a surface the shading orients differently.
+vec3 GeometricNormal()
+{
+    vec3 n = normalize(vNormal);
+    return gl_FrontFacing ? n : -n;
+}
+
 /// The depth of the nearest thing the map recorded in front of @p reference
 /// around @p uv, or @p reference itself where nothing is.
 ///
@@ -889,11 +903,7 @@ void main()
             // double-sided shell is then lit as though nothing stood between it
             // and the sun — a cutout casts no pattern into its own inside, which
             // is the one place its pattern is supposed to land.
-            vec3 Ng = normalize(vNormal);
-            if (!gl_FrontFacing)
-            {
-                Ng = -Ng;
-            }
+            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
@@ -993,7 +1003,7 @@ void main()
     {
         // The same lookup SampleCascade would make, so the number read here is
         // the number the comparison was given.
-        vec3        Ng    = normalize(vNormal);
+        vec3        Ng    = GeometricNormal();
         vec3        sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
         ShadowProbe probe = ProbeCascade(shadowCascade, vWorldPos, Ng, dot(Ng, sunL));
 
@@ -1022,7 +1032,7 @@ void main()
     //           reaching past the silhouette of whatever shades this fragment
     if (uFrame.shadowCounts.w == kShadowDebugTaps && shadowCascadeCount > 0u)
     {
-        vec3  Ng    = normalize(vNormal);
+        vec3  Ng    = GeometricNormal();
         vec3  sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
         float NdotL = dot(Ng, sunL);
 
