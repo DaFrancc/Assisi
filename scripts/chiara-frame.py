@@ -10,7 +10,7 @@ value falls between the extremes.
     scripts/chiara-frame.py 15                 # frame nearest t=15 s
     scripts/chiara-frame.py 15 median          # median frame in t=14..16 s
     scripts/chiara-frame.py 15 slowest         # slowest frame in that window
-    scripts/chiara-frame.py 15 busiest --window all   # most CPU work, whole run
+    scripts/chiara-frame.py 15 busiest --window all   # most active, whole run
     scripts/chiara-frame.py 15 median --hot    # + self-time ranking
 
 With no --capture, it asks which build and which capture to read.
@@ -289,8 +289,14 @@ def load(path):
     return ordered, counters, frames, dropped
 
 
-def cpu_work_per_frame(ordered, frames):
-    """Frame duration minus its pacing sleep: what each frame actually did.
+def active_per_frame(ordered, frames):
+    """Frame duration minus its pacing sleep: the frame's active time.
+
+    Active rather than "CPU work": the main thread also blocks on the swapchain
+    and on the present queue, and that blocking sits inside this figure because
+    it sits inside the scope tree. An app that publishes a frame/cpu-ms counter
+    has already subtracted it; the header prints both, and the gap between them
+    is the waiting.
 
     Ranking pacing-capped frames by duration ranks them by how long they waited,
     which is the reverse of interesting. Both scopes are one per frame, so this
@@ -509,7 +515,44 @@ def plain_english(percentile_rank, what):
     return f"{what} than only {percentile_rank:.0f}% of frames"
 
 
-def print_capture(path, frames, work, dropped, style):
+# What an app may publish about its own frame, in the order a reader wants it.
+# The tool derives none of these: the app knows which of its waiting is
+# deliberate and which is a stall, and re-deriving that here would be a guess.
+FRAME_ACCOUNTING = [
+    ("frame/cpu-ms", "cpu", "work on the main thread"),
+    ("frame/gpu-ms", "gpu", "the frame's work on the device"),
+    ("frame/gpu-wait-ms", "gpu wait", "main thread blocked on the device or the display"),
+    ("frame/sleep-ms", "sleep", "deliberate pacing"),
+    ("frame/unaccounted-ms", "unaccounted", "main thread descheduled, doing nothing"),
+]
+
+
+def print_accounting(counters, style):
+    """The app's own split of a median frame, when it publishes one.
+
+    Worth more than anything derived here: `active` above cannot separate work
+    from blocking, and no scope tree can show time the thread was descheduled,
+    because a descheduled thread opens no scopes.
+    """
+    series = defaultdict(list)
+    for event in counters:
+        value = event["args"].get("v", event["args"])
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            series[event["name"]].append(float(value))
+
+    rows = [(label, sorted(series[key]), gloss)
+            for key, label, gloss in FRAME_ACCOUNTING if series.get(key)]
+    if not rows:
+        return
+
+    print(style("  the app's own accounting of a median frame", Style.BOLD))
+    for label, values, gloss in rows:
+        print(f"    {label:<12}{statistics.median(values):8.3f} ms   "
+              + style(gloss, Style.DIM))
+    print()
+
+
+def print_capture(path, frames, work, dropped, counters, style):
     origin = frames[0]["ts"]
     span = (frames[-1]["ts"] + frames[-1]["dur"] - origin) / 1e6
     durations = sorted(f["dur"] for f in frames)
@@ -526,11 +569,12 @@ def print_capture(path, frames, work, dropped, style):
     print()
     print(style(f"  {'ms':<10}{'p50':>9}{'p90':>9}{'p99':>9}{'min':>9}{'max':>9}", Style.BOLD))
     print(row("frame", durations))
-    print(row("cpu work", ranked_work, "frame minus pacing-sleep"))
+    print(row("active", ranked_work, "the frame minus its pacing sleep"))
     if dropped:
         print(style(f"  {dropped} negative-duration event(s) dropped "
                     "(capture stopped mid-scope)", Style.DIM))
     print()
+    print_accounting(counters, style)
 
 
 def print_frame_card(frames, work, index, note, style):
@@ -546,7 +590,7 @@ def print_frame_card(frames, work, index, note, style):
                style))
     print(f"  duration   {style(f'{frame['dur'] / 1000:7.3f} ms', Style.BOLD)}   "
           + style(plain_english(faster, "slower"), Style.DIM))
-    print(f"  cpu work   {style(f'{work[index] / 1000:7.3f} ms', Style.BOLD)}   "
+    print(f"  active     {style(f'{work[index] / 1000:7.3f} ms', Style.BOLD)}   "
           + style(plain_english(busier, "busier"), Style.DIM))
     print(style(f"  chosen as  {note}", Style.DIM))
     # A capped frame's duration is mostly how long it waited, so the two
@@ -664,7 +708,7 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms, other=None):
     print(rule(style("EVERY SCOPE IN THIS FRAME", Style.BOLD)
                + (style(f"  against frame #{other[0]} ({other[1]})", Style.DIM)
                   if other else ""), style))
-    print(style(f"    {'SCOPE':<{name_w}} {'ms':>8}  {'SHARE OF WORK':<13}  "
+    print(style(f"    {'SCOPE':<{name_w}} {'ms':>8}  {'% OF ACTIVE':<13}  "
                 f"{head_delta:>17}  {'RANK':>5}  "
                 f"{head_right:>8}" + ("" if other else f"{'p90':>8}"), Style.BOLD))
 
@@ -730,8 +774,9 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms, other=None):
     print()
     entries = [
         ("ms", "this scope in this frame"),
-        ("SHARE OF WORK", f"its part of the frame's {work / 1000:.3f} ms of work — the "
-                          "frame minus pacing-sleep, which is why those two show —"),
+        ("% OF ACTIVE", f"its part of the frame's {work / 1000:.3f} ms of active time "
+                        "— the frame minus its pacing sleep, which is why those two "
+                        "rows show —. Active time includes blocking on the GPU"),
         ("Δ vs MEDIAN", "how far this frame is from what this scope usually costs; "
                         "— when the median is under a microsecond"),
         ("RANK", "where this frame lands among that scope's own frames: p50 typical, "
@@ -1006,10 +1051,12 @@ SELECTING A FRAME
     p90       a frame at the 90th duration percentile — a bad frame that is
               still representative, rather than the single worst one.
     p99       the same at the 99th.
-    busiest   most CPU work, where work is the frame's duration minus its
+    busiest   most active time, which is the frame's duration minus its
               pacing sleep. When frames are capped at a refresh rate, ranking
               by duration ranks them by how long they waited; this does not.
-    idlest    least CPU work.
+              Active time still includes blocking on the GPU, so it is not the
+              same as CPU work — see WHERE A FRAME GOES below.
+    idlest    least active time.
 
 WHAT YOU GET
 
@@ -1023,16 +1070,37 @@ WHAT YOU GET
                      child is listed, because only the child names the code.
     every scope      the full tree, for when the summary is not enough
 
+WHERE A FRAME GOES
+
+  Two accountings sit at the top of the report, and they do not agree.
+
+  `active` is the tool's own: the frame minus its pacing sleep, which is
+  everything the scope tree can see. It is what the % OF ACTIVE column is a
+  share of, and what busiest and idlest rank on. It includes the main thread
+  blocking on the swapchain and the present queue, because those waits are
+  scopes like any other.
+
+  The block beneath it is the app's, printed only when the capture carries the
+  counters for it. That one separates work from blocking, which the tree
+  cannot, and reports time the thread was descheduled, which no tree can — a
+  descheduled thread opens no scopes, so the gap is invisible from the inside.
+  Trust it over `active` where they differ, and read the difference as waiting.
+
+  So a scope high in the tree is not automatically expensive: check whether it
+  is a wait before treating it as work. A `present` or an `acquire` at the top
+  of SELF TIME usually means the frame was ahead of the display, not that
+  anything needs fixing.
+
 READING THE TABLE
 
   Every row compares one scope in the chosen frame against that same scope
   across the whole recording:
 
     ms              its duration in this frame
-    SHARE OF WORK   its part of the frame's work — the frame minus its pacing
-                    sleep. Against the whole frame, a capped frame is 95%
-                    sleep and every real scope rounds to nothing; those two
-                    rows show `—` for that reason.
+    % OF ACTIVE     its part of the frame's active time — the frame minus its
+                    pacing sleep. Against the whole frame, a capped frame is
+                    95% sleep and every real scope rounds to nothing; those
+                    two rows show `—` for that reason.
     Δ vs MEDIAN     distance from its own median, absolute and as a
                     percentage. `—` means that median is under a microsecond,
                     where the ratio would be arithmetic rather than
@@ -1164,7 +1232,7 @@ def main():
             cache_write(path, ordered, counters, dropped)
 
     done = progress(f"walking {len(frames)} frames…", style)
-    work = cpu_work_per_frame(ordered, frames)
+    work = active_per_frame(ordered, frames)
     index, note = select(frames, work, seconds, target, half)
     wants = {index}
     other = None
@@ -1182,11 +1250,11 @@ def main():
 
     print()
     if args.scope:
-        print_capture(path, frames, work, dropped, style)
+        print_capture(path, frames, work, dropped, counters, style)
         print_scope(args.scope, ordered, frames, style)
         return
 
-    print_capture(path, frames, work, dropped, style)
+    print_capture(path, frames, work, dropped, counters, style)
     print_frame_card(frames, work, index, note, style)
     print_standout(rows, stats, style)
     print_tree(rows, stats, len(frames), style, args.depth, args.min_ms, other)
