@@ -100,8 +100,10 @@ DrawStats DrawScene(const DrawSceneParams &params);
 /// re-gather, so a steady-state scene allocates nothing here.
 struct ShadowCasterGather
 {
-    /// Sorted by geometry key, which is what lets consecutive entries
-    /// coalesce into one instanced draw in the shadow pass.
+    /// Sorted opaque-first and by geometry key within each half, which is what
+    /// lets consecutive entries coalesce into one instanced draw in the shadow
+    /// pass. The alpha-tested half sorts last because it draws through its own
+    /// pipeline, and a run that straddled the two could not coalesce anyway.
     std::vector<Assisi::Render::ShadowCaster> casters;
 
     /// The smallest `dot(p, lightDirection)` any caster's bounding sphere
@@ -112,11 +114,12 @@ struct ShadowCasterGather
 
 /// @brief Collect every shadow-casting submesh in the scene, for the sun.
 ///
-/// A caster is any resolved mesh whose MeshRenderer has `castsShadows` set. The
-/// material is not consulted: an opaque caster's shadow is a property of its
-/// geometry, and the alpha-tested case is a separate variant that does not
-/// exist yet. Nothing is frustum-culled here — that is per view, and this list
-/// feeds all of them.
+/// A caster is any resolved mesh whose MeshRenderer has `castsShadows` set.
+/// Each submesh's material is consulted for one thing only: whether it
+/// alpha-tests, and which table row the test reads. A submesh with no material
+/// resolved still casts, opaquely — a shadow is a property of the geometry, and
+/// dropping it would be a worse answer than a solid one. Nothing is
+/// frustum-culled here — that is per view, and this list feeds all of them.
 ///
 /// Each caster's geometry is resolved to its arena offsets here rather than at
 /// draw time: a caster is drawn once per view it survives into, and resolving

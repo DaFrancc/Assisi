@@ -162,7 +162,6 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 ReadField(sun, "slopeBias", shadows.sun.slopeBias);
                 ReadField(sun, "normalOffsetTexels", shadows.sun.normalOffsetTexels);
                 ReadField(sun, "cascadeBlend", shadows.sun.cascadeBlend);
-                ReadField(sun, "cullFrontFaces", shadows.sun.cullFrontFaces);
             }
             if (sh.contains("local"))
             {
@@ -175,7 +174,6 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 ReadField(local, "depthBiasTexels", shadows.local.depthBiasTexels);
                 ReadField(local, "slopeBias", shadows.local.slopeBias);
                 ReadField(local, "normalOffsetTexels", shadows.local.normalOffsetTexels);
-                ReadField(local, "cullFrontFaces", shadows.local.cullFrontFaces);
             }
             // Whatever the file said, nothing downstream sees an out-of-range
             // value — and here that is a texture allocation, not only a shader.
@@ -244,7 +242,6 @@ std::string OptionsConfig::ToJsonText() const
     sun["slopeBias"]          = shadows.sun.slopeBias;
     sun["normalOffsetTexels"] = shadows.sun.normalOffsetTexels;
     sun["cascadeBlend"]       = shadows.sun.cascadeBlend;
-    sun["cullFrontFaces"]     = shadows.sun.cullFrontFaces;
 
     nlohmann::json &local = json["shadows"]["local"];
     local["enabled"]            = shadows.local.enabled;
@@ -255,7 +252,6 @@ std::string OptionsConfig::ToJsonText() const
     local["depthBiasTexels"]    = shadows.local.depthBiasTexels;
     local["slopeBias"]          = shadows.local.slopeBias;
     local["normalOffsetTexels"] = shadows.local.normalOffsetTexels;
-    local["cullFrontFaces"]     = shadows.local.cullFrontFaces;
 
     json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"]       = fpsLimit;

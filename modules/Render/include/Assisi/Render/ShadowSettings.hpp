@@ -106,21 +106,6 @@ inline constexpr std::uint32_t kMaxShadowAtlasResolution = 8192;
 inline constexpr std::uint32_t kMinShadowFaceResolution = 128;
 inline constexpr std::uint32_t kMaxShadowFaceResolution = 2048;
 
-/// @brief The resolution a filter radius is quoted against.
-///
-/// Kernel offsets are in texels, so a radius measured in the *map's own* texels
-/// shrinks as the map grows: doubling the resolution halves what one texel
-/// covers, and the blur collapses to half its width exactly when the quality
-/// setting went up. A tier that raises the resolution then delivers a sharper
-/// occluder edge and a narrower penumbra at once, and comes out looking harder
-/// than the tier below it rather than better.
-///
-/// Quoting the radius against a fixed resolution decouples the two: the map
-/// governs how finely the occluder's silhouette is resolved, and the filter
-/// footprint stays put. Below this size the step cannot be finer than a texel,
-/// so it is a texel; above it, the taps simply straddle more than one.
-inline constexpr std::uint32_t kFilterReferenceResolution = 2048;
-
 /// @brief How far from the camera the sun casts. Past the ceiling the outermost
 /// cascade's texels are metres wide and the shadow is a stain rather than a shape.
 inline constexpr float kMinShadowDistance = 5.0f;
@@ -149,6 +134,12 @@ inline constexpr float kSplitDistributionNear = 1.5f;
 /// @brief Constant depth bias, in shadow-map texels. Auto-scaled per view by
 /// that view's world-units-per-texel, so one value holds across maps whose
 /// texels differ by an order of magnitude.
+///
+/// Like the normal offset, this is a floor under the receiver-plane bias rather
+/// than the thing that stops acne. It covers what the plane cannot: the depth
+/// format's own quantisation, and the residual where a receiver is curved
+/// across the kernel. Raising it buys nothing the plane bias does not already
+/// give and detaches every shadow from its contact edge.
 inline constexpr float kMinDepthBiasTexels = 0.0f;
 inline constexpr float kMaxDepthBiasTexels = 8.0f;
 
@@ -158,9 +149,20 @@ inline constexpr float kMinSlopeBias = 0.0f;
 inline constexpr float kMaxSlopeBias = 8.0f;
 
 /// @brief How far along the surface normal a sample is pushed before it is
-/// looked up, in shadow-map texels. This is what fixes acne on surfaces the
-/// light grazes, where a depth bias alone would have to be large enough to
-/// detach the contact shadow.
+/// looked up, in shadow-map texels.
+///
+/// A safety net, not the mechanism: the receiver-plane bias in the mesh shader
+/// is what corrects a tap for the receiver's slope, and it does so by an amount
+/// derived from the surface rather than by a constant that has to be large
+/// enough for the worst case. What is left for this to cover is the case that
+/// bias cannot see — a receiver whose curvature or displacement leaves it off
+/// the plane its own screen-space quad reports.
+///
+/// Every texel of it is a leak: the offset moves the *lookup*, so near a
+/// silhouette it moves the lookup off the occluder and the fragment reads lit.
+/// The offset is quoted in texels and a texel grows with the cascade, so a
+/// setting large enough to matter close up opens a hole metres wide out at the
+/// last cascade.
 inline constexpr float kMinNormalOffsetTexels = 0.0f;
 inline constexpr float kMaxNormalOffsetTexels = 8.0f;
 
@@ -207,9 +209,25 @@ struct SunShadowSettings
 
     ShadowFilter filter = ShadowFilter::Pcf3x3;
 
-    float depthBiasTexels = 1.5f;
+    /// A quarter texel, and it is not the mechanism. Everything angle-dependent
+    /// is covered by the rasterizer's slope bias on the caster and the normal
+    /// offset on the receiver; what is left for a constant is the depth format's
+    /// quantisation and a receiver curved across the kernel. Raising it past
+    /// that buys nothing and detaches every shadow from its contact edge.
+    float depthBiasTexels = 0.25f;
+
+    /// Slope-scaled, applied by the rasterizer as the map is drawn. The only
+    /// bias that sees the polygon being recorded, so it is the one that can
+    /// answer for that polygon's own tilt.
     float slopeBias = 2.0f;
-    float normalOffsetTexels = 1.5f;
+
+    /// Texels of the cascade's own map, moved along the geometric normal. Half a
+    /// texel is the floor that means anything: the hardware comparison blends
+    /// four texels, so a lookup that has not cleared half a texel has not left
+    /// the surface it is standing on. It is also the ceiling worth paying — this
+    /// is the one bias that moves the lookup sideways, and sideways is what walks
+    /// a receiver out from under the occluder next to it.
+    float normalOffsetTexels = 0.5f;
 
     /// A third of each cascade. A seam is a step in texel size and the band is
     /// the only thing that turns it into a gradient, so it wants real distance —
@@ -217,12 +235,6 @@ struct SunShadowSettings
     /// frame or two, which is when a ramp reads as a pop.
     float cascadeBlend = 0.33f;
 
-    /// Which faces the depth pass keeps. Culling front faces moves the acne to
-    /// surfaces the camera cannot see, which is the classic fix — but it breaks
-    /// on single-sided geometry, where the back face it relies on does not
-    /// exist, and a cube-built test world is all thin walls. The default is
-    /// therefore the honest one and the alternative is a knob to measure.
-    bool cullFrontFaces = false;
 };
 
 /// @brief Spot and point lights' shadows, as the user edits them.
@@ -253,11 +265,6 @@ struct LocalShadowSettings
     float depthBiasTexels = 1.5f;
     float slopeBias = 2.0f;
     float normalOffsetTexels = 1.5f;
-
-    /// Same trade as the sun's, and separately settable because the geometry a
-    /// local light illuminates is usually interior — where the back face the
-    /// trick relies on is the one the light is on the wrong side of.
-    bool cullFrontFaces = false;
 };
 
 /// @brief Every shadow knob, in its two halves.

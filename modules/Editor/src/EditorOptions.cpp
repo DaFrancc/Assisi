@@ -162,23 +162,22 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     changed |= ImGui::SliderFloat("Slope Bias", &shadows.sun.slopeBias, Assisi::Render::kMinSlopeBias,
                                   Assisi::Render::kMaxSlopeBias, "%.2f");
 
-    // Which faces the depth pass keeps. Front-face culling moves acne to
-    // surfaces the camera cannot see, but it needs a back face to land on —
-    // which single-sided geometry does not have. Worth measuring per scene.
-    changed |= ImGui::Checkbox("Cull Front Faces", &shadows.sun.cullFrontFaces);
-
     if (!shadows.sun.enabled)
     {
         ImGui::EndDisabled();
     }
 
-    // Tints the lit image by which cascade shadowed each pixel, so a split
-    // distance and a blend band are visible against the geometry. Runtime only,
-    // not persisted — it is a thing to look at, not a setting.
-    bool cascadeView = frame.renderer.CascadeDebugView();
-    if (ImGui::Checkbox("Cascade View", &cascadeView))
+    // Diagnostics, not settings: runtime only and never persisted. Each one
+    // changes the picture, which is why they are a list with an off entry rather
+    // than checkboxes that could be left on by accident.
+    static const char *const kShadowDebugNames[] = {"Off", "Cascades", "Occluder Margin", "Filter Taps"};
+    static_assert(std::size(kShadowDebugNames) == Assisi::Render::kShadowDebugViewCount,
+                  "The debug view list must name every ShadowDebugView.");
+    int debugView = static_cast<int>(frame.renderer.ShadowDebugView());
+    if (ImGui::Combo("Shadow View", &debugView, kShadowDebugNames,
+                     static_cast<int>(Assisi::Render::kShadowDebugViewCount)))
     {
-        frame.renderer.SetCascadeDebugView(cascadeView);
+        frame.renderer.SetShadowDebugView(static_cast<Assisi::Render::ShadowDebugView>(debugView));
     }
 
     const Assisi::Render::ShadowPass::Stats stats = frame.renderer.LastShadowStats();

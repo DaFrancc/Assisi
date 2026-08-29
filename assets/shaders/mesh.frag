@@ -1,5 +1,10 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+// textureSize and texelFetch on a texture with no sampler bound to it, which is
+// how the margin debug view reads the shadow map's stored depth: every other
+// read of that texture goes through a comparison sampler and returns a fraction
+// rather than the depth itself.
+#extension GL_EXT_samplerless_texture_functions : require
 
 layout(location = 0) in vec3  vWorldPos;
 layout(location = 1) in vec3  vNormal;
@@ -445,15 +450,27 @@ float AttenuationSq(float d2, float radiusSq)
 // sampler: the hardware tests the reference against four texels and returns the
 // blended result, so even the one-tap filter comes back soft to a texel.
 //
-// Two biases, both scaled CPU-side by the cascade's world-per-texel so one
-// setting holds across cascades whose texels differ by an order of magnitude.
-// They do different jobs and neither replaces the other: the constant depth bias
-// lies about how deep the surface is, which detaches contact shadows if it is
-// large; the normal offset moves the lookup out of the surface instead, which is
-// what actually fixes acne where the sun grazes.
+// Three biases, in the order they do work. The rasterizer offsets each caster by
+// its own depth slope while the map is drawn, which is the only one that can see
+// the polygon being recorded. The sample side then moves the lookup along the
+// surface normal by the sine of the light's incidence, which is what covers a
+// texel's worth of surface at any angle without running away at the grazing end.
+// A small constant covers what is left: the depth format's quantisation, and a
+// receiver curved across the kernel.
+//
+// Both sample-side terms are scaled CPU-side by the cascade's world-per-texel,
+// so one setting holds across cascades whose texels differ by an order of
+// magnitude. Neither is asked to cover slope — that is the rasterizer's job, and
+// a constant large enough to do it is a constant large enough to detach every
+// shadow from its contact edge.
 
 layout(binding = 7) uniform texture2DArray uShadowCascades;
 layout(binding = 129) uniform samplerShadow uShadowSampler;
+
+// Must match Render::ShadowDebugView.
+const uint kShadowDebugCascades = 1u;
+const uint kShadowDebugMargin   = 2u;
+const uint kShadowDebugTaps     = 3u;
 
 // Must match Render::ShadowFilter.
 const uint kShadowFilterPoint = 0u;
@@ -468,66 +485,150 @@ const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
 const float kGoldenAngle        = 2.39996323;
 
-float ShadowFetch(vec2 uv, uint cascade, float reference)
+/// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
+/// comparison is made against.
+///
+/// The cascade projection is orthographic, so w is exactly 1 and this mapping is
+/// affine. That is what makes the plane fit below exact for a flat receiver
+/// rather than a first-order approximation of one.
+vec3 ShadowCoord(uint cascade, vec3 worldPos)
+{
+    vec4 clip = uFrame.shadowViewProjection[cascade] * vec4(worldPos, 1.0);
+    vec3 ndc  = clip.xyz / clip.w;
+    // The backend draws with a flipped viewport, so the map's first texel row is
+    // ndc.y == +1 — hence the negative y scale rather than the usual 0.5.
+    return vec3(ndc.xy * vec2(0.5, -0.5) + 0.5, ndc.z);
+}
+
+float ShadowTap(vec2 uv, uint cascade, float reference)
 {
     return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
 }
 
-// Rotates the Vogel disk per pixel so its 12 taps read as noise rather than as
-// 12 repeated copies of the same rosette.
+// Rotates the Vogel disk per pixel so its taps read as noise rather than as
+// repeated copies of the same rosette.
 float InterleavedGradientNoise(vec2 position)
 {
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
+/// The normal of the surface that was actually rasterized, facing the viewer.
+///
+/// The interpolated vertex normal, flipped for a back face exactly as the shaded
+/// normal is. Both have to agree about which way a surface faces or they disagree
+/// about whether the sun reaches it — and a double-sided shell is nothing but
+/// back faces from inside, so the disagreement is the whole of what one sees
+/// there. The one geometric normal in the shader, so a diagnostic cannot answer
+/// for a surface the shading orients differently.
+vec3 GeometricNormal()
+{
+    vec3 n = normalize(vNormal);
+    return gl_FrontFacing ? n : -n;
+}
+
+/// The depth of the nearest thing the map recorded in front of @p reference
+/// around @p uv, or @p reference itself where nothing is.
+///
+/// Read rather than compared: the comparison sampler answers whether something
+/// is in front, and what is wanted here is how far in front.
+///
+/// The fragment's own texel and no other. A wider search reads the receiver
+/// itself: a surface the light grazes recedes so fast in depth that its own
+/// neighbouring texels lie in front of this fragment's reference, and they
+/// qualify as occluders a hair away. Sizing a kernel from that collapses it to
+/// one tap on exactly the surfaces whose self-shadowing the kernel was averaging
+/// away, which prints as stripes. The one texel under the lookup cannot be the
+/// receiver, because the receiver is what the reference came from.
+float NearestBlockerDepth(vec2 uv, uint cascade, float reference)
+{
+    ivec3 size = textureSize(uShadowCascades, 0);
+    ivec2 texel = clamp(ivec2(clamp(uv, vec2(0.0), vec2(1.0)) * vec2(size.xy)), ivec2(0), size.xy - 1);
+    return min(reference, texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r);
+}
+
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
+///
+/// @p N is the geometric normal, not the shaded one. The offset below has to
+/// move the lookup off the surface that is actually in the depth map, and a
+/// normal map describes a surface no caster ever rasterized: biasing along it
+/// tilts the lookup by whatever the texture says, which reads as lit speckle in
+/// the pattern of the normal map inside an otherwise correct shadow.
 float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 {
-    // The offset is scaled by how far from head-on the light is. At normal
-    // incidence a surface cannot shadow itself and needs none; at grazing
-    // incidence a texel spans a long stretch of the surface and needs all of it.
-    float slope = clamp(1.0 - NdotL, 0.0, 1.0);
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * slope);
+    // Along the normal, scaled by the sine of the light's incidence.
+    //
+    // Sine because that is the geometry: a texel covers a fixed distance across
+    // the map, and the depth the surface gains over it is that distance times
+    // the tangent of the incidence — but the offset only has to clear the
+    // surface, not match its depth, and moving along the normal covers the same
+    // error with the sine. The difference matters at the edge: tangent runs away
+    // to infinity as the light goes edge-on and needs clamping, sine tops out at
+    // one, so the offset is bounded by construction and the worst it can ever do
+    // is a filter radius of leak.
+    //
+    // Scaled by the filter's reach as well as the texel, because the tap that
+    // has to clear the surface is the outermost one, not the centre.
+    float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
+    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
 
-    vec4 lightClip = uFrame.shadowViewProjection[cascade] * vec4(biasedPos, 1.0);
-    vec3 ndc = lightClip.xyz / lightClip.w;
-
-    // The backend draws with a flipped viewport, so the map's first texel row is
-    // ndc.y == +1 — hence the negative y scale rather than the usual 0.5.
-    vec2  uv        = ndc.xy * vec2(0.5, -0.5) + 0.5;
-    float reference = ndc.z - uFrame.shadowCascade[cascade].y;
+    vec3 coord = ShadowCoord(cascade, biasedPos);
+    vec2 uv    = coord.xy;
 
     // Outside the cascade nothing was recorded, so nothing may be claimed. The
     // sampler's white border would answer "lit" anyway; rejecting here also skips
     // the taps.
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || reference > 1.0)
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || coord.z > 1.0)
     {
         return 1.0;
     }
 
-    // The UV distance between taps. Deliberately not one texel of this map: a
-    // radius quoted in the cascade's own texels would shrink every time the
-    // resolution went up, so raising the quality setting would harden the
-    // shadow rather than improve it. See Render::FilterTapStepUv.
-    float step = uFrame.shadowParams.x;
+    // What is left for a constant to cover once the offset has moved the lookup
+    // and the rasterizer has biased the caster by its own slope: the depth
+    // format's quantisation, and a receiver curved across the kernel. Neither
+    // grows with the angle to the light, which is why this stays small.
+    float reference = coord.z - uFrame.shadowCascade[cascade].y;
+
+    // How wide to filter, asked of the geometry rather than assumed.
+    //
+    // The sun is not a point: it subtends about half a degree, so an occluder d
+    // away throws a penumbra of roughly d/216, and that — not a texel, not a
+    // constant — is how soft this fragment's shadow should be. The map knows d:
+    // it is the distance between what the map recorded and the fragment itself.
+    //
+    // This is what closes the leak rather than narrowing it. A kernel escapes an
+    // occluder's silhouette only if it reaches as far as the silhouette is away,
+    // and a fragment tucked under an occluder is by definition close to it — the
+    // inside of a box's ceiling is a hand's breadth from the wall beneath it, so
+    // the honest penumbra there is under a millimetre and there is nothing left
+    // to reach past. Every earlier width was a guess standing in for d: a texel
+    // count, then a constant in metres, then that constant over the incidence.
+    // Each narrowed the band, because each was smaller than the last, and none
+    // could close it, because none of them knew how far the occluder was.
+    //
+    // Where nothing is recorded in front of the fragment there is no occluder to
+    // measure, and the kernel stays at the cap: that is both the lit side of an
+    // edge, which keeps its softness, and a surface shadowing itself, whose
+    // acne the full kernel is what averages away.
+    float texelStep  = uFrame.shadowParams.x;
+    float capStep    = min(texelStep, uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w);
+    float blockerNdc = reference - NearestBlockerDepth(uv, cascade, reference);
+    float step       = blockerNdc > 0.0 ? min(capStep, uFrame.shadowParams.w * blockerNdc) : capStep;
     uint  filterMode = uFrame.shadowCounts.z;
 
     if (filterMode == kShadowFilterPoint)
     {
-        return ShadowFetch(uv, cascade, reference);
+        return ShadowTap(uv, cascade, reference);
     }
 
     if (filterMode == kShadowFilterVogel)
     {
-        // A dozen taps on a disk, rotated per pixel. Trades the grid's banding
-        // for noise, which reads as a softer edge at a third of 5x5's taps.
         float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
         float sum = 0.0;
         for (uint i = 0u; i < kVogelTaps; ++i)
         {
             float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
             float theta = float(i) * kGoldenAngle + phi;
-            sum += ShadowFetch(uv + vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference);
+            sum += ShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference);
         }
         return sum / float(kVogelTaps);
     }
@@ -539,7 +640,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             for (int x = -2; x <= 2; ++x)
             {
-                sum += ShadowFetch(uv + vec2(float(x), float(y)) * step, cascade, reference);
+                sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
             }
         }
         return sum * (1.0 / 25.0);
@@ -550,10 +651,43 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     {
         for (int x = -1; x <= 1; ++x)
         {
-            sum += ShadowFetch(uv + vec2(float(x), float(y)) * step, cascade, reference);
+            sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
         }
     }
     return sum * (1.0 / 9.0);
+}
+
+
+/// What the map holds at this fragment's own lookup, against what the fragment
+/// compares — the two numbers the comparison sampler comes between and never
+/// shows. Both in the cascade's [0, 1] depth; the difference times its depth
+/// range is metres, and a positive one is how far in front of the receiver the
+/// recorded occluder sits.
+///
+/// The centre tap only, fetched rather than filtered: a filtered read answers
+/// what the shadow looks like, and the question here is what the map contains.
+struct ShadowProbe
+{
+    float stored;
+    float reference;
+    bool  outside;
+};
+
+ShadowProbe ProbeCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+{
+    ShadowProbe probe;
+    float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
+    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
+
+    vec3 coord     = ShadowCoord(cascade, biasedPos);
+    probe.outside  = any(lessThan(coord.xy, vec2(0.0))) || any(greaterThan(coord.xy, vec2(1.0))) || coord.z > 1.0;
+    probe.reference = coord.z - uFrame.shadowCascade[cascade].y;
+
+    ivec3 size = textureSize(uShadowCascades, 0);
+    ivec2 texel = ivec2(clamp(coord.xy, vec2(0.0), vec2(1.0)) * vec2(size.xy));
+    texel = clamp(texel, ivec2(0), size.xy - 1);
+    probe.stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
+    return probe;
 }
 
 /// The sun's visibility at this fragment, blended across the cascade seam.
@@ -599,10 +733,36 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
     float band      = (splitFar - splitNear) * uFrame.shadowParams.y;
     if (band > 0.0 && viewDepth > splitFar - band)
     {
-        float t    = clamp((viewDepth - (splitFar - band)) / band, 0.0, 1.0);
-        float next = cascade + 1u < cascadeCount ? SampleCascade(cascade + 1u, vWorldPos, N, NdotL) : 1.0;
-        visibility = mix(visibility, next, t);
+        float t = clamp((viewDepth - (splitFar - band)) / band, 0.0, 1.0);
+        if (cascade + 1u < cascadeCount)
+        {
+            // Darker of the two, never brighter. The next cascade covers more
+            // world with the same texels, so where the two disagree it is the
+            // one that could not resolve what this one did — and the direction
+            // of that failure is always toward light, because an occluder it
+            // cannot represent is an occluder it does not record. A hollow
+            // shape a few centimetres thick is the clear case: a cascade whose
+            // texel is as wide as the walls has nowhere to put them, reports
+            // the inside as lit, and blending toward that answer carries
+            // daylight into a sealed box a third of a cascade before the
+            // boundary that would have justified it.
+            //
+            // Only the disagreement is dropped. Where both cascades agree the
+            // mix is the mix, which is what the band is for: the seam it hides
+            // is a change in how sharply an edge resolves, not a change in
+            // whether the light arrives.
+            float next = SampleCascade(cascade + 1u, vWorldPos, N, NdotL);
+            visibility = mix(visibility, min(visibility, next), t);
+        }
+        else
+        {
+            // Past the last cascade there is no further view to disagree with —
+            // the shadow simply stops being recorded, and fading to lit is that
+            // range ending rather than two cascades differing.
+            visibility = mix(visibility, 1.0, t);
+        }
     }
+
     return visibility;
 }
 
@@ -727,10 +887,36 @@ void main()
             // away a line later. Sampling the cascade first told it something it
             // already knew, at sixteen comparison fetches a fragment — and about
             // half the surfaces in any scene face away from a given light.
-            float NdotL = dot(N, L);
-            if (NdotL > 0.0)
+            //
+            // The shadow reads the geometric normal, not the shaded one. What is
+            // in the depth map is the geometry a caster rasterized; a normal map
+            // describes a surface that was never drawn into it, so biasing along
+            // it tilts the lookup by whatever the texture says and lights
+            // speckles in the pattern of the map inside a correct shadow. The
+            // lighting below keeps the shaded normal — that part is not geometry.
+            // Flipped for a back face, exactly as the shaded normal is. A
+            // double-sided surface seen from behind is lit by the shaded normal
+            // and would be tested for shadow by the unflipped one, so the two
+            // disagree about which way the surface faces: the test fails, the
+            // multiply below is skipped, and the fragment keeps the sun's full
+            // radiance with no shadow applied at all. Every interior of a
+            // double-sided shell is then lit as though nothing stood between it
+            // and the sun — a cutout casts no pattern into its own inside, which
+            // is the one place its pattern is supposed to land.
+            vec3  Ng     = GeometricNormal();
+            float NgdotL = dot(Ng, L);
+            float NdotL  = dot(N, L);
+            if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= SunVisibility(N, L, shadowCascade, NdotL);
+                radiance *= SunVisibility(Ng, L, shadowCascade, NgdotL);
+            }
+            else if (NdotL > 0.0)
+            {
+                // Lit by the shaded normal but facing away by the geometric one,
+                // which a normal map can do at a grazing angle. Nothing in the
+                // depth map describes that surface, so the honest answer is that
+                // it is not lit rather than that it is lit and unshadowed.
+                radiance = vec3(0.0);
             }
         }
         Lo += CookTorrance(brdf, N, V, L, radiance);
@@ -797,9 +983,78 @@ void main()
     // distance and a blend band are readable against the geometry that provoked
     // them. Goes through the tone map like any other radiance — these are bands
     // to look at, not numbers to read off the screen.
-    if (uFrame.shadowCounts.w != 0u && shadowCascadeCount > 0u)
+    if (uFrame.shadowCounts.w == kShadowDebugCascades && shadowCascadeCount > 0u)
     {
         color *= CascadeTint(shadowCascade);
+    }
+
+    // Margin view: how far in front of this fragment the map's recorded occluder
+    // sits, in metres, replacing the shading rather than tinting it. The one
+    // thing the comparison sampler cannot be asked — it returns a fraction, and
+    // a fraction is the same whether the map holds the wrong occluder or the
+    // right one at the wrong depth.
+    //
+    //   blue    the lookup left the cascade, so the map was never asked
+    //   red     an occluder nearer the light than the fragment, brighter the
+    //           deeper it sits in front — this is what being shadowed looks like
+    //   green   nothing in front of the fragment: the map says it is lit
+    //   black   the two agree to within a millimetre, which is the ambiguous case
+    if (uFrame.shadowCounts.w == kShadowDebugMargin && shadowCascadeCount > 0u)
+    {
+        // The same lookup SampleCascade would make, so the number read here is
+        // the number the comparison was given.
+        vec3        Ng    = GeometricNormal();
+        vec3        sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
+        ShadowProbe probe = ProbeCascade(shadowCascade, vWorldPos, Ng, dot(Ng, sunL));
+
+        const float kFullScaleMetres = 0.25;
+        float margin = (probe.stored - probe.reference) * uFrame.shadowCascade[shadowCascade].w;
+        float scaled = clamp(abs(margin) / kFullScaleMetres, 0.0, 1.0);
+
+        color = probe.outside ? vec3(0.0, 0.0, 1.0)
+                              : (margin >= 0.0 ? vec3(0.0, scaled, 0.0) : vec3(scaled, 0.0, 0.0));
+    }
+
+    // Tap view: the visibility that actually shades the pixel, against the two
+    // narrower answers inside it. Every stage that can add light is on screen at
+    // once, so a leak names the stage that produced it instead of only proving
+    // the stage below it was innocent.
+    //
+    //   red     what SunVisibility returns — the number the shading uses
+    //   green   what this cascade's own filtered lookup returns
+    //   blue    what its centre tap alone returns
+    //
+    //   black   all three shadowed: correct, and the ordinary case in shadow
+    //   white   all three lit: correct, and the ordinary case out of it
+    //   red     the blend relit a fragment its own cascade shadowed — the next
+    //           cascade's coarser texels read through what this one did not
+    //   yellow  the kernel found light its centre did not: the footprint
+    //           reaching past the silhouette of whatever shades this fragment
+    if (uFrame.shadowCounts.w == kShadowDebugTaps && shadowCascadeCount > 0u)
+    {
+        vec3  Ng    = GeometricNormal();
+        vec3  sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
+        float NdotL = dot(Ng, sunL);
+
+        // A surface turned away from the sun is never asked, so reporting an
+        // answer for it invents one: the shading gate below decides the colour
+        // before the lookup does, and the roof inside a box is dark because it
+        // faces down, not because of anything in the map.
+        if (NdotL <= 0.0)
+        {
+            outColor = vec4(0.08, 0.08, 0.12, 1.0);
+            return;
+        }
+
+        ShadowProbe probe    = ProbeCascade(shadowCascade, vWorldPos, Ng, NdotL);
+        float       blended  = SunVisibility(Ng, sunL, shadowCascade, NdotL);
+        float       filtered = SampleCascade(shadowCascade, vWorldPos, Ng, NdotL);
+        float       centre   = ShadowTap(ShadowCoord(shadowCascade,
+                                                     vWorldPos + Ng * (uFrame.shadowCascade[shadowCascade].z *
+                                                                       sqrt(max(0.0, 1.0 - NdotL * NdotL)))).xy,
+                                         shadowCascade, probe.reference);
+
+        color = vec3(blended, filtered, centre);
     }
 
     // Linear radiance, unbounded. The scene target is float and the tone map is

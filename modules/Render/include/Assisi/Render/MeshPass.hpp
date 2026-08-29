@@ -48,6 +48,36 @@ enum class MaterialDebugView : uint32_t
     Emissive,
 };
 
+/// @brief What the shadow lookup draws instead of shading, for diagnosis.
+///
+/// Wire encoding: the shader switches on the integer. Separate from
+/// MaterialDebugView because these describe the lookup rather than the surface,
+/// and because two of them have to run the lookup to have anything to report.
+enum class ShadowDebugView : uint32_t
+{
+    None = 0,
+    /// Tint the lit result by which cascade each pixel sampled — the view that
+    /// makes a split distance or a blend band visible.
+    Cascades,
+    /// The distance, in metres, between the fragment and the occluder the map
+    /// recorded at its own lookup: red where one sits nearer the light (which is
+    /// what shadow looks like), green where nothing does, blue where the lookup
+    /// left the cascade. Reads the centre texel unfiltered, because the
+    /// comparison sampler returns a fraction and a fraction cannot distinguish
+    /// the map holding the wrong occluder from it holding the right one at the
+    /// wrong depth.
+    Margin,
+    /// The visibility that shades the pixel, against the two narrower answers
+    /// inside it: red is what SunVisibility returns, green this cascade's own
+    /// filtered lookup, blue its centre tap. Black and white are the two correct
+    /// cases; red alone is the blend relighting what its cascade shadowed, and
+    /// yellow is the kernel finding light its centre did not. Every stage that
+    /// can add light is on screen at once, so a leak names its own stage.
+    Taps,
+};
+
+inline constexpr uint32_t kShadowDebugViewCount = 4;
+
 /// @brief The ambient term every surface gets for free, when nobody says otherwise.
 ///
 /// Named rather than left as a literal in three places; anything that wants a
@@ -117,9 +147,8 @@ public:
         /// Which directional light the cascades belong to, as an index into the
         /// buffer the shader reads. Only that light's radiance is shadowed.
         uint32_t sunLightIndex = 0;
-        /// Tint the lit result by which cascade each pixel sampled — the view
-        /// that makes a split distance or a blend band visible.
-        bool cascadeDebugView = false;
+        /// Which diagnostic overlay the shadow lookup draws, if any.
+        ShadowDebugView debugView = ShadowDebugView::None;
     };
 
     /// @brief Everything the per-frame constant buffer carries. Grouped so the

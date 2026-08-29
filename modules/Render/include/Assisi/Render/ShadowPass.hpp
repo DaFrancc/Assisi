@@ -15,6 +15,7 @@
 /// a one-texel placeholder so the mesh pass's binding set still has something
 /// to point at. A scene with no sun therefore pays a single texel and no pass.
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -68,6 +69,10 @@ public:
         std::uint32_t cascades = 0;  ///< Cascades rendered (0 when inactive).
         std::uint32_t instances = 0; ///< Caster instances submitted, counted once per cascade they survive into.
         std::uint32_t batches = 0;   ///< Instanced draw commands after coalescing same-geometry runs.
+        /// How many of @ref batches drew through the alpha-testing pipeline.
+        /// Zero for a scene whose casters are all opaque, which is what makes
+        /// "the cutouts cost nothing here" a reading rather than a claim.
+        std::uint32_t maskedBatches = 0;
         std::uint32_t drawCalls = 0; ///< drawIndexedIndirect calls issued — one per cascade with anything in it.
         std::uint32_t culled = 0;    ///< Caster-cascade pairs the per-cascade frustum test rejected.
     };
@@ -83,7 +88,7 @@ public:
     /// caster behind the camera survives the test rather than being clipped.
     Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const ShadowCaster> casters) const;
 
-    [[nodiscard]] bool IsActive() const { return _active && _pipeline != nullptr; }
+    [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }
 
     /// @brief The cascade array the mesh shader samples. Never null after a
     /// successful Initialize() — it is the one-texel placeholder while the pass
@@ -99,6 +104,8 @@ public:
 private:
     [[nodiscard]] bool RebuildTargets();
     [[nodiscard]] bool RebuildPipeline();
+    /// @brief The handles as the renderer wants them, one per pipeline class.
+    [[nodiscard]] ShadowPipelines PipelineSet() const;
     void ReleaseTargets();
     /// @brief The one-texel array bound while the pass is inactive.
     [[nodiscard]] bool CreatePlaceholder();
@@ -106,7 +113,13 @@ private:
     nvrhi::IDevice *_device = nullptr;
     const ShadowDepthRenderer *_depthRenderer = nullptr;
 
-    nvrhi::GraphicsPipelineHandle _pipeline;
+    // One per MeshPipeline class: the alpha test and the cull mode are both
+    // pipeline state and vary independently, so a caster's material decides
+    // which of the four it is drawn through. Built from the same settings and
+    // released together. A masked entry is null when the renderer has no
+    // alpha-testing variant to build it from, which leaves cutouts casting a
+    // solid silhouette rather than nothing.
+    std::array<nvrhi::GraphicsPipelineHandle, kMeshPipelineCount> _pipelines;
 
     // The cascade array, and one framebuffer per slice. Empty while inactive.
     nvrhi::TextureHandle _cascadeTexture;
@@ -122,7 +135,6 @@ private:
     std::uint32_t _builtResolution = 0;
     ShadowMapFormat _builtFormat = ShadowMapFormat::D32;
     float _builtSlopeBias = -1.f;
-    bool _builtCullFrontFaces = false;
 
     /// Where this frame's cascades start in the shared view table.
     mutable std::uint32_t _firstView = 0;

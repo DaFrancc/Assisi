@@ -23,7 +23,6 @@ TEST_CASE("Shadow settings survive a write and a read")
     written.shadows.sun.slopeBias = 3.5f;
     written.shadows.sun.normalOffsetTexels = 0.75f;
     written.shadows.sun.cascadeBlend = 0.1f;
-    written.shadows.sun.cullFrontFaces = true;
 
     written.shadows.local.enabled = false;
     written.shadows.local.atlasResolution = 8192;
@@ -33,7 +32,6 @@ TEST_CASE("Shadow settings survive a write and a read")
     written.shadows.local.depthBiasTexels = 0.5f;
     written.shadows.local.slopeBias = 1.25f;
     written.shadows.local.normalOffsetTexels = 4.f;
-    written.shadows.local.cullFrontFaces = true;
 
     const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
 
@@ -48,7 +46,6 @@ TEST_CASE("Shadow settings survive a write and a read")
     CHECK(read.shadows.sun.slopeBias == doctest::Approx(written.shadows.sun.slopeBias));
     CHECK(read.shadows.sun.normalOffsetTexels == doctest::Approx(written.shadows.sun.normalOffsetTexels));
     CHECK(read.shadows.sun.cascadeBlend == doctest::Approx(written.shadows.sun.cascadeBlend));
-    CHECK(read.shadows.sun.cullFrontFaces == written.shadows.sun.cullFrontFaces);
 
     CHECK(read.shadows.local.enabled == written.shadows.local.enabled);
     CHECK(read.shadows.local.atlasResolution == written.shadows.local.atlasResolution);
@@ -58,7 +55,6 @@ TEST_CASE("Shadow settings survive a write and a read")
     CHECK(read.shadows.local.depthBiasTexels == doctest::Approx(written.shadows.local.depthBiasTexels));
     CHECK(read.shadows.local.slopeBias == doctest::Approx(written.shadows.local.slopeBias));
     CHECK(read.shadows.local.normalOffsetTexels == doctest::Approx(written.shadows.local.normalOffsetTexels));
-    CHECK(read.shadows.local.cullFrontFaces == written.shadows.local.cullFrontFaces);
 }
 
 TEST_CASE("The two shadow halves are written to their own sections")

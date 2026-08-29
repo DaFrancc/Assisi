@@ -96,6 +96,29 @@ glm::mat4 LightRotation(const glm::vec3 &lightDirection)
     return glm::lookAt(glm::vec3(0.f), direction, up);
 }
 
+namespace
+{
+/// How close to a lattice line counts as being on it, in texels.
+///
+/// The rotation is exact but the round trip through it is not: a point snapped
+/// to a whole texel comes back a few ulps to either side of one. Landing a
+/// hair below sends floor() to the texel beneath, so the snap moves a point
+/// that was already on the lattice — and the cascade lurches a texel between
+/// two frames whose input differed by nothing.
+///
+/// A thousandth of a texel is far below anything the shadow can resolve and far
+/// above the round trip's error over any coordinate a level reaches.
+constexpr float kSnapTexelTolerance = 1e-3f;
+
+/// @brief @p quotient rounded down to a whole texel, snapping to the nearest
+/// lattice line when it is within tolerance of one.
+[[nodiscard]] float FloorTexel(float quotient)
+{
+    const float nearest = std::round(quotient);
+    return std::abs(quotient - nearest) < kSnapTexelTolerance ? nearest : std::floor(quotient);
+}
+} // namespace
+
 glm::vec3 SnapToTexelGrid(const glm::vec3 &center, const glm::mat4 &lightRotation, float worldUnitsPerTexel)
 {
     if (!(worldUnitsPerTexel > 0.f) || !std::isfinite(worldUnitsPerTexel))
@@ -104,11 +127,12 @@ glm::vec3 SnapToTexelGrid(const glm::vec3 &center, const glm::mat4 &lightRotatio
     }
 
     glm::vec3 lightSpace = glm::vec3(lightRotation * glm::vec4(center, 1.f));
-    lightSpace.x = std::floor(lightSpace.x / worldUnitsPerTexel) * worldUnitsPerTexel;
-    lightSpace.y = std::floor(lightSpace.y / worldUnitsPerTexel) * worldUnitsPerTexel;
+    lightSpace.x = FloorTexel(lightSpace.x / worldUnitsPerTexel) * worldUnitsPerTexel;
+    lightSpace.y = FloorTexel(lightSpace.y / worldUnitsPerTexel) * worldUnitsPerTexel;
 
-    // The rotation has no translation, so its inverse is its transpose exactly
-    // — no round-trip error to un-snap what was just snapped.
+    // The rotation has no translation, so its inverse is its transpose exactly.
+    // What error there is comes from the two multiplies, which is what the
+    // tolerance above absorbs.
     return glm::vec3(glm::transpose(lightRotation) * glm::vec4(lightSpace, 1.f));
 }
 
@@ -161,18 +185,20 @@ CascadeFit FitCascades(const CascadeFitParams &params)
         const float worldUnitsPerTexel = 2.f * sphere.radius / static_cast<float>(settings.resolution);
         const glm::vec3 center = SnapToTexelGrid(sphere.center, lightRotation, worldUnitsPerTexel);
 
-        // Where the slice sits along the light, and how far upstream of it a
-        // caster can still be. Pulling the near plane back to the casters is
-        // what keeps geometry behind the camera from being clipped out of the
-        // map — nvrhi only honours a disabled depth clip where the device has
-        // EXT_depth_clip_enable, so clamping cannot be relied on to do it.
+        // The slice's own extent along the light, and nothing more. A caster
+        // upstream of the near plane still reaches the map: shadow_depth.vert
+        // flattens it onto the plane rather than letting it clip, which costs it
+        // an ordering it does not need — nothing upstream of the near plane is a
+        // receiver in this view.
+        //
+        // The range stays the slice's because every depth-unit bias is quoted
+        // against it. Stretching it to reach the furthest caster in the scene
+        // makes the range the scene's extent for every cascade, which a float
+        // map absorbs and a 16-bit one does not: the quantisation step grows
+        // with it until it passes the constant bias meant to cover it.
         const float centerAlongLight = glm::dot(center, lightDirection);
-        const float sliceNearAlongLight = centerAlongLight - sphere.radius;
-        const float nearAlongLight =
-            params.casterNearAlongLight.has_value() && std::isfinite(*params.casterNearAlongLight)
-                ? std::min(sliceNearAlongLight, *params.casterNearAlongLight)
-                : sliceNearAlongLight;
-        const float depthRange = (centerAlongLight + sphere.radius) - nearAlongLight;
+        const float nearAlongLight = centerAlongLight - sphere.radius;
+        const float depthRange = 2.f * sphere.radius;
 
         // The eye moves only along the light, so its light-space XY still match
         // the snapped centre's and the texel lattice survives the pull-back.
@@ -204,6 +230,21 @@ float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings 
     return worldBias / cascade.depthRange;
 }
 
+float SlopeBiasClampNdc(const SunShadowSettings &settings)
+{
+    // Two texels. The slope term is there to cover the depth a caster gains
+    // across a texel, which is a real effect at moderate incidence and a runaway
+    // one past it; capping at two puts the hand-over to the normal offset near
+    // 45 degrees for a slope factor of 2, and bounds the caster-side leak at the
+    // same order as the offset's own. A larger cap does not buy less acne — the
+    // offset already covers the angles above the hand-over — it only widens the
+    // gap under every silhouette, at every resolution, since the cap is a depth
+    // and does not shrink when the texels do.
+    constexpr float kSlopeBiasClampTexels = 2.f;
+    const std::uint32_t resolution = std::max(Sanitized(settings).resolution, 1u);
+    return kSlopeBiasClampTexels / static_cast<float>(resolution);
+}
+
 float FilterRadiusTaps(ShadowFilter filter)
 {
     switch (filter)
@@ -224,10 +265,14 @@ float FilterRadiusTaps(ShadowFilter filter)
 
 float FilterTapStepUv(const SunShadowSettings &settings)
 {
-    const std::uint32_t resolution = std::max(Sanitized(settings).resolution, 1u);
-    // Never finer than a texel: below the reference size there is nothing
-    // between one texel and the next to sample, so the step is the texel.
-    return 1.f / static_cast<float>(std::min(resolution, kFilterReferenceResolution));
+    // The map's own texel. The kernel walks the grid the map actually has, so
+    // its world footprint halves every time the resolution doubles.
+    return ShadowTexelSizeUv(settings);
+}
+
+float ShadowTexelSizeUv(const SunShadowSettings &settings)
+{
+    return 1.f / static_cast<float>(std::max(Sanitized(settings).resolution, 1u));
 }
 
 float CascadeTexelScreenPixels(const ShadowCascade &cascade, float viewDistance, float screenHeight,
@@ -243,11 +288,30 @@ float CascadeTexelScreenPixels(const ShadowCascade &cascade, float viewDistance,
     return cascade.worldUnitsPerTexel * screenHeight / denominator;
 }
 
+float CascadeFilterTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings)
+{
+    const SunShadowSettings safe = Sanitized(settings);
+    const float texelUv = ShadowTexelSizeUv(safe);
+    const float radiusTaps = FilterRadiusTaps(safe.filter);
+    const float boxWidth = 2.f * cascade.radius;
+    if (!(radiusTaps > 0.f) || !(boxWidth > 0.f))
+    {
+        return texelUv;
+    }
+
+    // A step of one texel is the ordinary case and the one every near cascade
+    // takes. It stops being ordinary in a far cascade, where a texel is tens of
+    // centimetres: the kernel then reaches further into the world than the
+    // things it is filtering are thick, and its outer taps read past them.
+    const float cappedUv = kMaxPenumbraWorld / (radiusTaps * boxWidth);
+    return std::min(texelUv, cappedUv);
+}
+
 float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     const SunShadowSettings safe = Sanitized(settings);
     const float boxWidth = 2.f * cascade.radius;
-    const float kernelUv = FilterRadiusTaps(safe.filter) * FilterTapStepUv(safe);
+    const float kernelUv = FilterRadiusTaps(safe.filter) * CascadeFilterTapStepUv(cascade, safe);
     // The hardware compares against four texels and blends, so every filter —
     // the one-tap one included — is soft to half a texel before its own kernel
     // adds anything.
@@ -257,7 +321,17 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
 
 float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
-    return settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
+    // Texels of the cascade's own map, and nothing else. In particular not the
+    // filter's reach: a wider kernel is a wider penumbra, and a penumbra is
+    // supposed to soften a shadow's edge rather than pull it off its contact.
+    // Scaling the offset by the kernel does the second, and does it worst at a
+    // concave corner, where the lookup is pushed out of the corner and past the
+    // very occluder that shades it — so the tier with the widest filter leaks
+    // the most light into the inside of a box. The kernel's own taps are the
+    // depth biases' problem; they push along the light and leave the corner
+    // where it is.
+    const SunShadowSettings safe = Sanitized(settings);
+    return safe.normalOffsetTexels * cascade.worldUnitsPerTexel;
 }
 
 } // namespace Assisi::Render

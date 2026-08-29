@@ -296,41 +296,43 @@ TEST_CASE("Each cascade's matrix covers its own slice")
     }
 }
 
-TEST_CASE("A caster upstream of the slice is inside the cascade's depth range")
+TEST_CASE("A cascade's depth range is its own slice, whatever the scene holds")
 {
-    // Geometry behind the camera still shadows what is in front of it. The near
-    // plane has to reach back to it, because the depth clip that would
-    // otherwise clamp it is not something nvrhi can be relied on to disable.
+    // Every bias the shader applies is quoted against this range, and a 16-bit
+    // map's quantisation step is this range over 65536 — so a range stretched to
+    // reach the furthest caster in the scene puts the step above the bias meant
+    // to cover it. Casters upstream of the near plane reach the map by being
+    // flattened onto it in shadow_depth.vert, not by widening this.
     CascadeFitParams params = DefaultParams();
     params.settings.cascadeCount = 1;
     params.settings.maxDistance = 40.f;
 
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 1);
+    CHECK(fit.cascades[0].depthRange == doctest::Approx(2.f * fit.cascades[0].radius));
+
+    // A caster far upstream projects in front of the near plane, which is what
+    // the vertex stage clamps. What matters here is that its existence has not
+    // widened the range.
     const glm::vec3 lightDirection = glm::normalize(params.lightDirection);
+    const glm::vec3 upstream = fit.cascades[0].center - lightDirection * (fit.cascades[0].radius + 30.f);
+    CHECK(ToClip(fit.cascades[0], upstream).z < 0.f);
+}
 
-    const CascadeFit tight = FitCascades(params);
-    REQUIRE(tight.count == 1);
+TEST_CASE("Every cascade keeps a range proportional to the world it covers")
+{
+    // The near cascades are the ones a shared range hurt most: their own extent
+    // is metres while the scene's is hundreds, so they carried a range two
+    // orders of magnitude wider than the depth they actually resolve.
+    CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 1);
 
-    // A caster 30 m upstream of where the slice's own near plane sits.
-    const float sliceNear = glm::dot(tight.cascades[0].center, lightDirection) - tight.cascades[0].radius;
-    const float casterNear = sliceNear - 30.f;
-    params.casterNearAlongLight = casterNear;
-
-    const CascadeFit extended = FitCascades(params);
-    REQUIRE(extended.count == 1);
-
-    // The slice itself is unmoved — pulling the near plane back must not
-    // change which world the cascade covers, only how deep it reaches.
-    CHECK(extended.cascades[0].radius == doctest::Approx(tight.cascades[0].radius));
-    CHECK(glm::length(extended.cascades[0].center - tight.cascades[0].center) < 1e-3f);
-    CHECK(extended.cascades[0].depthRange == doctest::Approx(tight.cascades[0].depthRange + 30.f));
-
-    // A point at the caster's depth, over the middle of the slice, now projects
-    // inside the clip volume instead of in front of it.
-    const glm::vec3 caster =
-        tight.cascades[0].center - lightDirection * (glm::dot(tight.cascades[0].center, lightDirection) - casterNear);
-    CHECK(ToClip(tight.cascades[0], caster).z < 0.f);
-    CHECK(ToClip(extended.cascades[0], caster).z >= -0.001f);
-    CHECK(ToClip(extended.cascades[0], caster).z <= 1.001f);
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        CHECK(fit.cascades[i].depthRange == doctest::Approx(2.f * fit.cascades[i].radius));
+    }
+    CHECK(fit.cascades[0].depthRange < fit.cascades[fit.count - 1].depthRange);
 }
 
 TEST_CASE("Biases scale with the cascade they are applied in")
@@ -368,67 +370,251 @@ TEST_CASE("Biases scale with the cascade they are applied in")
     CHECK(CascadeDepthBiasNdc(ShadowCascade{}, params.settings) == doctest::Approx(0.f));
 }
 
-TEST_CASE("A bigger shadow map does not narrow the blur it is filtered with")
+TEST_CASE("The unconditional bias is small enough not to leak on its own")
 {
-    // Kernel offsets are in texels, so a radius measured in the cascade's own
-    // texels halves in world terms every time the resolution doubles — and a
-    // tier that raises the resolution ships a *harder* shadow than the tier
-    // below it. The step is quoted against a reference size to stop that.
-    SunShadowSettings coarse;
-    coarse.resolution = kFilterReferenceResolution / 2;
-    SunShadowSettings reference;
-    reference.resolution = kFilterReferenceResolution;
-    SunShadowSettings fine;
-    fine.resolution = kFilterReferenceResolution * 2;
+    // The depth bias applies to every lookup, so its whole magnitude is a gap
+    // under every contact, and it grows with the cascade because it is quoted in
+    // texels. At a texel and a half the outermost cascade of the defaults lied
+    // by 14 cm, which is what the leak was; this pins that it stayed small.
+    //
+    // The normal offset is deliberately not held to the same bound. It is scaled
+    // in the shader by how much of the receiver-plane fit had to be withdrawn,
+    // so it is absent exactly where a large offset used to leak and present only
+    // on surfaces the fit cannot serve. That gating is not visible from here —
+    // what this file can still say is that the bias which is *not* gated stayed
+    // where it belongs.
+    CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
 
-    // At or below the reference there is nothing between one texel and the next
-    // to sample, so the step is exactly a texel.
-    CHECK(FilterTapStepUv(coarse) == doctest::Approx(1.0f / static_cast<float>(coarse.resolution)));
-    CHECK(FilterTapStepUv(reference) == doctest::Approx(1.0f / static_cast<float>(reference.resolution)));
-
-    // Above it the step holds, so the footprint stays where it was.
-    CHECK(FilterTapStepUv(fine) == doctest::Approx(FilterTapStepUv(reference)));
-    CHECK(FilterTapStepUv(fine) > 1.0f / static_cast<float>(fine.resolution));
+    const ShadowCascade &outermost = fit.cascades[fit.count - 1];
+    CHECK(CascadeDepthBiasNdc(outermost, params.settings) * outermost.depthRange < 0.06f);
 }
 
-TEST_CASE("Raising quality never hardens the shadow")
+TEST_CASE("The normal offset is a texel, whatever the filter is")
 {
-    // The defect this exists to catch: Ultra came out sharper-edged than High
-    // at every cascade, because doubling its resolution halved the world size
-    // of the texels its filter radius was quoted in. Both axes a quality
-    // setting can move are checked at a fixed cascade layout, since a tier that
-    // also changes the layout changes the extents and with them the penumbra —
-    // which is the fit doing its job, not the filter failing to.
+    // The offset is the only bias that moves the lookup sideways, and sideways
+    // is what carries a receiver out from under the occluder beside it — so at a
+    // concave corner the offset is the leak. Sizing it by the kernel made the
+    // widest filter the leakiest, which is not a thing a quality setting may do.
+    CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
+    const ShadowCascade &cascade = fit.cascades[0];
+
+    const float expected = params.settings.normalOffsetTexels * cascade.worldUnitsPerTexel;
+    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
+                                      ShadowFilter::Vogel})
+    {
+        params.settings.filter = filter;
+        CHECK(CascadeNormalOffsetWorld(cascade, params.settings) == doctest::Approx(expected));
+    }
+}
+
+TEST_CASE("Every tier narrows the gap the normal offset can open")
+{
+    // The tiers are the shipped combinations, and this is the property that
+    // makes them a ladder: a player who turns the setting up must not be handed
+    // more light inside a closed box than the tier below gave them. It is worth
+    // testing across whole tiers rather than one field, because the regression
+    // this replaces came from a formula that shrank with the resolution and grew
+    // with the filter — each half defensible, the product not monotonic.
+    float previous = std::numeric_limits<float>::max();
+    for (const ShadowTier tier : {ShadowTier::Low, ShadowTier::Medium, ShadowTier::High, ShadowTier::Ultra})
+    {
+        CascadeFitParams params = DefaultParams();
+        params.settings = Sanitized(TierSettings(tier).sun);
+
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
+
+        // Per texel of the cascade, so the comparison is of the formula rather
+        // than of how much world each tier's cascade zero happens to cover.
+        const float texels = CascadeNormalOffsetWorld(fit.cascades[0], params.settings) /
+                             fit.cascades[0].worldUnitsPerTexel;
+        const float uv = texels / static_cast<float>(params.settings.resolution);
+        CHECK(uv <= previous);
+        previous = uv;
+    }
+}
+
+TEST_CASE("A tap step is a texel at every resolution")
+{
+    // The step was once held at a reference resolution so a bigger map would not
+    // also narrow the penumbra. That made a tap stride several real texels, and
+    // a stride is a distance: once the kernel's reach passed the thickness of a
+    // wall, its outer taps landed beyond the caster's silhouette and voted lit,
+    // which put daylight inside a closed box at every tier. The two have to be
+    // the same number, and this is where that is stated.
+    for (const std::uint32_t resolution : {512u, 1024u, 2048u, 4096u})
+    {
+        SunShadowSettings settings;
+        settings.resolution = resolution;
+        CHECK(FilterTapStepUv(settings) == doctest::Approx(ShadowTexelSizeUv(settings)));
+        CHECK(FilterTapStepUv(settings) == doctest::Approx(1.f / static_cast<float>(resolution)));
+    }
+}
+
+TEST_CASE("A bigger map narrows what the filter can read through")
+{
+    // The property the leak fix turns on, and the one a quality setting is for:
+    // the kernel's reach is a distance in the world, and the whole of it has to
+    // shrink when the map grows. A tier that keeps the reach fixed keeps the
+    // leak fixed with it — raising the resolution then buys a sharper silhouette
+    // and exactly as much light through the wall as before.
     CascadeFitParams params = DefaultParams();
     params.settings.cascadeCount = 4;
     params.settings.maxDistance = 80.f;
+    params.settings.filter = ShadowFilter::Pcf5x5;
 
-    // Resolution: the kernel's reach is what the quoted radius controls, and it
-    // must not move when the map grows — that is the whole of the fix. What does
-    // still shrink is the hardware's own bilinear footprint, half a texel of a
-    // map that now has twice as many, and that is the map resolving better
-    // rather than the filter being quoted wrongly. So the kernel is asserted
-    // exactly and the total is left alone.
+    float previous = std::numeric_limits<float>::max();
+    for (const std::uint32_t resolution : {1024u, 2048u, 4096u})
+    {
+        params.settings.resolution = resolution;
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
+
+        // In metres, because metres are what a wall is thick in.
+        const float reachWorld = CascadePenumbraWorld(fit.cascades[0], params.settings);
+        CHECK(reachWorld < previous);
+        previous = reachWorld;
+    }
+}
+
+TEST_CASE("No cascade's kernel reaches further into the world than the cap")
+{
+    // A texel is a different size in every cascade — an order of magnitude
+    // across one frame — so a kernel quoted in texels has a reach in metres that
+    // grows with the cascade it lands in. The outermost used to reach 172 mm at
+    // Ultra, further than ordinary geometry is thick, and its outer taps read
+    // past the occluders they were meant to be filtering. That is light inside a
+    // closed box, and the blend carried it a third of a cascade inward besides.
     //
-    // From the reference size upward only. Below it the tap step is one texel
-    // because there is no finer grid to walk, so the reach tracks the resolution
-    // and shrinking there is the map running out of texels.
-    SunShadowSettings atReference = params.settings;
-    atReference.resolution = kFilterReferenceResolution;
-    SunShadowSettings aboveReference = params.settings;
-    aboveReference.resolution = kFilterReferenceResolution * 2;
+    // Every tier, every cascade, because the defect was in the last one of each.
+    for (const ShadowTier tier : {ShadowTier::Low, ShadowTier::Medium, ShadowTier::High, ShadowTier::Ultra})
+    {
+        CascadeFitParams params = DefaultParams();
+        params.settings = Sanitized(TierSettings(tier).sun);
 
-    const float reachAt = FilterRadiusTaps(atReference.filter) * FilterTapStepUv(atReference);
-    const float reachAbove = FilterRadiusTaps(aboveReference.filter) * FilterTapStepUv(aboveReference);
-    CHECK(reachAt > 0.f);
-    CHECK(reachAbove == doctest::Approx(reachAt));
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
 
-    // Filter: each kernel reaches further than the one below it, and the
-    // one-tap filter is still soft to the hardware's own bilinear rather than
-    // hard-edged.
-    params.settings.resolution = 2048;
+        for (std::uint32_t i = 0; i < fit.count; ++i)
+        {
+            const ShadowCascade &cascade = fit.cascades[i];
+            const float kernelWorld =
+                FilterRadiusTaps(params.settings.filter) * CascadeFilterTapStepUv(cascade, params.settings) *
+                (2.f * cascade.radius);
+            CHECK(kernelWorld <= kMaxPenumbraWorld + 1e-4f);
+        }
+    }
+}
+
+TEST_CASE("The cap only bites where a texel is wider than the penumbra")
+{
+    // Near cascades must be untouched by it: their texels are millimetres, so a
+    // texel-stepped kernel is already far inside the cap, and clamping there
+    // would harden exactly the shadows that can afford to be soft.
+    CascadeFitParams params = DefaultParams();
+    params.settings.filter = ShadowFilter::Pcf5x5;
+    params.settings.resolution = 4096;
+    params.settings.cascadeCount = 4;
+    params.settings.maxDistance = 80.f;
+
     const CascadeFit fit = FitCascades(params);
-    REQUIRE(fit.count == params.settings.cascadeCount);
+    REQUIRE(fit.count == 4);
+
+    CHECK(CascadeFilterTapStepUv(fit.cascades[0], params.settings) ==
+          doctest::Approx(ShadowTexelSizeUv(params.settings)));
+    // And the outermost, whose texels are centimetres, must be.
+    CHECK(CascadeFilterTapStepUv(fit.cascades[3], params.settings) < ShadowTexelSizeUv(params.settings));
+}
+
+TEST_CASE("No filter reads further than its own radius in texels")
+{
+    // The bound that keeps the reach tied to the map rather than to a constant
+    // chosen elsewhere: whatever the resolution, a kernel spans its radius in
+    // the map's own texels and the half one the hardware comparison adds. That
+    // is what lets the reach be reasoned about against scene geometry at all.
+    for (const std::uint32_t resolution : {1024u, 4096u})
+    {
+        for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
+                                          ShadowFilter::Vogel})
+        {
+            SunShadowSettings settings;
+            settings.resolution = resolution;
+            settings.filter = filter;
+
+            const float reachTexels = (FilterRadiusTaps(filter) * FilterTapStepUv(settings) +
+                                       0.5f * ShadowTexelSizeUv(settings)) /
+                                      ShadowTexelSizeUv(settings);
+            CHECK(reachTexels == doctest::Approx(FilterRadiusTaps(filter) + 0.5f));
+        }
+    }
+}
+
+TEST_CASE("The slope bias cannot open a gap wider than a few texels")
+{
+    // The clamp is a depth, not a multiple of one, so a value picked as a
+    // fraction of the depth range is a fixed count of texels at one resolution
+    // and twice as many at the next — the caster-side leak then grows with the
+    // quality setting instead of shrinking. Quoted in texels it does the
+    // opposite, which is the only behaviour a quality setting may have.
+    SunShadowSettings coarse;
+    coarse.resolution = 1024u;
+    SunShadowSettings fine;
+    fine.resolution = 4096u;
+
+    CHECK(SlopeBiasClampNdc(fine) < SlopeBiasClampNdc(coarse));
+
+    // Whatever the resolution, the cap is worth the same few texels of depth —
+    // and few enough that the gap under a silhouette stays the size of the
+    // sampling error it exists to cover, not a visible detachment.
+    for (const SunShadowSettings &settings : {coarse, fine})
+    {
+        const float texelsOfDepth = SlopeBiasClampNdc(settings) * static_cast<float>(settings.resolution);
+        CHECK(texelsOfDepth <= 4.f);
+        CHECK(texelsOfDepth > 0.f);
+    }
+}
+
+TEST_CASE("The caster's clamp is the same depth in every cascade")
+{
+    // A cascade's texel is 2r/resolution and its depth range is 2r, so a texel's
+    // worth of depth is 1/resolution wherever it is measured. That identity is
+    // what lets one clamp serve every cascade from a single pipeline; if the fit
+    // ever stopped tying the two to the same radius, this is what would notice.
+    CascadeFitParams params = DefaultParams();
+    params.settings.cascadeCount = 4;
+    params.settings.resolution = 1024u;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 4);
+
+    const float clamp = SlopeBiasClampNdc(params.settings);
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        const float texelDepthNdc = fit.cascades[i].worldUnitsPerTexel / fit.cascades[i].depthRange;
+        CHECK(texelDepthNdc == doctest::Approx(1.f / static_cast<float>(params.settings.resolution)));
+        // So the clamp's worth in world units tracks the cascade it lands in,
+        // without the pipeline ever being told which cascade that is.
+        CHECK(clamp * fit.cascades[i].depthRange ==
+              doctest::Approx(2.f * fit.cascades[i].worldUnitsPerTexel));
+    }
+}
+
+TEST_CASE("Softness comes from the filter, not from the step")
+{
+    // A wider kernel is still what buys a wider penumbra — that much is
+    // unchanged, and it is the axis a filter setting is allowed to move. What no
+    // longer buys one is the step between taps, which is pinned to the map's
+    // texel: the two knobs used to multiply, and the product was a reach in
+    // metres that nothing shrank.
+    CascadeFitParams params = DefaultParams();
+    params.settings.resolution = 4096;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
 
     float widest = 0.f;
     for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
@@ -439,28 +625,50 @@ TEST_CASE("Raising quality never hardens the shadow")
         CHECK(penumbra > widest);
         widest = penumbra;
     }
+}
 
-    // And across every cascade, not only the nearest, at the pair that was
-    // inverted: same layout, Ultra's resolution and filter against High's.
-    SunShadowSettings high = params.settings;
-    high.resolution = 2048;
-    high.filter = ShadowFilter::Pcf5x5;
-    SunShadowSettings ultra = params.settings;
-    ultra.resolution = 4096;
-    ultra.filter = ShadowFilter::Vogel;
+TEST_CASE("Raising quality narrows what the shadow reads through")
+{
+    // This case used to assert the opposite, and the reversal is the point.
+    //
+    // The old contract was that a tier raising the resolution must not also
+    // narrow the penumbra, so the tap step was quoted against a fixed reference
+    // and a tap came to stride several of the map's real texels. A stride is a
+    // distance, and once the kernel's reach in metres passed the thickness of a
+    // wall its outer taps landed beyond the caster's silhouette, read the map's
+    // cleared far value, and averaged in as light. Every tier leaked into a
+    // closed box, and the quality setting could not shrink the one term that
+    // mattered.
+    //
+    // A shadow that hardens as the map grows is a shadow resolving what is
+    // there. That is what a quality setting should buy.
+    CascadeFitParams params = DefaultParams();
+    params.settings.cascadeCount = 4;
+    params.settings.maxDistance = 80.f;
+    params.settings.filter = ShadowFilter::Pcf5x5;
 
-    CascadeFitParams ultraParams = DefaultParams();
-    ultraParams.settings = ultra;
-    const CascadeFit ultraFit = FitCascades(ultraParams);
-    CascadeFitParams highParams = DefaultParams();
-    highParams.settings = high;
-    const CascadeFit highFit = FitCascades(highParams);
-    REQUIRE(highFit.count == ultraFit.count);
-    for (std::uint32_t i = 0; i < highFit.count; ++i)
+    SunShadowSettings coarse = params.settings;
+    coarse.resolution = 2048;
+    SunShadowSettings fine = params.settings;
+    fine.resolution = 4096;
+
+    // The reach in UV halves with the map, where it used to hold.
+    CHECK(FilterRadiusTaps(fine.filter) * FilterTapStepUv(fine) ==
+          doctest::Approx(FilterRadiusTaps(coarse.filter) * FilterTapStepUv(coarse) * 0.5f));
+
+    // And in metres, at every cascade rather than only the nearest — a wall is
+    // the same thickness however far away it is.
+    CascadeFitParams coarseParams = DefaultParams();
+    coarseParams.settings = coarse;
+    CascadeFitParams fineParams = DefaultParams();
+    fineParams.settings = fine;
+    const CascadeFit coarseFit = FitCascades(coarseParams);
+    const CascadeFit fineFit = FitCascades(fineParams);
+    REQUIRE(coarseFit.count == fineFit.count);
+    for (std::uint32_t i = 0; i < coarseFit.count; ++i)
     {
-        CHECK(CascadePenumbraWorld(ultraFit.cascades[i], ultra) >
-              CascadePenumbraWorld(highFit.cascades[i], high));
-        CHECK(ultraFit.cascades[i].worldUnitsPerTexel < highFit.cascades[i].worldUnitsPerTexel);
+        CHECK(CascadePenumbraWorld(fineFit.cascades[i], fine) <
+              CascadePenumbraWorld(coarseFit.cascades[i], coarse));
     }
 }
 
