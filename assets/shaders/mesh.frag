@@ -880,12 +880,33 @@ void main()
             // it tilts the lookup by whatever the texture says and lights
             // speckles in the pattern of the map inside a correct shadow. The
             // lighting below keeps the shaded normal — that part is not geometry.
-            vec3  Ng          = normalize(vNormal);
-            float NgdotL      = dot(Ng, L);
-            float NdotL       = dot(N, L);
+            // Flipped for a back face, exactly as the shaded normal is. A
+            // double-sided surface seen from behind is lit by the shaded normal
+            // and would be tested for shadow by the unflipped one, so the two
+            // disagree about which way the surface faces: the test fails, the
+            // multiply below is skipped, and the fragment keeps the sun's full
+            // radiance with no shadow applied at all. Every interior of a
+            // double-sided shell is then lit as though nothing stood between it
+            // and the sun — a cutout casts no pattern into its own inside, which
+            // is the one place its pattern is supposed to land.
+            vec3 Ng = normalize(vNormal);
+            if (!gl_FrontFacing)
+            {
+                Ng = -Ng;
+            }
+            float NgdotL = dot(Ng, L);
+            float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
                 radiance *= SunVisibility(Ng, L, shadowCascade, NgdotL);
+            }
+            else if (NdotL > 0.0)
+            {
+                // Lit by the shaded normal but facing away by the geometric one,
+                // which a normal map can do at a grazing angle. Nothing in the
+                // depth map describes that surface, so the honest answer is that
+                // it is not lit rather than that it is lit and unshadowed.
+                radiance = vec3(0.0);
             }
         }
         Lo += CookTorrance(brdf, N, V, L, radiance);
