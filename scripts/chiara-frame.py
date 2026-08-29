@@ -379,13 +379,21 @@ def rule(label, style, width=112):
     return style(head + "─" * max(0, width - len(head)), Style.DIM)
 
 
-def share_bar(fraction, width=8):
+def share_bar(fraction, style, width=8):
     """Filled proportion of a scope's frame. A number says how much; a bar says
-    how much compared to the row above it, without being read."""
+    how much compared to the row above it, without being read.
+
+    Drawn on a dim track rather than on blank space, so a part-full bar is read
+    against the whole it is part of — the same shape the RANK column uses.
+    """
     filled = int(round(fraction * width))
-    if filled == 0:
-        return ("▏" if fraction > 0 else " ") + " " * (width - 1)
-    return "█" * filled + " " * (width - filled)
+    if filled:
+        head, used = style("█" * filled, Style.CYAN), filled
+    elif fraction > 0:
+        head, used = style("▏", Style.CYAN), 1  # under half a cell, still not none
+    else:
+        head, used = "", 0
+    return head + style("░" * (width - used), Style.DIM)
 
 
 def plain_english(percentile_rank, what):
@@ -452,8 +460,11 @@ def print_standout(rows, stats, style, limit=8):
     """
     picks = []
     for depth, pid, event in rows:
-        if depth == 0:
-            continue  # the frame itself; the card above already reports it
+        # The frame and its pacing sleep are not findings. A frame selected on
+        # duration is trivially unusual in both, and saying so would put "slept
+        # 0.09 ms longer than usual" above the work that actually moved.
+        if depth == 0 or (depth == 1 and event["name"] == SLEEP_SCOPE):
+            continue
         median, _, _, sorted_v = stats[pid]
         delta = event["dur"] - median
         # 10 µs: under it a scope can be at p100 and still not matter.
@@ -557,7 +568,9 @@ def print_tree(rows, stats, frame_count, style, max_depth, min_ms):
 
         print(f"  {mark} {name} "
               f"{event['dur'] / 1000:8.3f}  "
-              + style(share_bar(share), Style.CYAN) + pct_text + " "
+              # The frame and its sleep have no share of the work; an empty
+              # track would read as zero rather than as not applicable.
+              + (" " * 8 if sleeping else share_bar(share, style)) + pct_text + " "
               + delta_cell(event["dur"], median, style)
               + "   " + rank_cell(rank, style) + "  "
               + style(f"{median / 1000:8.3f}{percentile(sorted_v, 90) / 1000:8.3f}",
