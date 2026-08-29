@@ -719,9 +719,34 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
     float band      = (splitFar - splitNear) * uFrame.shadowParams.y;
     if (band > 0.0 && viewDepth > splitFar - band)
     {
-        float t    = clamp((viewDepth - (splitFar - band)) / band, 0.0, 1.0);
-        float next = cascade + 1u < cascadeCount ? SampleCascade(cascade + 1u, vWorldPos, N, NdotL) : 1.0;
-        visibility = mix(visibility, next, t);
+        float t = clamp((viewDepth - (splitFar - band)) / band, 0.0, 1.0);
+        if (cascade + 1u < cascadeCount)
+        {
+            // Darker of the two, never brighter. The next cascade covers more
+            // world with the same texels, so where the two disagree it is the
+            // one that could not resolve what this one did — and the direction
+            // of that failure is always toward light, because an occluder it
+            // cannot represent is an occluder it does not record. A hollow
+            // shape a few centimetres thick is the clear case: a cascade whose
+            // texel is as wide as the walls has nowhere to put them, reports
+            // the inside as lit, and blending toward that answer carries
+            // daylight into a sealed box a third of a cascade before the
+            // boundary that would have justified it.
+            //
+            // Only the disagreement is dropped. Where both cascades agree the
+            // mix is the mix, which is what the band is for: the seam it hides
+            // is a change in how sharply an edge resolves, not a change in
+            // whether the light arrives.
+            float next = SampleCascade(cascade + 1u, vWorldPos, N, NdotL);
+            visibility = mix(visibility, min(visibility, next), t);
+        }
+        else
+        {
+            // Past the last cascade there is no further view to disagree with —
+            // the shadow simply stops being recorded, and fading to lit is that
+            // range ending rather than two cascades differing.
+            visibility = mix(visibility, 1.0, t);
+        }
     }
 
     return visibility;
