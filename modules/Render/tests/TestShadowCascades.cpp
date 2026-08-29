@@ -481,6 +481,55 @@ TEST_CASE("A bigger map narrows what the filter can read through")
     }
 }
 
+TEST_CASE("No cascade's kernel reaches further into the world than the cap")
+{
+    // A texel is a different size in every cascade — an order of magnitude
+    // across one frame — so a kernel quoted in texels has a reach in metres that
+    // grows with the cascade it lands in. The outermost used to reach 172 mm at
+    // Ultra, further than ordinary geometry is thick, and its outer taps read
+    // past the occluders they were meant to be filtering. That is light inside a
+    // closed box, and the blend carried it a third of a cascade inward besides.
+    //
+    // Every tier, every cascade, because the defect was in the last one of each.
+    for (const ShadowTier tier : {ShadowTier::Low, ShadowTier::Medium, ShadowTier::High, ShadowTier::Ultra})
+    {
+        CascadeFitParams params = DefaultParams();
+        params.settings = Sanitized(TierSettings(tier).sun);
+
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
+
+        for (std::uint32_t i = 0; i < fit.count; ++i)
+        {
+            const ShadowCascade &cascade = fit.cascades[i];
+            const float kernelWorld =
+                FilterRadiusTaps(params.settings.filter) * CascadeFilterTapStepUv(cascade, params.settings) *
+                (2.f * cascade.radius);
+            CHECK(kernelWorld <= kMaxPenumbraWorld + 1e-4f);
+        }
+    }
+}
+
+TEST_CASE("The cap only bites where a texel is wider than the penumbra")
+{
+    // Near cascades must be untouched by it: their texels are millimetres, so a
+    // texel-stepped kernel is already far inside the cap, and clamping there
+    // would harden exactly the shadows that can afford to be soft.
+    CascadeFitParams params = DefaultParams();
+    params.settings.filter = ShadowFilter::Pcf5x5;
+    params.settings.resolution = 4096;
+    params.settings.cascadeCount = 4;
+    params.settings.maxDistance = 80.f;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 4);
+
+    CHECK(CascadeFilterTapStepUv(fit.cascades[0], params.settings) ==
+          doctest::Approx(ShadowTexelSizeUv(params.settings)));
+    // And the outermost, whose texels are centimetres, must be.
+    CHECK(CascadeFilterTapStepUv(fit.cascades[3], params.settings) < ShadowTexelSizeUv(params.settings));
+}
+
 TEST_CASE("No filter reads further than its own radius in texels")
 {
     // The bound that keeps the reach tied to the map rather than to a constant

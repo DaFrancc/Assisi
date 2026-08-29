@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <iterator>
 #include <vector>
 
@@ -69,15 +70,19 @@ struct FrameConstants
     /// no lookup at all), y = which directional light the cascades belong to,
     /// z = ShadowFilter, w = 1 to tint by cascade.
     glm::uvec4 shadowCounts;
-    /// x = the UV step between PCF taps, which is one texel of the map — so the
-    /// kernel's reach in metres halves when the resolution doubles, and cannot
-    /// grow past the thickness of what it reads through,
-    /// y = the fraction of each cascade spent fading into the next, zw unused.
+    /// x = one texel of the map, in UV, which is the step between PCF taps in
+    /// every cascade whose texels are small enough,
+    /// y = the fraction of each cascade spent fading into the next,
+    /// z = the penumbra cap over the filter's radius, which the shader divides
+    /// by a cascade's depth range to get the step that keeps that cascade's
+    /// kernel from reaching past what it is filtering, w unused.
     glm::vec4 shadowParams;
     /// One record per cascade: x = the view-space distance it ends at (what the
     /// shader selects on), y = its constant depth bias already in the [0, 1]
     /// depth the shader compares in, z = its normal offset in world units,
-    /// w unused. Both biases are scaled CPU-side by that cascade's texel size,
+    /// w = the world span of its depth range, which is also how wide its ortho
+    /// box is, and what the tap-step cap above is divided by to reach a step.
+    /// Both biases are scaled CPU-side by that cascade's texel size,
     /// which is why one setting holds across cascades whose texels differ by an
     /// order of magnitude (see CascadeDepthBiasNdc).
     ///
@@ -305,8 +310,15 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
                                                cascade.depthRange);
         constants.shadowViewProjection[i] = cascade.viewProjection;
     }
-    constants.shadowParams =
-        glm::vec4(FilterTapStepUv(shadows.settings), shadows.settings.cascadeBlend, 0.f, 0.f);
+    // z is the penumbra cap divided by the filter's radius, so the shader can
+    // turn it into a tap step with one divide by the cascade's own depth range —
+    // which is the same 2r the cascade's box is wide. Infinite for a filter with
+    // no kernel of its own, so the min below it never bites.
+    const float radiusTaps = FilterRadiusTaps(shadows.settings.filter);
+    const float cappedStepNumerator =
+        radiusTaps > 0.f ? kMaxPenumbraWorld / radiusTaps : std::numeric_limits<float>::max();
+    constants.shadowParams = glm::vec4(ShadowTexelSizeUv(shadows.settings), shadows.settings.cascadeBlend,
+                                       cappedStepNumerator, 0.f);
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

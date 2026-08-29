@@ -554,7 +554,13 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // grows with the angle to the light, which is why this stays small.
     float reference = coord.z - uFrame.shadowCascade[cascade].y;
 
-    float step       = uFrame.shadowParams.x;
+    // A texel of the map, unless a texel's worth of kernel would reach further
+    // into the world than the penumbra is allowed to be. A far cascade's texel
+    // is tens of centimetres, and a kernel that wide stops filtering an occluder
+    // and starts reading past it — which is how a closed box fills with light
+    // while its own centre tap reads correctly shadowed.
+    float texelStep  = uFrame.shadowParams.x;
+    float step       = min(texelStep, uFrame.shadowParams.z / uFrame.shadowCascade[cascade].w);
     uint  filterMode = uFrame.shadowCounts.z;
 
     if (filterMode == kShadowFilterPoint)

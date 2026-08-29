@@ -288,11 +288,30 @@ float CascadeTexelScreenPixels(const ShadowCascade &cascade, float viewDistance,
     return cascade.worldUnitsPerTexel * screenHeight / denominator;
 }
 
+float CascadeFilterTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings)
+{
+    const SunShadowSettings safe = Sanitized(settings);
+    const float texelUv = ShadowTexelSizeUv(safe);
+    const float radiusTaps = FilterRadiusTaps(safe.filter);
+    const float boxWidth = 2.f * cascade.radius;
+    if (!(radiusTaps > 0.f) || !(boxWidth > 0.f))
+    {
+        return texelUv;
+    }
+
+    // A step of one texel is the ordinary case and the one every near cascade
+    // takes. It stops being ordinary in a far cascade, where a texel is tens of
+    // centimetres: the kernel then reaches further into the world than the
+    // things it is filtering are thick, and its outer taps read past them.
+    const float cappedUv = kMaxPenumbraWorld / (radiusTaps * boxWidth);
+    return std::min(texelUv, cappedUv);
+}
+
 float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     const SunShadowSettings safe = Sanitized(settings);
     const float boxWidth = 2.f * cascade.radius;
-    const float kernelUv = FilterRadiusTaps(safe.filter) * FilterTapStepUv(safe);
+    const float kernelUv = FilterRadiusTaps(safe.filter) * CascadeFilterTapStepUv(cascade, safe);
     // The hardware compares against four texels and blends, so every filter —
     // the one-tap one included — is soft to half a texel before its own kernel
     // adds anything.

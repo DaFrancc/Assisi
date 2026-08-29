@@ -159,6 +159,32 @@ struct CascadeFitParams
 /// soft the edge reads.
 [[nodiscard]] float FilterRadiusTaps(ShadowFilter filter);
 
+/// @brief The widest the sun's penumbra may be, in world units.
+///
+/// A cascade's texel is a different size in every cascade — an order of
+/// magnitude across a frame — so a kernel quoted in texels has a reach in metres
+/// that grows with the cascade it lands in. Past a point that reach exceeds the
+/// thickness of ordinary geometry, and the outer taps stop filtering the
+/// occluder and start reading past it: light arrives inside a closed box because
+/// the filter is wider than the box's walls.
+///
+/// Five centimetres is the sun's own penumbra behind an occluder a few metres
+/// away, which is the physical figure this is standing in for, and it is thinner
+/// than anything a level is likely to be built from.
+///
+/// A far cascade capped by this filters inside a single texel, so its shadows
+/// harden rather than leak. That is the right way round: an edge that aliases at
+/// eighty metres is a worse picture, and light through a wall is a wrong one.
+inline constexpr float kMaxPenumbraWorld = 0.05f;
+
+/// @brief UV distance between adjacent PCF taps, for one cascade.
+///
+/// A texel of the map, except where a texel's worth of kernel would reach
+/// further into the world than kMaxPenumbraWorld — there the step goes
+/// sub-texel, and the taps crowd inside one texel rather than spreading past
+/// what they are meant to be filtering.
+[[nodiscard]] float CascadeFilterTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings);
+
 /// @brief UV distance between adjacent PCF taps.
 ///
 /// One texel of the map, always — so the kernel's world footprint halves every
