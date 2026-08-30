@@ -657,6 +657,9 @@ target_link_libraries(Assisi-ImGuizmo PUBLIC imgui::imgui)
 add_library(imguizmo::imguizmo ALIAS Assisi-ImGuizmo)
 
 # --- NVRHI (Vulkan backend only; DX11/DX12 disabled — Windows+Linux via Vulkan)
+# Pinned to a bare commit, so NO GIT_SHALLOW: a depth-1 fetch can only grab a
+# ref tip, and upstream has moved past this commit, so a shallow clone can no
+# longer check it out ("unable to read tree"). A full clone reaches any commit.
 set(NVRHI_WITH_VULKAN     ON  CACHE BOOL "" FORCE)
 set(NVRHI_WITH_DX11       OFF CACHE BOOL "" FORCE)
 set(NVRHI_WITH_DX12       OFF CACHE BOOL "" FORCE)
@@ -665,7 +668,6 @@ set(NVRHI_INSTALL         OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(nvrhi
     GIT_REPOSITORY https://github.com/NVIDIA-RTX/NVRHI.git
     GIT_TAG        8e8c36e37558acec333204619b95d9d2fcdc4a79 # NVRHI has no tagged releases; pinned to a specific commit
-    GIT_SHALLOW    TRUE
     SYSTEM
 )
 FetchContent_MakeAvailable(nvrhi)
