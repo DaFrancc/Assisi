@@ -3,6 +3,8 @@
         msvc-asan gcc-asan gcc-tsan clang-asan clang-tsan \
         test-gcc-asan test-gcc-tsan test-clang-asan test-clang-tsan test-msvc-asan \
         md mv ms gd gv gs cd cv cs \
+        configure-msvc-chiara configure-gcc-chiara configure-clang-chiara \
+        msvc-chiara gcc-chiara clang-chiara \
         msvc-debug-chiara msvc-dev-chiara msvc-ship-chiara \
         gcc-debug-chiara gcc-dev-chiara gcc-ship-chiara \
         clang-debug-chiara clang-dev-chiara clang-ship-chiara \
@@ -130,9 +132,9 @@ test-clang-tsan: clang-tsan
 	ctest --preset clang-tsan
 
 # Chiara builds: the same configs with the capture system compiled in.
-# Off by default everywhere, so these are the
-# only way to get it. Configure + build in one step like the sanitizer targets;
-# the configure is a cached no-op after the first run.
+# Off by default everywhere, so these are the only way to get it. Split into
+# configure and build targets like the plain compiler targets, so a build does
+# not re-run configure.
 #
 # They get their own build directories rather than flipping a cache variable in
 # place: ASSISI_CHIARA_ENABLED is a PUBLIC define, so toggling it rebuilds
@@ -141,40 +143,61 @@ test-clang-tsan: clang-tsan
 #
 # `make gs-c` is the one to reach for: an optimized build with capture. Profiling
 # a debug build mostly measures the debug build.
-msvc-debug-chiara:
+configure-msvc-chiara:
 	cmake --preset msvc-debug-chiara
+	cmake --preset msvc-dev-chiara
+	cmake --preset msvc-ship-chiara
+
+configure-gcc-chiara:
+	cmake --preset gcc-debug-chiara
+	cmake --preset gcc-dev-chiara
+	cmake --preset gcc-ship-chiara
+
+configure-clang-chiara:
+	cmake --preset clang-debug-chiara
+	cmake --preset clang-dev-chiara
+	cmake --preset clang-ship-chiara
+
+msvc-chiara: configure-msvc-chiara
+	cmake --build --preset msvc-debug-chiara
+	cmake --build --preset msvc-dev-chiara
+	cmake --build --preset msvc-ship-chiara
+
+gcc-chiara: configure-gcc-chiara
+	cmake --build --preset gcc-debug-chiara
+	cmake --build --preset gcc-dev-chiara
+	cmake --build --preset gcc-ship-chiara
+
+clang-chiara: configure-clang-chiara
+	cmake --build --preset clang-debug-chiara
+	cmake --build --preset clang-dev-chiara
+	cmake --build --preset clang-ship-chiara
+
+msvc-debug-chiara:
 	cmake --build --preset msvc-debug-chiara
 
 msvc-dev-chiara:
-	cmake --preset msvc-dev-chiara
 	cmake --build --preset msvc-dev-chiara
 
 msvc-ship-chiara:
-	cmake --preset msvc-ship-chiara
 	cmake --build --preset msvc-ship-chiara
 
 gcc-debug-chiara:
-	cmake --preset gcc-debug-chiara
 	cmake --build --preset gcc-debug-chiara
 
 gcc-dev-chiara:
-	cmake --preset gcc-dev-chiara
 	cmake --build --preset gcc-dev-chiara
 
 gcc-ship-chiara:
-	cmake --preset gcc-ship-chiara
 	cmake --build --preset gcc-ship-chiara
 
 clang-debug-chiara:
-	cmake --preset clang-debug-chiara
 	cmake --build --preset clang-debug-chiara
 
 clang-dev-chiara:
-	cmake --preset clang-dev-chiara
 	cmake --build --preset clang-dev-chiara
 
 clang-ship-chiara:
-	cmake --preset clang-ship-chiara
 	cmake --build --preset clang-ship-chiara
 
 # Chiara's own race tests need tsan *and* the capture compiled in; gcc-tsan
