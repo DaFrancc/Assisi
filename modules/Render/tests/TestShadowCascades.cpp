@@ -826,3 +826,87 @@ TEST_CASE("A degenerate camera range fits nothing rather than something wrong")
     params.settings.maxDistance = kMinShadowDistance;
     CHECK(FitCascades(params).count == 0);
 }
+
+TEST_CASE("The shadowed volume contains every cascade's ortho box")
+{
+    const CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == params.settings.cascadeCount);
+
+    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(fit);
+    REQUIRE(bounds.radius > 0.f);
+
+    // Light space's axes, back in world. A cascade's ortho box is a cube of
+    // half-extent `radius` on these, centred on `center` — the corners are what
+    // the depth pass rasterizes into, and a bound that cut them would drop
+    // casters the draw list still keeps.
+    const glm::mat4 toWorld = glm::transpose(LightRotation(params.lightDirection));
+    const glm::vec3 axes[3] = {glm::vec3(toWorld * glm::vec4(1.f, 0.f, 0.f, 0.f)),
+                               glm::vec3(toWorld * glm::vec4(0.f, 1.f, 0.f, 0.f)),
+                               glm::vec3(toWorld * glm::vec4(0.f, 0.f, 1.f, 0.f))};
+
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        const ShadowCascade &cascade = fit.cascades[i];
+        for (int32_t corner = 0; corner < 8; ++corner)
+        {
+            const glm::vec3 offset = ((corner & 1) != 0 ? axes[0] : -axes[0]) +
+                                     ((corner & 2) != 0 ? axes[1] : -axes[1]) +
+                                     ((corner & 4) != 0 ? axes[2] : -axes[2]);
+            const glm::vec3 point = cascade.center + offset * cascade.radius;
+            CHECK(glm::length(point - bounds.center) <= bounds.radius + 1e-3f);
+        }
+    }
+}
+
+TEST_CASE("A caster past the shadow distance cannot reach the volume")
+{
+    const CascadeFitParams params = DefaultParams();
+    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(FitCascades(params));
+    REQUIRE(bounds.radius > 0.f);
+
+    // Kilometres out, in the plane across the light. This is the whole of what
+    // maxDistance is supposed to buy and what the gather never spent.
+    const Assisi::Geometry::BoundingSphere far{.center = glm::vec3(5000.f, 0.f, -5000.f), .radius = 1.f};
+    CHECK_FALSE(CasterReachesShadowedVolume(far, bounds, params.lightDirection));
+
+    // Down-light of the volume: the sweep runs the other way, so nothing here
+    // casts back into it however close it is.
+    const Assisi::Geometry::BoundingSphere behind{
+            .center = bounds.center + glm::normalize(params.lightDirection) * (bounds.radius * 4.f), .radius = 1.f};
+    CHECK_FALSE(CasterReachesShadowedVolume(behind, bounds, params.lightDirection));
+}
+
+TEST_CASE("A caster up-light of the volume reaches it, wherever the camera looks")
+{
+    const CascadeFitParams params = DefaultParams();
+    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(FitCascades(params));
+    REQUIRE(bounds.radius > 0.f);
+
+    const glm::vec3 light = glm::normalize(params.lightDirection);
+
+    // Far enough up-light that the caster's own sphere is nowhere near the
+    // volume — the sweep is the only thing that keeps it, which is the case
+    // WithoutNearPlane() and the vertex shader's pancaking exist for.
+    const glm::vec3 upLight = bounds.center - light * (bounds.radius * 4.f);
+    const Assisi::Geometry::BoundingSphere overhead{.center = upLight, .radius = 1.f};
+    REQUIRE(glm::length(overhead.center - bounds.center) > bounds.radius + overhead.radius);
+    CHECK(CasterReachesShadowedVolume(overhead, bounds, params.lightDirection));
+
+    // The camera looks down -Z from the origin, so this one is behind it. A
+    // caster the camera cannot see still casts into what it can.
+    CHECK(upLight.z > 0.f);
+
+    // Inside the volume, which no direction may reject.
+    const Assisi::Geometry::BoundingSphere inside{.center = bounds.center, .radius = 1.f};
+    CHECK(CasterReachesShadowedVolume(inside, bounds, params.lightDirection));
+}
+
+TEST_CASE("An unfitted cascade set bounds nothing, and nothing reaches it")
+{
+    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(CascadeFit{});
+    CHECK(bounds.radius == 0.f);
+
+    const Assisi::Geometry::BoundingSphere caster{.center = glm::vec3(0.f), .radius = 1.f};
+    CHECK_FALSE(CasterReachesShadowedVolume(caster, bounds, glm::vec3(0.f, -1.f, 0.f)));
+}

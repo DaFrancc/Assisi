@@ -11,6 +11,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
@@ -108,8 +109,14 @@ struct ShadowCasterGather
 
     /// The smallest `dot(p, lightDirection)` any caster's bounding sphere
     /// reaches — the point up-light past which nothing can cast into the view.
-    /// Absent when nothing casts.
+    /// Absent when nothing casts. Measured over the casters that survived the
+    /// distance cull, since the ones that did not are no longer drawn.
     std::optional<float> nearAlongLight;
+
+    /// Entities dropped for being unable to reach the shadowed volume. Reported
+    /// so the shadow distance's effect is a number rather than an impression:
+    /// walking content past it should move this and nothing else.
+    std::uint32_t culledEntities = 0;
 };
 
 /// @brief Collect every shadow-casting submesh in the scene, for the sun.
@@ -118,14 +125,23 @@ struct ShadowCasterGather
 /// Each submesh's material is consulted for one thing only: whether it
 /// alpha-tests, and which table row the test reads. A submesh with no material
 /// resolved still casts, opaquely — a shadow is a property of the geometry, and
-/// dropping it would be a worse answer than a solid one. Nothing is
-/// frustum-culled here — that is per view, and this list feeds all of them.
+/// dropping it would be a worse answer than a solid one.
+///
+/// Nothing is frustum-culled here — that is per view, and this list feeds all of
+/// them. What is culled is the one thing every view agrees on: @p shadowedVolume
+/// bounds all of them together, so a caster whose sweep down-light misses it
+/// misses every cascade and belongs in no list. That is where the sun's shadow
+/// distance is spent — the fit clamps its own far plane to it, and without this
+/// the gather still walked, sorted and per-view tested a caster kilometres past
+/// the last cascade. A volume of radius zero is the unfitted case and gathers
+/// nothing.
 ///
 /// Each caster's geometry is resolved to its arena offsets here rather than at
 /// draw time: a caster is drawn once per view it survives into, and resolving
 /// per view would repeat the lookup for every one of them.
 ///
 /// @p out is cleared and refilled; pass the same object every frame.
-void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection, ShadowCasterGather &out);
+void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
+                         const Assisi::Geometry::BoundingSphere &shadowedVolume, ShadowCasterGather &out);
 
 } // namespace Assisi::Runtime

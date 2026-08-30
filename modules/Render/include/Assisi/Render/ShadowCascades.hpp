@@ -124,6 +124,34 @@ struct CascadeFitParams
 /// @brief Fit every cascade for this frame.
 [[nodiscard]] CascadeFit FitCascades(const CascadeFitParams &params);
 
+/// @brief One sphere containing every fitted cascade — the volume a caster has
+/// to reach to matter. Radius zero when nothing is fitted.
+///
+/// Bounds each cascade's **ortho box**, not its slice sphere. The box is a
+/// light-space cube of half-extent `radius` centred on `center`, so its
+/// circumscribed sphere is `radius * sqrt(3)`: the slice sphere is inscribed in
+/// the box, and bounding that instead would cut the box's corners off a volume
+/// the depth pass still rasterizes into. Bounding the boxes is what makes a cull
+/// against this strictly weaker than the frustum test the shadow draw list
+/// already applies, so nothing that renders today can be lost to it.
+[[nodiscard]] Geometry::BoundingSphere ShadowedVolumeBounds(const CascadeFit &fit);
+
+/// @brief Whether @p caster can cast into @p volume, given a light travelling
+/// along @p lightDirection.
+///
+/// The caster's sphere swept down-light is a semi-infinite capsule, and this is
+/// that capsule against the volume: the distance from the volume's centre to the
+/// ray `caster.center + t * lightDirection`, `t >= 0`, against the two radii
+/// summed. One point-to-ray distance, no planes.
+///
+/// The sweep is what keeps a caster between the light and the volume, which the
+/// depth pass draws by flattening it onto the near plane. Testing the caster's
+/// sphere where it sits would reject exactly those, and the shadow of anything
+/// overhead would vanish as the camera walked under it.
+[[nodiscard]] bool CasterReachesShadowedVolume(const Geometry::BoundingSphere &caster,
+                                               const Geometry::BoundingSphere &volume,
+                                               const glm::vec3 &lightDirection);
+
 /// @brief The constant depth bias for one cascade, in the [0, 1] depth the
 /// shader compares against.
 ///

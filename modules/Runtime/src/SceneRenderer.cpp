@@ -294,6 +294,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // "the alpha-tested variant costs nothing here" into something visible.
     ASSISI_PROFILE_COUNTER("shadows/masked-batches", static_cast<double>(_lastShadowStats.maskedBatches));
     ASSISI_PROFILE_COUNTER("shadows/culled", static_cast<double>(_lastShadowStats.culled));
+    // Casters the gather never handed to a view at all, because nothing they
+    // cast can reach the shadow distance. Walking content out past it moves this
+    // and leaves every other shadow counter where it was.
+    ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(_shadowCasters.culledEntities));
 }
 
 Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame,
@@ -323,8 +327,6 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         return shadows;
     }
 
-    GatherShadowCasters(scene, sun->direction, _shadowCasters);
-
     // Opens the frame's shadow view table. Every kind of shadow map appends to
     // one table, so this belongs here rather than inside any one of them.
     _shadowDepthRenderer.BeginFrame();
@@ -340,6 +342,12 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     // agree with the array that was actually allocated.
     fitParams.settings = _shadowPass.Settings();
     _cascadeFit = Render::FitCascades(fitParams);
+
+    // After the fit, because the gather culls against it: the sun's shadow
+    // distance lives in the cascades' own extent, and a caster that cannot reach
+    // it is one no view wants. The fit reads nothing from the gather, so this is
+    // the order it always could have been in.
+    GatherShadowCasters(scene, sun->direction, Render::ShadowedVolumeBounds(_cascadeFit), _shadowCasters);
 
     _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, _shadowCasters.casters);
 
