@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -23,6 +24,21 @@ const char *SurfaceName(ChainSurface surface)
     case ChainSurface::Swapchain:          break;
     }
     return "Swapchain";
+}
+
+/// Capture and debug-marker label for a chain step. Lower-case and hyphenated
+/// to match the surrounding scope names rather than the enumerator spelling.
+const char *StageName(ChainStage stage)
+{
+    switch (stage)
+    {
+    case ChainStage::Resolve:  return "pp-resolve";
+    case ChainStage::Tonemap:  return "pp-tonemap";
+    case ChainStage::Overlays: return "pp-overlays";
+    case ChainStage::Blit:     return "pp-blit";
+    case ChainStage::Fxaa:     break;
+    }
+    return "pp-fxaa";
 }
 } // namespace
 
@@ -371,6 +387,12 @@ void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &
         {
             continue; // the app's, not ours
         }
+
+        // The chain's shape is data, so a step is only identifiable in a capture
+        // by the stage it runs. Two steps of the same stage appear as siblings
+        // of the same name, which is what they are.
+        ASSISI_PROFILE_GPU_SCOPE(commandList, StageName(step.stage));
+
         if (step.stage == ChainStage::Resolve)
         {
             commandList->resolveTexture(TextureFor(step.destination, &frame), nvrhi::AllSubresources,
@@ -384,31 +406,44 @@ void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &
             continue;
         }
 
-        nvrhi::GraphicsState state;
-        state.pipeline = resources.pipeline;
-        state.framebuffer = FramebufferFor(step.destination, &frame);
-        state.addBindingSet(resources.bindingSet);
-        state.viewport.addViewportAndScissorRect(
-            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
-        commandList->setGraphicsState(state);
-
-        if (step.stage == ChainStage::Fxaa)
         {
-            const glm::vec2 texelSize(1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height));
-            commandList->setPushConstants(&texelSize, sizeof(texelSize));
-        }
-        else
-        {
-            // A Blit is the tone map shader told to copy: by the time it runs, the
-            // image it is moving has already been mapped, exposed and graded.
-            const bool copyThrough = (step.stage == ChainStage::Blit) || _tonemapPassthrough;
-            const TonemapConstants constants = MakeTonemapConstants(_tonemap, copyThrough);
-            commandList->setPushConstants(&constants, sizeof(constants));
+            // Where a full-screen step's CPU cost actually is: nvrhi resolves
+            // the binding set and commits the barriers the target needs here,
+            // while the draw below is three vertices and a command.
+            ASSISI_PROFILE_SCOPE("graphics-state");
+            nvrhi::GraphicsState state;
+            state.pipeline = resources.pipeline;
+            state.framebuffer = FramebufferFor(step.destination, &frame);
+            state.addBindingSet(resources.bindingSet);
+            state.viewport.addViewportAndScissorRect(
+                nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+            commandList->setGraphicsState(state);
         }
 
-        nvrhi::DrawArguments drawArgs;
-        drawArgs.vertexCount = 3;
-        commandList->draw(drawArgs);
+        {
+            ASSISI_PROFILE_SCOPE("push-constants");
+            if (step.stage == ChainStage::Fxaa)
+            {
+                const glm::vec2 texelSize(1.0f / static_cast<float>(frame.width),
+                                          1.0f / static_cast<float>(frame.height));
+                commandList->setPushConstants(&texelSize, sizeof(texelSize));
+            }
+            else
+            {
+                // A Blit is the tone map shader told to copy: by the time it runs, the
+                // image it is moving has already been mapped, exposed and graded.
+                const bool copyThrough = (step.stage == ChainStage::Blit) || _tonemapPassthrough;
+                const TonemapConstants constants = MakeTonemapConstants(_tonemap, copyThrough);
+                commandList->setPushConstants(&constants, sizeof(constants));
+            }
+        }
+
+        {
+            ASSISI_PROFILE_SCOPE("draw");
+            nvrhi::DrawArguments drawArgs;
+            drawArgs.vertexCount = 3;
+            commandList->draw(drawArgs);
+        }
     }
 }
 

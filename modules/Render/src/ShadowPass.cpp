@@ -215,25 +215,34 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
 
     ASSISI_PROFILE_GPU_PASS(commandList, "shadow-cascades");
 
-    _scratchTargets.clear();
-    _scratchTargets.reserve(cascadeCount);
-    for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+    // The pass is a fixed setup cost per cascade plus whatever the geometry
+    // costs; separating them says whether a jump came from raising the cascade
+    // count or from the scene.
     {
-        // Cleared whether or not anything draws into it: a stale slice would
-        // shadow this frame with last frame's geometry. The clear is this
-        // pass's business rather than the renderer's, because a cascade is
-        // rebuilt every frame and a cached map would be ruined by one.
-        commandList->clearDepthStencilTexture(
-            _cascadeTexture, nvrhi::TextureSubresourceSet(0, 1, static_cast<nvrhi::ArraySlice>(cascade), 1), true, 1.0f,
-            false, 0);
+        ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-clears");
+        _scratchTargets.clear();
+        _scratchTargets.reserve(cascadeCount);
+        for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+        {
+            // Cleared whether or not anything draws into it: a stale slice would
+            // shadow this frame with last frame's geometry. The clear is this
+            // pass's business rather than the renderer's, because a cascade is
+            // rebuilt every frame and a cached map would be ruined by one.
+            commandList->clearDepthStencilTexture(
+                _cascadeTexture, nvrhi::TextureSubresourceSet(0, 1, static_cast<nvrhi::ArraySlice>(cascade), 1), true,
+                1.0f, false, 0);
 
-        _scratchTargets.push_back(
-            ShadowDepthTarget{.view = CascadeShadowView(fit.cascades[cascade], cascade, _settings),
-                              .framebuffer = _cascadeFramebuffers[cascade]});
+            _scratchTargets.push_back(
+                ShadowDepthTarget{.view = CascadeShadowView(fit.cascades[cascade], cascade, _settings),
+                                  .framebuffer = _cascadeFramebuffers[cascade]});
+        }
     }
 
-    const ShadowDepthRenderer::Stats drawn = _depthRenderer->Render(
-        commandList, PipelineSet(), _scratchTargets, casters);
+    ShadowDepthRenderer::Stats drawn;
+    {
+        ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-depth");
+        drawn = _depthRenderer->Render(commandList, PipelineSet(), _scratchTargets, casters);
+    }
 
     _firstView = drawn.firstView;
     stats.cascades = drawn.views;

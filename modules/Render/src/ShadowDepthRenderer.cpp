@@ -5,6 +5,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Render/Frustum.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 #include <algorithm>
@@ -403,21 +404,30 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
 
     stats.views = static_cast<std::uint32_t>(targets.size());
 
-    // The table describes the frame, not this call: appended to and re-uploaded
-    // whole, so it is complete after whichever kind of shadow map draws last.
-    for (const ShadowDepthTarget &target : targets)
     {
-        _views.push_back(PackShadowView(target.view));
+        // The table describes the frame, not this call: appended to and re-uploaded
+        // whole, so it is complete after whichever kind of shadow map draws last.
+        ASSISI_PROFILE_SCOPE("view-table");
+        for (const ShadowDepthTarget &target : targets)
+        {
+            _views.push_back(PackShadowView(target.view));
+        }
+        if (!_viewTable.IsValid() || _views.size() > _viewTable.CapacityElements())
+        {
+            _viewTable.Create(_device, sizeof(ShadowViewGpu), static_cast<std::uint32_t>(_views.size()),
+                              /*allowUnorderedAccess=*/ false, "ShadowDepthRenderer::ViewTable");
+        }
+        _viewTable.Upload(commandList, _views.data(), static_cast<std::uint32_t>(_views.size()));
     }
-    if (!_viewTable.IsValid() || _views.size() > _viewTable.CapacityElements())
-    {
-        _viewTable.Create(_device, sizeof(ShadowViewGpu), static_cast<std::uint32_t>(_views.size()),
-                          /*allowUnorderedAccess=*/ false, "ShadowDepthRenderer::ViewTable");
-    }
-    _viewTable.Upload(commandList, _views.data(), static_cast<std::uint32_t>(_views.size()));
 
     ShadowDrawList &drawList = _drawList;
-    BuildShadowDrawList(targets, casters, drawList);
+    {
+        // Culls every caster against every view, so it scales with their
+        // product rather than with what survives — the one part of the pass a
+        // scene can make expensive without drawing anything more.
+        ASSISI_PROFILE_SCOPE("build-draw-list");
+        BuildShadowDrawList(targets, casters, drawList);
+    }
 
     stats.instances = static_cast<std::uint32_t>(drawList.instances.size());
     stats.batches = static_cast<std::uint32_t>(drawList.commands.size());
@@ -428,27 +438,35 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
         return stats;
     }
 
-    if (!_instanceBuffer.IsValid() || drawList.instances.size() > _instanceBuffer.CapacityElements())
+    nvrhi::IBindingSet *bindingSet = nullptr;
+    nvrhi::IBindingSet *maskedBindingSet = nullptr;
     {
-        const auto needed = static_cast<std::uint32_t>(drawList.instances.size());
-        const std::uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialCasterCapacity);
-        _instanceBuffer.Create(_device, sizeof(ShadowInstanceData), std::max(grown, needed),
-                               /*allowUnorderedAccess=*/ false, "ShadowDepthRenderer::Instances");
+        // A grow reallocates the buffer and invalidates the binding sets built
+        // against it, so a spike here comes with a second one in the sets.
+        ASSISI_PROFILE_SCOPE("instance-upload");
+        if (!_instanceBuffer.IsValid() || drawList.instances.size() > _instanceBuffer.CapacityElements())
+        {
+            const auto needed = static_cast<std::uint32_t>(drawList.instances.size());
+            const std::uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialCasterCapacity);
+            _instanceBuffer.Create(_device, sizeof(ShadowInstanceData), std::max(grown, needed),
+                                   /*allowUnorderedAccess=*/ false, "ShadowDepthRenderer::Instances");
+        }
+        EnsureIndirectCapacity(static_cast<std::uint32_t>(drawList.commands.size()));
+
+        _instanceBuffer.Upload(commandList, drawList.instances.data(),
+                               static_cast<std::uint32_t>(drawList.instances.size()));
+        commandList->writeBuffer(_indirectBuffer, drawList.commands.data(),
+                                 drawList.commands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
+
+        bindingSet = GetOrCreateBindingSet(_instanceBuffer.NativeBuffer());
+        maskedBindingSet = GetOrCreateMaskedBindingSet(_instanceBuffer.NativeBuffer());
     }
-    EnsureIndirectCapacity(static_cast<std::uint32_t>(drawList.commands.size()));
-
-    _instanceBuffer.Upload(commandList, drawList.instances.data(),
-                           static_cast<std::uint32_t>(drawList.instances.size()));
-    commandList->writeBuffer(_indirectBuffer, drawList.commands.data(),
-                             drawList.commands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
-
-    nvrhi::IBindingSet *const bindingSet = GetOrCreateBindingSet(_instanceBuffer.NativeBuffer());
-    nvrhi::IBindingSet *const maskedBindingSet = GetOrCreateMaskedBindingSet(_instanceBuffer.NativeBuffer());
     // Without a pipeline that can discard, or a set to feed it, the cutouts draw
     // through the opaque one of the same cull mode: a solid silhouette rather
     // than no shadow at all.
     const bool alphaTesting = maskedBindingSet != nullptr;
 
+    ASSISI_PROFILE_SCOPE("record-draws");
     for (std::uint32_t index = 0; index < targets.size(); ++index)
     {
         if (targets[index].framebuffer == nullptr)

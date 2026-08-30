@@ -1107,26 +1107,59 @@ void VulkanContext::EndFrame()
     {
         ASSISI_PROFILE_SCOPE("submit-present");
 
-        _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
-        _commandList->close();
+        // Three costs that move independently: closing the recording (nvrhi
+        // resolves the frame's barriers here), handing it to the queue, and the
+        // presentation engine's own pacing. A rise in the whole is only
+        // actionable once it is attributed to one of them.
+        {
+            ASSISI_PROFILE_SCOPE("record-close");
+            {
+                ASSISI_PROFILE_SCOPE("end-timer-query");
+                _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
+            }
+            {
+                ASSISI_PROFILE_SCOPE("close");
+                _commandList->close();
+            }
+        }
 
-        _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
-        _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
-        _nvrhiDevice->executeCommandList(_commandList);
+        {
+            ASSISI_PROFILE_SCOPE("queue-submit");
+            {
+                ASSISI_PROFILE_SCOPE("queue-semaphores");
+                _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
+                _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics,
+                                                   _renderFinishedSemaphores[_currentImageIndex], 0);
+            }
+            {
+                ASSISI_PROFILE_SCOPE("execute-command-list");
+                _nvrhiDevice->executeCommandList(_commandList);
+            }
+            {
+                // Snapshot this submission's completion into the slot's query; the frame that
+                // reuses this slot kFramesInFlight later waits on it in BeginFrame().
+                ASSISI_PROFILE_SCOPE("frame-fence");
+                _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
+                _frameQueryPending[slot] = true;
+            }
+        }
 
-        // Snapshot this submission's completion into the slot's query; the frame that
-        // reuses this slot kFramesInFlight later waits on it in BeginFrame().
-        _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
-        _frameQueryPending[slot] = true;
-
-        VkPresentInfoKHR presentInfo{};
-        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = &_swapchain;
-        presentInfo.pImageIndices = &_currentImageIndex;
-        presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+        {
+            // `present` minus `queue-present` is the descriptor fill, so a
+            // difference between the two is measurement overhead, not work.
+            ASSISI_PROFILE_SCOPE("present");
+            VkPresentInfoKHR presentInfo{};
+            presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+            presentInfo.waitSemaphoreCount = 1;
+            presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
+            presentInfo.swapchainCount = 1;
+            presentInfo.pSwapchains = &_swapchain;
+            presentInfo.pImageIndices = &_currentImageIndex;
+            {
+                ASSISI_PROFILE_SCOPE("queue-present");
+                presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+            }
+        }
     }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
