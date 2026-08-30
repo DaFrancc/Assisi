@@ -10,6 +10,7 @@
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
+#include <Assisi/Render/ShadowCascades.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
@@ -221,12 +222,14 @@ DrawStats DrawScene(const DrawSceneParams &params)
     return stats;
 }
 
-void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection, ShadowCasterGather &out)
+void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
+                         const Assisi::Geometry::BoundingSphere &shadowedVolume, ShadowCasterGather &out)
 {
     ASSISI_PROFILE_SCOPE("shadow-gather");
 
     out.casters.clear();
     out.nearAlongLight.reset();
+    out.culledEntities = 0;
 
     float nearAlongLight = std::numeric_limits<float>::max();
 
@@ -240,6 +243,17 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
 
         const Assisi::Geometry::BoundingSphere worldSphere =
             Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
+
+        // Swept down-light against the volume every cascade sits inside. A
+        // rejection here is one the per-view frustum test would have made six
+        // times over, before which this caster was also walked and sorted; the
+        // sweep is what lets it be made once, and made without cutting off the
+        // casters up-light that the views deliberately keep.
+        if (!Assisi::Render::CasterReachesShadowedVolume(worldSphere, shadowedVolume, lightDirection))
+        {
+            ++out.culledEntities;
+            continue;
+        }
 
         // How far up-light this caster reaches. Every cascade's near plane is
         // pulled back to the smallest of these, which is what stops geometry

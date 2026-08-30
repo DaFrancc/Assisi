@@ -220,6 +220,78 @@ CascadeFit FitCascades(const CascadeFitParams &params)
     return fit;
 }
 
+namespace
+{
+/// Half the diagonal of a unit cube: what a cascade's radius becomes when the
+/// sphere wanted is the one around its ortho box rather than inside it.
+constexpr float kBoxCircumradiusPerHalfExtent = 1.7320508f;
+
+/// @brief The smallest sphere containing both, up to the usual incremental
+/// approximation — exact when one contains the other, and enclosing otherwise.
+[[nodiscard]] Geometry::BoundingSphere Merged(const Geometry::BoundingSphere &a, const Geometry::BoundingSphere &b)
+{
+    const glm::vec3 offset = b.center - a.center;
+    const float distance = glm::length(offset);
+    if (distance + b.radius <= a.radius)
+    {
+        return a;
+    }
+    if (distance + a.radius <= b.radius)
+    {
+        return b;
+    }
+    // Concentric with equal radii: the containment branches above cover every
+    // other zero-distance case, and dividing by it below would not.
+    if (!(distance > 0.f))
+    {
+        return a;
+    }
+
+    const float radius = 0.5f * (distance + a.radius + b.radius);
+    return Geometry::BoundingSphere{.center = a.center + offset * ((radius - a.radius) / distance), .radius = radius};
+}
+} // namespace
+
+Geometry::BoundingSphere ShadowedVolumeBounds(const CascadeFit &fit)
+{
+    const std::uint32_t count = std::min(fit.count, static_cast<std::uint32_t>(kMaxShadowCascades));
+    if (count == 0u)
+    {
+        return Geometry::BoundingSphere{};
+    }
+
+    Geometry::BoundingSphere bounds{.center = fit.cascades[0].center,
+                                    .radius = fit.cascades[0].radius * kBoxCircumradiusPerHalfExtent};
+    for (std::uint32_t i = 1; i < count; ++i)
+    {
+        bounds = Merged(bounds, Geometry::BoundingSphere{.center = fit.cascades[i].center,
+                                                         .radius = fit.cascades[i].radius *
+                                                                   kBoxCircumradiusPerHalfExtent});
+    }
+    return bounds;
+}
+
+bool CasterReachesShadowedVolume(const Geometry::BoundingSphere &caster, const Geometry::BoundingSphere &volume,
+                                 const glm::vec3 &lightDirection)
+{
+    // Nothing is fitted, so there is nothing to cast into.
+    if (!(volume.radius > 0.f))
+    {
+        return false;
+    }
+
+    const glm::vec3 light = SafeLightDirection(lightDirection);
+    const glm::vec3 toVolume = volume.center - caster.center;
+
+    // Where the sweep comes closest. Clamped at zero because the sweep starts at
+    // the caster and runs down-light forever: a caster past the volume in the
+    // light's own direction casts away from it, not into it.
+    const float along = std::max(glm::dot(toVolume, light), 0.f);
+    const glm::vec3 offset = toVolume - light * along;
+    const float reach = caster.radius + volume.radius;
+    return glm::dot(offset, offset) <= reach * reach;
+}
+
 float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     if (!(cascade.depthRange > 0.f))
