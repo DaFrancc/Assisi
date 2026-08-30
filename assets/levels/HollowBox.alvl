@@ -1,0 +1,55 @@
+{
+  "entities": [
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [],
+          "mesh": {
+            "guid": "9f15ecc7-f74e-4042-9dd1-b0d8e1846e1e",
+            "path": "models/hollow_box.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            2.9587583541870117,
+            2.9587583541870117,
+            5.917516708374023
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Box"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            -0.18000000715255737
+          ],
+          "intensity": 1.0
+        }
+      },
+      "name": "Sun"
+    }
+  ],
+  "version": 2
+}
