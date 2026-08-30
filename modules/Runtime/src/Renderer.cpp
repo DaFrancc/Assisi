@@ -223,7 +223,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
 }
 
 void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
-                         const Assisi::Geometry::BoundingSphere &shadowedVolume, ShadowCasterGather &out)
+                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, ShadowCasterGather &out)
 {
     ASSISI_PROFILE_SCOPE("shadow-gather");
 
@@ -244,12 +244,15 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
         const Assisi::Geometry::BoundingSphere worldSphere =
             Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
 
-        // Swept down-light against the volume every cascade sits inside. A
-        // rejection here is one the per-view frustum test would have made six
-        // times over, before which this caster was also walked and sorted; the
-        // sweep is what lets it be made once, and made without cutting off the
-        // casters up-light that the views deliberately keep.
-        if (!Assisi::Render::CasterReachesShadowedVolume(worldSphere, shadowedVolume, lightDirection))
+        // Swept down-light against each view's volume, once, here. The same
+        // rejection made per view is one the frustum test would have reached
+        // only after walking this caster again for every view and every pipeline
+        // class; the mask is what turns that product into a classification, and
+        // the sweep is what makes it without cutting off the casters up-light
+        // that the views deliberately keep.
+        const std::uint32_t viewMask =
+            Assisi::Render::ShadowCasterViewMask(worldSphere, viewVolumes, lightDirection);
+        if (viewMask == 0u)
         {
             ++out.culledEntities;
             continue;
@@ -292,6 +295,7 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
                     .baseVertexLocation = static_cast<int32_t>(mesh->VertexBase()),
                     .model = transform.worldMatrix,
                     .worldSphere = worldSphere,
+                    .viewMask = viewMask,
                     .alphaMasked = alphaMasked,
                     .doubleSided = doubleSided,
                     .materialIndex = alphaMasked ? material->Id() : 0u});

@@ -78,6 +78,19 @@ struct ShadowCaster
     /// against it.
     Geometry::BoundingSphere worldSphere;
 
+    /// Which views this caster can reach: bit i is target i of the span the
+    /// draw list is built over. The gather sets it, which is where the world
+    /// sphere is already in hand; a caller that classifies nothing leaves every
+    /// bit set and every view walks every caster, as they did before there were
+    /// masks.
+    ///
+    /// It only ever removes work. The volume each bit is decided against
+    /// contains the view's whole ortho box, so a cleared bit is a caster the
+    /// view's own frustum test would have rejected anyway — which is what makes
+    /// this a filter on the sweep rather than a second, weaker cull with its own
+    /// answer.
+    std::uint32_t viewMask = ~0u;
+
     /// Whether this caster's material alpha-tests, and so draws through a
     /// fragment stage that can discard. Opaque casters must keep the pipeline
     /// with no fragment stage at all — charging every one of them a texture
@@ -170,8 +183,20 @@ struct ShadowDrawList
     /// classes cost an equal pair of bounds and no draw, which is every class
     /// but the first in a scene of ordinary solid geometry.
     std::vector<std::uint32_t> viewPipelineStart;
-    /// Caster-view pairs the frustum test rejected.
+    /// Caster-view pairs no view drew, whichever cull rejected them: the mask
+    /// before the walk, or the frustum test during it.
     std::uint32_t culled = 0;
+
+    /// Indices into the caster span of every view's members, concatenated, in
+    /// the span's own order — so a view's list is class-major and geometry-major
+    /// exactly as the span is, and the runs still coalesce. View i owns
+    /// [viewMemberStart[i], viewMemberStart[i + 1]).
+    std::vector<std::uint32_t> viewMembers;
+    std::vector<std::uint32_t> viewMemberStart;
+    /// Where the next member of each view goes while the lists are being
+    /// filled. A member of the struct rather than a local so a steady state
+    /// allocates nothing here either.
+    std::vector<std::uint32_t> viewMemberCursor;
 
     void Clear();
 };
@@ -181,9 +206,17 @@ struct ShadowDrawList
 /// @p casters is expected sorted opaque-first and by @ref ShadowGeometryKey
 /// within each half — consecutive items with the same key coalesce into one
 /// instanced draw, and an unsorted span merely produces more commands for the
-/// same picture. A caster the cull rejects also breaks the run, so the next
-/// survivor opens a new batch. The two halves are separated here whatever the
-/// ordering, so only the coalescing depends on it and never the picture.
+/// same picture. A caster the frustum test rejects also breaks the run, so the
+/// next survivor opens a new batch. The two halves are separated here whatever
+/// the ordering, so only the coalescing depends on it and never the picture.
+///
+/// Each view walks only the members its casters' @ref ShadowCaster::viewMask
+/// named, rather than the whole span once per pipeline class: the classification
+/// happens once per caster where its sphere is already in hand, and this costs
+/// what survives it. A caster the mask kept out of a view is not in that view's
+/// list at all, so its neighbours coalesce across it — the view's instances are
+/// appended in its own member order, and a command's range covers its members
+/// and nothing between them.
 ///
 /// Device-free by construction: this is the whole of what the depth pass
 /// decides, and none of it needs a GPU to be checked.
@@ -298,7 +331,7 @@ public:
         /// no-regression claim is checked rather than eyeballed.
         std::uint32_t maskedBatches = 0;
         std::uint32_t drawCalls = 0; ///< drawIndexedIndirect calls issued.
-        std::uint32_t culled = 0;    ///< Caster-view pairs the frustum test rejected.
+        std::uint32_t culled = 0;    ///< Caster-view pairs no view drew, mask and frustum test together.
     };
 
     /// @brief Draw @p casters into every target, with @p pipelines.

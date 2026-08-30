@@ -74,7 +74,7 @@ public:
         /// "the cutouts cost nothing here" a reading rather than a claim.
         std::uint32_t maskedBatches = 0;
         std::uint32_t drawCalls = 0; ///< drawIndexedIndirect calls issued — one per cascade with anything in it.
-        std::uint32_t culled = 0;    ///< Caster-cascade pairs the per-cascade frustum test rejected.
+        std::uint32_t culled = 0;    ///< Caster-cascade pairs no cascade drew, classification and frustum together.
     };
 
     /// @brief Clear every cascade and draw @p casters into them.
@@ -83,9 +83,10 @@ public:
     /// the same key coalesce into one instanced draw, and an unsorted span
     /// merely draws more commands.
     ///
-    /// Each cascade culls the span against its own frustum. The cascade
-    /// matrices already reach back to the casters (see CascadeFitParams), so a
-    /// caster behind the camera survives the test rather than being clipped.
+    /// Each cascade culls against its own frustum the casters whose view mask
+    /// named it, and no others. The cascade matrices already reach back to the
+    /// casters (see CascadeFitParams), so a caster behind the camera survives
+    /// the test rather than being clipped.
     Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const ShadowCaster> casters) const;
 
     [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }

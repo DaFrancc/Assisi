@@ -3,9 +3,11 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <utility>
 
 #include <Assisi/Chiara/Profile.hpp>
@@ -343,11 +345,20 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     fitParams.settings = _shadowPass.Settings();
     _cascadeFit = Render::FitCascades(fitParams);
 
-    // After the fit, because the gather culls against it: the sun's shadow
-    // distance lives in the cascades' own extent, and a caster that cannot reach
-    // it is one no view wants. The fit reads nothing from the gather, so this is
-    // the order it always could have been in.
-    GatherShadowCasters(scene, sun->direction, Render::ShadowedVolumeBounds(_cascadeFit), _shadowCasters);
+    // After the fit, because the gather classifies against it: the sun's shadow
+    // distance lives in the cascades' own extent, and a caster that reaches no
+    // cascade is one no view wants. The fit reads nothing from the gather, so
+    // this is the order it always could have been in.
+    //
+    // One volume per cascade rather than one around all of them: the bit a
+    // caster earns here is the cascade it draws into, so the classification is
+    // what the per-view sweep used to redo, and a caster inside the shadow
+    // distance but in only one cascade now walks only that one.
+    std::array<Geometry::BoundingSphere, Render::kMaxShadowCascades> cascadeVolumes{};
+    const std::uint32_t volumeCount = Render::CascadeVolumeBounds(_cascadeFit, cascadeVolumes);
+    GatherShadowCasters(scene, sun->direction,
+                        std::span<const Geometry::BoundingSphere>(cascadeVolumes.data(), volumeCount),
+                        _shadowCasters);
 
     _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, _shadowCasters.casters);
 

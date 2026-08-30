@@ -6,8 +6,10 @@
 #include <Assisi/Render/ShadowCascades.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 
+#include <array>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <vector>
 
 using namespace Assisi::Render;
@@ -827,14 +829,11 @@ TEST_CASE("A degenerate camera range fits nothing rather than something wrong")
     CHECK(FitCascades(params).count == 0);
 }
 
-TEST_CASE("The shadowed volume contains every cascade's ortho box")
+TEST_CASE("A cascade's volume contains its own ortho box")
 {
     const CascadeFitParams params = DefaultParams();
     const CascadeFit fit = FitCascades(params);
     REQUIRE(fit.count == params.settings.cascadeCount);
-
-    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(fit);
-    REQUIRE(bounds.radius > 0.f);
 
     // Light space's axes, back in world. A cascade's ortho box is a cube of
     // half-extent `radius` on these, centred on `center` — the corners are what
@@ -847,7 +846,11 @@ TEST_CASE("The shadowed volume contains every cascade's ortho box")
 
     for (std::uint32_t i = 0; i < fit.count; ++i)
     {
+        CAPTURE(i);
         const ShadowCascade &cascade = fit.cascades[i];
+        const Assisi::Geometry::BoundingSphere bounds = CascadeVolumeBounds(cascade);
+        REQUIRE(bounds.radius > 0.f);
+
         for (int32_t corner = 0; corner < 8; ++corner)
         {
             const glm::vec3 offset = ((corner & 1) != 0 ? axes[0] : -axes[0]) +
@@ -859,10 +862,37 @@ TEST_CASE("The shadowed volume contains every cascade's ortho box")
     }
 }
 
+TEST_CASE("Every cascade gets a volume, in its own order")
+{
+    const CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == params.settings.cascadeCount);
+
+    std::array<Assisi::Geometry::BoundingSphere, kMaxShadowCascades> volumes{};
+    const std::uint32_t count = CascadeVolumeBounds(fit, volumes);
+    REQUIRE(count == fit.count);
+
+    // The order is the meaning: a caster's mask names its cascade by index.
+    for (std::uint32_t i = 0; i < count; ++i)
+    {
+        CAPTURE(i);
+        CHECK(volumes[i].center == fit.cascades[i].center);
+        CHECK(volumes[i].radius == doctest::Approx(CascadeVolumeBounds(fit.cascades[i]).radius));
+    }
+
+    // A span shorter than the fit takes what fits rather than writing past it.
+    CHECK(CascadeVolumeBounds(fit, std::span<Assisi::Geometry::BoundingSphere>(volumes.data(), 1)) == 1u);
+    CHECK(CascadeVolumeBounds(fit, std::span<Assisi::Geometry::BoundingSphere>{}) == 0u);
+}
+
 TEST_CASE("A caster past the shadow distance cannot reach the volume")
 {
     const CascadeFitParams params = DefaultParams();
-    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(FitCascades(params));
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
+    // The last cascade is the furthest-reaching one, so a caster that cannot
+    // reach this reaches none of them.
+    const Assisi::Geometry::BoundingSphere bounds = CascadeVolumeBounds(fit.cascades[fit.count - 1u]);
     REQUIRE(bounds.radius > 0.f);
 
     // Kilometres out, in the plane across the light. This is the whole of what
@@ -880,7 +910,9 @@ TEST_CASE("A caster past the shadow distance cannot reach the volume")
 TEST_CASE("A caster up-light of the volume reaches it, wherever the camera looks")
 {
     const CascadeFitParams params = DefaultParams();
-    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(FitCascades(params));
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 0);
+    const Assisi::Geometry::BoundingSphere bounds = CascadeVolumeBounds(fit.cascades[fit.count - 1u]);
     REQUIRE(bounds.radius > 0.f);
 
     const glm::vec3 light = glm::normalize(params.lightDirection);
@@ -904,9 +936,73 @@ TEST_CASE("A caster up-light of the volume reaches it, wherever the camera looks
 
 TEST_CASE("An unfitted cascade set bounds nothing, and nothing reaches it")
 {
-    const Assisi::Geometry::BoundingSphere bounds = ShadowedVolumeBounds(CascadeFit{});
+    std::array<Assisi::Geometry::BoundingSphere, kMaxShadowCascades> volumes{};
+    CHECK(CascadeVolumeBounds(CascadeFit{}, volumes) == 0u);
+
+    const Assisi::Geometry::BoundingSphere bounds = CascadeVolumeBounds(ShadowCascade{});
     CHECK(bounds.radius == 0.f);
 
     const Assisi::Geometry::BoundingSphere caster{.center = glm::vec3(0.f), .radius = 1.f};
     CHECK_FALSE(CasterReachesShadowedVolume(caster, bounds, glm::vec3(0.f, -1.f, 0.f)));
+
+    // And a caster classified against nothing is a member of nothing, which is
+    // what the gather drops rather than hands to a view.
+    CHECK(ShadowCasterViewMask(caster, std::span<const Assisi::Geometry::BoundingSphere>{},
+                               glm::vec3(0.f, -1.f, 0.f)) == 0u);
+}
+
+TEST_CASE("A caster is classified into the volumes it reaches and no others")
+{
+    // Two volumes far apart across the light, so a caster over one is nowhere
+    // near the other and the answer is unambiguous.
+    const glm::vec3 light = glm::normalize(glm::vec3(0.f, -1.f, 0.f));
+    const Assisi::Geometry::BoundingSphere volumes[] = {
+        {.center = glm::vec3(0.f), .radius = 10.f},
+        {.center = glm::vec3(1000.f, 0.f, 0.f), .radius = 10.f},
+    };
+
+    // Up-light of the second, which the sweep is what keeps: the caster's own
+    // sphere is a hundred radii away from it.
+    const Assisi::Geometry::BoundingSphere overhead{.center = glm::vec3(1000.f, 500.f, 0.f), .radius = 1.f};
+    CHECK(ShadowCasterViewMask(overhead, volumes, light) == 0b10u);
+
+    const Assisi::Geometry::BoundingSphere inside{.center = glm::vec3(0.f), .radius = 1.f};
+    CHECK(ShadowCasterViewMask(inside, volumes, light) == 0b01u);
+
+    // Between them and reaching neither.
+    const Assisi::Geometry::BoundingSphere between{.center = glm::vec3(500.f, 500.f, 0.f), .radius = 1.f};
+    CHECK(ShadowCasterViewMask(between, volumes, light) == 0u);
+
+    // A caster large enough to cover both is in both: the mask is a membership,
+    // not a choice of one.
+    const Assisi::Geometry::BoundingSphere wide{.center = glm::vec3(500.f, 500.f, 0.f), .radius = 600.f};
+    CHECK(ShadowCasterViewMask(wide, volumes, light) == 0b11u);
+}
+
+TEST_CASE("A caster's classification agrees with the sweep it stands for")
+{
+    // The mask is exactly the per-volume test, run once — a mask that said
+    // anything else would be a second cull with its own answer.
+    const CascadeFitParams params = DefaultParams();
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 1);
+
+    std::array<Assisi::Geometry::BoundingSphere, kMaxShadowCascades> volumes{};
+    const std::uint32_t count = CascadeVolumeBounds(fit, volumes);
+    const std::span<const Assisi::Geometry::BoundingSphere> span(volumes.data(), count);
+
+    for (const glm::vec3 center : {glm::vec3(0.f, 2.f, -5.f), glm::vec3(0.f, 40.f, -60.f),
+                                   glm::vec3(0.f, 0.f, 30.f), glm::vec3(4000.f, 0.f, -4000.f)})
+    {
+        CAPTURE(center.x);
+        CAPTURE(center.z);
+        const Assisi::Geometry::BoundingSphere caster{.center = center, .radius = 1.f};
+        const std::uint32_t mask = ShadowCasterViewMask(caster, span, params.lightDirection);
+        for (std::uint32_t i = 0; i < count; ++i)
+        {
+            CAPTURE(i);
+            CHECK(((mask >> i) & 1u) ==
+                  (CasterReachesShadowedVolume(caster, volumes[i], params.lightDirection) ? 1u : 0u));
+        }
+    }
 }
