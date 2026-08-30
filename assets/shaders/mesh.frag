@@ -485,6 +485,15 @@ const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
 const float kGoldenAngle        = 2.39996323;
 
+// The sixteen taps split into a probe and the rest. The probe's four are picked
+// for coverage — spread around the disk, and spanning its radius from near the
+// centre to the rim — so a kernel that straddles a shadow edge almost always
+// lands at least one probe tap on each side of it. Together the two lists are
+// exactly the taps 0..15, so summing both walks the same disk the single loop
+// did.
+const uint kVogelProbe[4] = uint[](0u, 4u, 11u, 15u);
+const uint kVogelRest[12] = uint[](1u, 2u, 3u, 5u, 6u, 7u, 8u, 9u, 10u, 12u, 13u, 14u);
+
 /// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
 /// comparison is made against.
 ///
@@ -510,6 +519,16 @@ float ShadowTap(vec2 uv, uint cascade, float reference)
 float InterleavedGradientNoise(vec2 position)
 {
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
+}
+
+/// Tap @p i of the kVogelTaps-point Vogel disk, rotated by @p phi and spaced by
+/// @p stepUv per radius step. The position depends only on the index, so the
+/// disk is the same whichever order its taps are visited in.
+float VogelTap(uint i, vec2 uv, uint cascade, float reference, float stepUv, float phi)
+{
+    float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
+    float theta = float(i) * kGoldenAngle + phi;
+    return ShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * stepUv, cascade, reference);
 }
 
 /// The normal of the surface that was actually rasterized, facing the viewer.
@@ -588,6 +607,15 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // grows with the angle to the light, which is why this stays small.
     float reference = coord.z - uFrame.shadowCascade[cascade].y;
 
+    uint filterMode = uFrame.shadowCounts.z;
+
+    // The centre tap needs no kernel width, so it answers before the blocker
+    // search below spends a fetch sizing a kernel it would never use.
+    if (filterMode == kShadowFilterPoint)
+    {
+        return ShadowTap(uv, cascade, reference);
+    }
+
     // How wide to filter, asked of the geometry rather than assumed.
     //
     // The sun is not a point: it subtends about half a degree, so an occluder d
@@ -613,22 +641,37 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     float capStep    = min(texelStep, uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w);
     float blockerNdc = reference - NearestBlockerDepth(uv, cascade, reference);
     float step       = blockerNdc > 0.0 ? min(capStep, uFrame.shadowParams.w * blockerNdc) : capStep;
-    uint  filterMode = uFrame.shadowCounts.z;
-
-    if (filterMode == kShadowFilterPoint)
-    {
-        return ShadowTap(uv, cascade, reference);
-    }
 
     if (filterMode == kShadowFilterVogel)
     {
         float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
+
+        // The probe taps first. A tap that lands wholly lit or wholly shadowed
+        // returns exactly 1 or 0 — the comparison sampler blends only across a
+        // texel — so a unanimous probe means the kernel almost certainly does
+        // not straddle an edge, and most of any frame it does not. The twelve
+        // remaining taps run only where the probe disagrees, with the same
+        // positions and the same per-pixel rotation, so a penumbra keeps its
+        // noise pattern. The probe can answer wrongly only where the rest
+        // would have disagreed with a unanimous four — the outermost fringe of
+        // a penumbra — and the rotation scatters that per pixel rather than
+        // letting it band.
         float sum = 0.0;
-        for (uint i = 0u; i < kVogelTaps; ++i)
+        for (uint i = 0u; i < 4u; ++i)
         {
-            float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
-            float theta = float(i) * kGoldenAngle + phi;
-            sum += ShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * step, cascade, reference);
+            sum += VogelTap(kVogelProbe[i], uv, cascade, reference, step, phi);
+        }
+        if (sum == 0.0)
+        {
+            return 0.0;
+        }
+        if (sum == 4.0)
+        {
+            return 1.0;
+        }
+        for (uint i = 0u; i < 12u; ++i)
+        {
+            sum += VogelTap(kVogelRest[i], uv, cascade, reference, step, phi);
         }
         return sum / float(kVogelTaps);
     }
@@ -690,26 +733,29 @@ ShadowProbe ProbeCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     return probe;
 }
 
-/// The sun's visibility at this fragment, blended across the cascade seam.
-/// Reports which cascade it read in @p outCascade, for the debug view.
-/// Which cascade covers this fragment. A compare chain over frame constants —
-/// cheap enough to run even where the shadow itself is never looked up, which
-/// is what lets the debug view still colour a surface the sun cannot reach.
+/// Which cascade covers this fragment. A count over frame constants — cheap
+/// enough to run even where the shadow itself is never looked up, which is
+/// what lets the debug view still colour a surface the sun cannot reach.
 uint SelectCascade(float viewDepth)
 {
+    // The splits ascend (each cascade ends further out than the last), so the
+    // covering cascade is the number of splits at or below viewDepth. Counting
+    // rather than searching keeps the trip count uniform: no break, so a warp
+    // straddling a seam does not diverge here.
+    //
+    // Only the first count-1 splits are counted, so anything past the last
+    // split lands on the last cascade — the fallback: out there SampleCascade's
+    // own bounds check answers "lit".
     uint cascadeCount = uFrame.shadowCounts.x;
-    // The last cascade is the fallback: past its split there is nothing further
-    // out, and SampleCascade's own bounds check answers "lit" there.
-    for (uint i = 0u; i < cascadeCount; ++i)
+    uint cascade      = 0u;
+    for (uint i = 0u; i + 1u < cascadeCount; ++i)
     {
-        if (viewDepth < uFrame.shadowCascade[i].x)
-        {
-            return i;
-        }
+        cascade += viewDepth >= uFrame.shadowCascade[i].x ? 1u : 0u;
     }
-    return cascadeCount - 1u;
+    return cascade;
 }
 
+/// The sun's visibility at this fragment, blended across the cascade seam.
 float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
 {
     uint  cascadeCount = uFrame.shadowCounts.x;
@@ -751,8 +797,18 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
             // mix is the mix, which is what the band is for: the seam it hides
             // is a change in how sharply an edge resolves, not a change in
             // whether the light arrives.
-            float next = SampleCascade(cascade + 1u, vWorldPos, N, NdotL);
-            visibility = mix(visibility, min(visibility, next), t);
+            //
+            // At zero the neighbour has nothing to say: min() can only keep or
+            // lower the answer, and mixing zero toward zero is zero, so the
+            // second cascade is not sampled at all. This is the one early-out
+            // the min() direction permits — a fully lit fragment can still be
+            // darkened by the neighbour, which is the hollow-shape case the
+            // min() exists for, so it must still pay for the second sample.
+            if (visibility > 0.0)
+            {
+                float next = SampleCascade(cascade + 1u, vWorldPos, N, NdotL);
+                visibility = mix(visibility, min(visibility, next), t);
+            }
         }
         else
         {
@@ -933,16 +989,27 @@ void main()
         uint  li   = lightIndexList[pointOffset + i];
         vec3  lPos = pointLights[li].positionRadius.xyz;
         float r    = pointLights[li].positionRadius.w;
-        vec3  lCol = pointLights[li].colorIntensity.xyz;
-        float lInt = pointLights[li].colorIntensity.w;
 
         // One inversesqrt covers both the direction and the attenuation, which
         // needs only squared distance. The max() guards a fragment sitting exactly
         // on the light, where toLight is zero.
-        vec3  toLight  = lPos - vWorldPos;
-        float d2       = max(dot(toLight, toLight), 1e-8);
+        vec3  toLight = lPos - vWorldPos;
+        float d2      = max(dot(toLight, toLight), 1e-8);
+
+        // The cluster lists a light for every fragment of every froxel its
+        // sphere touches, so a fragment can sit past the radius while its
+        // cluster still names the light. Attenuation is exactly zero out there,
+        // and the BRDF of zero radiance is zero — skip it.
+        float att = AttenuationSq(d2, r * r);
+        if (att == 0.0)
+        {
+            continue;
+        }
+
+        vec3  lCol     = pointLights[li].colorIntensity.xyz;
+        float lInt     = pointLights[li].colorIntensity.w;
         vec3  L        = toLight * inversesqrt(d2);
-        vec3  radiance = lCol * lInt * AttenuationSq(d2, r * r);
+        vec3  radiance = lCol * lInt * att;
 
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
@@ -954,8 +1021,6 @@ void main()
         float r      = spotLights[li].positionRadius.w;
         vec3  lDir   = spotLights[li].directionInner.xyz;
         float inner  = spotLights[li].directionInner.w;
-        vec3  lCol   = spotLights[li].colorIntensity.xyz;
-        float lInt   = spotLights[li].colorIntensity.w;
         float outer  = spotLights[li].outerCutoff;
 
         vec3  toLight = lPos - vWorldPos;
@@ -969,7 +1034,20 @@ void main()
         float theta = dot(L, -lDir);
         // A cone authored with inner == outer makes smoothstep divide by zero.
         float cone  = smoothstep(outer, max(inner, outer + 1e-4), theta);
-        vec3  radiance = lCol * lInt * AttenuationSq(d2, r * r) * cone;
+
+        // The cluster clips the cone against froxels, not fragments, so most
+        // fragments of a froxel the cone grazes are outside it — and outside
+        // the cone or past the radius the radiance is exactly zero. Skip the
+        // BRDF for both.
+        float att = AttenuationSq(d2, r * r);
+        if (att == 0.0 || cone == 0.0)
+        {
+            continue;
+        }
+
+        vec3  lCol     = spotLights[li].colorIntensity.xyz;
+        float lInt     = spotLights[li].colorIntensity.w;
+        vec3  radiance = lCol * lInt * att * cone;
 
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
