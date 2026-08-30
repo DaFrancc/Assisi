@@ -9,6 +9,7 @@
 #include <Assisi/Render/ShaderModule.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <iterator>
 
@@ -56,23 +57,39 @@ void ShadowDrawList::Clear()
     viewCommandStart.clear();
     viewPipelineStart.clear();
     culled = 0;
+    viewMembers.clear();
+    viewMemberStart.clear();
+    viewMemberCursor.clear();
 }
 
 namespace
 {
-/// @brief Cull one view's casters of a single pipeline class and append their
+/// @brief The views @p caster is a member of, as a mask over the first
+/// kShadowViewMaskBits of @p viewCount.
+///
+/// The views past the mask's width are not in the answer at all — they take
+/// every caster, and the walk adds them separately.
+[[nodiscard]] std::uint32_t MemberBits(const ShadowCaster &caster, std::uint32_t viewCount)
+{
+    const std::uint32_t width = std::min(viewCount, kShadowViewMaskBits);
+    const std::uint32_t inRange = width == kShadowViewMaskBits ? ~0u : (1u << width) - 1u;
+    return caster.viewMask & inRange;
+}
+
+/// @brief Cull one view's members of a single pipeline class and append their
 /// commands, coalescing consecutive runs of the same geometry.
 ///
 /// One class per sweep is what puts a view's commands in pipeline order without
 /// the caller having had to sort the span: a sweep that wants another class
 /// rejects on the class before the frustum test, so a caster is only ever culled
 /// — and only ever counted as culled — by the sweep that would have drawn it.
-void AppendViewCommands(const Frustum &frustum, std::span<const ShadowCaster> casters, MeshPipeline pipeline,
-                        ShadowDrawList &out)
+void AppendViewCommands(const Frustum &frustum, std::span<const ShadowCaster> casters,
+                        std::span<const std::uint32_t> members, MeshPipeline pipeline, ShadowDrawList &out)
 {
     const ShadowCaster *run = nullptr;
-    for (const ShadowCaster &caster : casters)
+    for (const std::uint32_t member : members)
     {
+        const ShadowCaster &caster = casters[member];
         if (MeshPipelineFor(caster.alphaMasked, caster.doubleSided) != pipeline || caster.indexCount == 0)
         {
             continue;
@@ -106,6 +123,67 @@ void AppendViewCommands(const Frustum &frustum, std::span<const ShadowCaster> ca
         }
     }
 }
+
+/// @brief Fill @p out's per-view member lists from the casters' masks.
+///
+/// Two passes over the span, neither of them per view: the first counts what
+/// each view takes, the second places it. A caster costs one pass step per view
+/// it is a member of, which in a fitted cascade set is one or two — the whole
+/// point of classifying at all.
+///
+/// Every pair a mask kept out is counted as culled here, so the tally still
+/// names every caster-view pair no view drew whichever cull rejected it.
+void BuildViewMembers(std::span<const ShadowCaster> casters, std::uint32_t viewCount, ShadowDrawList &out)
+{
+    // The views past the mask's width take every caster with anything to draw,
+    // which is what the counting below has to know before it can size them.
+    const std::uint32_t maskedViews = std::min(viewCount, kShadowViewMaskBits);
+
+    out.viewMemberStart.assign(static_cast<std::size_t>(viewCount) + 1u, 0u);
+    for (const ShadowCaster &caster : casters)
+    {
+        if (caster.indexCount == 0)
+        {
+            continue; // nothing to draw, so no view wants it and none rejected it
+        }
+        std::uint32_t bits = MemberBits(caster, viewCount);
+        out.culled += maskedViews - static_cast<std::uint32_t>(std::popcount(bits));
+        while (bits != 0u)
+        {
+            ++out.viewMemberStart[static_cast<std::uint32_t>(std::countr_zero(bits)) + 1u];
+            bits &= bits - 1u;
+        }
+        for (std::uint32_t view = maskedViews; view < viewCount; ++view)
+        {
+            ++out.viewMemberStart[view + 1u];
+        }
+    }
+
+    for (std::uint32_t view = 0; view < viewCount; ++view)
+    {
+        out.viewMemberStart[view + 1u] += out.viewMemberStart[view];
+    }
+    out.viewMembers.resize(out.viewMemberStart.back());
+    out.viewMemberCursor.assign(out.viewMemberStart.begin(), out.viewMemberStart.end() - 1);
+
+    for (std::uint32_t index = 0; index < casters.size(); ++index)
+    {
+        if (casters[index].indexCount == 0)
+        {
+            continue;
+        }
+        std::uint32_t bits = MemberBits(casters[index], viewCount);
+        while (bits != 0u)
+        {
+            out.viewMembers[out.viewMemberCursor[static_cast<std::uint32_t>(std::countr_zero(bits))]++] = index;
+            bits &= bits - 1u;
+        }
+        for (std::uint32_t view = maskedViews; view < viewCount; ++view)
+        {
+            out.viewMembers[out.viewMemberCursor[view]++] = index;
+        }
+    }
+}
 } // namespace
 
 void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters,
@@ -124,8 +202,15 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
         classPresent[static_cast<std::uint32_t>(MeshPipelineFor(caster.alphaMasked, caster.doubleSided))] = true;
     }
 
-    for (const ShadowDepthTarget &target : targets)
+    const auto viewCount = static_cast<std::uint32_t>(targets.size());
+    BuildViewMembers(casters, viewCount, out);
+
+    for (std::uint32_t view = 0; view < viewCount; ++view)
     {
+        const ShadowDepthTarget &target = targets[view];
+        const std::span<const std::uint32_t> members(out.viewMembers.data() + out.viewMemberStart[view],
+                                                     out.viewMemberStart[view + 1u] - out.viewMemberStart[view]);
+
         out.viewCommandStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
 
         // Open at the near end. A caster between the light and this slice is
@@ -143,7 +228,7 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
             out.viewPipelineStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
             if (classPresent[index])
             {
-                AppendViewCommands(frustum, casters, static_cast<MeshPipeline>(index), out);
+                AppendViewCommands(frustum, casters, members, static_cast<MeshPipeline>(index), out);
             }
         }
     }
@@ -422,9 +507,9 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
 
     ShadowDrawList &drawList = _drawList;
     {
-        // Culls every caster against every view, so it scales with their
-        // product rather than with what survives — the one part of the pass a
-        // scene can make expensive without drawing anything more.
+        // Scales with the casters and with what each view keeps, not with their
+        // product: the gather classified every caster once, and a view walks
+        // only the members that named it.
         ASSISI_PROFILE_SCOPE("build-draw-list");
         BuildShadowDrawList(targets, casters, drawList);
     }

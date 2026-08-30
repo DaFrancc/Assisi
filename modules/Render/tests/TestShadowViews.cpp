@@ -8,6 +8,10 @@
 #include <Assisi/Render/ShadowSettings.hpp>
 #include <Assisi/Render/ShadowView.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <span>
 #include <vector>
 
 using namespace Assisi::Render;
@@ -79,6 +83,13 @@ ShadowCaster Masked(ShadowCaster caster, std::uint32_t materialIndex)
 {
     caster.alphaMasked = true;
     caster.materialIndex = materialIndex;
+    return caster;
+}
+
+/// The same caster, classified into the views @p viewMask names.
+ShadowCaster InViews(ShadowCaster caster, std::uint32_t viewMask)
+{
+    caster.viewMask = viewMask;
     return caster;
 }
 } // namespace
@@ -648,4 +659,192 @@ TEST_CASE("A rebuilt draw list keeps no alpha-tested range from the last one")
     REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
     CHECK(MaskedStart(list, 0) == 1);
     CHECK(list.viewCommandStart[1] == 1);
+}
+
+TEST_CASE("A caster draws only into the views its mask names")
+{
+    // Two views of the same box, so the frustum test keeps the caster in both
+    // and only the classification can tell them apart.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {InViews(CasterAt(glm::vec3(0.f), 1.f, 1), 0b01u)};
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 3);
+    CHECK(list.viewCommandStart[1] == 1); // the view it was classified into
+    CHECK(list.viewCommandStart[2] == 1); // the other drew nothing
+    CHECK(list.instances.size() == 1);
+}
+
+TEST_CASE("A classified-out pair is still counted as culled")
+{
+    // The tally names every caster-view pair no view drew, whichever cull
+    // rejected it — a mask that made the number smaller would report a saving
+    // the pass did not make.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {
+        InViews(CasterAt(glm::vec3(0.f), 1.f, 1), 0b01u),
+        InViews(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 0b10u),
+        // Classified into both, and inside neither: the frustum test is what
+        // rejects this one, and both rejections land in the same tally.
+        InViews(CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 3), 0b11u),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    CHECK(list.instances.size() == 2);
+    CHECK(list.culled == 4);
+}
+
+TEST_CASE("A caster the mask excludes leaves the run around it whole")
+{
+    // A view's instances are appended in its own member order, so the two
+    // survivors are adjacent in the buffer and one command covers them. The
+    // caster between them is not in this view at all — there is no gap in the
+    // range for it to be drawn through.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f, 0.f, 0.f), 1.f, 5),
+        InViews(CasterAt(glm::vec3(1.f, 0.f, 0.f), 1.f, 5), 0u),
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 5),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    CHECK(list.culled == 1);
+    CHECK(list.instances.size() == 2);
+    REQUIRE(list.commands.size() == 1);
+    CHECK(list.commands[0].instanceCount == 2);
+    CHECK(list.commands[0].startInstanceLocation == 0);
+}
+
+TEST_CASE("A view's members keep the span's class-major order")
+{
+    // The masked half still follows the opaque half inside every view, and each
+    // view's ranges describe its own members rather than the whole span.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {
+        InViews(CasterAt(glm::vec3(0.f), 1.f, 1), 0b11u),
+        InViews(Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 3), 0b01u),
+        InViews(Masked(CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 4), 3), 0b10u),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 3);
+    // One opaque command then one masked, in each view.
+    CHECK(MaskedStart(list, 0) == 1);
+    CHECK(list.viewCommandStart[1] == 2);
+    CHECK(MaskedStart(list, 1) == 3);
+    CHECK(list.viewCommandStart[2] == 4);
+
+    // The second view's masked command draws the geometry classified into it,
+    // not the one the first view drew.
+    CHECK(list.commands[MaskedStart(list, 1)].startIndexLocation == 4u * 36u);
+}
+
+TEST_CASE("Classifying a real cascade set draws exactly what sweeping it drew")
+{
+    // The property the whole classification rests on: each cascade's volume
+    // contains that cascade's ortho box, so a cleared bit is a caster the
+    // cascade's own frustum test would have rejected anyway. The mask may only
+    // remove work, never a shadow — and this is that claim run end to end
+    // rather than argued.
+    CascadeFitParams params;
+    params.cameraView = glm::lookAt(glm::vec3(0.f), glm::vec3(0.f, 0.f, -1.f), glm::vec3(0.f, 1.f, 0.f));
+    params.tanHalfFovY = 0.5773502692f;
+    params.aspectRatio = 16.f / 9.f;
+    params.nearZ = 0.1f;
+    params.farZ = 200.f;
+    params.lightDirection = glm::normalize(glm::vec3(-0.4f, -1.f, -0.3f));
+    params.settings.cascadeCount = 4;
+    params.settings.resolution = 2048;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 4);
+
+    std::array<Assisi::Geometry::BoundingSphere, kMaxShadowCascades> volumes{};
+    const std::uint32_t volumeCount = CascadeVolumeBounds(fit, volumes);
+    const std::span<const Assisi::Geometry::BoundingSphere> span(volumes.data(), volumeCount);
+
+    std::vector<ShadowDepthTarget> targets;
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        targets.push_back(TargetOf(CascadeShadowView(fit.cascades[i], i, params.settings)));
+    }
+
+    // A grid through the whole shadowed depth range and out past it, so every
+    // cascade gets members, some casters straddle two, and some reach none.
+    std::vector<ShadowCaster> classified;
+    for (std::int32_t x = -6; x <= 6; ++x)
+    {
+        for (std::int32_t z = 0; z <= 24; ++z)
+        {
+            const glm::vec3 center(static_cast<float>(x) * 12.f, 0.f, static_cast<float>(z) * -12.f);
+            ShadowCaster caster = CasterAt(center, 2.f, static_cast<std::uint64_t>(z % 3));
+            caster.viewMask = ShadowCasterViewMask(caster.worldSphere, span, params.lightDirection);
+            classified.push_back(caster);
+        }
+    }
+    std::sort(classified.begin(), classified.end(),
+              [](const ShadowCaster &lhs, const ShadowCaster &rhs) { return lhs.geometryKey < rhs.geometryKey; });
+
+    std::vector<ShadowCaster> unclassified = classified;
+    for (ShadowCaster &caster : unclassified)
+    {
+        caster.viewMask = ~0u;
+    }
+
+    ShadowDrawList masked;
+    ShadowDrawList swept;
+    BuildShadowDrawList(targets, classified, masked);
+    BuildShadowDrawList(targets, unclassified, swept);
+
+    // Something was actually classified out, or this proves nothing.
+    REQUIRE(std::any_of(classified.begin(), classified.end(),
+                        [](const ShadowCaster &caster) { return caster.viewMask != 0b1111u; }));
+    // And something is actually drawn.
+    REQUIRE(masked.instances.size() > 0);
+
+    // Every view submits the same casters in the same order, so the instance
+    // buffer is identical record for record — the picture is the same picture.
+    REQUIRE(masked.instances.size() == swept.instances.size());
+    for (std::size_t i = 0; i < masked.instances.size(); ++i)
+    {
+        CAPTURE(i);
+        CHECK(masked.instances[i].model == swept.instances[i].model);
+    }
+    CHECK(masked.culled == swept.culled);
+
+    // Each view draws its own instances, and the same ones.
+    REQUIRE(masked.viewCommandStart.size() == swept.viewCommandStart.size());
+    for (std::uint32_t view = 0; view < targets.size(); ++view)
+    {
+        CAPTURE(view);
+        const auto instancesIn = [](const ShadowDrawList &list, std::uint32_t index)
+        {
+            std::uint32_t total = 0;
+            for (std::uint32_t i = list.viewCommandStart[index]; i < list.viewCommandStart[index + 1u]; ++i)
+            {
+                total += list.commands[i].instanceCount;
+            }
+            return total;
+        };
+        CHECK(instancesIn(masked, view) == instancesIn(swept, view));
+        CHECK(masked.commands[masked.viewCommandStart[view]].startInstanceLocation ==
+              swept.commands[swept.viewCommandStart[view]].startInstanceLocation);
+    }
+
+    // What does differ is the batching, and only in the one direction: the sweep
+    // broke a run wherever it rejected a caster mid-span, while a caster the
+    // mask kept out of a view is not in that view's list to break anything.
+    CHECK(masked.commands.size() < swept.commands.size());
 }

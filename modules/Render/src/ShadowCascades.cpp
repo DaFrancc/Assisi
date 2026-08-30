@@ -225,50 +225,36 @@ namespace
 /// Half the diagonal of a unit cube: what a cascade's radius becomes when the
 /// sphere wanted is the one around its ortho box rather than inside it.
 constexpr float kBoxCircumradiusPerHalfExtent = 1.7320508f;
-
-/// @brief The smallest sphere containing both, up to the usual incremental
-/// approximation — exact when one contains the other, and enclosing otherwise.
-[[nodiscard]] Geometry::BoundingSphere Merged(const Geometry::BoundingSphere &a, const Geometry::BoundingSphere &b)
-{
-    const glm::vec3 offset = b.center - a.center;
-    const float distance = glm::length(offset);
-    if (distance + b.radius <= a.radius)
-    {
-        return a;
-    }
-    if (distance + a.radius <= b.radius)
-    {
-        return b;
-    }
-    // Concentric with equal radii: the containment branches above cover every
-    // other zero-distance case, and dividing by it below would not.
-    if (!(distance > 0.f))
-    {
-        return a;
-    }
-
-    const float radius = 0.5f * (distance + a.radius + b.radius);
-    return Geometry::BoundingSphere{.center = a.center + offset * ((radius - a.radius) / distance), .radius = radius};
-}
 } // namespace
 
-Geometry::BoundingSphere ShadowedVolumeBounds(const CascadeFit &fit)
+Geometry::BoundingSphere CascadeVolumeBounds(const ShadowCascade &cascade)
 {
-    const std::uint32_t count = std::min(fit.count, static_cast<std::uint32_t>(kMaxShadowCascades));
-    if (count == 0u)
-    {
-        return Geometry::BoundingSphere{};
-    }
+    return Geometry::BoundingSphere{.center = cascade.center,
+                                    .radius = cascade.radius * kBoxCircumradiusPerHalfExtent};
+}
 
-    Geometry::BoundingSphere bounds{.center = fit.cascades[0].center,
-                                    .radius = fit.cascades[0].radius * kBoxCircumradiusPerHalfExtent};
-    for (std::uint32_t i = 1; i < count; ++i)
+std::uint32_t CascadeVolumeBounds(const CascadeFit &fit, std::span<Geometry::BoundingSphere> out)
+{
+    const std::uint32_t count =
+        std::min({fit.count, static_cast<std::uint32_t>(out.size()), static_cast<std::uint32_t>(kMaxShadowCascades)});
+    for (std::uint32_t i = 0; i < count; ++i)
     {
-        bounds = Merged(bounds, Geometry::BoundingSphere{.center = fit.cascades[i].center,
-                                                         .radius = fit.cascades[i].radius *
-                                                                   kBoxCircumradiusPerHalfExtent});
+        out[i] = CascadeVolumeBounds(fit.cascades[i]);
     }
-    return bounds;
+    return count;
+}
+
+std::uint32_t ShadowCasterViewMask(const Geometry::BoundingSphere &caster,
+                                   std::span<const Geometry::BoundingSphere> volumes,
+                                   const glm::vec3 &lightDirection)
+{
+    const auto count = static_cast<std::uint32_t>(std::min<std::size_t>(volumes.size(), kShadowViewMaskBits));
+    std::uint32_t mask = 0;
+    for (std::uint32_t i = 0; i < count; ++i)
+    {
+        mask |= CasterReachesShadowedVolume(caster, volumes[i], lightDirection) ? (1u << i) : 0u;
+    }
+    return mask;
 }
 
 bool CasterReachesShadowedVolume(const Geometry::BoundingSphere &caster, const Geometry::BoundingSphere &volume,

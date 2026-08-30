@@ -23,6 +23,8 @@
 ///     half a texel resamples every edge in the map and the shadow crawls.
 
 #include <array>
+#include <cstdint>
+#include <span>
 
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -124,17 +126,44 @@ struct CascadeFitParams
 /// @brief Fit every cascade for this frame.
 [[nodiscard]] CascadeFit FitCascades(const CascadeFitParams &params);
 
-/// @brief One sphere containing every fitted cascade — the volume a caster has
-/// to reach to matter. Radius zero when nothing is fitted.
+/// @brief The volume a caster has to reach to matter to @p cascade. Radius zero
+/// for an unfitted one.
 ///
-/// Bounds each cascade's **ortho box**, not its slice sphere. The box is a
+/// Bounds the cascade's **ortho box**, not its slice sphere. The box is a
 /// light-space cube of half-extent `radius` centred on `center`, so its
 /// circumscribed sphere is `radius * sqrt(3)`: the slice sphere is inscribed in
 /// the box, and bounding that instead would cut the box's corners off a volume
-/// the depth pass still rasterizes into. Bounding the boxes is what makes a cull
+/// the depth pass still rasterizes into. Bounding the box is what makes a cull
 /// against this strictly weaker than the frustum test the shadow draw list
 /// already applies, so nothing that renders today can be lost to it.
-[[nodiscard]] Geometry::BoundingSphere ShadowedVolumeBounds(const CascadeFit &fit);
+[[nodiscard]] Geometry::BoundingSphere CascadeVolumeBounds(const ShadowCascade &cascade);
+
+/// @brief Every fitted cascade's volume, in cascade order, into @p out.
+///
+/// In cascade order because the order is the meaning: a caster's mask names its
+/// views by index, and the index is the cascade's own.
+///
+/// @return how many were written — the smallest of the fit's count, @p out's
+/// size, and kMaxShadowCascades.
+[[nodiscard]] std::uint32_t CascadeVolumeBounds(const CascadeFit &fit, std::span<Geometry::BoundingSphere> out);
+
+/// @brief How many views a caster's mask can name, one bit each.
+///
+/// A frame drawing more views than this classifies none of the ones past it:
+/// they take every caster, which is what a per-view sweep did before there were
+/// masks. Conservative rather than clever, because a bit that does not exist
+/// cannot be read as "not a member" without dropping shadows.
+inline constexpr std::uint32_t kShadowViewMaskBits = 32;
+
+/// @brief Which of @p volumes @p caster can cast into, one bit per volume.
+///
+/// The whole of what a per-view sweep would decide, decided once where the
+/// caster's sphere is already in hand. Bit i is `volumes[i]`; a zero answer is a
+/// caster no view wants at all. Volumes past kShadowViewMaskBits are not
+/// classified — they have no bit to be named by.
+[[nodiscard]] std::uint32_t ShadowCasterViewMask(const Geometry::BoundingSphere &caster,
+                                                 std::span<const Geometry::BoundingSphere> volumes,
+                                                 const glm::vec3 &lightDirection);
 
 /// @brief Whether @p caster can cast into @p volume, given a light travelling
 /// along @p lightDirection.
