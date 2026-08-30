@@ -65,7 +65,18 @@ logo/
 
 # Model assets — heavy binary art (glTF .bin + textures), kept local only.
 assets/models/
+# Captures, of every kind. Machine-specific measurements of one run on one
+# machine: large, stale the moment anything changes, and worthless to anyone
+# who did not take them. Quote a number in the tracker instead of committing
+# the file it came from.
+#
+# Chiara writes to <user root>/captures, and the user root is the exe directory
+# by default — so running from the repo root leaves them here, the same way the
+# logs above arrive. The build tree's copies are already covered by out/.
+captures/
+
 # RenderDoc captures (scripts/rdc-capture.sh) and the reports rdc-analyze.py
-# writes beside them. Large binaries, machine-specific, never worth committing.
+# writes beside them.
 captures-rdc/
 *.rdc
+
