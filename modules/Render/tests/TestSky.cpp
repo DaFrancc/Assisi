@@ -761,3 +761,4 @@ TEST_CASE("The transmittance the light takes is the one the sky applies")
         CHECK(AllFinite(t));
     }
 }
+

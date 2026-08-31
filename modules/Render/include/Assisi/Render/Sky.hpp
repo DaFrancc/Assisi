@@ -89,12 +89,18 @@ inline constexpr float kMaxSkyChannel = 100.0f;
 /// number that sets both how deep the daytime colour is and how far a low sun
 /// shifts, since every other direction follows from the air mass along it.
 ///
+/// It is also what sets WHEN the sun turns golden. The reddening follows the
+/// beam's path length, so a thicker atmosphere reaches any given warmth with the
+/// sun still higher: at 0.07 the disk is barely warm until about 15 degrees, at
+/// 0.14 it is golden by 30. Raising it does not cost the daytime sky — multiple
+/// scattering keeps the horizon blue, and the zenith deepens rather than dulls.
+///
 /// **Zero is meaningful and reachable**: no atmosphere. The scattering term
 /// vanishes, transmittance goes to one, and what is left is a black sky with an
 /// unattenuated sun in it.
 inline constexpr float kMinZenithOpticalDepth = 0.0f;
 inline constexpr float kMaxZenithOpticalDepth = 0.5f;
-inline constexpr float kDefaultZenithOpticalDepth = 0.07f;
+inline constexpr float kDefaultZenithOpticalDepth = 0.14f;
 
 /// Asymmetry of the Mie phase function — how sharply haze throws light. Positive
 /// scatters forward (the halo around a low sun), negative scatters back toward
