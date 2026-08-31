@@ -45,8 +45,15 @@ SkyResolution ResolveSky(ECS::Scene &scene)
     return SkyResolution{.status = SkyStatus::Ready,
                          // Reversed: the component stores where the light goes,
                          // and a sky is described by where the sun is.
+                         // Under SunColorSource::Sky the authored colour is not
+                         // read anywhere — the inspector greys it out, and a
+                         // greyed field that still tinted the sky would make that
+                         // grey a lie. The sun above the air is white, and the
+                         // atmosphere does the rest.
                          .sun = Render::SkySun{.directionToSun = Render::SafeSkyDirection(-sunLight->direction),
-                                               .color = sunLight->color,
+                                               .color = sunLight->colorSource == SunColorSource::Sky
+                                                            ? glm::vec3(1.f)
+                                                            : sunLight->color,
                                                .intensity = sunLight->intensity},
                          .settings = ToSkySettings(*skybox)};
 }

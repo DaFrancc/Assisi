@@ -34,6 +34,21 @@ namespace Assisi::Runtime
 // would make every newly placed light wrong until someone noticed. Turning it
 // off is a cost decision the author makes deliberately.
 
+/// @brief Where a directional light's colour comes from.
+///
+/// AENUM rather than a bool because it drives a radio: `color` greys out while
+/// the sky is supplying it, and a radio source has to be an enum.
+AENUM()
+enum class SunColorSource : std::uint8_t
+{
+    /// The colour authored on the light, used exactly as given.
+    Authored,
+    /// The colour the sun has after the atmosphere on this same entity has had
+    /// it. Needs a Skybox here; without one there is no atmosphere to take a
+    /// colour from and the light falls back to white.
+    Sky,
+};
+
 /// @brief Infinite-distance directional light (sun / moon).
 ///
 /// No position, no falloff.  Multiple directional lights are supported.
@@ -41,23 +56,23 @@ ACOMP()
 struct DirectionalLight
 {
     AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction the light shines (unit vector).
-    AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
+
+    /// @brief Where the light's colour comes from.
+    ///
+    /// Sky, with a Skybox on this same entity, lights the world with what is left
+    /// of the sun after that atmosphere: at sunset the world goes orange and
+    /// dimmer because that is what reaches the ground by then, and it matches the
+    /// sky it sits under with no system keeping the two in step. Authored is for
+    /// lighting that is art-directed rather than physical.
+    AFIELD(radioBroadcast) SunColorSource colorSource = SunColorSource::Sky;
+
+    /// Linear-RGB colour. Read only under SunColorSource::Authored — the sky
+    /// supplies its own, so the inspector greys this out while it is doing so.
+    AFIELD(radioListen = {source = colorSource, value = Authored, behavior = grey})
+    glm::vec3 color{1.f, 1.f, 1.f};
+
     AFIELD() float intensity = 1.f;
     AFIELD() bool castsShadows = true; ///< Whether this light renders a shadow map.
-
-    /// @brief Take the colour the sky gives, instead of the one above.
-    ///
-    /// With a Skybox on this same entity, the light that reaches surfaces becomes
-    /// the sun's colour AFTER that atmosphere has had it: at sunset the world
-    /// goes orange and dimmer because that is what is left of the beam by then,
-    /// and it matches the sky it sits under with no system keeping the two in
-    /// step. @ref color still says what the sun is before the air touches it, so
-    /// a blue sun stays a blue sun and the atmosphere works on that.
-    ///
-    /// Does nothing without a Skybox on this entity — there is no atmosphere to
-    /// be coloured by. Turn it off when the lighting is art-directed rather than
-    /// physical.
-    AFIELD() bool tintedBySky = true;
 };
 
 /// @brief Omnidirectional point light with distance falloff.

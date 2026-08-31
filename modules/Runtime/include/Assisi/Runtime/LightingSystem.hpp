@@ -76,9 +76,12 @@ public:
     /// its own entity has had it.
     ///
     /// Split out of Update for the same reason WorldSpotDirection is: the rule is
-    /// the feature, and Update needs a command list. @p atmosphere is null when
-    /// the entity carries no Skybox or the light opted out, and then the authored
-    /// colour passes through untouched.
+    /// the feature, and Update needs a command list.
+    ///
+    /// @p atmosphere is null under SunColorSource::Authored, or when the entity
+    /// carries no Skybox — and then @p color passes through untouched. Otherwise
+    /// @p color is NOT read: the sky supplies the colour outright, which is what
+    /// lets the inspector grey the field rather than leave it looking live.
     ///
     /// Extinction dims as well as tints, so both ride here and the light's
     /// authored intensity is left exactly as authored.
