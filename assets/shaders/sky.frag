@@ -15,12 +15,12 @@ layout(binding = 256) uniform SkyConstants
     vec4 cameraPosition;  // xyz = world-space eye, w unused
     vec4 sunDirection;    // xyz = unit direction TO the sun, w = disk radius (radians)
     vec4 sunRadiance;     // xyz = colour * intensity, w = disk edge softness
-    vec4 rayleigh;        // xyz = scattering coefficients, w = the optical depth scaling them
-    vec4 mie;             // xyz = coefficients, w = asymmetry
-    vec4 groundColor;     // xyz = linear colour, w = sky intensity
+    vec4 airScattering;   // xyz = how strongly the air scatters each channel, w = how much air there is
+    vec4 haze;            // xyz = how strongly haze scatters each channel, w = its forwardness
+    vec4 groundColor;     // xyz = linear colour, w = sky exposure
     vec4 nightColor;      // xyz = linear colour, w = disk intensity
     vec4 sunDiskColor;    // xyz = disk tint, w = limb darkening
-    vec4 atmosphere;      // x = multiple scattering, yzw unused
+    vec4 atmosphere;      // x = sky bounce, yzw unused
 } uSky;
 
 layout(location = 0) in vec4 vFarPoint;
@@ -94,13 +94,13 @@ void main()
 
     vec3  sunDirection = uSky.sunDirection.xyz;
     vec3  radiantSun   = uSky.sunRadiance.rgb;
-    // The coefficients are two different things and must not be confused. As a
-    // RATIO they tint the in-scattered light; scaled by the optical depth they
-    // are an EXTINCTION, and only that form belongs in an exp().
-    vec3  rayleigh     = uSky.rayleigh.rgb;
-    vec3  extinction   = rayleigh * uSky.rayleigh.w;
-    float rayleighGrey = (extinction.r + extinction.g + extinction.b) / 3.0;
-    vec3  mieCoeff     = uSky.mie.rgb;
+    // The scattering strengths are two different things and must not be confused.
+    // As a RATIO they tint the in-scattered light; scaled by how much air there
+    // is they are an EXTINCTION, and only that form belongs in an exp().
+    vec3  airScattering = uSky.airScattering.rgb;
+    vec3  extinction    = airScattering * uSky.airScattering.w;
+    float greyExtinction = (extinction.r + extinction.g + extinction.b) / 3.0;
+    vec3  hazeScattering = uSky.haze.rgb;
 
     float cosGamma    = clamp(dot(ray, sunDirection), -1.0, 1.0);
     float sunAirMass  = SunAirMass(sunDirection.y);
@@ -121,23 +121,23 @@ void main()
     // How much air the view ray has to scatter in — a quantity, not a colour.
     // Saturating toward one is why the horizon is bright and the zenith, with a
     // thirtieth of the air, is not.
-    float scattered = 1.0 - exp(-rayleighGrey * viewAirMass);
+    float scattered = 1.0 - exp(-greyExtinction * viewAirMass);
 
     // Haze, with its own extinction and its own colour. It shares the molecular
     // attenuation, which is what makes the halo around a setting sun take the
     // sun's colour rather than staying white.
-    vec3 mie = (vec3(1.0) - exp(-mieCoeff * viewAirMass)) * exp(-mieCoeff * totalAirMass) *
-               MiePhase(cosGamma, uSky.mie.w);
+    vec3 haze = (vec3(1.0) - exp(-hazeScattering * viewAirMass)) * exp(-hazeScattering * totalAirMass) *
+                MiePhase(cosGamma, uSky.haze.w);
 
     // The second bounce onward, attenuated by the sun's path but not the view's.
     // Single scattering treats light knocked out of the line of sight as lost,
     // which over the horizon's thirty-odd air masses kills the blue exactly where
     // the sky is deepest and leaves the horizon green. This is what air actually
     // does with it.
-    vec3 multiScattered = beam * (rayleigh * (scattered * uSky.atmosphere.x));
+    vec3 bounced = beam * (airScattering * (scattered * uSky.atmosphere.x));
 
-    vec3 sky = radiantSun * attenuation * (rayleigh * (RayleighPhase(cosGamma) * scattered) + mie) +
-               multiScattered + uSky.nightColor.rgb;
+    vec3 sky = radiantSun * attenuation * (airScattering * (RayleighPhase(cosGamma) * scattered) + haze) +
+               bounced + uSky.nightColor.rgb;
 
     // The ground reflects the same beam off a Lambertian albedo, foreshortened by
     // the sun's elevation, and gets the night colour too — so it and the sky over

@@ -57,7 +57,7 @@ bool AllFinite(const glm::vec3 &v)
 SkySettings ClearAir()
 {
     SkySettings settings;
-    settings.mieCoefficients = glm::vec3(0.0f);
+    settings.hazeScattering = glm::vec3(0.0f);
     settings.sunDiskIntensity = 0.0f;
     return settings;
 }
@@ -66,10 +66,10 @@ SkySettings ClearAir()
 TEST_CASE("Sky settings are sanitized into their ranges")
 {
     SkySettings settings;
-    settings.zenithOpticalDepth = std::numeric_limits<float>::quiet_NaN();
-    settings.mieCoefficients = glm::vec3(-1.0f, 0.5f, 1e30f);
-    settings.intensity = -4.0f;
-    settings.sunAngularRadiusDegrees = 0.0f;
+    settings.airThickness = std::numeric_limits<float>::quiet_NaN();
+    settings.hazeScattering = glm::vec3(-1.0f, 0.5f, 1e30f);
+    settings.exposure = -4.0f;
+    settings.sunSizeDegrees = 0.0f;
     settings.sunDiskIntensity = std::numeric_limits<float>::infinity();
     settings.groundColor = glm::vec3(-1.0f, std::numeric_limits<float>::quiet_NaN(), 0.5f);
     settings.nightColor = glm::vec3(std::numeric_limits<float>::infinity(), 0.25f, -0.25f);
@@ -78,12 +78,12 @@ TEST_CASE("Sky settings are sanitized into their ranges")
     const SkySettings defaults;
 
     // NaN falls back to the default; a finite out-of-range value clamps.
-    CHECK(safe.zenithOpticalDepth == doctest::Approx(defaults.zenithOpticalDepth));
-    CHECK(safe.mieCoefficients.r == doctest::Approx(0.0f));
-    CHECK(safe.mieCoefficients.g == doctest::Approx(0.5f));
-    CHECK(safe.mieCoefficients.b == doctest::Approx(kMaxSkyChannel));
-    CHECK(safe.intensity == doctest::Approx(kMinSkyIntensity));
-    CHECK(safe.sunAngularRadiusDegrees == doctest::Approx(kMinSunAngularRadiusDegrees));
+    CHECK(safe.airThickness == doctest::Approx(defaults.airThickness));
+    CHECK(safe.hazeScattering.r == doctest::Approx(0.0f));
+    CHECK(safe.hazeScattering.g == doctest::Approx(0.5f));
+    CHECK(safe.hazeScattering.b == doctest::Approx(kMaxSkyChannel));
+    CHECK(safe.exposure == doctest::Approx(kMinSkyExposure));
+    CHECK(safe.sunSizeDegrees == doctest::Approx(kMinSunSizeDegrees));
     CHECK(safe.sunDiskIntensity == doctest::Approx(defaults.sunDiskIntensity));
     CHECK(safe.groundColor.r == doctest::Approx(0.0f));
     CHECK(safe.groundColor.g == doctest::Approx(defaults.groundColor.g));
@@ -93,9 +93,9 @@ TEST_CASE("Sky settings are sanitized into their ranges")
 
     // Idempotent: nothing downstream has to wonder whether it was already done.
     const SkySettings twice = Sanitized(safe);
-    CHECK(twice.zenithOpticalDepth == doctest::Approx(safe.zenithOpticalDepth));
-    CHECK(twice.mieCoefficients.b == doctest::Approx(safe.mieCoefficients.b));
-    CHECK(twice.intensity == doctest::Approx(safe.intensity));
+    CHECK(twice.airThickness == doctest::Approx(safe.airThickness));
+    CHECK(twice.hazeScattering.b == doctest::Approx(safe.hazeScattering.b));
+    CHECK(twice.exposure == doctest::Approx(safe.exposure));
     CHECK(twice.sunDiskIntensity == doctest::Approx(safe.sunDiskIntensity));
 }
 
@@ -172,12 +172,12 @@ TEST_CASE("Radiance sanitizes what it is handed, so a bad config cannot black ou
     const float nan = std::numeric_limits<float>::quiet_NaN();
 
     SkySettings broken;
-    broken.zenithOpticalDepth = nan;
-    broken.mieCoefficients = glm::vec3(-5.0f);
-    broken.intensity = std::numeric_limits<float>::infinity();
+    broken.airThickness = nan;
+    broken.hazeScattering = glm::vec3(-5.0f);
+    broken.exposure = std::numeric_limits<float>::infinity();
     broken.groundColor = glm::vec3(nan);
     broken.nightColor = glm::vec3(-1.0f);
-    broken.sunAngularRadiusDegrees = nan;
+    broken.sunSizeDegrees = nan;
     broken.sunDiskIntensity = nan;
 
     SkySun brokenSun;
@@ -264,15 +264,15 @@ TEST_CASE("Night is dark, and never darker than the night floor")
     // Deep night still reads as a sky rather than as a hole: the night colour is
     // added, so it is the floor every direction sits on.
     const glm::vec3 midnight = SkyRadiance(Dir(90.0f, 0.0f), SunAt(-60.0f), settings);
-    CHECK(midnight.b >= settings.nightColor.b * settings.intensity * 0.99f);
+    CHECK(midnight.b >= settings.nightColor.b * settings.exposure * 0.99f);
     CHECK(Luminance(midnight) < 0.01f);
 
     // The ground falls to the same floor rather than going black under it while
     // the sky above still glows — which is what it would do if a sun below the
     // horizon were allowed to light it by a negative amount.
     const glm::vec3 groundAtDusk = SkyRadiance(glm::vec3(0.0f, -1.0f, 0.0f), SunAt(-1.0f), settings);
-    CHECK(groundAtDusk.r >= settings.nightColor.r * settings.intensity * 0.99f);
-    CHECK(groundAtDusk.b >= settings.nightColor.b * settings.intensity * 0.99f);
+    CHECK(groundAtDusk.r >= settings.nightColor.r * settings.exposure * 0.99f);
+    CHECK(groundAtDusk.b >= settings.nightColor.b * settings.exposure * 0.99f);
 }
 
 TEST_CASE("The horizon is a seam, not a step")
@@ -367,14 +367,14 @@ TEST_CASE("Sky intensity scales the whole image and zero blanks it")
     const SkySun sun = SunAt(40.0f);
     const glm::vec3 direction = Dir(20.0f, 70.0f);
 
-    settings.intensity = 1.0f;
+    settings.exposure = 1.0f;
     const glm::vec3 unit = SkyRadiance(direction, sun, settings);
-    settings.intensity = 3.0f;
+    settings.exposure = 3.0f;
     const glm::vec3 tripled = SkyRadiance(direction, sun, settings);
     CHECK(tripled.r == doctest::Approx(unit.r * 3.0f));
     CHECK(tripled.b == doctest::Approx(unit.b * 3.0f));
 
-    settings.intensity = 0.0f;
+    settings.exposure = 0.0f;
     const glm::vec3 blank = SkyRadiance(direction, sun, settings);
     CHECK(Luminance(blank) == doctest::Approx(0.0f));
 }
@@ -383,7 +383,7 @@ TEST_CASE("Haze whitens the sky and grows the halo around the sun")
 {
     SkySettings clear = ClearAir();
     SkySettings hazy = clear;
-    hazy.mieCoefficients = glm::vec3(0.1f);
+    hazy.hazeScattering = glm::vec3(0.1f);
 
     const SkySun sun = SunAt(30.0f, 0.0f);
     const glm::vec3 nearSun = Dir(38.0f, 0.0f);
@@ -400,9 +400,9 @@ TEST_CASE("Haze whitens the sky and grows the halo around the sun")
 TEST_CASE("Sky constants carry the sanitized settings and a unit sun")
 {
     SkySettings settings;
-    settings.mieAsymmetry = 99.0f;                                // clamps
-    settings.intensity = std::numeric_limits<float>::quiet_NaN(); // falls back
-    settings.sunAngularRadiusDegrees = 2.0f;
+    settings.hazeForwardness = 99.0f;                                // clamps
+    settings.exposure = std::numeric_limits<float>::quiet_NaN(); // falls back
+    settings.sunSizeDegrees = 2.0f;
     settings.sunDiskIntensity = 7.0f;
     settings.groundColor = glm::vec3(0.3f, 0.2f, 0.1f);
 
@@ -423,8 +423,8 @@ TEST_CASE("Sky constants carry the sanitized settings and a unit sun")
     CHECK(constants.sunRadiance.r == doctest::Approx(2.0f));
     CHECK(constants.sunRadiance.g == doctest::Approx(1.8f));
 
-    CHECK(constants.mie.w == doctest::Approx(kMaxMieAsymmetry));
-    CHECK(constants.groundColor.w == doctest::Approx(SkySettings{}.intensity));
+    CHECK(constants.haze.w == doctest::Approx(kMaxHazeForwardness));
+    CHECK(constants.groundColor.w == doctest::Approx(SkySettings{}.exposure));
     CHECK(constants.nightColor.w == doctest::Approx(7.0f));
 
     // The disk radius travels in radians, already converted, so the shader does
@@ -437,18 +437,18 @@ TEST_CASE("Sky constants carry the sanitized settings and a unit sun")
     // attenuate it — and a lane holding the product cannot say which it is.
     // sky.frag once read a premultiplied lane as the ratio and rendered the sky
     // fourteen times too dark; this is what stops that being expressible.
-    CHECK(constants.rayleigh.r == doctest::Approx(settings.rayleighCoefficients.r));
-    CHECK(constants.rayleigh.g == doctest::Approx(settings.rayleighCoefficients.g));
-    CHECK(constants.rayleigh.b == doctest::Approx(settings.rayleighCoefficients.b));
-    CHECK(constants.rayleigh.w == doctest::Approx(settings.zenithOpticalDepth));
-    CHECK(constants.rayleigh.b != doctest::Approx(settings.rayleighCoefficients.b * settings.zenithOpticalDepth));
+    CHECK(constants.airScattering.r == doctest::Approx(settings.airScattering.r));
+    CHECK(constants.airScattering.g == doctest::Approx(settings.airScattering.g));
+    CHECK(constants.airScattering.b == doctest::Approx(settings.airScattering.b));
+    CHECK(constants.airScattering.w == doctest::Approx(settings.airThickness));
+    CHECK(constants.airScattering.b != doctest::Approx(settings.airScattering.b * settings.airThickness));
 }
 
 TEST_CASE("An airless world is the model's own limit, not a special case")
 {
     SkySettings vacuum;
-    vacuum.zenithOpticalDepth = 0.0f;
-    vacuum.mieCoefficients = glm::vec3(0.0f);
+    vacuum.airThickness = 0.0f;
+    vacuum.hazeScattering = glm::vec3(0.0f);
     vacuum.nightColor = glm::vec3(0.0f);
     vacuum.sunDiskIntensity = 0.0f;
 
@@ -483,7 +483,7 @@ TEST_CASE("Air of another composition gives another sky, and its own sunset")
 {
     SkySettings alien = ClearAir();
     // Green scatters hardest here, where on Earth blue does.
-    alien.rayleighCoefficients = glm::vec3(0.30f, 1.0f, 0.35f);
+    alien.airScattering = glm::vec3(0.30f, 1.0f, 0.35f);
 
     const glm::vec3 noon = SkyRadiance(Dir(89.0f, 90.0f), SunAt(45.0f), alien);
     CHECK(noon.g > noon.r);
@@ -506,8 +506,8 @@ TEST_CASE("Air of another composition gives another sky, and its own sunset")
 TEST_CASE("Coloured haze tints the sky independently of the air")
 {
     SkySettings dusty = ClearAir();
-    dusty.zenithOpticalDepth = kMinZenithOpticalDepth; // no molecular scattering at all
-    dusty.mieCoefficients = glm::vec3(0.06f, 0.03f, 0.01f);
+    dusty.airThickness = kMinAirThickness; // no molecular scattering at all
+    dusty.hazeScattering = glm::vec3(0.06f, 0.03f, 0.01f);
 
     const SkySun sun = SunAt(30.0f, 0.0f);
     const glm::vec3 radiance = SkyRadiance(Dir(35.0f, 0.0f), sun, dusty);
@@ -524,12 +524,12 @@ TEST_CASE("Mie asymmetry aims the halo, forward or back")
     // The air removed so the haze is the only thing scattering. Otherwise
     // Rayleigh — which peaks toward the sun whatever the haze is doing — buries
     // the effect this names, and the test would pass on the wrong grounds.
-    forward.zenithOpticalDepth = kMinZenithOpticalDepth;
-    forward.mieCoefficients = glm::vec3(0.05f);
-    forward.mieAsymmetry = 0.8f;
+    forward.airThickness = kMinAirThickness;
+    forward.hazeScattering = glm::vec3(0.05f);
+    forward.hazeForwardness = 0.8f;
 
     SkySettings backward = forward;
-    backward.mieAsymmetry = -0.8f;
+    backward.hazeForwardness = -0.8f;
 
     // A low sun, so both samples sit above the horizon at the same elevation and
     // therefore in the same amount of air — the only thing separating them is
@@ -643,7 +643,7 @@ TEST_CASE("The default sky is blue overhead and pale blue at the horizon")
 TEST_CASE("Multiple scattering is what keeps the horizon from going green")
 {
     SkySettings single;
-    single.multipleScattering = 0.0f;
+    single.skyBounce = 0.0f;
     const SkySettings settings; // the default, which has it
 
     const SkySun sun = SunAt(45.0f, 0.0f);
@@ -664,12 +664,12 @@ TEST_CASE("Multiple scattering is what keeps the horizon from going green")
     // And it costs nothing where there is no air to bounce in, so an airless
     // world is unaffected by whatever it is set to.
     SkySettings vacuum;
-    vacuum.zenithOpticalDepth = 0.0f;
-    vacuum.mieCoefficients = glm::vec3(0.0f);
+    vacuum.airThickness = 0.0f;
+    vacuum.hazeScattering = glm::vec3(0.0f);
     vacuum.nightColor = glm::vec3(0.0f);
     vacuum.sunDiskIntensity = 0.0f;
     SkySettings vacuumMulti = vacuum;
-    vacuumMulti.multipleScattering = kMaxMultipleScattering;
+    vacuumMulti.skyBounce = kMaxSkyBounce;
     CHECK(Luminance(SkyRadiance(direction, sun, vacuumMulti)) == doctest::Approx(0.0f));
 }
 
@@ -729,7 +729,7 @@ TEST_CASE("Sunlight at the ground is the same beam the sky scatters")
 
     // And an airless world does nothing to it at all.
     SkySettings vacuum;
-    vacuum.zenithOpticalDepth = 0.0f;
+    vacuum.airThickness = 0.0f;
     const glm::vec3 unfiltered = SunlightAtGround(sunset, vacuum);
     CHECK(unfiltered.r == doctest::Approx(1.0f));
     CHECK(unfiltered.b == doctest::Approx(1.0f));

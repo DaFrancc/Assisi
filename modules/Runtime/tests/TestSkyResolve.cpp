@@ -60,8 +60,11 @@ TEST_CASE("A sun carrying a Skybox is a sky")
     ECS::Scene scene;
     const ECS::Entity sun = AddSun(scene);
     Skybox skybox;
-    skybox.intensity = 4.f;
-    skybox.zenithOpticalDepth = 0.2f;
+    // Custom, because the knobs below are what this case is about: every other
+    // preset answers outright and leaves them unread.
+    skybox.preset = Assisi::Runtime::SkyPreset::Custom;
+    skybox.exposure = 4.f;
+    skybox.airThickness = 0.2f;
     (void)scene.Add<Skybox>(sun, skybox);
 
     const Runtime::SkyResolution resolved = ResolveSky(scene);
@@ -78,9 +81,9 @@ TEST_CASE("A sun carrying a Skybox is a sky")
     CHECK(resolved.sun.color.g == doctest::Approx(0.9f));
     CHECK(resolved.sun.intensity == doctest::Approx(3.f));
 
-    // The look is the component's.
-    CHECK(resolved.settings.intensity == doctest::Approx(4.f));
-    CHECK(resolved.settings.zenithOpticalDepth == doctest::Approx(0.2f));
+    // The look is the component's own knobs.
+    CHECK(resolved.settings.exposure == doctest::Approx(4.f));
+    CHECK(resolved.settings.airThickness == doctest::Approx(0.2f));
 }
 
 TEST_CASE("The Skybox must be on the light, not merely in the scene")
@@ -230,7 +233,7 @@ TEST_CASE("SunlightColor is what the atmosphere leaves of the light")
 
     // An airless world leaves it alone entirely.
     Assisi::Render::SkySettings vacuum;
-    vacuum.zenithOpticalDepth = 0.f;
+    vacuum.airThickness = 0.f;
     const glm::vec3 unfiltered =
         LightingSystem::SunlightColor(white, glm::normalize(glm::vec3(0.f, 0.02f, 1.f)), &vacuum);
     CHECK(unfiltered.r == doctest::Approx(1.f));
@@ -288,4 +291,104 @@ TEST_CASE("A temperature-authored sun reaches the sky and the world alike")
     REQUIRE(resolved.status == SkyStatus::Ready);
     CHECK(resolved.sun.color.r > resolved.sun.color.b);
     CHECK(resolved.sun.color.r == doctest::Approx(Assisi::Math::BlackbodyColor(3000.f).r));
+}
+
+TEST_CASE("Every preset is a complete, usable sky")
+{
+    using Assisi::Runtime::PresetSettings;
+    using Assisi::Runtime::SkyPreset;
+
+    const SkyPreset all[] = {SkyPreset::Clear,    SkyPreset::Arctic,   SkyPreset::Savanna, SkyPreset::Tropical,
+                             SkyPreset::Alpine,   SkyPreset::Overcast, SkyPreset::Airless, SkyPreset::Custom};
+
+    for (const SkyPreset preset : all)
+    {
+        const Assisi::Render::SkySettings s = PresetSettings(preset);
+        // Sanitizing must be a no-op on every one of them: a preset that needed
+        // clamping would be shipping a value no author could have typed.
+        const Assisi::Render::SkySettings safe = Assisi::Render::Sanitized(s);
+        CHECK(safe.airThickness == doctest::Approx(s.airThickness));
+        CHECK(safe.exposure == doctest::Approx(s.exposure));
+        CHECK(safe.hazeForwardness == doctest::Approx(s.hazeForwardness));
+        CHECK(safe.hazeScattering.r == doctest::Approx(s.hazeScattering.r));
+        CHECK(safe.sunDiskIntensity == doctest::Approx(s.sunDiskIntensity));
+    }
+
+    // Custom is the defaults, which is what makes departing from a preset start
+    // somewhere sensible rather than at zero.
+    const Assisi::Render::SkySettings custom = PresetSettings(SkyPreset::Custom);
+    const Assisi::Render::SkySettings defaults;
+    CHECK(custom.airThickness == doctest::Approx(defaults.airThickness));
+    CHECK(custom.groundColor.r == doctest::Approx(defaults.groundColor.r));
+}
+
+TEST_CASE("The presets differ in the way their names claim")
+{
+    using Assisi::Runtime::PresetSettings;
+    using Assisi::Runtime::SkyPreset;
+
+    const auto clear = PresetSettings(SkyPreset::Clear);
+    const auto arctic = PresetSettings(SkyPreset::Arctic);
+    const auto savanna = PresetSettings(SkyPreset::Savanna);
+    const auto tropical = PresetSettings(SkyPreset::Tropical);
+    const auto alpine = PresetSettings(SkyPreset::Alpine);
+    const auto overcast = PresetSettings(SkyPreset::Overcast);
+    const auto airless = PresetSettings(SkyPreset::Airless);
+
+    const auto haze = [](const Assisi::Render::SkySettings &s)
+                      { return (s.hazeScattering.r + s.hazeScattering.g + s.hazeScattering.b) / 3.f; };
+
+    // Clean cold air and thin mountain air both scatter less grey than a clear
+    // day at sea level; humid and dusty air scatter more.
+    CHECK(haze(arctic) < haze(clear));
+    CHECK(haze(alpine) < haze(clear));
+    CHECK(haze(tropical) > haze(clear));
+    CHECK(haze(savanna) > haze(clear));
+
+    // Dust absorbs blue, so the savanna's haze is warm where the tropics' is grey.
+    CHECK(savanna.hazeScattering.r > savanna.hazeScattering.b);
+    CHECK(tropical.hazeScattering.r == doctest::Approx(tropical.hazeScattering.b));
+
+    // Less air overhead at altitude, more of it in the cold dense arctic.
+    CHECK(alpine.airThickness < clear.airThickness);
+    CHECK(arctic.airThickness > clear.airThickness);
+
+    // Snow throws far more back up than any other ground here.
+    CHECK(arctic.groundColor.b > 0.5f);
+    CHECK(arctic.skyBounce > clear.skyBounce);
+
+    // Cloud has no direction and no disk in it — that is what makes it overcast
+    // rather than merely hazy.
+    CHECK(overcast.sunDiskIntensity == doctest::Approx(0.f));
+    CHECK(overcast.hazeForwardness < tropical.hazeForwardness);
+    CHECK(haze(overcast) > haze(tropical));
+
+    // And airless is the limit: nothing to scatter in at all.
+    CHECK(airless.airThickness == doctest::Approx(0.f));
+    CHECK(haze(airless) == doctest::Approx(0.f));
+}
+
+TEST_CASE("A preset answers outright, and Custom is what reads the knobs")
+{
+    ECS::Scene scene;
+    const ECS::Entity sun = AddSun(scene);
+    Skybox skybox;
+    skybox.preset = Assisi::Runtime::SkyPreset::Arctic;
+    skybox.airThickness = 0.999f; // ignored while a preset is chosen
+    (void)scene.Add<Skybox>(sun, skybox);
+
+    const Runtime::SkyResolution presetSky = ResolveSky(scene);
+    REQUIRE(presetSky.status == SkyStatus::Ready);
+    CHECK(presetSky.settings.airThickness ==
+          doctest::Approx(Assisi::Runtime::PresetSettings(Assisi::Runtime::SkyPreset::Arctic).airThickness));
+    CHECK(presetSky.settings.airThickness != doctest::Approx(0.999f));
+
+    // Switching to Custom is what makes those same stored knobs live again.
+    Skybox *stored = scene.GetMut<Skybox>(sun);
+    REQUIRE(stored != nullptr);
+    stored->preset = Assisi::Runtime::SkyPreset::Custom;
+
+    const Runtime::SkyResolution customSky = ResolveSky(scene);
+    REQUIRE(customSky.status == SkyStatus::Ready);
+    CHECK(customSky.settings.airThickness == doctest::Approx(0.999f));
 }
