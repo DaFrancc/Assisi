@@ -15,7 +15,7 @@ layout(binding = 256) uniform SkyConstants
     vec4 cameraPosition;  // xyz = world-space eye, w unused
     vec4 sunDirection;    // xyz = unit direction TO the sun, w = disk radius (radians)
     vec4 sunRadiance;     // xyz = colour * intensity, w = disk edge softness
-    vec4 rayleigh;        // xyz = coefficients * optical depth, w = their mean
+    vec4 rayleigh;        // xyz = scattering coefficients, w = the optical depth scaling them
     vec4 mie;             // xyz = coefficients, w = asymmetry
     vec4 groundColor;     // xyz = linear colour, w = sky intensity
     vec4 nightColor;      // xyz = linear colour, w = disk intensity
@@ -94,8 +94,12 @@ void main()
 
     vec3  sunDirection = uSky.sunDirection.xyz;
     vec3  radiantSun   = uSky.sunRadiance.rgb;
-    vec3  rayleigh     = uSky.rayleigh.rgb;   // already scaled by the optical depth
-    float rayleighGrey = uSky.rayleigh.w;
+    // The coefficients are two different things and must not be confused. As a
+    // RATIO they tint the in-scattered light; scaled by the optical depth they
+    // are an EXTINCTION, and only that form belongs in an exp().
+    vec3  rayleigh     = uSky.rayleigh.rgb;
+    vec3  extinction   = rayleigh * uSky.rayleigh.w;
+    float rayleighGrey = (extinction.r + extinction.g + extinction.b) / 3.0;
     vec3  mieCoeff     = uSky.mie.rgb;
 
     float cosGamma    = clamp(dot(ray, sunDirection), -1.0, 1.0);
@@ -105,14 +109,14 @@ void main()
 
     // What is left of the beam where it meets the ground — the sun's own colour,
     // and the whole reason a low sun shifts hue.
-    vec3 beam = radiantSun * exp(-rayleigh * sunAirMass);
+    vec3 beam = radiantSun * exp(-extinction * sunAirMass);
 
     // Light reaching the eye crossed the atmosphere twice, in along the beam and
     // out along the view ray, and is extinguished over both. Attenuating the sum
     // rather than the beam alone is what keeps a sunset red on Earth: over a
     // short path the colour is the scattering coefficient's, and over a long one
     // the exponential wins and what survives is what it scatters LEAST.
-    vec3 attenuation = exp(-rayleigh * totalAirMass);
+    vec3 attenuation = exp(-extinction * totalAirMass);
 
     // How much air the view ray has to scatter in — a quantity, not a colour.
     // Saturating toward one is why the horizon is bright and the zenith, with a

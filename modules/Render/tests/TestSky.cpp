@@ -430,12 +430,17 @@ TEST_CASE("Sky constants carry the sanitized settings and a unit sun")
     // no trigonometry the CPU could have done once.
     CHECK(constants.sunDirection.w == doctest::Approx(glm::radians(2.0f)));
 
-    // The Rayleigh lane carries the coefficients ALREADY scaled by the optical
-    // depth, and its w is their mean — both premultiplied here because they are
-    // the same for every pixel of the draw.
-    const glm::vec3 scaled = settings.rayleighCoefficients * settings.zenithOpticalDepth;
-    CHECK(constants.rayleigh.b == doctest::Approx(scaled.b));
-    CHECK(constants.rayleigh.w == doctest::Approx((scaled.r + scaled.g + scaled.b) / 3.0f));
+    // The Rayleigh lane carries the coefficients AS AUTHORED and the optical
+    // depth beside them, NOT their product. The two are different quantities —
+    // a ratio where they tint the in-scattered light, an extinction where they
+    // attenuate it — and a lane holding the product cannot say which it is.
+    // sky.frag once read a premultiplied lane as the ratio and rendered the sky
+    // fourteen times too dark; this is what stops that being expressible.
+    CHECK(constants.rayleigh.r == doctest::Approx(settings.rayleighCoefficients.r));
+    CHECK(constants.rayleigh.g == doctest::Approx(settings.rayleighCoefficients.g));
+    CHECK(constants.rayleigh.b == doctest::Approx(settings.rayleighCoefficients.b));
+    CHECK(constants.rayleigh.w == doctest::Approx(settings.zenithOpticalDepth));
+    CHECK(constants.rayleigh.b != doctest::Approx(settings.rayleighCoefficients.b * settings.zenithOpticalDepth));
 }
 
 TEST_CASE("An airless world is the model's own limit, not a special case")

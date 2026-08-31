@@ -482,7 +482,12 @@ struct SkyConstants
     glm::vec4 cameraPosition{0.0f};                 ///< xyz = world-space eye, w unused
     glm::vec4 sunDirection{0.0f, 1.0f, 0.0f, 0.0f}; ///< xyz = unit direction TO the sun, w = disk radius (radians)
     glm::vec4 sunRadiance{1.0f};                    ///< xyz = colour * intensity, w = disk edge softness
-    glm::vec4 rayleigh{0.0f};                       ///< xyz = coefficients * optical depth, w = their mean
+    /// xyz = scattering coefficients as authored, w = the optical depth scaling
+    /// them. Deliberately NOT premultiplied: the coefficients are a ratio where
+    /// they tint the in-scattered light and an extinction where they attenuate
+    /// it, and a lane holding the product cannot say which it is — which is how
+    /// the shader once read the tint fourteen times too dark.
+    glm::vec4 rayleigh{0.0f};
     glm::vec4 mie{0.0f};                            ///< xyz = coefficients, w = asymmetry
     glm::vec4 groundColor{0.0f};                    ///< xyz = linear colour, w = sky intensity
     glm::vec4 nightColor{0.0f};                     ///< xyz = linear colour, w = disk intensity
@@ -497,18 +502,12 @@ struct SkyConstants
     const SkySettings settings = Sanitized(rawSettings);
     const SkySun sun = Sanitized(rawSun);
 
-    // Premultiplied here rather than in the shader: it is the same product for
-    // every pixel, and the mean beside it would otherwise be three more adds per
-    // fragment for a value that cannot change across the draw.
-    const glm::vec3 rayleigh = settings.rayleighCoefficients * settings.zenithOpticalDepth;
-    const float rayleighGrey = (rayleigh.r + rayleigh.g + rayleigh.b) / 3.0f;
-
     return SkyConstants{
         .invViewProjection = invViewProjection,
         .cameraPosition = glm::vec4(cameraPosition, 0.0f),
         .sunDirection = glm::vec4(sun.directionToSun, glm::radians(settings.sunAngularRadiusDegrees)),
         .sunRadiance = glm::vec4(sun.color * sun.intensity, settings.sunEdgeSoftness),
-        .rayleigh = glm::vec4(rayleigh, rayleighGrey),
+        .rayleigh = glm::vec4(settings.rayleighCoefficients, settings.zenithOpticalDepth),
         .mie = glm::vec4(settings.mieCoefficients, settings.mieAsymmetry),
         .groundColor = glm::vec4(settings.groundColor, settings.intensity),
         .nightColor = glm::vec4(settings.nightColor, settings.sunDiskIntensity),
