@@ -44,6 +44,20 @@ struct DirectionalLight
     AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
     AFIELD() float intensity = 1.f;
     AFIELD() bool castsShadows = true; ///< Whether this light renders a shadow map.
+
+    /// @brief Take the colour the sky gives, instead of the one above.
+    ///
+    /// With a Skybox on this same entity, the light that reaches surfaces becomes
+    /// the sun's colour AFTER that atmosphere has had it: at sunset the world
+    /// goes orange and dimmer because that is what is left of the beam by then,
+    /// and it matches the sky it sits under with no system keeping the two in
+    /// step. @ref color still says what the sun is before the air touches it, so
+    /// a blue sun stays a blue sun and the atmosphere works on that.
+    ///
+    /// Does nothing without a Skybox on this entity — there is no atmosphere to
+    /// be coloured by. Turn it off when the lighting is art-directed rather than
+    /// physical.
+    AFIELD() bool tintedBySky = true;
 };
 
 /// @brief Omnidirectional point light with distance falloff.

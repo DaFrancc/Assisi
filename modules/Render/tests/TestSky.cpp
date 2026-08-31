@@ -689,3 +689,75 @@ TEST_CASE("The default sun disk is warm, not a white hole")
     // sunset.
     CHECK(disk.r / disk.b < 2.0f);
 }
+
+TEST_CASE("Sunlight at the ground is the same beam the sky scatters")
+{
+    const SkySettings settings;
+
+    // Overhead, the air barely touches it: what lights the world is very nearly
+    // the sun's own colour.
+    const SkySun noon = SunAt(90.0f);
+    const glm::vec3 noonLight = SunlightAtGround(noon, settings);
+    CHECK(noonLight.r == doctest::Approx(1.0f).epsilon(0.05));
+    CHECK(noonLight.r / noonLight.b == doctest::Approx(1.0f).epsilon(0.1));
+
+    // Low, it is both dimmer and oranger, and both come off the one exponential
+    // rather than from two knobs that could disagree.
+    const SkySun sunset = SunAt(1.0f);
+    const glm::vec3 sunsetLight = SunlightAtGround(sunset, settings);
+    CHECK(Luminance(sunsetLight) < Luminance(noonLight));
+    CHECK(sunsetLight.r / sunsetLight.b > 3.0f);
+
+    // It tracks the sun continuously, with no step anywhere deciding when sunset
+    // begins.
+    float previous = 0.0f;
+    for (int32_t elevation = 60; elevation >= 0; elevation -= 5)
+    {
+        const glm::vec3 light = SunlightAtGround(SunAt(static_cast<float>(elevation)), settings);
+        const float ratio = light.r / light.b;
+        CHECK(ratio > previous);
+        previous = ratio;
+    }
+
+    // The sun's own colour still means what it says: the atmosphere works on it
+    // rather than replacing it, so a blue sun stays a blue sun.
+    SkySun blueSun = SunAt(70.0f);
+    blueSun.color = glm::vec3(0.3f, 0.5f, 1.0f);
+    const glm::vec3 blueLight = SunlightAtGround(blueSun, settings);
+    CHECK(blueLight.b > blueLight.r);
+
+    // And an airless world does nothing to it at all.
+    SkySettings vacuum;
+    vacuum.zenithOpticalDepth = 0.0f;
+    const glm::vec3 unfiltered = SunlightAtGround(sunset, vacuum);
+    CHECK(unfiltered.r == doctest::Approx(1.0f));
+    CHECK(unfiltered.b == doctest::Approx(1.0f));
+}
+
+TEST_CASE("The transmittance the light takes is the one the sky applies")
+{
+    // The whole point of the toggle is that the two cannot drift: the light is
+    // tinted by exactly the factor the sky already divides out of the beam. If
+    // these ever disagree, a lit world stops matching the sky over it.
+    const SkySettings settings;
+    for (const float elevation : {80.0f, 40.0f, 5.0f, 0.5f})
+    {
+        const SkySun sun = SunAt(elevation);
+        const glm::vec3 viaTransmittance =
+            sun.color * sun.intensity * SunlightTransmittance(sun.directionToSun, settings);
+        const glm::vec3 viaGround = SunlightAtGround(sun, settings);
+        CHECK(viaTransmittance.r == doctest::Approx(viaGround.r));
+        CHECK(viaTransmittance.g == doctest::Approx(viaGround.g));
+        CHECK(viaTransmittance.b == doctest::Approx(viaGround.b));
+    }
+
+    // Never brightens: it is what SURVIVES the air, so it is a fraction.
+    for (const float elevation : {90.0f, 30.0f, -10.0f})
+    {
+        const glm::vec3 t = SunlightTransmittance(Dir(elevation, 0.0f), settings);
+        CHECK(t.r <= 1.0f);
+        CHECK(t.b <= 1.0f);
+        CHECK(t.b >= 0.0f);
+        CHECK(AllFinite(t));
+    }
+}

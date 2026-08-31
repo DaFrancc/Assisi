@@ -390,6 +390,36 @@ struct SkySun
     return edge * (1.0f - limbDarkening * (1.0f - faceCosine));
 }
 
+/// @brief The fraction of the sun's light, per channel, that survives the
+/// atmosphere on its way to the ground.
+///
+/// A colour multiplier and nothing else: it dims as well as tints, because a
+/// long path through air takes light out rather than merely reddening it, and
+/// both come off the one exponential.
+///
+/// @param directionToSun  Unit vector pointing AT the sun; up is +Y.
+[[nodiscard]] inline glm::vec3 SunlightTransmittance(const glm::vec3 &directionToSun,
+                                                     const SkySettings &rawSettings)
+{
+    const SkySettings settings = Sanitized(rawSettings);
+    const glm::vec3 extinction = settings.rayleighCoefficients * settings.zenithOpticalDepth;
+    return Transmittance(extinction, SunAirMass(SafeSkyDirection(directionToSun).y));
+}
+
+/// @brief The sun's light where it reaches the ground, having crossed the
+/// atmosphere on the way in.
+///
+/// The same quantity the sky scatters, which is the point of it being one
+/// function: a world lit by this and a sky drawn from the same beam agree at
+/// every time of day without anything keeping them in step. At noon it is very
+/// nearly the sun's own colour; at sunset the air has taken most of the blue out
+/// of it, so it is dimmer AND oranger, both from the one exponential.
+[[nodiscard]] inline glm::vec3 SunlightAtGround(const SkySun &rawSun, const SkySettings &rawSettings)
+{
+    const SkySun sun = Sanitized(rawSun);
+    return sun.color * sun.intensity * SunlightTransmittance(sun.directionToSun, rawSettings);
+}
+
 /// @brief Radiance arriving from @p direction, in linear RGB.
 ///
 /// Finite and non-negative for every direction and every sun position, including
@@ -415,7 +445,8 @@ struct SkySun
     const float rayleighGrey = (rayleigh.r + rayleigh.g + rayleigh.b) / 3.0f;
 
     // What is left of the beam where it meets the ground: the sun's own colour,
-    // and the whole reason a low sun shifts hue.
+    // and the whole reason a low sun shifts hue. The same value a Skybox hands
+    // the directional light when it is asked to tint it.
     const glm::vec3 beam = radiantSun * Transmittance(rayleigh, sunAirMass);
 
     // Light that reaches the eye crossed the atmosphere twice — in along the

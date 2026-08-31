@@ -5,6 +5,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
+#include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
@@ -132,4 +133,65 @@ TEST_CASE("A sun that casts no shadow still lights a sky")
     // castsShadows decides whether the light gets cascades, which is a separate
     // question from whether there is daylight to scatter.
     CHECK(ResolveSky(scene).status == SkyStatus::Ready);
+}
+
+TEST_CASE("A sun tinted by its sky is lit by what reaches the ground")
+{
+    // The toggle is on DirectionalLight, and what it needs is a Skybox on the
+    // same entity — the atmosphere doing the tinting.
+    ECS::Scene scene;
+    const ECS::Entity sun = scene.Create();
+    (void)scene.Add<DirectionalLight>(sun, DirectionalLight{.direction = glm::vec3(0.f, -1.f, 0.f),
+                                                            .color = glm::vec3(1.f),
+                                                            .intensity = 1.f,
+                                                            .castsShadows = true,
+                                                            .tintedBySky = true});
+    (void)scene.Add<Skybox>(sun);
+
+    // The sky still scatters the light's OWN colour: the tint is applied to what
+    // lights surfaces, and the sky applies the same extinction itself, so the two
+    // never double it.
+    const Runtime::SkyResolution resolved = ResolveSky(scene);
+    REQUIRE(resolved.status == SkyStatus::Ready);
+    CHECK(resolved.sun.color.r == doctest::Approx(1.f));
+    CHECK(resolved.sun.color.b == doctest::Approx(1.f));
+}
+
+TEST_CASE("SunlightColor is what the atmosphere leaves of the light")
+{
+    using Assisi::Runtime::LightingSystem;
+    const Assisi::Render::SkySettings air;
+    const glm::vec3 white{1.f, 1.f, 1.f};
+
+    // No atmosphere on the entity, or the light opted out: authored colour, whole.
+    CHECK(LightingSystem::SunlightColor(white, glm::vec3(0.f, 1.f, 0.f), nullptr).r == doctest::Approx(1.f));
+    CHECK(LightingSystem::SunlightColor(white, glm::vec3(0.f, 1.f, 0.f), nullptr).b == doctest::Approx(1.f));
+
+    // Overhead, the air barely touches it — placing a Skybox must not visibly
+    // darken a midday scene.
+    const glm::vec3 noon = LightingSystem::SunlightColor(white, glm::vec3(0.f, 1.f, 0.f), &air);
+    CHECK(noon.r == doctest::Approx(1.f).epsilon(0.05));
+    CHECK(noon.b == doctest::Approx(1.f).epsilon(0.1));
+
+    // Low, the world goes oranger AND dimmer, which is the whole feature.
+    const glm::vec3 low =
+        LightingSystem::SunlightColor(white, glm::normalize(glm::vec3(0.f, 0.02f, 1.f)), &air);
+    CHECK(low.r > low.g);
+    CHECK(low.g > low.b);
+    CHECK(low.r < noon.r);
+
+    // It scales the authored colour rather than replacing it, so a blue sun stays
+    // a blue sun and the air works on that.
+    const glm::vec3 blue{0.2f, 0.4f, 1.f};
+    const glm::vec3 tinted = LightingSystem::SunlightColor(blue, glm::vec3(0.f, 1.f, 0.f), &air);
+    CHECK(tinted.b > tinted.r);
+    CHECK(tinted.r / blue.r == doctest::Approx(noon.r).epsilon(0.001));
+
+    // An airless world leaves it alone entirely.
+    Assisi::Render::SkySettings vacuum;
+    vacuum.zenithOpticalDepth = 0.f;
+    const glm::vec3 unfiltered =
+        LightingSystem::SunlightColor(white, glm::normalize(glm::vec3(0.f, 0.02f, 1.f)), &vacuum);
+    CHECK(unfiltered.r == doctest::Approx(1.f));
+    CHECK(unfiltered.b == doctest::Approx(1.f));
 }

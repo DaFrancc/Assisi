@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Runtime/LightingSystem.hpp>
+
+#include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -50,6 +52,16 @@ void LightingSystem::Resize(nvrhi::ICommandList *commandList, int32_t width, int
 glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection)
 {
     return SafeDirection(glm::mat3(worldMatrix) * localDirection);
+}
+
+glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
+                                        const Render::SkySettings *atmosphere)
+{
+    if (atmosphere == nullptr)
+    {
+        return color;
+    }
+    return color * Render::SunlightTransmittance(directionToSun, *atmosphere);
 }
 
 std::optional<LightingSystem::ShadowSun> LightingSystem::ShadowCastingSun() const
@@ -118,9 +130,25 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
 
         for (auto [entity, light] : scene.Query<DirectionalLight>())
         {
+            // A sun asked to take its colour from the sky is lit by the beam as it
+            // arrives at the ground rather than as it left: dimmer and oranger the
+            // lower it is, which is what makes a lit world agree with the sky over
+            // it. Extinction dims as well as tints, and both ride in the colour —
+            // the authored intensity stays exactly what was authored.
+            //
+            // Only what lights surfaces is tinted. The sky scatters the light's
+            // own `color` and applies this same extinction itself, so nothing
+            // applies it twice.
+            const Skybox *skybox = light.tintedBySky ? scene.Get<Skybox>(entity) : nullptr;
+            const glm::vec3 direction = SafeDirection(light.direction);
+            const std::optional<Render::SkySettings> atmosphere =
+                skybox != nullptr ? std::optional<Render::SkySettings>(ToSkySettings(*skybox)) : std::nullopt;
+            const glm::vec3 color =
+                SunlightColor(light.color, -direction, atmosphere ? &*atmosphere : nullptr);
+
             _dirLights.push_back({
-                    .directionIntensity = {SafeDirection(light.direction), light.intensity},
-                    .colorPad           = {light.color, 0.f},
+                    .directionIntensity = {direction, light.intensity},
+                    .colorPad           = {color, 0.f},
                 });
             _dirShadowFlags.push_back(AsShadowCaster(light.castsShadows));
         }
