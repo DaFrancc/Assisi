@@ -2,6 +2,8 @@
 
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
+#include <Assisi/Runtime/SkyResolve.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -300,18 +302,29 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .culler         = &_meshCuller,
                                                .cullBuilder    = &_cullBuilder});
 
-    // The sky goes last, into whatever the geometry left at the depth clear. The
-    // sun is the scene's own directional light rather than a setting, so a light
-    // that moves takes the sky with it; with no directional light there is
-    // nothing to scatter and the clear colour stands.
-    if (_skySettings.enabled)
+    // The sky goes last, into whatever the geometry left at the depth clear. Both
+    // halves of it come from the scene — the sun from a directional light, the
+    // look from the Skybox component on that same entity — so a level authors its
+    // own world and a light that moves takes the sky with it.
+    const SkyResolution sky = ResolveSky(scene);
+    if (sky.status == SkyStatus::Ready)
     {
-        if (const std::optional<LightingSystem::Sun> sun = _lighting.PrimaryDirectionalLight())
+        _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), sky.sun, sky.settings);
+    }
+    // Said once, because silently dropping the sky sends someone reading shader
+    // code, and saying it every frame is its own kind of unreadable.
+    if (sky.status == SkyStatus::MultipleDirectionalLights)
+    {
+        if (!_multipleSunsWarned)
         {
-            const Render::SkySun skySun{
-                .directionToSun = sun->directionToSun, .color = sun->color, .intensity = sun->intensity};
-            _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), skySun, _skySettings);
+            Core::Log::Warn("SceneRenderer: more than one directional light in the scene; the sky is unsupported "
+                            "there and is not drawn.");
+            _multipleSunsWarned = true;
         }
+    }
+    else
+    {
+        _multipleSunsWarned = false;
     }
 
     // What the frame actually drew, on their own tracks. These are the numbers you

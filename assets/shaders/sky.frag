@@ -5,30 +5,26 @@
 // and no history.
 //
 // This is a transcription of Render::SkyRadiance in Sky.hpp, which is also what
-// the ambient term queries on the CPU. The two must agree, and every constant
-// below is declared there — change one and change both.
+// the ambient term queries on the CPU. The two must agree — every constant lives
+// there, and the scattering coefficients are authored per level rather than
+// baked in here, so this shader knows nothing about which planet it is on.
 
 layout(binding = 256) uniform SkyConstants
 {
     mat4 invViewProjection;
     vec4 cameraPosition;  // xyz = world-space eye, w unused
-    vec4 sunDirection;    // xyz = unit direction TO the sun, w = cos of the disk's outer edge
-    vec4 sunRadiance;     // xyz = colour * intensity, w = cos of the disk's inner edge
-    vec4 groundColor;     // xyz = linear colour, w = zenith optical depth
-    vec4 nightColor;      // xyz = linear colour, w = haze
-    vec4 params;          // x = intensity, y = sun disk intensity, zw unused
+    vec4 sunDirection;    // xyz = unit direction TO the sun, w = disk radius (radians)
+    vec4 sunRadiance;     // xyz = colour * intensity, w = disk edge softness
+    vec4 rayleigh;        // xyz = coefficients * optical depth, w = their mean
+    vec4 mie;             // xyz = coefficients, w = asymmetry
+    vec4 groundColor;     // xyz = linear colour, w = sky intensity
+    vec4 nightColor;      // xyz = linear colour, w = disk intensity
+    vec4 sunDiskColor;    // xyz = disk tint, w = limb darkening
 } uSky;
 
 layout(location = 0) in vec4 vFarPoint;
 layout(location = 0) out vec4 outColor;
 
-// Rayleigh scattering per channel relative to blue: the inverse fourth power of
-// wavelength, and the only reason the sky has a colour at all.
-const vec3  kRayleighRatio   = vec3(0.1752, 0.4078, 1.0);
-// Its mean — the colourless part, which sets how much is scattered rather than
-// what colour comes out.
-const float kRayleighGrey    = (0.1752 + 0.4078 + 1.0) / 3.0;
-const float kMieAsymmetry    = 0.76;
 const float kHorizonAirMass  = 35.567;
 const float kTwilightFalloff = 10.0;
 const float kHorizonSoftness = 0.01;
@@ -55,11 +51,6 @@ float SunAirMass(float cosZenith)
     return c >= 0.0 ? ViewAirMass(c) : kHorizonAirMass * exp(kTwilightFalloff * -c);
 }
 
-vec3 Transmittance(float airMass, float zenithOpticalDepth)
-{
-    return exp(-kRayleighRatio * (zenithOpticalDepth * airMass));
-}
-
 // Both phase functions average one over the sphere rather than integrating to
 // one, so they read as "against scattering the same light every way" and sit on
 // the same footing as each other.
@@ -68,73 +59,93 @@ float RayleighPhase(float cosTheta)
     return 0.75 * (1.0 + cosTheta * cosTheta);
 }
 
-float MiePhase(float cosTheta)
+float MiePhase(float cosTheta, float asymmetry)
 {
-    float gg = kMieAsymmetry * kMieAsymmetry;
-    // Clamped because the denominator reaches zero looking straight at the sun
-    // as the asymmetry approaches one, and the pow would return infinity.
-    float denom = max(1.0 + gg - 2.0 * kMieAsymmetry * cosTheta, 1e-4);
+    float gg = asymmetry * asymmetry;
+    // Clamped because the denominator reaches zero looking along the beam as the
+    // asymmetry approaches one, and the pow would return infinity.
+    float denom = max(1.0 + gg - 2.0 * asymmetry * cosTheta, 1e-4);
     return (1.0 - gg) / pow(denom, 1.5);
+}
+
+// The disk's brightness off its centre, in [0, 1]. Two effects, and they are not
+// the same one: the edge fade is antialiasing, and the limb darkening is what a
+// sphere looks like. A disk with the first and not the second is a soft-edged
+// sticker.
+float SunDiskProfile(float angleToSun, float radius, float edgeSoftness, float limbDarkening)
+{
+    float edge = 1.0 - smoothstep(radius * (1.0 - edgeSoftness), radius * (1.0 + edgeSoftness), angleToSun);
+    if (edge <= 0.0)
+    {
+        return 0.0;
+    }
+    // How far across the visible face this line of sight lands, then the cosine
+    // of the angle it makes with the surface there. A ray at the rim leaves
+    // through cooler material and carries less of it out.
+    float acrossFace = min(angleToSun / max(radius, 1e-6), 1.0);
+    float faceCosine = sqrt(max(1.0 - acrossFace * acrossFace, 0.0));
+    return edge * (1.0 - limbDarkening * (1.0 - faceCosine));
 }
 
 void main()
 {
     vec3 ray = normalize(vFarPoint.xyz / vFarPoint.w - uSky.cameraPosition.xyz);
 
-    vec3  sunDirection       = uSky.sunDirection.xyz;
-    vec3  radiantSun         = uSky.sunRadiance.rgb;
-    float zenithOpticalDepth = uSky.groundColor.w;
-    float haze               = uSky.nightColor.w;
+    vec3  sunDirection = uSky.sunDirection.xyz;
+    vec3  radiantSun   = uSky.sunRadiance.rgb;
+    vec3  rayleigh     = uSky.rayleigh.rgb;   // already scaled by the optical depth
+    float rayleighGrey = uSky.rayleigh.w;
+    vec3  mieCoeff     = uSky.mie.rgb;
 
     float cosGamma    = clamp(dot(ray, sunDirection), -1.0, 1.0);
     float sunAirMass  = SunAirMass(sunDirection.y);
     float viewAirMass = ViewAirMass(ray.y);
+    float totalAirMass = sunAirMass + viewAirMass;
 
     // What is left of the beam where it meets the ground — the sun's own colour,
-    // and the whole reason a low sun is orange.
-    vec3 beam = radiantSun * Transmittance(sunAirMass, zenithOpticalDepth);
+    // and the whole reason a low sun shifts hue.
+    vec3 beam = radiantSun * exp(-rayleigh * sunAirMass);
 
     // Light reaching the eye crossed the atmosphere twice, in along the beam and
     // out along the view ray, and is extinguished over both. Attenuating the sum
-    // rather than the beam alone is what keeps a sunset red: over a short path
-    // the colour is the scattering coefficient's, deep blue, and over a long one
-    // the exponential wins and what survives is red.
-    vec3 attenuation = Transmittance(sunAirMass + viewAirMass, zenithOpticalDepth);
+    // rather than the beam alone is what keeps a sunset red on Earth: over a
+    // short path the colour is the scattering coefficient's, and over a long one
+    // the exponential wins and what survives is what it scatters LEAST.
+    vec3 attenuation = exp(-rayleigh * totalAirMass);
 
     // How much air the view ray has to scatter in — a quantity, not a colour.
     // Saturating toward one is why the horizon is bright and the zenith, with a
     // thirtieth of the air, is not.
-    float scattered = 1.0 - exp(-zenithOpticalDepth * kRayleighGrey * viewAirMass);
+    float scattered = 1.0 - exp(-rayleighGrey * viewAirMass);
 
-    // Haze scatters every wavelength alike and throws it hard forward, so it is
-    // grey where it is added and coloured only by the attenuation it shares with
-    // the molecular term. That sharing is what makes the halo around a setting
-    // sun orange rather than white.
-    float mie = MiePhase(cosGamma) * (1.0 - exp(-haze * viewAirMass)) *
-                exp(-haze * (sunAirMass + viewAirMass));
+    // Haze, with its own extinction and its own colour. It shares the molecular
+    // attenuation, which is what makes the halo around a setting sun take the
+    // sun's colour rather than staying white.
+    vec3 mie = (vec3(1.0) - exp(-mieCoeff * viewAirMass)) * exp(-mieCoeff * totalAirMass) *
+               MiePhase(cosGamma, uSky.mie.w);
 
-    vec3 sky = radiantSun * attenuation *
-                   (kRayleighRatio * (RayleighPhase(cosGamma) * scattered) + vec3(mie)) +
+    // The Rayleigh coefficients recovered unscaled: the optical depth is already
+    // in `rayleigh`, and what tints the in-scattered light is the ratio between
+    // the channels, not its magnitude.
+    vec3 sky = radiantSun * attenuation * (rayleigh * (RayleighPhase(cosGamma) * scattered) + mie) +
                uSky.nightColor.rgb;
 
     // The ground reflects the same beam off a Lambertian albedo, foreshortened by
     // the sun's elevation, and gets the night colour too — so it and the sky over
     // it fall to the same floor instead of the ground going black first.
-    vec3 ground = uSky.groundColor.rgb * (beam * (max(sunDirection.y, 0.0) * kInvPi)) +
-                  uSky.nightColor.rgb;
+    vec3 ground = uSky.groundColor.rgb * (beam * (max(sunDirection.y, 0.0) * kInvPi)) + uSky.nightColor.rgb;
 
     float skyward  = smoothstep(-kHorizonSoftness, kHorizonSoftness, ray.y);
     vec3  radiance = mix(ground, sky, skyward);
 
     // The disk, gated by the same blend so the sun sets behind the ground rather
-    // than shining up through it. Softened over a tenth of its radius, because an
-    // HDR disk with a hard edge aliases into a flickering dot.
-    float sunDiskIntensity = uSky.params.y;
-    if (sunDiskIntensity > 0.0)
+    // than shining up through it.
+    float diskIntensity = uSky.nightColor.w;
+    if (diskIntensity > 0.0)
     {
-        float disk = smoothstep(uSky.sunDirection.w, uSky.sunRadiance.w, cosGamma);
-        radiance += beam * (sunDiskIntensity * disk * skyward);
+        float profile = SunDiskProfile(acos(cosGamma), uSky.sunDirection.w, uSky.sunRadiance.w, uSky.sunDiskColor.w);
+        radiance += beam * uSky.sunDiskColor.rgb * (diskIntensity * profile * skyward);
     }
 
-    outColor = vec4(max(radiance * uSky.params.x, vec3(0.0)), 1.0);
+    outColor = vec4(max(radiance * uSky.groundColor.w, vec3(0.0)), 1.0);
 }

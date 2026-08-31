@@ -203,20 +203,6 @@ public:
     void SetShadowSettings(const Render::ShadowSettings &settings) { _shadowSettings = settings; }
     [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
 
-    /// @brief The sky's look. Applied on the next Render(); everything here
-    /// rides into the shader as a constant, so an edit lands on the next frame
-    /// with nothing to rebuild.
-    ///
-    /// Scene-look data rather than a user preference, which is why it is not one
-    /// of the settings options.json carries.
-    ///
-    /// The sun is NOT here: it comes from the scene's first directional light
-    /// every frame, so moving that light moves the sky with it. A scene with no
-    /// directional light draws no sky at all — a scattering model with no sun
-    /// has nothing to scatter — and the clear colour stands.
-    void SetSkySettings(const Render::SkySettings &settings) { _skySettings = settings; }
-    [[nodiscard]] const Render::SkySettings &SkySettings() const { return _skySettings; }
-
     /// @brief Which shadow diagnostic the mesh shader draws over the lit image.
     /// Runtime only, and off by default — every one of these changes the picture.
     void SetShadowDebugView(Render::ShadowDebugView view) { _shadowDebugView = view; }
@@ -441,7 +427,10 @@ private:
     glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
     float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
-    Render::SkySettings _skySettings;                                       // the sky's look; the sun comes from the scene
+    // Latched so the unsupported-scene warning is said once rather than at the
+    // frame rate. Cleared when the scene stops having several suns, so fixing it
+    // and breaking it again is reported both times.
+    bool _multipleSunsWarned = false;
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats; // what the shadow pass drew, for the same overlay

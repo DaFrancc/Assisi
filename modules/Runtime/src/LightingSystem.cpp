@@ -67,20 +67,6 @@ std::optional<LightingSystem::ShadowSun> LightingSystem::ShadowCastingSun() cons
     return std::nullopt;
 }
 
-std::optional<LightingSystem::Sun> LightingSystem::PrimaryDirectionalLight() const
-{
-    // Bounded by _dirLightCount for the same reason ShadowCastingSun is: lights
-    // past the buffer's capacity were dropped on upload and light nothing.
-    if (_dirLightCount == 0)
-    {
-        return std::nullopt;
-    }
-    const Assisi::Render::DirLightGPU &light = _dirLights[0];
-    return Sun{.directionToSun = -glm::vec3(light.directionIntensity),
-               .color = glm::vec3(light.colorPad),
-               .intensity = light.directionIntensity.w};
-}
-
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
     ASSISI_PROFILE_GPU_PASS(commandList, "lighting");

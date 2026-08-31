@@ -13,9 +13,16 @@
 /// also a light source: the ambient term wants the colour of the sky above a
 /// surface and of the ground below it, and that is a query, not a pixel.
 ///
-/// Nothing here bakes the sun in. The sun arrives as SkySun every frame, so a
-/// sun that moves takes the sky with it — the daylight colour, the sunset, and
-/// the fall to night are all one function of where it is.
+/// **Nothing here is Earth by construction.** The scattering coefficients are
+/// parameters, not constants, so the air's composition is authored: a different
+/// mix gives a different sky, and a different sunset, without a second model or
+/// a mode switch. An atmosphere of zero optical depth is the airless case, and
+/// it falls out as the limit rather than as a branch — black sky, hard white
+/// sun, lit ground.
+///
+/// The sun arrives as SkySun every frame, so a sun that moves takes the sky with
+/// it: the daylight colour, the sunset, and the fall to night are all one
+/// function of where it is.
 
 #include <Assisi/Math/GLM.hpp>
 
@@ -26,31 +33,25 @@
 namespace Assisi::Render
 {
 
-/// @brief Rayleigh scattering per channel, relative to blue.
+/// @brief Earth's Rayleigh scattering per channel, relative to blue.
 ///
 /// Scattering by air molecules falls as the inverse fourth power of wavelength,
-/// which is the entire reason the daytime sky is blue and a low sun is red: blue
-/// is scattered out of the direct beam almost six times as readily as red, so
-/// what survives a long path is what is left over. Normalised to blue because
-/// the absolute coefficient is what SkySettings::zenithOpticalDepth sets.
-inline constexpr glm::vec3 kRayleighRatio{0.1752f, 0.4078f, 1.0f};
-
-/// @brief The mean of @ref kRayleighRatio — the colourless part of Rayleigh
-/// extinction, which is what sets HOW MUCH of the beam a column of air scatters
-/// while the ratio sets WHAT COLOUR comes out.
-inline constexpr float kRayleighGrey = (0.1752f + 0.4078f + 1.0f) / 3.0f;
-
-/// @brief Asymmetry of the Mie phase function — how sharply haze throws light
-/// forward. Near 1 is a tight halo around the sun; 0 would scatter in every
-/// direction equally and stop looking like haze at all.
-inline constexpr float kMieAsymmetry = 0.76f;
-
-/// @brief Air mass looking along the horizon, relative to straight up.
+/// which is why Earth's daytime sky is blue and a low sun is red: blue is
+/// scattered out of the direct beam almost six times as readily as red, so what
+/// survives a long path is what is left over.
 ///
-/// A ray at the horizon passes through roughly thirty-five times the air a ray
-/// at the zenith does. The number is the Kasten-Young fit evaluated at ninety
-/// degrees; it is named because the twilight extension below continues from it.
-inline constexpr float kHorizonAirMass = 35.567f;
+/// A default, not a law. Another world's air scatters in whatever proportion its
+/// molecules do, and pushing green here gives a green noon and — with no further
+/// authoring — a magenta sunset, because the same coefficient governs both.
+inline constexpr glm::vec3 kEarthRayleighCoefficients{0.1752f, 0.4078f, 1.0f};
+
+/// @brief Earth-ish Mie extinction per unit air mass — dust and water droplets.
+///
+/// Grey by default because Earth's haze is near enough wavelength-independent.
+/// Colouring it is what a dust-dominated sky needs: a world whose dust absorbs
+/// blue gets a butterscotch day and a blue sunset, which is Mars, and which no
+/// amount of Rayleigh authoring reaches.
+inline constexpr glm::vec3 kEarthMieCoefficients{0.005f, 0.005f, 0.005f};
 
 /// @brief How fast the sun's air mass grows once it is below the horizon.
 ///
@@ -60,6 +61,13 @@ inline constexpr float kHorizonAirMass = 35.567f;
 /// separate sunset from full night. It is what makes dusk a fade rather than a
 /// switch, and it is an extrapolation — no fit claims this region.
 inline constexpr float kTwilightFalloff = 10.0f;
+
+/// @brief Air mass looking along the horizon, relative to straight up.
+///
+/// A ray at the horizon passes through roughly thirty-five times the air a ray
+/// at the zenith does. The number is the Kasten-Young fit evaluated at ninety
+/// degrees; it is named because the twilight extension continues from it.
+inline constexpr float kHorizonAirMass = 35.567f;
 
 /// @brief Half-width of the band the sky and the ground blend across, in units
 /// of the direction's vertical component. About half a degree — wide enough
@@ -72,18 +80,29 @@ inline constexpr float kHorizonSoftness = 0.01f;
 /// takes the whole frame with it.
 /// @{
 
-/// Rayleigh optical depth at the zenith, in the blue channel — the one number
-/// that sets both how deep the daytime blue is and how far a low sun reddens,
-/// since every other direction follows from the air mass along it.
-inline constexpr float kMinZenithOpticalDepth = 0.005f;
+/// Upper bound on a scattering coefficient or a colour channel. Generous, since
+/// these describe worlds rather than preferences; it exists to stop a hand-typed
+/// value reaching a shader, not to express taste.
+inline constexpr float kMaxSkyChannel = 100.0f;
+
+/// Rayleigh optical depth at the zenith, scaling the coefficients above. The one
+/// number that sets both how deep the daytime colour is and how far a low sun
+/// shifts, since every other direction follows from the air mass along it.
+///
+/// **Zero is meaningful and reachable**: no atmosphere. The scattering term
+/// vanishes, transmittance goes to one, and what is left is a black sky with an
+/// unattenuated sun in it.
+inline constexpr float kMinZenithOpticalDepth = 0.0f;
 inline constexpr float kMaxZenithOpticalDepth = 0.5f;
 inline constexpr float kDefaultZenithOpticalDepth = 0.07f;
 
-/// Mie extinction per unit air mass — dust and water, which scatter every
-/// wavelength alike. Raising it whitens the sky and grows the halo round the sun.
-inline constexpr float kMinHaze = 0.0f;
-inline constexpr float kMaxHaze = 0.1f;
-inline constexpr float kDefaultHaze = 0.005f;
+/// Asymmetry of the Mie phase function — how sharply haze throws light. Positive
+/// scatters forward (the halo around a low sun), negative scatters back toward
+/// the source, zero is uniform. Held off ±1, where the phase function's
+/// denominator reaches zero.
+inline constexpr float kMinMieAsymmetry = -0.95f;
+inline constexpr float kMaxMieAsymmetry = 0.95f;
+inline constexpr float kDefaultMieAsymmetry = 0.76f;
 
 /// Overall multiplier on the sky's radiance. The scene target holds radiance and
 /// the tone map is downstream, so this is an exposure of the sky against the
@@ -103,12 +122,32 @@ inline constexpr float kDefaultSkyIntensity = 10.0f;
 /// decide when night starts.
 inline constexpr glm::vec3 kDefaultNightColor{0.00006f, 0.00010f, 0.00020f};
 
-/// Angular radius of the sun's disk, in degrees. The real sun is about 0.27, but
-/// a disk that small lands inside a single pixel at ordinary fields of view and
+/// Angular radius of the sun's disk, in degrees. Earth's is about 0.27, but a
+/// disk that small lands inside a single pixel at ordinary fields of view and
 /// aliases into a crawling dot, so the default is larger.
 inline constexpr float kMinSunAngularRadiusDegrees = 0.05f;
-inline constexpr float kMaxSunAngularRadiusDegrees = 10.0f;
+inline constexpr float kMaxSunAngularRadiusDegrees = 30.0f;
 inline constexpr float kDefaultSunAngularRadiusDegrees = 0.5f;
+
+/// Width of the disk's edge fade, as a fraction of its radius.
+///
+/// The minimum is NOT zero, and that is a requirement rather than a limitation:
+/// the disk is the brightest thing in an HDR frame by orders of magnitude, and a
+/// hard edge on it aliases into a dot that crawls and flickers as the camera
+/// turns. A fade of a few percent of the radius is what stops that.
+inline constexpr float kMinSunEdgeSoftness = 0.02f;
+inline constexpr float kMaxSunEdgeSoftness = 1.0f;
+inline constexpr float kDefaultSunEdgeSoftness = 0.1f;
+
+/// How much dimmer the disk's rim is than its centre.
+///
+/// A star is a ball of gas, not a sticker: a line of sight at the rim leaves
+/// through cooler, higher material than one through the middle, so the rim is
+/// genuinely darker. Zero is a flat disk, which is what a uniform circle looks
+/// like and why one reads as fake. Earth's sun is about 0.6 in visible light.
+inline constexpr float kMinSunLimbDarkening = 0.0f;
+inline constexpr float kMaxSunLimbDarkening = 1.0f;
+inline constexpr float kDefaultSunLimbDarkening = 0.6f;
 
 /// Multiplier on the disk against the sky around it. Zero removes the disk
 /// without touching the scattering that surrounds it.
@@ -119,15 +158,26 @@ inline constexpr float kDefaultSunDiskIntensity = 20.0f;
 
 /// @brief The sky's look, as an author edits it.
 ///
-/// Scene-look data rather than a user preference: it describes the world, not
-/// the machine rendering it, so it is not one of the settings options.json
-/// carries.
+/// Scene data rather than a user preference: it describes the world, not the
+/// machine rendering it. It reaches the renderer from a Skybox component on the
+/// scene's sun, so it is authored and saved per level.
+///
+/// Note what is NOT here: the sun's colour and intensity. Those are the
+/// DirectionalLight's, because they are one physical quantity — the same value
+/// lights every surface in the world, tints the scattering, and colours the
+/// disk. A blue sun is a blue directional light, and everything follows.
+/// @ref sunDiskColor tints the disk alone, for when that coherence is not what
+/// is wanted.
 struct SkySettings
 {
-    bool enabled = true;
-
+    /// Scattering per channel by the air itself. See kEarthRayleighCoefficients.
+    glm::vec3 rayleighCoefficients = kEarthRayleighCoefficients;
+    /// How much air there is, scaling the above. Zero is an airless world.
     float zenithOpticalDepth = kDefaultZenithOpticalDepth;
-    float haze = kDefaultHaze;
+
+    /// Extinction per channel by dust and droplets. See kEarthMieCoefficients.
+    glm::vec3 mieCoefficients = kEarthMieCoefficients;
+    float mieAsymmetry = kDefaultMieAsymmetry;
 
     /// Albedo of the ground half of the sphere, lit by the same sun as the sky.
     /// Not a floor or a real surface — the sky covers every direction, and this
@@ -139,8 +189,18 @@ struct SkySettings
     glm::vec3 nightColor = kDefaultNightColor;
 
     float intensity = kDefaultSkyIntensity;
+
+    /// @name The disk
+    /// @{
     float sunAngularRadiusDegrees = kDefaultSunAngularRadiusDegrees;
+    float sunEdgeSoftness = kDefaultSunEdgeSoftness;
+    float sunLimbDarkening = kDefaultSunLimbDarkening;
     float sunDiskIntensity = kDefaultSunDiskIntensity;
+    /// Tint on the disk ALONE, multiplied over the sun's own colour. White
+    /// leaves the disk agreeing with the light that lights the world; pushing it
+    /// is the artistic escape hatch for a yellow sun over a neutrally-lit scene.
+    glm::vec3 sunDiskColor{1.0f, 1.0f, 1.0f};
+    /// @}
 };
 
 /// @brief The sun the sky is scattering, as the scene supplies it each frame.
@@ -163,12 +223,12 @@ struct SkySun
     return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
 }
 
-/// @brief A colour with every channel finite and non-negative.
-[[nodiscard]] inline glm::vec3 SanitizedColor(const glm::vec3 &color, const glm::vec3 &fallback)
+/// @brief A colour or coefficient triple with every channel finite and in range.
+[[nodiscard]] inline glm::vec3 SanitizedSkyChannels(const glm::vec3 &value, const glm::vec3 &fallback)
 {
-    return glm::vec3(ClampFiniteSky(color.r, 0.0f, kMaxSkyIntensity, fallback.r),
-                     ClampFiniteSky(color.g, 0.0f, kMaxSkyIntensity, fallback.g),
-                     ClampFiniteSky(color.b, 0.0f, kMaxSkyIntensity, fallback.b));
+    return glm::vec3(ClampFiniteSky(value.r, 0.0f, kMaxSkyChannel, fallback.r),
+                     ClampFiniteSky(value.g, 0.0f, kMaxSkyChannel, fallback.g),
+                     ClampFiniteSky(value.b, 0.0f, kMaxSkyChannel, fallback.b));
 }
 
 /// @brief The same settings with every lane inside its range. Idempotent:
@@ -176,17 +236,26 @@ struct SkySun
 [[nodiscard]] inline SkySettings Sanitized(SkySettings settings)
 {
     const SkySettings defaults;
+    settings.rayleighCoefficients =
+        SanitizedSkyChannels(settings.rayleighCoefficients, defaults.rayleighCoefficients);
     settings.zenithOpticalDepth = ClampFiniteSky(settings.zenithOpticalDepth, kMinZenithOpticalDepth,
                                                  kMaxZenithOpticalDepth, defaults.zenithOpticalDepth);
-    settings.haze = ClampFiniteSky(settings.haze, kMinHaze, kMaxHaze, defaults.haze);
-    settings.groundColor = SanitizedColor(settings.groundColor, defaults.groundColor);
-    settings.nightColor = SanitizedColor(settings.nightColor, defaults.nightColor);
+    settings.mieCoefficients = SanitizedSkyChannels(settings.mieCoefficients, defaults.mieCoefficients);
+    settings.mieAsymmetry =
+        ClampFiniteSky(settings.mieAsymmetry, kMinMieAsymmetry, kMaxMieAsymmetry, defaults.mieAsymmetry);
+    settings.groundColor = SanitizedSkyChannels(settings.groundColor, defaults.groundColor);
+    settings.nightColor = SanitizedSkyChannels(settings.nightColor, defaults.nightColor);
     settings.intensity = ClampFiniteSky(settings.intensity, kMinSkyIntensity, kMaxSkyIntensity, defaults.intensity);
     settings.sunAngularRadiusDegrees =
         ClampFiniteSky(settings.sunAngularRadiusDegrees, kMinSunAngularRadiusDegrees, kMaxSunAngularRadiusDegrees,
                        defaults.sunAngularRadiusDegrees);
+    settings.sunEdgeSoftness =
+        ClampFiniteSky(settings.sunEdgeSoftness, kMinSunEdgeSoftness, kMaxSunEdgeSoftness, defaults.sunEdgeSoftness);
+    settings.sunLimbDarkening = ClampFiniteSky(settings.sunLimbDarkening, kMinSunLimbDarkening, kMaxSunLimbDarkening,
+                                               defaults.sunLimbDarkening);
     settings.sunDiskIntensity = ClampFiniteSky(settings.sunDiskIntensity, kMinSunDiskIntensity, kMaxSunDiskIntensity,
                                                defaults.sunDiskIntensity);
+    settings.sunDiskColor = SanitizedSkyChannels(settings.sunDiskColor, defaults.sunDiskColor);
     return settings;
 }
 
@@ -204,7 +273,7 @@ struct SkySun
     const bool finiteDirection = std::isfinite(sun.directionToSun.x) && std::isfinite(sun.directionToSun.y) &&
                                  std::isfinite(sun.directionToSun.z);
     sun.directionToSun = SafeSkyDirection(finiteDirection ? sun.directionToSun : glm::vec3(0.0f, 1.0f, 0.0f));
-    sun.color = SanitizedColor(sun.color, glm::vec3(1.0f));
+    sun.color = SanitizedSkyChannels(sun.color, glm::vec3(1.0f));
     sun.intensity = ClampFiniteSky(sun.intensity, 0.0f, kMaxSkyIntensity, 1.0f);
     return sun;
 }
@@ -233,9 +302,9 @@ struct SkySun
 /// @brief Air mass along the beam from the sun, continued below the horizon.
 ///
 /// Above the horizon this is @ref ViewAirMass. Below it the path keeps
-/// lengthening as the sun sinks, and this is what darkens and reddens the sky
-/// through dusk instead of a separate night mode: the beam is simply extinguished
-/// by more and more air until nothing of it arrives.
+/// lengthening as the sun sinks, and this is what darkens and shifts the sky
+/// through dusk instead of a separate night mode: the beam is simply
+/// extinguished by more and more air until nothing of it arrives.
 [[nodiscard]] inline float SunAirMass(float cosZenith)
 {
     const float clamped = std::clamp(cosZenith, -1.0f, 1.0f);
@@ -247,9 +316,9 @@ struct SkySun
 }
 
 /// @brief Fraction of each channel that survives @p airMass of atmosphere.
-[[nodiscard]] inline glm::vec3 Transmittance(float airMass, float zenithOpticalDepth)
+[[nodiscard]] inline glm::vec3 Transmittance(const glm::vec3 &coefficients, float airMass)
 {
-    return glm::exp(-kRayleighRatio * (zenithOpticalDepth * airMass));
+    return glm::exp(-coefficients * airMass);
 }
 
 /// @brief Rayleigh phase: how molecular scattering is distributed about the
@@ -263,16 +332,38 @@ struct SkySun
     return 0.75f * (1.0f + cosTheta * cosTheta);
 }
 
-/// @brief Henyey-Greenstein phase: haze, which throws light forward hard. This
-/// is the halo around a low sun. Averages one over the sphere, like
-/// @ref RayleighPhase.
+/// @brief Henyey-Greenstein phase: haze, which throws light forward hard at a
+/// positive asymmetry and back toward the source at a negative one. Averages one
+/// over the sphere, like @ref RayleighPhase.
 [[nodiscard]] inline float MiePhase(float cosTheta, float asymmetry)
 {
     const float gg = asymmetry * asymmetry;
     const float denom = 1.0f + gg - 2.0f * asymmetry * cosTheta;
-    // Clamped because denom reaches zero as asymmetry approaches 1 looking
-    // straight at the sun, and the pow would return infinity.
+    // Clamped because denom reaches zero as the asymmetry approaches one looking
+    // straight along the beam, and the pow would return infinity.
     return (1.0f - gg) / std::pow(std::max(denom, 1e-4f), 1.5f);
+}
+
+/// @brief The disk's brightness at @p angleToSun radians off its centre, in
+/// [0, 1]. Zero everywhere outside it.
+///
+/// Two effects, and they are not the same one: the edge fade is antialiasing,
+/// and the limb darkening is what a sphere looks like. A disk with the first and
+/// not the second is a soft-edged sticker.
+[[nodiscard]] inline float SunDiskProfile(float angleToSun, float radius, float edgeSoftness, float limbDarkening)
+{
+    const float edge = 1.0f - glm::smoothstep(radius * (1.0f - edgeSoftness), radius * (1.0f + edgeSoftness),
+                                              angleToSun);
+    if (edge <= 0.0f)
+    {
+        return 0.0f;
+    }
+    // How far across the visible face this line of sight lands, and then the
+    // cosine of the angle it makes with the surface there. A ray at the rim
+    // leaves through cooler material and carries less of it out.
+    const float acrossFace = std::min(angleToSun / std::max(radius, 1e-6f), 1.0f);
+    const float faceCosine = std::sqrt(std::max(1.0f - acrossFace * acrossFace, 0.0f));
+    return edge * (1.0f - limbDarkening * (1.0f - faceCosine));
 }
 
 /// @brief Radiance arriving from @p direction, in linear RGB.
@@ -293,32 +384,37 @@ struct SkySun
     const float viewAirMass = ViewAirMass(ray.y);
     const glm::vec3 radiantSun = sun.color * sun.intensity;
 
+    // Extinction per channel, and the colourless part of it. The first says what
+    // colour the air takes out; the second says how much of the beam it scatters
+    // rather than transmits, which is a quantity and not a hue.
+    const glm::vec3 rayleigh = settings.rayleighCoefficients * settings.zenithOpticalDepth;
+    const float rayleighGrey = (rayleigh.r + rayleigh.g + rayleigh.b) / 3.0f;
+
     // What is left of the beam where it meets the ground: the sun's own colour,
-    // and the whole reason a low sun is orange.
-    const glm::vec3 beam = radiantSun * Transmittance(sunAirMass, settings.zenithOpticalDepth);
+    // and the whole reason a low sun shifts hue.
+    const glm::vec3 beam = radiantSun * Transmittance(rayleigh, sunAirMass);
 
-    // Light that reaches the eye has crossed the atmosphere twice — in along the
+    // Light that reaches the eye crossed the atmosphere twice — in along the
     // beam, out along the view ray — and is extinguished over both. Attenuating
-    // the sum rather than the beam alone is what keeps a sunset red: over the
-    // short path of a noon zenith the colour is the scattering coefficient's,
-    // deep blue, and over the long path of a low sun the exponential wins and
-    // what survives is red.
-    const glm::vec3 attenuation = Transmittance(sunAirMass + viewAirMass, settings.zenithOpticalDepth);
+    // the sum rather than the beam alone is what keeps a sunset red on Earth:
+    // over the short path of a noon zenith the colour is the scattering
+    // coefficient's, and over the long path of a low sun the exponential wins
+    // and what survives is whatever that coefficient scatters LEAST.
+    const glm::vec3 attenuation = Transmittance(rayleigh, sunAirMass + viewAirMass);
 
-    // How much air the view ray has to scatter in, which is a quantity and not a
-    // colour — the colour is kRayleighRatio's job. Saturating toward one is why
+    // How much air the view ray has to scatter in. Saturating toward one is why
     // the horizon is bright and the zenith, with a thirtieth of the air, is not.
-    const float scattered = 1.0f - std::exp(-settings.zenithOpticalDepth * kRayleighGrey * viewAirMass);
+    const float scattered = 1.0f - std::exp(-rayleighGrey * viewAirMass);
 
-    // Haze scatters every wavelength alike and throws it hard forward, so it is
-    // grey where it is added and coloured only by the attenuation it shares with
-    // the molecular term. That shared attenuation is what makes the halo around
-    // a setting sun orange rather than white.
-    const float mie = MiePhase(cosGamma, kMieAsymmetry) * (1.0f - std::exp(-settings.haze * viewAirMass)) *
-                      std::exp(-settings.haze * (sunAirMass + viewAirMass));
+    // Haze, with its own extinction and its own colour. It shares the molecular
+    // attenuation, which is what makes the halo around a setting sun take the
+    // sun's colour rather than staying white.
+    const glm::vec3 mie = (glm::vec3(1.0f) - Transmittance(settings.mieCoefficients, viewAirMass)) *
+                          Transmittance(settings.mieCoefficients, sunAirMass + viewAirMass) *
+                          MiePhase(cosGamma, settings.mieAsymmetry);
 
     const glm::vec3 sky =
-        radiantSun * attenuation * (kRayleighRatio * (RayleighPhase(cosGamma) * scattered) + glm::vec3(mie)) +
+        radiantSun * attenuation * (settings.rayleighCoefficients * (RayleighPhase(cosGamma) * scattered) + mie) +
         settings.nightColor;
 
     // The ground reflects the same beam off a Lambertian albedo, foreshortened by
@@ -333,15 +429,12 @@ struct SkySun
     glm::vec3 radiance = glm::mix(ground, sky, skyward);
 
     // The disk, gated by the same blend so the sun sets behind the ground rather
-    // than shining through it. Softened over a tenth of its radius, because an
-    // HDR disk with a hard edge aliases into a flickering dot.
+    // than shining up through it.
     if (settings.sunDiskIntensity > 0.0f)
     {
-        const float radius = glm::radians(settings.sunAngularRadiusDegrees);
-        const float cosOuter = std::cos(radius * 1.1f);
-        const float cosInner = std::cos(radius * 0.9f);
-        const float disk = glm::smoothstep(cosOuter, cosInner, cosGamma);
-        radiance += beam * (settings.sunDiskIntensity * disk * skyward);
+        const float profile = SunDiskProfile(std::acos(cosGamma), glm::radians(settings.sunAngularRadiusDegrees),
+                                             settings.sunEdgeSoftness, settings.sunLimbDarkening);
+        radiance += beam * settings.sunDiskColor * (settings.sunDiskIntensity * profile * skyward);
     }
 
     return glm::max(radiance * settings.intensity, glm::vec3(0.0f));
@@ -356,12 +449,14 @@ struct SkyConstants
     /// makes the sky land in the same place the geometry did, viewport flip and
     /// all, without this pass knowing anything about either.
     glm::mat4 invViewProjection{1.0f};
-    glm::vec4 cameraPosition{0.0f};    ///< xyz = world-space eye, w unused
-    glm::vec4 sunDirection{0.0f, 1.0f, 0.0f, 0.0f}; ///< xyz = unit direction TO the sun, w = cos of the disk's outer edge
-    glm::vec4 sunRadiance{1.0f};       ///< xyz = colour * intensity, w = cos of the disk's inner edge
-    glm::vec4 groundColor{0.0f};       ///< xyz = linear colour, w = zenith optical depth
-    glm::vec4 nightColor{0.0f};        ///< xyz = linear colour, w = haze
-    glm::vec4 params{0.0f};            ///< x = intensity, y = sun disk intensity, zw unused
+    glm::vec4 cameraPosition{0.0f};                 ///< xyz = world-space eye, w unused
+    glm::vec4 sunDirection{0.0f, 1.0f, 0.0f, 0.0f}; ///< xyz = unit direction TO the sun, w = disk radius (radians)
+    glm::vec4 sunRadiance{1.0f};                    ///< xyz = colour * intensity, w = disk edge softness
+    glm::vec4 rayleigh{0.0f};                       ///< xyz = coefficients * optical depth, w = their mean
+    glm::vec4 mie{0.0f};                            ///< xyz = coefficients, w = asymmetry
+    glm::vec4 groundColor{0.0f};                    ///< xyz = linear colour, w = sky intensity
+    glm::vec4 nightColor{0.0f};                     ///< xyz = linear colour, w = disk intensity
+    glm::vec4 sunDiskColor{1.0f};                   ///< xyz = disk tint, w = limb darkening
 };
 
 /// @brief The constants for one sky draw, with everything sanitized on the way in.
@@ -370,16 +465,23 @@ struct SkyConstants
 {
     const SkySettings settings = Sanitized(rawSettings);
     const SkySun sun = Sanitized(rawSun);
-    const float radius = glm::radians(settings.sunAngularRadiusDegrees);
+
+    // Premultiplied here rather than in the shader: it is the same product for
+    // every pixel, and the mean beside it would otherwise be three more adds per
+    // fragment for a value that cannot change across the draw.
+    const glm::vec3 rayleigh = settings.rayleighCoefficients * settings.zenithOpticalDepth;
+    const float rayleighGrey = (rayleigh.r + rayleigh.g + rayleigh.b) / 3.0f;
 
     return SkyConstants{
         .invViewProjection = invViewProjection,
         .cameraPosition = glm::vec4(cameraPosition, 0.0f),
-        .sunDirection = glm::vec4(sun.directionToSun, std::cos(radius * 1.1f)),
-        .sunRadiance = glm::vec4(sun.color * sun.intensity, std::cos(radius * 0.9f)),
-        .groundColor = glm::vec4(settings.groundColor, settings.zenithOpticalDepth),
-        .nightColor = glm::vec4(settings.nightColor, settings.haze),
-        .params = glm::vec4(settings.intensity, settings.sunDiskIntensity, 0.0f, 0.0f)};
+        .sunDirection = glm::vec4(sun.directionToSun, glm::radians(settings.sunAngularRadiusDegrees)),
+        .sunRadiance = glm::vec4(sun.color * sun.intensity, settings.sunEdgeSoftness),
+        .rayleigh = glm::vec4(rayleigh, rayleighGrey),
+        .mie = glm::vec4(settings.mieCoefficients, settings.mieAsymmetry),
+        .groundColor = glm::vec4(settings.groundColor, settings.intensity),
+        .nightColor = glm::vec4(settings.nightColor, settings.sunDiskIntensity),
+        .sunDiskColor = glm::vec4(settings.sunDiskColor, settings.sunLimbDarkening)};
 }
 
 } // namespace Assisi::Render

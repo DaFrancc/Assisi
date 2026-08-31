@@ -79,12 +79,6 @@ private:
     /// cascade view is a runtime look.
     static void DrawShadowSettings(const Frame &frame);
 
-    /// @brief The sky section: the atmosphere knobs and the sun disk.
-    ///
-    /// Runtime only, and not in options.json — the sky describes the world
-    /// rather than the machine rendering it, so it is scene-look data and not a
-    /// user preference.
-    static void DrawSkySettings(const Frame &frame);
 
     bool _showOptions = false;
 

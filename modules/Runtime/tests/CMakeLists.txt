@@ -15,6 +15,7 @@ add_executable(Assisi-Runtime-Tests
   TestHierarchy.cpp
   TestLifecycle.cpp
   TestLightingSystem.cpp
+  TestSkyResolve.cpp
   TestWireGating.cpp
 )
 

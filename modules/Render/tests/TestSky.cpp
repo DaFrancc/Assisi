@@ -56,7 +56,7 @@ bool AllFinite(const glm::vec3 &v)
 SkySettings ClearAir()
 {
     SkySettings settings;
-    settings.haze = 0.0f;
+    settings.mieCoefficients = glm::vec3(0.0f);
     settings.sunDiskIntensity = 0.0f;
     return settings;
 }
@@ -66,7 +66,7 @@ TEST_CASE("Sky settings are sanitized into their ranges")
 {
     SkySettings settings;
     settings.zenithOpticalDepth = std::numeric_limits<float>::quiet_NaN();
-    settings.haze = 99.0f;
+    settings.mieCoefficients = glm::vec3(-1.0f, 0.5f, 1e30f);
     settings.intensity = -4.0f;
     settings.sunAngularRadiusDegrees = 0.0f;
     settings.sunDiskIntensity = std::numeric_limits<float>::infinity();
@@ -78,7 +78,9 @@ TEST_CASE("Sky settings are sanitized into their ranges")
 
     // NaN falls back to the default; a finite out-of-range value clamps.
     CHECK(safe.zenithOpticalDepth == doctest::Approx(defaults.zenithOpticalDepth));
-    CHECK(safe.haze == doctest::Approx(kMaxHaze));
+    CHECK(safe.mieCoefficients.r == doctest::Approx(0.0f));
+    CHECK(safe.mieCoefficients.g == doctest::Approx(0.5f));
+    CHECK(safe.mieCoefficients.b == doctest::Approx(kMaxSkyChannel));
     CHECK(safe.intensity == doctest::Approx(kMinSkyIntensity));
     CHECK(safe.sunAngularRadiusDegrees == doctest::Approx(kMinSunAngularRadiusDegrees));
     CHECK(safe.sunDiskIntensity == doctest::Approx(defaults.sunDiskIntensity));
@@ -91,7 +93,7 @@ TEST_CASE("Sky settings are sanitized into their ranges")
     // Idempotent: nothing downstream has to wonder whether it was already done.
     const SkySettings twice = Sanitized(safe);
     CHECK(twice.zenithOpticalDepth == doctest::Approx(safe.zenithOpticalDepth));
-    CHECK(twice.haze == doctest::Approx(safe.haze));
+    CHECK(twice.mieCoefficients.b == doctest::Approx(safe.mieCoefficients.b));
     CHECK(twice.intensity == doctest::Approx(safe.intensity));
     CHECK(twice.sunDiskIntensity == doctest::Approx(safe.sunDiskIntensity));
 }
@@ -170,7 +172,7 @@ TEST_CASE("Radiance sanitizes what it is handed, so a bad config cannot black ou
 
     SkySettings broken;
     broken.zenithOpticalDepth = nan;
-    broken.haze = -5.0f;
+    broken.mieCoefficients = glm::vec3(-5.0f);
     broken.intensity = std::numeric_limits<float>::infinity();
     broken.groundColor = glm::vec3(nan);
     broken.nightColor = glm::vec3(-1.0f);
@@ -380,7 +382,7 @@ TEST_CASE("Haze whitens the sky and grows the halo around the sun")
 {
     SkySettings clear = ClearAir();
     SkySettings hazy = clear;
-    hazy.haze = kMaxHaze;
+    hazy.mieCoefficients = glm::vec3(0.1f);
 
     const SkySun sun = SunAt(30.0f, 0.0f);
     const glm::vec3 nearSun = Dir(38.0f, 0.0f);
@@ -397,7 +399,7 @@ TEST_CASE("Haze whitens the sky and grows the halo around the sun")
 TEST_CASE("Sky constants carry the sanitized settings and a unit sun")
 {
     SkySettings settings;
-    settings.haze = 99.0f;                                     // clamps
+    settings.mieAsymmetry = 99.0f;                                // clamps
     settings.intensity = std::numeric_limits<float>::quiet_NaN(); // falls back
     settings.sunAngularRadiusDegrees = 2.0f;
     settings.sunDiskIntensity = 7.0f;
@@ -420,13 +422,184 @@ TEST_CASE("Sky constants carry the sanitized settings and a unit sun")
     CHECK(constants.sunRadiance.r == doctest::Approx(2.0f));
     CHECK(constants.sunRadiance.g == doctest::Approx(1.8f));
 
-    CHECK(constants.nightColor.w == doctest::Approx(kMaxHaze));
-    CHECK(constants.params.x == doctest::Approx(SkySettings{}.intensity));
-    CHECK(constants.params.y == doctest::Approx(7.0f));
-    CHECK(constants.groundColor.w == doctest::Approx(settings.zenithOpticalDepth));
+    CHECK(constants.mie.w == doctest::Approx(kMaxMieAsymmetry));
+    CHECK(constants.groundColor.w == doctest::Approx(SkySettings{}.intensity));
+    CHECK(constants.nightColor.w == doctest::Approx(7.0f));
 
-    // The two disk edges bracket the radius, outer first — the smoothstep in
-    // sky.frag reads them in that order.
-    CHECK(constants.sunDirection.w < constants.sunRadiance.w);
-    CHECK(constants.sunRadiance.w < 1.0f);
+    // The disk radius travels in radians, already converted, so the shader does
+    // no trigonometry the CPU could have done once.
+    CHECK(constants.sunDirection.w == doctest::Approx(glm::radians(2.0f)));
+
+    // The Rayleigh lane carries the coefficients ALREADY scaled by the optical
+    // depth, and its w is their mean — both premultiplied here because they are
+    // the same for every pixel of the draw.
+    const glm::vec3 scaled = settings.rayleighCoefficients * settings.zenithOpticalDepth;
+    CHECK(constants.rayleigh.b == doctest::Approx(scaled.b));
+    CHECK(constants.rayleigh.w == doctest::Approx((scaled.r + scaled.g + scaled.b) / 3.0f));
+}
+
+TEST_CASE("An airless world is the model's own limit, not a special case")
+{
+    SkySettings vacuum;
+    vacuum.zenithOpticalDepth = 0.0f;
+    vacuum.mieCoefficients = glm::vec3(0.0f);
+    vacuum.nightColor = glm::vec3(0.0f);
+    vacuum.sunDiskIntensity = 0.0f;
+
+    const SkySun sun = SunAt(45.0f);
+
+    // No air to scatter in means no sky: every direction above the horizon is
+    // black, at noon as much as at midnight.
+    for (const float elevation : {5.0f, 45.0f, 89.0f})
+    {
+        const glm::vec3 radiance = SkyRadiance(Dir(elevation, 30.0f), sun, vacuum);
+        CHECK(Luminance(radiance) == doctest::Approx(0.0f));
+    }
+
+    // And nothing dims the sun on its way in, so the ground gets the beam whole:
+    // the lit ground is the albedo itself, untinted.
+    SkySettings litGround = vacuum;
+    litGround.groundColor = glm::vec3(0.5f, 0.4f, 0.3f);
+    const glm::vec3 ground = SkyRadiance(glm::vec3(0.0f, -1.0f, 0.0f), SunAt(90.0f), litGround);
+    CHECK(ground.r / ground.g == doctest::Approx(0.5f / 0.4f).epsilon(0.001));
+    CHECK(ground.g / ground.b == doctest::Approx(0.4f / 0.3f).epsilon(0.001));
+
+    // Air is what reddens a low sun. Without it the beam is the same colour at
+    // the horizon as overhead — no atmosphere, no sunset.
+    SkySettings withDisk = vacuum;
+    withDisk.sunDiskIntensity = 10.0f;
+    const glm::vec3 highSun = SkyRadiance(Dir(80.0f, 0.0f), SunAt(80.0f), withDisk);
+    const glm::vec3 lowSun = SkyRadiance(Dir(1.0f, 0.0f), SunAt(1.0f), withDisk);
+    CHECK(highSun.r / highSun.b == doctest::Approx(lowSun.r / lowSun.b).epsilon(0.001));
+}
+
+TEST_CASE("Air of another composition gives another sky, and its own sunset")
+{
+    SkySettings alien = ClearAir();
+    // Green scatters hardest here, where on Earth blue does.
+    alien.rayleighCoefficients = glm::vec3(0.30f, 1.0f, 0.35f);
+
+    const glm::vec3 noon = SkyRadiance(Dir(89.0f, 90.0f), SunAt(45.0f), alien);
+    CHECK(noon.g > noon.r);
+    CHECK(noon.g > noon.b);
+
+    // And the sunset is the complement, with nothing further authored: the beam
+    // loses what the air scatters most, so what survives a long path is what it
+    // scatters least — red and blue, which is magenta.
+    const glm::vec3 sunset = SkyRadiance(Dir(1.0f, 0.0f), SunAt(1.0f), alien);
+    CHECK(sunset.r > sunset.g);
+    CHECK(sunset.b > sunset.g);
+
+    // The mechanism is the coefficients, not a hardcoded hue: Earth's air in the
+    // same model puts blue overhead and red at the horizon instead.
+    const SkySettings earth = ClearAir();
+    const glm::vec3 earthNoon = SkyRadiance(Dir(89.0f, 90.0f), SunAt(45.0f), earth);
+    CHECK(earthNoon.b > earthNoon.g);
+}
+
+TEST_CASE("Coloured haze tints the sky independently of the air")
+{
+    SkySettings dusty = ClearAir();
+    dusty.zenithOpticalDepth = kMinZenithOpticalDepth; // no molecular scattering at all
+    dusty.mieCoefficients = glm::vec3(0.06f, 0.03f, 0.01f);
+
+    const SkySun sun = SunAt(30.0f, 0.0f);
+    const glm::vec3 radiance = SkyRadiance(Dir(35.0f, 0.0f), sun, dusty);
+
+    // With the air removed, the dust is the only thing scattering, and it is what
+    // decides the colour — which is the case no amount of Rayleigh authoring reaches.
+    CHECK(radiance.r > radiance.g);
+    CHECK(radiance.g > radiance.b);
+}
+
+TEST_CASE("Mie asymmetry aims the halo, forward or back")
+{
+    SkySettings forward = ClearAir();
+    // The air removed so the haze is the only thing scattering. Otherwise
+    // Rayleigh — which peaks toward the sun whatever the haze is doing — buries
+    // the effect this names, and the test would pass on the wrong grounds.
+    forward.zenithOpticalDepth = kMinZenithOpticalDepth;
+    forward.mieCoefficients = glm::vec3(0.05f);
+    forward.mieAsymmetry = 0.8f;
+
+    SkySettings backward = forward;
+    backward.mieAsymmetry = -0.8f;
+
+    // A low sun, so both samples sit above the horizon at the same elevation and
+    // therefore in the same amount of air — the only thing separating them is
+    // which way they face.
+    const SkySun sun = SunAt(5.0f, 0.0f);
+    const glm::vec3 toward = Dir(10.0f, 0.0f);
+    const glm::vec3 away = Dir(10.0f, 180.0f);
+
+    const glm::vec3 forwardNear = SkyRadiance(toward, sun, forward);
+    const glm::vec3 forwardFar = SkyRadiance(away, sun, forward);
+    const glm::vec3 backwardNear = SkyRadiance(toward, sun, backward);
+    const glm::vec3 backwardFar = SkyRadiance(away, sun, backward);
+
+    // Positive throws light on past the drop it scattered from, so the halo sits
+    // around the sun; negative sends it back the way it came, and the bright half
+    // of the sky is the half facing away.
+    CHECK(Luminance(forwardNear) > Luminance(forwardFar));
+    CHECK(Luminance(backwardFar) > Luminance(backwardNear));
+}
+
+TEST_CASE("The disk is a sphere, not a sticker")
+{
+    const float radius = glm::radians(2.0f);
+
+    // Limb darkening: the rim carries less than the centre, by exactly the
+    // parameter. Zero is the flat disk, which is what reads as fake.
+    const float centre = SunDiskProfile(0.0f, radius, kMinSunEdgeSoftness, 0.6f);
+    const float midway = SunDiskProfile(radius * 0.7f, radius, kMinSunEdgeSoftness, 0.6f);
+    CHECK(centre == doctest::Approx(1.0f));
+    CHECK(midway < centre);
+
+    const float flatCentre = SunDiskProfile(0.0f, radius, kMinSunEdgeSoftness, 0.0f);
+    const float flatMidway = SunDiskProfile(radius * 0.7f, radius, kMinSunEdgeSoftness, 0.0f);
+    CHECK(flatMidway == doctest::Approx(flatCentre));
+
+    // It falls off monotonically from the middle outward, and is gone outside.
+    float previous = centre;
+    for (int32_t step = 1; step <= 20; ++step)
+    {
+        const float profile = SunDiskProfile(radius * (static_cast<float>(step) / 20.0f), radius,
+                                             kMinSunEdgeSoftness, 0.6f);
+        CHECK(profile <= previous);
+        previous = profile;
+    }
+    CHECK(SunDiskProfile(radius * 3.0f, radius, kDefaultSunEdgeSoftness, 0.6f) == doctest::Approx(0.0f));
+
+    // A softer edge reaches further out — that is the whole of what it does, and
+    // it is antialiasing rather than a glow.
+    const float hard = SunDiskProfile(radius * 1.05f, radius, kMinSunEdgeSoftness, 0.0f);
+    const float soft = SunDiskProfile(radius * 1.05f, radius, 0.5f, 0.0f);
+    CHECK(soft > hard);
+
+    // Finite everywhere, including the degenerate angles either side of it.
+    CHECK(std::isfinite(SunDiskProfile(0.0f, radius, kMaxSunEdgeSoftness, kMaxSunLimbDarkening)));
+    CHECK(std::isfinite(SunDiskProfile(glm::pi<float>(), radius, kMaxSunEdgeSoftness, kMaxSunLimbDarkening)));
+}
+
+TEST_CASE("The disk tint colours the sun without touching what lights the world")
+{
+    SkySettings settings;
+    settings.sunDiskIntensity = 50.0f;
+    SkySettings tinted = settings;
+    tinted.sunDiskColor = glm::vec3(1.0f, 0.8f, 0.4f);
+
+    const SkySun sun = SunAt(45.0f);
+
+    // On the disk, the tint applies.
+    const glm::vec3 plain = SkyRadiance(sun.directionToSun, sun, settings);
+    const glm::vec3 yellow = SkyRadiance(sun.directionToSun, sun, tinted);
+    CHECK(yellow.b < plain.b);
+    CHECK(yellow.r / yellow.b > plain.r / plain.b);
+
+    // Off it, nothing changed: the tint is the disk's alone, so the sky it sits
+    // in — and the light the rest of the world is lit by — are untouched.
+    const glm::vec3 offDiskPlain = SkyRadiance(Dir(20.0f, 90.0f), sun, settings);
+    const glm::vec3 offDiskTinted = SkyRadiance(Dir(20.0f, 90.0f), sun, tinted);
+    CHECK(offDiskTinted.r == doctest::Approx(offDiskPlain.r));
+    CHECK(offDiskTinted.b == doctest::Approx(offDiskPlain.b));
 }
