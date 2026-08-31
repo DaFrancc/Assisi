@@ -396,13 +396,13 @@ def parse_radio_spec(raw: str, where: str) -> dict:
 def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
     """Resolve and validate every field's AFIELD(radio ...) against its struct,
     attaching a RadioInfo to each field. A field may be a broadcaster
-    (AFIELD(radioBroadcast) on an enum), a listener (AFIELD(radioListen = {
+    (AFIELD(radioBroadcast) on an enum or a bool), a listener (AFIELD(radioListen = {
     source, value, behavior })), or both — listeners can follow a broadcaster
     that itself follows another, forming a chain.
 
-    Every misuse is a hard build failure: a broadcaster that isn't an enum, a
-    listener naming a missing / non-enum / non-broadcaster field, an unknown
-    enumerator, a bad behavior, or a cycle in the source chain."""
+    Every misuse is a hard build failure: a broadcaster that is neither an enum
+    nor a bool, a listener naming a missing / wrong-typed / non-broadcaster field,
+    an unknown enumerator, a bad behavior, or a cycle in the source chain."""
     by_name = {f.name: f for f in comp.fields}
 
     for f in comp.fields:
@@ -412,10 +412,10 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
         info          = RadioInfo()
 
         if has_broadcast:
-            if f.enum_info is None:
+            if f.enum_info is None and f.cpp_type != 'bool':
                 raise ValueError(
-                    f"{where} is marked AFIELD(radioBroadcast) but is not an AENUM enum "
-                    f"field (its type is '{f.cpp_type}'). Only enum fields can broadcast.")
+                    f"{where} is marked AFIELD(radioBroadcast) but is neither an AENUM enum "
+                    f"field nor a bool (its type is '{f.cpp_type}'). Only those can broadcast.")
             info.is_broadcast = True
 
         if raw_spec is not None:
@@ -439,10 +439,10 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
                 raise ValueError(
                     f"{where}: AFIELD(radioListen source = {source_name}) names no field in "
                     f"struct '{comp.name}'.")
-            if source.enum_info is None:
+            if source.enum_info is None and source.cpp_type != 'bool':
                 raise ValueError(
-                    f"{where}: AFIELD(radioListen) follows '{source_name}', which is not an "
-                    f"AENUM enum field.")
+                    f"{where}: AFIELD(radioListen) follows '{source_name}', which is neither an "
+                    f"AENUM enum field nor a bool.")
             if not source.args.has('radioBroadcast'):
                 raise ValueError(
                     f"{where}: AFIELD(radioListen) follows '{source_name}', which is not "
@@ -451,13 +451,23 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
             value_names = _parse_value_list(spec['value'])
             if not value_names:
                 raise ValueError(f"{where}: AFIELD(radioListen value = ...) is empty.")
-            const_map = {name: val for name, val in source.enum_info.constants}
+
+            # A bool broadcasts the same way an enum does — it is a two-valued
+            # enumeration, and requiring one to be spelled as an AENUM to drive a
+            # radio is ceremony rather than meaning. `true`/`false` are its
+            # enumerator names, and reach the runtime as the 1/0 a bool holds.
+            if source.enum_info is None:
+                const_map = {'false': 0, 'true': 1}
+                source_desc = f"bool '{source_name}'"
+            else:
+                const_map = {name: val for name, val in source.enum_info.constants}
+                source_desc = f"'{source.enum_info.name}'"
             values: list = []
             for vname in value_names:
                 if vname not in const_map:
                     raise ValueError(
-                        f"{where}: AFIELD(radioListen value = {vname}) is not an enumerator "
-                        f"of '{source.enum_info.name}' (valid: {sorted(const_map)}).")
+                        f"{where}: AFIELD(radioListen value = {vname}) is not a value "
+                        f"of {source_desc} (valid: {sorted(const_map)}).")
                 values.append(const_map[vname])
 
             behavior = _RADIO_BEHAVIORS.get(spec['behavior'].lower())

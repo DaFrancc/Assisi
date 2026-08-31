@@ -30,6 +30,7 @@
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowPass.hpp>
+#include <Assisi/Render/SkyPass.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
@@ -369,6 +370,9 @@ private:
     Render::ShadowPass _shadowPass;
     Render::CascadeFit _cascadeFit;
     ShadowCasterGather _shadowCasters;
+    // Drawn after the opaque geometry, into the pixels it left at the depth
+    // clear. See SkyPass for why that ordering is the cheap one.
+    Render::SkyPass _skyPass;
     Render::OutlinePass _outlinePass;
     Render::IconPass _iconPass;
     Render::LinePass _linePass;
@@ -423,6 +427,10 @@ private:
     glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
     float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
+    // Latched so the unsupported-scene warning is said once rather than at the
+    // frame rate. Cleared when the scene stops having several suns, so fixing it
+    // and breaking it again is reported both times.
+    bool _multipleSunsWarned = false;
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats; // what the shadow pass drew, for the same overlay

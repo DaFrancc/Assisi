@@ -163,11 +163,19 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
         cur = FindField(meta, cur->radioSource);
     }
 
-    const auto readEnum = [component](const FieldMeta *fm) -> std::int64_t
-                          {
-                              const void *fp = static_cast<const char *>(component) + fm->offset;
-                              return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
-                          };
+    // A broadcaster is an enum or a bool, and a bool is read as the 0 or 1 the
+    // parser recorded for `false` and `true`. It cannot go through
+    // ReadEnumValue: a bool field carries no enumSize, so that would read a
+    // zero-width integer rather than the byte.
+    const auto readSource = [component](const FieldMeta *fm) -> std::int64_t
+                            {
+                                const void *fp = static_cast<const char *>(component) + fm->offset;
+                                if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
+                                {
+                                    return *static_cast<const bool *>(fp) ? 1 : 0;
+                                }
+                                return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
+                            };
 
     // Fold from the root down toward `field` (chain front). `state` holds the
     // resolved visibility of the source one level up.
@@ -181,7 +189,7 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
             state = RadioVisibility::Hidden; // an inactive source hides its listeners
             continue;
         }
-        const std::int64_t current = readEnum(source);
+        const std::int64_t current = readSource(source);
         bool match   = false;
         for (const std::int64_t value : listener->radioValues)
         {

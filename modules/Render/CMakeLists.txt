@@ -22,6 +22,8 @@ target_sources(Assisi-Render
     "include/Assisi/Render/ShadowPass.hpp"
     "include/Assisi/Render/ShadowSettings.hpp"
     "include/Assisi/Render/ShadowView.hpp"
+    "include/Assisi/Render/Sky.hpp"
+    "include/Assisi/Render/SkyPass.hpp"
     "include/Assisi/Render/Texture.hpp"
     "include/Assisi/Render/Tonemap.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
@@ -47,6 +49,7 @@ target_sources(Assisi-Render
     "src/ShadowDepthRenderer.cpp"
     "src/ShadowPass.cpp"
     "src/ShadowView.cpp"
+    "src/SkyPass.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )

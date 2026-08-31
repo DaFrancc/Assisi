@@ -15,6 +15,8 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Renderer.hpp"
     "include/Assisi/Runtime/SceneRenderer.hpp"
     "include/Assisi/Runtime/SceneSerializer.hpp"
+    "include/Assisi/Runtime/SkyComponents.hpp"
+    "include/Assisi/Runtime/SkyResolve.hpp"
   PRIVATE
     "src/AssetResolve.cpp"
     "src/Blueprint.cpp"
@@ -31,6 +33,7 @@ target_sources(Assisi-Runtime
     "src/SceneSerializerInstances.hpp"
     "src/SceneSerializerLevel.cpp"
     "src/SceneSerializerRefs.cpp"
+    "src/SkyResolve.cpp"
 )
 
 target_include_directories(Assisi-Runtime
@@ -55,6 +58,7 @@ assisi_reflect(
     include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
     include/Assisi/Runtime/NameComponent.hpp
+    include/Assisi/Runtime/SkyComponents.hpp
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)

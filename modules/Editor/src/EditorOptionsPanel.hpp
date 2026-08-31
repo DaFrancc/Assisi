@@ -79,6 +79,7 @@ private:
     /// cascade view is a runtime look.
     static void DrawShadowSettings(const Frame &frame);
 
+
     bool _showOptions = false;
 
     /// NVIDIA GPU telemetry (clocks/power/util/temp). Initialises NVML on first

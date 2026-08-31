@@ -2,6 +2,8 @@
 
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
+#include <Assisi/Runtime/SkyResolve.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -37,6 +39,12 @@ constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 // material casts a shadow with its hole in it.
 constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
 constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
+
+// The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
+// plane, so its vertex stage is its own rather than the shared one: that one
+// emits depth 0, and the sky has to land on the 1.0 the depth clear left.
+constexpr const char *kSkyVertexShader = "shaders/sky.vert.spv";
+constexpr const char *kSkyPixelShader  = "shaders/sky.frag.spv";
 
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
@@ -128,6 +136,16 @@ bool SceneRenderer::Initialize(const InitParams &params)
     }
     _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
 
+    // The sky. Non-fatal: without it the scene target keeps its clear colour,
+    // which is what every scene looked like before there was a sky at all.
+    if (!_skyPass.Initialize(Render::SkyPass::InitParams{.device = _device,
+                                                         .framebufferInfo = params.framebufferInfo,
+                                                         .vertexShaderSpvPath = kSkyVertexShader,
+                                                         .pixelShaderSpvPath = kSkyPixelShader}))
+    {
+        Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
+    }
+
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
     // build, the "GPU Cull" toggle stays a no-op and the CPU draw path runs.
     if (!_meshCuller.Initialize(_device))
@@ -210,6 +228,12 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     {
         Core::Log::Warn("SceneRenderer: overlay-line pipeline rebuild failed; collider wireframes disabled.");
     }
+    // The sky targets the scene format, not the overlay one — it holds radiance
+    // and is drawn before the tone map, like the geometry it sits behind.
+    if (!_skyPass.RebuildPipeline(framebufferInfo))
+    {
+        Core::Log::Warn("SceneRenderer: sky pipeline rebuild failed; sky disabled.");
+    }
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
@@ -277,6 +301,31 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .gpuCulling     = _gpuCulling,
                                                .culler         = &_meshCuller,
                                                .cullBuilder    = &_cullBuilder});
+
+    // The sky goes last, into whatever the geometry left at the depth clear. Both
+    // halves of it come from the scene — the sun from a directional light, the
+    // look from the Skybox component on that same entity — so a level authors its
+    // own world and a light that moves takes the sky with it.
+    const SkyResolution sky = ResolveSky(scene);
+    if (sky.status == SkyStatus::Ready)
+    {
+        _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), sky.sun, sky.settings);
+    }
+    // Said once, because silently dropping the sky sends someone reading shader
+    // code, and saying it every frame is its own kind of unreadable.
+    if (sky.status == SkyStatus::MultipleDirectionalLights)
+    {
+        if (!_multipleSunsWarned)
+        {
+            Core::Log::Warn("SceneRenderer: more than one directional light in the scene; the sky is unsupported "
+                            "there and is not drawn.");
+            _multipleSunsWarned = true;
+        }
+    }
+    else
+    {
+        _multipleSunsWarned = false;
+    }
 
     // What the frame actually drew, on their own tracks. These are the numbers you
     // reach for the moment `draw-scene` moves: a jump in batches or draw calls says

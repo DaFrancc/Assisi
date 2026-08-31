@@ -15,6 +15,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
+#include <Assisi/Render/Sky.hpp>
 
 #include <cstdint>
 #include <optional>
@@ -70,6 +71,22 @@ public:
     /// scale, and falls back to a fixed axis for a degenerate (zero) direction
     /// instead of producing NaN.
     [[nodiscard]] static glm::vec3 WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection);
+
+    /// @brief The colour a directional light contributes, after the atmosphere on
+    /// its own entity has had it.
+    ///
+    /// Split out of Update for the same reason WorldSpotDirection is: the rule is
+    /// the feature, and Update needs a command list.
+    ///
+    /// @p atmosphere is null when the light has tintedBySky off, or when the entity
+    /// carries no Skybox — and then @p color passes through untouched. Otherwise
+    /// @p color is NOT read: the sky supplies the colour outright, which is what
+    /// lets the inspector grey the field rather than leave it looking live.
+    ///
+    /// Extinction dims as well as tints, so both ride here and the light's
+    /// authored intensity is left exactly as authored.
+    [[nodiscard]] static glm::vec3 SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
+                                                 const Render::SkySettings *atmosphere);
 
     /// @brief Number of directional lights found in the last Update() call.
     uint32_t DirLightCount() const { return _dirLightCount; }
