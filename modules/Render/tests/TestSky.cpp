@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Sky.hpp>
 
@@ -762,3 +763,55 @@ TEST_CASE("The transmittance the light takes is the one the sky applies")
     }
 }
 
+
+TEST_CASE("A blackbody's colour is its hue, not its brightness")
+{
+    using Assisi::Math::BlackbodyColor;
+
+    // Warm is low. That the hot end comes out blue is physics, and the opposite
+    // of how "warm" and "cool" are used of the colours themselves.
+    const glm::vec3 tungsten = BlackbodyColor(2800.0f);
+    const glm::vec3 noonSun = BlackbodyColor(5778.0f);
+    const glm::vec3 overcast = BlackbodyColor(6500.0f);
+    const glm::vec3 northSky = BlackbodyColor(12000.0f);
+
+    CHECK(tungsten.r > tungsten.b);
+    CHECK(tungsten.r / tungsten.b > 4.0f);
+    CHECK(noonSun.r > noonSun.b);
+    CHECK(northSky.b > northSky.r);
+
+    // 6500 K is the sRGB white point, so it comes out near enough neutral — the
+    // check that the whole xy-to-RGB route is wired up the right way round.
+    CHECK(overcast.r == doctest::Approx(1.0f).epsilon(0.06));
+    CHECK(overcast.g == doctest::Approx(1.0f).epsilon(0.06));
+    CHECK(overcast.b == doctest::Approx(1.0f).epsilon(0.06));
+
+    // Monotone: every step up in temperature is a step toward blue, with no
+    // temperature at which it doubles back.
+    float previous = 1e9f;
+    for (int32_t kelvin = 2000; kelvin <= 20000; kelvin += 250)
+    {
+        const glm::vec3 c = BlackbodyColor(static_cast<float>(kelvin));
+        const float warmth = c.r / std::max(c.b, 1e-6f);
+        CHECK(warmth < previous);
+        previous = warmth;
+    }
+
+    // A hue and nothing more: the strongest channel is always one, so changing a
+    // light's temperature never silently changes how much light it casts.
+    for (const float kelvin : {1667.0f, 3000.0f, 5778.0f, 9000.0f, 25000.0f})
+    {
+        const glm::vec3 c = BlackbodyColor(kelvin);
+        CHECK(std::max({c.r, c.g, c.b}) == doctest::Approx(1.0f));
+        CHECK(c.r >= 0.0f);
+        CHECK(c.g >= 0.0f);
+        CHECK(c.b >= 0.0f);
+        CHECK(AllFinite(c));
+    }
+
+    // Clamped rather than extrapolated: the cubic fit diverges outside its range,
+    // so anything past the ends is the end.
+    CHECK(BlackbodyColor(-500.0f).r == doctest::Approx(BlackbodyColor(Assisi::Math::kMinTemperatureKelvin).r));
+    CHECK(BlackbodyColor(1e9f).b == doctest::Approx(BlackbodyColor(Assisi::Math::kMaxTemperatureKelvin).b));
+    CHECK(AllFinite(BlackbodyColor(std::numeric_limits<float>::quiet_NaN())));
+}

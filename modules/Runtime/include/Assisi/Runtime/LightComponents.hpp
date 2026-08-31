@@ -34,6 +34,18 @@ namespace Assisi::Runtime
 // would make every newly placed light wrong until someone noticed. Turning it
 // off is a cost decision the author makes deliberately.
 
+/// @brief How a directional light's own colour is written down.
+///
+/// Two spellings of one thing. Kelvin is how light sources are actually
+/// specified — 3000 K reads as afternoon, 6500 K as an overcast noon — and RGB is
+/// there for a sun that is not a blackbody at all.
+AENUM()
+enum class SunColorExpression : std::uint8_t
+{
+    Rgb,         ///< Whatever `color` says.
+    Temperature, ///< A blackbody at `temperatureKelvin`.
+};
+
 /// @brief Infinite-distance directional light (sun / moon).
 ///
 /// No position, no falloff.  Multiple directional lights are supported.
@@ -54,15 +66,36 @@ struct DirectionalLight
     /// take a colour from, and @ref color is used as authored.
     AFIELD(radioBroadcast) bool tintedBySky = true;
 
-    /// Linear-RGB colour. Read only while @ref tintedBySky is off — the sky
-    /// supplies its own, so the inspector greys this out while it is doing so,
-    /// and nothing reads it then.
-    AFIELD(radioListen = {source = tintedBySky, value = false, behavior = grey})
-    glm::vec3 color{1.f, 1.f, 1.f};
+    /// Which of the two below says what colour this sun is. Both vanish while the
+    /// sky is supplying one, because then neither is read.
+    AFIELD(radioBroadcast, radioListen = {source = tintedBySky, value = false, behavior = vanish})
+    SunColorExpression colorExpression = SunColorExpression::Rgb;
+
+    /// Linear-RGB colour, under SunColorExpression::Rgb.
+    AFIELD(radioListen = {source = colorExpression, value = Rgb, behavior = grey})
+    Assisi::Math::Color3 color{1.f, 1.f, 1.f};
+
+    /// Colour temperature, under SunColorExpression::Temperature. Low is warm:
+    /// about 2800 K for tungsten, 5800 for daylight, 6500 for an overcast sky,
+    /// past 10000 for a blue north sky. Morning and afternoon light differ here.
+    AFIELD(min = 1667.0, max = 25000.0, radioListen = {source = colorExpression, value = Temperature, behavior = grey})
+    float temperatureKelvin = 5778.f;
 
     AFIELD() float intensity = 1.f;
     AFIELD() bool castsShadows = true; ///< Whether this light renders a shadow map.
 };
+
+/// @brief The sun's own colour, however it was written down.
+///
+/// One place resolves the two spellings, so nothing downstream has to know there
+/// were two. Not what lights the world when @ref DirectionalLight::tintedBySky is
+/// on — see LightingSystem::SunlightColor for that.
+[[nodiscard]] inline glm::vec3 AuthoredSunColor(const DirectionalLight &light)
+{
+    return light.colorExpression == SunColorExpression::Temperature
+               ? Assisi::Math::BlackbodyColor(light.temperatureKelvin)
+               : glm::vec3(light.color);
+}
 
 /// @brief Omnidirectional point light with distance falloff.
 ///

@@ -51,7 +51,7 @@ SkyResolution ResolveSky(ECS::Scene &scene)
                          // grey a lie. The sun above the air is white, and the
                          // atmosphere does the rest.
                          .sun = Render::SkySun{.directionToSun = Render::SafeSkyDirection(-sunLight->direction),
-                                               .color = sunLight->tintedBySky ? glm::vec3(1.f) : sunLight->color,
+                                               .color = sunLight->tintedBySky ? glm::vec3(1.f) : AuthoredSunColor(*sunLight),
                                                .intensity = sunLight->intensity},
                          .settings = ToSkySettings(*skybox)};
 }

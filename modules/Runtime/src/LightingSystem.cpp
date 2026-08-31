@@ -148,7 +148,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
             const std::optional<Render::SkySettings> atmosphere =
                 skybox != nullptr ? std::optional<Render::SkySettings>(ToSkySettings(*skybox)) : std::nullopt;
             const glm::vec3 color =
-                SunlightColor(light.color, -direction, atmosphere ? &*atmosphere : nullptr);
+                SunlightColor(AuthoredSunColor(light), -direction, atmosphere ? &*atmosphere : nullptr);
 
             _dirLights.push_back({
                     .directionIntensity = {direction, light.intensity},

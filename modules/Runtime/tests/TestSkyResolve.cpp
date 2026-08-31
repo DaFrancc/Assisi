@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -234,4 +235,57 @@ TEST_CASE("SunlightColor is what the atmosphere leaves of the light")
         LightingSystem::SunlightColor(white, glm::normalize(glm::vec3(0.f, 0.02f, 1.f)), &vacuum);
     CHECK(unfiltered.r == doctest::Approx(1.f));
     CHECK(unfiltered.b == doctest::Approx(1.f));
+}
+
+TEST_CASE("A sun's colour can be written as RGB or as a temperature")
+{
+    using Assisi::Runtime::AuthoredSunColor;
+    using Assisi::Runtime::SunColorExpression;
+
+    DirectionalLight light;
+    light.colorExpression = SunColorExpression::Rgb;
+    light.color = Assisi::Math::Color3(0.25f, 0.5f, 1.f);
+    light.temperatureKelvin = 2800.f;
+
+    // Under Rgb the temperature is not read, and under Temperature the colour is
+    // not — which is what lets the inspector grey whichever is not in use.
+    const glm::vec3 asRgb = AuthoredSunColor(light);
+    CHECK(asRgb.r == doctest::Approx(0.25f));
+    CHECK(asRgb.b == doctest::Approx(1.f));
+
+    light.colorExpression = SunColorExpression::Temperature;
+    const glm::vec3 asKelvin = AuthoredSunColor(light);
+    CHECK(asKelvin.r > asKelvin.b);                      // 2800 K is tungsten-warm
+    CHECK(asKelvin.b < asRgb.b);                          // and nothing of the blue RGB survived
+
+    // Morning against afternoon: the pair of settings this exists for.
+    light.temperatureKelvin = 7000.f;
+    const glm::vec3 morning = AuthoredSunColor(light);
+    light.temperatureKelvin = 3500.f;
+    const glm::vec3 afternoon = AuthoredSunColor(light);
+    CHECK(morning.b > afternoon.b);
+    CHECK(afternoon.r / afternoon.b > morning.r / morning.b);
+}
+
+TEST_CASE("A temperature-authored sun reaches the sky and the world alike")
+{
+    ECS::Scene scene;
+    const ECS::Entity sun = scene.Create();
+    (void)scene.Add<DirectionalLight>(sun,
+                                      DirectionalLight{.direction = glm::vec3(0.f, -1.f, 0.f),
+                                                       .tintedBySky = false,
+                                                       .colorExpression =
+                                                           Assisi::Runtime::SunColorExpression::Temperature,
+                                                       .color = Assisi::Math::Color3(1.f, 1.f, 1.f),
+                                                       .temperatureKelvin = 3000.f,
+                                                       .intensity = 1.f,
+                                                       .castsShadows = true});
+    (void)scene.Add<Skybox>(sun);
+
+    // The sky scatters the sun it is given, so a warm sun makes a warm sky — the
+    // temperature is the star's, not a grade applied to one half of the picture.
+    const Runtime::SkyResolution resolved = ResolveSky(scene);
+    REQUIRE(resolved.status == SkyStatus::Ready);
+    CHECK(resolved.sun.color.r > resolved.sun.color.b);
+    CHECK(resolved.sun.color.r == doctest::Approx(Assisi::Math::BlackbodyColor(3000.f).r));
 }
