@@ -43,9 +43,15 @@ enum class SkyPreset : std::uint8_t
     /// Thin air at altitude. Little of it to scatter in, so the zenith goes
     /// nearly navy and the sun stays hard and white far into the afternoon.
     Alpine,
-    /// Under cloud. Approximated as haze deep enough to bury the sun's disk and
-    /// scatter it evenly, which is what an overcast sky is: one flat source.
-    Overcast,
+    /// Thick, still, muggy air. The sun survives as a pale disk with no edge to
+    /// it and the whole sky flattens toward grey.
+    ///
+    /// Deliberately NOT called overcast, and it is worth saying why. A cloudy sky
+    /// is bright because light bounces many times inside the cloud; single
+    /// scattering has no way to reach that, and haze thick enough to bury the sun
+    /// here takes the sky down with it. This is the thickest air the model is
+    /// honest about.
+    Hazy,
     /// No atmosphere. A black sky, a hard white sun, and lit ground — the
     /// airless limit of the same model rather than a mode of its own.
     Airless,
@@ -201,17 +207,18 @@ struct Skybox
         settings.sunEdgeSoftness = 0.05f;
         break;
 
-    case SkyPreset::Overcast:
-        // Cloud is not modelled, and this is the honest approximation of it:
-        // enough grey scattering to bury the disk, spread almost evenly, so what
-        // is left is one flat source with no sun in it. There is no direction to
-        // a cloudy sky, and that is what makes it read as cloudy.
-        settings.airThickness = 0.10f;
-        settings.hazeScattering = glm::vec3(0.55f);
-        settings.hazeForwardness = 0.15f;
-        settings.groundColor = glm::vec3(0.16f, 0.16f, 0.17f);
-        settings.sunDiskIntensity = 0.0f;
-        settings.exposure = 6.0f;
+    case SkyPreset::Hazy:
+        // Enough suspended water to take a third of the direct sun out and
+        // spread it, so the disk survives as something you can look at and the
+        // sky loses most of its blue. The wide, soft edge is what a sun seen
+        // through haze has; a hard one would read as a hole punched in fog.
+        settings.airThickness = 0.11f;
+        settings.hazeScattering = glm::vec3(0.05f);
+        settings.hazeForwardness = 0.60f;
+        settings.groundColor = glm::vec3(0.17f, 0.17f, 0.16f);
+        settings.sunDiskIntensity = 8.0f;
+        settings.sunEdgeSoftness = 0.40f;
+        settings.exposure = 6.5f;
         break;
 
     case SkyPreset::Airless:

@@ -97,10 +97,14 @@ void main()
     // The scattering strengths are two different things and must not be confused.
     // As a RATIO they tint the in-scattered light; scaled by how much air there
     // is they are an EXTINCTION, and only that form belongs in an exp().
-    vec3  airScattering = uSky.airScattering.rgb;
-    vec3  extinction    = airScattering * uSky.airScattering.w;
-    float greyExtinction = (extinction.r + extinction.g + extinction.b) / 3.0;
+    vec3  airScattering  = uSky.airScattering.rgb;
     vec3  hazeScattering = uSky.haze.rgb;
+    // Everything that takes light out of a straight line: the molecules AND what
+    // is suspended among them. Haze dims the beam as surely as air does, and
+    // leaving it out lights an overcast noon like a clear one.
+    vec3  airExtinction  = airScattering * uSky.airScattering.w;
+    vec3  extinction     = airExtinction + hazeScattering;
+    float greyExtinction = (airExtinction.r + airExtinction.g + airExtinction.b) / 3.0;
 
     float cosGamma    = clamp(dot(ray, sunDirection), -1.0, 1.0);
     float sunAirMass  = SunAirMass(sunDirection.y);
@@ -123,11 +127,11 @@ void main()
     // thirtieth of the air, is not.
     float scattered = 1.0 - exp(-greyExtinction * viewAirMass);
 
-    // Haze, with its own extinction and its own colour. It shares the molecular
-    // attenuation, which is what makes the halo around a setting sun take the
-    // sun's colour rather than staying white.
-    vec3 haze = (vec3(1.0) - exp(-hazeScattering * viewAirMass)) * exp(-hazeScattering * totalAirMass) *
-                MiePhase(cosGamma, uSky.haze.w);
+    // How much of the beam the haze scatters toward the eye, and which way it
+    // throws it. Its extinction is not applied here — it is in `attenuation`
+    // with the air's, so both in-scattered terms are dimmed by the same thing
+    // they were dimmed by on the way in.
+    vec3 haze = (vec3(1.0) - exp(-hazeScattering * viewAirMass)) * MiePhase(cosGamma, uSky.haze.w);
 
     // The second bounce onward, attenuated by the sun's path but not the view's.
     // Single scattering treats light knocked out of the line of sight as lost,

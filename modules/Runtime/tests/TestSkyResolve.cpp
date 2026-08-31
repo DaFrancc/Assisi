@@ -231,9 +231,11 @@ TEST_CASE("SunlightColor is what the atmosphere leaves of the light")
     // And it IS read when nothing is supplying one.
     CHECK(LightingSystem::SunlightColor(blue, glm::vec3(0.f, 1.f, 0.f), nullptr).r == doctest::Approx(blue.r));
 
-    // An airless world leaves it alone entirely.
+    // An airless world leaves it alone entirely — no air AND nothing suspended
+    // in it, since haze dims the beam just as the molecules do.
     Assisi::Render::SkySettings vacuum;
     vacuum.airThickness = 0.f;
+    vacuum.hazeScattering = glm::vec3(0.f);
     const glm::vec3 unfiltered =
         LightingSystem::SunlightColor(white, glm::normalize(glm::vec3(0.f, 0.02f, 1.f)), &vacuum);
     CHECK(unfiltered.r == doctest::Approx(1.f));
@@ -299,7 +301,7 @@ TEST_CASE("Every preset is a complete, usable sky")
     using Assisi::Runtime::SkyPreset;
 
     const SkyPreset all[] = {SkyPreset::Clear,    SkyPreset::Arctic,   SkyPreset::Savanna, SkyPreset::Tropical,
-                             SkyPreset::Alpine,   SkyPreset::Overcast, SkyPreset::Airless, SkyPreset::Custom};
+                             SkyPreset::Alpine,   SkyPreset::Hazy, SkyPreset::Airless, SkyPreset::Custom};
 
     for (const SkyPreset preset : all)
     {
@@ -332,7 +334,7 @@ TEST_CASE("The presets differ in the way their names claim")
     const auto savanna = PresetSettings(SkyPreset::Savanna);
     const auto tropical = PresetSettings(SkyPreset::Tropical);
     const auto alpine = PresetSettings(SkyPreset::Alpine);
-    const auto overcast = PresetSettings(SkyPreset::Overcast);
+    const auto hazy = PresetSettings(SkyPreset::Hazy);
     const auto airless = PresetSettings(SkyPreset::Airless);
 
     const auto haze = [](const Assisi::Render::SkySettings &s)
@@ -357,11 +359,13 @@ TEST_CASE("The presets differ in the way their names claim")
     CHECK(arctic.groundColor.b > 0.5f);
     CHECK(arctic.skyBounce > clear.skyBounce);
 
-    // Cloud has no direction and no disk in it — that is what makes it overcast
-    // rather than merely hazy.
-    CHECK(overcast.sunDiskIntensity == doctest::Approx(0.f));
-    CHECK(overcast.hazeForwardness < tropical.hazeForwardness);
-    CHECK(haze(overcast) > haze(tropical));
+    // Hazy is the thickest air here: more suspended than the tropics, and a sun
+    // softened rather than removed — the model cannot reach true overcast, so it
+    // does not pretend to.
+    CHECK(haze(hazy) > haze(tropical));
+    CHECK(hazy.sunDiskIntensity > 0.f);
+    CHECK(hazy.sunDiskIntensity < clear.sunDiskIntensity);
+    CHECK(hazy.sunEdgeSoftness > clear.sunEdgeSoftness);
 
     // And airless is the limit: nothing to scatter in at all.
     CHECK(airless.airThickness == doctest::Approx(0.f));

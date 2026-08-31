@@ -199,6 +199,13 @@ struct SkySettings
     float airThickness = kDefaultAirThickness;
 
     /// Extinction per channel by dust and droplets. See kEarthHazeScattering.
+    ///
+    /// Honest up to about 0.06. Past that the model inverts the sky's gradient —
+    /// the horizon goes DARKER than the zenith, where real haze brightens it. The
+    /// cause is single scattering: thick haze extinguishes the beam over the
+    /// horizon's long path, and what keeps real fog bright is the light bouncing
+    /// inside it many times, which this has no way to follow. True overcast is
+    /// out of reach for the same reason.
     glm::vec3 hazeScattering = kEarthHazeScattering;
     float hazeForwardness = kDefaultHazeForwardness;
 
@@ -396,6 +403,18 @@ struct SkySun
     return edge * (1.0f - limbDarkening * (1.0f - faceCosine));
 }
 
+/// @brief Everything in the air that takes light out of a straight line, per
+/// channel.
+///
+/// The molecules AND what is suspended among them. Haze belongs here and not
+/// only in the glow it adds: dust and water dim the sun as surely as air does,
+/// and an atmosphere that scattered a bright halo while letting the beam through
+/// undimmed would light an overcast noon like a clear one.
+[[nodiscard]] inline glm::vec3 BeamExtinction(const SkySettings &settings)
+{
+    return settings.airScattering * settings.airThickness + settings.hazeScattering;
+}
+
 /// @brief The fraction of the sun's light, per channel, that survives the
 /// atmosphere on its way to the ground.
 ///
@@ -408,8 +427,7 @@ struct SkySun
                                                      const SkySettings &rawSettings)
 {
     const SkySettings settings = Sanitized(rawSettings);
-    const glm::vec3 extinction = settings.airScattering * settings.airThickness;
-    return Transmittance(extinction, SunAirMass(SafeSkyDirection(directionToSun).y));
+    return Transmittance(BeamExtinction(settings), SunAirMass(SafeSkyDirection(directionToSun).y));
 }
 
 /// @brief The sun's light where it reaches the ground, having crossed the
@@ -444,11 +462,13 @@ struct SkySun
     const float viewAirMass = ViewAirMass(ray.y);
     const glm::vec3 radiantSun = sun.color * sun.intensity;
 
-    // Extinction per channel, and the colourless part of it. The first says what
-    // colour the air takes out; the second says how much of the beam it scatters
-    // rather than transmits, which is a quantity and not a hue.
-    const glm::vec3 extinction = settings.airScattering * settings.airThickness;
-    const float greyExtinction = (extinction.r + extinction.g + extinction.b) / 3.0f;
+    // Everything that takes light out of a straight line, and the colourless
+    // part of the air's share. The first says what colour is removed; the second
+    // says how much of the beam the air scatters rather than transmits, which is
+    // a quantity and not a hue.
+    const glm::vec3 extinction = BeamExtinction(settings);
+    const glm::vec3 airExtinction = settings.airScattering * settings.airThickness;
+    const float greyExtinction = (airExtinction.r + airExtinction.g + airExtinction.b) / 3.0f;
 
     // What is left of the beam where it meets the ground: the sun's own colour,
     // and the whole reason a low sun shifts hue. The same value a Skybox hands
@@ -467,11 +487,11 @@ struct SkySun
     // the horizon is bright and the zenith, with a thirtieth of the air, is not.
     const float scattered = 1.0f - std::exp(-greyExtinction * viewAirMass);
 
-    // Haze, with its own extinction and its own colour. It shares the molecular
-    // attenuation, which is what makes the halo around a setting sun take the
-    // sun's colour rather than staying white.
+    // How much of the beam the haze scatters toward the eye, and which way it
+    // throws it. Its extinction is not applied here — it is in `attenuation`
+    // with the air's, so both in-scattered terms are dimmed by the same thing
+    // they were dimmed by on the way in.
     const glm::vec3 mie = (glm::vec3(1.0f) - Transmittance(settings.hazeScattering, viewAirMass)) *
-                          Transmittance(settings.hazeScattering, sunAirMass + viewAirMass) *
                           MiePhase(cosGamma, settings.hazeForwardness);
 
     // The second bounce onward, attenuated by the sun's path but not the view's

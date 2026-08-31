@@ -727,9 +727,11 @@ TEST_CASE("Sunlight at the ground is the same beam the sky scatters")
     const glm::vec3 blueLight = SunlightAtGround(blueSun, settings);
     CHECK(blueLight.b > blueLight.r);
 
-    // And an airless world does nothing to it at all.
+    // And an airless world does nothing to it at all — no air AND nothing
+    // suspended in it, since haze dims the beam just as the molecules do.
     SkySettings vacuum;
     vacuum.airThickness = 0.0f;
+    vacuum.hazeScattering = glm::vec3(0.0f);
     const glm::vec3 unfiltered = SunlightAtGround(sunset, vacuum);
     CHECK(unfiltered.r == doctest::Approx(1.0f));
     CHECK(unfiltered.b == doctest::Approx(1.0f));
