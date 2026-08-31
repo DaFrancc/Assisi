@@ -104,6 +104,23 @@ inline constexpr float kMinMieAsymmetry = -0.95f;
 inline constexpr float kMaxMieAsymmetry = 0.95f;
 inline constexpr float kDefaultMieAsymmetry = 0.76f;
 
+/// How much of the light scattered OUT of the single-scattered beam arrives
+/// anyway, having bounced again.
+///
+/// Single scattering treats a photon knocked out of the line of sight as lost,
+/// and over the horizon's thirty-odd air masses that is badly wrong: it kills
+/// the blue exactly where the sky is deepest, leaving the horizon green. Real
+/// air is not a one-bounce medium. This is the second order and beyond, folded
+/// into one term — attenuated by the sun's path but not the view's, and
+/// isotropic, because by the time light has bounced twice it has forgotten which
+/// way it came.
+///
+/// Zero is pure single scattering. It costs nothing on an airless world, where
+/// there is no scattering to have a second order of.
+inline constexpr float kMinMultipleScattering = 0.0f;
+inline constexpr float kMaxMultipleScattering = 1.0f;
+inline constexpr float kDefaultMultipleScattering = 0.2f;
+
 /// Overall multiplier on the sky's radiance. The scene target holds radiance and
 /// the tone map is downstream, so this is an exposure of the sky against the
 /// rest of the scene rather than a brightness in display terms.
@@ -179,6 +196,9 @@ struct SkySettings
     glm::vec3 mieCoefficients = kEarthMieCoefficients;
     float mieAsymmetry = kDefaultMieAsymmetry;
 
+    /// See kDefaultMultipleScattering. Without it the horizon goes green.
+    float multipleScattering = kDefaultMultipleScattering;
+
     /// Albedo of the ground half of the sphere, lit by the same sun as the sky.
     /// Not a floor or a real surface — the sky covers every direction, and this
     /// is what the ones pointing down get.
@@ -199,7 +219,9 @@ struct SkySettings
     /// Tint on the disk ALONE, multiplied over the sun's own colour. White
     /// leaves the disk agreeing with the light that lights the world; pushing it
     /// is the artistic escape hatch for a yellow sun over a neutrally-lit scene.
-    glm::vec3 sunDiskColor{1.0f, 1.0f, 1.0f};
+    /// Warm by default. A star's disk read against a blue sky looks yellow to
+    /// the eye, and a pure white one reads as a hole rather than a sun.
+    glm::vec3 sunDiskColor{1.0f, 0.95f, 0.82f};
     /// @}
 };
 
@@ -243,6 +265,8 @@ struct SkySun
     settings.mieCoefficients = SanitizedSkyChannels(settings.mieCoefficients, defaults.mieCoefficients);
     settings.mieAsymmetry =
         ClampFiniteSky(settings.mieAsymmetry, kMinMieAsymmetry, kMaxMieAsymmetry, defaults.mieAsymmetry);
+    settings.multipleScattering = ClampFiniteSky(settings.multipleScattering, kMinMultipleScattering,
+                                                 kMaxMultipleScattering, defaults.multipleScattering);
     settings.groundColor = SanitizedSkyChannels(settings.groundColor, defaults.groundColor);
     settings.nightColor = SanitizedSkyChannels(settings.nightColor, defaults.nightColor);
     settings.intensity = ClampFiniteSky(settings.intensity, kMinSkyIntensity, kMaxSkyIntensity, defaults.intensity);
@@ -413,9 +437,15 @@ struct SkySun
                           Transmittance(settings.mieCoefficients, sunAirMass + viewAirMass) *
                           MiePhase(cosGamma, settings.mieAsymmetry);
 
+    // The second bounce onward, attenuated by the sun's path but not the view's
+    // — which is the whole point, since it is at the horizon, where the
+    // round-trip term has died, that the sky would otherwise turn green.
+    const glm::vec3 multiScattered =
+        beam * (settings.rayleighCoefficients * (scattered * settings.multipleScattering));
+
     const glm::vec3 sky =
         radiantSun * attenuation * (settings.rayleighCoefficients * (RayleighPhase(cosGamma) * scattered) + mie) +
-        settings.nightColor;
+        multiScattered + settings.nightColor;
 
     // The ground reflects the same beam off a Lambertian albedo, foreshortened by
     // the sun's elevation. It gets the night colour too, so a moonless landscape
@@ -457,6 +487,7 @@ struct SkyConstants
     glm::vec4 groundColor{0.0f};                    ///< xyz = linear colour, w = sky intensity
     glm::vec4 nightColor{0.0f};                     ///< xyz = linear colour, w = disk intensity
     glm::vec4 sunDiskColor{1.0f};                   ///< xyz = disk tint, w = limb darkening
+    glm::vec4 atmosphere{0.0f};                     ///< x = multiple scattering, yzw unused
 };
 
 /// @brief The constants for one sky draw, with everything sanitized on the way in.
@@ -481,7 +512,8 @@ struct SkyConstants
         .mie = glm::vec4(settings.mieCoefficients, settings.mieAsymmetry),
         .groundColor = glm::vec4(settings.groundColor, settings.intensity),
         .nightColor = glm::vec4(settings.nightColor, settings.sunDiskIntensity),
-        .sunDiskColor = glm::vec4(settings.sunDiskColor, settings.sunLimbDarkening)};
+        .sunDiskColor = glm::vec4(settings.sunDiskColor, settings.sunLimbDarkening),
+        .atmosphere = glm::vec4(settings.multipleScattering, 0.0f, 0.0f, 0.0f)};
 }
 
 } // namespace Assisi::Render

@@ -53,6 +53,11 @@ struct Skybox
     /// How sharply haze throws light. Positive scatters forward (the halo around
     /// a low sun), negative scatters back toward it, zero is uniform.
     AFIELD() float mieAsymmetry = Assisi::Render::kDefaultMieAsymmetry;
+
+    /// How much light knocked out of the direct line of sight arrives anyway,
+    /// having bounced again. Without it the horizon turns green, because single
+    /// scattering treats that light as lost exactly where there is most of it.
+    AFIELD(min = 0) float multipleScattering = Assisi::Render::kDefaultMultipleScattering;
     /// @}
 
     /// @name Colour
@@ -94,7 +99,7 @@ struct Skybox
     /// Tint on the disk ALONE, over the light's own colour. White leaves the
     /// disk agreeing with what lights the world; pushing it is the escape hatch
     /// for a yellow sun over a neutrally-lit scene.
-    AFIELD() glm::vec3 sunDiskColor{1.0f, 1.0f, 1.0f};
+    AFIELD() glm::vec3 sunDiskColor{1.0f, 0.95f, 0.82f};
     /// @}
 };
 
@@ -105,6 +110,7 @@ struct Skybox
                                        .zenithOpticalDepth = skybox.zenithOpticalDepth,
                                        .mieCoefficients = skybox.mieCoefficients,
                                        .mieAsymmetry = skybox.mieAsymmetry,
+                                       .multipleScattering = skybox.multipleScattering,
                                        .groundColor = skybox.groundColor,
                                        .nightColor = skybox.nightColor,
                                        .intensity = skybox.intensity,

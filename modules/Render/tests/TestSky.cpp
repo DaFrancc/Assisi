@@ -603,3 +603,84 @@ TEST_CASE("The disk tint colours the sun without touching what lights the world"
     CHECK(offDiskTinted.r == doctest::Approx(offDiskPlain.r));
     CHECK(offDiskTinted.b == doctest::Approx(offDiskPlain.b));
 }
+
+TEST_CASE("The default sky is blue overhead and pale blue at the horizon")
+{
+    // What the defaults look like, asserted rather than left to a screenshot.
+    // Every claim here is about the DEFAULT settings: change them and this is the
+    // test that says the picture changed with them.
+    const SkySettings settings;
+    const SkySun sun = SunAt(45.0f, 0.0f);
+
+    const glm::vec3 zenith = SkyRadiance(Dir(89.0f, 90.0f), sun, settings);
+    const glm::vec3 horizon = SkyRadiance(Dir(1.0f, 90.0f), sun, settings);
+
+    // Blue is the strongest channel in both halves of the sky. The horizon is
+    // where this is easy to lose: single scattering alone puts GREEN highest
+    // there, because it treats the blue knocked out over thirty air masses as
+    // gone rather than re-scattered.
+    CHECK(zenith.b > zenith.g);
+    CHECK(zenith.g > zenith.r);
+    CHECK(horizon.b > horizon.g);
+    CHECK(horizon.g > horizon.r);
+
+    // Deep overhead, pale at the horizon — the horizon is less saturated, not a
+    // different hue.
+    CHECK(zenith.b / zenith.r > 2.5f);
+    CHECK(horizon.b / horizon.r < zenith.b / zenith.r);
+    CHECK(horizon.b / horizon.r > 1.2f);
+
+    // And brighter toward the horizon, which is what makes a sky read as deep.
+    CHECK(Luminance(horizon) > Luminance(zenith));
+}
+
+TEST_CASE("Multiple scattering is what keeps the horizon from going green")
+{
+    SkySettings single;
+    single.multipleScattering = 0.0f;
+    const SkySettings settings; // the default, which has it
+
+    const SkySun sun = SunAt(45.0f, 0.0f);
+    const glm::vec3 direction = Dir(1.0f, 90.0f);
+
+    const glm::vec3 withoutIt = SkyRadiance(direction, sun, single);
+    const glm::vec3 withIt = SkyRadiance(direction, sun, settings);
+
+    // Without it the horizon's strongest channel is green — the artefact this
+    // term exists to remove.
+    CHECK(withoutIt.g > withoutIt.b);
+    CHECK(withIt.b > withIt.g);
+
+    // It adds light rather than redistributing it: the second bounce arrives, it
+    // does not come out of the first.
+    CHECK(Luminance(withIt) > Luminance(withoutIt));
+
+    // And it costs nothing where there is no air to bounce in, so an airless
+    // world is unaffected by whatever it is set to.
+    SkySettings vacuum;
+    vacuum.zenithOpticalDepth = 0.0f;
+    vacuum.mieCoefficients = glm::vec3(0.0f);
+    vacuum.nightColor = glm::vec3(0.0f);
+    vacuum.sunDiskIntensity = 0.0f;
+    SkySettings vacuumMulti = vacuum;
+    vacuumMulti.multipleScattering = kMaxMultipleScattering;
+    CHECK(Luminance(SkyRadiance(direction, sun, vacuumMulti)) == doctest::Approx(0.0f));
+}
+
+TEST_CASE("The default sun disk is warm, not a white hole")
+{
+    const SkySettings settings;
+    const SkySun sun = SunAt(50.0f);
+
+    const glm::vec3 disk = SkyRadiance(sun.directionToSun, sun, settings);
+
+    // Warm: red strongest, blue weakest, and by enough to read as yellow rather
+    // than as a rounding difference.
+    CHECK(disk.r > disk.g);
+    CHECK(disk.g > disk.b);
+    CHECK(disk.r / disk.b > 1.15f);
+
+    // Still recognisably the sun rather than an orange lamp — a tint, not a
+    // sunset.
+    CHECK(disk.r / disk.b < 2.0f);
+}

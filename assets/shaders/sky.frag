@@ -20,6 +20,7 @@ layout(binding = 256) uniform SkyConstants
     vec4 groundColor;     // xyz = linear colour, w = sky intensity
     vec4 nightColor;      // xyz = linear colour, w = disk intensity
     vec4 sunDiskColor;    // xyz = disk tint, w = limb darkening
+    vec4 atmosphere;      // x = multiple scattering, yzw unused
 } uSky;
 
 layout(location = 0) in vec4 vFarPoint;
@@ -124,11 +125,15 @@ void main()
     vec3 mie = (vec3(1.0) - exp(-mieCoeff * viewAirMass)) * exp(-mieCoeff * totalAirMass) *
                MiePhase(cosGamma, uSky.mie.w);
 
-    // The Rayleigh coefficients recovered unscaled: the optical depth is already
-    // in `rayleigh`, and what tints the in-scattered light is the ratio between
-    // the channels, not its magnitude.
+    // The second bounce onward, attenuated by the sun's path but not the view's.
+    // Single scattering treats light knocked out of the line of sight as lost,
+    // which over the horizon's thirty-odd air masses kills the blue exactly where
+    // the sky is deepest and leaves the horizon green. This is what air actually
+    // does with it.
+    vec3 multiScattered = beam * (rayleigh * (scattered * uSky.atmosphere.x));
+
     vec3 sky = radiantSun * attenuation * (rayleigh * (RayleighPhase(cosGamma) * scattered) + mie) +
-               uSky.nightColor.rgb;
+               multiScattered + uSky.nightColor.rgb;
 
     // The ground reflects the same beam off a Lambertian albedo, foreshortened by
     // the sun's elevation, and gets the night colour too — so it and the sky over
