@@ -19,15 +19,15 @@ namespace
 {
 /// An entity carrying a sun pointing straight down, i.e. a sun overhead.
 ///
-/// Authored by default so the colour it is given is the colour that comes out —
-/// under SunColorSource::Sky the sun above the air is white, which is a different
+/// Untinted by default so the colour it is given is the colour that comes out —
+/// with tintedBySky on, the sun above the air is white, which is a different
 /// thing to be testing.
 ECS::Entity AddSun(ECS::Scene &scene, const glm::vec3 &travels = glm::vec3(0.f, -1.f, 0.f),
-                   Assisi::Runtime::SunColorSource source = Assisi::Runtime::SunColorSource::Authored)
+                   bool tintedBySky = false)
 {
     const ECS::Entity entity = scene.Create();
     (void)scene.Add<DirectionalLight>(entity, DirectionalLight{.direction = travels,
-                                                               .colorSource = source,
+                                                               .tintedBySky = tintedBySky,
                                                                .color = glm::vec3(1.f, 0.9f, 0.8f),
                                                                .intensity = 3.f,
                                                                .castsShadows = true});
@@ -71,7 +71,7 @@ TEST_CASE("A sun carrying a Skybox is a sky")
     CHECK(resolved.sun.directionToSun.y == doctest::Approx(1.f));
     CHECK(glm::length(resolved.sun.directionToSun) == doctest::Approx(1.f));
 
-    // With an authored colour, the sun's colour and intensity are the light's,
+    // With tintedBySky off, the sun's colour and intensity are the light's,
     // not the component's — one physical quantity lights the world, tints the sky
     // and colours the disk.
     CHECK(resolved.sun.color.g == doctest::Approx(0.9f));
@@ -148,15 +148,14 @@ TEST_CASE("A sun tinted by its sky is lit by what reaches the ground")
     // same entity — the atmosphere doing the tinting.
     ECS::Scene scene;
     const ECS::Entity sun = scene.Create();
-    (void)scene.Add<DirectionalLight>(sun,
-                                      DirectionalLight{.direction = glm::vec3(0.f, -1.f, 0.f),
-                                                       .colorSource = Assisi::Runtime::SunColorSource::Sky,
-                                                       .color = glm::vec3(1.f),
-                                                       .intensity = 1.f,
-                                                       .castsShadows = true});
+    (void)scene.Add<DirectionalLight>(sun, DirectionalLight{.direction = glm::vec3(0.f, -1.f, 0.f),
+                                                            .tintedBySky = true,
+                                                            .color = glm::vec3(1.f),
+                                                            .intensity = 1.f,
+                                                            .castsShadows = true});
     (void)scene.Add<Skybox>(sun);
 
-    // Under Sky the authored colour reaches nothing at all — not the light, and
+    // With tintedBySky on, the authored colour reaches nothing at all — not the light, and
     // not the sky either. A field the inspector greys out has to be inert
     // everywhere, or the grey is telling the author something untrue.
     const Runtime::SkyResolution resolved = ResolveSky(scene);
@@ -167,12 +166,12 @@ TEST_CASE("A sun tinted by its sky is lit by what reaches the ground")
 
 TEST_CASE("A greyed-out sun colour reaches nothing, and an authored one reaches the sky")
 {
-    const auto skyColorFor = [](Assisi::Runtime::SunColorSource source)
+    const auto skyColorFor = [](bool tintedBySky)
                              {
                                  ECS::Scene scene;
                                  const ECS::Entity sun = scene.Create();
                                  (void)scene.Add<DirectionalLight>(sun, DirectionalLight{.direction = glm::vec3(0.f, -1.f, 0.f),
-                                                                                         .colorSource = source,
+                                                                                         .tintedBySky = tintedBySky,
                                                                                          .color = glm::vec3(0.2f, 0.4f, 1.f),
                                                                                          .intensity = 1.f,
                                                                                          .castsShadows = true});
@@ -183,14 +182,14 @@ TEST_CASE("A greyed-out sun colour reaches nothing, and an authored one reaches 
                              };
 
     // Greyed: the blue authored on the light is nowhere in the sky's input.
-    const glm::vec3 fromSky = skyColorFor(Assisi::Runtime::SunColorSource::Sky);
+    const glm::vec3 fromSky = skyColorFor(true);
     CHECK(fromSky.r == doctest::Approx(1.f));
     CHECK(fromSky.g == doctest::Approx(1.f));
     CHECK(fromSky.b == doctest::Approx(1.f));
 
     // Editable: a blue sun scatters a blue sky, which is the whole reason to
     // author one.
-    const glm::vec3 authored = skyColorFor(Assisi::Runtime::SunColorSource::Authored);
+    const glm::vec3 authored = skyColorFor(false);
     CHECK(authored.r == doctest::Approx(0.2f));
     CHECK(authored.b == doctest::Approx(1.f));
 }

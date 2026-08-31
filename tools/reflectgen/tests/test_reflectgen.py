@@ -958,20 +958,69 @@ class RadioTest(unittest.TestCase):
             cpp,
         )
 
+    # ── bool sources ────────────────────────────────────────────────────────
+    #
+    # A bool is a two-valued enumeration, so it broadcasts like one. Requiring an
+    # AENUM to express an on/off radio was ceremony, not meaning.
+
+    def test_bool_can_broadcast(self):
+        f = self._fields("AFIELD(radioBroadcast) bool flag = true;")["flag"]
+        self.assertTrue(f.radio.is_broadcast)
+        self.assertEqual(f.radio.source, "")
+
+    def test_bool_listener_resolves_true_and_false_to_one_and_zero(self):
+        fields = self._fields(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = false, behavior = grey}) float x = 0.f;\n"
+            "AFIELD(radioListen = {source = flag, value = true, behavior = vanish}) float y = 0.f;"
+        )
+        self.assertEqual(fields["x"].radio.source, "flag")
+        self.assertEqual(fields["x"].radio.values, [0])
+        self.assertEqual(fields["x"].radio.behavior, "Grey")
+        self.assertEqual(fields["y"].radio.values, [1])
+        self.assertEqual(fields["y"].radio.behavior, "Vanish")
+
+    def test_bool_listener_emits_the_same_radio_members_an_enum_would(self):
+        # The runtime tells the two apart by the source's FieldType, so nothing
+        # about the emitted listener changes.
+        cpp = reflectgen.generate_cpp(_parse_source(self._src(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = false, behavior = grey}) int32_t n = 0;"
+        )), "N/C.hpp")
+        self.assertIn('"flag", { 0 }, Assisi::Core::Reflect::RadioBehavior::Grey', cpp)
+
+    def test_bool_source_accepts_both_values_at_once(self):
+        f = self._fields(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = {false, true}, behavior = grey}) float x = 0.f;"
+        )["x"]
+        self.assertEqual(sorted(f.radio.values), [0, 1])
+
+    def test_bool_source_rejects_a_value_that_is_not_true_or_false(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = High, behavior = grey}) float x = 0.f;")
+
+    def test_listen_to_non_broadcaster_bool_is_rejected(self):
+        # A bool must still opt in, exactly as an enum does.
+        self._assert_rejected(
+            "AFIELD() bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = true, behavior = grey}) float x = 0.f;")
+
     # ── hard-fail validation ────────────────────────────────────────────────
 
     def _assert_rejected(self, body: str):
         with self.assertRaises(ValueError):
             _parse_source(self._src(body))
 
-    def test_broadcast_on_non_enum_is_rejected(self):
+    def test_broadcast_on_neither_enum_nor_bool_is_rejected(self):
         self._assert_rejected("AFIELD(radioBroadcast) float notAnEnum = 0.f;")
 
     def test_listen_to_missing_field_is_rejected(self):
         self._assert_rejected(
             "AFIELD(radioListen = {source = ghost, value = High, behavior = grey}) float x = 0.f;")
 
-    def test_listen_to_non_enum_field_is_rejected(self):
+    def test_listen_to_neither_enum_nor_bool_field_is_rejected(self):
         self._assert_rejected(
             "AFIELD() float src = 0.f;\n"
             "AFIELD(radioListen = {source = src, value = High, behavior = grey}) float x = 0.f;")

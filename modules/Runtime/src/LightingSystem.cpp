@@ -61,8 +61,8 @@ glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 
     {
         return color;
     }
-    // White through the air, not the authored colour through it: under
-    // SunColorSource::Sky the sky IS the colour, and the inspector greys the
+    // White through the air, not the authored colour through it: while
+    // tintedBySky is on the sky IS the colour, and the inspector greys the
     // authored one out to say so. Multiplying it in here would make that grey a
     // lie.
     return Render::SunlightTransmittance(directionToSun, *atmosphere);
@@ -143,8 +143,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
             // Only what lights surfaces is tinted. The sky scatters the light's
             // own `color` and applies this same extinction itself, so nothing
             // applies it twice.
-            const Skybox *skybox =
-                light.colorSource == SunColorSource::Sky ? scene.Get<Skybox>(entity) : nullptr;
+            const Skybox *skybox = light.tintedBySky ? scene.Get<Skybox>(entity) : nullptr;
             const glm::vec3 direction = SafeDirection(light.direction);
             const std::optional<Render::SkySettings> atmosphere =
                 skybox != nullptr ? std::optional<Render::SkySettings>(ToSkySettings(*skybox)) : std::nullopt;

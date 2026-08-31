@@ -64,13 +64,17 @@
 /// (redundant), and on AFIELD(norep) in a component that is not replicable (the
 /// annotation would mean nothing).
 ///
-/// Radio (declarative editor visibility driven by a sibling enum's value):
-///   AFIELD(radioBroadcast)       -- marks an AENUM enum field as a broadcaster
+/// Radio (declarative editor visibility driven by a sibling field's value):
+///   AFIELD(radioBroadcast)       -- marks an AENUM enum or bool field as a broadcaster
 ///   AFIELD(radioListen = { source = shape, value = Box, behavior = vanish })
 ///   AFIELD(radioListen = { source = shape, value = {Sphere, Capsule}, behavior = grey })
-/// A listener field is active only while the named source enum equals one of the
+///   AFIELD(radioListen = { source = tintedBySky, value = false, behavior = grey })
+/// A listener field is active only while the named source equals one of the
 /// listed value(s); otherwise the inspector greys it out (behavior = grey) or
 /// hides it (behavior = vanish).
+///
+/// A bool broadcasts like the two-valued enumeration it is, with `true` and
+/// `false` as its value names — an on/off radio needs no AENUM invented for it.
 ///
 /// A field may be BOTH a broadcaster and a listener, so a source can itself
 /// follow another broadcaster (a chain). The rule is recursive: while a source
@@ -82,9 +86,10 @@
 ///   AFIELD(radioBroadcast, radioListen = { source = myFoo, value = A, behavior = vanish }) Bar myBar;
 ///   AFIELD(radioListen = { source = myBar, value = X, behavior = grey }) float f;
 ///
-/// reflectgen hard-fails the build if radioBroadcast is on a non-enum field, if
-/// `source` names a field that is not an AENUM enum marked AFIELD(radioBroadcast)
-/// in the same struct, if any `value` is not an enumerator of that enum, if
+/// reflectgen hard-fails the build if radioBroadcast is on a field that is
+/// neither an AENUM enum nor a bool, if `source` names a field that is not such a
+/// field marked AFIELD(radioBroadcast) in the same struct, if any `value` is not
+/// one of that source's values (an enumerator, or true/false for a bool), if
 /// `behavior` is neither grey nor vanish, or if the chain contains a cycle.
 
 #define ACOMP(...)
