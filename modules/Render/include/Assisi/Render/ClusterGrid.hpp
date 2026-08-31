@@ -51,7 +51,7 @@ static_assert(sizeof(SpotLightGPU) == 64);
 
 struct DirLightGPU
 {
-    glm::vec4 directionIntensity; ///< xyz = direction toward light (unit vec), w = intensity
+    glm::vec4 directionIntensity; ///< xyz = direction the light TRAVELS (unit vec), w = intensity
     glm::vec4 colorPad;           ///< xyz = linear-RGB colour, w = unused
 };
 static_assert(sizeof(DirLightGPU) == 32);

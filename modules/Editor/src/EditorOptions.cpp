@@ -15,6 +15,7 @@
 
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Render/PostProcess.hpp>
+#include <Assisi/Render/Sky.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -189,6 +190,57 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         frame.renderer.SetShadowSettings(shadows);
         frame.options.shadows = shadows;
         frame.options.SaveToJson();
+    }
+}
+
+// The sky. Every value here rides into the sky shader as a constant, so an edit
+// lands on the next frame with nothing rebuilt — which is what makes these
+// usable for comparing one setting against another.
+//
+// The sun is deliberately absent: it is the scene's own first directional light,
+// so the way to move the sky is to move that light. A scene with no directional
+// light draws no sky at all, which is what the line under the toggle is for —
+// without it these knobs look broken rather than unlit.
+void EditorOptionsPanel::DrawSkySettings(const Frame &frame)
+{
+    Assisi::Render::SkySettings sky = frame.renderer.SkySettings();
+    bool changed = false;
+
+    ImGui::TextUnformatted("Sky");
+    changed |= ImGui::Checkbox("Sky Enabled", &sky.enabled);
+    ImGui::TextDisabled("Lit by the scene's first directional light.");
+
+    if (!sky.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+
+    changed |= ImGui::SliderFloat("Sky Intensity", &sky.intensity, Assisi::Render::kMinSkyIntensity,
+                                  Assisi::Render::kMaxSkyIntensity, "%.1f");
+    // Deeper blue overhead AND a longer reddening at sunset both come off this
+    // one number, because both are the same optical depth over a different path.
+    changed |= ImGui::SliderFloat("Atmosphere", &sky.zenithOpticalDepth, Assisi::Render::kMinZenithOpticalDepth,
+                                  Assisi::Render::kMaxZenithOpticalDepth, "%.3f");
+    // Dust and water: whitens the sky and grows the halo round the sun.
+    changed |= ImGui::SliderFloat("Haze", &sky.haze, Assisi::Render::kMinHaze, Assisi::Render::kMaxHaze, "%.4f");
+    changed |= ImGui::SliderFloat("Sun Size", &sky.sunAngularRadiusDegrees,
+                                  Assisi::Render::kMinSunAngularRadiusDegrees,
+                                  Assisi::Render::kMaxSunAngularRadiusDegrees, "%.2f deg");
+    changed |= ImGui::SliderFloat("Sun Disk", &sky.sunDiskIntensity, Assisi::Render::kMinSunDiskIntensity,
+                                  Assisi::Render::kMaxSunDiskIntensity, "%.1f");
+    changed |= ImGui::ColorEdit3("Ground", &sky.groundColor.x, ImGuiColorEditFlags_Float);
+    // Four orders below the daytime zenith, so an ordinary colour picker cannot
+    // reach it — it is edited as three numbers instead.
+    changed |= ImGui::InputFloat3("Night", &sky.nightColor.x, "%.5f");
+
+    if (!sky.enabled)
+    {
+        ImGui::EndDisabled();
+    }
+
+    if (changed)
+    {
+        frame.renderer.SetSkySettings(sky);
     }
 }
 
@@ -491,6 +543,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         OptionsConfig &options = frame.options;
 
         DrawShadowSettings(frame);
+
+        ImGui::Separator();
+
+        DrawSkySettings(frame);
 
         ImGui::Separator();
 

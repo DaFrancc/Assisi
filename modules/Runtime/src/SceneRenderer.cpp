@@ -38,6 +38,12 @@ constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
 constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
 
+// The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
+// plane, so its vertex stage is its own rather than the shared one: that one
+// emits depth 0, and the sky has to land on the 1.0 the depth clear left.
+constexpr const char *kSkyVertexShader = "shaders/sky.vert.spv";
+constexpr const char *kSkyPixelShader  = "shaders/sky.frag.spv";
+
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
 // the orange border. Editor-only, so they live under editor/shaders/ — except the
@@ -128,6 +134,16 @@ bool SceneRenderer::Initialize(const InitParams &params)
     }
     _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
 
+    // The sky. Non-fatal: without it the scene target keeps its clear colour,
+    // which is what every scene looked like before there was a sky at all.
+    if (!_skyPass.Initialize(Render::SkyPass::InitParams{.device = _device,
+                                                         .framebufferInfo = params.framebufferInfo,
+                                                         .vertexShaderSpvPath = kSkyVertexShader,
+                                                         .pixelShaderSpvPath = kSkyPixelShader}))
+    {
+        Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
+    }
+
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
     // build, the "GPU Cull" toggle stays a no-op and the CPU draw path runs.
     if (!_meshCuller.Initialize(_device))
@@ -210,6 +226,12 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     {
         Core::Log::Warn("SceneRenderer: overlay-line pipeline rebuild failed; collider wireframes disabled.");
     }
+    // The sky targets the scene format, not the overlay one — it holds radiance
+    // and is drawn before the tone map, like the geometry it sits behind.
+    if (!_skyPass.RebuildPipeline(framebufferInfo))
+    {
+        Core::Log::Warn("SceneRenderer: sky pipeline rebuild failed; sky disabled.");
+    }
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
@@ -277,6 +299,20 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .gpuCulling     = _gpuCulling,
                                                .culler         = &_meshCuller,
                                                .cullBuilder    = &_cullBuilder});
+
+    // The sky goes last, into whatever the geometry left at the depth clear. The
+    // sun is the scene's own directional light rather than a setting, so a light
+    // that moves takes the sky with it; with no directional light there is
+    // nothing to scatter and the clear colour stands.
+    if (_skySettings.enabled)
+    {
+        if (const std::optional<LightingSystem::Sun> sun = _lighting.PrimaryDirectionalLight())
+        {
+            const Render::SkySun skySun{
+                .directionToSun = sun->directionToSun, .color = sun->color, .intensity = sun->intensity};
+            _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), skySun, _skySettings);
+        }
+    }
 
     // What the frame actually drew, on their own tracks. These are the numbers you
     // reach for the moment `draw-scene` moves: a jump in batches or draw calls says

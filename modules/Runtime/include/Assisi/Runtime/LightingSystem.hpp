@@ -93,6 +93,25 @@ public:
     /// still light; they just do not occlude.
     [[nodiscard]] std::optional<ShadowSun> ShadowCastingSun() const;
 
+    /// @brief The scene's sun, whether or not it casts.
+    struct Sun
+    {
+        /// The direction pointing AT the light — the opposite of the direction it
+        /// travels, which is the sense the shaders and the sky both want.
+        glm::vec3 directionToSun{0.f, 1.f, 0.f};
+        glm::vec3 color{1.f, 1.f, 1.f};
+        float intensity = 1.f;
+    };
+
+    /// @brief The first directional light of the last Update(), or nothing when
+    /// the scene has none.
+    ///
+    /// Separate from ShadowCastingSun() because that one answers "which light
+    /// gets cascades", and a light with `castsShadows` off is still the sun as
+    /// far as anything that only wants to know where the daylight comes from is
+    /// concerned.
+    [[nodiscard]] std::optional<Sun> PrimaryDirectionalLight() const;
+
     /// @name Shadow-casting flags from the last Update()
     ///
     /// One entry per light, in the same order as the buffers uploaded to the GPU
