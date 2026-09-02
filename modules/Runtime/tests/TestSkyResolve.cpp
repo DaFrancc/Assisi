@@ -7,8 +7,11 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
+#include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
+
+#include <cmath>
 
 using namespace Assisi;
 using Assisi::Runtime::DirectionalLight;
@@ -370,6 +373,57 @@ TEST_CASE("The presets differ in the way their names claim")
     // And airless is the limit: nothing to scatter in at all.
     CHECK(airless.airThickness == doctest::Approx(0.f));
     CHECK(haze(airless) == doctest::Approx(0.f));
+}
+
+TEST_CASE("The presets are told apart by the light they cast, not only by their numbers")
+{
+    using Assisi::Render::AmbientFromSky;
+    using Assisi::Render::SkyAmbient;
+    using Assisi::Runtime::PresetSettings;
+    using Assisi::Runtime::SkyPreset;
+
+    // Coefficients differing is not the same as a scene looking different. What
+    // an author sees is this: the colour a shadowed surface is filled with, and
+    // how far it is from the one the preset beside it gives.
+    const float elevation = glm::radians(60.f);
+    const Assisi::Render::SkySun sun{.directionToSun = glm::vec3(0.f, std::sin(elevation), std::cos(elevation)),
+                                     .color = glm::vec3(1.f),
+                                     .intensity = 3.f};
+
+    const auto ambient = [&sun](SkyPreset preset) { return AmbientFromSky(sun, PresetSettings(preset)); };
+    const auto luminance = [](const glm::vec3 &c) { return glm::dot(c, glm::vec3(0.2126f, 0.7152f, 0.0722f)); };
+
+    const SkyAmbient clear = ambient(SkyPreset::Clear);
+    const SkyAmbient arctic = ambient(SkyPreset::Arctic);
+    const SkyAmbient savanna = ambient(SkyPreset::Savanna);
+    const SkyAmbient tropical = ambient(SkyPreset::Tropical);
+    const SkyAmbient alpine = ambient(SkyPreset::Alpine);
+
+    // The one that matters most for a place reading as hot or cold: the savanna's
+    // dust scatters red where air scatters blue, so its shadows are filled with
+    // WARM light — the sign of the comparison flips, rather than the amount
+    // merely shifting.
+    CHECK(savanna.sky.r > savanna.sky.b);
+    CHECK(clear.sky.b > clear.sky.r);
+    CHECK(alpine.sky.b > alpine.sky.r);
+    CHECK(arctic.sky.b > arctic.sky.r);
+
+    // Thin mountain air has the least of itself to scatter in, so it fills a
+    // shadow with far less than a hazy or humid sky does. A spread this wide is
+    // the difference between presets being a look and being a rounding error.
+    CHECK(luminance(alpine.sky) * 5.f < luminance(tropical.sky));
+
+    // Snow sends up more than the sky sends down; jungle sends up almost nothing.
+    // Which way that ratio points is what decides whether a scene's shadows come
+    // from above or below it.
+    CHECK(luminance(arctic.ground) > luminance(arctic.sky));
+    CHECK(luminance(tropical.ground) < luminance(tropical.sky));
+
+    // And the ground each throws back keeps its own hue: snow is neutral, jungle
+    // is green, dust is warm.
+    CHECK(tropical.ground.g > tropical.ground.r);
+    CHECK(tropical.ground.g > tropical.ground.b);
+    CHECK(savanna.ground.r > savanna.ground.b);
 }
 
 TEST_CASE("A preset answers outright, and Custom is what reads the knobs")
