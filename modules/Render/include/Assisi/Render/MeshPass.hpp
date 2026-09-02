@@ -25,6 +25,7 @@
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
 #include <Assisi/Render/DrawItem.hpp>
+#include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
@@ -77,12 +78,6 @@ enum class ShadowDebugView : uint32_t
 };
 
 inline constexpr uint32_t kShadowDebugViewCount = 4;
-
-/// @brief The ambient term every surface gets for free, when nobody says otherwise.
-///
-/// Named rather than left as a literal in three places; anything that wants a
-/// different one passes it.
-inline constexpr float kDefaultAmbientIntensity = 0.03f;
 
 class MeshPass
 {
@@ -163,10 +158,10 @@ public:
         float farZ = 0.f;
         uint32_t dirLightCount = 0;
         MaterialDebugView debugView = MaterialDebugView::None;
-        /// The uniform term every surface receives regardless of what lights it.
-        /// The editor turns it up to inspect a model without having to light one.
-        glm::vec3 ambientColor{1.f, 1.f, 1.f};
-        float ambientIntensity = kDefaultAmbientIntensity;
+        /// What reaches a surface from everything that is not a light, as the
+        /// frame's indirect-lighting provider answered it. The pass carries the
+        /// answer and never asks which provider gave it.
+        IndirectConstants indirect;
         ShadowFrameData shadows;
     };
 

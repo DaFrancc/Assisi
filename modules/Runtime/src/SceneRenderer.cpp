@@ -273,6 +273,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
 
     const Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
 
+    // The scene's sky, which both lights the geometry and is drawn behind it.
+    // Resolved before the geometry because the indirect term comes off it: a
+    // surface in shadow is still under the sky, and what saves it from reading
+    // as a hole is the sky's own colour arriving here.
+    const SkyResolution sky = ResolveSky(scene);
+
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
         const Render::MeshPass::FrameConstantsParams frameConstants{
@@ -284,8 +290,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
             .farZ             = camera.farZ,
             .dirLightCount    = _lighting.DirLightCount(),
             .debugView        = _debugView,
-            .ambientColor     = _ambientColor,
-            .ambientIntensity = _ambientIntensity,
+            .indirect         = ResolveIndirect(sky, _ambient),
             .shadows          = shadows};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
@@ -306,7 +311,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // halves of it come from the scene — the sun from a directional light, the
     // look from the Skybox component on that same entity — so a level authors its
     // own world and a light that moves takes the sky with it.
-    const SkyResolution sky = ResolveSky(scene);
     if (sky.status == SkyStatus::Ready)
     {
         _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), sky.sun, sky.settings);

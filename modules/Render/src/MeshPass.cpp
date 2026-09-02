@@ -61,10 +61,11 @@ struct FrameConstants
     ///   w  = -z * log(nearZ)                (matching bias)
     /// slice = log(|viewZ|) * z + w, which is gridDim.z * log(|viewZ|/nearZ) / log(farZ/nearZ).
     glm::vec4 clusterScale;
-    /// Uniform ambient term: rgb = linear colour, w = intensity. A frame constant
-    /// rather than a shader constant so a scene can be turned up for inspection;
-    /// the default is white × kDefaultAmbientIntensity.
-    glm::vec4 ambient;
+    /// The frame's indirect term, as its provider answered it (see
+    /// Render::IndirectConstants): rgb = the radiance a surface facing straight
+    /// up receives, then the same facing straight down, w unused in both.
+    glm::vec4 indirectSky;
+    glm::vec4 indirectGround;
 
     /// x = cascade count (0 = nothing shadows this frame, and the shader takes
     /// no lookup at all), y = which directional light the cascades belong to,
@@ -286,7 +287,8 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
                   static_cast<float>(ClusterGrid::kNumY) / static_cast<float>(params.screenHeight), sliceScale,
                   -sliceScale * std::log(safeNear));
 
-    constants.ambient = glm::vec4(params.ambientColor, params.ambientIntensity);
+    constants.indirectSky = glm::vec4(params.indirect.skyRadiance, 0.f);
+    constants.indirectGround = glm::vec4(params.indirect.groundRadiance, 0.f);
 
     // Shadows. A zero cascade count is the whole of "nothing shadows this frame"
     // as far as the shader is concerned: it takes no lookup, so an unshadowed

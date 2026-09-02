@@ -16,6 +16,9 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Sky.hpp>
 
+#include <array>
+#include <cstddef>
+
 namespace Assisi::Runtime
 {
 
@@ -152,88 +155,107 @@ struct Skybox
     /// @}
 };
 
-/// @brief The settings a named sky stands for.
+/// @brief Every preset, already built, in the order @ref SkyPreset declares them.
 ///
-/// Every field, so a preset is a complete answer rather than a partial one — an
-/// author switching from Arctic to Savanna gets the savanna's ground as well as
-/// its dust, and nothing survives from the sky before it.
-[[nodiscard]] inline Assisi::Render::SkySettings PresetSettings(SkyPreset preset)
+/// A table rather than a function that assembles one per call: these are seven
+/// fixed answers, so they are constructed once at compile time and handed out.
+///
+/// Each is written as what it CHANGES. The fields left out are not missing — an
+/// aggregate fills them from SkySettings' own defaults — so a preset reads as
+/// the handful of knobs that make it what it is, and stays a complete answer:
+/// an author switching from Arctic to Savanna gets the savanna's ground as well
+/// as its dust, with nothing surviving from the sky before it.
+inline constexpr std::array<Assisi::Render::SkySettings, static_cast<std::size_t>(SkyPreset::Custom) + 1>
+kSkyPresets{{
+    // Clear: the defaults, unchanged. It is the sky every other entry is a
+    // departure from.
+    Assisi::Render::SkySettings{},
+
+    // Arctic. Cold air holds almost no moisture, so there is very little to
+    // scatter greyly and the blue survives all the way to the horizon. Snow
+    // is the brightest ground there is, and most of what the sky sends down
+    // comes straight back — which is why the light under it is so flat: the
+    // fill from below rivals the sun from above, and nothing has a dark side.
+    Assisi::Render::SkySettings{.airThickness = 0.22f,
+                                .hazeScattering = glm::vec3(0.0010f),
+                                .skyBounce = 0.50f,
+                                .groundColor = glm::vec3(0.90f, 0.93f, 0.97f)},
+
+    // Savanna. Suspended dust, which scatters red where air scatters blue,
+    // so the haze itself is warm and the horizon goes straw before the sun
+    // is anywhere near it. Enough of it that a shadow here is lit by warm
+    // light rather than by a blue sky — which is what makes the place read
+    // as hot rather than merely bright.
+    Assisi::Render::SkySettings{.airThickness = 0.13f,
+                                .hazeScattering = glm::vec3(0.050f, 0.032f, 0.012f),
+                                .hazeForwardness = 0.72f,
+                                .groundColor = glm::vec3(0.42f, 0.32f, 0.16f)},
+
+    // Tropical. Water droplets are large enough to scatter every wavelength
+    // alike and hard forward, so the sky pales toward the sun and the horizon
+    // loses its colour long before the ground does. Thick enough to take real
+    // bite out of the sun: the light here is mostly a bright white sky rather
+    // than a beam, and the ground throws green back into everything above it.
+    Assisi::Render::SkySettings{.airThickness = 0.10f,
+                                .hazeScattering = glm::vec3(0.055f),
+                                .hazeForwardness = 0.88f,
+                                .skyBounce = 0.30f,
+                                .groundColor = glm::vec3(0.09f, 0.16f, 0.07f)},
+
+    // Alpine. Less air overhead means less of it to scatter in: the zenith
+    // darkens toward navy, and the sun keeps its edge and its colour much
+    // lower in the sky than it would at sea level. The hardest light of the
+    // seven — a nearly white beam against almost no sky to fill the shadows,
+    // over pale rock that is the only thing softening them.
+    Assisi::Render::SkySettings{.airThickness = 0.035f,
+                                .hazeScattering = glm::vec3(0.0004f),
+                                .skyBounce = 0.10f,
+                                .groundColor = glm::vec3(0.50f, 0.51f, 0.54f),
+                                .sunEdgeSoftness = 0.05f},
+
+    // Hazy. Enough suspended water to take most of the direct sun out and
+    // spread it, so the disk survives as something you can look at and the
+    // sky loses its blue. The wide, soft edge is what a sun seen through haze
+    // has; a hard one would read as a hole punched in fog.
+    //
+    // The haze is at the ceiling of what single scattering is honest about,
+    // which is what makes this the flattest sky here rather than the darkest:
+    // sky and ground arrive at nearly the same value, so a surface's own
+    // shape stops telling you which way it faces.
+    Assisi::Render::SkySettings{.airThickness = 0.16f,
+                                .hazeScattering = glm::vec3(0.060f),
+                                .hazeForwardness = 0.55f,
+                                .skyBounce = 0.35f,
+                                .groundColor = glm::vec3(0.20f, 0.20f, 0.19f),
+                                .exposure = 6.5f,
+                                .sunEdgeSoftness = 0.40f,
+                                .sunDiskIntensity = 8.0f},
+
+    // Airless. The degenerate case, and it needs no special handling
+    // anywhere: with nothing to scatter in, the scattering term is zero and
+    // the beam arrives whole.
+    Assisi::Render::SkySettings{.airThickness = 0.0f,
+                                .hazeScattering = glm::vec3(0.0f),
+                                .groundColor = glm::vec3(0.14f, 0.13f, 0.12f),
+                                .nightColor = glm::vec3(0.0f),
+                                .sunEdgeSoftness = Assisi::Render::kMinSunEdgeSoftness,
+                                .sunDiskColor = glm::vec3(1.0f)},
+
+    // Custom: the defaults again, which is what makes departing from a preset
+    // start where the knobs already are rather than somewhere else.
+    Assisi::Render::SkySettings{},
+}};
+
+// Custom is last, and this is what says so. Adding a preset anywhere shifts
+// Custom's value, and the count stops matching until the table gains its row —
+// which is the check the switch this replaced got from -Wswitch for free.
+static_assert(kSkyPresets.size() == static_cast<std::size_t>(SkyPreset::Custom) + 1,
+              "Every SkyPreset needs a row in kSkyPresets, and Custom has to stay last.");
+
+/// @brief The settings a named sky stands for.
+[[nodiscard]] inline const Assisi::Render::SkySettings &PresetSettings(SkyPreset preset)
 {
-    Assisi::Render::SkySettings settings; // Clear: what the defaults already describe.
-    switch (preset)
-    {
-    case SkyPreset::Clear:
-    case SkyPreset::Custom:
-        break;
-
-    case SkyPreset::Arctic:
-        // Cold air holds almost no moisture, so there is very little to scatter
-        // greyly and the blue survives all the way to the horizon. Snow is the
-        // brightest ground there is, and most of what the sky sends down comes
-        // straight back — which is why the light under it is so flat.
-        settings.airThickness = 0.16f;
-        settings.hazeScattering = glm::vec3(0.0015f);
-        settings.groundColor = glm::vec3(0.80f, 0.83f, 0.88f);
-        settings.skyBounce = 0.35f;
-        break;
-
-    case SkyPreset::Savanna:
-        // Suspended dust, which absorbs blue rather than scattering it evenly,
-        // so the haze itself is warm and the horizon goes straw before the sun
-        // is anywhere near it.
-        settings.airThickness = 0.13f;
-        settings.hazeScattering = glm::vec3(0.030f, 0.022f, 0.012f);
-        settings.hazeForwardness = 0.70f;
-        settings.groundColor = glm::vec3(0.34f, 0.27f, 0.15f);
-        break;
-
-    case SkyPreset::Tropical:
-        // Water droplets are large enough to scatter every wavelength alike and
-        // hard forward, so the sky pales toward the sun and the horizon loses
-        // its colour long before the ground does.
-        settings.airThickness = 0.12f;
-        settings.hazeScattering = glm::vec3(0.040f);
-        settings.hazeForwardness = 0.85f;
-        settings.groundColor = glm::vec3(0.12f, 0.16f, 0.09f);
-        break;
-
-    case SkyPreset::Alpine:
-        // Less air overhead means less of it to scatter in: the zenith darkens
-        // toward navy, and the sun keeps its edge and its colour much lower in
-        // the sky than it would at sea level.
-        settings.airThickness = 0.055f;
-        settings.hazeScattering = glm::vec3(0.0008f);
-        settings.groundColor = glm::vec3(0.42f, 0.44f, 0.47f);
-        settings.sunEdgeSoftness = 0.05f;
-        break;
-
-    case SkyPreset::Hazy:
-        // Enough suspended water to take a third of the direct sun out and
-        // spread it, so the disk survives as something you can look at and the
-        // sky loses most of its blue. The wide, soft edge is what a sun seen
-        // through haze has; a hard one would read as a hole punched in fog.
-        settings.airThickness = 0.11f;
-        settings.hazeScattering = glm::vec3(0.05f);
-        settings.hazeForwardness = 0.60f;
-        settings.groundColor = glm::vec3(0.17f, 0.17f, 0.16f);
-        settings.sunDiskIntensity = 8.0f;
-        settings.sunEdgeSoftness = 0.40f;
-        settings.exposure = 6.5f;
-        break;
-
-    case SkyPreset::Airless:
-        // The degenerate case, and it needs no special handling anywhere: with
-        // nothing to scatter in, the scattering term is zero and the beam
-        // arrives whole.
-        settings.airThickness = 0.0f;
-        settings.hazeScattering = glm::vec3(0.0f);
-        settings.nightColor = glm::vec3(0.0f);
-        settings.groundColor = glm::vec3(0.14f, 0.13f, 0.12f);
-        settings.sunEdgeSoftness = Assisi::Render::kMinSunEdgeSoftness;
-        settings.sunDiskColor = glm::vec3(1.0f);
-        break;
-    }
-    return settings;
+    return kSkyPresets[static_cast<std::size_t>(preset)];
 }
 
 /// @brief The component's look as the render side wants it.

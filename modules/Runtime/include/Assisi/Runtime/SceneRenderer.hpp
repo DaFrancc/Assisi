@@ -32,6 +32,7 @@
 #include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Render/SkyPass.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
@@ -180,18 +181,27 @@ public:
     void SetDebugView(Render::MaterialDebugView view) { _debugView = view; }
     [[nodiscard]] Render::MaterialDebugView DebugView() const { return _debugView; }
 
-    /// @brief The uniform ambient term, in linear colour and intensity.
+    /// @brief Pin the indirect term to a uniform colour and intensity, in place
+    /// of whatever the scene would be lit by.
     ///
-    /// Defaults to white at Render::kDefaultAmbientIntensity. The blueprint editor
-    /// turns it up: inspecting a model means seeing all of it, and a scene lit only
-    /// by a key light hides half of one in black.
-    void SetAmbient(const glm::vec3 &color, float intensity)
+    /// The blueprint editor turns it up: inspecting a model means seeing all of
+    /// it, and a scene lit only by a key light hides half of one in black. An
+    /// interior wants it for the honest reason — a room is not lit by a sky it
+    /// cannot see.
+    ///
+    /// It overrides rather than adds, and it stays pinned until ClearAmbient().
+    void SetAmbient(const Assisi::Math::Color3 &color, float intensity)
     {
-        _ambientColor     = color;
-        _ambientIntensity = intensity;
+        _ambient = AmbientOverride{.active = true, .color = color, .intensity = intensity};
     }
-    [[nodiscard]] glm::vec3 AmbientColor() const { return _ambientColor; }
-    [[nodiscard]] float     AmbientIntensity() const { return _ambientIntensity; }
+
+    /// @brief Give the scene back its own indirect lighting: a sky lights what
+    /// is under it, and a scene without one keeps the flat default.
+    void ClearAmbient() { _ambient = AmbientOverride{}; }
+
+    [[nodiscard]] bool                 AmbientOverridden() const { return _ambient.active; }
+    [[nodiscard]] Assisi::Math::Color3 AmbientColor() const { return _ambient.color; }
+    [[nodiscard]] float                AmbientIntensity() const { return _ambient.intensity; }
 
     /// @brief The shadow knobs, in both halves. Applied on the next Render():
     /// a cascade count, resolution or format change reallocates the array
@@ -424,8 +434,7 @@ private:
     bool _sortDraws      = true;      // default draw path sorts by sort key before submit
     bool _gpuCulling     = false;      // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
-    glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
-    float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
+    AmbientOverride _ambient;                                               // inactive: the scene lights itself
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
     // Latched so the unsupported-scene warning is said once rather than at the
     // frame rate. Cleared when the scene stops having several suns, so fixing it
