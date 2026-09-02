@@ -8,6 +8,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/DrawItem.hpp"
     "include/Assisi/Render/Frustum.hpp"
     "include/Assisi/Render/GpuTelemetry.hpp"
+    "include/Assisi/Render/IndirectLighting.hpp"
     "include/Assisi/Render/Material.hpp"
     "include/Assisi/Render/LinePass.hpp"
     "include/Assisi/Render/MeshBuffer.hpp"

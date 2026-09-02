@@ -46,7 +46,8 @@ layout(binding = 256) uniform FrameConstants
     // the middle silently shifts every following offset.
     vec4  cameraPosition;
     vec4  clusterScale;
-    vec4  ambient;
+    vec4  indirectSky;
+    vec4  indirectGround;
     uvec4 shadowCounts;
     vec4  shadowParams;
     vec4  shadowCascade[8];

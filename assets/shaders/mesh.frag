@@ -76,7 +76,10 @@ layout(binding = 256) uniform FrameConstants
     // Froxel lookup scale/bias (see Render::FrameConstants): xy = gridDim.xy /
     // screenSize, z = gridDim.z / log(farZ/nearZ), w = -z * log(nearZ).
     vec4  clusterScale;
-    vec4  ambient;            // rgb = linear colour, w = intensity
+    // The indirect term, as the provider that answered this frame left it (see
+    // Render::IndirectConstants and IndirectRadiance below).
+    vec4  indirectSky;        // rgb = radiance onto a surface facing straight up, w unused
+    vec4  indirectGround;     // rgb = the same for one facing straight down, w unused
     // Sun shadows (see Render::FrameConstants and ShadowCascades.hpp).
     uvec4 shadowCounts;       // x = cascade count (0 = no shadows), y = shadowed dir light, z = filter, w = cascade view
     vec4  shadowParams;       // x = UV step between PCF taps, y = blend-band fraction
@@ -856,6 +859,25 @@ uint ClusterIndex()
     return ix + iy * gridDim.x + iz * gridDim.x * gridDim.y;
 }
 
+// ---- Indirect lighting ---------------------------------------------------
+
+// Radiance arriving from everything that is not a light, for a surface at
+// @worldPos facing @N. The GPU half of the indirect-lighting seam: this is the
+// only expression in the shader that answers it, and swapping the provider that
+// filled uFrame.indirectSky/Ground swaps the answer without any other line here
+// changing. Mirrors Render::EvaluateIndirect.
+//
+// The position is unread by a hemisphere, whose answer is the same everywhere,
+// and is the parameter a baked or probe-based provider needs — the question is
+// "here, facing this way" whether or not today's answer uses both halves of it.
+vec3 IndirectRadiance(vec3 N, vec3 worldPos)
+{
+    // Saturated so a normal that is not quite unit length cannot extrapolate
+    // past either hemisphere and hand back a negative radiance.
+    float upward = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    return mix(uFrame.indirectGround.rgb, uFrame.indirectSky.rgb, upward);
+}
+
 // ---- Main -----------------------------------------------------------------
 
 void main()
@@ -1052,10 +1074,12 @@ void main()
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
-    // Ambient is scaled by the occlusion map (direct light already accounts for
-    // visibility via N·L); emissive is added on top, unlit.
-    vec3 ambient = uFrame.ambient.rgb * uFrame.ambient.w;
-    vec3 color = ambient * albedo * surf.occlusion + Lo + surf.emissive;
+    // The indirect term is scaled by the occlusion map (direct light already
+    // accounts for visibility via N·L); emissive is added on top, unlit. No
+    // further factor of pi: the provider answers with the cosine-weighted mean
+    // radiance, which is exactly what a Lambertian albedo multiplies.
+    vec3 indirect = IndirectRadiance(N, vWorldPos);
+    vec3 color = indirect * albedo * surf.occlusion + Lo + surf.emissive;
 
     // Cascade view: tint the lit result rather than replacing it, so a split
     // distance and a blend band are readable against the geometry that provoked

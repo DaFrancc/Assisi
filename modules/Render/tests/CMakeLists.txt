@@ -1,5 +1,6 @@
 add_executable(Assisi-Render-Tests
   main.cpp
+  TestIndirectLighting.cpp
   TestPostProcessChain.cpp
   TestShadowCascades.cpp
   TestShadowSettings.cpp

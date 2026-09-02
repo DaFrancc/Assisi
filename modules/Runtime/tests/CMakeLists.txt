@@ -7,6 +7,7 @@ add_executable(Assisi-Runtime-Tests
   TestBlueprintPreparedForm.cpp
   TestBlueprintReexpand.cpp
   TestDrawItem.cpp
+  TestIndirectResolve.cpp
   TestMaterialConstants.cpp
   TestMeshCuller.cpp
   TestPerfScenes.cpp

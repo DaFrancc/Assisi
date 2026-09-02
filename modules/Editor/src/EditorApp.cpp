@@ -993,11 +993,13 @@ void EditorApp::OnUpdate(float dt)
 
     // The blueprint rig's ambient, re-applied every frame rather than at the two
     // transitions: the renderer is shared by every world, so a knob left turned up
-    // would light the level the author went back to.
+    // would light the level the author went back to. Clearing rather than pinning
+    // the default is what hands a level back its own indirect lighting — a pinned
+    // ambient overrides the sky, and a level's sky is most of what lights it.
     if (InBlueprintMode())
         _sceneRenderer.SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
     else
-        _sceneRenderer.SetAmbient(glm::vec3(1.f), Assisi::Render::kDefaultAmbientIntensity);
+        _sceneRenderer.ClearAmbient();
 
     // A travel a game system asked for last frame. Systems run inside the walk over
     // the resident worlds, and travelling from there would invalidate that walk and
