@@ -394,6 +394,17 @@ private:
     /// enough to sit under a scene full of lights.
     void SubmitLightGizmos();
 
+    /// @brief The light whose outline the cursor is on, or NullEntity.
+    ///
+    /// The outline, not the volume it encloses: a point light's sphere is where
+    /// its falloff ends, and treating its inside as the light's own would make
+    /// everything the light reaches unclickable — which is most of a room. So a
+    /// click lands on the drawn lines, within a few pixels of them.
+    ///
+    /// @p tOut is how far the grabbed point is, on the same scale PickEntity
+    /// reports, so the caller can take whichever hit is nearer.
+    [[nodiscard]] Assisi::ECS::Entity PickLightOutline(glm::vec2 mousePos, float &tOut);
+
     // --- Gizmo state ---
     /// @brief True while the transform gizmo is hovered or being dragged. Entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
@@ -1465,6 +1476,12 @@ private:
     // one's absence depend on the other's ordering.
     std::vector<Assisi::Render::LineVertex> _lightLinesDepthTested;
     std::vector<Assisi::Render::LineVertex> _lightLinesOnTop;
+
+    // One light's outline at a time, rebuilt and cleared per light while a click
+    // is resolved. A member only to keep its storage between clicks; nothing here
+    // survives the call that fills it.
+    std::vector<Assisi::Render::LineVertex> _lightPickOutline;
+
     std::vector<Assisi::ECS::Entity>        _colliderEntities;
 
     // --- Entity list ---

@@ -19,6 +19,18 @@ namespace
 /// with the entity's scale — the same way the rest of the box does.
 constexpr float kFlatAxisHalfExtent = 0.005f;
 
+/// Clip-space w at or below this is the eye plane and behind it, where the
+/// perspective divide stops meaning anything.
+constexpr float kMinClipW = 1e-4f;
+
+/// Where a clip-space point lands in framebuffer pixels. Y is flipped because a
+/// mouse position counts down from the top and NDC counts up from the bottom.
+glm::vec2 ClipToScreen(const glm::vec4 &clip, glm::vec2 viewport)
+{
+    const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+    return glm::vec2((ndc.x * 0.5f + 0.5f) * viewport.x, (0.5f - ndc.y * 0.5f) * viewport.y);
+}
+
 } // namespace
 
 bool RayAabbIntersect(glm::vec3 origin, glm::vec3 dir, const Geometry::Aabb &localBounds, const glm::mat4 &model,
@@ -78,6 +90,61 @@ bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, gl
         return true;
     }
     return false;
+}
+
+bool ScreenDistanceToSegment(const PickRay &ray, glm::vec2 cursor, glm::vec3 a, glm::vec3 b, float &pixelsOut,
+                             float &distanceOut)
+{
+    if (!ray.valid || ray.viewportSize.x <= 0.f || ray.viewportSize.y <= 0.f)
+    {
+        return false;
+    }
+
+    const glm::vec4 clipA = ray.viewProjection * glm::vec4(a, 1.f);
+    const glm::vec4 clipB = ray.viewProjection * glm::vec4(b, 1.f);
+    if (clipA.w < kMinClipW && clipB.w < kMinClipW)
+    {
+        return false;
+    }
+
+    // The stretch of the segment that is in front of the eye, as a range of its
+    // own parameter. Clipping here rather than after the divide is the whole
+    // point: w changes sign across the eye plane, and the endpoint past it comes
+    // back projected through the origin onto the opposite side of the screen.
+    float visibleFrom = 0.f;
+    float visibleTo   = 1.f;
+    if (clipA.w < kMinClipW)
+    {
+        visibleFrom = (kMinClipW - clipA.w) / (clipB.w - clipA.w);
+    }
+    else if (clipB.w < kMinClipW)
+    {
+        visibleTo = (kMinClipW - clipA.w) / (clipB.w - clipA.w);
+    }
+
+    // A straight line in the world projects to a straight line on screen, so the
+    // clipped ends are all this needs — the distance below is exact, not sampled.
+    const glm::vec4 clip0 = glm::mix(clipA, clipB, visibleFrom);
+    const glm::vec4 clip1 = glm::mix(clipA, clipB, visibleTo);
+    const glm::vec2 end0  = ClipToScreen(clip0, ray.viewportSize);
+    const glm::vec2 end1  = ClipToScreen(clip1, ray.viewportSize);
+
+    const glm::vec2 span    = end1 - end0;
+    const float spanLengthSq = glm::dot(span, span);
+    const float onScreen =
+        spanLengthSq > 0.f ? std::clamp(glm::dot(cursor - end0, span) / spanLengthSq, 0.f, 1.f) : 0.f;
+    pixelsOut = glm::length(cursor - (end0 + onScreen * span));
+
+    // How far along the screen is not how far along the segment: perspective packs
+    // the far half of a line into fewer pixels, and the two w's are what undo it.
+    // Without this the reported depth is of some other point on the line, and the
+    // outline wins or loses against a wall it is not actually beside.
+    const float weighted = clip1.w + onScreen * (clip0.w - clip1.w);
+    const float alongClipped = weighted != 0.f ? (onScreen * clip0.w) / weighted : onScreen;
+
+    const glm::vec3 nearest = glm::mix(a, b, glm::mix(visibleFrom, visibleTo, alongClipped));
+    distanceOut             = glm::distance(ray.origin, nearest);
+    return true;
 }
 
 Geometry::Aabb PickableBounds(const Geometry::Aabb &bounds)

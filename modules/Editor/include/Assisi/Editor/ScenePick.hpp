@@ -27,9 +27,35 @@ struct PickRay
     glm::vec3 direction{0.f, 0.f, -1.f};
     glm::vec3 cameraRight{1.f, 0.f, 0.f};
     glm::vec3 cameraUp{0.f, 1.f, 0.f};
+    /// World to clip, and the framebuffer clip lands in. What a screen-space pick
+    /// needs and a volume pick does not: an outline is a set of lines with no
+    /// inside to be within, so it is grabbed by how near the cursor is to where it
+    /// was *drawn*, which is a question about pixels.
+    glm::mat4 viewProjection{1.f};
+    glm::vec2 viewportSize{0.f};
     /// False for a zero-size framebuffer (minimized), where there is no ray.
     bool valid = false;
 };
+
+/// @brief How near the cursor must be to a drawn line to grab it, in pixels.
+///
+/// A tolerance rather than a hit on the line itself, because a line is one pixel
+/// wide and nobody can click one pixel. Wide enough to catch a deliberate aim,
+/// narrow enough that two outlines crossing under the cursor is rare.
+inline constexpr float kOutlinePickPixels = 6.f;
+
+/// @brief Where the cursor sits relative to the segment @p a -> @p b as drawn.
+///
+/// @p pixelsOut is the screen distance from @p cursor to the segment; @p
+/// distanceOut is how far the nearest point on it is from @p ray's origin, in
+/// world units, so an outline hit weighs against a volume hit on the same terms.
+///
+/// False when the segment is wholly behind the eye, where it has no screen
+/// position to be near. A segment that merely crosses the eye plane is clipped
+/// first: dividing a negative w through would mirror that endpoint to the far
+/// side of the viewport and report a line nowhere near the drawn one.
+[[nodiscard]] bool ScreenDistanceToSegment(const PickRay &ray, glm::vec2 cursor, glm::vec3 a, glm::vec3 b,
+                                           float &pixelsOut, float &distanceOut);
 
 /// @brief The box a meshed entity is picked with when its own bounds are unusable:
 /// ±0.5 on every axis, matching the unit primitives.

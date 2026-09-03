@@ -17,10 +17,13 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/LinePass.hpp>
@@ -87,6 +90,52 @@ glm::vec3 EntityPosition(Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity)
     }
     return glm::vec3(0.f);
 }
+
+// The three builders below are what a light's outline *is*. Both the draw and the
+// click go through them, so an outline cannot be clickable somewhere it was not
+// drawn — which is the failure a second copy of this geometry would produce, and
+// would produce silently, since neither copy is wrong on its own.
+
+/// @brief A point light's reach: a sphere of its radius, at its world position.
+///
+/// Translation only. A point light is a sphere however its entity is scaled or
+/// turned, and inheriting the rotation would draw an ellipsoid that claims a
+/// reach the light does not have.
+void AddPointLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, const glm::mat4 &world,
+                          const Rt::PointLight &light)
+{
+    const glm::mat4 model = glm::translate(glm::mat4(1.f), glm::vec3(world[3]));
+    AddSphereWireframe(out, model, color, light.radius);
+}
+
+/// @brief A spot light's cone, and while @p detailed its inner cone and axis too.
+///
+/// The inner cone is the full-brightness core and the outer is where the falloff
+/// ends, so seeing both is how the softness of the edge is judged — but two cones
+/// per light is twice the clutter in a scene that is not being edited.
+void AddSpotLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, const glm::mat4 &world,
+                         const Rt::SpotLight &light, bool detailed)
+{
+    // The aim the renderer uses, not the authored local one: a spot mounted on a
+    // parent points where the parent faces, and a cone drawn along the unrotated
+    // field would disagree with the light it describes.
+    const glm::vec3 aim   = Rt::LightingSystem::WorldSpotDirection(world, light.direction);
+    const glm::mat4 model = glm::translate(glm::mat4(1.f), glm::vec3(world[3])) * AimAlong(aim);
+
+    AddConeWireframe(out, model, color, light.outerAngle, light.radius, detailed);
+    if (detailed)
+    {
+        AddConeWireframe(out, model, color, light.innerAngle, light.radius, false);
+    }
+}
+
+/// @brief A directional light's arrow, pointing the way the light travels.
+void AddDirectionalLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, const glm::vec3 &position,
+                                const Rt::DirectionalLight &light)
+{
+    const glm::mat4 model = glm::translate(glm::mat4(1.f), position) * AimAlong(light.direction);
+    AddArrowWireframe(out, model, color, kSunArrowLength);
+}
 } // namespace
 
 void EditorApp::SubmitLightGizmos()
@@ -122,44 +171,97 @@ void EditorApp::SubmitLightGizmos()
     for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::PointLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        // Translation only. A point light is a sphere however its entity is
-        // scaled or turned, and inheriting the rotation would draw an ellipsoid
-        // that claims a reach the light does not have.
-        const glm::mat4 model = glm::translate(glm::mat4(1.f), glm::vec3(transform.worldMatrix[3]));
-        AddSphereWireframe(*style.batch, model, style.color, light.radius);
+        AddPointLightOutline(*style.batch, style.color, transform.worldMatrix, light);
     }
 
     for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::SpotLight>())
     {
-        const auto style = styleFor(entity, light.color);
-        // The aim the renderer uses, not the authored local one: a spot mounted
-        // on a parent points where the parent faces, and a cone drawn along the
-        // unrotated field would disagree with the light it describes.
-        const glm::vec3 aim = Rt::LightingSystem::WorldSpotDirection(transform.worldMatrix, light.direction);
-        const glm::mat4 model =
-            glm::translate(glm::mat4(1.f), glm::vec3(transform.worldMatrix[3])) * AimAlong(aim);
-
-        AddConeWireframe(*style.batch, model, style.color, light.outerAngle, light.radius, style.detailed);
-        if (style.detailed)
-        {
-            // The inner cone only while selected. It is the full-brightness core
-            // and the outer is where the falloff ends, so seeing both is how the
-            // softness of the edge is judged — but two cones per light is twice
-            // the clutter in a scene that is not being edited.
-            AddConeWireframe(*style.batch, model, style.color, light.innerAngle, light.radius, false);
-        }
+        const auto style = styleFor(entity, glm::vec3(light.color));
+        AddSpotLightOutline(*style.batch, style.color, transform.worldMatrix, light, style.detailed);
     }
 
     for (auto [entity, light] : _scene->Query<Rt::DirectionalLight>())
     {
         const auto style = styleFor(entity, glm::vec3(Rt::AuthoredSunColor(light)));
-        const glm::mat4 model =
-            glm::translate(glm::mat4(1.f), EntityPosition(*_scene, entity)) * AimAlong(light.direction);
-        AddArrowWireframe(*style.batch, model, style.color, kSunArrowLength);
+        AddDirectionalLightOutline(*style.batch, style.color, EntityPosition(*_scene, entity), light);
     }
 
     _sceneRenderer.SubmitOverlayLines(_lightLinesDepthTested, /*onTop=*/ false);
     _sceneRenderer.SubmitOverlayLines(_lightLinesOnTop, /*onTop=*/ true);
+}
+
+Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
+{
+    tOut = std::numeric_limits<float>::max();
+    if (_scene == nullptr)
+    {
+        return Assisi::ECS::NullEntity;
+    }
+
+    // The condition the outlines are drawn under — see SubmitLightGizmos. A shape
+    // that is not on screen is a click target the author cannot see to avoid.
+    if (!_showEditorOverlays || _playState == PlayState::Playing)
+    {
+        return Assisi::ECS::NullEntity;
+    }
+
+    const PickRay ray = BuildPickRay(mousePos);
+    if (!ray.valid)
+    {
+        return Assisi::ECS::NullEntity;
+    }
+
+    Assisi::ECS::Entity result = Assisi::ECS::NullEntity;
+
+    // Nearest wins among the outlines under the cursor, and the distance is the
+    // world one the volume picks report — so an outline behind a wall loses to the
+    // wall and one in front of it wins, which is what the depth-tested overlay
+    // already looks like.
+    const auto takeNearest = [&](Assisi::ECS::Entity entity)
+                             {
+                                 for (std::size_t i = 0; i + 1 < _lightPickOutline.size(); i += 2)
+                                 {
+                                     float pixels   = 0.f;
+                                     float distance = 0.f;
+                                     if (!ScreenDistanceToSegment(ray, mousePos, _lightPickOutline[i].position,
+                                                                  _lightPickOutline[i + 1].position, pixels,
+                                                                  distance))
+                                     {
+                                         continue;
+                                     }
+                                     if (pixels <= kOutlinePickPixels && distance < tOut)
+                                     {
+                                         tOut   = distance;
+                                         result = entity;
+                                     }
+                                 }
+                                 _lightPickOutline.clear();
+                             };
+
+    // The colour is not read by anything downstream of here, so any is as good as
+    // another; `detailed` is not free that way, since it decides whether the inner
+    // cone is on screen to be clicked at all.
+    constexpr glm::vec4 kUnread{1.f};
+
+    for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::PointLight>())
+    {
+        AddPointLightOutline(_lightPickOutline, kUnread, transform.worldMatrix, light);
+        takeNearest(entity);
+    }
+
+    for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::SpotLight>())
+    {
+        AddSpotLightOutline(_lightPickOutline, kUnread, transform.worldMatrix, light, IsSelected(entity));
+        takeNearest(entity);
+    }
+
+    for (auto [entity, light] : _scene->Query<Rt::DirectionalLight>())
+    {
+        AddDirectionalLightOutline(_lightPickOutline, kUnread, EntityPosition(*_scene, entity), light);
+        takeNearest(entity);
+    }
+
+    return result;
 }
 
 bool EditorApp::DrawDirectionalLightGizmo()
