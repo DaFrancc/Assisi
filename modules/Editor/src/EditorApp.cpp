@@ -1622,6 +1622,19 @@ void EditorApp::OnImGui()
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
         history->EndFrameSweep(_captureEditingActive);
 
+    // The bound baseline's life is that same gesture's. It exists so the values a
+    // bound-settle would consume survive the intermediate states of one
+    // interaction — the 4 on the way to 40 — and what ends an interaction is
+    // exactly what the sweep above reads: no widget still being manipulated.
+    //
+    // Deliberately not an ImGui activation edge. Ctrl+clicking a drag box turns it
+    // into a text box, crossing that edge in the middle of a single gesture, so a
+    // baseline keyed to it is dropped the moment typing begins.
+    if (!_captureEditingActive)
+    {
+        _boundBaseline.active = false;
+    }
+
     // Show unsaved changes in the OS window title, re-setting it only when the
     // dirty state flips rather than every frame. The base title is the game's own,
     // from game.json, not an editor hardcode.

@@ -18,7 +18,9 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
@@ -28,6 +30,8 @@ using Assisi::Core::Reflect::FieldMeta;
 using Assisi::Core::Reflect::FieldType;
 using Assisi::Core::Reflect::ReadNumericField;
 using Assisi::Core::Reflect::ResolveFieldBounds;
+using Assisi::Core::Reflect::SettleDependentBounds;
+using Assisi::Core::Reflect::WriteNumericField;
 
 namespace
 {
@@ -145,6 +149,121 @@ TEST_CASE("ResolveFieldBounds: two fields may bound each other")
     Cone cone;
     CHECK(ResolveFieldBounds(fields[0], fields, &cone).maxValue == doctest::Approx(30.0));
     CHECK(ResolveFieldBounds(fields[1], fields, &cone).minValue == doctest::Approx(15.0));
+}
+
+TEST_CASE("SettleDependentBounds: narrowing the cap drags the capped field down")
+{
+    // The asymmetry this exists for. `outer` has no upper bound of its own, so
+    // dragging it down past `inner` is a perfectly legal edit to *that* field —
+    // and nothing on `inner`'s own widget runs to notice, because the drag is
+    // happening somewhere else.
+    const std::vector<FieldMeta> fields = ConeFields();
+    Cone cone;
+    cone.outer = 10.f;
+
+    CHECK(SettleDependentBounds(fields, &cone));
+    CHECK(cone.inner == doctest::Approx(10.f));
+    // The field that was edited is not itself moved back.
+    CHECK(cone.outer == doctest::Approx(10.f));
+}
+
+TEST_CASE("SettleDependentBounds: a pair already in range is left alone")
+{
+    const std::vector<FieldMeta> fields = ConeFields();
+    Cone cone;
+
+    CHECK_FALSE(SettleDependentBounds(fields, &cone));
+    CHECK(cone.inner == doctest::Approx(15.f));
+    CHECK(cone.outer == doctest::Approx(30.f));
+}
+
+TEST_CASE("SettleDependentBounds: a literal-bounded field is not rewritten")
+{
+    // `outer`'s bounds are both literals, so nothing an author does to another
+    // field can invalidate them — a value outside came from a hand-edited file,
+    // and silently correcting it would hide that.
+    const std::vector<FieldMeta> fields = ConeFields();
+    Cone cone;
+    cone.outer = 200.f; // past the literal max of 89
+
+    SettleDependentBounds(fields, &cone);
+    CHECK(cone.outer == doctest::Approx(200.f));
+}
+
+TEST_CASE("SettleDependentBounds: a chain settles in one call")
+{
+    struct Chain
+    {
+        float a = 100.f;
+        float b = 50.f;
+        float c = 25.f;
+    };
+    // Listed against the direction of the dependency — c follows b follows a — so
+    // a single pass cannot cascade: it reaches `c` while `b` is still stale, and
+    // only fixes `b` afterwards. Declaration order is the author's choice and says
+    // nothing about which field caps which, so the settle cannot rely on it.
+    const std::vector<FieldMeta> fields{
+        FieldMeta{.name = "c", .type = FieldType::Float, .offset = offsetof(Chain, c),
+                  .hasMax = true, .maxField = "b"},
+        FieldMeta{.name = "b", .type = FieldType::Float, .offset = offsetof(Chain, b),
+                  .hasMax = true, .maxField = "a"},
+        FieldMeta{.name = "a", .type = FieldType::Float, .offset = offsetof(Chain, a)},
+    };
+
+    // `a` drops below both.
+    Chain chain;
+    chain.a = 10.f;
+
+    CHECK(SettleDependentBounds(fields, &chain));
+    CHECK(chain.b == doctest::Approx(10.f));
+    CHECK(chain.c == doctest::Approx(10.f));
+}
+
+TEST_CASE("SettleDependentBounds: a mutually bounded pair terminates")
+{
+    // Both directions named. Clamping only ever moves a field *toward* the other,
+    // so this converges rather than ping-ponging — and the pass cap holds even if
+    // some future metadata does not.
+    std::vector<FieldMeta> fields = ConeFields();
+    fields[1].minField = "inner";
+
+    Cone cone;
+    cone.outer = 5.f;
+
+    CHECK(SettleDependentBounds(fields, &cone));
+    CHECK(cone.inner == doctest::Approx(5.f));
+    CHECK(cone.outer == doctest::Approx(5.f));
+}
+
+TEST_CASE("SettleDependentBounds: a NaN is left where it is")
+{
+    // Not ordered against either bound, so there is no direction to move it in —
+    // and it compares unequal to itself, which is what would otherwise read as
+    // "moved" on every pass.
+    const std::vector<FieldMeta> fields = ConeFields();
+    Cone cone;
+    cone.inner = std::numeric_limits<float>::quiet_NaN();
+
+    CHECK_FALSE(SettleDependentBounds(fields, &cone));
+    CHECK(std::isnan(cone.inner));
+}
+
+TEST_CASE("WriteNumericField: writes at the field's own width, and refuses the rest")
+{
+    const std::vector<FieldMeta> fields = ConeFields();
+    Cone cone;
+
+    REQUIRE(WriteNumericField(fields[0], &cone, 12.5));
+    CHECK(cone.inner == doctest::Approx(12.5f));
+
+    // Narrowed to the field's type rather than written as a double over it, which
+    // would take the neighbouring bytes with it.
+    REQUIRE(WriteNumericField(fields[2], &cone, 42.9));
+    CHECK(cone.count == 42);
+    CHECK(cone.outer == doctest::Approx(30.f));
+
+    const FieldMeta text{.name = "label", .type = FieldType::String, .offset = 0};
+    CHECK_FALSE(WriteNumericField(text, &cone, 1.0));
 }
 
 TEST_CASE("ReadNumericField: every numeric width reads, and nothing else does")

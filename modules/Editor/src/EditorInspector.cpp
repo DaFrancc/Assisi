@@ -389,6 +389,84 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     return edited;
 }
 
+namespace
+{
+
+/// @brief Whether @p baseline is the one for this field's current edit.
+bool BoundBaselineMatches(const BoundBaseline &baseline, Assisi::ECS::Entity entity,
+                          const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t editedField)
+{
+    return baseline.active && baseline.entity == entity && baseline.component == meta.id &&
+           baseline.editedField == editedField;
+}
+
+/// @brief Remember every field a bound-settle could move, before this edit's
+/// first intermediate value reaches them.
+///
+/// Only fields whose bound *names* a sibling: a literal bound is not something
+/// another field's edit can push against, so there is nothing to restore.
+void CaptureBoundBaseline(BoundBaseline &baseline, Assisi::ECS::Entity entity,
+                          const Assisi::Core::Reflect::ComponentMeta &meta, const void *object,
+                          std::size_t editedField)
+{
+    baseline.values.clear();
+    baseline.entity      = entity;
+    baseline.component   = meta.id;
+    baseline.editedField = editedField;
+    baseline.active      = true;
+
+    for (std::size_t i = 0; i < meta.fields.size(); ++i)
+    {
+        const Assisi::Core::Reflect::FieldMeta &field = meta.fields[i];
+        if (field.minField.empty() && field.maxField.empty())
+        {
+            continue;
+        }
+        double value = 0.0;
+        if (Assisi::Core::Reflect::ReadNumericField(field, object, value))
+        {
+            baseline.values.emplace_back(i, value);
+        }
+    }
+}
+
+/// @brief Put the remembered values back, so the settle that follows measures
+/// against what the fields were rather than what the last keystroke left them.
+///
+/// The field being edited is skipped — restoring it would write over what is
+/// being typed. A baseline belonging to another entity or component is ignored
+/// rather than applied, since its indices mean nothing here.
+/// @return Whether any field's value actually changed, which the caller owes the
+/// scene as a change notification.
+bool RestoreBoundBaseline(const BoundBaseline &baseline, Assisi::ECS::Entity entity,
+                          const Assisi::Core::Reflect::ComponentMeta &meta, void *object,
+                          std::size_t editedField)
+{
+    if (!BoundBaselineMatches(baseline, entity, meta, editedField))
+    {
+        return false;
+    }
+
+    bool moved = false;
+    for (const auto &[index, value] : baseline.values)
+    {
+        if (index == editedField || index >= meta.fields.size())
+        {
+            continue;
+        }
+        const Assisi::Core::Reflect::FieldMeta &field = meta.fields[index];
+        double current = 0.0;
+        if (Assisi::Core::Reflect::ReadNumericField(field, object, current) && current != value &&
+            Assisi::Core::Reflect::WriteNumericField(field, object, value))
+        {
+            moved = true;
+        }
+    }
+    return moved;
+}
+
+} // namespace
+
 bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     using namespace Assisi::Core::Reflect;
@@ -396,8 +474,12 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
     bool anyEditable   = false;
     bool anyFieldEdited = false;
 
-    for (const auto &field : meta.fields)
+    // By index, because the bound baseline names fields by position: it has to
+    // say which one is being edited, and that is the one value it must not
+    // restore over.
+    for (std::size_t fieldIndex = 0; fieldIndex < meta.fields.size(); ++fieldIndex)
     {
+        const FieldMeta &field = meta.fields[fieldIndex];
         if (field.transient)
             continue;
         anyEditable = true;
@@ -640,7 +722,35 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             }
         }
 
-        anyFieldEdited |= edited;
+        // Also on the frame the widget lets go, whether or not it reported an
+        // edit: Escape reverts a text field's own value silently, and without a
+        // settle there the capped field keeps the half-typed number.
+        const bool finishing = ImGui::IsItemDeactivated();
+        bool settled = false;
+        if (edited || finishing)
+        {
+            // Captured on this field's *first* edit of the gesture, not on
+            // ImGui's activation edge. Ctrl+clicking a drag box turns it into a
+            // text box, which deactivates and reactivates mid-gesture — a
+            // baseline keyed to that edge is dropped exactly when the typing
+            // starts, which is the one case it exists for. Here the capped fields
+            // are still pristine, since no settle has run for this gesture yet,
+            // so it is the same snapshot the activation edge would have taken.
+            if (!BoundBaselineMatches(_boundBaseline, _selectedEntity, meta, fieldIndex))
+            {
+                CaptureBoundBaseline(_boundBaseline, _selectedEntity, meta, mut, fieldIndex);
+            }
+
+            // A field that caps another has just moved, so the capped one may be
+            // out of range — and its own widget will not run again until the next
+            // frame, by which point the drag has moved on. Settling here keeps the
+            // pair consistent every frame of the drag, and inside the same gesture,
+            // so one undo puts both back.
+            settled = RestoreBoundBaseline(_boundBaseline, _selectedEntity, meta, mut, fieldIndex);
+            settled = SettleDependentBounds(meta.fields, mut) || settled;
+        }
+
+        anyFieldEdited |= edited || settled;
         ImGui::PopID();
     }
 

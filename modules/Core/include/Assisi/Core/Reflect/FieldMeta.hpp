@@ -227,6 +227,14 @@ struct FieldBounds
 /// no single number to be compared against a bound.
 [[nodiscard]] bool ReadNumericField(const FieldMeta &field, const void *object, double &out);
 
+/// @brief Write @p value into @p field of @p object, narrowed to the field's own
+/// type.
+///
+/// False for a non-numeric field, which is left untouched. The narrowing is the
+/// caller's business: a value outside the field's range is what a cast of it
+/// gives, not an error.
+bool WriteNumericField(const FieldMeta &field, void *object, double value);
+
 /// @brief What @p field's bounds actually are for this @p object.
 ///
 /// The one way to read a bound. A bound naming a sibling is resolved against
@@ -237,5 +245,25 @@ struct FieldBounds
 /// component's fields, and a bound of zero would be a quiet clamp to zero.
 [[nodiscard]] FieldBounds ResolveFieldBounds(const FieldMeta &field, std::span<const FieldMeta> siblings,
                                              const void *object);
+
+/// @brief Pull every field bounded *by another field* back inside its range, and
+/// report whether anything moved.
+///
+/// What makes a named bound hold from both sides. Editing the field that caps
+/// another leaves that other one out of range, and a clamp applied only where the
+/// capped field is edited would never notice: dragging a spot light's outer cone
+/// down past its inner one is a legal edit to a field with no upper bound of its
+/// own. This is what drags the inner cone down with it.
+///
+/// Only fields whose bound *names* a sibling are touched. A literal bound cannot
+/// be invalidated by editing something else, so a value outside one came from a
+/// hand-edited file and is the author's to see rather than this function's to
+/// quietly rewrite.
+///
+/// Repeated until nothing moves, so a chain settles in one call, and capped at
+/// one pass per field so metadata describing something perverse cannot spin.
+/// A field holding NaN is left alone: it is not ordered against the bounds, so
+/// there is no direction to move it in.
+bool SettleDependentBounds(std::span<const FieldMeta> fields, void *object);
 
 } // namespace Assisi::Core::Reflect

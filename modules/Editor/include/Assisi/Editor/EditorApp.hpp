@@ -160,6 +160,34 @@ struct EditorConfig
 
 class EditorOptionsPanel;
 
+/// @brief What the fields a bound-settle can move held when the current field
+/// edit began.
+///
+/// Settling consumes what it moves, and a typed value arrives one character at a
+/// time: typing 40 into a cap passes through 4, and a clamp applied at that
+/// instant drags the capped field to 4 and leaves it there when the 0 lands.
+/// Restoring these before each settle makes the capped field follow *what it was*
+/// against the current cap, rather than a running minimum of every value the cap
+/// passed through on the way.
+///
+/// Lives for one widget interaction — captured when a field takes focus, dropped
+/// when it loses it — so releasing a drag commits what is on screen. The
+/// component itself is never shadowed: the capped field really does hold each
+/// intermediate value, and the scene is told about it.
+struct BoundBaseline
+{
+    Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
+    Assisi::Core::Reflect::ComponentId component{};
+    /// The field being edited, which is the one value never restored — that would
+    /// be writing over what is being typed.
+    std::size_t editedField = 0;
+    /// Index into the component's field list, and the value it held. Only fields
+    /// whose bound names a sibling are here, so this is empty for almost every
+    /// component.
+    std::vector<std::pair<std::size_t, double>> values;
+    bool active = false;
+};
+
 class EditorApp : public Assisi::App::Application
 {
 public:
@@ -1425,6 +1453,10 @@ private:
         std::string field;         ///< Empty resets the whole component's claim.
     };
     std::optional<PendingOverrideReset> _pendingOverrideReset;
+
+    /// See BoundBaseline: what a bound-settle would otherwise consume while a
+    /// value is being typed one character at a time.
+    BoundBaseline _boundBaseline;
 
     /// The blueprint instance the selection is *about*, or 0 for none.
     ///

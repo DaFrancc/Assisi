@@ -3,6 +3,7 @@
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -46,6 +47,21 @@ bool ReadNumericField(const FieldMeta &field, const void *object, double &out)
     }
 }
 
+bool WriteNumericField(const FieldMeta &field, void *object, double value)
+{
+    void *address = static_cast<std::byte *>(object) + field.offset;
+    switch (field.type)
+    {
+    case FieldType::Float:  *static_cast<float *>(address)         = static_cast<float>(value); return true;
+    case FieldType::Double: *static_cast<double *>(address)        = value; return true;
+    case FieldType::Int32:  *static_cast<std::int32_t *>(address)  = static_cast<std::int32_t>(value); return true;
+    case FieldType::UInt32: *static_cast<std::uint32_t *>(address) = static_cast<std::uint32_t>(value); return true;
+    case FieldType::Int64:  *static_cast<std::int64_t *>(address)  = static_cast<std::int64_t>(value); return true;
+    case FieldType::UInt64: *static_cast<std::uint64_t *>(address) = static_cast<std::uint64_t>(value); return true;
+    default: return false;
+    }
+}
+
 FieldBounds ResolveFieldBounds(const FieldMeta &field, std::span<const FieldMeta> siblings, const void *object)
 {
     FieldBounds bounds;
@@ -73,6 +89,60 @@ FieldBounds ResolveFieldBounds(const FieldMeta &field, std::span<const FieldMeta
     resolve(field.hasMin, field.minField, field.minValue, bounds.hasMin, bounds.minValue);
     resolve(field.hasMax, field.maxField, field.maxValue, bounds.hasMax, bounds.maxValue);
     return bounds;
+}
+
+bool SettleDependentBounds(std::span<const FieldMeta> fields, void *object)
+{
+    if (object == nullptr)
+    {
+        return false;
+    }
+
+    bool anyMoved = false;
+    // One pass per field is enough for any chain that settles at all, and is the
+    // stop for metadata that would otherwise not settle.
+    for (std::size_t pass = 0; pass < fields.size(); ++pass)
+    {
+        bool movedThisPass = false;
+        for (const FieldMeta &field : fields)
+        {
+            if (field.minField.empty() && field.maxField.empty())
+            {
+                continue;
+            }
+
+            double value = 0.0;
+            if (!ReadNumericField(field, object, value))
+            {
+                continue;
+            }
+
+            const FieldBounds bounds = ResolveFieldBounds(field, fields, object);
+            double settled = value;
+            if (bounds.hasMin)
+            {
+                settled = std::max(settled, bounds.minValue);
+            }
+            if (bounds.hasMax)
+            {
+                settled = std::min(settled, bounds.maxValue);
+            }
+
+            // The finite test is what stops a NaN from being written back over
+            // and over: it compares unequal to itself, so "did it move" would be
+            // true on every pass.
+            if (settled != value && std::isfinite(settled) && WriteNumericField(field, object, settled))
+            {
+                movedThisPass = true;
+            }
+        }
+        if (!movedThisPass)
+        {
+            break;
+        }
+        anyMoved = true;
+    }
+    return anyMoved;
 }
 
 } // namespace Assisi::Core::Reflect
