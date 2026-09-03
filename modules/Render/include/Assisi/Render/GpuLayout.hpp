@@ -55,19 +55,19 @@ inline constexpr std::size_t kGpuLaneAlignment = 16;
 /// compiler may order the members as it likes, and `offsetof` is not required to
 /// work. Trivial copyability is because these are uploaded as raw bytes.
 #define ASSISI_GPU_LAYOUT(type)                                                                                      \
-    static_assert(std::is_standard_layout_v<type>, #type " must be standard-layout to mirror a shader struct.");      \
-    static_assert(std::is_trivially_copyable_v<type>,                                                                \
-                  #type " must be trivially copyable — it is uploaded to the GPU as bytes.");                         \
-    static_assert(sizeof(type) % ::Assisi::Render::kGpuLaneAlignment == 0,                                           \
-                  #type " must be a whole number of GPU lanes, or its array stride will not match the shader's.")
+        static_assert(std::is_standard_layout_v<type>, #type " must be standard-layout to mirror a shader struct.");      \
+        static_assert(std::is_trivially_copyable_v<type>,                                                                \
+                      #type " must be trivially copyable — it is uploaded to the GPU as bytes.");                         \
+        static_assert(sizeof(type) % ::Assisi::Render::kGpuLaneAlignment == 0,                                           \
+                      #type " must be a whole number of GPU lanes, or its array stride will not match the shader's.")
 
 /// @brief Assert that @p member is @p type's first, and so begins at the start
 /// of the struct.
 ///
 /// The anchor the relative claims below hang from. One per struct.
 #define ASSISI_GPU_FIRST_FIELD(type, member)                                                                         \
-    static_assert(offsetof(type, member) == 0,                                                                       \
-                  #type "::" #member " is no longer first; every offset below it has moved.")
+        static_assert(offsetof(type, member) == 0,                                                                       \
+                      #type "::" #member " is no longer first; every offset below it has moved.")
 
 /// @brief Assert that @p member begins immediately after @p previous, with
 /// nothing between them.
@@ -76,9 +76,9 @@ inline constexpr std::size_t kGpuLaneAlignment = 16;
 /// the shader was written against. A member inserted between the two, or either
 /// one retyped, breaks this and every claim after it.
 #define ASSISI_GPU_FIELD_AFTER(type, member, previous)                                                               \
-    static_assert(offsetof(type, member) == offsetof(type, previous) + sizeof(type::previous),                       \
-                  #type "::" #member " no longer sits directly after " #previous "; the shader mirroring it "        \
-                  "still reads the old offset.")
+        static_assert(offsetof(type, member) == offsetof(type, previous) + sizeof(type::previous),                       \
+                      #type "::" #member " no longer sits directly after " #previous "; the shader mirroring it "        \
+                      "still reads the old offset.")
 
 /// @brief Assert that @p last is @p type's final member and that the struct ends
 /// where it does.
@@ -88,5 +88,5 @@ inline constexpr std::size_t kGpuLaneAlignment = 16;
 /// silent break this file exists to prevent. A struct with deliberate tail
 /// padding names that padding as its last member.
 #define ASSISI_GPU_NO_TAIL_PADDING(type, last)                                                                       \
-    static_assert(sizeof(type) == offsetof(type, last) + sizeof(type::last),                                         \
-                  #type " has bytes past " #last "; either a member was appended or its tail padding changed.")
+        static_assert(sizeof(type) == offsetof(type, last) + sizeof(type::last),                                         \
+                      #type " has bytes past " #last "; either a member was appended or its tail padding changed.")

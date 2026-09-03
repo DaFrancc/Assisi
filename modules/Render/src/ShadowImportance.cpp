@@ -71,9 +71,9 @@ std::uint32_t StableSizeClass(std::uint32_t baseClass, float coverage, std::uint
     // relevant boundary by the margin — which is what stops a light sitting on a
     // boundary from resizing every other frame.
     const auto boundary = [&](std::uint32_t sizeClass)
-    {
-        return kFaceCoverageReference * std::exp2(static_cast<float>(sizeClass) - static_cast<float>(baseClass));
-    };
+                          {
+                              return kFaceCoverageReference * std::exp2(static_cast<float>(sizeClass) - static_cast<float>(baseClass));
+                          };
 
     if (demand > held)
     {

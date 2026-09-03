@@ -834,14 +834,14 @@ TEST_CASE("Classifying a real cascade set draws exactly what sweeping it drew")
     {
         CAPTURE(view);
         const auto instancesIn = [](const ShadowDrawList &list, std::uint32_t index)
-        {
-            std::uint32_t total = 0;
-            for (std::uint32_t i = list.viewCommandStart[index]; i < list.viewCommandStart[index + 1u]; ++i)
-            {
-                total += list.commands[i].instanceCount;
-            }
-            return total;
-        };
+                                 {
+                                     std::uint32_t total = 0;
+                                     for (std::uint32_t i = list.viewCommandStart[index]; i < list.viewCommandStart[index + 1u]; ++i)
+                                     {
+                                         total += list.commands[i].instanceCount;
+                                     }
+                                     return total;
+                                 };
         CHECK(instancesIn(masked, view) == instancesIn(swept, view));
         CHECK(masked.commands[masked.viewCommandStart[view]].startInstanceLocation ==
               swept.commands[swept.viewCommandStart[view]].startInstanceLocation);

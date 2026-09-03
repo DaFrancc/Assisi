@@ -342,7 +342,7 @@ LocalShadowPass::Stats LocalShadowPass::Render(nvrhi::ICommandList *commandList,
     stats.occupancy = _allocator.TotalTexels() == 0
                       ? 0.f
                       : static_cast<float>(_allocator.AllocatedTexels()) /
-                        static_cast<float>(_allocator.TotalTexels());
+                      static_cast<float>(_allocator.TotalTexels());
 
     {
         // The whole atlas at once, not tile by tile: a clear is a fixed cost per
