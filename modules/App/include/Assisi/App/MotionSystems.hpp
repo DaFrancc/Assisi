@@ -38,4 +38,21 @@ struct SystemContext;
 /// — that is how a mover is parked without removing the component.
 ASYSTEM(FixedUpdate) void OscillateSystem(SystemContext &ctx);
 
+/// @brief Turns every directional light whose daylight cycle is on.
+///
+/// The light sweeps about world up at whatever angle above the horizon it was
+/// aimed at, one full revolution per `daylightPeriodSeconds`. A light with the
+/// cycle off is untouched, so this costs a compare on a level's fixed suns.
+///
+/// @par Requirements
+/// Register it in **FixedUpdate**. The step is the clock, so a day advances at
+/// the same rate whatever the frame rate did — and the sky, which takes its
+/// colour from the sun's angle, moves with it rather than independently.
+///
+/// Unlike OscillateSystem this integrates rather than evaluating: it turns the
+/// aim the light has now, which is also the aim the gizmo writes and the aim a
+/// save records. See Runtime::AdvanceDaylight for why that trade falls the other
+/// way here.
+ASYSTEM(FixedUpdate) void DaylightCycleSystem(SystemContext &ctx);
+
 } // namespace Assisi::App

@@ -10,6 +10,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 
 #include <glm/gtx/matrix_decompose.hpp>
 
@@ -247,7 +248,30 @@ void EditorApp::DrawTransformGizmo()
     // a frame in which the handles are not held, so each of them ends the drag. A
     // release read inside the drawing is unreachable from all four, leaving an open
     // drag to commit a frame later against a different selection.
-    const bool held = !instanceMode && DrawTransformGizmoHandles();
+    // A directional light takes the gizmo for itself: what it has to edit is an
+    // aim, not a placement, and the two sets of handles cannot share a screen.
+    // Before the transform handles rather than after, because ImGuizmo keeps one
+    // interaction state and the second Manipulate of a frame overwrites the
+    // first's.
+    _lightGizmoHeld = false;
+    // Whether the aim handles *drew*, not whether they are held. Exactly one
+    // Manipulate may run per frame — ImGuizmo keeps a single interaction state,
+    // and a second call fights the first for it — so a frame in which these drew
+    // is a frame the transform handles must sit out entirely.
+    const bool aimingLight = !instanceMode && DrawDirectionalLightGizmo();
+
+    // The aim's release edge, on the same terms as the transform drag's below and
+    // for the same reason: driven from out here, so that every early return
+    // inside the draw is a frame in which the handles are not held and therefore
+    // closes the drag. A commit inside the draw would instead fire on each unheld
+    // frame, making one undo entry per frame the light sat selected.
+    if (!_lightGizmoHeld)
+    {
+        _lightDrag.Release(_scene, ActiveHistory(),
+                           Assisi::Core::Reflect::ComponentIdOf<Rt::DirectionalLight>());
+    }
+
+    const bool held = !instanceMode && !aimingLight && DrawTransformGizmoHandles();
     if (!held)
         _gizmoDrag.Release(_scene, ActiveHistory(), Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>());
 

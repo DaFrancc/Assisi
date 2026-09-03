@@ -83,7 +83,69 @@ struct DirectionalLight
 
     AFIELD() float intensity = 1.f;
     AFIELD() bool castsShadows = true; ///< Whether this light renders a shadow map.
+
+    /// @brief Turn this light as time passes, instead of leaving it where it was
+    /// aimed.
+    ///
+    /// The sun of a level that has a time of day rather than a fixed hour. Off
+    /// leaves @ref direction exactly as authored, which is what a light aimed by
+    /// hand for one shot wants — so this is opt-in rather than something every
+    /// placed sun starts doing.
+    AFIELD(radioBroadcast) bool daylightCycle = false;
+
+    /// Seconds of real time one full revolution takes.
+    ///
+    /// A period rather than a rate, because a period is the quantity anyone
+    /// actually has in mind — "a day lasts ten minutes" — and because it behaves
+    /// at both ends. A rate approaching zero is a sun that has stopped, which is
+    /// indistinguishable from the cycle being switched off; a period approaching
+    /// zero is a strobe, which the floor below keeps out.
+    AFIELD(min = 1.0, max = 86400.0,
+           radioListen = {source = daylightCycle, value = true, behavior = vanish})
+    float daylightPeriodSeconds = 120.f;
 };
+
+/// @brief The shortest day the cycle will run, in seconds.
+///
+/// A sun crossing the sky in under a second is a strobe rather than a time of
+/// day. The inspector clamps the field to this; the system enforces it again,
+/// because a level file is hand-editable and this one divides.
+inline constexpr float kMinDaylightPeriodSeconds = 1.f;
+
+/// @brief The axis a daylight cycle turns the sun about.
+///
+/// Horizontal, because that is what makes a day: the sun rises on one side,
+/// passes overhead and sets on the other, and half the cycle is night. Turning
+/// about world *up* instead would sweep it around at a fixed elevation and never
+/// set — and would leave a sun aimed straight down, which is the default, exactly
+/// where it started.
+///
+/// Which horizontal axis is arbitrary without somewhere on a planet to stand.
+inline constexpr glm::vec3 kDaylightAxis{1.f, 0.f, 0.f};
+
+/// @brief @p light's direction advanced *by* @p seconds — the aim it has now,
+/// turned by the fraction of a day that has passed since.
+///
+/// Turns about the world's up axis, so a sun keeps whatever angle it was
+/// authored at above the horizon and sweeps around it. That is the shape of a day
+/// everywhere but the poles, and it is what an author gets by aiming the light
+/// once and letting this carry it — rather than by authoring an orbit.
+///
+/// **Integrated, unlike Oscillator, which evaluates its pose from the tick.**
+/// That one has an `origin` to evaluate from and a day cycle has no equivalent:
+/// the only base it could use is the authored direction, and a field holding it
+/// would be one more thing to keep in step with the aim the gizmo writes. What
+/// integration costs is that the cycle consumes the direction it turns — stopping
+/// it leaves the sun where it stopped, and saving mid-cycle saves that. Both are
+/// what someone stopping a day cycle to frame a shot would want, so the trade
+/// falls the right way here even though it fell the other way there.
+///
+/// A light with the cycle off is returned untouched, so running this over every
+/// directional light costs a compare on the ones not using it.
+///
+/// Pure, and split out of the system, so the rule is checkable without a scene or
+/// a clock.
+[[nodiscard]] glm::vec3 AdvanceDaylight(const DirectionalLight &light, float seconds);
 
 /// @brief The sun's own colour, however it was written down.
 ///
@@ -128,7 +190,7 @@ ACOMP()
 struct SpotLight
 {
     AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< Aim in LOCAL space; the Transform rotates it into world.
-    AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
+    AFIELD() Assisi::Math::Color3 color{1.f, 1.f, 1.f}; ///< Linear-RGB colour.
     AFIELD() float intensity   = 1.f;              ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius   = 10.f;         ///< Maximum influence range in world units; never negative.
     AFIELD() float innerAngle  = 15.f;             ///< Half-angle of the full-brightness cone (degrees).

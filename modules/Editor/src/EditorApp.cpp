@@ -806,6 +806,11 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         ASSISI_PROFILE_SCOPE("collider-wireframes");
         SubmitColliderWireframes();
 
+        // A light's reach, on the same terms and in the same batch pass: it is
+        // the only thing in the viewport that says what a radius or a cone angle
+        // actually covers.
+        SubmitLightGizmos();
+
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
         // and an unmarked origin is also an unclickable one.

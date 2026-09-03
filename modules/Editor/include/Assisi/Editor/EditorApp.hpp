@@ -381,10 +381,39 @@ private:
     void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
                                const glm::vec3 &color);
 
+    // --- Light visualisation ---
+    /// @brief Draw every light's reach as an overlay: a point light's sphere, a
+    /// spot's two cones, a directional light's arrow.
+    ///
+    /// A light is invisible otherwise. Its billboard says where it is and nothing
+    /// about what it does, so a radius is authored by typing a number and
+    /// checking the result frame by frame — which is the loop this removes.
+    ///
+    /// The selected light draws in the selection colour and shows more: the inner
+    /// cone as well as the outer, and its axis. Everything else is drawn thinly
+    /// enough to sit under a scene full of lights.
+    void SubmitLightGizmos();
+
     // --- Gizmo state ---
     /// @brief True while the transform gizmo is hovered or being dragged. Entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
     [[nodiscard]] bool IsUsingGizmo() const;
+
+    /// @brief Drive the selected directional light's aim with the rotate gizmo,
+    /// in place of the transform one.
+    ///
+    /// A directional light has no position — only a direction — so the ordinary
+    /// gizmo has nothing to grab on the two thirds of the time it is translating
+    /// or scaling, and rotating the entity's Transform would turn a matrix the
+    /// light never reads. This turns the light's own `direction` field instead.
+    ///
+    /// Drawn at the entity's world position where it has a Transform, and at the
+    /// world origin where it does not — a sun commonly has none, and a gizmo with
+    /// nowhere to be is a gizmo nobody can reach.
+    ///
+    /// @return true when it took the frame's gizmo, which the transform gizmo
+    /// checks so the two never draw over each other.
+    [[nodiscard]] bool DrawDirectionalLightGizmo();
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -1429,6 +1458,13 @@ private:
     // every frame.
     std::vector<Assisi::Render::LineVertex> _colliderLinesDepthTested;
     std::vector<Assisi::Render::LineVertex> _colliderLinesOnTop;
+
+    // The same split for the light gizmos, and separate batches rather than
+    // shared ones because a light's reach and a body's collider are unrelated
+    // overlays that happen to be drawn the same way — sharing would make either
+    // one's absence depend on the other's ordering.
+    std::vector<Assisi::Render::LineVertex> _lightLinesDepthTested;
+    std::vector<Assisi::Render::LineVertex> _lightLinesOnTop;
     std::vector<Assisi::ECS::Entity>        _colliderEntities;
 
     // --- Entity list ---
@@ -1445,6 +1481,19 @@ private:
     // edge, which is what keeps a drag its own undo entry rather than merged with a
     // later edit. See GizmoDrag.hpp.
     Assisi::Editor::GizmoDrag _gizmoDrag;
+
+    // The same, for a directional light's aim, which is its own drag against its
+    // own component. Separate from the one above rather than shared: they hold
+    // different components, and Release names the component it commits — one
+    // drag serving both would commit whichever the last caller happened to pass.
+    Assisi::Editor::GizmoDrag _lightDrag;
+
+    // Whether the light-aim handles were held this frame. Shaped like
+    // _captureEditingActive: raised by the draw, read after it. Separate from the
+    // draw's return value, which says whether it *drew* — the caller needs both,
+    // and conflating them let the transform gizmo draw a second set of handles
+    // over these on every frame a sun was selected and not dragged.
+    bool _lightGizmoHeld = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

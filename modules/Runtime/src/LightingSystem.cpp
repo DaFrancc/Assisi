@@ -54,6 +54,35 @@ glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const
     return SafeDirection(glm::mat3(worldMatrix) * localDirection);
 }
 
+glm::vec3 AdvanceDaylight(const DirectionalLight &light, float seconds)
+{
+    // A light not on the cycle is left exactly where it was aimed, which is what
+    // makes running this over every directional light cost one compare on the
+    // ones that are not.
+    if (!light.daylightCycle || !std::isfinite(seconds))
+    {
+        return light.direction;
+    }
+    const float period = std::max(light.daylightPeriodSeconds, kMinDaylightPeriodSeconds);
+
+    // Turned about a horizontal axis, which is what makes this a day rather than
+    // a circuit. Turning about world up would sweep the sun around at whatever
+    // elevation it was authored at and never take it below the horizon — a polar
+    // summer, with no night in it — and it would leave the default sun, aimed
+    // straight down, exactly where it started: that aim is parallel to world up,
+    // so it maps onto itself and nothing moves at all.
+    //
+    // Which horizontal axis is arbitrary without somewhere on a planet to stand,
+    // so it is world X: the sun rises on one side, passes overhead and sets on
+    // the other. An author who wants a different bearing turns the level or aims
+    // the light off-axis, and an aim off this axis traces a tilted arc, which is
+    // what a day away from the equator looks like.
+    const float turns = seconds / period;
+    const float angle = turns * glm::two_pi<float>();
+    const glm::mat4 rotation = glm::rotate(glm::mat4(1.f), angle, kDaylightAxis);
+    return SafeDirection(glm::vec3(rotation * glm::vec4(light.direction, 0.f)));
+}
+
 glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
                                         const Render::SkySettings *atmosphere)
 {

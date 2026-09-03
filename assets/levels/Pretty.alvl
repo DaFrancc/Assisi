@@ -1,0 +1,214 @@
+{
+  "entities": [
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": false,
+          "halfExtents": [
+            50.0,
+            0.25,
+            50.0
+          ],
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
+        },
+        "Transform": {
+          "position": [
+            2.9587583541870117,
+            2.9587583541870117,
+            5.917516708374023
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            100.0,
+            0.5,
+            100.0
+          ]
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
+        "Bounce": {
+          "rebound": 1.0
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 1.0,
+          "shape": 1
+        },
+        "Transform": {
+          "position": [
+            2.090198040008545,
+            5.19636344909668,
+            5.917516708374023
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Ball"
+    },
+    {
+      "components": {
+        "Bounce": {
+          "rebound": 0.25
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
+        },
+        "Transform": {
+          "position": [
+            2.5220329761505127,
+            7.063097953796387,
+            6.0795488357543945
+          ],
+          "rotation": [
+            0.8990762233734131,
+            -0.2657429277896881,
+            0.09861496835947037,
+            0.3336431682109833
+          ],
+          "scale": [
+            0.999999463558197,
+            0.9999991059303284,
+            0.9999991655349731
+          ]
+        }
+      },
+      "name": "Cube"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "colorExpression": 0,
+          "daylightCycle": true,
+          "daylightPeriodSeconds": 120.0,
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "intensity": 1.0,
+          "temperatureKelvin": 5778.0,
+          "tintedBySky": true
+        },
+        "Skybox": {
+          "airScattering": [
+            0.17520000040531158,
+            0.40779998898506165,
+            1.0
+          ],
+          "airThickness": 0.14000000059604645,
+          "exposure": 10.0,
+          "groundColor": [
+            0.10999999940395355,
+            0.10000000149011612,
+            0.09000000357627869
+          ],
+          "hazeForwardness": 0.7599999904632568,
+          "hazeScattering": [
+            0.004999999888241291,
+            0.004999999888241291,
+            0.004999999888241291
+          ],
+          "nightColor": [
+            5.999999848427251e-05,
+            9.999999747378752e-05,
+            0.00019999999494757503
+          ],
+          "preset": 0,
+          "skyBounce": 0.20000000298023224,
+          "sunDiskColor": [
+            1.0,
+            0.949999988079071,
+            0.8199999928474426
+          ],
+          "sunDiskIntensity": 20.0,
+          "sunEdgeSoftness": 0.10000000149011612,
+          "sunLimbDarkening": 0.6000000238418579,
+          "sunSizeDegrees": 0.5
+        }
+      },
+      "name": "Sun"
+    }
+  ],
+  "systems": [
+    "Bounce",
+    "DaylightCycle"
+  ],
+  "version": 2
+}
