@@ -15,6 +15,7 @@ target_sources(Assisi-Core
     "src/ContentHash.cpp"
     "src/ComponentMask.cpp"
     "src/Diagnostics.cpp"
+    "src/FieldMeta.cpp"
     "src/ComponentRegistry.cpp"
     "src/MessageRegistry.cpp"
     "src/JobSystem.cpp"

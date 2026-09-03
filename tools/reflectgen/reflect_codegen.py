@@ -20,7 +20,8 @@ than ignored, because "unknown flag" and "this flag changed meaning" are
 different problems for a reader to debug.
 """
 
-from typing import Optional
+import re
+from typing import NamedTuple, Optional
 
 from reflect_parser import FieldInfo, ComponentInfo, MessageInfo
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
@@ -46,8 +47,30 @@ NUMERIC_BOUND_RANGES: dict[str, Optional[tuple[int, int]]] = {
 }
 
 
-def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen]) -> tuple[Optional[float], Optional[float]]:
+_IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+class Bound(NamedTuple):
+    """One resolved AFIELD(min=) or AFIELD(max=).
+
+    Exactly one of the two is set: `value` for a literal, `field` for the name of
+    a sibling the bound is read from at the moment it is needed.
+    """
+    value: Optional[float] = None
+    field: Optional[str]   = None
+
+
+def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen],
+                     siblings: list) -> tuple[Optional[Bound], Optional[Bound]]:
     """Validate AFIELD(min=/max=) hints against the field's type.
+
+    A bound is a number, or the name of another numeric field of the same
+    struct — the case a literal cannot express, where the limit is whatever a
+    neighbouring field currently holds (a spot light's inner cone against its
+    outer). Deliberately no further: not another component's field, not an
+    expression, and not a type that has no single number in it, because each of
+    those needs a lookup the editor and the wire check cannot both do cheaply,
+    and a bound nobody enforces is worse than none.
 
     Everything wrong here is a hard generation error — a typo like
     AFIELD(min=O), a negative bound on an unsigned field, or a bound on a
@@ -65,13 +88,31 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen]) -> tuple[Optional[
 
     allowed = NUMERIC_BOUND_RANGES[tc.enum_value]
 
-    def parse(raw: Optional[str], key: str) -> Optional[float]:
+    def parse(raw: Optional[str], key: str) -> Optional[Bound]:
         if raw is None:
             return None
+
+        # A name is checked before a number, so `inf` and `nan` reach the
+        # "names no field" error rather than becoming a bound float() accepts
+        # and nothing downstream can compare against.
+        if _IDENTIFIER.match(raw):
+            if raw == f.name:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" bounds it by itself')
+            source = next((s for s in siblings if s.name == raw), None)
+            if source is None:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" names no field in the '
+                                 f'same struct; a bound may only follow a sibling field')
+            source_tc = _field_tc(source)
+            if source_tc is None or source_tc.enum_value not in NUMERIC_BOUND_RANGES:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" follows "{raw}", of type '
+                                 f'{source.cpp_type!r}, which holds no number to bound by')
+            return Bound(field=raw)
+
         try:
             value = float(raw)
         except ValueError:
-            raise ValueError(f'AFIELD({key}={raw!r}) on field "{f.name}" is not a number')
+            raise ValueError(f'AFIELD({key}={raw!r}) on field "{f.name}" is neither a number nor '
+                             f'the name of a sibling field')
         if allowed is not None:
             lo, hi = allowed
             if not value.is_integer():
@@ -80,13 +121,19 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen]) -> tuple[Optional[
             if not lo <= value <= hi:
                 raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" is outside '
                                  f'the supported {f.cpp_type} bound range [{lo}, {hi}]')
-        return value
+        return Bound(value=value)
 
-    vmin = parse(raw_min, 'min')
-    vmax = parse(raw_max, 'max')
-    if vmin is not None and vmax is not None and vmin > vmax:
-        raise ValueError(f'AFIELD on field "{f.name}": min={vmin:g} exceeds max={vmax:g}')
-    return vmin, vmax
+    bmin = parse(raw_min, 'min')
+    bmax = parse(raw_max, 'max')
+    # Only two literals can be compared here. A pair involving a sibling is a
+    # runtime question — and a pair naming *each other* is legal and means what it
+    # reads as, since resolution is one step and never consults the named field's
+    # own bounds.
+    if (bmin is not None and bmax is not None
+            and bmin.value is not None and bmax.value is not None
+            and bmin.value > bmax.value):
+        raise ValueError(f'AFIELD on field "{f.name}": min={bmin.value:g} exceeds max={bmax.value:g}')
+    return bmin, bmax
 
 
 def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
@@ -104,62 +151,74 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
     return TYPES.get(f.cpp_type)
 
 
-def _gen_field_meta(f: FieldInfo) -> str:
-    tc        = _field_tc(f)
-    ftype     = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
-    transient = 'true' if f.args.has('transient') else 'false'
-    norep     = 'true' if f.args.has('norep') else 'false'
-    vmin, vmax = _validate_bounds(f, tc)
+def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
+    """One FieldMeta initializer, with every member named.
 
-    bounds_active     = vmin is not None or vmax is not None
-    enum_active       = f.enum_info is not None
-    listener_active   = f.radio is not None and f.radio.source != ''
-    controlled_active = f.args.has('controlled')
-    subject_active    = f.args.has('subject')
+    Designated initializers rather than a positional list. FieldMeta has a member
+    per annotation the engine understands and most fields use none of them, so
+    positionally an ordinary field reads `false, false, 0.f, 0.f, "", "", {}, 0,
+    false` — nine values that say nothing about the field and cannot be checked
+    against anything without counting members in another file. Naming them also
+    decouples this from FieldMeta's member *order*: a new member appends one line
+    to the output of the fields that use it and leaves every other field alone.
 
-    # FieldMeta's trailing members are positional — bounds, then the enum block
-    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled,
-    # then subject — so emitting any block forces every *earlier* block to be
-    # emitted at its default. Blocks nobody needs are omitted, which keeps an
-    # unannotated field at the short, golden-stable initializer form.
-    tail: list[str] = []
+    Members are emitted in declaration order, which designated initializers
+    require, and only when they differ from FieldMeta's own default — so what is
+    written is exactly what the annotation asked for.
+    """
+    tc         = _field_tc(f)
+    ftype      = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
+    bmin, bmax = _validate_bounds(f, tc, siblings)
 
-    if bounds_active or enum_active or listener_active or controlled_active or subject_active:
-        has_min = 'true' if vmin is not None else 'false'
-        has_max = 'true' if vmax is not None else 'false'
-        min_v   = f'{vmin}f' if vmin is not None else '0.f'
-        max_v   = f'{vmax}f' if vmax is not None else '0.f'
-        tail += [has_min, has_max, min_v, max_v]
+    parts = [
+        f'.name = "{f.name}"',
+        f'.type = {ftype}',
+        f'.offset = offsetof(T, {f.name})',
+    ]
 
-    if enum_active or listener_active or controlled_active or subject_active:
-        if enum_active:
-            consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
-            tail.append(f'{{ {consts} }}')
-            tail.append(str(f.enum_info.size))
-            tail.append('true' if f.enum_info.is_signed else 'false')
-        else:
-            # Not an enum: empty enumConstants, size 0 (which marks "not an enum").
-            tail += ['{}', '0', 'false']
+    if f.args.has('transient'):
+        parts.append('.transient = true')
+    if f.args.has('norep'):
+        parts.append('.norep = true')
 
-    if listener_active or controlled_active or subject_active:
-        if listener_active:
-            values = ', '.join(str(v) for v in f.radio.values)
-            tail += [
-                f'"{f.radio.source}"',
-                f'{{ {values} }}',
-                f'Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}',
-            ]
-        else:
-            tail += ['""', '{}', 'Assisi::Core::Reflect::RadioBehavior::None']
+    # hasMin/hasMax say a bound exists; whether the literal or the field name
+    # carries it depends on how it was written. A named bound leaves the literal
+    # at zero, which is why nothing may read the literal without checking the name
+    # first — see Reflect::ResolveFieldBounds.
+    if bmin is not None:
+        parts.append('.hasMin = true')
+    if bmax is not None:
+        parts.append('.hasMax = true')
+    if bmin is not None and bmin.value is not None:
+        parts.append(f'.minValue = {bmin.value}f')
+    if bmax is not None and bmax.value is not None:
+        parts.append(f'.maxValue = {bmax.value}f')
+    if bmin is not None and bmin.field is not None:
+        parts.append(f'.minField = "{bmin.field}"')
+    if bmax is not None and bmax.field is not None:
+        parts.append(f'.maxField = "{bmax.field}"')
 
-    if controlled_active or subject_active:
-        tail.append('true' if controlled_active else 'false')
+    if f.enum_info is not None:
+        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
+        parts.append(f'.enumConstants = {{ {consts} }}')
+        # The width marks the field as an enum at all — zero means "not one" — so
+        # it is written even for the enum whose size matches the default int.
+        parts.append(f'.enumSize = {f.enum_info.size}')
+        if f.enum_info.is_signed:
+            parts.append('.enumSigned = true')
 
-    if subject_active:
-        tail.append('true')
+    if f.radio is not None and f.radio.source != '':
+        values = ', '.join(str(v) for v in f.radio.values)
+        parts.append(f'.radioSource = "{f.radio.source}"')
+        parts.append(f'.radioValues = {{ {values} }}')
+        parts.append(f'.radioBehavior = Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}')
 
-    base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
-    return base + ' }' if not tail else base + ', ' + ', '.join(tail) + ' }'
+    if f.args.has('controlled'):
+        parts.append('.controlled = true')
+    if f.args.has('subject'):
+        parts.append('.subject = true')
+
+    return '{ ' + ', '.join(parts) + ' }'
 
 
 def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
@@ -494,7 +553,7 @@ def _check_controlled_outside_messages(components: list, header_name: str) -> No
 
 def _gen_message_block(msg: MessageInfo) -> str:
     var_name    = f'_reflectgen_msg_{msg.name}'
-    field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
+    field_metas = ',\n            '.join(_gen_field_meta(f, msg.fields) for f in msg.fields)
     serialize   = _indent(_gen_message_serialize(msg.fields), 12)
     deserialize = _indent(_gen_message_deserialize(msg.fields, msg.name), 12)
 
@@ -576,7 +635,7 @@ struct MessageTraits<::{msg.fqn}>
 def _gen_asset_block(comp: ComponentInfo) -> str:
     fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
     var_name = f'_reflectgen_{comp.name}'
-    field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
+    field_metas = ',\n            '.join(_gen_field_meta(f, comp.fields) for f in comp.fields)
     serialize   = _indent(_gen_serialize(comp.fields), 12)
     deserialize = _indent(_gen_deserialize_asset(comp.fields, comp.name), 12)
 
@@ -829,7 +888,7 @@ static const bool {var_name} = []() -> bool
 """)
             continue
 
-        field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
+        field_metas = ',\n            '.join(_gen_field_meta(f, comp.fields) for f in comp.fields)
         serialize   = _indent(_gen_serialize(comp.fields), 12)
         deserialize = _indent(_gen_deserialize(comp.fields, comp.name), 12)
 

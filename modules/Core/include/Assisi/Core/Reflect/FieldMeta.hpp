@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -79,9 +80,14 @@ enum class RadioBehavior : std::uint8_t
     Vanish, ///< Hide the field entirely while inactive.
 };
 
+// Every member carries a default initializer, the empty ones included, and that
+// is load-bearing rather than tidiness: reflectgen writes a FieldMeta with
+// designated initializers and names only the members an annotation asked for, and
+// -Wmissing-field-initializers objects to an omitted member that has no default of
+// its own. So a member added here without one breaks every generated file at once.
 struct FieldMeta
 {
-    std::string name;
+    std::string name{};
     FieldType type      = FieldType::Unknown;
     std::size_t offset    = 0;
     bool transient = false;        ///< If true, excluded from serialization.
@@ -105,12 +111,32 @@ struct FieldMeta
     // negative). Hints only — serialization does not enforce them.
     bool hasMin   = false;  ///< True when AFIELD supplied min=...
     bool hasMax   = false;  ///< True when AFIELD supplied max=...
-    float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin.
-    float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax.
+    float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin and minField is empty.
+    float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax and maxField is empty.
+
+    /// A sibling numeric field this bound is read from instead of minValue /
+    /// maxValue, named by AFIELD(min = otherField) / AFIELD(max = otherField).
+    /// Empty when the bound is a literal, which is the ordinary case.
+    ///
+    /// For the bounds one field of a component imposes on another: a spot light's
+    /// inner cone cannot open wider than its outer cone, and the number that caps
+    /// it is whatever the outer angle is at the time. A literal cannot say that —
+    /// any constant is either too small to allow legal values or too large to
+    /// exclude illegal ones.
+    ///
+    /// Resolution is one step and never recurses: the named field's own bounds are
+    /// not consulted. So two fields may name each other, and that pair means what
+    /// it reads as — neither may cross the other.
+    ///
+    /// **Never read these directly** — ResolveFieldBounds is what turns a FieldMeta
+    /// and an object into the numbers that apply. Reading minValue while minField
+    /// is set silently clamps to zero.
+    std::string minField{};
+    std::string maxField{};
 
     // Populated only for FieldType::Enum: the enumerators to offer in an editor,
     // in declaration order. Empty for every other field type.
-    std::vector<EnumConstant> enumConstants;
+    std::vector<EnumConstant> enumConstants{};
 
     // The enum's underlying storage, so an editor reads/writes the field at its
     // true width instead of assuming a 4-byte int (which would corrupt neighbours
@@ -129,8 +155,8 @@ struct FieldMeta
     // listeners hide unconditionally, so the editor resolves visibility by
     // walking radioSource up the chain (reflectgen rejects cycles). radioSource is
     // empty for every non-listener field.
-    std::string radioSource;                                        ///< Sibling enum field this field's visibility follows ("" = not a listener).
-    std::vector<std::int64_t> radioValues;                          ///< Enum values at which this field is active; meaningful when radioSource set.
+    std::string radioSource{};                                      ///< Sibling enum field this field's visibility follows ("" = not a listener).
+    std::vector<std::int64_t> radioValues{};                        ///< Enum values at which this field is active; meaningful when radioSource set.
     RadioBehavior radioBehavior = RadioBehavior::None;               ///< Editor treatment while inactive.
 
     /// @brief AFIELD(controlled): this message field must name an entity the
@@ -180,5 +206,36 @@ struct FieldMeta
     /// decode, so two builds differing only here still parse each other.
     bool subject = false;
 };
+
+/// @brief The bounds a field is held to right now: literals as written, and
+/// sibling-field bounds as whatever that sibling currently holds.
+///
+/// Doubles rather than floats because the widest bounded field is 64-bit, and a
+/// bound narrowed to float would move — outward for a max, which lets an illegal
+/// value through, and that is the direction that matters.
+struct FieldBounds
+{
+    bool hasMin = false;
+    bool hasMax = false;
+    double minValue = 0.0;
+    double maxValue = 0.0;
+};
+
+/// @brief Read @p field of @p object as a double, for any numeric FieldType.
+///
+/// False for every other type, leaving @p out untouched — a Vec3 or a string has
+/// no single number to be compared against a bound.
+[[nodiscard]] bool ReadNumericField(const FieldMeta &field, const void *object, double &out);
+
+/// @brief What @p field's bounds actually are for this @p object.
+///
+/// The one way to read a bound. A bound naming a sibling is resolved against
+/// @p siblings — the field list of the component @p field belongs to — and a name
+/// that resolves to nothing, or to a field with no number in it, drops that bound
+/// rather than inventing one: reflectgen has already refused the annotations that
+/// could get here wrong, so the remaining case is a caller passing the wrong
+/// component's fields, and a bound of zero would be a quiet clamp to zero.
+[[nodiscard]] FieldBounds ResolveFieldBounds(const FieldMeta &field, std::span<const FieldMeta> siblings,
+                                             const void *object);
 
 } // namespace Assisi::Core::Reflect

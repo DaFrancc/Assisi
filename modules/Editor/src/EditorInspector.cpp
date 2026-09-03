@@ -208,7 +208,8 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
 
 } // namespace
 
-bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field)
+bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                               const Assisi::Core::Reflect::FieldBounds &bounds)
 {
     using namespace Assisi::Core::Reflect;
 
@@ -217,11 +218,12 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     {
     case FieldType::Float:
     {
-        // AFIELD(min=/max=) hints. DragFloat reads min==max==0 as "no clamp",
-        // so an open side substitutes ±FLT_MAX; AlwaysClamp is what makes the
-        // bounds hold for Ctrl+click text entry too.
-        const float minBound = field.hasMin ? field.minValue : -FLT_MAX;
-        const float maxBound = field.hasMax ? field.maxValue : FLT_MAX;
+        // AFIELD(min=/max=) hints, already resolved — a bound naming a sibling
+        // field is that sibling's current value. DragFloat reads min==max==0 as
+        // "no clamp", so an open side substitutes ±FLT_MAX; AlwaysClamp is what
+        // makes the bounds hold for Ctrl+click text entry too.
+        const float minBound = bounds.hasMin ? static_cast<float>(bounds.minValue) : -FLT_MAX;
+        const float maxBound = bounds.hasMax ? static_cast<float>(bounds.maxValue) : FLT_MAX;
         edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
                                   "%.3f", ImGuiSliderFlags_AlwaysClamp);
         break;
@@ -233,13 +235,13 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         if (edited)
         {
             double &value = *static_cast<double *>(fp);
-            if (field.hasMin)
+            if (bounds.hasMin)
             {
-                value = std::max(value, static_cast<double>(field.minValue));
+                value = std::max(value, bounds.minValue);
             }
-            if (field.hasMax)
+            if (bounds.hasMax)
             {
-                value = std::min(value, static_cast<double>(field.maxValue));
+                value = std::min(value, bounds.maxValue);
             }
         }
         break;
@@ -248,16 +250,16 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     {
         // reflectgen guarantees an integer field's bounds are integral and in
         // range, so these casts are exact.
-        const int32_t minBound = field.hasMin ? static_cast<int32_t>(field.minValue) : INT32_MIN;
-        const int32_t maxBound = field.hasMax ? static_cast<int32_t>(field.maxValue) : INT32_MAX;
+        const int32_t minBound = bounds.hasMin ? static_cast<int32_t>(bounds.minValue) : INT32_MIN;
+        const int32_t maxBound = bounds.hasMax ? static_cast<int32_t>(bounds.maxValue) : INT32_MAX;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
                                    nullptr, ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::UInt32:
     {
-        const uint32_t minBound = field.hasMin ? static_cast<uint32_t>(field.minValue) : 0u;
-        const uint32_t maxBound = field.hasMax ? static_cast<uint32_t>(field.maxValue) : UINT32_MAX;
+        const uint32_t minBound = bounds.hasMin ? static_cast<uint32_t>(bounds.minValue) : 0u;
+        const uint32_t maxBound = bounds.hasMax ? static_cast<uint32_t>(bounds.maxValue) : UINT32_MAX;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
                                    nullptr, ImGuiSliderFlags_AlwaysClamp);
         break;
@@ -268,8 +270,8 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         // silently round, so the open range stops at what is representable
         // rather than pretending to honour it.
         constexpr int64_t kExact   = 1LL << 53;
-        const int64_t minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
-        const int64_t maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
+        const int64_t minBound = bounds.hasMin ? static_cast<int64_t>(bounds.minValue) : -kExact;
+        const int64_t maxBound = bounds.hasMax ? static_cast<int64_t>(bounds.maxValue) : kExact;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
                                    nullptr, ImGuiSliderFlags_AlwaysClamp);
         break;
@@ -277,8 +279,8 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::UInt64:
     {
         constexpr uint64_t kExact   = 1ULL << 53;
-        const uint64_t minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
-        const uint64_t maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
+        const uint64_t minBound = bounds.hasMin ? static_cast<uint64_t>(bounds.minValue) : 0u;
+        const uint64_t maxBound = bounds.hasMax ? static_cast<uint64_t>(bounds.maxValue) : kExact;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
                                    nullptr, ImGuiSliderFlags_AlwaysClamp);
         break;
@@ -590,7 +592,9 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             break;
         }
         default:
-            edited = EditFieldValue(fp, field);
+            // Resolved here, against the component being drawn: a bound naming a
+            // sibling is only a number once there is an object to read it from.
+            edited = EditFieldValue(fp, field, ResolveFieldBounds(field, meta.fields, mut));
             break;
         }
 

@@ -193,8 +193,18 @@ struct SpotLight
     AFIELD() Assisi::Math::Color3 color{1.f, 1.f, 1.f}; ///< Linear-RGB colour.
     AFIELD() float intensity   = 1.f;              ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius   = 10.f;         ///< Maximum influence range in world units; never negative.
-    AFIELD() float innerAngle  = 15.f;             ///< Half-angle of the full-brightness cone (degrees).
-    AFIELD() float outerAngle  = 30.f;             ///< Half-angle of the cutoff cone (degrees).
+    /// Half-angle of the full-brightness cone (degrees), capped by the cutoff it
+    /// sits inside. An inner cone wider than the outer one describes no falloff at
+    /// all, and the shader reads the gap between them as a divisor.
+    AFIELD(min = 0, max = outerAngle) float innerAngle = 15.f;
+
+    /// Half-angle of the cutoff cone (degrees). Deliberately not floored by
+    /// @ref innerAngle: the outer angle is the light's actual reach and the one
+    /// an author aims first, and a floor there would stop that drag dead at
+    /// whatever the core happens to be. The ordering is enforced from the inner
+    /// side alone, so narrowing this below the core leaves the two crossed until
+    /// the core is touched — the shader treats that as a hard edge.
+    AFIELD(min = 0, max = 89.0) float outerAngle = 30.f;
     AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders a shadow map.
 
     /// Octaves of bias on this light's importance, when more lights want an

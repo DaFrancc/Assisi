@@ -553,7 +553,12 @@ private:
     /// AssetId's browse target, an EntityRef's scene, an AssetIdVector's mesh)
     /// are the caller's to handle before delegating here; they land on the
     /// "unsupported" label if it does not.
-    bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field);
+    /// @p bounds is the field's clamp already resolved against the object being
+    /// drawn — Reflect::ResolveFieldBounds — because a bound may name a sibling
+    /// field rather than a constant, and this half of the renderer holds only the
+    /// one field's address.
+    bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                        const Assisi::Core::Reflect::FieldBounds &bounds);
     // The inspector's replication surfaces. Every one reads or writes a
     // NetSync::Replicated marker, so without networking there is no component
     // for them to be about and the inspector has no replication block.
