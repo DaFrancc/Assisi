@@ -310,14 +310,14 @@ float FilterRadiusTaps(ShadowFilter filter)
     case ShadowFilter::Point:
         // No taps of its own — the hardware's bilinear comparison is the whole
         // of the footprint, and CascadePenumbraWorld adds that separately.
-        return 0.f;
+        return kPointFilterRadiusTaps;
     case ShadowFilter::Pcf5x5:
-        return 2.f;
+        return kPcf5FilterRadiusTaps;
     case ShadowFilter::Vogel:
-        return 2.5f;
+        return kVogelFilterRadiusTaps;
     case ShadowFilter::Pcf3x3:
     default:
-        return 1.f;
+        return kPcf3FilterRadiusTaps;
     }
 }
 

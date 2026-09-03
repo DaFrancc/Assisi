@@ -50,6 +50,24 @@ enum class ShadowFilter : std::uint8_t
 
 inline constexpr std::uint32_t kShadowFilterCount = 4;
 
+/// @brief How far each filter's outermost tap sits from the centre, in taps.
+///
+/// A grid kernel's reach is what its name says: a 3x3 reaches one texel from its
+/// centre, a 5x5 reaches two. The Vogel disk's radius is a choice rather than a
+/// consequence, and 2.5 is what fills sixteen taps without leaving holes.
+///
+/// mesh.frag walks the same kernels and so carries the same three numbers. They
+/// are here rather than only there because the CPU sizes two things from them —
+/// the penumbra cap, and the inset that keeps an atlas lookup inside its own
+/// tile — and a kernel wider than the inset assumed reads the light next door.
+///
+/// Point has none of its own: the hardware's bilinear comparison is the whole of
+/// its footprint, and that half-texel is added separately wherever it matters.
+inline constexpr float kPointFilterRadiusTaps = 0.f;
+inline constexpr float kPcf3FilterRadiusTaps = 1.f;
+inline constexpr float kPcf5FilterRadiusTaps = 2.f;
+inline constexpr float kVogelFilterRadiusTaps = 2.5f;
+
 /// @brief Depth format of a shadow map.
 ///
 /// Wire encoding, like ShadowFilter: it is persisted.
@@ -105,6 +123,24 @@ inline constexpr std::uint32_t kMaxShadowAtlasResolution = 8192;
 /// leaves room for fifteen more.
 inline constexpr std::uint32_t kMinShadowFaceResolution = 128;
 inline constexpr std::uint32_t kMaxShadowFaceResolution = 2048;
+
+/// @brief Bounds on how many local lights may hold atlas tiles at once.
+///
+/// The ceilings are the Ultra tier's, and they are backstops rather than
+/// targets: the default sits well above what a sensible scene places, so the
+/// cap does not bind while anyone is authoring. Zero is a real setting — it
+/// means this light type never shadows — which is why the floor is not one.
+inline constexpr std::uint32_t kMinShadowCap = 0;
+inline constexpr std::uint32_t kMaxShadowCap = 256;
+
+/// @brief How far a light's priority may be biased, in score octaves.
+///
+/// The score is a product of coverage, distance and intensity, so a bias that
+/// added to it would mean something different at every range. This one doubles
+/// or halves, which means the same thing everywhere: +1 is "treat this as twice
+/// as important as its geometry says".
+inline constexpr float kMinShadowPriority = -8.0f;
+inline constexpr float kMaxShadowPriority = 8.0f;
 
 /// @brief How far from the camera the sun casts. Past the ceiling the outermost
 /// cascade's texels are metres wide and the shadow is a stain rather than a shape.
@@ -241,9 +277,9 @@ struct SunShadowSettings
 ///
 /// These are the knobs that decide what is *allocated*: how big the shared
 /// atlas is, what a light's face gets out of it, and how a lookup into it is
-/// filtered and biased. How lights compete for those tiles when there are more
-/// of them than there is atlas is selection policy, and it belongs with the
-/// selector that applies it rather than here.
+/// filtered and biased. Which lights win those tiles when there are more of them
+/// than there is atlas is a separate question, and it is answered by
+/// LocalShadowSelectionSettings below.
 struct LocalShadowSettings
 {
     /// Whether spot and point lights cast at all.
@@ -267,11 +303,62 @@ struct LocalShadowSettings
     float normalOffsetTexels = 1.5f;
 };
 
-/// @brief Every shadow knob, in its two halves.
+/// @brief Which local lights hold atlas tiles when more of them want one than
+/// the atlas can serve.
+///
+/// Separate from LocalShadowSettings because it answers a different question:
+/// those knobs size what exists, these order who gets it. A scene under no
+/// pressure never reaches any of this — every shadowed light is served and the
+/// ordering never decides anything.
+///
+/// The caps are per type rather than one number, and that is design rather than
+/// generosity. A point light is six shadow renders against a spot's one, so a
+/// single cap of "eight lights" means eight renders or forty-eight depending on
+/// what happens to be placed. Split by type, the setting means the same thing
+/// whatever the mix.
+struct LocalShadowSelectionSettings
+{
+    /// Whether importance decides at all.
+    ///
+    /// Off does not lift the physical limit — the atlas is a fixed-size texture
+    /// and fills either way. What it removes is the *ordering*: lights are
+    /// served until the allocator is full and the rest go unshadowed in arrival
+    /// order rather than by what they contribute. Strictly worse under pressure,
+    /// which is why it is not the default, and it is still the author's call.
+    bool capEnabled = true;
+
+    /// Max simultaneously shadowed spot lights. One face each.
+    std::uint32_t capSpot = 16;
+    /// Max simultaneously shadowed point lights. Six faces each, which is why
+    /// this is about a quarter of the spot cap at every tier.
+    std::uint32_t capPoint = 4;
+
+    /// How much better a challenger's score must be before it takes a tile from
+    /// a light that already holds one, as a fraction.
+    ///
+    /// Without it two lights whose scores cross keep swapping every frame, and
+    /// swapping is visible: the loser's shadow disappears. The margin costs
+    /// nothing but a slightly stale ordering, and staleness in this ordering is
+    /// imperceptible where flicker is not.
+    float capHysteresis = 0.15f;
+
+    /// How far demand must pass the next size class before a light's tile is
+    /// resized, as a fraction.
+    ///
+    /// A resize invalidates the tile, so reassigning classes every frame the way
+    /// a purely demand-driven allocator would thrashes whatever the tile held.
+    /// Tile resolution is the cheap axis — quadrupling the texels moved the
+    /// depth pass by a fraction of a percent — so this is a quality-distribution
+    /// control and there is nothing to be gained by letting it chase.
+    float classHysteresis = 0.25f;
+};
+
+/// @brief Every shadow knob: the two quality halves, and who wins a tile.
 struct ShadowSettings
 {
     SunShadowSettings sun;
     LocalShadowSettings local;
+    LocalShadowSelectionSettings selection;
 };
 
 /// @brief Clamps to [low, high], substituting `fallback` for a non-finite value.
@@ -367,11 +454,27 @@ struct ShadowSettings
     return settings;
 }
 
-/// @brief Both halves, each sanitized on its own terms.
+/// @brief The selection knobs, on the same terms.
+[[nodiscard]] inline LocalShadowSelectionSettings Sanitized(LocalShadowSelectionSettings settings)
+{
+    const LocalShadowSelectionSettings defaults;
+
+    settings.capSpot = std::clamp(settings.capSpot, kMinShadowCap, kMaxShadowCap);
+    settings.capPoint = std::clamp(settings.capPoint, kMinShadowCap, kMaxShadowCap);
+    // Both fractions are bounded above by 1: a margin of a whole score would
+    // mean a challenger has to be twice the holder to displace it, which is no
+    // longer hysteresis but a different policy.
+    settings.capHysteresis = ClampFiniteShadow(settings.capHysteresis, 0.f, 1.f, defaults.capHysteresis);
+    settings.classHysteresis = ClampFiniteShadow(settings.classHysteresis, 0.f, 1.f, defaults.classHysteresis);
+    return settings;
+}
+
+/// @brief Every half, each sanitized on its own terms.
 [[nodiscard]] inline ShadowSettings Sanitized(ShadowSettings settings)
 {
     settings.sun = Sanitized(settings.sun);
     settings.local = Sanitized(settings.local);
+    settings.selection = Sanitized(settings.selection);
     return settings;
 }
 
@@ -398,6 +501,8 @@ struct ShadowSettings
         settings.local.atlasResolution = 2048;
         settings.local.faceResolution = 256;
         settings.local.filter = ShadowFilter::Point;
+        settings.selection.capSpot = 8;
+        settings.selection.capPoint = 2;
         break;
     case ShadowTier::High:
         // Resolution rather than cascades. Both buy a smaller seam, but a
@@ -414,6 +519,8 @@ struct ShadowSettings
         settings.local.atlasResolution = 4096;
         settings.local.faceResolution = 512;
         settings.local.filter = ShadowFilter::Pcf5x5;
+        settings.selection.capSpot = 32;
+        settings.selection.capPoint = 8;
         break;
     case ShadowTier::Ultra:
         // The only preset whose seams land at roughly one screen pixel at
@@ -428,6 +535,8 @@ struct ShadowSettings
         settings.local.atlasResolution = 8192;
         settings.local.faceResolution = 512;
         settings.local.filter = ShadowFilter::Vogel;
+        settings.selection.capSpot = 64;
+        settings.selection.capPoint = 16;
         break;
     case ShadowTier::Medium:
     case ShadowTier::Custom:
@@ -457,7 +566,13 @@ struct ShadowSettings
                                   preset.local.format == settings.local.format &&
                                   preset.local.faceResolution == settings.local.faceResolution &&
                                   preset.local.filter == settings.local.filter;
-        if (sunMatches && localMatches)
+        // Compared because a tier sets them, on the same rule as everything else
+        // here: a preset's own fields decide whether the settings are that
+        // preset. Lowering the cap alone is leaving the tier — it changes how
+        // many lights shadow, which is exactly what a tier is a statement about.
+        const bool capsMatch = preset.selection.capSpot == settings.selection.capSpot &&
+                               preset.selection.capPoint == settings.selection.capPoint;
+        if (sunMatches && localMatches && capsMatch)
         {
             return candidate;
         }

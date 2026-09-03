@@ -82,6 +82,12 @@ layout(binding = 256) uniform FrameConstants
     vec4  indirectGround;     // rgb = the same for one facing straight down, w unused
     // Sun shadows (see Render::FrameConstants and ShadowCascades.hpp).
     uvec4 shadowCounts;       // x = cascade count (0 = no shadows), y = shadowed dir light, z = filter, w = cascade view
+    // Local-light shadows (see Render::FrameConstants and LocalShadowPass.hpp).
+    // x = ShadowFilter for the atlas, y = 1 while any local light holds a tile.
+    // The per-view biases and tap step ride in the view table, not here: a
+    // demoted tile is biased differently from a full-size one, and a frame
+    // constant could not say so.
+    uvec4 localShadowCounts;
     vec4  shadowParams;       // x = UV step between PCF taps, y = blend-band fraction
     // Per cascade: x = view-space distance it ends at, y = constant depth bias
     // in [0,1] depth, z = normal offset in world units.
@@ -104,7 +110,16 @@ const uint kDebugEmissive  = 6u;
 // these occupy slots 1-5 (slot 0 is the material table, slot 6 the instance
 // buffer) — see MeshPass.cpp.
 
-struct PointLight { vec4 positionRadius; vec4 colorIntensity; };
+// shadowView is the light's first row in the shadow view table below, or
+// kNoShadowView when it holds no atlas tile this frame. A point light's six
+// faces are that row and the five after it.
+
+struct PointLight
+{
+    vec4  positionRadius;
+    vec4  colorIntensity;
+    uvec4 shadowView;
+};
 
 struct SpotLight
 {
@@ -112,8 +127,12 @@ struct SpotLight
     vec4  directionInner;
     vec4  colorIntensity;
     float outerCutoff;
-    float _p0, _p1, _p2;
+    uint  shadowView;
+    float _p0, _p1;
 };
+
+// Must match Render::kNoShadowView.
+const uint kNoShadowView = 0xFFFFFFFFu;
 
 struct DirLight { vec4 directionIntensity; vec4 colorPad; };
 
@@ -130,6 +149,22 @@ layout(std430, binding = 2) readonly buffer SpotLights     { SpotLight  spotLigh
 layout(std430, binding = 3) readonly buffer DirLights      { DirLight   dirLights[];     };
 layout(std430, binding = 4) readonly buffer LightIndexList { uint       lightIndexList[]; };
 layout(std430, binding = 5) readonly buffer LightGrids     { LightGrid  lightGrids[];    };
+
+// ---- Shadow view table (mirrors Render::ShadowViewGpu) --------------------
+// One row per shadow map view of the frame, whichever kind of map produced it.
+// The sun's cascades ride in the frame constants instead, because there are at
+// most eight of them and they are read by every shadowed fragment; a local
+// light's view is read only where that light reaches, and there may be a hundred
+// and sixty of them.
+struct ShadowViewRow
+{
+    mat4 viewProjection;
+    vec4 uvScaleOffset; // xy = scale, zw = offset: the tile's rectangle of the atlas
+    vec4 params;        // x = depth bias, y = normal offset, z = tap step, w = array slice
+    vec4 clampUv;       // xy = min, zw = max UV a lookup may reach
+};
+
+layout(std430, binding = 8) readonly buffer ShadowViews { ShadowViewRow shadowViews[]; };
 
 // Must match Render::ClusterGrid::kMaxLightIndices and cluster_cull.comp's MAX_LIGHT_INDICES.
 const uint kSpotIndexBase = 262144u;
@@ -469,6 +504,10 @@ float AttenuationSq(float d2, float radiusSq)
 
 layout(binding = 7) uniform texture2DArray uShadowCascades;
 layout(binding = 129) uniform samplerShadow uShadowSampler;
+// Every spot and point face of the frame, in one texture. Sampled through the
+// same comparison sampler the cascades use — the filtering is identical, only
+// the rectangle differs.
+layout(binding = 9) uniform texture2D uShadowAtlas;
 
 // Must match Render::ShadowDebugView.
 const uint kShadowDebugCascades = 1u;
@@ -480,6 +519,26 @@ const uint kShadowFilterPoint = 0u;
 const uint kShadowFilterPcf3  = 1u;
 const uint kShadowFilterPcf5  = 2u;
 const uint kShadowFilterVogel = 3u;
+
+// Half-widths of the two grid kernels, in taps: a 3x3 reaches one texel from its
+// centre and a 5x5 reaches two. The filter's own name says the grid; these say
+// the reach, which is what both the loop bounds and the tap count come from.
+//
+// Must match Render::kPcf3FilterRadiusTaps and kPcf5FilterRadiusTaps, and
+// kVogelRadiusSteps below must match kVogelFilterRadiusTaps. The CPU sizes the
+// penumbra cap and the atlas tile's clamp inset from those, so a kernel that
+// reached further here than the CPU assumed would read past its own tile.
+const int kPcf3Radius = 1;
+const int kPcf5Radius = 2;
+
+// Taps in a square kernel of half-width @p radius, as the divisor that averages
+// them. Derived rather than written down beside each loop, so a radius and its
+// divisor cannot drift apart.
+float PcfTapCount(int radius)
+{
+    int side = 2 * radius + 1;
+    return float(side * side);
+}
 
 // 16 rather than a dozen because the disk it has to fill is quoted against a
 // reference resolution, so on a map above that size it spans twice as many
@@ -679,28 +738,18 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         return sum / float(kVogelTaps);
     }
 
-    if (filterMode == kShadowFilterPcf5)
+    // The two grid filters differ in nothing but their reach, so they are one
+    // loop over it rather than two loops that have to be kept identical.
+    int   radius = filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius;
+    float sum    = 0.0;
+    for (int y = -radius; y <= radius; ++y)
     {
-        float sum = 0.0;
-        for (int y = -2; y <= 2; ++y)
-        {
-            for (int x = -2; x <= 2; ++x)
-            {
-                sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
-            }
-        }
-        return sum * (1.0 / 25.0);
-    }
-
-    float sum = 0.0;
-    for (int y = -1; y <= 1; ++y)
-    {
-        for (int x = -1; x <= 1; ++x)
+        for (int x = -radius; x <= radius; ++x)
         {
             sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
         }
     }
-    return sum * (1.0 / 9.0);
+    return sum / PcfTapCount(radius);
 }
 
 
@@ -823,6 +872,170 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
     }
 
     return visibility;
+}
+
+// ---- Local-light shadows --------------------------------------------------
+//
+// A spot light's map and one face of a point light's cube are the same thing: a
+// perspective view into a rectangle of one shared atlas. The rectangle is why
+// every lookup here clamps — the sampler's own clamp is to the whole texture, so
+// a filter tap that walked off a tile would read the depth of whatever light
+// sits beside it and report that light's occluders as this one's. The clamp
+// rectangle is the tile inset by the kernel's reach, and the faces are drawn
+// wider than they need to be so that inset costs no coverage.
+//
+// The biases work exactly as the cascades' do, and arrive already scaled by the
+// tile's own texel — so a light demoted to a quarter-size tile is biased for the
+// map it got rather than the map the setting names.
+
+float LocalShadowTap(vec2 uv, vec4 clampUv, float reference)
+{
+    return texture(sampler2DShadow(uShadowAtlas, uShadowSampler),
+                   vec3(clamp(uv, clampUv.xy, clampUv.zw), reference));
+}
+
+// The six faces of a point light's cube, in the order the CPU wrote its views
+// into the frame's table. Must match Render::PointLightFace — these numbers are
+// the contract between the two, and a disagreement samples a neighbouring face's
+// depth for every fragment rather than failing anywhere.
+const uint kFacePositiveX = 0u;
+const uint kFaceNegativeX = 1u;
+const uint kFacePositiveY = 2u;
+const uint kFaceNegativeY = 3u;
+const uint kFacePositiveZ = 4u;
+const uint kFaceNegativeZ = 5u;
+
+/// Which of a point light's six faces @p direction falls in, where @p direction
+/// points from the light toward what it is lighting.
+///
+/// Must agree with Render::PointLightFaceOf, comparison for comparison: the
+/// inclusive tests are what put a direction exactly on a seam onto one face
+/// rather than the last, and either face of a seam holds the geometry because
+/// the faces are drawn overlapping.
+uint PointLightFace(vec3 direction)
+{
+    vec3 m = abs(direction);
+    if (m.x >= m.y && m.x >= m.z)
+    {
+        return direction.x >= 0.0 ? kFacePositiveX : kFaceNegativeX;
+    }
+    if (m.y >= m.z)
+    {
+        return direction.y >= 0.0 ? kFacePositiveY : kFaceNegativeY;
+    }
+    return direction.z >= 0.0 ? kFacePositiveZ : kFaceNegativeZ;
+}
+
+/// Fraction of a local light reaching @p worldPos through view @p viewIndex:
+/// 1 lit, 0 in shadow.
+///
+/// @p N is the geometric normal, for the same reason the cascade lookup wants
+/// one: the depth map holds the geometry a caster rasterized, and offsetting
+/// along a normal map's surface tilts the lookup by whatever the texture says.
+float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float axisDepth)
+{
+    ShadowViewRow view = shadowViews[viewIndex];
+
+    // Both biases are quoted per unit of distance from the light, because a
+    // perspective texel is a solid angle: what it covers grows as you move away.
+    // A cascade can bake its bias in because an orthographic texel does not.
+    //
+    // @p axisDepth is the distance along this view's own axis, not the straight
+    // line to the light — that is what a texel's footprint actually scales with,
+    // and at a face's corner the two differ by a factor of the square root of
+    // three. The offset moves the lookup sideways, so an over-estimate here walks
+    // it out from under its occluder.
+    float sinTheta = sqrt(max(1.0 - NdotL * NdotL, 0.0));
+    vec3  biasedPos = worldPos + N * (view.params.y * axisDepth * sinTheta);
+
+    vec4 clip = view.viewProjection * vec4(biasedPos, 1.0);
+    // Behind the light's near plane, or outside the frustum this face recorded.
+    // Lit rather than shadowed: the map holds nothing about out here, and
+    // guessing dark would print a hard rectangle at the edge of every face.
+    if (clip.w <= 0.0)
+    {
+        return 1.0;
+    }
+    vec3 ndc = clip.xyz / clip.w;
+    if (any(greaterThan(abs(ndc.xy), vec2(1.0))) || ndc.z > 1.0 || ndc.z < 0.0)
+    {
+        return 1.0;
+    }
+
+    // Into the tile, then into the atlas. The y scale is negative for the same
+    // reason the cascade lookup's is: the backend draws with a flipped viewport,
+    // so the map's first texel row is ndc.y == +1.
+    vec2 tileUv = ndc.xy * vec2(0.5, -0.5) + 0.5;
+    vec2 uv     = tileUv * view.uvScaleOffset.xy + view.uvScaleOffset.zw;
+
+    // params.x is the bias times a distance, so this divide is what evaluates it
+    // where the receiver actually is. Guarded because a receiver sitting on the
+    // light would divide by zero, and the near plane has already excluded it from
+    // the map anyway.
+    float reference = ndc.z - view.params.x / max(axisDepth, 1e-4);
+    float stepUv    = view.params.z;
+    vec4  clampUv   = view.clampUv;
+
+    uint filterMode = uFrame.localShadowCounts.x;
+    if (filterMode == kShadowFilterPoint)
+    {
+        return LocalShadowTap(uv, clampUv, reference);
+    }
+
+    if (filterMode == kShadowFilterVogel)
+    {
+        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
+        float sum = 0.0;
+        for (uint i = 0u; i < kVogelTaps; i++)
+        {
+            float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
+            float theta = float(i) * kGoldenAngle + phi;
+            sum += LocalShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * stepUv, clampUv, reference);
+        }
+        return sum / float(kVogelTaps);
+    }
+
+    int   radius = filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius;
+    float sum    = 0.0;
+    for (int y = -radius; y <= radius; ++y)
+    {
+        for (int x = -radius; x <= radius; ++x)
+        {
+            sum += LocalShadowTap(uv + vec2(float(x), float(y)) * stepUv, clampUv, reference);
+        }
+    }
+    return sum / PcfTapCount(radius);
+}
+
+/// The same, for a spot light: one view, or no shadow at all.
+///
+/// Its view looks down the cone's own axis, so the depth along that axis is what
+/// the fragment projects to — the same quantity the perspective divide produces.
+float SpotVisibility(uint shadowView, vec3 spotDir, vec3 lightPos, vec3 worldPos, vec3 N, float NdotL)
+{
+    if (shadowView == kNoShadowView)
+    {
+        return 1.0;
+    }
+    float axisDepth = max(dot(worldPos - lightPos, spotDir), 0.0);
+    return LocalVisibility(shadowView, worldPos, N, NdotL, axisDepth);
+}
+
+/// The same, for a point light: the face the fragment falls in, of the six this
+/// light's first view begins.
+float PointVisibility(uint firstView, vec3 lightPos, vec3 worldPos, vec3 N, float NdotL)
+{
+    if (firstView == kNoShadowView)
+    {
+        return 1.0;
+    }
+    vec3 d = worldPos - lightPos;
+    // The chosen face is the major axis by construction, so the largest component
+    // of |d| is the depth along that face's own axis — no branch on the face, and
+    // exact rather than the straight-line distance, which at a face's corner
+    // over-states it by the square root of three.
+    float axisDepth = max(max(abs(d.x), abs(d.y)), abs(d.z));
+    return LocalVisibility(firstView + PointLightFace(d), worldPos, N, NdotL, axisDepth);
 }
 
 /// Flat tints for the cascade debug view, one per slice.
@@ -1000,6 +1213,11 @@ void main()
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
+    // Read once rather than per light: it is the same frame constant for every
+    // light in both loops, and the loops are where a redundant uniform fetch is
+    // paid for as many times as the cluster lists anything.
+    uint localShadows = uFrame.localShadowCounts.y;
+
     uint clusterIdx  = ClusterIndex();
     uint pointOffset = lightGrids[clusterIdx].pointOffset;
     uint pointCount  = lightGrids[clusterIdx].pointCount;
@@ -1032,6 +1250,27 @@ void main()
         float lInt     = pointLights[li].colorIntensity.w;
         vec3  L        = toLight * inversesqrt(d2);
         vec3  radiance = lCol * lInt * att;
+
+        // The same two-normal rule the sun's lookup follows, and for the same
+        // reasons: a surface facing away is already dark by its own geometry, so
+        // sampling first would tell the BRDF what it is about to work out for
+        // itself; and where a normal map lights a surface the geometry faces
+        // away from, nothing in the depth map describes that surface, so the
+        // honest answer is unlit rather than lit-and-unshadowed.
+        if (localShadows == 1u)
+        {
+            vec3  Ng     = GeometricNormal();
+            float NgdotL = dot(Ng, L);
+            float NdotL  = dot(N, L);
+            if (NdotL > 0.0 && NgdotL > 0.0)
+            {
+                radiance *= PointVisibility(pointLights[li].shadowView.x, lPos, vWorldPos, Ng, NgdotL);
+            }
+            else if (NdotL > 0.0)
+            {
+                radiance = vec3(0.0);
+            }
+        }
 
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
@@ -1070,6 +1309,21 @@ void main()
         vec3  lCol     = spotLights[li].colorIntensity.xyz;
         float lInt     = spotLights[li].colorIntensity.w;
         vec3  radiance = lCol * lInt * att * cone;
+
+        if (localShadows == 1u)
+        {
+            vec3  Ng     = GeometricNormal();
+            float NgdotL = dot(Ng, L);
+            float NdotL  = dot(N, L);
+            if (NdotL > 0.0 && NgdotL > 0.0)
+            {
+                radiance *= SpotVisibility(spotLights[li].shadowView, lDir, lPos, vWorldPos, Ng, NgdotL);
+            }
+            else if (NdotL > 0.0)
+            {
+                radiance = vec3(0.0);
+            }
+        }
 
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }

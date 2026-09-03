@@ -5,10 +5,13 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/AssetCache.hpp>
+#include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
+#include <Assisi/Render/ShadowView.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <iterator>
@@ -71,6 +74,13 @@ struct FrameConstants
     /// no lookup at all), y = which directional light the cascades belong to,
     /// z = ShadowFilter, w = 1 to tint by cascade.
     glm::uvec4 shadowCounts;
+    /// x = the ShadowFilter the atlas is sampled with, y = 1 while any local
+    /// light holds a tile and the two light loops should look one up.
+    ///
+    /// The biases and the tap step are deliberately absent: a demoted tile is
+    /// biased for the smaller map it got, so those belong per view rather than
+    /// per frame, and they ride in the shadow view table with the matrix.
+    glm::uvec4 localShadowCounts;
     /// x = one texel of the map, in UV, which is the step between PCF taps in
     /// every cascade whose texels are small enough,
     /// y = the fraction of each cascade spent fading into the next,
@@ -94,12 +104,39 @@ struct FrameConstants
     /// float array to a 16-byte stride anyway, so three of them would cost the
     /// same and read as three places to keep in step instead of one. Entries
     /// past the live count are unread.
-    glm::vec4 shadowCascade[kMaxShadowCascades];
+    std::array<glm::vec4, kMaxShadowCascades> shadowCascade;
     /// World space to each cascade's clip space. Last because it is the only
     /// member whose size is not one lane, and appending keeps every offset
     /// above it fixed.
-    glm::mat4 shadowViewProjection[kMaxShadowCascades];
+    std::array<glm::mat4, kMaxShadowCascades> shadowViewProjection;
 };
+
+// std140, not std430 — this is a uniform block. The two agree on everything this
+// struct contains, because every member is a vec4/uvec4/mat4 lane or an array of
+// one, and those take a 16-byte offset and stride under both rules. That is not
+// an accident to be preserved by luck: it is why nothing here is a bare float or
+// a uint, and the offsets below are what keeps it true.
+//
+// GLM's default gentypes are 4-aligned, so the C++ side packs these tightly and
+// every member still lands on a lane boundary because every member is a whole
+// number of lanes wide. Insert anything narrower and the two layouts part
+// company silently — which is what these lines exist to prevent.
+ASSISI_GPU_LAYOUT(FrameConstants);
+ASSISI_GPU_FIRST_FIELD(FrameConstants, viewProjection);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, view, viewProjection);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, gridDim, view);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, screenSizeNearFar, gridDim);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, lightCounts, screenSizeNearFar);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, cameraPosition, lightCounts);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, clusterScale, cameraPosition);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectSky, clusterScale);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectGround, indirectSky);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCounts, indirectGround);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, localShadowCounts, shadowCounts);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowParams, localShadowCounts);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCascade, shadowParams);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowViewProjection, shadowCascade);
+ASSISI_GPU_NO_TAIL_PADDING(FrameConstants, shadowViewProjection);
 } // namespace
 
 bool MeshPass::Initialize(const InitParams &params)
@@ -173,7 +210,11 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(5)); // lightGrid
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(6)); // per-instance data
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(7));          // sun cascade array
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));              // cascade comparison sampler
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(8)); // shadow view table
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(9));          // local-light shadow atlas
+    // One comparison sampler for both maps: the cascades and the atlas are
+    // filtered identically, and only the rectangle they are read from differs.
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));              // shadow comparison sampler
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -217,6 +258,17 @@ bool MeshPass::Initialize(const InitParams &params)
     if (_frameConstantsBuffer == nullptr)
     {
         Core::Log::Error("MeshPass: failed to create the frame-constants buffer.");
+        return false;
+    }
+
+    // One row, never read. It is bound in the view table's place while there is
+    // no table, which for a scene that shadows nothing is every frame: a binding
+    // set may not have a hole in it, and a scene with no shadows must still draw.
+    _noShadowViews.Create(device, sizeof(ShadowViewGpu), 1u, /*allowUnorderedAccess=*/ false,
+                          "MeshPass::NoShadowViews");
+    if (_noShadowViews.NativeBuffer() == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the empty shadow view table.");
         return false;
     }
 
@@ -298,6 +350,11 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     constants.shadowCounts = glm::uvec4(cascadeCount, shadows.sunLightIndex,
                                         static_cast<uint32_t>(shadows.settings.filter),
                                         static_cast<uint32_t>(shadows.debugView));
+    // The local half switches on its own flag rather than on the cascade count:
+    // a scene may have shadowed lamps and no sun, or a sun and no shadowed lamp,
+    // and neither should pay for the other's lookup.
+    constants.localShadowCounts = glm::uvec4(static_cast<uint32_t>(shadows.localSettings.filter),
+                                             shadows.localActive ? 1u : 0u, 0u, 0u);
     for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
     {
         constants.shadowCascade[i] = glm::vec4(0.f);
@@ -338,10 +395,21 @@ void MeshPass::SetShadowMap(nvrhi::ITexture *cascades)
     _shadowMap = cascades;
 }
 
+void MeshPass::SetShadowAtlas(nvrhi::ITexture *atlas)
+{
+    _shadowAtlas = atlas;
+}
+
+void MeshPass::SetShadowViewTable(nvrhi::IBuffer *views)
+{
+    _shadowViewTable = views;
+}
+
 nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const
 {
     if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
-        _globalSetShadowMap == _shadowMap)
+        _globalSetShadowMap == _shadowMap && _globalSetShadowAtlas == _shadowAtlas &&
+        _globalSetShadowViewTable == _shadowViewTable)
     {
         return _globalBindingSet;
     }
@@ -368,10 +436,16 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
         nvrhi::BindingSetItem::StructuredBuffer_SRV(5, _clusterGrid->LightGridBuffer().NativeBuffer()));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(6, instanceBuffer));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(7, _shadowMap));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(
+                               8, _shadowViewTable != nullptr ? _shadowViewTable
+                                                              : _noShadowViews.NativeBuffer()));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(9, _shadowAtlas));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(1, _shadowSampler));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;
     _globalSetShadowMap = _shadowMap;
+    _globalSetShadowAtlas = _shadowAtlas;
+    _globalSetShadowViewTable = _shadowViewTable;
     return _globalBindingSet;
 }
 

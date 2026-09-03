@@ -41,7 +41,10 @@ layout(std430, binding = 0) readonly buffer ShadowInstances
 // that does.
 layout(push_constant) uniform PushConstants
 {
-    mat4 lightViewProjection;
+    mat4  lightViewProjection;
+    // x = 1 while this view projects orthographically, and so may pancake. See
+    // the clamp at the end of main, and Render::ShadowView::orthographic.
+    uvec4 pancake;
 } pc;
 
 void main()
@@ -65,8 +68,18 @@ void main()
     // costs the flattened caster its own depth ordering, which is no loss —
     // nothing upstream of the near plane is a receiver in this view.
     //
-    // Valid because the projection is orthographic and w is exactly 1, so this
-    // is a clamp in the depth the comparison will use. It needs no device
+    // Valid only because the projection is orthographic and w is exactly 1, so
+    // this is a clamp in the depth the comparison will use. It needs no device
     // feature, unlike disabling depth clip.
-    gl_Position.z = max(gl_Position.z, 0.0);
+    //
+    // Which is why it is gated. A local light projects perspectively: the depth
+    // the comparison uses is z / w, so clamping z on the vertices that fall
+    // upstream and not on their neighbours leaves an interpolated depth that
+    // describes no surface — nearer than the truth along part of the triangle
+    // and further along the rest. Further is a leak, and a whole floor spanning
+    // a light's faces is exactly the geometry that straddles the plane.
+    if (pc.pancake.x == 1u)
+    {
+        gl_Position.z = max(gl_Position.z, 0.0);
+    }
 }

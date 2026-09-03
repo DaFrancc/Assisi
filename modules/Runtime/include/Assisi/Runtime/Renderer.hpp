@@ -14,6 +14,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/LocalShadowPass.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDepthRenderer.hpp>
@@ -147,5 +148,27 @@ struct ShadowCasterGather
 /// @p out is cleared and refilled; pass the same object every frame.
 void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
                          std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, ShadowCasterGather &out);
+
+/// @brief Every shadow-casting submesh in the scene, and which of @p lightVolumes
+/// each one reaches.
+///
+/// The local-light half of the gather above, and it differs in one way that
+/// matters: the sun sweeps a caster down-light against a cascade's volume,
+/// because the sun is infinitely far away and everything between the caster and
+/// the cascade is a potential occluder. A local light is a point with a range, so
+/// what can occlude for it is what is inside its sphere — a plain sphere-sphere
+/// test, and no sweep.
+///
+/// The result is the "cull once per light" half of the cost model. Each light's
+/// row names the casters inside its reach, and a point light's six faces then
+/// refine that row with the frustum test the draw list already makes, rather than
+/// walking the scene six times.
+///
+/// @p out.casters is sorted opaque-first and geometry-major, like the sun's, so
+/// the rows index a span whose runs still coalesce. A caster reaching no light at
+/// all is dropped rather than gathered.
+void GatherLocalShadowCasters(Assisi::ECS::Scene &scene,
+                              std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
+                              ShadowCasterGather &out, Assisi::Render::LocalShadowCasterIndex &index);
 
 } // namespace Assisi::Runtime

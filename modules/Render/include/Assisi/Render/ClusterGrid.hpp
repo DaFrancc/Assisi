@@ -18,6 +18,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ComputeShader.hpp>
+#include <Assisi/Render/GpuLayout.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -31,13 +32,35 @@ namespace Assisi::Render
 // All vec3 fields are stored in vec4 to satisfy std430 alignment rules.
 // The C++ structs must have identical memory layout to the GLSL structs in
 // cluster_cull.comp / mesh.frag.
+//
+// Each one declares where every member lands (see GpuLayout.hpp). That is the
+// whole defence: a member inserted, reordered or resized here and not in the
+// shader does not fail to build and does not fail to run — the shader reads the
+// wrong sixteen bytes and the picture is subtly wrong, which is the hardest kind
+// of mistake to find. Declared offsets turn it into a compile error.
+
+/// @brief What a light's `shadowView` holds when it has no atlas tile.
+///
+/// Every light carries the lane whether or not it shadows, because the alternative
+/// is a second buffer the shader would have to index in parallel. A sentinel
+/// costs a compare the shader was going to make anyway — it has to know whether
+/// to sample at all.
+inline constexpr uint32_t kNoShadowView = 0xFFFFFFFFu;
 
 struct PointLightGPU
 {
     glm::vec4 positionRadius; ///< xyz = world position, w = influence radius
     glm::vec4 colorIntensity; ///< xyz = linear-RGB colour,  w = intensity
+    /// x = index of this light's first shadow view in the frame's view table, or
+    /// kNoShadowView. Its six faces are the next six entries, in the cubemap
+    /// order ShadowView.hpp's PointLightFaceOf selects with. yzw unused.
+    glm::uvec4 shadowView{kNoShadowView, 0u, 0u, 0u};
 };
-static_assert(sizeof(PointLightGPU) == 32);
+ASSISI_GPU_LAYOUT(PointLightGPU);
+ASSISI_GPU_FIRST_FIELD(PointLightGPU, positionRadius);
+ASSISI_GPU_FIELD_AFTER(PointLightGPU, colorIntensity, positionRadius);
+ASSISI_GPU_FIELD_AFTER(PointLightGPU, shadowView, colorIntensity);
+ASSISI_GPU_NO_TAIL_PADDING(PointLightGPU, shadowView);
 
 struct SpotLightGPU
 {
@@ -45,16 +68,37 @@ struct SpotLightGPU
     glm::vec4 directionInner; ///< xyz = direction (unit vec),  w = cos(innerAngle)
     glm::vec4 colorIntensity; ///< xyz = linear-RGB colour,     w = intensity
     float outerCutoff;        ///< cos(outerAngle)
-    float _pad[3]{};
+    /// This light's single shadow view, or kNoShadowView. It rides in what was
+    /// padding, so carrying it costs the buffer nothing.
+    uint32_t shadowView = kNoShadowView;
+    /// std430 rounds a struct up to its largest member's alignment, which for a
+    /// vec4 is 16 — so the shader's stride is 64 and the last two lanes exist
+    /// only to reach it.
+    ///
+    /// Written out rather than left to the compiler, because GLM's default
+    /// gentypes are 4-aligned: nothing here would round the struct up on its
+    /// own, and without these the C++ side would be 56 bytes against the
+    /// shader's 64. The assert below is what says so.
+    float _pad[2]{};
 };
-static_assert(sizeof(SpotLightGPU) == 64);
+ASSISI_GPU_LAYOUT(SpotLightGPU);
+ASSISI_GPU_FIRST_FIELD(SpotLightGPU, positionRadius);
+ASSISI_GPU_FIELD_AFTER(SpotLightGPU, directionInner, positionRadius);
+ASSISI_GPU_FIELD_AFTER(SpotLightGPU, colorIntensity, directionInner);
+ASSISI_GPU_FIELD_AFTER(SpotLightGPU, outerCutoff, colorIntensity);
+ASSISI_GPU_FIELD_AFTER(SpotLightGPU, shadowView, outerCutoff);
+ASSISI_GPU_FIELD_AFTER(SpotLightGPU, _pad, shadowView);
+ASSISI_GPU_NO_TAIL_PADDING(SpotLightGPU, _pad);
 
 struct DirLightGPU
 {
     glm::vec4 directionIntensity; ///< xyz = direction the light TRAVELS (unit vec), w = intensity
     glm::vec4 colorPad;           ///< xyz = linear-RGB colour, w = unused
 };
-static_assert(sizeof(DirLightGPU) == 32);
+ASSISI_GPU_LAYOUT(DirLightGPU);
+ASSISI_GPU_FIRST_FIELD(DirLightGPU, directionIntensity);
+ASSISI_GPU_FIELD_AFTER(DirLightGPU, colorPad, directionIntensity);
+ASSISI_GPU_NO_TAIL_PADDING(DirLightGPU, colorPad);
 
 // ---------------------------------------------------------------------------
 

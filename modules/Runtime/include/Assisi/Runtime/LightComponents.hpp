@@ -107,7 +107,16 @@ struct PointLight
     AFIELD() Assisi::Math::Color3 color{1.f, 1.f, 1.f};
     AFIELD() float intensity = 1.f;           ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius = 10.f;      ///< Maximum influence range in world units; never negative.
-    AFIELD() bool castsShadows = true;        ///< Whether this light renders shadow maps (six faces).
+    AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders shadow maps (six faces).
+
+    /// Octaves of bias on this light's importance, when more lights want an
+    /// atlas tile than the atlas can serve. See SpotLight::shadowPriority.
+    AFIELD(min = -8.0, max = 8.0, radioListen = {source = castsShadows, value = true, behavior = grey})
+    float shadowPriority = 0.f;
+    /// Never loses its shadow to the cap, whatever it scores.
+    /// See SpotLight::shadowAlwaysOn.
+    AFIELD(radioListen = {source = castsShadows, value = true, behavior = grey})
+    bool shadowAlwaysOn = false;
 };
 
 /// @brief Cone-restricted point light (flashlight / stage spotlight).
@@ -124,7 +133,33 @@ struct SpotLight
     AFIELD(min = 0) float radius   = 10.f;         ///< Maximum influence range in world units; never negative.
     AFIELD() float innerAngle  = 15.f;             ///< Half-angle of the full-brightness cone (degrees).
     AFIELD() float outerAngle  = 30.f;             ///< Half-angle of the cutoff cone (degrees).
-    AFIELD() bool castsShadows = true;             ///< Whether this light renders a shadow map.
+    AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders a shadow map.
+
+    /// Octaves of bias on this light's importance, when more lights want an
+    /// atlas tile than the atlas can serve.
+    ///
+    /// A light is ordered by what it contributes to the image — how much of the
+    /// screen it fills, and how bright it is. This says the geometry has it
+    /// wrong: +1 is "treat this as twice as important", -1 as half. Octaves
+    /// rather than an addition because the score is a product, and a number
+    /// added to it would mean something different at every distance.
+    ///
+    /// Does nothing until the cap actually binds, which on sensible content is
+    /// never — the defaults sit above what a level places.
+    AFIELD(min = -8.0, max = 8.0, radioListen = {source = castsShadows, value = true, behavior = grey})
+    float shadowPriority = 0.f;
+
+    /// Never loses its shadow to the cap, whatever it scores.
+    ///
+    /// Separate from the bias above, and not a very large value of it, because a
+    /// bias big enough to always win depends on what else the level places —
+    /// which is not something an author can know while placing this one. A key
+    /// light whose shadow is the shot wants a promise rather than a number.
+    ///
+    /// It outranks the cap, not the atlas: a pinned light still needs a tile to
+    /// be cut, and takes a smaller one rather than none when the atlas is full.
+    AFIELD(radioListen = {source = castsShadows, value = true, behavior = grey})
+    bool shadowAlwaysOn = false;
 };
 
 } // namespace Assisi::Runtime

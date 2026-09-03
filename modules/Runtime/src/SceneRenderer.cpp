@@ -104,9 +104,10 @@ bool SceneRenderer::Initialize(const InitParams &params)
     }
     _clusterProjection = projection;
 
-    // Before the mesh pass: it binds the cascade array into every binding set it
-    // builds, and the pass keeps a placeholder there until a sun turns up. A
-    // failure is non-fatal — the scene renders unshadowed rather than not at all.
+    // Before the mesh pass: it binds both shadow maps into every binding set it
+    // builds, and each pass keeps a one-texel empty texture there until
+    // something wants shadows. A failure is non-fatal — the scene renders
+    // unshadowed rather than not at all.
     if (!_shadowDepthRenderer.Initialize(
             Render::ShadowDepthRenderer::InitParams{.device = _device,
                                                     .vertexShaderSpvPath = kShadowVertexShader,
@@ -119,6 +120,13 @@ bool SceneRenderer::Initialize(const InitParams &params)
             Render::ShadowPass::InitParams{.device = _device, .depthRenderer = &_shadowDepthRenderer}))
     {
         Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
+    }
+    // The same renderer, so every shadow view of the frame lands in one table
+    // whichever kind of map produced it.
+    if (!_localShadowPass.Initialize(
+            Render::LocalShadowPass::InitParams{.device = _device, .depthRenderer = &_shadowDepthRenderer}))
+    {
+        Core::Log::Warn("SceneRenderer: local-light shadows unavailable (the depth pass failed to initialise).");
     }
 
     if (!_meshPass.Initialize(Render::MeshPass::InitParams{.device = _device,
@@ -135,6 +143,7 @@ bool SceneRenderer::Initialize(const InitParams &params)
         return false;
     }
     _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
+    _meshPass.SetShadowAtlas(_localShadowPass.AtlasTexture());
 
     // The sky. Non-fatal: without it the scene target keeps its clear colour,
     // which is what every scene looked like before there was a sky at all.
@@ -269,9 +278,15 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
         RebuildClusterGrid(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height), camera, projection);
     }
 
-    _lighting.Update(frame.commandList, scene, view);
+    // Gathered but not yet uploaded: the local-light atlas decides which lights
+    // hold tiles and stamps each winner's view index into the light record, and
+    // that stamp has to happen before the lights reach the GPU.
+    _lighting.Gather(scene);
 
-    const Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
+    Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
+    RenderLocalShadows(frame, scene, camera, cameraTransform, shadows);
+
+    _lighting.Upload(frame.commandList, view);
 
     // The scene's sky, which both lights the geometry and is drawn behind it.
     // Resolved before the geometry because the indirect term comes off it: a
@@ -353,6 +368,17 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // cast can reach the shadow distance. Walking content out past it moves this
     // and leaves every other shadow counter where it was.
     ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(_shadowCasters.culledEntities));
+
+    // The local-light atlas on its own tracks. `dropped-by-cap` and `unserved`
+    // answer different questions about a lamp with no shadow — the first is the
+    // importance cap, the second is the atlas running out — and `occupancy` says
+    // which of the two the scene is actually near.
+    ASSISI_PROFILE_COUNTER("shadows/atlas-lights", static_cast<double>(_lastLocalShadowStats.lights));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-views", static_cast<double>(_lastLocalShadowStats.views));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-batches", static_cast<double>(_lastLocalShadowStats.batches));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-occupancy", static_cast<double>(_lastLocalShadowStats.occupancy));
+    ASSISI_PROFILE_COUNTER("shadows/dropped-by-cap", static_cast<double>(_lastSelection.droppedByCap));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-unserved", static_cast<double>(_lastLocalShadowStats.unserved));
 }
 
 Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame,
@@ -420,6 +446,167 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     shadows.sunLightIndex = sun->index;
     shadows.debugView = _shadowDebugView;
     return shadows;
+}
+
+float SceneRenderer::LocalLightScreenCoverage(const glm::vec3 &position, float range,
+                                              const glm::vec3 &cameraPosition, float tanHalfFovY)
+{
+    if (!(range > 0.f) || !(tanHalfFovY > 0.f))
+    {
+        return 0.f;
+    }
+    const glm::vec3 toLight = position - cameraPosition;
+    const float distance = std::sqrt(glm::dot(toLight, toLight));
+    // Inside the light's own volume it fills the view, and there is nothing
+    // further to say: the ratio past that point grows without bound and would
+    // make one lamp's score swamp every other light in the level.
+    if (distance <= range)
+    {
+        return 1.f;
+    }
+    // Half the screen's height spans `distance * tanHalfFovY` at the light's
+    // distance, and the light spans `range` — so this is the light's diameter
+    // over the view's height.
+    return std::min(range / (distance * tanHalfFovY), 1.f);
+}
+
+void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
+                                       const Transform &cameraTransform,
+                                       Render::MeshPass::ShadowFrameData &shadows)
+{
+    _lastLocalShadowStats = Render::LocalShadowPass::Stats{};
+    _lastSelection.Clear();
+
+    const std::span<const LightingSystem::LocalLight> spots = _lighting.ShadowCastingSpotLights();
+    const std::span<const LightingSystem::LocalLight> points = _lighting.ShadowCastingPointLights();
+
+    // No shadow-casting local light means no allocation and no pass — the same
+    // blank-scene rule the cascades keep, and the reason `active` is a scene
+    // fact rather than a settings one.
+    const bool active = _shadowSettings.local.enabled && !(spots.empty() && points.empty());
+    if (!_localShadowPass.Configure(_shadowSettings.local, active))
+    {
+        Core::Log::Warn("SceneRenderer: local-light shadows disabled (the atlas failed to rebuild).");
+        _shadowSettings.local.enabled = false;
+    }
+    // After Configure: a reallocation swaps the texture handle, and the mesh
+    // pass rebuilds its binding set when it notices.
+    _meshPass.SetShadowAtlas(_localShadowPass.AtlasTexture());
+    _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
+
+    if (!_localShadowPass.IsActive())
+    {
+        // The selector's memory is of an atlas that is no longer there, so the
+        // next frame that turns shadows back on takes its demand outright rather
+        // than resisting a change from a size class that no longer exists.
+        _localShadowSelector.Forget();
+        return;
+    }
+
+    // The sun opens the frame's view table when it draws. With no sun, nothing
+    // has, and the local views would append to last frame's.
+    if (!_shadowPass.IsActive())
+    {
+        _shadowDepthRenderer.BeginFrame();
+    }
+
+    const glm::vec3 cameraPosition = glm::vec3(cameraTransform.worldMatrix[3]);
+    const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
+
+    _localCandidates.clear();
+    _localCandidates.reserve(spots.size() + points.size());
+    const auto addCandidate = [&](const LightingSystem::LocalLight &light, Render::LocalLightKind kind)
+                              {
+                                  _localCandidates.push_back(Render::LocalShadowCandidate{
+                .kind = kind,
+                .lightIndex = light.index,
+                .screenCoverage = LocalLightScreenCoverage(light.position, light.range, cameraPosition,
+                                                           tanHalfFovY),
+                .intensity = light.intensity,
+                .priority = light.shadowPriority,
+                .pinned = light.shadowAlwaysOn,
+                // Every gathered light is a candidate. A frustum test here would
+                // drop the shadows of lights just off screen, and their casters
+                // are exactly the ones whose shadows reach into it.
+                .visible = true});
+                              };
+    for (const LightingSystem::LocalLight &light : spots)
+    {
+        addCandidate(light, Render::LocalLightKind::Spot);
+    }
+    for (const LightingSystem::LocalLight &light : points)
+    {
+        addCandidate(light, Render::LocalLightKind::Point);
+    }
+
+    _localShadowSelector.Select(_localCandidates, _shadowSettings.local, _shadowSettings.selection, _lastSelection);
+    if (_lastSelection.lights.empty())
+    {
+        return;
+    }
+
+    // Back to the light each winner names, for the geometry its views are built
+    // from. The selection carries scores and classes; it deliberately does not
+    // carry positions, so that it can be tested without a scene.
+    _localRequests.clear();
+    _localLightVolumes.clear();
+    _localRequests.reserve(_lastSelection.lights.size());
+    _localLightVolumes.reserve(_lastSelection.lights.size());
+    for (const Render::LocalShadowAssignment &winner : _lastSelection.lights)
+    {
+        const std::span<const LightingSystem::LocalLight> &pool =
+            winner.kind == Render::LocalLightKind::Point ? points : spots;
+        const LightingSystem::LocalLight *light = nullptr;
+        for (const LightingSystem::LocalLight &candidate : pool)
+        {
+            if (candidate.index == winner.lightIndex)
+            {
+                light = &candidate;
+                break;
+            }
+        }
+        if (light == nullptr)
+        {
+            continue;
+        }
+        _localRequests.push_back(Render::LocalShadowRequest{.kind = winner.kind,
+                                                            .lightIndex = light->index,
+                                                            .position = light->position,
+                                                            .direction = light->direction,
+                                                            .range = light->range,
+                                                            .outerAngleDegrees = light->outerAngleDegrees,
+                                                            .sizeClass = winner.sizeClass});
+        // The light's whole reach, whatever shape it lights within it. A spot's
+        // cone would be a tighter volume, but the cone test belongs per face
+        // where the frustum already makes it — bounding the sphere here keeps
+        // one gather serving both kinds.
+        _localLightVolumes.push_back(Geometry::BoundingSphere{light->position, light->range});
+    }
+
+    GatherLocalShadowCasters(scene, _localLightVolumes, _localShadowCasters, _localCasterIndex);
+
+    _lastLocalShadowStats = _localShadowPass.Render(frame.commandList, _localRequests, _localShadowCasters.casters,
+                                                    _localCasterIndex);
+
+    // Stamp each served light with where its views landed. A light the atlas
+    // could not serve has no tile and keeps the kNoShadowView the gather left,
+    // so it lights unshadowed rather than sampling someone else's depth.
+    for (const Render::LocalShadowPass::Tile &tile : _localShadowPass.Tiles())
+    {
+        if (tile.kind == Render::LocalLightKind::Point)
+        {
+            _lighting.SetPointShadowView(tile.lightIndex, tile.firstView);
+        }
+        else
+        {
+            _lighting.SetSpotShadowView(tile.lightIndex, tile.firstView);
+        }
+    }
+
+    // Re-read after the draw: the table grew, which swapped its handle.
+    _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
+    shadows.localActive = _lastLocalShadowStats.lights > 0;
+    shadows.localSettings = _localShadowPass.Settings();
 }
 
 void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,

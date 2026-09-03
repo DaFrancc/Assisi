@@ -18,6 +18,100 @@ namespace Assisi::Runtime
 {
 namespace
 {
+/// @brief Whether @p lhs draws through a pipeline class that sorts before
+/// @p rhs's, or the same class and an earlier geometry.
+///
+/// The whole pipeline class, not the alpha test alone: the cull mode is pipeline
+/// state too, so a run crossing from single- to double-sided could not coalesce
+/// however identical its geometry. The key is built from the mesh id rather than
+/// its address, so the ordering is the same every frame whatever the allocator
+/// did.
+bool ShadowCasterOrderBefore(const Assisi::Render::ShadowCaster &lhs, const Assisi::Render::ShadowCaster &rhs)
+{
+    const Assisi::Render::MeshPipeline lhsClass =
+        Assisi::Render::MeshPipelineFor(lhs.alphaMasked, lhs.doubleSided);
+    const Assisi::Render::MeshPipeline rhsClass =
+        Assisi::Render::MeshPipelineFor(rhs.alphaMasked, rhs.doubleSided);
+    if (lhsClass != rhsClass)
+    {
+        return lhsClass < rhsClass;
+    }
+    return lhs.geometryKey < rhs.geometryKey;
+}
+
+/// @brief Order @p casters pipeline-class first, geometry-major within a class.
+///
+/// A run of identical (mesh, submesh) entries then coalesces into one instanced
+/// draw in every view that keeps them. The class leads because it is the
+/// pipeline: a run crossing from one class into another could not coalesce
+/// whatever its geometry, so sorting on it is what keeps the runs whole.
+void SortShadowCasters(std::vector<Assisi::Render::ShadowCaster> &casters)
+{
+    ASSISI_PROFILE_SCOPE("shadow-sort");
+    std::sort(casters.begin(), casters.end(), ShadowCasterOrderBefore);
+}
+
+/// @brief The same order, produced as a permutation of @p order rather than by
+/// moving @p casters.
+///
+/// For a caller that has a second array keyed by a caster's original position —
+/// the local gather's light membership — and so needs to know where each one
+/// went rather than only that they are sorted.
+void SortShadowCasterOrder(const std::vector<Assisi::Render::ShadowCaster> &casters,
+                           std::vector<std::uint32_t> &order)
+{
+    ASSISI_PROFILE_SCOPE("shadow-sort");
+    std::sort(order.begin(), order.end(), [&casters](std::uint32_t lhs, std::uint32_t rhs)
+              { return ShadowCasterOrderBefore(casters[lhs], casters[rhs]); });
+}
+
+/// @brief Append one caster per LOD0 submesh of @p mesh to @p out.
+///
+/// LOD0, matching the draw path: a shadow cast by a different silhouette than
+/// the one on screen is worse than a slightly expensive one.
+///
+/// Shared by the sun's gather and the local lights', because a caster is the
+/// same thing to both — only what decides its @p viewMask differs.
+void EmitShadowCasters(const Assisi::Render::MeshBuffer &mesh, const MeshRenderer &meshRenderer,
+                       const Transform &transform, const Assisi::Geometry::BoundingSphere &worldSphere,
+                       std::uint32_t viewMask, std::vector<Assisi::Render::ShadowCaster> &out)
+{
+    const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh.SubMeshes();
+    const std::vector<Assisi::Geometry::LodRange> &lods = mesh.Lods();
+    const Assisi::Geometry::LodRange lod0 =
+        !lods.empty() ? lods.front() : Assisi::Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+
+    for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+    {
+        const uint32_t submeshIndex = lod0.FirstSubMesh + i;
+        const Assisi::Geometry::SubMesh &subMesh = subMeshes[submeshIndex];
+        // An unresolved slot casts opaquely rather than not at all: row 0 is
+        // never read, because the alpha test that would read it is off.
+        const Assisi::Render::Material *material =
+            subMesh.MaterialSlot < meshRenderer.materials.size() ? meshRenderer.materials[subMesh.MaterialSlot]
+                                                                 : nullptr;
+        const bool alphaMasked = material != nullptr && material->IsAlphaMasked();
+        // The same flag the mesh pass reads. A double-sided caster is a surface
+        // with no interior, so the depth pass must record both of its faces; a
+        // single-sided one is a closed shell whose back faces are its inside,
+        // and culling them is free and correct.
+        const bool doubleSided = material != nullptr && material->IsDoubleSided();
+        out.push_back(Assisi::Render::ShadowCaster{
+                    .geometryKey = Assisi::Render::ShadowGeometryKey(mesh.Id(), submeshIndex),
+                    .vertexBuffer = mesh.VertexBuffer(),
+                    .indexBuffer = mesh.IndexBuffer(),
+                    .indexCount = subMesh.IndexCount,
+                    .startIndexLocation = mesh.IndexBase() + subMesh.IndexOffset,
+                    .baseVertexLocation = static_cast<int32_t>(mesh.VertexBase()),
+                    .model = transform.worldMatrix,
+                    .worldSphere = worldSphere,
+                    .viewMask = viewMask,
+                    .alphaMasked = alphaMasked,
+                    .doubleSided = doubleSided,
+                    .materialIndex = alphaMasked ? material->Id() : 0u});
+    }
+}
+
 // GPU-driven cull path (stage F1). Instead of culling + emitting + sorting draws
 // on the CPU, gather every mesh entity into the culler's host tables (deduping
 // meshes into a descriptor table), let the compute pass frustum-cull and build the
@@ -263,43 +357,7 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
         // behind the camera from being clipped out of the map it shadows into.
         nearAlongLight = std::min(nearAlongLight, glm::dot(worldSphere.center, lightDirection) - worldSphere.radius);
 
-        // LOD0, matching the draw path: a shadow cast by a different silhouette
-        // than the one on screen is worse than a slightly expensive one.
-        const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
-        const std::vector<Assisi::Geometry::LodRange> &lods = mesh->Lods();
-        const Assisi::Geometry::LodRange lod0 =
-            !lods.empty() ? lods.front()
-                          : Assisi::Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
-
-        for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
-        {
-            const uint32_t submeshIndex = lod0.FirstSubMesh + i;
-            const Assisi::Geometry::SubMesh &subMesh = subMeshes[submeshIndex];
-            // An unresolved slot casts opaquely rather than not at all: row 0 is
-            // never read, because the alpha test that would read it is off.
-            const Assisi::Render::Material *material =
-                subMesh.MaterialSlot < meshRenderer.materials.size() ? meshRenderer.materials[subMesh.MaterialSlot]
-                                                                     : nullptr;
-            const bool alphaMasked = material != nullptr && material->IsAlphaMasked();
-            // The same flag the mesh pass reads. A double-sided caster is a
-            // surface with no interior, so the depth pass must record both of
-            // its faces; a single-sided one is a closed shell whose back faces
-            // are its inside, and culling them is free and correct.
-            const bool doubleSided = material != nullptr && material->IsDoubleSided();
-            out.casters.push_back(Assisi::Render::ShadowCaster{
-                    .geometryKey = Assisi::Render::ShadowGeometryKey(mesh->Id(), submeshIndex),
-                    .vertexBuffer = mesh->VertexBuffer(),
-                    .indexBuffer = mesh->IndexBuffer(),
-                    .indexCount = subMesh.IndexCount,
-                    .startIndexLocation = mesh->IndexBase() + subMesh.IndexOffset,
-                    .baseVertexLocation = static_cast<int32_t>(mesh->VertexBase()),
-                    .model = transform.worldMatrix,
-                    .worldSphere = worldSphere,
-                    .viewMask = viewMask,
-                    .alphaMasked = alphaMasked,
-                    .doubleSided = doubleSided,
-                    .materialIndex = alphaMasked ? material->Id() : 0u});
-        }
+        EmitShadowCasters(*mesh, meshRenderer, transform, worldSphere, viewMask, out.casters);
     }
 
     if (out.casters.empty())
@@ -307,31 +365,126 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
         return;
     }
     out.nearAlongLight = nearAlongLight;
+    SortShadowCasters(out.casters);
+}
 
-    // Pipeline class first, then geometry-major within it, so a run of identical
-    // (mesh, submesh) entries coalesces into one instanced draw in every view
-    // that keeps them. The class leads because it is the pipeline: a run that
-    // crossed from one class into another could not coalesce whatever its
-    // geometry, so sorting on it is what keeps the runs whole. The key is built
-    // from the mesh id rather than its address: the same ordering every frame,
-    // whatever the allocator did.
-    ASSISI_PROFILE_SCOPE("shadow-sort");
-    std::sort(out.casters.begin(), out.casters.end(),
-              [](const Assisi::Render::ShadowCaster &lhs, const Assisi::Render::ShadowCaster &rhs)
+void GatherLocalShadowCasters(Assisi::ECS::Scene &scene,
+                              std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
+                              ShadowCasterGather &out, Assisi::Render::LocalShadowCasterIndex &index)
+{
+    ASSISI_PROFILE_SCOPE("local-shadow-gather");
+
+    out.casters.clear();
+    out.nearAlongLight.reset(); // meaningless for a light with a position
+    out.culledEntities = 0;
+    index.Clear();
+
+    if (lightVolumes.empty())
+    {
+        index.start.assign(1, 0u);
+        return;
+    }
+
+    // Which lights each caster reaches, accumulated while the casters are
+    // gathered and inverted into the per-light rows afterwards. Inverted rather
+    // than filled directly because the rows index the *sorted* caster span, and
+    // the sort has not happened yet.
+    std::vector<std::uint32_t> reached;
+    std::vector<std::uint32_t> reachedStart;
+    reachedStart.push_back(0);
+
+    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+    {
+        const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+        if (mesh == nullptr || !meshRenderer.castsShadows)
         {
-            // The whole pipeline class, not the alpha test alone: the cull mode
-            // is pipeline state too, so a run crossing from single- to
-            // double-sided could not coalesce however identical its geometry.
-            const Assisi::Render::MeshPipeline lhsClass =
-                Assisi::Render::MeshPipelineFor(lhs.alphaMasked, lhs.doubleSided);
-            const Assisi::Render::MeshPipeline rhsClass =
-                Assisi::Render::MeshPipelineFor(rhs.alphaMasked, rhs.doubleSided);
-            if (lhsClass != rhsClass)
+            continue;
+        }
+
+        const Assisi::Geometry::BoundingSphere worldSphere =
+            Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
+
+        // A plain sphere-sphere test, and no sweep: a local light is a point
+        // with a range, so what can occlude for it is what stands inside its
+        // reach. The sun's gather sweeps down-light because the sun has no
+        // position to be inside of.
+        const std::size_t firstReach = reached.size();
+        for (std::uint32_t light = 0; light < lightVolumes.size(); ++light)
+        {
+            const glm::vec3 separation = worldSphere.center - lightVolumes[light].center;
+            const float reach = worldSphere.radius + lightVolumes[light].radius;
+            if (glm::dot(separation, separation) <= reach * reach)
             {
-                return lhsClass < rhsClass;
+                reached.push_back(light);
             }
-            return lhs.geometryKey < rhs.geometryKey;
-        });
+        }
+        if (reached.size() == firstReach)
+        {
+            ++out.culledEntities;
+            continue;
+        }
+
+        // One row per emitted caster, not per entity: a mesh's submeshes are
+        // separate casters and each needs its own row, and they all reach
+        // exactly the lights the entity's sphere did.
+        const std::size_t before = out.casters.size();
+        EmitShadowCasters(*mesh, meshRenderer, transform, worldSphere, ~0u, out.casters);
+        for (std::size_t emitted = before; emitted < out.casters.size(); ++emitted)
+        {
+            if (emitted != before)
+            {
+                reached.insert(reached.end(), reached.begin() + static_cast<std::ptrdiff_t>(firstReach),
+                               reached.begin() + static_cast<std::ptrdiff_t>(reached.size()));
+            }
+            reachedStart.push_back(static_cast<std::uint32_t>(reached.size()));
+        }
+    }
+
+    index.start.assign(lightVolumes.size() + 1u, 0u);
+    if (out.casters.empty())
+    {
+        return;
+    }
+
+    // The sort moves casters, and the rows name them by position — so the
+    // membership is carried through it rather than read after it. Sorting an
+    // index and permuting alongside would be the same work with a second array
+    // to keep in step.
+    std::vector<std::uint32_t> order(out.casters.size());
+    for (std::uint32_t i = 0; i < order.size(); ++i)
+    {
+        order[i] = i;
+    }
+    SortShadowCasterOrder(out.casters, order);
+
+    // Count first, then fill: a row's length is known before anything is placed,
+    // so the whole index is two linear passes and one allocation.
+    for (const std::uint32_t caster : order)
+    {
+        for (std::uint32_t entry = reachedStart[caster]; entry < reachedStart[caster + 1u]; ++entry)
+        {
+            ++index.start[reached[entry] + 1u];
+        }
+    }
+    for (std::size_t light = 1; light < index.start.size(); ++light)
+    {
+        index.start[light] += index.start[light - 1u];
+    }
+
+    std::vector<std::uint32_t> cursor(index.start.begin(), index.start.end() - 1);
+    index.caster.resize(index.start.back());
+    std::vector<Assisi::Render::ShadowCaster> sorted;
+    sorted.reserve(out.casters.size());
+    for (std::uint32_t sortedIndex = 0; sortedIndex < order.size(); ++sortedIndex)
+    {
+        const std::uint32_t original = order[sortedIndex];
+        sorted.push_back(out.casters[original]);
+        for (std::uint32_t entry = reachedStart[original]; entry < reachedStart[original + 1u]; ++entry)
+        {
+            index.caster[cursor[reached[entry]]++] = sortedIndex;
+        }
+    }
+    out.casters.swap(sorted);
 }
 
 } // namespace Assisi::Runtime

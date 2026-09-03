@@ -33,6 +33,10 @@ ShadowView ViewOf(const glm::mat4 &viewProjection)
     view.viewProjection = viewProjection;
     view.rect = ShadowViewRect{.x = 0, .y = 0, .width = 1024, .height = 1024};
     view.targetResolution = 1024;
+    // Every view in this file is built from BoxView, which is an ortho fit — and
+    // saying so is what admits the casters upstream of the near plane that the
+    // pancaking exists to keep. A perspective view must not claim it.
+    view.orthographic = true;
     return view;
 }
 

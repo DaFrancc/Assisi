@@ -131,7 +131,9 @@ public:
     ///
     /// A null @ref fit — or one whose count is zero — means no shadowing sun
     /// this frame, and the shader skips the lookup on a frame constant rather
-    /// than sampling a map that holds nothing.
+    /// than sampling a map that holds nothing. @ref localActive is the same
+    /// switch for the local half, and the two are independent: a scene may have
+    /// a shadowed sun and no shadowed lamp, or the reverse.
     struct ShadowFrameData
     {
         /// This frame's fitted cascades. Not retained past the call.
@@ -144,6 +146,15 @@ public:
         uint32_t sunLightIndex = 0;
         /// Which diagnostic overlay the shadow lookup draws, if any.
         ShadowDebugView debugView = ShadowDebugView::None;
+
+        /// Whether any local light holds an atlas tile this frame. False leaves
+        /// both light loops taking no lookup at all, which is what a scene with
+        /// no shadowed lamp in it pays.
+        bool localActive = false;
+        /// The knobs the atlas was drawn with. Only the filter reaches the
+        /// shader from here — every bias is per tile, because a demoted tile is
+        /// biased differently from a full-size one, and rides in the view table.
+        LocalShadowSettings localSettings;
     };
 
     /// @brief Everything the per-frame constant buffer carries. Grouped so the
@@ -174,11 +185,24 @@ public:
 
     /// @brief Point the shader at the sun's cascade array (ShadowPass owns it).
     ///
-    /// Never null in practice — the shadow pass keeps a one-texel placeholder
+    /// Never null in practice — the shadow pass keeps a one-texel empty array
     /// bound while it is inactive, so the binding set never has a hole in it.
     /// A different handle invalidates the cached set, which is what a resolution
     /// or cascade-count change produces.
     void SetShadowMap(nvrhi::ITexture *cascades);
+
+    /// @brief Point the shader at the local-light atlas (LocalShadowPass owns
+    /// it), on the same terms as the cascade array above.
+    void SetShadowAtlas(nvrhi::ITexture *atlas);
+
+    /// @brief Point the shader at the frame's shadow view table
+    /// (ShadowDepthRenderer owns it).
+    ///
+    /// Null before anything has drawn a shadow map, which is the state a scene
+    /// with no shadows in it stays in: the pass binds a one-row empty table in
+    /// its place, because a binding set may not have a hole in it. The table
+    /// grows, and a growth swaps the handle, which invalidates the cached set.
+    void SetShadowViewTable(nvrhi::IBuffer *views);
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). They describe the batching
@@ -352,8 +376,20 @@ private:
     mutable nvrhi::BindingSetHandle _globalBindingSet;
     // The instance-buffer and cascade-array handles _globalBindingSet was built
     // against; a mismatch in either means the set must be rebuilt.
+    // The local-light atlas (LocalShadowPass owns it) and the frame's shadow view
+    // table (ShadowDepthRenderer owns it). Non-owning, and both swap handles on a
+    // reallocation, which invalidates the cached global set.
+    nvrhi::ITexture *_shadowAtlas = nullptr;
+    nvrhi::IBuffer *_shadowViewTable = nullptr;
+    // Bound in the view table's place while there is no table — which for a
+    // scene that shadows nothing is every frame. One row, never read; it exists
+    // because a binding set may not have a hole in it. Permanent, not scaffolding.
+    Buffer _noShadowViews;
+
     mutable const nvrhi::IBuffer *_globalSetInstanceBuffer = nullptr;
     mutable const nvrhi::ITexture *_globalSetShadowMap = nullptr;
+    mutable const nvrhi::ITexture *_globalSetShadowAtlas = nullptr;
+    mutable const nvrhi::IBuffer *_globalSetShadowViewTable = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn
