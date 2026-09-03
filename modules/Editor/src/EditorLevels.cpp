@@ -895,6 +895,7 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     // transaction against handles that now mean something else.
     _instanceGesture.Abandon();
     _gizmoDrag.Abandon();
+    _lightDrag.Abandon();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
 

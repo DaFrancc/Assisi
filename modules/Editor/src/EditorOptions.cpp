@@ -72,13 +72,15 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
             shadows.sun.format       = preset.sun.format;
             shadows.sun.maxDistance  = preset.sun.maxDistance;
             shadows.sun.filter       = preset.sun.filter;
-            // The local half too, though nothing below edits it yet: a tier is
-            // one point in the whole knob space, and writing half of it would
-            // leave the readout reporting Custom the moment it was pressed.
+            // The local half too: a tier is one point in the whole knob space,
+            // and writing half of it would leave the readout reporting Custom
+            // the moment it was pressed.
             shadows.local.atlasResolution = preset.local.atlasResolution;
             shadows.local.format          = preset.local.format;
             shadows.local.faceResolution  = preset.local.faceResolution;
             shadows.local.filter          = preset.local.filter;
+            shadows.selection.capSpot     = preset.selection.capSpot;
+            shadows.selection.capPoint    = preset.selection.capPoint;
             changed = true;
         }
         ImGui::EndDisabled();
@@ -183,6 +185,117 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     const Assisi::Render::ShadowPass::Stats stats = frame.renderer.LastShadowStats();
     ImGui::Text("Cascades: %u  |  %u instances / %u batches", stats.cascades, stats.instances, stats.batches);
     ImGui::Text("Casters culled: %u  |  %u draw calls", stats.culled, stats.drawCalls);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Local Light Shadows");
+
+    changed |= ImGui::Checkbox("Cast Shadows##local", &shadows.local.enabled);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.0f MiB)",
+                        static_cast<double>(Assisi::Render::LocalShadowMemoryBytes(shadows.local)) /
+                        (1024.0 * 1024.0));
+
+    if (!shadows.local.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+
+    static const char *const kAtlasNames[] = {"512", "1024", "2048", "4096", "8192"};
+    static constexpr std::uint32_t kAtlasResolutions[] = {512u, 1024u, 2048u, 4096u, 8192u};
+    static_assert(std::size(kAtlasNames) == std::size(kAtlasResolutions),
+                  "Every atlas resolution needs a label.");
+    int32_t atlasIndex = 0;
+    for (std::size_t i = 0; i < std::size(kAtlasResolutions); ++i)
+    {
+        if (kAtlasResolutions[i] == shadows.local.atlasResolution)
+        {
+            atlasIndex = static_cast<int32_t>(i);
+        }
+    }
+    if (ImGui::Combo("Atlas", &atlasIndex, kAtlasNames, static_cast<int32_t>(std::size(kAtlasNames))))
+    {
+        shadows.local.atlasResolution = kAtlasResolutions[atlasIndex];
+        changed = true;
+    }
+
+    static const char *const kFaceNames[] = {"128", "256", "512", "1024", "2048"};
+    static constexpr std::uint32_t kFaceResolutions[] = {128u, 256u, 512u, 1024u, 2048u};
+    static_assert(std::size(kFaceNames) == std::size(kFaceResolutions), "Every face class needs a label.");
+    int32_t faceIndex = 0;
+    for (std::size_t i = 0; i < std::size(kFaceResolutions); ++i)
+    {
+        if (kFaceResolutions[i] == shadows.local.faceResolution)
+        {
+            faceIndex = static_cast<int32_t>(i);
+        }
+    }
+    if (ImGui::Combo("Face Size", &faceIndex, kFaceNames, static_cast<int32_t>(std::size(kFaceNames))))
+    {
+        shadows.local.faceResolution = kFaceResolutions[faceIndex];
+        changed = true;
+    }
+    ImGui::SetItemTooltip("The tile a light's face gets before anything demotes it. A light too far away to "
+                          "fill one takes a smaller tile on its own.");
+
+    int32_t localFilterIndex = static_cast<int32_t>(shadows.local.filter);
+    if (ImGui::Combo("Filter##local", &localFilterIndex, kFilterNames,
+                     static_cast<int32_t>(Assisi::Render::kShadowFilterCount)))
+    {
+        shadows.local.filter = static_cast<Assisi::Render::ShadowFilter>(localFilterIndex);
+        changed = true;
+    }
+
+    changed |= ImGui::SliderFloat("Depth Bias##local", &shadows.local.depthBiasTexels,
+                                  Assisi::Render::kMinDepthBiasTexels, Assisi::Render::kMaxDepthBiasTexels,
+                                  "%.2f texels");
+    changed |= ImGui::SliderFloat("Normal Offset##local", &shadows.local.normalOffsetTexels,
+                                  Assisi::Render::kMinNormalOffsetTexels, Assisi::Render::kMaxNormalOffsetTexels,
+                                  "%.2f texels");
+    changed |= ImGui::SliderFloat("Slope Bias##local", &shadows.local.slopeBias, Assisi::Render::kMinSlopeBias,
+                                  Assisi::Render::kMaxSlopeBias, "%.2f");
+
+    changed |= ImGui::Checkbox("Importance Cap", &shadows.selection.capEnabled);
+    ImGui::SetItemTooltip("Off does not lift the limit, only the ordering: the atlas is a fixed-size texture "
+                          "either way, so lights are served until it is full and the rest go unshadowed in "
+                          "the order they were placed rather than by what they contribute. Worse under "
+                          "pressure, and your call.");
+
+    if (!shadows.selection.capEnabled)
+    {
+        ImGui::BeginDisabled();
+    }
+    int32_t capSpot = static_cast<int32_t>(shadows.selection.capSpot);
+    if (ImGui::SliderInt("Shadowed Spots", &capSpot, static_cast<int32_t>(Assisi::Render::kMinShadowCap),
+                         static_cast<int32_t>(Assisi::Render::kMaxShadowCap)))
+    {
+        shadows.selection.capSpot = static_cast<std::uint32_t>(capSpot);
+        changed = true;
+    }
+    int32_t capPoint = static_cast<int32_t>(shadows.selection.capPoint);
+    if (ImGui::SliderInt("Shadowed Points", &capPoint, static_cast<int32_t>(Assisi::Render::kMinShadowCap),
+                         static_cast<int32_t>(Assisi::Render::kMaxShadowCap)))
+    {
+        shadows.selection.capPoint = static_cast<std::uint32_t>(capPoint);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Fewer than the spot cap, and deliberately: a point light is six shadow renders "
+                          "against a spot's one.");
+    if (!shadows.selection.capEnabled)
+    {
+        ImGui::EndDisabled();
+    }
+
+    if (!shadows.local.enabled)
+    {
+        ImGui::EndDisabled();
+    }
+
+    const Assisi::Render::LocalShadowPass::Stats local = frame.renderer.LastLocalShadowStats();
+    ImGui::Text("Atlas: %u lights / %u faces  |  %.0f%% full", local.lights, local.views,
+                static_cast<double>(local.occupancy) * 100.0);
+    // Two different answers to "why has that lamp no shadow", and they are two
+    // different settings: the cap turned it away, or the atlas had no room.
+    ImGui::Text("Dropped by cap: %u  |  atlas full: %u", frame.renderer.LastShadowDroppedByCap(), local.unserved);
 
     if (changed)
     {

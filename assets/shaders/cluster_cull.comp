@@ -30,7 +30,16 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 struct AABB        { vec4 minPoint; vec4 maxPoint; };
 
-struct PointLight  { vec4 positionRadius; vec4 colorIntensity; };
+// The shadow lanes are unread here — culling asks where a light reaches, not
+// whether it occludes — but they are part of the stride, and a struct that
+// omitted them would read every light after the first from the wrong offset.
+
+struct PointLight
+{
+    vec4  positionRadius;
+    vec4  colorIntensity;
+    uvec4 shadowView;
+};
 
 struct SpotLight
 {
@@ -38,7 +47,8 @@ struct SpotLight
     vec4  directionInner;
     vec4  colorIntensity;
     float outerCutoff;
-    float _p0, _p1, _p2;
+    uint  shadowView;
+    float _p0, _p1;
 };
 
 struct LightGrid

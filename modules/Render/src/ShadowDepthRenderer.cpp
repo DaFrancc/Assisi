@@ -5,6 +5,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Render/Frustum.hpp>
+#include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
@@ -20,6 +21,21 @@ namespace
 /// Starting capacity of the instance and indirect-args buffers, in records.
 /// Grown geometrically past this; a first level typically fits without one.
 constexpr std::uint32_t kInitialCasterCapacity = 1024u;
+
+/// @brief What one view hands the depth vertex stage. Mirrors
+/// shadow_depth.vert's push_constant block.
+struct ShadowDepthPushConstants
+{
+    glm::mat4 lightViewProjection{1.f};
+    /// x = 1 to flatten a caster upstream of the near plane onto it instead of
+    /// letting it clip. Only an orthographic view may ask for it — see
+    /// ShadowView::orthographic. yzw unused.
+    glm::uvec4 pancake{0u, 0u, 0u, 0u};
+};
+ASSISI_GPU_LAYOUT(ShadowDepthPushConstants);
+ASSISI_GPU_FIRST_FIELD(ShadowDepthPushConstants, lightViewProjection);
+ASSISI_GPU_FIELD_AFTER(ShadowDepthPushConstants, pancake, lightViewProjection);
+ASSISI_GPU_NO_TAIL_PADDING(ShadowDepthPushConstants, pancake);
 
 /// @brief Apply the caster-side depth bias to @p state.
 ///
@@ -213,15 +229,24 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
 
         out.viewCommandStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
 
-        // Open at the near end. A caster between the light and this slice is
-        // upstream of the slice's near plane and still shadows every surface in
-        // it; shadow_depth.vert flattens such a caster onto that plane rather
-        // than letting it clip, and rejecting it here would undo that before the
-        // rasterizer ever saw it. The symptom is a shadow that vanishes as the
-        // camera approaches, because the nearest cascade's slice — and with it
-        // its near plane — closes in around the viewer until the caster
-        // overhead falls outside.
-        const Frustum frustum = Frustum::FromViewProjection(target.view.viewProjection).WithoutNearPlane();
+        // An orthographic view is open at the near end. A caster between the
+        // light and this slice is upstream of the slice's near plane and still
+        // shadows every surface in it; shadow_depth.vert flattens such a caster
+        // onto that plane rather than letting it clip, and rejecting it here
+        // would undo that before the rasterizer ever saw it. The symptom is a
+        // shadow that vanishes as the camera approaches, because the nearest
+        // cascade's slice — and with it its near plane — closes in around the
+        // viewer until the caster overhead falls outside.
+        //
+        // A perspective view keeps its near plane, and must. Its four side
+        // planes extended form a double cone, so dropping the near plane admits
+        // the mirrored half *behind* the light — geometry that reaches the
+        // rasterizer with a negative w and has no business in this map. There is
+        // nothing to pancake there either: a local light's near plane is a
+        // hundredth of its reach, and what little sits inside that is closer to
+        // the bulb than anything it lights.
+        const Frustum bounded = Frustum::FromViewProjection(target.view.viewProjection);
+        const Frustum frustum = target.view.orthographic ? bounded.WithoutNearPlane() : bounded;
 
         for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
         {
@@ -267,7 +292,7 @@ bool ShadowDepthRenderer::Initialize(const InitParams &params)
     // Nothing else: no material, no lights, no frame constants.
     nvrhi::BindingLayoutDesc bindingLayoutDesc;
     bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex;
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::mat4)));
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
     _bindingLayout = _device->createBindingLayout(bindingLayoutDesc);
     if (_bindingLayout == nullptr)
@@ -324,7 +349,7 @@ void ShadowDepthRenderer::InitializeAlphaTest(const InitParams &params)
     // constant. The bindless textures join as register space 1.
     nvrhi::BindingLayoutDesc maskedLayoutDesc;
     maskedLayoutDesc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
-    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::mat4)));
+    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
     maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
     maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
     maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
@@ -428,7 +453,7 @@ nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateMaskedBindingSet(nvrhi::IBuf
         return _maskedBindingSet;
     }
     nvrhi::BindingSetDesc desc;
-    desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::mat4)));
+    desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
     desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, instanceBuffer));
     desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _materialTable));
     desc.addItem(nvrhi::BindingSetItem::Sampler(0, _maskedSampler));
@@ -444,7 +469,7 @@ nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateBindingSet(nvrhi::IBuffer *i
         return _bindingSet;
     }
     nvrhi::BindingSetDesc desc;
-    desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::mat4)));
+    desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
     desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, instanceBuffer));
     _bindingSet = _device->createBindingSet(desc, _bindingLayout);
     _bindingSetInstanceBuffer = instanceBuffer;
@@ -620,8 +645,10 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
                 state.indirectParams = _indirectBuffer;
                 commandList->setGraphicsState(state);
 
-                const glm::mat4 lightViewProjection = targets[index].view.viewProjection;
-                commandList->setPushConstants(&lightViewProjection, sizeof(lightViewProjection));
+                const ShadowDepthPushConstants pushConstants{
+                    .lightViewProjection = targets[index].view.viewProjection,
+                    .pancake = glm::uvec4(targets[index].view.orthographic ? 1u : 0u, 0u, 0u, 0u)};
+                commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
 
                 commandList->drawIndexedIndirect(runStart * sizeof(nvrhi::DrawIndexedIndirectArguments),
                                                  runEnd - runStart);

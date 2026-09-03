@@ -175,6 +175,15 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 ReadField(local, "slopeBias", shadows.local.slopeBias);
                 ReadField(local, "normalOffsetTexels", shadows.local.normalOffsetTexels);
             }
+            if (sh.contains("selection"))
+            {
+                const auto &selection = sh.at("selection");
+                ReadField(selection, "capEnabled", shadows.selection.capEnabled);
+                ReadField(selection, "capSpot", shadows.selection.capSpot);
+                ReadField(selection, "capPoint", shadows.selection.capPoint);
+                ReadField(selection, "capHysteresis", shadows.selection.capHysteresis);
+                ReadField(selection, "classHysteresis", shadows.selection.classHysteresis);
+            }
             // Whatever the file said, nothing downstream sees an out-of-range
             // value — and here that is a texture allocation, not only a shader.
             shadows = Render::Sanitized(shadows);
@@ -252,6 +261,13 @@ std::string OptionsConfig::ToJsonText() const
     local["depthBiasTexels"]    = shadows.local.depthBiasTexels;
     local["slopeBias"]          = shadows.local.slopeBias;
     local["normalOffsetTexels"] = shadows.local.normalOffsetTexels;
+
+    nlohmann::json &selection = json["shadows"]["selection"];
+    selection["capEnabled"]      = shadows.selection.capEnabled;
+    selection["capSpot"]         = shadows.selection.capSpot;
+    selection["capPoint"]        = shadows.selection.capPoint;
+    selection["capHysteresis"]   = shadows.selection.capHysteresis;
+    selection["classHysteresis"] = shadows.selection.classHysteresis;
 
     json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"]       = fpsLimit;

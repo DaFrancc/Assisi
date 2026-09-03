@@ -33,6 +33,10 @@ ShadowView ViewOf(const glm::mat4 &viewProjection)
     view.viewProjection = viewProjection;
     view.rect = ShadowViewRect{.x = 0, .y = 0, .width = 1024, .height = 1024};
     view.targetResolution = 1024;
+    // Every view in this file is built from BoxView, which is an ortho fit — and
+    // saying so is what admits the casters upstream of the near plane that the
+    // pancaking exists to keep. A perspective view must not claim it.
+    view.orthographic = true;
     return view;
 }
 
@@ -830,14 +834,14 @@ TEST_CASE("Classifying a real cascade set draws exactly what sweeping it drew")
     {
         CAPTURE(view);
         const auto instancesIn = [](const ShadowDrawList &list, std::uint32_t index)
-        {
-            std::uint32_t total = 0;
-            for (std::uint32_t i = list.viewCommandStart[index]; i < list.viewCommandStart[index + 1u]; ++i)
-            {
-                total += list.commands[i].instanceCount;
-            }
-            return total;
-        };
+                                 {
+                                     std::uint32_t total = 0;
+                                     for (std::uint32_t i = list.viewCommandStart[index]; i < list.viewCommandStart[index + 1u]; ++i)
+                                     {
+                                         total += list.commands[i].instanceCount;
+                                     }
+                                     return total;
+                                 };
         CHECK(instancesIn(masked, view) == instancesIn(swept, view));
         CHECK(masked.commands[masked.viewCommandStart[view]].startInstanceLocation ==
               swept.commands[swept.viewCommandStart[view]].startInstanceLocation);

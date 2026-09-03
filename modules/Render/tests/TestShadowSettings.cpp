@@ -151,6 +151,73 @@ TEST_CASE("A tier names both halves, so half a tier is no tier")
     }
 }
 
+TEST_CASE("The selection knobs are sanitized on their own terms")
+{
+    LocalShadowSelectionSettings hostile;
+    hostile.capSpot = 100000;
+    hostile.capPoint = 100000;
+    hostile.capHysteresis = std::numeric_limits<float>::quiet_NaN();
+    hostile.classHysteresis = 9.f;
+
+    // options.json is hand-editable, and these values order what renders — a
+    // NaN margin would make every comparison against it false and the ordering
+    // arbitrary.
+    const LocalShadowSelectionSettings safe = Sanitized(hostile);
+    CHECK(safe.capSpot == kMaxShadowCap);
+    CHECK(safe.capPoint == kMaxShadowCap);
+    CHECK(safe.capHysteresis == LocalShadowSelectionSettings{}.capHysteresis);
+    CHECK(safe.classHysteresis == 1.f);
+
+    // Zero is a real setting on both caps — it means this light type never
+    // shadows — which is why the floor is not one.
+    LocalShadowSelectionSettings none;
+    none.capSpot = 0;
+    none.capPoint = 0;
+    CHECK(Sanitized(none).capSpot == 0);
+    CHECK(Sanitized(none).capPoint == 0);
+
+    // And the aggregate sanitizes all three halves, not two.
+    ShadowSettings settings;
+    settings.selection.capSpot = 100000;
+    CHECK(Sanitized(settings).selection.capSpot == kMaxShadowCap);
+}
+
+TEST_CASE("A tier sets the caps, and a cap edit leaves the tier")
+{
+    // Point caps are about a quarter the spot caps at every tier, and that is
+    // arithmetic rather than taste: a point light is six shadow renders against
+    // a spot's one, so equal caps would mean six times the work for the same
+    // number.
+    for (std::uint32_t i = 0; i < kShadowTierCount; ++i)
+    {
+        const ShadowSettings preset = TierSettings(static_cast<ShadowTier>(i));
+        CHECK(preset.selection.capPoint < preset.selection.capSpot);
+        CHECK(preset.selection.capPoint * 4u == preset.selection.capSpot);
+    }
+
+    // Raising a tier raises both caps: a higher tier shadows more lights, which
+    // is most of what the tier means here.
+    CHECK(TierSettings(ShadowTier::Low).selection.capSpot <
+          TierSettings(ShadowTier::Medium).selection.capSpot);
+    CHECK(TierSettings(ShadowTier::Medium).selection.capSpot <
+          TierSettings(ShadowTier::High).selection.capSpot);
+    CHECK(TierSettings(ShadowTier::High).selection.capSpot <
+          TierSettings(ShadowTier::Ultra).selection.capSpot);
+
+    // A cap is a knob the tier sets, so moving it is leaving the tier — unlike
+    // a bias, which no tier has an opinion about.
+    ShadowSettings high = TierSettings(ShadowTier::High);
+    high.selection.capPoint += 1;
+    CHECK(Tier(high) == ShadowTier::Custom);
+
+    // The hysteresis margins are not tier knobs: they are correctness settings,
+    // and an author who tunes one has not left the tier they picked.
+    ShadowSettings tuned = TierSettings(ShadowTier::High);
+    tuned.selection.capHysteresis = 0.4f;
+    tuned.selection.classHysteresis = 0.05f;
+    CHECK(Tier(tuned) == ShadowTier::High);
+}
+
 TEST_CASE("Shadow memory is reported per half and in total")
 {
     // The memory column of the tier table, computed rather than quoted.

@@ -499,10 +499,16 @@ const char *FieldTypeName(FieldType type)
 /// Exact decimal-free spelling of a float bound: the bounds are quantization
 /// parameters, so two builds differing in the last mantissa bit must produce
 /// different hashes. A formatted decimal could round them together.
-std::string BoundText(bool present, float value)
+std::string BoundText(bool present, float value, const std::string &named)
 {
     if (!present)
         return "-";
+    // A bound naming a sibling travels as that name. Two builds that cap the same
+    // field against different siblings accept different values from each other,
+    // and a build that turned a literal into a reference would otherwise hash the
+    // same as one that still holds the old constant.
+    if (!named.empty())
+        return '@' + named;
     return ToHex64(std::bit_cast<std::uint32_t>(value));
 }
 
@@ -535,9 +541,9 @@ void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
         // enum width; when per-field quantization bit counts land in FieldMeta
         // they must be appended here too.
         text += " min=";
-        text += BoundText(field.hasMin, field.minValue);
+        text += BoundText(field.hasMin, field.minValue, field.minField);
         text += " max=";
-        text += BoundText(field.hasMax, field.maxValue);
+        text += BoundText(field.hasMax, field.maxValue, field.maxField);
 
         if (field.type == FieldType::Enum)
         {
@@ -738,25 +744,19 @@ bool FieldsWithinBounds(std::span<const FieldMeta> fields, const void *object, s
         // them elsewhere — so anything else here is a field that simply has no
         // range to be outside of.
         double value = 0.0;
-        const void *address = FieldAddress(object, field.offset);
-        switch (field.type)
-        {
-        // Explicit, like the 64-bit cases below: the widening is intended — the
-        // whole comparison runs in double — and saying so is what keeps
-        // -Wdouble-promotion (clang) from reading it as an accident.
-        case FieldType::Float:  value = static_cast<double>(*static_cast<const float *>(address)); break;
-        case FieldType::Double: value = *static_cast<const double *>(address); break;
-        case FieldType::Int32:  value = *static_cast<const std::int32_t *>(address); break;
-        case FieldType::UInt32: value = *static_cast<const std::uint32_t *>(address); break;
-        case FieldType::Int64:  value = static_cast<double>(*static_cast<const std::int64_t *>(address)); break;
-        case FieldType::UInt64: value = static_cast<double>(*static_cast<const std::uint64_t *>(address)); break;
-        default: continue;
-        }
+        if (!ReadNumericField(field, object, value))
+            continue;
+
+        // Resolved against the object, because a bound may name a sibling field
+        // rather than a constant — a spot light's inner angle against its outer.
+        // Both are checked here for the same reason either is: a sender is not
+        // trusted to have respected the editor's clamp.
+        const FieldBounds bounds = ResolveFieldBounds(field, fields, object);
 
         // NaN fails both comparisons, which is the answer we want: a value that
         // is not ordered against the bounds is not within them.
-        const bool belowMin = field.hasMin && !(value >= static_cast<double>(field.minValue));
-        const bool aboveMax = field.hasMax && !(value <= static_cast<double>(field.maxValue));
+        const bool belowMin = bounds.hasMin && !(value >= bounds.minValue);
+        const bool aboveMax = bounds.hasMax && !(value <= bounds.maxValue);
         if (belowMin || aboveMax)
         {
             if (outField != nullptr)

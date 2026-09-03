@@ -649,7 +649,9 @@ void EditorApp::DrawMaterialEditor()
                 channelsChanged = true;
             }
         }
-        else if (EditFieldValue(fp, field))
+        else if (EditFieldValue(
+                     fp, field,
+                     Assisi::Core::Reflect::ResolveFieldBounds(field, meta->fields, &_materialEditorData)))
         {
             edited = true;
         }

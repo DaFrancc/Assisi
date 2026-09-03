@@ -87,13 +87,13 @@ bool PostProcess::Initialize(const InitParams &params)
     // vertex buffer or per-vertex bindings) — see fullscreen.vert. The two
     // layouts differ only in push-constant size, which the shaders disagree on.
     const auto makeLayout = [this](size_t pushConstantSize) {
-        nvrhi::BindingLayoutDesc desc;
-        desc.visibility = nvrhi::ShaderType::Pixel;
-        desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, pushConstantSize));
-        desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
-        desc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
-        return _device->createBindingLayout(desc);
-    };
+                                nvrhi::BindingLayoutDesc desc;
+                                desc.visibility = nvrhi::ShaderType::Pixel;
+                                desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, pushConstantSize));
+                                desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+                                desc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+                                return _device->createBindingLayout(desc);
+                            };
     _tonemapBindingLayout = makeLayout(sizeof(TonemapConstants));
     _fxaaBindingLayout = makeLayout(sizeof(glm::vec2));
 
@@ -151,61 +151,61 @@ void PostProcess::Rebuild()
     // Which surfaces this chain actually touches. Allocating from the plan is
     // what keeps an app that asked for no overlays from paying for the seam.
     const auto uses = [this](ChainSurface surface) {
-        if (_plan.sceneTarget == surface)
-        {
-            return true;
-        }
-        for (uint32_t i = 0; i < _plan.stepCount; ++i)
-        {
-            if (_plan.steps[i].source == surface || _plan.steps[i].destination == surface)
-            {
-                return true;
-            }
-        }
-        return false;
-    };
+                          if (_plan.sceneTarget == surface)
+                          {
+                              return true;
+                          }
+                          for (uint32_t i = 0; i < _plan.stepCount; ++i)
+                          {
+                              if (_plan.steps[i].source == surface || _plan.steps[i].destination == surface)
+                              {
+                                  return true;
+                              }
+                          }
+                          return false;
+                      };
 
     const auto makeColor = [this](nvrhi::Format format, uint32_t sampleCount, bool shaderResource,
                                   const char *debugName) {
-        nvrhi::TextureDesc desc;
-        desc.width = _width;
-        desc.height = _height;
-        desc.format = format;
-        desc.sampleCount = sampleCount;
-        desc.isRenderTarget = true;
-        desc.isShaderResource = shaderResource;
-        desc.debugName = debugName;
-        desc.initialState = nvrhi::ResourceStates::RenderTarget;
-        desc.keepInitialState = true;
-        return _device->createTexture(desc);
-    };
+                               nvrhi::TextureDesc desc;
+                               desc.width = _width;
+                               desc.height = _height;
+                               desc.format = format;
+                               desc.sampleCount = sampleCount;
+                               desc.isRenderTarget = true;
+                               desc.isShaderResource = shaderResource;
+                               desc.debugName = debugName;
+                               desc.initialState = nvrhi::ResourceStates::RenderTarget;
+                               desc.keepInitialState = true;
+                               return _device->createTexture(desc);
+                           };
 
     const auto makeDepth = [this, depthFormat](uint32_t sampleCount, const char *debugName) {
-        nvrhi::TextureDesc desc;
-        desc.width = _width;
-        desc.height = _height;
-        desc.format = depthFormat;
-        desc.sampleCount = sampleCount;
-        desc.isRenderTarget = true;
-        desc.debugName = debugName;
-        desc.initialState = nvrhi::ResourceStates::DepthWrite;
-        desc.keepInitialState = true;
-        return _device->createTexture(desc);
-    };
+                               nvrhi::TextureDesc desc;
+                               desc.width = _width;
+                               desc.height = _height;
+                               desc.format = depthFormat;
+                               desc.sampleCount = sampleCount;
+                               desc.isRenderTarget = true;
+                               desc.debugName = debugName;
+                               desc.initialState = nvrhi::ResourceStates::DepthWrite;
+                               desc.keepInitialState = true;
+                               return _device->createTexture(desc);
+                           };
 
     const auto makeFramebuffer = [this](nvrhi::ITexture *color, nvrhi::ITexture *depth) {
-        nvrhi::FramebufferDesc desc;
-        desc.addColorAttachment(color);
-        if (depth != nullptr)
-        {
-            desc.setDepthAttachment(depth);
-        }
-        return _device->createFramebuffer(desc);
-    };
+                                     nvrhi::FramebufferDesc desc;
+                                     desc.addColorAttachment(color);
+                                     if (depth != nullptr)
+                                     {
+                                         desc.setDepthAttachment(depth);
+                                     }
+                                     return _device->createFramebuffer(desc);
+                                 };
 
     if (uses(ChainSurface::SceneMultisample))
     {
-        _msaaColor = makeColor(kSceneColorFormat, _msaaSamples, /*shaderResource=*/false, "PostProcess::MSAAColor");
+        _msaaColor = makeColor(kSceneColorFormat, _msaaSamples, /*shaderResource=*/ false, "PostProcess::MSAAColor");
         _msaaDepth = makeDepth(_msaaSamples, "PostProcess::MSAADepth");
         _msaaFramebuffer = makeFramebuffer(_msaaColor, _msaaDepth);
     }
@@ -213,7 +213,7 @@ void PostProcess::Rebuild()
     // Always present: the tone map reads it in every configuration. It only needs
     // its own depth when the scene draws into it, which is when MSAA is off.
     const bool sceneDrawsHere = (_plan.sceneTarget == ChainSurface::SceneHdr);
-    _sceneColor = makeColor(kSceneColorFormat, 1, /*shaderResource=*/true, "PostProcess::SceneColor");
+    _sceneColor = makeColor(kSceneColorFormat, 1, /*shaderResource=*/ true, "PostProcess::SceneColor");
     if (sceneDrawsHere)
     {
         _sceneDepth = makeDepth(1, "PostProcess::SceneDepth");
@@ -226,13 +226,13 @@ void PostProcess::Rebuild()
         // test against what the scene wrote, and a depth buffer cannot be copied
         // between sample counts.
         _overlayMsaaColor =
-            makeColor(ldrFormat, _msaaSamples, /*shaderResource=*/false, "PostProcess::OverlayMSAAColor");
+            makeColor(ldrFormat, _msaaSamples, /*shaderResource=*/ false, "PostProcess::OverlayMSAAColor");
         _overlayMsaaFramebuffer = makeFramebuffer(_overlayMsaaColor, _msaaDepth);
     }
 
     if (uses(ChainSurface::Ldr))
     {
-        _ldrColor = makeColor(ldrFormat, 1, /*shaderResource=*/true, "PostProcess::LdrColor");
+        _ldrColor = makeColor(ldrFormat, 1, /*shaderResource=*/ true, "PostProcess::LdrColor");
         // Depth only where overlays draw straight into it (no MSAA), for the same
         // reason the multisample overlay target has one.
         const bool overlaysDrawHere = _plan.OverlaySurface() == ChainSurface::Ldr;
@@ -273,7 +273,7 @@ void PostProcess::Rebuild()
 
         nvrhi::BindingSetDesc bindingSetDesc;
         bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(
-            0, isFxaa ? sizeof(glm::vec2) : sizeof(TonemapConstants)));
+                                   0, isFxaa ? sizeof(glm::vec2) : sizeof(TonemapConstants)));
         bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, TextureFor(step.source, nullptr)));
         bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
         _stepResources[i].bindingSet = _device->createBindingSet(bindingSetDesc, layout);

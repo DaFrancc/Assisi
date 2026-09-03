@@ -160,6 +160,34 @@ struct EditorConfig
 
 class EditorOptionsPanel;
 
+/// @brief What the fields a bound-settle can move held when the current field
+/// edit began.
+///
+/// Settling consumes what it moves, and a typed value arrives one character at a
+/// time: typing 40 into a cap passes through 4, and a clamp applied at that
+/// instant drags the capped field to 4 and leaves it there when the 0 lands.
+/// Restoring these before each settle makes the capped field follow *what it was*
+/// against the current cap, rather than a running minimum of every value the cap
+/// passed through on the way.
+///
+/// Lives for one widget interaction — captured when a field takes focus, dropped
+/// when it loses it — so releasing a drag commits what is on screen. The
+/// component itself is never shadowed: the capped field really does hold each
+/// intermediate value, and the scene is told about it.
+struct BoundBaseline
+{
+    Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
+    Assisi::Core::Reflect::ComponentId component{};
+    /// The field being edited, which is the one value never restored — that would
+    /// be writing over what is being typed.
+    std::size_t editedField = 0;
+    /// Index into the component's field list, and the value it held. Only fields
+    /// whose bound names a sibling are here, so this is empty for almost every
+    /// component.
+    std::vector<std::pair<std::size_t, double>> values;
+    bool active = false;
+};
+
 class EditorApp : public Assisi::App::Application
 {
 public:
@@ -381,10 +409,50 @@ private:
     void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
                                const glm::vec3 &color);
 
+    // --- Light visualisation ---
+    /// @brief Draw every light's reach as an overlay: a point light's sphere, a
+    /// spot's two cones, a directional light's arrow.
+    ///
+    /// A light is invisible otherwise. Its billboard says where it is and nothing
+    /// about what it does, so a radius is authored by typing a number and
+    /// checking the result frame by frame — which is the loop this removes.
+    ///
+    /// The selected light draws in the selection colour and shows more: the inner
+    /// cone as well as the outer, and its axis. Everything else is drawn thinly
+    /// enough to sit under a scene full of lights.
+    void SubmitLightGizmos();
+
+    /// @brief The light whose outline the cursor is on, or NullEntity.
+    ///
+    /// The outline, not the volume it encloses: a point light's sphere is where
+    /// its falloff ends, and treating its inside as the light's own would make
+    /// everything the light reaches unclickable — which is most of a room. So a
+    /// click lands on the drawn lines, within a few pixels of them.
+    ///
+    /// @p tOut is how far the grabbed point is, on the same scale PickEntity
+    /// reports, so the caller can take whichever hit is nearer.
+    [[nodiscard]] Assisi::ECS::Entity PickLightOutline(glm::vec2 mousePos, float &tOut);
+
     // --- Gizmo state ---
     /// @brief True while the transform gizmo is hovered or being dragged. Entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
     [[nodiscard]] bool IsUsingGizmo() const;
+
+    /// @brief Drive the selected directional light's aim with the rotate gizmo,
+    /// in place of the transform one.
+    ///
+    /// A directional light has no position — only a direction — so the ordinary
+    /// gizmo has nothing to grab on the two thirds of the time it is translating
+    /// or scaling, and rotating the entity's Transform would turn a matrix the
+    /// light never reads. This turns the light's own `direction` field instead.
+    ///
+    /// Drawn at the entity's world position where it has a Transform, and at the
+    /// world origin where it does not — a sun commonly has none, and a gizmo with
+    /// nowhere to be is a gizmo nobody can reach.
+    ///
+    /// @return true when it took the frame's gizmo, which the transform gizmo
+    /// checks so the two never draw over each other.
+    [[nodiscard]] bool DrawDirectionalLightGizmo();
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -513,7 +581,12 @@ private:
     /// AssetId's browse target, an EntityRef's scene, an AssetIdVector's mesh)
     /// are the caller's to handle before delegating here; they land on the
     /// "unsupported" label if it does not.
-    bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field);
+    /// @p bounds is the field's clamp already resolved against the object being
+    /// drawn — Reflect::ResolveFieldBounds — because a bound may name a sibling
+    /// field rather than a constant, and this half of the renderer holds only the
+    /// one field's address.
+    bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                        const Assisi::Core::Reflect::FieldBounds &bounds);
     // The inspector's replication surfaces. Every one reads or writes a
     // NetSync::Replicated marker, so without networking there is no component
     // for them to be about and the inspector has no replication block.
@@ -1381,6 +1454,10 @@ private:
     };
     std::optional<PendingOverrideReset> _pendingOverrideReset;
 
+    /// See BoundBaseline: what a bound-settle would otherwise consume while a
+    /// value is being typed one character at a time.
+    BoundBaseline _boundBaseline;
+
     /// The blueprint instance the selection is *about*, or 0 for none.
     ///
     /// Selection has two modes. Clicking an instance's row selects the instance —
@@ -1429,6 +1506,19 @@ private:
     // every frame.
     std::vector<Assisi::Render::LineVertex> _colliderLinesDepthTested;
     std::vector<Assisi::Render::LineVertex> _colliderLinesOnTop;
+
+    // The same split for the light gizmos, and separate batches rather than
+    // shared ones because a light's reach and a body's collider are unrelated
+    // overlays that happen to be drawn the same way — sharing would make either
+    // one's absence depend on the other's ordering.
+    std::vector<Assisi::Render::LineVertex> _lightLinesDepthTested;
+    std::vector<Assisi::Render::LineVertex> _lightLinesOnTop;
+
+    // One light's outline at a time, rebuilt and cleared per light while a click
+    // is resolved. A member only to keep its storage between clicks; nothing here
+    // survives the call that fills it.
+    std::vector<Assisi::Render::LineVertex> _lightPickOutline;
+
     std::vector<Assisi::ECS::Entity>        _colliderEntities;
 
     // --- Entity list ---
@@ -1445,6 +1535,19 @@ private:
     // edge, which is what keeps a drag its own undo entry rather than merged with a
     // later edit. See GizmoDrag.hpp.
     Assisi::Editor::GizmoDrag _gizmoDrag;
+
+    // The same, for a directional light's aim, which is its own drag against its
+    // own component. Separate from the one above rather than shared: they hold
+    // different components, and Release names the component it commits — one
+    // drag serving both would commit whichever the last caller happened to pass.
+    Assisi::Editor::GizmoDrag _lightDrag;
+
+    // Whether the light-aim handles were held this frame. Shaped like
+    // _captureEditingActive: raised by the draw, read after it. Separate from the
+    // draw's return value, which says whether it *drew* — the caller needs both,
+    // and conflating them let the transform gizmo draw a second set of handles
+    // over these on every frame a sun was selected and not dragged.
+    bool _lightGizmoHeld = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

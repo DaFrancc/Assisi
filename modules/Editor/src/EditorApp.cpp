@@ -806,6 +806,11 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         ASSISI_PROFILE_SCOPE("collider-wireframes");
         SubmitColliderWireframes();
 
+        // A light's reach, on the same terms and in the same batch pass: it is
+        // the only thing in the viewport that says what a radius or a cone angle
+        // actually covers.
+        SubmitLightGizmos();
+
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
         // and an unmarked origin is also an unclickable one.
@@ -1616,6 +1621,19 @@ void EditorApp::OnImGui()
     // sweep point keeps the capture model simple. Playing captures nothing.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
         history->EndFrameSweep(_captureEditingActive);
+
+    // The bound baseline's life is that same gesture's. It exists so the values a
+    // bound-settle would consume survive the intermediate states of one
+    // interaction — the 4 on the way to 40 — and what ends an interaction is
+    // exactly what the sweep above reads: no widget still being manipulated.
+    //
+    // Deliberately not an ImGui activation edge. Ctrl+clicking a drag box turns it
+    // into a text box, crossing that edge in the middle of a single gesture, so a
+    // baseline keyed to it is dropped the moment typing begins.
+    if (!_captureEditingActive)
+    {
+        _boundBaseline.active = false;
+    }
 
     // Show unsaved changes in the OS window title, re-setting it only when the
     // dirty state flips rather than every frame. The base title is the game's own,

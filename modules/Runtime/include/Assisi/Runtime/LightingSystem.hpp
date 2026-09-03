@@ -56,8 +56,63 @@ public:
     void Resize(nvrhi::ICommandList *commandList, int32_t width, int32_t height, float nearZ, float farZ,
                 const glm::mat4 &projection);
 
-    /// @brief Collect lights from the scene, upload to GPU, and run the cull pass.
+    /// @brief Collect lights from the scene into the staging arrays.
+    ///
+    /// Separate from Upload because the local-light shadow pass runs between the
+    /// two: it decides which lights hold atlas tiles, and stamps each winner's
+    /// view index into the light record the shader will read. Gathering and
+    /// uploading in one call would have sent the lights before anything knew.
+    void Gather(Assisi::ECS::Scene &scene);
+
+    /// @brief Send the gathered lights to the GPU and run the cull pass.
+    ///
+    /// Whatever Gather() collected, plus whatever SetShadowView() stamped since.
+    void Upload(nvrhi::ICommandList *commandList, const glm::mat4 &view);
+
+    /// @brief Gather then Upload, for a caller with no shadow pass between them.
     void Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view);
+
+    /// @brief Record that spot light @p index holds the shadow view @p firstView,
+    /// or Render::kNoShadowView to say it holds none.
+    ///
+    /// Valid between Gather() and Upload(); after Upload the lights are on the
+    /// GPU and a later stamp reaches nothing until the next frame's Gather.
+    /// Indices past what was gathered are ignored rather than growing the array —
+    /// a light the buffer had no room for has no index for the shader either.
+    void SetSpotShadowView(uint32_t index, uint32_t firstView);
+    /// @brief The same for a point light, whose six faces begin at @p firstView.
+    void SetPointShadowView(uint32_t index, uint32_t firstView);
+
+    /// @brief One gathered light's shape, for the code that decides which lights
+    /// shadow.
+    ///
+    /// The scoring inputs are the caller's business — it has the camera and this
+    /// does not — so what travels is the geometry plus the two authored knobs.
+    struct LocalLight
+    {
+        /// Row in this type's GPU buffer, so a selection made from these names
+        /// lights the shader already agrees about.
+        uint32_t index = 0;
+        glm::vec3 position{0.f};
+        /// World-space aim. Straight down for a point light, which has none.
+        glm::vec3 direction{0.f, -1.f, 0.f};
+        float range = 0.f;
+        float intensity = 0.f;
+        /// Half-angle of a spot's outer cone, in degrees. Unread for a point.
+        float outerAngleDegrees = 0.f;
+        float shadowPriority = 0.f;
+        bool shadowAlwaysOn = false;
+    };
+
+    /// @name The shadow-casting local lights of the last Gather()
+    ///
+    /// Only the casters, because only they can want a tile — a light with
+    /// castsShadows off is not a candidate for anything and carrying it would
+    /// make every consumer filter it again. Valid until the next Gather().
+    /// @{
+    [[nodiscard]] std::span<const LocalLight> ShadowCastingSpotLights() const { return _shadowSpots; }
+    [[nodiscard]] std::span<const LocalLight> ShadowCastingPointLights() const { return _shadowPoints; }
+    /// @}
 
     /// @brief A spot light's aim in world space: its LOCAL direction rotated by the
     /// entity's propagated world matrix, normalized.
@@ -151,6 +206,13 @@ private:
     std::vector<ShadowCaster> _pointShadowFlags;
     std::vector<ShadowCaster> _spotShadowFlags;
     std::vector<ShadowCaster> _dirShadowFlags;
+
+    // The shadow-casting local lights of the last Gather(), in the shape the
+    // shadow-tile selection wants them. Not index-parallel to the arrays above:
+    // each entry carries the buffer row it came from, because the non-casters
+    // between them are absent.
+    std::vector<LocalLight> _shadowSpots;
+    std::vector<LocalLight> _shadowPoints;
 };
 
 } // namespace Assisi::Runtime

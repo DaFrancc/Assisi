@@ -903,7 +903,7 @@ TEST_CASE("A caster past the shadow distance cannot reach the volume")
     // Down-light of the volume: the sweep runs the other way, so nothing here
     // casts back into it however close it is.
     const Assisi::Geometry::BoundingSphere behind{
-            .center = bounds.center + glm::normalize(params.lightDirection) * (bounds.radius * 4.f), .radius = 1.f};
+        .center = bounds.center + glm::normalize(params.lightDirection) * (bounds.radius * 4.f), .radius = 1.f};
     CHECK_FALSE(CasterReachesShadowedVolume(behind, bounds, params.lightDirection));
 }
 

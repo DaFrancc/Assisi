@@ -22,6 +22,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/ShadowCascades.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 
@@ -56,15 +57,53 @@ struct ShadowView
     /// tile shares slice zero.
     std::uint32_t arraySlice = 0;
 
-    /// Constant depth bias, in the [0, 1] depth a lookup compares against.
-    /// Already scaled by this view's world-units-per-texel.
+    /// Whether this view projects orthographically.
+    ///
+    /// Two things in the depth pass are only valid when it does, and both are
+    /// silently wrong when it does not:
+    ///
+    ///   * **Pancaking.** shadow_depth.vert clamps a caster upstream of the near
+    ///     plane onto it rather than letting it clip. That is a clamp in the
+    ///     depth the comparison uses only while `w` is exactly 1. Under a
+    ///     perspective projection the comparison depth is `z / w`, so clamping
+    ///     `z` on some vertices of a triangle and not others leaves an
+    ///     interpolated depth that means nothing — too near in places, too far in
+    ///     others, and too far is a leak.
+    ///   * **Dropping the near plane from the cull.** A perspective frustum's
+    ///     four side planes extended form a double cone, so without the near
+    ///     plane the mirrored half behind the light passes the test.
+    ///
+    /// False by default: a view that has not said gets the conservative
+    /// treatment, which costs a caster its pancaking rather than corrupting a map.
+    bool orthographic = false;
+
+    /// Depth bias, in the [0, 1] depth a lookup compares against.
+    ///
+    /// A cascade's is the whole bias, already scaled by its world-per-texel — an
+    /// orthographic texel is the same size everywhere in the map, so one number
+    /// describes it. An atlas tile's is that number **times the receiver's
+    /// distance from the light**, and the shader divides: a perspective texel
+    /// grows with distance, so no single number can describe it.
     float depthBias = 0.f;
 
-    /// How far along the surface normal a sample is pushed, in world units.
+    /// How far along the surface normal a sample is pushed.
+    ///
+    /// World units for a cascade; world units **per unit of the receiver's
+    /// distance** for an atlas tile, for the same reason. See
+    /// LocalNormalOffsetPerDistance for why getting this one wrong leaks rather
+    /// than acnes.
     float normalOffset = 0.f;
 
     /// UV distance between adjacent filter taps, in this view's target.
     float filterTapStepUv = 0.f;
+
+    /// The rectangle of the target a lookup into this view may sample, as
+    /// xy = minimum UV, zw = maximum UV.
+    ///
+    /// The whole target for a view that owns one; the tile inset by the filter's
+    /// reach for an atlas tile, which is the only thing stopping a kernel at a
+    /// tile's edge from reading the light next to it. See ShadowViewClampUv.
+    glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
 };
 
 /// @brief The view's rectangle as a UV transform: xy scale, zw offset.
@@ -92,8 +131,16 @@ struct ShadowViewGpu
     glm::vec4 uvScaleOffset{1.f, 1.f, 0.f, 0.f};
     /// x = depth bias, y = normal offset, z = filter tap step, w = array slice.
     glm::vec4 params{0.f};
+    /// xy = minimum UV, zw = maximum UV a lookup may sample. See
+    /// ShadowView::clampUv.
+    glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
 };
-static_assert(sizeof(ShadowViewGpu) == 96, "ShadowViewGpu must match the shader's std430 array stride.");
+ASSISI_GPU_LAYOUT(ShadowViewGpu);
+ASSISI_GPU_FIRST_FIELD(ShadowViewGpu, viewProjection);
+ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, uvScaleOffset, viewProjection);
+ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, params, uvScaleOffset);
+ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, clampUv, params);
+ASSISI_GPU_NO_TAIL_PADDING(ShadowViewGpu, clampUv);
 
 /// @brief @p view in the layout the GPU table carries it in.
 [[nodiscard]] ShadowViewGpu PackShadowView(const ShadowView &view);
@@ -106,5 +153,171 @@ static_assert(sizeof(ShadowViewGpu) == 96, "ShadowViewGpu must match the shader'
 /// across cascades whose texels differ by an order of magnitude.
 [[nodiscard]] ShadowView CascadeShadowView(const ShadowCascade &cascade, std::uint32_t slice,
                                            const SunShadowSettings &settings);
+
+/// @brief Which face of a point light's cube a direction falls in.
+///
+/// +X, -X, +Y, -Y, +Z, -Z — the cubemap convention. The *numbers* are the
+/// contract rather than a choice: a light's six views are written into the frame
+/// table in this order, and mesh.frag recomputes the index from the same rule, so
+/// the two orderings have to be the same one. Reordering these renames nothing
+/// and breaks nothing at build time; it makes every point light sample a
+/// neighbouring face's depth.
+///
+/// A plain index rather than an enum class because it is exactly that — an
+/// offset from a light's first view into the table, and every use of it is
+/// arithmetic on that table.
+enum PointLightFace : std::uint32_t
+{
+    kPointLightFacePositiveX = 0,
+    kPointLightFaceNegativeX = 1,
+    kPointLightFacePositiveY = 2,
+    kPointLightFaceNegativeY = 3,
+    kPointLightFacePositiveZ = 4,
+    kPointLightFaceNegativeZ = 5,
+    /// One past the last, which is also how many views a point light spends.
+    kPointLightFaceCount = 6,
+};
+
+/// @brief The axis face @p face looks along.
+[[nodiscard]] glm::vec3 PointLightFaceDirection(std::uint32_t face);
+
+/// @brief Which of the six faces a direction from the light falls in.
+///
+/// The face whose axis @p direction is most aligned with, which is what the
+/// shader's own selection has to agree with. A zero direction lands on +X rather
+/// than nowhere.
+[[nodiscard]] std::uint32_t PointLightFaceOf(const glm::vec3 &direction);
+
+/// @brief How much wider than 90 degrees a point light's face is drawn, in
+/// degrees of full field of view.
+///
+/// Six 90-degree faces tile a cube exactly, and exactly is the problem: a PCF
+/// kernel at the edge of a tile reaches past it, and past it is the next light's
+/// tile. Widening every face gives the kernel somewhere to land that still
+/// belongs to this light, so the seam between two faces of one point light shows
+/// the same geometry from either side instead of a hard line.
+///
+/// The cost is resolution — a wider frustum spreads the same texels over more
+/// world — so this is as small as it can be while covering the widest kernel the
+/// filters here use.
+inline constexpr float kPointLightFaceOverlapDegrees = 6.0f;
+
+/// @brief The view for a spot light's single map.
+///
+/// A spot is a cone, so its map is one perspective frustum with the cone's outer
+/// angle for a field of view — widened a little, for the same reason a point
+/// light's faces are: the filter kernel at the edge of the cone must land on
+/// depth this light recorded rather than on whatever the neighbouring tile holds.
+///
+/// The near plane is a fraction of the light's range rather than a constant: a
+/// spot lighting a room and one lighting a hall differ by two orders of
+/// magnitude in reach, and a fixed near plane spends the entire depth format on
+/// whichever of the two it was chosen for.
+///
+/// @p rect is the tile the allocator handed out and @p atlasResolution the atlas
+/// it came from. The biases scale by the tile's own resolution, so a demoted
+/// light is biased as the smaller map it actually got.
+[[nodiscard]] ShadowView SpotShadowView(const glm::vec3 &position, const glm::vec3 &direction, float range,
+                                        float outerAngleDegrees, const ShadowViewRect &rect,
+                                        std::uint32_t atlasResolution, const LocalShadowSettings &settings);
+
+/// @brief The view for one face of a point light's cube.
+///
+/// Six of these cover every direction. Each is a 90-degree frustum widened by
+/// kPointLightFaceOverlapDegrees so the faces overlap rather than abut.
+[[nodiscard]] ShadowView PointFaceShadowView(const glm::vec3 &position, float range, std::uint32_t face,
+                                             const ShadowViewRect &rect, std::uint32_t atlasResolution,
+                                             const LocalShadowSettings &settings);
+
+/// @brief What one texel of a tile covers per unit of distance from the light.
+///
+/// A local light's map is a perspective projection, so a texel is a solid angle:
+/// what it covers is not a width but a width *per unit distance*, and it grows
+/// linearly as you move away from the light. That is the whole difference from a
+/// cascade, whose orthographic texel covers the same world distance everywhere in
+/// the map and so can be described by one number.
+///
+/// Every bias below is quoted this way and multiplied by the receiver's own
+/// distance in the shader. Quoting them at the far plane instead — one number,
+/// cascade-style — over-biases everything nearer by the ratio of the light's
+/// range to the receiver's distance, which for a floor under a long-ranged lamp
+/// is an order of magnitude.
+[[nodiscard]] float LocalTexelsPerUnitDistance(std::uint32_t tileResolution, float tanHalfFov);
+
+/// @brief The depth bias for one tile, in [0, 1] depth **times** the receiver's
+/// distance from the light.
+///
+/// The shader divides by that distance. Two things vary with it and they do not
+/// cancel: a texel's world footprint grows linearly, while a world unit is worth
+/// less depth the further out it is, as the inverse square. Their product is the
+/// inverse of the distance, which is why this is a coefficient rather than a
+/// constant.
+///
+/// It divides by the tile's own resolution, which is what makes a demoted light
+/// correctly biased for the smaller map it actually got rather than for the one
+/// the setting names.
+[[nodiscard]] float LocalDepthBiasNdcTimesDistance(std::uint32_t tileResolution, float nearPlane, float farPlane,
+                                                   float tanHalfFov, const LocalShadowSettings &settings);
+
+/// @brief How far along the surface normal a lookup is pushed, in world units
+/// **per unit** of the receiver's distance from the light.
+///
+/// The shader multiplies by that distance and by the sine of the light's
+/// incidence. Distance matters because this offset is only ever meant to clear
+/// one texel of the map, and a texel out at the receiver is larger than a texel
+/// near the light.
+///
+/// Getting that wrong leaks rather than acnes, and leaks hard: the offset moves
+/// the lookup *sideways*, so an offset sized for somewhere further away walks the
+/// sample out from under the occluder that should be shading it — and, at a point
+/// light, far enough sideways to leave the face it was chosen for.
+[[nodiscard]] float LocalNormalOffsetPerDistance(std::uint32_t tileResolution, float tanHalfFov,
+                                                 const LocalShadowSettings &settings);
+
+/// @brief Ceiling on the rasterizer's slope-scaled bias for a tile of
+/// @p tileResolution texels, in the [0, 1] depth the map stores.
+///
+/// Slope scaling is unbounded — a polygon approaching edge-on to the light gains
+/// depth per pixel without limit — so this cap is the widest contact gap the
+/// caster side can open, and it belongs to the map's resolution.
+///
+/// **Not the cascades' `1 / resolution`.** That identity holds only for an
+/// orthographic projection, where depth is linear in distance and a texel is
+/// always the same fraction of the depth range. A local light's projection is
+/// perspective, where a fraction of NDC depth near the far plane is an enormous
+/// world distance, and the cascade figure lets a grazing surface be pushed metres
+/// behind itself — which reads as light under everything the surface should have
+/// shadowed.
+///
+/// The light's own range cancels out, which is what makes one number serve every
+/// light: the near plane is a fixed fraction of the far plane, so the ratio that
+/// sets the depth curve is the same in all of them.
+///
+/// Quoted for a point light's face, the widest frustum here. A narrow spot gets a
+/// slightly looser cap than it strictly needs, which errs toward acne rather than
+/// toward the leak this exists to close.
+[[nodiscard]] float LocalSlopeBiasClampNdc(std::uint32_t tileResolution);
+
+/// @brief UV distance between adjacent filter taps in an atlas of
+/// @p atlasResolution texels a side.
+///
+/// One texel, because a tile's texels *are* the atlas's texels — a tile is a
+/// rectangle of the same grid, not a resampling of it. That is also why a
+/// demoted tile does not want a wider step: its texels did not grow, there are
+/// simply fewer of them, and a kernel quoted against the tile would step several
+/// atlas texels at a time and skip past what it is meant to be filtering.
+[[nodiscard]] float LocalFilterTapStepUv(std::uint32_t atlasResolution);
+
+/// @brief The tile's interior, inset by however far the filter reaches.
+///
+/// A tile in an atlas has no border to clamp against: the sampler's own clamp is
+/// to the whole texture, so a tap that leaves the tile lands in the neighbouring
+/// light's depth and reports whatever that light saw. Every lookup is clamped to
+/// this rectangle instead, which is the tile minus the kernel's radius on each
+/// side. The overlap the faces are drawn with is what makes that inset lossless —
+/// the geometry the inset trims off is geometry the neighbouring face also has.
+///
+/// Returned as UV, in the atlas's own space: xy = minimum, zw = maximum.
+[[nodiscard]] glm::vec4 ShadowViewClampUv(const ShadowView &view, ShadowFilter filter);
 
 } // namespace Assisi::Render

@@ -310,7 +310,7 @@ TEST_CASE("The masked bit never reaches the material id the shader indexes with"
     CHECK(builder.Tables().objectMaterials[0] == EncodeCullMaterial(9u, MeshPipeline::Mask));
     CHECK((builder.Tables().objectMaterials[0] & Assisi::Render::kCullMaterialIdMask) == 9u);
     // The sentinel must keep reading as "no material" rather than as a masked one.
-    CHECK((kNoMaterial & Assisi::Render::kCullMaterialIdMask) != 9u);
+    CHECK((kNoMaterial &Assisi::Render::kCullMaterialIdMask) != 9u);
 }
 
 TEST_CASE("Every pipeline a frame places gets its own contiguous command block")

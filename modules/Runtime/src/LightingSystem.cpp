@@ -54,6 +54,35 @@ glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const
     return SafeDirection(glm::mat3(worldMatrix) * localDirection);
 }
 
+glm::vec3 AdvanceDaylight(const DirectionalLight &light, float seconds)
+{
+    // A light not on the cycle is left exactly where it was aimed, which is what
+    // makes running this over every directional light cost one compare on the
+    // ones that are not.
+    if (!light.daylightCycle || !std::isfinite(seconds))
+    {
+        return light.direction;
+    }
+    const float period = std::max(light.daylightPeriodSeconds, kMinDaylightPeriodSeconds);
+
+    // Turned about a horizontal axis, which is what makes this a day rather than
+    // a circuit. Turning about world up would sweep the sun around at whatever
+    // elevation it was authored at and never take it below the horizon — a polar
+    // summer, with no night in it — and it would leave the default sun, aimed
+    // straight down, exactly where it started: that aim is parallel to world up,
+    // so it maps onto itself and nothing moves at all.
+    //
+    // Which horizontal axis is arbitrary without somewhere on a planet to stand,
+    // so it is world X: the sun rises on one side, passes overhead and sets on
+    // the other. An author who wants a different bearing turns the level or aims
+    // the light off-axis, and an aim off this axis traces a tilted arc, which is
+    // what a day away from the equator looks like.
+    const float turns = seconds / period;
+    const float angle = turns * glm::two_pi<float>();
+    const glm::mat4 rotation = glm::rotate(glm::mat4(1.f), angle, kDaylightAxis);
+    return SafeDirection(glm::vec3(rotation * glm::vec4(light.direction, 0.f)));
+}
+
 glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
                                         const Render::SkySettings *atmosphere)
 {
@@ -83,10 +112,30 @@ std::optional<LightingSystem::ShadowSun> LightingSystem::ShadowCastingSun() cons
     return std::nullopt;
 }
 
+void LightingSystem::SetSpotShadowView(uint32_t index, uint32_t firstView)
+{
+    if (index < _spotLights.size())
+    {
+        _spotLights[index].shadowView = firstView;
+    }
+}
+
+void LightingSystem::SetPointShadowView(uint32_t index, uint32_t firstView)
+{
+    if (index < _pointLights.size())
+    {
+        _pointLights[index].shadowView.x = firstView;
+    }
+}
+
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
-    ASSISI_PROFILE_GPU_PASS(commandList, "lighting");
+    Gather(scene);
+    Upload(commandList, view);
+}
 
+void LightingSystem::Gather(Assisi::ECS::Scene &scene)
+{
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
     _pointLights.clear();
     _spotLights.clear();
@@ -94,6 +143,8 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     _pointShadowFlags.clear();
     _spotShadowFlags.clear();
     _dirShadowFlags.clear();
+    _shadowSpots.clear();
+    _shadowPoints.clear();
 
     // World position comes from the propagated worldMatrix, not transform.position:
     // a parented light's local position is relative to its parent. For a root,
@@ -112,24 +163,54 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
 
         for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
         {
+            const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+            // Every light starts holding no tile. The shadow pass stamps the
+            // winners between here and Upload, so a light it never reaches is
+            // unshadowed by default rather than by last frame's answer.
             _pointLights.push_back({
-                    .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
+                    .positionRadius = {position, light.radius},
                     .colorIntensity = {light.color, light.intensity},
+                    .shadowView = {Render::kNoShadowView, 0u, 0u, 0u},
                 });
             _pointShadowFlags.push_back(AsShadowCaster(light.castsShadows));
+            if (light.castsShadows)
+            {
+                _shadowPoints.push_back(LocalLight{
+                        .index = static_cast<uint32_t>(_pointLights.size() - 1u),
+                        .position = position,
+                        .range = light.radius,
+                        .intensity = light.intensity,
+                        .shadowPriority = light.shadowPriority,
+                        .shadowAlwaysOn = light.shadowAlwaysOn});
+            }
         }
 
         for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
         {
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
+            const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+            const glm::vec3 direction = WorldSpotDirection(transform.worldMatrix, light.direction);
             _spotLights.push_back({
-                    .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-                    .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
+                    .positionRadius = {position, light.radius},
+                    .directionInner = {direction, innerCos},
                     .colorIntensity = {light.color, light.intensity},
                     .outerCutoff    = outerCos,
+                    .shadowView     = Render::kNoShadowView,
                 });
             _spotShadowFlags.push_back(AsShadowCaster(light.castsShadows));
+            if (light.castsShadows)
+            {
+                _shadowSpots.push_back(LocalLight{
+                        .index = static_cast<uint32_t>(_spotLights.size() - 1u),
+                        .position = position,
+                        .direction = direction,
+                        .range = light.radius,
+                        .intensity = light.intensity,
+                        .outerAngleDegrees = light.outerAngle,
+                        .shadowPriority = light.shadowPriority,
+                        .shadowAlwaysOn = light.shadowAlwaysOn});
+            }
         }
 
         for (auto [entity, light] : scene.Query<DirectionalLight>())
@@ -167,12 +248,16 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     // Clamped for the same reason CullLights clamps its counts: Upload
     // truncates at capacity and the shader must not read past it.
     _dirLightCount = std::min(static_cast<uint32_t>(_dirLights.size()), Render::ClusterGrid::kMaxDirLights);
-    {
-        // CPU-side this is three buffer uploads plus a dispatch record, so it is
-        // measuring the upload — the cull itself is GPU time and lands in frame/gpu-ms.
-        ASSISI_PROFILE_GPU_SCOPE(commandList, "light-cull");
-        _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
-    }
+}
+
+void LightingSystem::Upload(nvrhi::ICommandList *commandList, const glm::mat4 &view)
+{
+    ASSISI_PROFILE_GPU_PASS(commandList, "lighting");
+
+    // CPU-side this is three buffer uploads plus a dispatch record, so it is
+    // measuring the upload — the cull itself is GPU time and lands in frame/gpu-ms.
+    ASSISI_PROFILE_GPU_SCOPE(commandList, "light-cull");
+    _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
 }
 
 } // namespace Assisi::Runtime

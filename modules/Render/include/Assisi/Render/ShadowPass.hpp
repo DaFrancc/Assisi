@@ -12,8 +12,8 @@
 ///
 /// Nothing here is allocated until a shadow-casting sun exists. Configure(...,
 /// active = false) drops the array, the framebuffers and the pipeline, leaving
-/// a one-texel placeholder so the mesh pass's binding set still has something
-/// to point at. A scene with no sun therefore pays a single texel and no pass.
+/// a one-texel empty array so the mesh pass's binding set still has something to
+/// point at. A scene with no sun therefore pays a single texel and no pass.
 
 #include <array>
 #include <cstdint>
@@ -44,10 +44,9 @@ public:
         const ShadowDepthRenderer *depthRenderer = nullptr;
     };
 
-    /// @brief Bind to the device and the shared renderer, and create the
-    /// placeholder cascade texture. The pipeline and the real array wait for
-    /// Configure().
-    /// @return false if the renderer is unusable or the placeholder failed to
+    /// @brief Bind to the device and the shared renderer, and create the empty
+    /// cascade texture. The pipeline and the real array wait for Configure().
+    /// @return false if the renderer is unusable or the empty texture failed to
     /// allocate — either leaves the pass permanently inactive rather than
     /// failing the renderer.
     [[nodiscard]] bool Initialize(const InitParams &params);
@@ -92,7 +91,7 @@ public:
     [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }
 
     /// @brief The cascade array the mesh shader samples. Never null after a
-    /// successful Initialize() — it is the one-texel placeholder while the pass
+    /// successful Initialize() — it is the one-texel empty array while the pass
     /// is inactive, so the mesh pass's binding set never has a hole in it.
     [[nodiscard]] nvrhi::ITexture *CascadeTexture() const { return _cascadeTexture; }
 
@@ -108,8 +107,8 @@ private:
     /// @brief The handles as the renderer wants them, one per pipeline class.
     [[nodiscard]] ShadowPipelines PipelineSet() const;
     void ReleaseTargets();
-    /// @brief The one-texel array bound while the pass is inactive.
-    [[nodiscard]] bool CreatePlaceholder();
+    /// @brief Create the one-texel array bound while the pass is inactive.
+    [[nodiscard]] bool CreateNoCascadesTexture();
 
     nvrhi::IDevice *_device = nullptr;
     const ShadowDepthRenderer *_depthRenderer = nullptr;
@@ -125,8 +124,9 @@ private:
     // The cascade array, and one framebuffer per slice. Empty while inactive.
     nvrhi::TextureHandle _cascadeTexture;
     std::vector<nvrhi::FramebufferHandle> _cascadeFramebuffers;
-    // Bound while inactive so the mesh pass always has a texture to sample.
-    nvrhi::TextureHandle _placeholderTexture;
+    // Bound while the pass is inactive, so the mesh pass always has a texture to
+    // sample. Permanent, not scaffolding: a scene with no sun never leaves it.
+    nvrhi::TextureHandle _noCascadesTexture;
 
     SunShadowSettings _settings;
     bool _active = false;

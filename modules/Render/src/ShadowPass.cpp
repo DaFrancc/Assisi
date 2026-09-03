@@ -25,10 +25,10 @@ bool ShadowPass::Initialize(const InitParams &params)
     {
         return false;
     }
-    return CreatePlaceholder();
+    return CreateNoCascadesTexture();
 }
 
-bool ShadowPass::CreatePlaceholder()
+bool ShadowPass::CreateNoCascadesTexture()
 {
     nvrhi::TextureDesc desc;
     desc.width = 1;
@@ -40,20 +40,20 @@ bool ShadowPass::CreatePlaceholder()
     desc.initialState = nvrhi::ResourceStates::ShaderResource;
     desc.keepInitialState = true;
     desc.debugName = "ShadowPass::NoCascades";
-    _placeholderTexture = _device->createTexture(desc);
-    if (_placeholderTexture == nullptr)
+    _noCascadesTexture = _device->createTexture(desc);
+    if (_noCascadesTexture == nullptr)
     {
-        Core::Log::Error("ShadowPass: failed to create the placeholder cascade texture.");
+        Core::Log::Error("ShadowPass: failed to create the empty cascade texture.");
         return false;
     }
-    _cascadeTexture = _placeholderTexture;
+    _cascadeTexture = _noCascadesTexture;
     return true;
 }
 
 void ShadowPass::ReleaseTargets()
 {
     _cascadeFramebuffers.clear();
-    _cascadeTexture = _placeholderTexture;
+    _cascadeTexture = _noCascadesTexture;
     _builtCascades = 0;
     _builtResolution = 0;
 }

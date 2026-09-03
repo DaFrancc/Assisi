@@ -223,6 +223,17 @@ public:
     /// in the scene means the pass is inactive, not that it found nothing.
     [[nodiscard]] Render::ShadowPass::Stats LastShadowStats() const { return _lastShadowStats; }
 
+    /// @brief What the local-light atlas drew in the most recent Render().
+    ///
+    /// `droppedByCap` against `unserved` is the reading that matters when a lamp
+    /// has no shadow: the first says the importance cap turned it away, the
+    /// second says the atlas had no room. They are different settings.
+    [[nodiscard]] Render::LocalShadowPass::Stats LastLocalShadowStats() const { return _lastLocalShadowStats; }
+
+    /// @brief Shadowed local lights the importance cap turned away in the most
+    /// recent Render(). Zero is what "the cap does not bind here" looks like.
+    [[nodiscard]] uint32_t LastShadowDroppedByCap() const { return _lastSelection.droppedByCap; }
+
     /// @brief Drawn/culled counts from the most recent Render(); zero before the
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
@@ -331,11 +342,28 @@ private:
     /// them. Returns what the mesh shader needs to sample the result — a null
     /// fit when nothing casts, which is what makes the lookup free.
     ///
-    /// Called after LightingSystem::Update, which is where the shadow-casting
+    /// Called after LightingSystem::Gather, which is where the shadow-casting
     /// sun comes from, and before UpdateFrameConstants, which borrows the fit.
     [[nodiscard]] Render::MeshPass::ShadowFrameData RenderSunShadows(const Render::RenderFrame &frame,
                                                                      ECS::Scene &scene, const Camera &camera,
                                                                      const glm::mat4 &view);
+
+    /// @brief Choose which local lights hold atlas tiles, draw their faces, and
+    /// stamp each winner's view index into the light record the shader reads.
+    ///
+    /// Between LightingSystem::Gather and LightingSystem::Upload, which is the
+    /// only window in which that stamp reaches the GPU. Fills in @p shadows'
+    /// local half.
+    void RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
+                            const Transform &cameraTransform, Render::MeshPass::ShadowFrameData &shadows);
+
+    /// @brief What fraction of the screen's height a light of @p range at
+    /// @p position spans, from a camera at @p cameraPosition.
+    ///
+    /// The selector's coverage input, and the one place the camera enters the
+    /// ordering. A light the camera stands inside saturates at 1.
+    [[nodiscard]] static float LocalLightScreenCoverage(const glm::vec3 &position, float range,
+                                                        const glm::vec3 &cameraPosition, float tanHalfFovY);
 
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
@@ -380,6 +408,17 @@ private:
     Render::ShadowPass _shadowPass;
     Render::CascadeFit _cascadeFit;
     ShadowCasterGather _shadowCasters;
+    // The local-light half: the shared atlas, who gets a tile in it, and the
+    // casters each tile-holder reaches. Kept as members so a steady state
+    // allocates nothing.
+    Render::LocalShadowPass _localShadowPass;
+    Render::LocalShadowSelector _localShadowSelector;
+    Render::LocalShadowSelection _lastSelection;
+    std::vector<Render::LocalShadowCandidate> _localCandidates;
+    std::vector<Render::LocalShadowRequest> _localRequests;
+    std::vector<Geometry::BoundingSphere> _localLightVolumes;
+    ShadowCasterGather _localShadowCasters;
+    Render::LocalShadowCasterIndex _localCasterIndex;
     // Drawn after the opaque geometry, into the pixels it left at the depth
     // clear. See SkyPass for why that ordering is the cheap one.
     Render::SkyPass _skyPass;
@@ -443,6 +482,7 @@ private:
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats; // what the shadow pass drew, for the same overlay
+    Render::LocalShadowPass::Stats _lastLocalShadowStats; // the same for the local-light atlas
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene
     // Render() overload: the scene tick at the end of the last propagation. 0
