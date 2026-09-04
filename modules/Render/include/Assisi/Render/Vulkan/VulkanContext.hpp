@@ -286,6 +286,10 @@ private:
     /// The row the GPU's passes are drawn on. Null until the first frame that
     /// has timings to put there, and for the whole of a build without Chiara.
     Chiara::Track *_gpuTrack = nullptr;
+    /// One gap past the last frame's block on that track. A block never begins
+    /// before it, so two frames' passes cannot occupy the same instant however
+    /// long the GPU took over either of them.
+    std::uint64_t _gpuTrackEnd = 0;
 
     /// @brief Draw the just-resolved pass timings onto the GPU track, inside the
     /// frame they belong to.

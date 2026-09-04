@@ -1128,7 +1128,18 @@ void VulkanContext::EmitGpuTrackSlices(std::uint64_t frameBeginTicks)
     // from a left edge that means nothing on its own. That edge lines up with
     // the CPU's own Frame slice directly above it, which is the whole of the
     // answer to "which frame is this".
-    Chiara::TrackLayout layout(frameBeginTicks + Chiara::TrackLayout::GapTicks());
+    //
+    // Except when it cannot: a frame's passes laid end-to-end span the GPU's
+    // whole cost for it, and on a GPU-bound frame that is longer than the wall
+    // clock between one frame starting and the next. Anchored at the frame every
+    // time, consecutive blocks then run into each other and the row is rejected
+    // as overlapping — which is the honest shape of the problem, since a GPU
+    // that has not finished a frame before the next begins is exactly what being
+    // GPU-bound is. So the block starts at its frame or after the previous
+    // block, whichever is later, and a saturated GPU shows as a row that lags
+    // rather than as one that overlaps.
+    const std::uint64_t blockBegin = std::max(frameBeginTicks, _gpuTrackEnd + Chiara::TrackLayout::GapTicks());
+    Chiara::TrackLayout layout(blockBegin + Chiara::TrackLayout::GapTicks());
     for (const PassTiming &pass : _resolvedPassTimings)
     {
         const auto width =
@@ -1137,8 +1148,8 @@ void VulkanContext::EmitGpuTrackSlices(std::uint64_t frameBeginTicks)
     }
     // Emitted last and spanning them all, so nesting is by containment rather
     // than by the order the records happen to arrive in.
-    Chiara::EmitScopeOn(_gpuTrack, "frame", frameBeginTicks,
-                        layout.End() + Chiara::TrackLayout::GapTicks() - frameBeginTicks);
+    _gpuTrackEnd = layout.End() + Chiara::TrackLayout::GapTicks();
+    Chiara::EmitScopeOn(_gpuTrack, "frame", blockBegin, _gpuTrackEnd - blockBegin);
 }
 
 std::span<const VulkanContext::PassTiming> VulkanContext::GetPassTimings() const
