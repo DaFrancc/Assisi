@@ -13,6 +13,7 @@
 
 #include <Assisi/Render/LocalShadowCache.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -177,6 +178,43 @@ TEST_CASE("A light that moves cannot keep depth recorded from where it was")
     cache.Plan(FrameAt(3, settings, requests), plans);
     CHECK_FALSE(plans[0].retained);
     CHECK(plans[0].dirtyFaces == 0b1u);
+}
+
+TEST_CASE("A frame with nothing moving can still have everything to draw")
+{
+    LocalShadowCache cache;
+    const LocalShadowCacheSettings settings;
+    std::vector<LocalShadowRequest> requests{SpotAt(0, glm::vec3(0.f)), SpotAt(1, glm::vec3(50.f))};
+
+    std::vector<LocalShadowTilePlan> plans;
+    RunFrame(cache, FrameAt(1, settings, requests), plans);
+    RunFrame(cache, FrameAt(2, settings, requests), plans);
+    REQUIRE(cache.Stats().bakedFaces == 0); // resting
+
+    // The defect this exists for: a caller deciding whether to gather casters
+    // from the mover set alone concludes there is nothing to do, and the bake
+    // below runs against an empty caster list. That blanks the tile instead of
+    // filling it, and the light is left with no shadow at all — permanently,
+    // because the frame then records the tile as clean.
+    SUBCASE("a light moved")
+    {
+        requests[0].pose.position = glm::vec3(1.f, 0.f, 0.f);
+    }
+    SUBCASE("a light started casting again")
+    {
+        requests.push_back(SpotAt(2, glm::vec3(100.f)));
+    }
+    SUBCASE("a light's tile was resized")
+    {
+        requests[0].sizeClass = ShadowSizeClassOf(256);
+    }
+
+    cache.Plan(FrameAt(3, settings, requests), plans);
+    CHECK(cache.Stats().bakedFaces > 0);
+    // And every such face says so on its own plan, which is what the pass reads
+    // to decide the frame is not resting after all.
+    CHECK(std::any_of(plans.begin(), plans.end(),
+                      [](const LocalShadowTilePlan &plan) { return plan.dirtyFaces != 0u; }));
 }
 
 TEST_CASE("A caster crossing into a light's reach dirties it, and only it")

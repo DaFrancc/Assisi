@@ -639,6 +639,50 @@ LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *comman
     return stats;
 }
 
+bool LocalShadowPass::PlanFrame(const Frame &frame)
+{
+    _planned = true;
+    _plannedFrame = frame.frameIndex;
+
+    if (!IsActive())
+    {
+        _plans.clear();
+        return false;
+    }
+
+    if (_settings.cache.enabled && _cacheFramebuffer != nullptr)
+    {
+        _cache.Plan(LocalShadowCacheFrame{.frameIndex = frame.frameIndex,
+                                          .settings = _settings.cache,
+                                          .requests = frame.requests,
+                                          .movers = frame.movers,
+                                          .invalidations = frame.invalidations},
+                    _plans);
+    }
+    else
+    {
+        // Nothing is kept, so every light asks for a fresh tile and every face
+        // is drawn — which is the pass exactly as it was before there was a
+        // cache, and the baseline the cached path is measured against.
+        _plans.assign(frame.requests.size(), LocalShadowTilePlan{});
+    }
+
+    // A tile with a dirty face needs the *still* casters, which have not moved
+    // and are not in the mover set — a light that moved, or came back from not
+    // casting, dirties its faces without anything else in the scene stirring.
+    // Answering this from the movers alone bakes those tiles from an empty
+    // caster list, which blanks them and leaves that light lit with no shadow
+    // at all until something else happens to dirty it again.
+    for (const LocalShadowTilePlan &plan : _plans)
+    {
+        if (plan.dirtyFaces != 0u || (plan.hasMovers && plan.redrawMovers))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 LocalShadowPass::Stats LocalShadowPass::Render(nvrhi::ICommandList *commandList, const Frame &frame)
 {
     Stats stats;
@@ -661,22 +705,11 @@ LocalShadowPass::Stats LocalShadowPass::Render(nvrhi::ICommandList *commandList,
     ASSISI_PROFILE_GPU_PASS(commandList, "shadow-atlas");
 
     const bool caching = _settings.cache.enabled && _cacheFramebuffer != nullptr;
-    if (caching)
+    if (!_planned || _plannedFrame != frame.frameIndex)
     {
-        _cache.Plan(LocalShadowCacheFrame{.frameIndex = frame.frameIndex,
-                                          .settings = _settings.cache,
-                                          .requests = frame.requests,
-                                          .movers = frame.movers,
-                                          .invalidations = frame.invalidations},
-                    _plans);
+        (void)PlanFrame(frame);
     }
-    else
-    {
-        // Nothing is kept, so every light asks for a fresh tile and every face
-        // is drawn — which is the pass exactly as it was before there was a
-        // cache, and the baseline the cached path is measured against.
-        _plans.assign(frame.requests.size(), LocalShadowTilePlan{});
-    }
+    _planned = false;
 
     stats.unserved = AllocateTiles(frame.requests);
     stats.lights = static_cast<std::uint32_t>(_tiles.size());

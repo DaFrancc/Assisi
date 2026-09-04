@@ -168,8 +168,29 @@ public:
         std::uint32_t frameIndex = 0;
     };
 
+    /// @brief Decide what this frame needs, before its casters are gathered.
+    ///
+    /// The gather is the expensive half — it walks every mesh in the scene and
+    /// resolves its bounds and its material — and a frame that draws nothing
+    /// must not pay it. But whether a frame draws nothing is a question only the
+    /// cache can answer: a caster that moved is not the only thing that dirties
+    /// a tile, and a light that moved, or came back from not casting, or lost
+    /// its tile to somebody else needs its still layer baked from casters that
+    /// have not moved at all.
+    ///
+    /// So the caller asks first and gathers only if told to. @p frame's caster
+    /// span and index are unread here and may be empty.
+    ///
+    /// @return whether anything must be drawn this frame. False is the resting
+    /// case: every served tile already holds what it should.
+    [[nodiscard]] bool PlanFrame(const Frame &frame);
+
     /// @brief Bring every served light's tile up to date, drawing as little as
     /// the frame allows.
+    ///
+    /// Uses the decision PlanFrame made for the same @ref Frame::frameIndex, and
+    /// makes it itself if there is none — so a caller that does not care about
+    /// the gather can call this alone and still be correct.
     ///
     /// A point light's six tiles are committed together or not at all — five
     /// faces of six is a light with a hole in it, which is a worse picture than
@@ -331,8 +352,12 @@ private:
     // concatenated in that order — what the cache is told to remember.
     std::vector<std::uint32_t> _servedRequests;
     std::vector<ShadowViewRect> _servedRects;
-    // This frame's plan, one per request.
+    // This frame's plan, one per request, and the frame PlanFrame made it for.
+    // Render remakes it when they disagree, so a caller that never calls
+    // PlanFrame is merely slower rather than wrong.
     std::vector<LocalShadowTilePlan> _plans;
+    std::uint32_t _plannedFrame = 0;
+    bool _planned = false;
     // The subset of _targets whose kept layer is being re-baked, and the request
     // each came from.
     std::vector<ShadowDepthTarget> _bakeTargets;

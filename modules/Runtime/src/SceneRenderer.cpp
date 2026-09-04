@@ -604,30 +604,37 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     _casterMobility.Update(_shadowFrameIndex, _shadowSettings.local.cache.promoteStillFrames, _movedCasters,
                            _dynamicCasters, _casterInvalidations);
 
-    // A frame with nothing moving and nothing changing sides has nothing to
-    // redraw, so the gather — the per-object preparation the cost model says
-    // dominates — is skipped outright and the atlas keeps what it holds. The
-    // index still has to describe every request, because the composite walks a
-    // row per served face whether or not it finds anything in it.
-    const bool caching = _shadowSettings.local.cache.enabled;
-    if (caching && _dynamicCasters.empty() && _casterInvalidations.empty())
+    Render::LocalShadowPass::Frame shadowFrame{.requests = _localRequests,
+                                               .casters = {},
+                                               .casterIndex = &_localCasterIndex,
+                                               .movers = _dynamicCasters,
+                                               .invalidations = _casterInvalidations,
+                                               .frameIndex = _shadowFrameIndex};
+
+    // Asked rather than guessed. A frame with nothing to draw skips the gather —
+    // the per-object preparation the cost model says dominates — and the atlas
+    // keeps what it holds. What needs drawing is *not* "did a caster move": a
+    // light that moved, or came back from not casting, needs its still layer
+    // baked out of casters that are standing perfectly still. Deciding that here
+    // would be a second answer to a question the cache already answers, and the
+    // two disagreeing means baking a tile from an empty caster list — which
+    // blanks it and leaves that one light with no shadow until something else
+    // happens to dirty it again.
+    if (_localShadowPass.PlanFrame(shadowFrame))
     {
+        GatherLocalShadowCasters(scene, _localLightVolumes, _casterMobility, _localShadowCasters, _localCasterIndex);
+        shadowFrame.casters = _localShadowCasters.casters;
+    }
+    else
+    {
+        // The index still has to describe every request, because the composite
+        // walks a row per served face whether or not it finds anything in it.
         _localShadowCasters.casters.clear();
         _localCasterIndex.Clear();
         _localCasterIndex.start.assign(_localRequests.size() + 1u, 0u);
     }
-    else
-    {
-        GatherLocalShadowCasters(scene, _localLightVolumes, _casterMobility, _localShadowCasters, _localCasterIndex);
-    }
 
-    _lastLocalShadowStats = _localShadowPass.Render(
-        frame.commandList, Render::LocalShadowPass::Frame{.requests = _localRequests,
-                                                          .casters = _localShadowCasters.casters,
-                                                          .casterIndex = &_localCasterIndex,
-                                                          .movers = _dynamicCasters,
-                                                          .invalidations = _casterInvalidations,
-                                                          .frameIndex = _shadowFrameIndex});
+    _lastLocalShadowStats = _localShadowPass.Render(frame.commandList, shadowFrame);
 
     // Stamp each served light with where its views landed. A light the atlas
     // could not serve has no tile and keeps the kNoShadowView the gather left,
