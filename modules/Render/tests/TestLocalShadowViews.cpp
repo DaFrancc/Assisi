@@ -22,6 +22,25 @@ ShadowViewRect TileAt(std::uint32_t x, std::uint32_t y, std::uint32_t size)
     return ShadowViewRect{.x = x, .y = y, .width = size, .height = size};
 }
 
+/// The same square, said as the tile of an atlas that a view is built from.
+ShadowAtlasTile Tile(std::uint32_t x, std::uint32_t y, std::uint32_t size, std::uint32_t atlas = kAtlas)
+{
+    return ShadowAtlasTile{.rect = TileAt(x, y, size), .atlasResolution = atlas};
+}
+
+LocalShadowLightPose SpotPose(const glm::vec3 &position, const glm::vec3 &direction, float range,
+                              float outerAngleDegrees = 30.f)
+{
+    return LocalShadowLightPose{
+        .position = position, .direction = direction, .range = range, .outerAngleDegrees = outerAngleDegrees};
+}
+
+/// A point light aims in every direction, so its pose carries no aim at all.
+LocalShadowLightPose PointPose(const glm::vec3 &position, float range)
+{
+    return LocalShadowLightPose{.position = position, .range = range};
+}
+
 /// Where @p world lands in @p view's clip space, as NDC, plus whether it is in
 /// front of the near plane at all.
 struct Projected
@@ -57,7 +76,7 @@ std::array<ShadowView, kPointLightFaceCount> PointFaces(float range, const Local
     std::array<ShadowView, kPointLightFaceCount> faces{};
     for (std::uint32_t face = 0; face < kPointLightFaceCount; ++face)
     {
-        faces[face] = PointFaceShadowView(glm::vec3(0.f), range, face, TileAt(0, 0, 512), kAtlas, settings);
+        faces[face] = PointFaceShadowView(PointPose(glm::vec3(0.f), range), face, Tile(0, 0, 512), settings);
     }
     return faces;
 }
@@ -161,8 +180,8 @@ TEST_CASE("A point light's faces stop at its range")
 TEST_CASE("A spot light's map covers its cone and a little past it")
 {
     const LocalShadowSettings settings;
-    const ShadowView view = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, /*outerAngle=*/ 30.f,
-                                           TileAt(1024, 512, 512), kAtlas, settings);
+    const ShadowView view =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(1024, 512, 512), settings);
 
     // Straight down the cone's axis.
     CHECK(Project(view, glm::vec3(0.f, -10.f, 0.f)).Inside());
@@ -185,17 +204,17 @@ TEST_CASE("A spot aimed straight up still has a basis")
     const LocalShadowSettings settings;
     // The degenerate case for the usual +Y up axis. A collapsed basis produces a
     // NaN matrix, and a NaN matrix takes every fragment the light touches with it.
-    const ShadowView up = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f), 20.f, 30.f,
-                                         TileAt(0, 0, 512), kAtlas, settings);
+    const ShadowView up =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f), 20.f), Tile(0, 0, 512), settings);
     CHECK(Project(up, glm::vec3(0.f, 10.f, 0.f)).Inside());
 
-    const ShadowView down = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                           TileAt(0, 0, 512), kAtlas, settings);
+    const ShadowView down =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(0, 0, 512), settings);
     CHECK(Project(down, glm::vec3(0.f, -10.f, 0.f)).Inside());
 
     // A zero direction comes straight out of a hand-edited level file.
-    const ShadowView degenerate = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f), 20.f, 30.f, TileAt(0, 0, 512),
-                                                 kAtlas, settings);
+    const ShadowView degenerate =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f), 20.f), Tile(0, 0, 512), settings);
     for (int32_t i = 0; i < 4; ++i)
     {
         CHECK(std::isfinite(degenerate.viewProjection[i][0]));
@@ -206,8 +225,8 @@ TEST_CASE("A spot aimed straight up still has a basis")
 TEST_CASE("A view's rectangle maps onto its own tile and no other")
 {
     const LocalShadowSettings settings;
-    const ShadowView view = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                           TileAt(1024, 2048, 512), kAtlas, settings);
+    const ShadowView view =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(1024, 2048, 512), settings);
 
     const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
     CHECK(scaleOffset.x == doctest::Approx(512.f / 4096.f));
@@ -217,11 +236,9 @@ TEST_CASE("A view's rectangle maps onto its own tile and no other")
 
     // Every corner of the view's own UV square lands inside its tile: the
     // transform is what stops a lookup reaching the light beside it.
-    for (const glm::vec2 corner : {glm::vec2(0.f, 0.f), glm::vec2(1.f, 0.f), glm::vec2(0.f, 1.f),
-                                   glm::vec2(1.f, 1.f)})
+    for (const glm::vec2 corner : {glm::vec2(0.f, 0.f), glm::vec2(1.f, 0.f), glm::vec2(0.f, 1.f), glm::vec2(1.f, 1.f)})
     {
-        const glm::vec2 uv = corner * glm::vec2(scaleOffset.x, scaleOffset.y) +
-                             glm::vec2(scaleOffset.z, scaleOffset.w);
+        const glm::vec2 uv = corner * glm::vec2(scaleOffset.x, scaleOffset.y) + glm::vec2(scaleOffset.z, scaleOffset.w);
         CHECK(uv.x >= doctest::Approx(1024.f / 4096.f));
         CHECK(uv.x <= doctest::Approx(1536.f / 4096.f));
         CHECK(uv.y >= doctest::Approx(2048.f / 4096.f));
@@ -234,8 +251,8 @@ TEST_CASE("A lookup is clamped inside its tile by the filter's own reach")
     LocalShadowSettings settings;
     settings.filter = ShadowFilter::Pcf5x5;
 
-    const ShadowView view = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                           TileAt(1024, 2048, 512), kAtlas, settings);
+    const ShadowView view =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(1024, 2048, 512), settings);
 
     const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
     const glm::vec2 tileMin(scaleOffset.z, scaleOffset.w);
@@ -258,8 +275,8 @@ TEST_CASE("A lookup is clamped inside its tile by the filter's own reach")
     // the filter at all.
     LocalShadowSettings narrow = settings;
     narrow.filter = ShadowFilter::Point;
-    const ShadowView narrowView = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                                 TileAt(1024, 2048, 512), kAtlas, narrow);
+    const ShadowView narrowView =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(1024, 2048, 512), narrow);
     CHECK(narrowView.clampUv.x < view.clampUv.x);
 }
 
@@ -272,9 +289,8 @@ TEST_CASE("The smallest tile the allocator can hand out still has an interior")
     LocalShadowSettings settings;
     settings.filter = ShadowFilter::Vogel;
 
-    const ShadowView view = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                           TileAt(0, 0, kMinShadowFaceResolution), kMaxShadowAtlasResolution,
-                                           settings);
+    const ShadowView view = SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f),
+                                           Tile(0, 0, kMinShadowFaceResolution, kMaxShadowAtlasResolution), settings);
     CHECK(view.clampUv.x < view.clampUv.z);
     CHECK(view.clampUv.y < view.clampUv.w);
 }
@@ -444,18 +460,18 @@ TEST_CASE("The filter's tap step is one atlas texel whatever the tile's size")
     CHECK(LocalFilterTapStepUv(0) == doctest::Approx(0.f));
 
     LocalShadowSettings settings;
-    const ShadowView big = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                          TileAt(0, 0, 512), kAtlas, settings);
-    const ShadowView small = SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                            TileAt(0, 0, 128), kAtlas, settings);
+    const ShadowView big =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(0, 0, 512), settings);
+    const ShadowView small =
+        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(0, 0, 128), settings);
     CHECK(big.filterTapStepUv == doctest::Approx(small.filterTapStepUv));
 }
 
 TEST_CASE("Every local view is packed into the row the shader reads")
 {
     LocalShadowSettings settings;
-    const ShadowView view = SpotShadowView(glm::vec3(1.f, 2.f, 3.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f,
-                                           TileAt(512, 1024, 256), kAtlas, settings);
+    const ShadowView view = SpotShadowView(SpotPose(glm::vec3(1.f, 2.f, 3.f), glm::vec3(0.f, -1.f, 0.f), 20.f),
+                                           Tile(512, 1024, 256), settings);
 
     const ShadowViewGpu packed = PackShadowView(view);
     CHECK(packed.viewProjection == view.viewProjection);
@@ -479,13 +495,11 @@ TEST_CASE("A local view never claims to be orthographic")
     // 1, and dropping the near plane from the cull, which under perspective
     // admits the mirrored cone behind the light. A local view saying yes here
     // would turn both on.
-    CHECK_FALSE(SpotShadowView(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f, 30.f, TileAt(0, 0, 512), kAtlas,
-                               settings)
+    CHECK_FALSE(SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(0, 0, 512), settings)
                 .orthographic);
     for (std::uint32_t face = 0; face < kPointLightFaceCount; ++face)
     {
-        CHECK_FALSE(PointFaceShadowView(glm::vec3(0.f), 10.f, face, TileAt(0, 0, 512), kAtlas, settings)
-                    .orthographic);
+        CHECK_FALSE(PointFaceShadowView(PointPose(glm::vec3(0.f), 10.f), face, Tile(0, 0, 512), settings).orthographic);
     }
 
     // A cascade does, and must: it is the case the pancaking was written for.

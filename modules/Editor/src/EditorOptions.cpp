@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace Assisi::Editor
@@ -32,6 +33,58 @@ namespace Assisi::Editor
 using Assisi::App::Application;
 using Assisi::App::FrameSyncMode;
 using Assisi::App::OptionsConfig;
+
+namespace
+{
+/// Who holds which rectangle of the local-light atlas, and how long each one's
+/// still layer has stood.
+///
+/// The safety argument for caching, not polish. A missed invalidation has no
+/// visual tell — a shadow simply stops following its object — so the one thing
+/// that makes it findable is being able to see that a tile has not been redrawn
+/// while the thing under it moved. An age that keeps climbing on a light
+/// something is walking under is the defect, on screen, as a number.
+void DrawShadowAtlasInspector(std::span<const Assisi::Render::LocalShadowCache::Residency> tiles)
+{
+    if (!ImGui::TreeNode("Atlas Tiles"))
+    {
+        return;
+    }
+    if (tiles.empty())
+    {
+        ImGui::TextUnformatted("No light holds a tile.");
+        ImGui::TreePop();
+        return;
+    }
+
+    if (ImGui::BeginTable("atlas-tiles", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+    {
+        ImGui::TableSetupColumn("Light");
+        ImGui::TableSetupColumn("Tile");
+        ImGui::TableSetupColumn("Size");
+        ImGui::TableSetupColumn("Age");
+        ImGui::TableHeadersRow();
+
+        for (const Assisi::Render::LocalShadowCache::Residency &tile : tiles)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s %u", tile.kind == Assisi::Render::LocalLightKind::Point ? "point" : "spot",
+                        tile.lightIndex);
+            ImGui::TableNextColumn();
+            // The first face's corner. A point light's other five are the
+            // allocator's business and naming one of six locates the light.
+            ImGui::Text("%u,%u%s", tile.rect[0].x, tile.rect[0].y, tile.faces > 1 ? " +5" : "");
+            ImGui::TableNextColumn();
+            ImGui::Text("%u", Assisi::Render::ShadowSizeClassResolution(tile.sizeClass));
+            ImGui::TableNextColumn();
+            ImGui::Text("%u", tile.ageFrames);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TreePop();
+}
+} // namespace
 
 // The sun's cascades. Everything here lands on the next frame: a resolution or
 // cascade-count change reallocates the array in SceneRenderer::Render, and the
@@ -68,19 +121,19 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
             const Assisi::Render::ShadowSettings preset =
                 Assisi::Render::TierSettings(static_cast<Assisi::Render::ShadowTier>(i));
             shadows.sun.cascadeCount = preset.sun.cascadeCount;
-            shadows.sun.resolution   = preset.sun.resolution;
-            shadows.sun.format       = preset.sun.format;
-            shadows.sun.maxDistance  = preset.sun.maxDistance;
-            shadows.sun.filter       = preset.sun.filter;
+            shadows.sun.resolution = preset.sun.resolution;
+            shadows.sun.format = preset.sun.format;
+            shadows.sun.maxDistance = preset.sun.maxDistance;
+            shadows.sun.filter = preset.sun.filter;
             // The local half too: a tier is one point in the whole knob space,
             // and writing half of it would leave the readout reporting Custom
             // the moment it was pressed.
             shadows.local.atlasResolution = preset.local.atlasResolution;
-            shadows.local.format          = preset.local.format;
-            shadows.local.faceResolution  = preset.local.faceResolution;
-            shadows.local.filter          = preset.local.filter;
-            shadows.selection.capSpot     = preset.selection.capSpot;
-            shadows.selection.capPoint    = preset.selection.capPoint;
+            shadows.local.format = preset.local.format;
+            shadows.local.faceResolution = preset.local.faceResolution;
+            shadows.local.filter = preset.local.filter;
+            shadows.selection.capSpot = preset.selection.capSpot;
+            shadows.selection.capPoint = preset.selection.capPoint;
             changed = true;
         }
         ImGui::EndDisabled();
@@ -158,9 +211,9 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // that is the normal offset's job instead.
     changed |= ImGui::SliderFloat("Depth Bias", &shadows.sun.depthBiasTexels, Assisi::Render::kMinDepthBiasTexels,
                                   Assisi::Render::kMaxDepthBiasTexels, "%.2f texels");
-    changed |= ImGui::SliderFloat("Normal Offset", &shadows.sun.normalOffsetTexels,
-                                  Assisi::Render::kMinNormalOffsetTexels, Assisi::Render::kMaxNormalOffsetTexels,
-                                  "%.2f texels");
+    changed |=
+        ImGui::SliderFloat("Normal Offset", &shadows.sun.normalOffsetTexels, Assisi::Render::kMinNormalOffsetTexels,
+                           Assisi::Render::kMaxNormalOffsetTexels, "%.2f texels");
     changed |= ImGui::SliderFloat("Slope Bias", &shadows.sun.slopeBias, Assisi::Render::kMinSlopeBias,
                                   Assisi::Render::kMaxSlopeBias, "%.2f");
 
@@ -192,8 +245,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     changed |= ImGui::Checkbox("Cast Shadows##local", &shadows.local.enabled);
     ImGui::SameLine();
     ImGui::TextDisabled("(%.0f MiB)",
-                        static_cast<double>(Assisi::Render::LocalShadowMemoryBytes(shadows.local)) /
-                        (1024.0 * 1024.0));
+                        static_cast<double>(Assisi::Render::LocalShadowMemoryBytes(shadows.local)) / (1024.0 * 1024.0));
 
     if (!shadows.local.enabled)
     {
@@ -202,8 +254,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
 
     static const char *const kAtlasNames[] = {"512", "1024", "2048", "4096", "8192"};
     static constexpr std::uint32_t kAtlasResolutions[] = {512u, 1024u, 2048u, 4096u, 8192u};
-    static_assert(std::size(kAtlasNames) == std::size(kAtlasResolutions),
-                  "Every atlas resolution needs a label.");
+    static_assert(std::size(kAtlasNames) == std::size(kAtlasResolutions), "Every atlas resolution needs a label.");
     int32_t atlasIndex = 0;
     for (std::size_t i = 0; i < std::size(kAtlasResolutions); ++i)
     {
@@ -245,14 +296,59 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         changed = true;
     }
 
-    changed |= ImGui::SliderFloat("Depth Bias##local", &shadows.local.depthBiasTexels,
-                                  Assisi::Render::kMinDepthBiasTexels, Assisi::Render::kMaxDepthBiasTexels,
-                                  "%.2f texels");
+    changed |=
+        ImGui::SliderFloat("Depth Bias##local", &shadows.local.depthBiasTexels, Assisi::Render::kMinDepthBiasTexels,
+                           Assisi::Render::kMaxDepthBiasTexels, "%.2f texels");
     changed |= ImGui::SliderFloat("Normal Offset##local", &shadows.local.normalOffsetTexels,
                                   Assisi::Render::kMinNormalOffsetTexels, Assisi::Render::kMaxNormalOffsetTexels,
                                   "%.2f texels");
     changed |= ImGui::SliderFloat("Slope Bias##local", &shadows.local.slopeBias, Assisi::Render::kMinSlopeBias,
                                   Assisi::Render::kMaxSlopeBias, "%.2f");
+
+    changed |= ImGui::Checkbox("Cache Static Depth", &shadows.local.cache.enabled);
+    ImGui::SetItemTooltip("Keeps the still geometry's depth in each tile instead of redrawing it, so a lamp with "
+                          "nothing moving under it costs nothing per frame. Costs a second atlas. Off is the "
+                          "uncached baseline, exactly: every face of every served light, every frame.");
+
+    if (!shadows.local.cache.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+    int32_t budget = static_cast<int32_t>(shadows.local.cache.updateBudgetFaces);
+    if (ImGui::SliderInt("Redraw Budget", &budget, static_cast<int32_t>(Assisi::Render::kMinShadowBakeBudget),
+                         static_cast<int32_t>(Assisi::Render::kMaxShadowBakeBudget), "%d faces"))
+    {
+        shadows.local.cache.updateBudgetFaces = static_cast<std::uint32_t>(budget);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Faces that may be redrawn in one frame, most important first — what stops walking "
+                          "into a new room landing as one long frame. A light that does not fit waits, "
+                          "unshadowed, rather than showing a tile that is out of date.");
+
+    int32_t stillFrames = static_cast<int32_t>(shadows.local.cache.promoteStillFrames);
+    if (ImGui::SliderInt("Settle Frames", &stillFrames, static_cast<int32_t>(Assisi::Render::kMinPromoteStillFrames),
+                         static_cast<int32_t>(Assisi::Render::kMaxPromoteStillFrames)))
+    {
+        shadows.local.cache.promoteStillFrames = static_cast<std::uint32_t>(stillFrames);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("How long a caster must hold still before it is folded back into the kept layer. A "
+                          "motion costs two redraws however long it lasts — one leaving, one rejoining — and "
+                          "this is the wait before the second.");
+
+    int32_t divisor = static_cast<int32_t>(shadows.local.cache.movingLightUpdateDivisor);
+    if (ImGui::SliderInt("Mover Update Rate", &divisor, static_cast<int32_t>(Assisi::Render::kMinLightUpdateDivisor),
+                         static_cast<int32_t>(Assisi::Render::kMaxLightUpdateDivisor), "every %d frame(s)"))
+    {
+        shadows.local.cache.movingLightUpdateDivisor = static_cast<std::uint32_t>(divisor);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("A ceiling, not a rate: the most important lights always redraw every frame, and "
+                          "this is spent further down the ordering. One throttles nothing.");
+    if (!shadows.local.cache.enabled)
+    {
+        ImGui::EndDisabled();
+    }
 
     changed |= ImGui::Checkbox("Importance Cap", &shadows.selection.capEnabled);
     ImGui::SetItemTooltip("Off does not lift the limit, only the ordering: the atlas is a fixed-size texture "
@@ -293,9 +389,21 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     const Assisi::Render::LocalShadowPass::Stats local = frame.renderer.LastLocalShadowStats();
     ImGui::Text("Atlas: %u lights / %u faces  |  %.0f%% full", local.lights, local.views,
                 static_cast<double>(local.occupancy) * 100.0);
-    // Two different answers to "why has that lamp no shadow", and they are two
-    // different settings: the cap turned it away, or the atlas had no room.
-    ImGui::Text("Dropped by cap: %u  |  atlas full: %u", frame.renderer.LastShadowDroppedByCap(), local.unserved);
+    // Three different answers to "why has that lamp no shadow", and they are
+    // three different settings: the cap turned it away, the atlas had no room,
+    // or the redraw budget has not reached it yet.
+    ImGui::Text("Dropped by cap: %u  |  atlas full: %u  |  waiting to redraw: %u",
+                frame.renderer.LastShadowDroppedByCap(), local.unserved, local.deferredLights);
+
+    if (shadows.local.cache.enabled)
+    {
+        // The number the pay-for-what-you-place gate is read off, per light: on
+        // a still scene every served light is resting and both draws are zero.
+        ImGui::Text("Cache: %u resting  |  %u baked / %u copied  |  %u movers", local.restingLights, local.bakedFaces,
+                    local.copiedFaces, local.dynamicCasters);
+
+        DrawShadowAtlasInspector(frame.renderer.CachedShadowTiles());
+    }
 
     if (changed)
     {
@@ -353,8 +461,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             if (gpu.memTotalBytes > 0)
                 // PRIu64, never a fixed %llu: uint64_t is `unsigned long` on Linux and
                 // `unsigned long long` on Windows, so a literal is wrong on one of them.
-                ImGui::Text("VRAM:  %" PRIu64 " / %" PRIu64 " MiB", gpu.memUsedBytes >> 20,
-                            gpu.memTotalBytes >> 20);
+                ImGui::Text("VRAM:  %" PRIu64 " / %" PRIu64 " MiB", gpu.memUsedBytes >> 20, gpu.memTotalBytes >> 20);
 
             // One point per fresh NVML reading, not per frame. Poll() is throttled, so
             // the sequence bumps ~5x/s and the graphs span ~30 s of history whatever
@@ -363,7 +470,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             {
                 _lastGpuSequence = gpu.sequence;
                 _gpuClockHistory[static_cast<std::size_t>(_gpuTelemetryOffset)] = static_cast<float>(gpu.coreClockMhz);
-                _gpuUtilHistory[static_cast<std::size_t>(_gpuTelemetryOffset)]  = static_cast<float>(gpu.gpuUtilPct);
+                _gpuUtilHistory[static_cast<std::size_t>(_gpuTelemetryOffset)] = static_cast<float>(gpu.gpuUtilPct);
                 _gpuPowerHistory[static_cast<std::size_t>(_gpuTelemetryOffset)] = static_cast<float>(gpu.powerWatts);
                 _gpuTelemetryOffset = (_gpuTelemetryOffset + 1) % kGpuHistory;
                 if (_gpuTelemetryCount < kGpuHistory)
@@ -377,32 +484,32 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 // Until the ring wraps the samples sit in [0, count) in order, so plot
                 // from 0. Once it is full, the write cursor is the oldest sample, which
                 // is what ImPlot's Offset wants.
-                const int32_t plotCount  = _gpuTelemetryCount;
+                const int32_t plotCount = _gpuTelemetryCount;
                 const int32_t plotOffset = _gpuTelemetryCount < kGpuHistory ? 0 : _gpuTelemetryOffset;
-                const auto bufMax     = [plotCount](const std::array<float, kGpuHistory> &buf)
+                const auto bufMax = [plotCount](const std::array<float, kGpuHistory> &buf)
+                                    {
+                                        float m = 0.0f;
+                                        for (int32_t i = 0; i < plotCount; ++i)
                                         {
-                                            float m = 0.0f;
-                                            for (int32_t i = 0; i < plotCount; ++i)
-                                            {
-                                                m = std::max(m, buf[static_cast<std::size_t>(i)]);
-                                            }
-                                            return m;
-                                        };
+                                            m = std::max(m, buf[static_cast<std::size_t>(i)]);
+                                        }
+                                        return m;
+                                    };
 
                 // One compact history plot per metric. `title` is drawn above the plot
                 // and carries the unit, which is why the y-axis label is empty; its
                 // "###id" suffix keeps the ImGui id stable independent of that text.
                 // Y tick labels stay on, so the scale is readable off the axis.
                 const auto drawGpuPlot = [plotCount, plotOffset](const char *title,
-                                                                 const std::array<float, kGpuHistory> &buf,
-                                                                 float ymax, ImVec4 color)
+                                                                 const std::array<float, kGpuHistory> &buf, float ymax,
+                                                                 ImVec4 color)
                                          {
                                              ImPlotSpec spec;
-                                             spec.LineColor  = color;
-                                             spec.FillColor  = color;
-                                             spec.FillAlpha  = 0.25f;
+                                             spec.LineColor = color;
+                                             spec.FillColor = color;
+                                             spec.FillAlpha = 0.25f;
                                              spec.LineWeight = 1.5f;
-                                             spec.Offset     = plotOffset;
+                                             spec.Offset = plotOffset;
                                              // NoInputs: the limits are re-locked every frame anyway, so pan and
                                              // zoom would do nothing except make the x-axis look like a
                                              // draggable control.
@@ -427,9 +534,8 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 // Not every GPU reports power draw — laptops often do not.
                 if (gpu.powerSupported)
                 {
-                    const float powerMax = gpu.powerLimitWatts > 0.0
-                                               ? static_cast<float>(gpu.powerLimitWatts)
-                                               : std::max(bufMax(_gpuPowerHistory) * 1.1f, 50.0f);
+                    const float powerMax = gpu.powerLimitWatts > 0.0 ? static_cast<float>(gpu.powerLimitWatts)
+                                                                     : std::max(bufMax(_gpuPowerHistory) * 1.1f, 50.0f);
                     drawGpuPlot("GPU Power (W)###gpuPower", _gpuPowerHistory, powerMax,
                                 ImVec4(0.95f, 0.55f, 0.25f, 1.0f));
                 }
@@ -448,7 +554,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                         ImGui::SetCursorPosX(start.x + ((avail.x - ImGui::CalcTextSize(title).x) * 0.5f));
                         ImGui::TextUnformatted(title);
 
-                        const char *label     = "N/A (Unsupported by this GPU)";
+                        const char *label = "N/A (Unsupported by this GPU)";
                         const ImVec2 labelSize = ImGui::CalcTextSize(label);
                         ImGui::SetCursorPos(ImVec2(start.x + ((avail.x - labelSize.x) * 0.5f),
                                                    start.y + ((avail.y - labelSize.y) * 0.5f)));
@@ -470,26 +576,26 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         float plotMax = 4.0f;
         for (int32_t i = 0; i < frameHistory; ++i)
         {
-            plotMax = std::max({plotMax, frame.cpuMs[static_cast<std::size_t>(i)],
-                                frame.gpuMs[static_cast<std::size_t>(i)]});
+            plotMax =
+                std::max({plotMax, frame.cpuMs[static_cast<std::size_t>(i)], frame.gpuMs[static_cast<std::size_t>(i)]});
         }
         plotMax *= 1.1f; // headroom, so the peak is not pinned to the top edge
 
         // One spec per series, reused for the shaded fill and the outline so the two
         // cannot drift apart in colour.
         ImPlotSpec cpuSpec;
-        cpuSpec.LineColor  = ImVec4(0.95f, 0.55f, 0.25f, 1.0f); // orange
-        cpuSpec.FillColor  = cpuSpec.LineColor;
-        cpuSpec.FillAlpha  = 0.25f;
+        cpuSpec.LineColor = ImVec4(0.95f, 0.55f, 0.25f, 1.0f); // orange
+        cpuSpec.FillColor = cpuSpec.LineColor;
+        cpuSpec.FillAlpha = 0.25f;
         cpuSpec.LineWeight = 1.5f;
-        cpuSpec.Offset     = frame.offset;
+        cpuSpec.Offset = frame.offset;
 
         ImPlotSpec gpuSpec;
-        gpuSpec.LineColor  = ImVec4(0.30f, 0.75f, 0.40f, 1.0f); // green
-        gpuSpec.FillColor  = gpuSpec.LineColor;
-        gpuSpec.FillAlpha  = 0.25f;
+        gpuSpec.LineColor = ImVec4(0.30f, 0.75f, 0.40f, 1.0f); // green
+        gpuSpec.FillColor = gpuSpec.LineColor;
+        gpuSpec.FillAlpha = 0.25f;
         gpuSpec.LineWeight = 1.5f;
-        gpuSpec.Offset     = frame.offset;
+        gpuSpec.Offset = frame.offset;
 
         if (ImPlot::BeginPlot("Frame Time (ms)###frameGraph", ImVec2(-1.0f, 120.0f),
                               ImPlotFlags_NoMenus | ImPlotFlags_NoInputs))
@@ -525,8 +631,9 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
 
             // The tail of the sort, at least one frame however short the history is.
             const int32_t worstCount = std::max<int32_t>(1, static_cast<int32_t>(sorted.size()) / 100);
-            double worstSum   = 0.0;
-            for (int32_t i = static_cast<int32_t>(sorted.size()) - worstCount; i < static_cast<int32_t>(sorted.size()); ++i)
+            double worstSum = 0.0;
+            for (int32_t i = static_cast<int32_t>(sorted.size()) - worstCount; i < static_cast<int32_t>(sorted.size());
+                 ++i)
             {
                 worstSum += static_cast<double>(sorted[static_cast<std::size_t>(i)]);
             }
@@ -591,9 +698,9 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // Short-circuits the mesh shader to a single material channel, to look at the
         // PBR inputs directly. Runtime only. **This list is indexed by the enum
         // value** — it must stay in Render::MaterialDebugView's order.
-        static const char *kDebugViewNames[] = {"Off",       "Base Color", "Metallic", "Roughness",
-                                                "Normal",    "Occlusion",  "Emissive"};
-        int32_t debugViewIndex     = static_cast<int32_t>(frame.renderer.DebugView());
+        static const char *kDebugViewNames[] = {"Off",    "Base Color", "Metallic", "Roughness",
+                                                "Normal", "Occlusion",  "Emissive"};
+        int32_t debugViewIndex = static_cast<int32_t>(frame.renderer.DebugView());
         if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
         {
             frame.renderer.SetDebugView(static_cast<Assisi::Render::MaterialDebugView>(debugViewIndex));
@@ -621,9 +728,9 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             options.SaveToJson();
         }
 
-        bool lookChanged = ImGui::SliderFloat("Exposure", &options.tonemap.exposureStops,
-                                              Assisi::Render::kMinExposureStops,
-                                              Assisi::Render::kMaxExposureStops, "%.2f stops");
+        bool lookChanged =
+            ImGui::SliderFloat("Exposure", &options.tonemap.exposureStops, Assisi::Render::kMinExposureStops,
+                               Assisi::Render::kMaxExposureStops, "%.2f stops");
         lookChanged |= ImGui::SliderFloat("Contrast", &options.tonemap.contrast, Assisi::Render::kMinContrast,
                                           Assisi::Render::kMaxContrast, "%.2f");
         lookChanged |= ImGui::SliderFloat("Saturation", &options.tonemap.saturation, Assisi::Render::kMinSaturation,
@@ -637,14 +744,14 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // comparison point rather than a default worth returning to.
         if (ImGui::SmallButton("Punchy"))
         {
-            options.tonemap.contrast   = Assisi::Render::kPunchyContrast;
+            options.tonemap.contrast = Assisi::Render::kPunchyContrast;
             options.tonemap.saturation = Assisi::Render::kPunchySaturation;
             options.SaveToJson();
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Neutral"))
         {
-            options.tonemap.contrast   = 1.0f;
+            options.tonemap.contrast = 1.0f;
             options.tonemap.saturation = 1.0f;
             options.SaveToJson();
         }
@@ -652,7 +759,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         ImGui::Separator();
 
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
-        int modeIndex    = static_cast<int>(options.aaMode);
+        int modeIndex = static_cast<int>(options.aaMode);
         if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
         {
             options.aaMode = static_cast<Assisi::Render::AaMode>(modeIndex);
@@ -667,9 +774,9 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             ImGui::BeginDisabled();
         }
 
-        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
+        static const char *kSampleNames[] = {"2x", "4x", "8x"};
         static const int32_t kSampleValues[] = {2, 4, 8};
-        int sampleIndex     = 1;
+        int sampleIndex = 1;
         for (int32_t i = 0; i < 3; ++i)
         {
             if (kSampleValues[i] == options.msaaSamples)
@@ -701,11 +808,9 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // option is written here; Application::Run() switches the swapchain's present
         // mode between frames, which is the only safe place to do it.
         int frameSyncIndex = static_cast<int>(options.frameSync);
-        bool frameSyncChanged =
-            ImGui::RadioButton("VSync", &frameSyncIndex, static_cast<int>(FrameSyncMode::VSync));
+        bool frameSyncChanged = ImGui::RadioButton("VSync", &frameSyncIndex, static_cast<int>(FrameSyncMode::VSync));
         ImGui::SameLine();
-        frameSyncChanged |=
-            ImGui::RadioButton("FPS Limit", &frameSyncIndex, static_cast<int>(FrameSyncMode::FpsLimit));
+        frameSyncChanged |= ImGui::RadioButton("FPS Limit", &frameSyncIndex, static_cast<int>(FrameSyncMode::FpsLimit));
         if (frameSyncChanged)
         {
             options.frameSync = static_cast<FrameSyncMode>(frameSyncIndex);
@@ -747,8 +852,8 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         if (ImGui::IsItemDeactivatedAfterEdit())
         {
             // A cap of 0 or less is not a cap; the ceiling is what int16 holds.
-            capFps            = std::clamp(capFps, 1, static_cast<int>(INT16_MAX));
-            options.fpsLimit  = static_cast<std::int16_t>(capFps);
+            capFps = std::clamp(capFps, 1, static_cast<int>(INT16_MAX));
+            options.fpsLimit = static_cast<std::int16_t>(capFps);
             options.SaveToJson();
         }
         if (!capFieldEnabled)

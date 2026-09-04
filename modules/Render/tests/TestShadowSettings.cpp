@@ -197,12 +197,9 @@ TEST_CASE("A tier sets the caps, and a cap edit leaves the tier")
 
     // Raising a tier raises both caps: a higher tier shadows more lights, which
     // is most of what the tier means here.
-    CHECK(TierSettings(ShadowTier::Low).selection.capSpot <
-          TierSettings(ShadowTier::Medium).selection.capSpot);
-    CHECK(TierSettings(ShadowTier::Medium).selection.capSpot <
-          TierSettings(ShadowTier::High).selection.capSpot);
-    CHECK(TierSettings(ShadowTier::High).selection.capSpot <
-          TierSettings(ShadowTier::Ultra).selection.capSpot);
+    CHECK(TierSettings(ShadowTier::Low).selection.capSpot < TierSettings(ShadowTier::Medium).selection.capSpot);
+    CHECK(TierSettings(ShadowTier::Medium).selection.capSpot < TierSettings(ShadowTier::High).selection.capSpot);
+    CHECK(TierSettings(ShadowTier::High).selection.capSpot < TierSettings(ShadowTier::Ultra).selection.capSpot);
 
     // A cap is a knob the tier sets, so moving it is leaving the tier — unlike
     // a bias, which no tier has an opinion about.
@@ -226,9 +223,15 @@ TEST_CASE("Shadow memory is reported per half and in total")
     CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::High).sun) == 4ull * 4096 * 4096 * 4);
     CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Ultra).sun) == 6ull * 4096 * 4096 * 4);
 
-    // One atlas whatever the light count is — that is what an atlas is for.
-    CHECK(LocalShadowMemoryBytes(TierSettings(ShadowTier::Low).local) == 2048ull * 2048 * 2);
-    CHECK(LocalShadowMemoryBytes(TierSettings(ShadowTier::Ultra).local) == 8192ull * 8192 * 2);
+    // One atlas whatever the light count is — that is what an atlas is for —
+    // and a second one holding the still geometry's depth while tiles are
+    // cached. That doubling is the whole price of the cache, and it is the one
+    // number a tier's memory column has to move by when it is turned off.
+    LocalShadowSettings uncached = TierSettings(ShadowTier::Low).local;
+    uncached.cache.enabled = false;
+    CHECK(LocalShadowMemoryBytes(uncached) == 2048ull * 2048 * 2);
+    CHECK(LocalShadowMemoryBytes(TierSettings(ShadowTier::Low).local) == 2 * LocalShadowMemoryBytes(uncached));
+    CHECK(LocalShadowMemoryBytes(TierSettings(ShadowTier::Ultra).local) == 2ull * 8192 * 8192 * 2);
 
     const ShadowSettings ultra = TierSettings(ShadowTier::Ultra);
     CHECK(ShadowMemoryBytes(ultra) == SunShadowMemoryBytes(ultra.sun) + LocalShadowMemoryBytes(ultra.local));

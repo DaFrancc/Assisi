@@ -270,7 +270,85 @@ struct SunShadowSettings
     /// especially for a camera moving fast enough to cross a short one in a
     /// frame or two, which is when a ramp reads as a pop.
     float cascadeBlend = 0.33f;
+};
 
+/// @brief Bounds on how many atlas faces may be re-rendered in one frame.
+///
+/// The ceiling is above every tier's total face count — 64 spots and 16 points
+/// is 160 — so setting it there is "never wait", which is what the A/B against
+/// the uncached path wants. The floor is one rather than zero: a budget of zero
+/// re-renders nothing ever, which is not a slower cache but a broken one.
+inline constexpr std::uint32_t kMinShadowBakeBudget = 1;
+inline constexpr std::uint32_t kMaxShadowBakeBudget = 256;
+
+/// @brief Bounds on how long a caster must hold still before it rejoins the
+/// cached layer.
+///
+/// The floor is one frame, which is no hysteresis at all: every pause in a
+/// motion re-bakes. The ceiling is four seconds at 60 Hz, past which a thing
+/// that stopped moving is still being drawn as though it might not have.
+inline constexpr std::uint32_t kMinPromoteStillFrames = 1;
+inline constexpr std::uint32_t kMaxPromoteStillFrames = 240;
+
+/// @brief Bounds on the update-rate divisor a light's dynamic layer may be
+/// throttled to. One is every frame; three is every third.
+///
+/// Past a third the lag is visible as a shadow trailing its object rather than
+/// as a softer update, which is the point at which the technique stops buying
+/// anything a smaller tile would not buy more honestly.
+inline constexpr std::uint32_t kMinLightUpdateDivisor = 1;
+inline constexpr std::uint32_t kMaxLightUpdateDivisor = 3;
+
+/// @brief Keeping a resting light's shadow instead of redrawing it.
+///
+/// A tile's depth is two layers: what the still geometry recorded, which changes
+/// only when that geometry does, and what the moving geometry records, which
+/// changes every frame. Cached, a tile costs a copy of the first plus a draw of
+/// the second — and a light with nothing moving under it costs nothing at all,
+/// because its tile already holds the right depth from whenever it was last
+/// drawn.
+///
+/// Which casters are "still" is inferred rather than authored: Transform carries
+/// a change tick, so a caster that has not been written is one that has not
+/// moved. That is a fact the engine already has, and it cannot be set wrong the
+/// way a mobility flag on a prefab can.
+struct LocalShadowCacheSettings
+{
+    /// Whether tiles are cached at all. Off is the uncached path exactly: the
+    /// whole atlas is cleared and every face of every served light is redrawn,
+    /// which is the baseline every measurement here is quoted against.
+    bool enabled = true;
+
+    /// Faces that may be re-rendered in one frame, most important first.
+    ///
+    /// Distinct from the tile cap: a tile *held* costs memory, a face *drawn*
+    /// costs time. This is what stops a burst — walking into a new room, a door
+    /// opening onto a dozen lamps — landing as one long frame. A light whose
+    /// face does not fit this frame's budget goes unshadowed until it does,
+    /// never shadowed from a stale tile: a light waiting its turn is one not yet
+    /// drawn, and that is a dimmer image rather than a wrong one.
+    std::uint32_t updateBudgetFaces = 32;
+
+    /// Frames a caster must hold still before it is folded back into the cached
+    /// layer.
+    ///
+    /// A caster's first moved frame drops it out of the cached layer of every
+    /// tile it touches — one re-bake — and it draws with the movers until it
+    /// settles, at which point it is folded back in with one more. So a motion
+    /// episode costs two re-bakes however long it lasts, and standing still
+    /// costs none. Without the wait, a caster that pauses mid-motion re-bakes
+    /// every tile around it and then immediately undoes that.
+    std::uint32_t promoteStillFrames = 30;
+
+    /// The slowest rate a light's moving layer may be redrawn at: 1 is every
+    /// frame, 2 every other, 3 every third.
+    ///
+    /// A ceiling rather than a rate. The most important lights of a frame always
+    /// redraw every frame; the divisor is spent on the ones further down the
+    /// ordering, where a shadow one frame behind its object is not what anyone
+    /// is looking at. One — the default — throttles nothing, so this costs
+    /// nothing until it is turned up.
+    std::uint32_t movingLightUpdateDivisor = 1;
 };
 
 /// @brief Spot and point lights' shadows, as the user edits them.
@@ -301,6 +379,11 @@ struct LocalShadowSettings
     float depthBiasTexels = 1.5f;
     float slopeBias = 2.0f;
     float normalOffsetTexels = 1.5f;
+
+    /// What a resting light is allowed to skip. Nested here rather than beside
+    /// the selection knobs because it is a property of the atlas itself — it
+    /// doubles the atlas's memory and changes what a tile means.
+    LocalShadowCacheSettings cache;
 };
 
 /// @brief Which local lights hold atlas tiles when more of them want one than
@@ -410,17 +493,17 @@ struct ShadowSettings
     settings.cascadeCount = std::clamp(settings.cascadeCount, kMinShadowCascades, kMaxShadowCascades);
     settings.resolution = ShadowResolutionPowerOfTwo(settings.resolution, kMinShadowResolution, kMaxShadowResolution);
 
-    settings.maxDistance = ClampFiniteShadow(settings.maxDistance, kMinShadowDistance, kMaxShadowDistance,
-                                             defaults.maxDistance);
-    settings.splitLambda = ClampFiniteShadow(settings.splitLambda, kMinSplitLambda, kMaxSplitLambda,
-                                             defaults.splitLambda);
-    settings.depthBiasTexels = ClampFiniteShadow(settings.depthBiasTexels, kMinDepthBiasTexels, kMaxDepthBiasTexels,
-                                                 defaults.depthBiasTexels);
+    settings.maxDistance =
+        ClampFiniteShadow(settings.maxDistance, kMinShadowDistance, kMaxShadowDistance, defaults.maxDistance);
+    settings.splitLambda =
+        ClampFiniteShadow(settings.splitLambda, kMinSplitLambda, kMaxSplitLambda, defaults.splitLambda);
+    settings.depthBiasTexels =
+        ClampFiniteShadow(settings.depthBiasTexels, kMinDepthBiasTexels, kMaxDepthBiasTexels, defaults.depthBiasTexels);
     settings.slopeBias = ClampFiniteShadow(settings.slopeBias, kMinSlopeBias, kMaxSlopeBias, defaults.slopeBias);
     settings.normalOffsetTexels = ClampFiniteShadow(settings.normalOffsetTexels, kMinNormalOffsetTexels,
                                                     kMaxNormalOffsetTexels, defaults.normalOffsetTexels);
-    settings.cascadeBlend = ClampFiniteShadow(settings.cascadeBlend, kMinCascadeBlend, kMaxCascadeBlend,
-                                              defaults.cascadeBlend);
+    settings.cascadeBlend =
+        ClampFiniteShadow(settings.cascadeBlend, kMinCascadeBlend, kMaxCascadeBlend, defaults.cascadeBlend);
     return settings;
 }
 
@@ -446,11 +529,18 @@ struct ShadowSettings
     // and the allocator would have nothing sensible to demote it to.
     settings.faceResolution = std::min(settings.faceResolution, settings.atlasResolution);
 
-    settings.depthBiasTexels = ClampFiniteShadow(settings.depthBiasTexels, kMinDepthBiasTexels, kMaxDepthBiasTexels,
-                                                 defaults.depthBiasTexels);
+    settings.depthBiasTexels =
+        ClampFiniteShadow(settings.depthBiasTexels, kMinDepthBiasTexels, kMaxDepthBiasTexels, defaults.depthBiasTexels);
     settings.slopeBias = ClampFiniteShadow(settings.slopeBias, kMinSlopeBias, kMaxSlopeBias, defaults.slopeBias);
     settings.normalOffsetTexels = ClampFiniteShadow(settings.normalOffsetTexels, kMinNormalOffsetTexels,
                                                     kMaxNormalOffsetTexels, defaults.normalOffsetTexels);
+
+    settings.cache.updateBudgetFaces =
+        std::clamp(settings.cache.updateBudgetFaces, kMinShadowBakeBudget, kMaxShadowBakeBudget);
+    settings.cache.promoteStillFrames =
+        std::clamp(settings.cache.promoteStillFrames, kMinPromoteStillFrames, kMaxPromoteStillFrames);
+    settings.cache.movingLightUpdateDivisor =
+        std::clamp(settings.cache.movingLightUpdateDivisor, kMinLightUpdateDivisor, kMaxLightUpdateDivisor);
     return settings;
 }
 
@@ -559,8 +649,7 @@ struct ShadowSettings
         const ShadowSettings preset = TierSettings(candidate);
         const bool sunMatches = preset.sun.cascadeCount == settings.sun.cascadeCount &&
                                 preset.sun.resolution == settings.sun.resolution &&
-                                preset.sun.format == settings.sun.format &&
-                                preset.sun.filter == settings.sun.filter &&
+                                preset.sun.format == settings.sun.format && preset.sun.filter == settings.sun.filter &&
                                 preset.sun.maxDistance == settings.sun.maxDistance;
         const bool localMatches = preset.local.atlasResolution == settings.local.atlasResolution &&
                                   preset.local.format == settings.local.format &&
@@ -595,6 +684,11 @@ struct ShadowSettings
 
 /// @brief Bytes the local-light atlas occupies at these settings. One texture
 /// whatever the light count is — that is the point of an atlas.
+///
+/// Two textures when tiles are cached: the still geometry's depth is kept in its
+/// own atlas so a tile can be composed from it without having been redrawn, and
+/// that second copy is the whole price of the cache. It is the same shape as the
+/// first, so caching exactly doubles this figure.
 [[nodiscard]] inline std::uint64_t LocalShadowMemoryBytes(const LocalShadowSettings &settings)
 {
     const LocalShadowSettings safe = Sanitized(settings);
@@ -604,7 +698,7 @@ struct ShadowSettings
     }
     const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
     const std::uint64_t texels = static_cast<std::uint64_t>(safe.atlasResolution) * safe.atlasResolution;
-    return texels * bytesPerTexel;
+    return texels * bytesPerTexel * (safe.cache.enabled ? 2u : 1u);
 }
 
 /// @brief Bytes every shadow map occupies at these settings. What the tier

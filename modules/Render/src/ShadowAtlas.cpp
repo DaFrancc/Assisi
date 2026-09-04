@@ -112,6 +112,67 @@ bool ShadowAtlasAllocator::Split(std::uint32_t sizeClass)
     return true;
 }
 
+bool ShadowAtlasAllocator::Reserve(const ShadowViewRect &rect, std::uint32_t sizeClass)
+{
+    if (_tiledResolution == 0u || sizeClass >= kShadowSizeClassCount || sizeClass > RootClass())
+    {
+        return false;
+    }
+    const std::uint32_t size = ShadowSizeClassResolution(sizeClass);
+    // A tile of this class sits on a grid of its own size. Anything else is not a
+    // node of this tree, so no amount of splitting would ever produce it, and
+    // accepting it would hand back a rectangle overlapping two real tiles.
+    if (rect.width != size || rect.height != size || rect.x % size != 0u || rect.y % size != 0u ||
+        rect.x + size > _tiledResolution || rect.y + size > _tiledResolution)
+    {
+        return false;
+    }
+
+    // The node itself, if it is free. Erased by value rather than popped: the
+    // free list is unordered, and the whole point here is to take a named one.
+    std::vector<ShadowViewRect> &nodes = _free[sizeClass];
+    const auto found = std::find_if(nodes.begin(), nodes.end(),
+                                    [&](const ShadowViewRect &node) { return node.x == rect.x && node.y == rect.y; });
+    if (found != nodes.end())
+    {
+        nodes.erase(found);
+        _allocatedTexels += static_cast<std::uint64_t>(size) * size;
+        return true;
+    }
+
+    // Not free at this class: either an ancestor still holds it whole, or a
+    // sibling of it is already handed out and it is gone. Reserving the ancestor
+    // distinguishes the two — it succeeds only in the first case.
+    if (sizeClass >= RootClass())
+    {
+        return false;
+    }
+    const std::uint32_t parentSize = size * 2u;
+    const ShadowViewRect parent{.x = rect.x - rect.x % parentSize,
+                                .y = rect.y - rect.y % parentSize,
+                                .width = parentSize,
+                                .height = parentSize};
+    if (!Reserve(parent, sizeClass + 1u))
+    {
+        return false;
+    }
+    // The parent is out of the tree now, so its four quadrants become free nodes
+    // and this call takes the one it came for. The parent's texels are unwound
+    // because it was never handed to anyone; only the quadrant is.
+    _allocatedTexels -= static_cast<std::uint64_t>(parentSize) * parentSize;
+    for (std::uint32_t corner = 0; corner < 4u; ++corner)
+    {
+        const ShadowViewRect quadrant{
+            .x = parent.x + (corner % 2u) * size, .y = parent.y + (corner / 2u) * size, .width = size, .height = size};
+        if (quadrant.x != rect.x || quadrant.y != rect.y)
+        {
+            nodes.push_back(quadrant);
+        }
+    }
+    _allocatedTexels += static_cast<std::uint64_t>(size) * size;
+    return true;
+}
+
 ShadowViewRect ShadowAtlasAllocator::Allocate(std::uint32_t sizeClass)
 {
     sizeClass = std::min(sizeClass, kShadowSizeClassCount - 1u);

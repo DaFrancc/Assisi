@@ -5,35 +5,35 @@
 
 #if defined(ASSISI_CHIARA_ENABLED)
 
-#    include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Chiara/Chiara.hpp>
 
-#    include <algorithm>
-#    include <bit>
-#    include <chrono>
-#    include <cstring>
-#    include <fstream>
-#    include <mutex>
-#    include <string>
-#    include <thread>
-#    include <unordered_set>
+#include <algorithm>
+#include <bit>
+#include <chrono>
+#include <cstring>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
 
-#    if defined(_WIN32)
-#        ifndef WIN32_LEAN_AND_MEAN
-#            define WIN32_LEAN_AND_MEAN
-#        endif
-#        ifndef NOMINMAX
-#            define NOMINMAX
-#        endif
-#        include <windows.h>
-#    elif defined(__linux__)
-#        include <pthread.h>
-#        include <sys/syscall.h>
-#        include <unistd.h>
-#    endif
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <pthread.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
-#    if (defined(__x86_64__) || defined(__i386__)) && !defined(_MSC_VER)
-#        include <cpuid.h>
-#    endif
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(_MSC_VER)
+#include <cpuid.h>
+#endif
 
 namespace Assisi::Chiara
 {
@@ -58,14 +58,14 @@ namespace
 // feature for a shutdown crash.
 
 std::atomic<Detail::ThreadBuffer *> g_threadListHead{nullptr};
-std::atomic<std::uint32_t>          g_threadCount{0};
-std::atomic<std::uint64_t>          g_frameIndex{0};
-std::atomic<std::uint64_t>          g_nextFlowId{1};
-std::atomic<std::uint64_t>          g_nextAsyncId{1};
+std::atomic<std::uint32_t> g_threadCount{0};
+std::atomic<std::uint64_t> g_frameIndex{0};
+std::atomic<std::uint64_t> g_nextFlowId{1};
+std::atomic<std::uint64_t> g_nextAsyncId{1};
 
 std::mutex g_initMutex;
-bool g_initialized    = false;
-Config g_config         = {};
+bool g_initialized = false;
+Config g_config = {};
 double g_ticksPerSecond = 1'000'000'000.0;
 
 // Main-thread only: when the last ~1 Hz clock snapshot went out.
@@ -87,18 +87,18 @@ std::unordered_set<std::string> &InternTable()
 
 [[nodiscard]] std::uint64_t CurrentOsThreadId() noexcept
 {
-#    if defined(_WIN32)
+#if defined(_WIN32)
     return static_cast<std::uint64_t>(::GetCurrentThreadId());
-#    elif defined(__linux__)
+#elif defined(__linux__)
     return static_cast<std::uint64_t>(::syscall(SYS_gettid));
-#    else
+#else
     return 0;
-#    endif
+#endif
 }
 
 void SetOsThreadName(const char *name) noexcept
 {
-#    if defined(_WIN32)
+#if defined(_WIN32)
     const int32_t wideLength = ::MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
     if (wideLength <= 0)
     {
@@ -107,15 +107,15 @@ void SetOsThreadName(const char *name) noexcept
     std::wstring wide(static_cast<std::size_t>(wideLength), L'\0');
     ::MultiByteToWideChar(CP_UTF8, 0, name, -1, wide.data(), wideLength);
     (void)::SetThreadDescription(::GetCurrentThread(), wide.c_str());
-#    elif defined(__linux__)
+#elif defined(__linux__)
     // pthread caps the name at 16 bytes including the terminator.
     char truncated[16];
     std::strncpy(truncated, name, sizeof(truncated) - 1);
     truncated[sizeof(truncated) - 1] = '\0';
     (void)::pthread_setname_np(::pthread_self(), truncated);
-#    else
+#else
     (void)name;
-#    endif
+#endif
 }
 
 /// @brief Whether the raw hardware counter can be trusted for a trace.
@@ -128,9 +128,9 @@ void SetOsThreadName(const char *name) noexcept
 /// call per event but is always right.
 [[nodiscard]] bool HardwareClockIsTrustworthy()
 {
-#    if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
     bool invariant = false;
-#        if defined(_MSC_VER)
+#if defined(_MSC_VER)
     int registers[4] = {0, 0, 0, 0};
     __cpuid(registers, static_cast<int>(0x80000000));
     if (static_cast<unsigned int>(registers[0]) >= 0x80000007u)
@@ -138,7 +138,7 @@ void SetOsThreadName(const char *name) noexcept
         __cpuid(registers, static_cast<int>(0x80000007));
         invariant = (static_cast<unsigned int>(registers[3]) & (1u << 8u)) != 0u;
     }
-#        else
+#else
     unsigned int eax = 0;
     unsigned int ebx = 0;
     unsigned int ecx = 0;
@@ -147,19 +147,19 @@ void SetOsThreadName(const char *name) noexcept
     {
         invariant = (edx & (1u << 8u)) != 0u;
     }
-#        endif
+#endif
     if (!invariant)
     {
         return false;
     }
-#    elif defined(__aarch64__)
+#elif defined(__aarch64__)
     // CNTVCT_EL0 is architecturally a fixed-frequency system counter; its
     // frequency register can lie, which is why we calibrate rather than read it.
-#    else
+#else
     return false;
-#    endif
+#endif
 
-#    if defined(__linux__)
+#if defined(__linux__)
     // The kernel's verdict overrides ours: if it demoted the clocksource (bad
     // TSC sync, a VM that cannot guarantee it), so do we.
     std::ifstream source("/sys/devices/system/clocksource/clocksource0/current_clocksource");
@@ -169,27 +169,27 @@ void SetOsThreadName(const char *name) noexcept
         source >> selected;
         return selected == "tsc" || selected == "arch_sys_counter";
     }
-#    endif
+#endif
     return true;
 }
 
 [[nodiscard]] std::uint64_t ReadHardwareTicks() noexcept
 {
-#    if defined(__x86_64__) || defined(__i386__)
-#        if defined(_MSC_VER)
+#if defined(__x86_64__) || defined(__i386__)
+#if defined(_MSC_VER)
     return __rdtsc();
-#        else
+#else
     return __builtin_ia32_rdtsc();
-#        endif
-#    elif defined(_M_X64) || defined(_M_IX86)
+#endif
+#elif defined(_M_X64) || defined(_M_IX86)
     return __rdtsc();
-#    elif defined(__aarch64__)
+#elif defined(__aarch64__)
     std::uint64_t counter = 0;
     __asm__ volatile ("mrs %0, cntvct_el0" : "=r" (counter));
     return counter;
-#    else
+#else
     return Detail::ReadFallbackTicks();
-#    endif
+#endif
 }
 
 /// @brief Measures the hardware counter against the reference clock.
@@ -203,13 +203,13 @@ void SetOsThreadName(const char *name) noexcept
 {
     constexpr auto kWindow = std::chrono::milliseconds(2);
 
-    const std::uint64_t startNs    = Detail::ReadFallbackTicks();
+    const std::uint64_t startNs = Detail::ReadFallbackTicks();
     const std::uint64_t startTicks = ReadHardwareTicks();
     std::this_thread::sleep_for(kWindow);
     const std::uint64_t endTicks = ReadHardwareTicks();
-    const std::uint64_t endNs    = Detail::ReadFallbackTicks();
+    const std::uint64_t endNs = Detail::ReadFallbackTicks();
 
-    const std::uint64_t elapsedNs    = endNs - startNs;
+    const std::uint64_t elapsedNs = endNs - startNs;
     const std::uint64_t elapsedTicks = endTicks - startTicks;
     if (elapsedNs == 0 || elapsedTicks == 0)
     {
@@ -221,7 +221,7 @@ void SetOsThreadName(const char *name) noexcept
 [[nodiscard]] std::uint64_t CapacityFromBytes(std::uint32_t bytes)
 {
     std::uint64_t events = bytes / sizeof(Event);
-    events               = std::max<std::uint64_t>(events, 64u);
+    events = std::max<std::uint64_t>(events, 64u);
     return std::bit_floor(events);
 }
 
@@ -232,7 +232,7 @@ namespace Detail
 
 std::uint64_t ReadFallbackTicks() noexcept
 {
-#    if defined(_WIN32)
+#if defined(_WIN32)
     static const std::uint64_t frequency = []
                                            {
                                                LARGE_INTEGER value{};
@@ -244,14 +244,14 @@ std::uint64_t ReadFallbackTicks() noexcept
     const std::uint64_t ticks = static_cast<std::uint64_t>(counter.QuadPart);
     // Split to keep the nanosecond scaling from overflowing on a long uptime.
     return (ticks / frequency) * 1'000'000'000ull + ((ticks % frequency) * 1'000'000'000ull) / frequency;
-#    elif defined(__linux__)
+#elif defined(__linux__)
     timespec now{};
     ::clock_gettime(CLOCK_MONOTONIC_RAW, &now);
     return static_cast<std::uint64_t>(now.tv_sec) * 1'000'000'000ull + static_cast<std::uint64_t>(now.tv_nsec);
-#    else
+#else
     const auto since = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(since).count());
-#    endif
+#endif
 }
 
 bool ThreadBuffer::TrySnapshotOpenScopes(std::vector<OpenScope> &out) const
@@ -263,14 +263,14 @@ bool ThreadBuffer::TrySnapshotOpenScopes(std::vector<OpenScope> &out) const
     }
 
     const std::uint32_t rawDepth = shadowDepth.load(std::memory_order_acquire);
-    const std::uint32_t depth    = std::min(rawDepth, kMaxShadowDepth);
+    const std::uint32_t depth = std::min(rawDepth, kMaxShadowDepth);
 
     out.clear();
     out.reserve(depth);
     for (std::uint32_t index = 0; index < depth; ++index)
     {
         OpenScope scope;
-        scope.name       = shadowNames[index].load(std::memory_order_acquire);
+        scope.name = shadowNames[index].load(std::memory_order_acquire);
         scope.beginTicks = shadowBegins[index].load(std::memory_order_acquire);
         out.push_back(scope);
     }
@@ -281,17 +281,14 @@ bool ThreadBuffer::TrySnapshotOpenScopes(std::vector<OpenScope> &out) const
     return shadowGeneration.load(std::memory_order_acquire) == before;
 }
 
-ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept
+/// @brief Allocates a buffer, names it, and publishes it to the reader's list.
+///
+/// Shared by the two things that need one: a thread registering itself, and a
+/// track, which is a buffer no thread owns. Everything that differs between them
+/// is decided by the caller — a track passes @p ownedByThread false, so it takes
+/// no OS thread id and can never be mistaken for the main thread.
+ThreadBuffer *CreateBuffer(const char *name, bool ownedByThread) noexcept
 {
-    if (t_buffer != nullptr)
-    {
-        if (name != nullptr)
-        {
-            t_buffer->name.store(name, std::memory_order_release);
-        }
-        return t_buffer;
-    }
-
     {
         const std::lock_guard<std::mutex> lock(g_initMutex);
         if (!g_initialized)
@@ -300,8 +297,12 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept
         }
     }
 
-    const std::uint32_t index  = g_threadCount.fetch_add(1, std::memory_order_relaxed);
-    const bool isMain = index == 0;
+    const std::uint32_t index = g_threadCount.fetch_add(1, std::memory_order_relaxed);
+    // Index zero is the thread that called Initialize. A track cannot be it —
+    // Initialize registers the main thread before anything can ask for a track —
+    // but saying so here means a reordering cannot quietly make a GPU row sort
+    // itself to the top as though it were the main thread.
+    const bool isMain = ownedByThread && index == 0;
 
     auto *buffer = new (std::nothrow) ThreadBuffer(); // NOLINT(cppcoreguidelines-owning-memory) — never freed
     if (buffer == nullptr)
@@ -318,20 +319,38 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept
     }
     buffer->ring.Reset(buffer->storage, capacity);
 
-    buffer->osThreadId        = CurrentOsThreadId();
+    buffer->osThreadId = ownedByThread ? CurrentOsThreadId() : 0;
     buffer->registrationIndex = index;
-    buffer->isMain            = isMain;
+    buffer->isMain = isMain;
     buffer->name.store(name != nullptr ? name : InternString("thread-" + std::to_string(index)),
                        std::memory_order_relaxed);
 
     // Publish last: `next` and every field above must be visible to a reader
     // that acquires the head.
     buffer->next = g_threadListHead.load(std::memory_order_acquire);
-    while (!g_threadListHead.compare_exchange_weak(
-               buffer->next, buffer, std::memory_order_release, std::memory_order_acquire))
+    while (!g_threadListHead.compare_exchange_weak(buffer->next, buffer, std::memory_order_release,
+                                                   std::memory_order_acquire))
     {
     }
+    return buffer;
+}
 
+ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept
+{
+    if (t_buffer != nullptr)
+    {
+        if (name != nullptr)
+        {
+            t_buffer->name.store(name, std::memory_order_release);
+        }
+        return t_buffer;
+    }
+
+    ThreadBuffer *buffer = CreateBuffer(name, /*ownedByThread=*/ true);
+    if (buffer == nullptr)
+    {
+        return nullptr;
+    }
     t_buffer = buffer;
     return buffer;
 }
@@ -350,10 +369,10 @@ void Initialize(const Config &config)
             return;
         }
 
-        g_config                   = config;
+        g_config = config;
         Detail::g_useHardwareTicks = HardwareClockIsTrustworthy();
-        g_ticksPerSecond           = Detail::g_useHardwareTicks ? CalibrateTicksPerSecond() : 1'000'000'000.0;
-        g_initialized              = true;
+        g_ticksPerSecond = Detail::g_useHardwareTicks ? CalibrateTicksPerSecond() : 1'000'000'000.0;
+        g_initialized = true;
     }
 
     // Claim index 0 *before* recording opens. Registration only needs
@@ -474,13 +493,49 @@ void EndAsync(const char *name, std::uint64_t asyncId)
     Detail::EmitRecord(EventType::AsyncEnd, name, asyncId);
 }
 
+// --- Tracks -----------------------------------------------------------------
+
+Track *RegisterTrack(const char *name)
+{
+    return Detail::CreateBuffer(name, /*ownedByThread=*/ false);
+}
+
+std::uint64_t TrackLayout::GapTicks() noexcept
+{
+    // A trace rounds a slice's begin and its duration to the nanosecond
+    // separately, so a reported end can miss the true one by half a nanosecond
+    // each way, and the next slice's reported begin by another half. Two
+    // nanoseconds clears all three.
+    constexpr double kGapSeconds = 2e-9;
+    const auto ticks = static_cast<std::uint64_t>(TicksPerSecond() * kGapSeconds);
+    // A clock too coarse for two nanoseconds still has to separate two slices,
+    // and one tick is the smallest distance it can express.
+    return std::max<std::uint64_t>(ticks, 1);
+}
+
+void EmitScopeOn(Track *track, const char *name, std::uint64_t beginTicks, std::uint64_t durationTicks) noexcept
+{
+    if (track == nullptr || !IsRecording())
+    {
+        return;
+    }
+    // The one emit that does not read the clock. A Scope record is already
+    // (begin, duration), so measuring elsewhere costs a push and no new format.
+    Event record;
+    record.timestampTicks = beginTicks;
+    record.payload = durationTicks;
+    record.name = name;
+    record.type = EventType::Scope;
+    track->ring.Push(record);
+}
+
 // --- Read side --------------------------------------------------------------
 
 CaptureStats GetCaptureStats()
 {
     CaptureStats stats;
     for (const Detail::ThreadBuffer *buffer = g_threadListHead.load(std::memory_order_acquire); buffer != nullptr;
-         buffer                             = buffer->next)
+         buffer = buffer->next)
     {
         const std::uint64_t cursor = buffer->ring.WriteCursor();
         stats.totalEventsWritten += cursor;
@@ -493,7 +548,7 @@ CaptureStats GetCaptureStats()
             // overwritten mid-read if this thread were descheduled long enough
             // for the producer to lap an entire ring. A wrong number on a debug
             // readout, not a wrong capture — the serializer pauses first.
-            const std::uint64_t begin  = buffer->ring.ReadableBegin(cursor);
+            const std::uint64_t begin = buffer->ring.ReadableBegin(cursor);
             const std::uint64_t oldest = buffer->ring.At(begin).timestampTicks;
             const std::uint64_t newest = buffer->ring.At(cursor - 1u).timestampTicks;
             if (newest > oldest)
@@ -509,18 +564,18 @@ std::vector<ThreadSnapshot> SnapshotThreads()
 {
     std::vector<ThreadSnapshot> snapshots;
     for (const Detail::ThreadBuffer *buffer = g_threadListHead.load(std::memory_order_acquire); buffer != nullptr;
-         buffer                             = buffer->next)
+         buffer = buffer->next)
     {
         ThreadSnapshot snapshot;
-        snapshot.name       = buffer->name.load(std::memory_order_acquire);
+        snapshot.name = buffer->name.load(std::memory_order_acquire);
         snapshot.osThreadId = buffer->osThreadId;
-        snapshot.ring       = &buffer->ring;
-        snapshot.isMain     = buffer->isMain;
+        snapshot.ring = &buffer->ring;
+        snapshot.isMain = buffer->isMain;
 
         const std::uint64_t cursor = buffer->ring.WriteCursor();
-        snapshot.beginIndex        = buffer->ring.ReadableBegin(cursor);
-        snapshot.endIndex          = cursor;
-        snapshot.lostEvents        = buffer->ring.LostEvents(cursor);
+        snapshot.beginIndex = buffer->ring.ReadableBegin(cursor);
+        snapshot.endIndex = cursor;
+        snapshot.lostEvents = buffer->ring.LostEvents(cursor);
 
         // Bounded retries: a thread churning scopes fast enough to lose eight
         // races in a row gets no open-scope synthesis rather than a torn one.

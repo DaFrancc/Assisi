@@ -54,28 +54,31 @@ glm::vec3 UpFor(const glm::vec3 &forward)
 }
 
 /// The view for one local light frustum, with the tile and biases filled in.
-ShadowView LocalShadowView(const glm::vec3 &position, const glm::vec3 &forward, float range, float fovDegrees,
-                           const ShadowViewRect &rect, std::uint32_t atlasResolution,
-                           const LocalShadowSettings &settings)
+///
+/// @p forward and @p fovDegrees are the caller's per-kind reading of the pose's
+/// aim — a spot's own cone, or the axis of one face of a point light's cube —
+/// which is why they are arguments rather than read from @p pose here.
+ShadowView LocalShadowView(const LocalShadowLightPose &pose, const glm::vec3 &forward, float fovDegrees,
+                           const ShadowAtlasTile &tile, const LocalShadowSettings &settings)
 {
-    const float safeRange = SafeRange(range);
+    const float safeRange = SafeRange(pose.range);
     const float nearPlane = std::max(safeRange * kLocalNearFraction, kLocalMinNear);
     const float fov = std::clamp(fovDegrees, kMinLocalFovDegrees, kMaxLocalFovDegrees);
     const float tanHalfFov = std::tan(glm::radians(fov) * 0.5f);
 
     ShadowView view;
     view.viewProjection = glm::perspective(glm::radians(fov), 1.f, nearPlane, safeRange) *
-                          glm::lookAt(position, position + forward, UpFor(forward));
-    view.rect = rect;
-    view.targetResolution = atlasResolution;
+                          glm::lookAt(pose.position, pose.position + forward, UpFor(forward));
+    view.rect = tile.rect;
+    view.targetResolution = tile.atlasResolution;
     // Every tile shares slice zero: the atlas is one texture, and the slice lane
     // exists for the cascade array that is not.
     view.arraySlice = 0;
     // Both are coefficients the shader scales by the receiver's own distance
     // from the light, not figures fixed at the far plane. See their declarations.
-    view.depthBias = LocalDepthBiasNdcTimesDistance(rect.width, nearPlane, safeRange, tanHalfFov, settings);
-    view.normalOffset = LocalNormalOffsetPerDistance(rect.width, tanHalfFov, settings);
-    view.filterTapStepUv = LocalFilterTapStepUv(atlasResolution);
+    view.depthBias = LocalDepthBiasNdcTimesDistance(tile.rect.width, nearPlane, safeRange, tanHalfFov, settings);
+    view.normalOffset = LocalNormalOffsetPerDistance(tile.rect.width, tanHalfFov, settings);
+    view.filterTapStepUv = LocalFilterTapStepUv(tile.atlasResolution);
     view.clampUv = ShadowViewClampUv(view, settings.filter);
     return view;
 }
@@ -96,8 +99,8 @@ nvrhi::Viewport ShadowViewViewport(const ShadowView &view)
 {
     const auto x = static_cast<float>(view.rect.x);
     const auto y = static_cast<float>(view.rect.y);
-    return nvrhi::Viewport(x, x + static_cast<float>(view.rect.width), y, y + static_cast<float>(view.rect.height),
-                           0.f, 1.f);
+    return nvrhi::Viewport(x, x + static_cast<float>(view.rect.width), y, y + static_cast<float>(view.rect.height), 0.f,
+                           1.f);
 }
 
 ShadowViewGpu PackShadowView(const ShadowView &view)
@@ -105,8 +108,8 @@ ShadowViewGpu PackShadowView(const ShadowView &view)
     ShadowViewGpu packed;
     packed.viewProjection = view.viewProjection;
     packed.uvScaleOffset = ShadowViewUvScaleOffset(view);
-    packed.params = glm::vec4(view.depthBias, view.normalOffset, view.filterTapStepUv,
-                              static_cast<float>(view.arraySlice));
+    packed.params =
+        glm::vec4(view.depthBias, view.normalOffset, view.filterTapStepUv, static_cast<float>(view.arraySlice));
     packed.clampUv = view.clampUv;
     return packed;
 }
@@ -136,12 +139,18 @@ glm::vec3 PointLightFaceDirection(std::uint32_t face)
 {
     switch (face)
     {
-    case kPointLightFacePositiveX: return glm::vec3(1.f, 0.f, 0.f);
-    case kPointLightFaceNegativeX: return glm::vec3(-1.f, 0.f, 0.f);
-    case kPointLightFacePositiveY: return glm::vec3(0.f, 1.f, 0.f);
-    case kPointLightFaceNegativeY: return glm::vec3(0.f, -1.f, 0.f);
-    case kPointLightFacePositiveZ: return glm::vec3(0.f, 0.f, 1.f);
-    default: return glm::vec3(0.f, 0.f, -1.f);
+    case kPointLightFacePositiveX:
+        return glm::vec3(1.f, 0.f, 0.f);
+    case kPointLightFaceNegativeX:
+        return glm::vec3(-1.f, 0.f, 0.f);
+    case kPointLightFacePositiveY:
+        return glm::vec3(0.f, 1.f, 0.f);
+    case kPointLightFaceNegativeY:
+        return glm::vec3(0.f, -1.f, 0.f);
+    case kPointLightFacePositiveZ:
+        return glm::vec3(0.f, 0.f, 1.f);
+    default:
+        return glm::vec3(0.f, 0.f, -1.f);
     }
 }
 
@@ -175,8 +184,8 @@ float LocalTexelsPerUnitDistance(std::uint32_t tileResolution, float tanHalfFov)
     return 2.f * tanHalfFov / static_cast<float>(tileResolution);
 }
 
-float LocalDepthBiasNdcTimesDistance(std::uint32_t tileResolution, float nearPlane, float farPlane,
-                                     float tanHalfFov, const LocalShadowSettings &settings)
+float LocalDepthBiasNdcTimesDistance(std::uint32_t tileResolution, float nearPlane, float farPlane, float tanHalfFov,
+                                     const LocalShadowSettings &settings)
 {
     const LocalShadowSettings safe = Sanitized(settings);
     const float perDistance = LocalTexelsPerUnitDistance(tileResolution, tanHalfFov);
@@ -191,8 +200,7 @@ float LocalDepthBiasNdcTimesDistance(std::uint32_t tileResolution, float nearPla
     return safe.depthBiasTexels * perDistance * nearPlane * farPlane / (farPlane - nearPlane);
 }
 
-float LocalNormalOffsetPerDistance(std::uint32_t tileResolution, float tanHalfFov,
-                                   const LocalShadowSettings &settings)
+float LocalNormalOffsetPerDistance(std::uint32_t tileResolution, float tanHalfFov, const LocalShadowSettings &settings)
 {
     const LocalShadowSettings safe = Sanitized(settings);
     return safe.normalOffsetTexels * LocalTexelsPerUnitDistance(tileResolution, tanHalfFov);
@@ -244,28 +252,27 @@ glm::vec4 ShadowViewClampUv(const ShadowView &view, ShadowFilter filter)
     return glm::vec4(minUv + inset, maxUv - inset);
 }
 
-ShadowView SpotShadowView(const glm::vec3 &position, const glm::vec3 &direction, float range,
-                          float outerAngleDegrees, const ShadowViewRect &rect, std::uint32_t atlasResolution,
+ShadowView SpotShadowView(const LocalShadowLightPose &pose, const ShadowAtlasTile &tile,
                           const LocalShadowSettings &settings)
 {
     // The cone's outer angle is a half-angle, so the full field of view is twice
     // it — widened for the same reason a point light's faces are, so the filter
     // at the cone's rim reads depth this light recorded rather than the tile
     // beside it.
-    const float outer = std::isfinite(outerAngleDegrees) ? std::clamp(outerAngleDegrees, 0.f, 89.f) : 45.f;
+    const float outer = std::isfinite(pose.outerAngleDegrees)
+                            ? std::clamp(pose.outerAngleDegrees, 0.f, Math::kMaxConeHalfAngleDegrees)
+                            : Math::kDefaultSpotOuterAngleDegrees;
     const float fov = outer * 2.f + kPointLightFaceOverlapDegrees;
 
-    const float lengthSq = glm::dot(direction, direction);
-    const glm::vec3 forward = lengthSq > 0.f ? direction / std::sqrt(lengthSq) : glm::vec3(0.f, -1.f, 0.f);
-    return LocalShadowView(position, forward, range, fov, rect, atlasResolution, settings);
+    const float lengthSq = glm::dot(pose.direction, pose.direction);
+    const glm::vec3 forward = lengthSq > 0.f ? pose.direction / std::sqrt(lengthSq) : glm::vec3(0.f, -1.f, 0.f);
+    return LocalShadowView(pose, forward, fov, tile, settings);
 }
 
-ShadowView PointFaceShadowView(const glm::vec3 &position, float range, std::uint32_t face,
-                               const ShadowViewRect &rect, std::uint32_t atlasResolution,
+ShadowView PointFaceShadowView(const LocalShadowLightPose &pose, std::uint32_t face, const ShadowAtlasTile &tile,
                                const LocalShadowSettings &settings)
 {
-    return LocalShadowView(position, PointLightFaceDirection(face), range,
-                           90.f + kPointLightFaceOverlapDegrees, rect, atlasResolution, settings);
+    return LocalShadowView(pose, PointLightFaceDirection(face), 90.f + kPointLightFaceOverlapDegrees, tile, settings);
 }
 
 } // namespace Assisi::Render

@@ -37,10 +37,10 @@ struct Scene
     // Scenes delete the same pools (double free); a move would leave the
     // moved-from Registry's pool back-registrations dangling. No caller copies
     // or moves a Scene — SceneRegistry owns them through std::unique_ptr.
-    Scene(const Scene &)            = delete;
+    Scene(const Scene &) = delete;
     Scene &operator=(const Scene &) = delete;
-    Scene(Scene &&)                 = delete;
-    Scene &operator=(Scene &&)      = delete;
+    Scene(Scene &&) = delete;
+    Scene &operator=(Scene &&) = delete;
 
     /// @brief Allocates a new entity.
     Entity Create() { return _registry.Create(); }
@@ -215,6 +215,21 @@ struct Scene
         return ChangeTick<T>(entity) > sinceTick;
     }
 
+    /// @brief Appends every entity whose T was written after `sinceTick`.
+    ///
+    /// What a system asks when it must react to a change it cannot predict the
+    /// location of — the shadow atlas's cache invalidation is the case: it needs
+    /// the entities that moved, and asking Changed<Transform> of every caster
+    /// would cost the whole scene on a frame where nothing moved at all.
+    ///
+    /// @p out is appended to rather than cleared, so one set may collect several
+    /// component types' changes.
+    template <typename T> void ChangedSince(uint64_t sinceTick, std::vector<Entity> &out) const
+    {
+        if (const SparseSet<T> *pool = GetPool<T>())
+            pool->ChangedSince(sinceTick, out);
+    }
+
     /// @brief How many entities in this scene carry the component with @p id.
     ///
     /// By ComponentId rather than static type so a caller holding only a runtime
@@ -315,7 +330,8 @@ struct Scene
     /// pool (an Es) mid-loop is safe: it is re-probed each step through its stable
     /// pool address, nothing cached points into it, so a change there cannot
     /// dangle the iterator (and the debug check does not count excluded pools).
-    template <typename... Ts, typename... Es> QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...> without)
+    template <typename... Ts, typename... Es>
+    QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...> without)
     {
         return MakeView<RefAccess, Ts...>(without, NoChangeTick{});
     }
@@ -397,12 +413,12 @@ private:
 
     struct PoolStorage
     {
-        void *pool                                          = nullptr;
-        void (*remove)(void *pool, Entity entity)           = nullptr;
-        void (*clear)(void *pool)                           = nullptr;
-        void (*destroy)(void *pool)                         = nullptr;
+        void *pool = nullptr;
+        void (*remove)(void *pool, Entity entity) = nullptr;
+        void (*clear)(void *pool) = nullptr;
+        void (*destroy)(void *pool) = nullptr;
         void (*stamp)(void *pool, Entity entity, uint64_t tick) = nullptr; // null unless the pool is tracked
-        std::size_t (*size)(const void *pool)               = nullptr;
+        std::size_t (*size)(const void *pool) = nullptr;
         uint64_t (*changeTick)(const void *pool, Entity entity) = nullptr; // ditto; reads what stamp wrote
     };
 
@@ -472,7 +488,7 @@ private:
             if (meta && meta->tracksChanges)
             {
                 pool->SetTracksChanges(true);
-                slot.stamp      = &StampFn<T>;
+                slot.stamp = &StampFn<T>;
                 slot.changeTick = &ChangeTickFn<T>;
             }
         }
