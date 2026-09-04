@@ -37,7 +37,7 @@
 #include <vector>
 
 #if defined(_MSC_VER)
-#    include <intrin.h>
+#include <intrin.h>
 #endif
 
 namespace Assisi::Chiara
@@ -47,7 +47,7 @@ namespace Assisi::Chiara
 /// heavy 144 fps frame on the main thread and hours on a worker.
 struct Config
 {
-    std::uint32_t mainThreadBufferBytes  = 32u << 20;
+    std::uint32_t mainThreadBufferBytes = 32u << 20;
     std::uint32_t otherThreadBufferBytes = 2u << 20;
 };
 
@@ -56,23 +56,23 @@ struct Config
 struct CaptureStats
 {
     std::uint64_t totalEventsWritten = 0;
-    std::uint64_t bufferWrapCount    = 0;   ///< Records lost to overwrite, all rings.
-    std::uint32_t threadCount        = 0;
-    double mainWindowSeconds  = 0.0;        ///< Time span the main ring currently covers.
+    std::uint64_t bufferWrapCount = 0; ///< Records lost to overwrite, all rings.
+    std::uint32_t threadCount = 0;
+    double mainWindowSeconds = 0.0; ///< Time span the main ring currently covers.
 };
 
 /// @brief One thread's readable window, taken under a paused capture. The index
 /// range is already narrowed to what is safe to read (Event.hpp, EventRing).
 struct ThreadSnapshot
 {
-    const char *name       = nullptr;
+    const char *name = nullptr;
     std::uint64_t osThreadId = 0;
-    const Detail::EventRing *ring      = nullptr;
-    std::uint64_t beginIndex = 0;           ///< Inclusive.
-    std::uint64_t endIndex   = 0;           ///< Exclusive.
+    const Detail::EventRing *ring = nullptr;
+    std::uint64_t beginIndex = 0; ///< Inclusive.
+    std::uint64_t endIndex = 0;   ///< Exclusive.
     std::uint64_t lostEvents = 0;
-    bool isMain     = false;
-    std::vector<OpenScope>  openScopes;     ///< Still open at snapshot time (§4, the hang case).
+    bool isMain = false;
+    std::vector<OpenScope> openScopes; ///< Still open at snapshot time (§4, the hang case).
 };
 
 #if defined(ASSISI_CHIARA_ENABLED)
@@ -115,7 +115,7 @@ struct ThreadBuffer
     // version is invisible to the one tool that can check it.
     std::atomic<std::uint32_t> shadowGeneration{0};
     std::atomic<std::uint32_t> shadowDepth{0};
-    std::atomic<const char *>  shadowNames[kMaxShadowDepth]{};
+    std::atomic<const char *> shadowNames[kMaxShadowDepth]{};
     std::atomic<std::uint64_t> shadowBegins[kMaxShadowDepth]{};
 
     // Atomic because a thread may name itself *after* it has already emitted
@@ -123,10 +123,10 @@ struct ThreadBuffer
     // could be reading the list at that moment.
     std::atomic<const char *> name{nullptr};
 
-    std::uint64_t osThreadId        = 0;
+    std::uint64_t osThreadId = 0;
     std::uint32_t registrationIndex = 0;
-    bool isMain            = false;
-    ThreadBuffer *next              = nullptr;
+    bool isMain = false;
+    ThreadBuffer *next = nullptr;
 
     /// @brief Records a scope as open. Owner thread only.
     void PushOpenScope(const char *scopeName, std::uint64_t beginTicks) noexcept
@@ -170,6 +170,13 @@ struct ThreadBuffer
 
 extern thread_local ThreadBuffer *t_buffer;
 
+/// @brief Allocates a buffer and publishes it to the reader's list.
+///
+/// @p ownedByThread false makes a track: a buffer no thread owns, with no OS
+/// thread id, which can never be taken for the main thread however early it is
+/// created.
+ThreadBuffer *CreateBuffer(const char *name, bool ownedByThread) noexcept;
+
 /// @brief Allocates and registers a buffer for the calling thread. Slow path,
 /// taken once per thread; returns nullptr before Initialize.
 ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept;
@@ -194,11 +201,11 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept;
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
     if (Detail::g_useHardwareTicks)
     {
-#    if defined(_MSC_VER)
+#if defined(_MSC_VER)
         return __rdtsc();
-#    else
+#else
         return __builtin_ia32_rdtsc();
-#    endif
+#endif
     }
 #elif defined(__aarch64__)
     if (Detail::g_useHardwareTicks)
@@ -236,9 +243,9 @@ inline void EmitRecord(EventType type, const char *name, std::uint64_t payload) 
 
     Event record;
     record.timestampTicks = ReadTicks();
-    record.payload        = payload;
-    record.name           = name;
-    record.type           = type;
+    record.payload = payload;
+    record.name = name;
+    record.type = type;
     buffer->ring.Push(record);
 }
 
@@ -329,6 +336,43 @@ inline void EmitArgStringInterned(const char *key, const char *value) noexcept
 
 void EndAsync(const char *name, std::uint64_t asyncId);
 
+// --- Tracks -----------------------------------------------------------------
+
+/// @brief A row in the capture that is not a thread.
+///
+/// For work this process can time but was never on a thread to hold a scope
+/// around: the GPU's passes are the case. Their durations come back from the
+/// device frames after they ran, so at the moment they executed there was no
+/// call stack anywhere to open a ScopeTimer on, and the ordinary macros cannot
+/// express them at all.
+///
+/// A track is a ThreadBuffer that no thread owns, which is why the type is
+/// opaque here: everything about it that matters is that it serializes as its
+/// own row beside the real threads.
+using Track = Detail::ThreadBuffer;
+
+/// @brief Creates a track named @p name, or null before Initialize.
+///
+/// Slow path — call once and keep the pointer. Never freed, on the same terms as
+/// a thread's buffer.
+///
+/// @warning One writer. A track's ring is single-producer like every other, and
+/// nothing here makes it otherwise; two threads emitting into one track is a
+/// race. Register a track per producer if you need several.
+[[nodiscard]] Track *RegisterTrack(const char *name);
+
+/// @brief Records a slice on @p track that was measured somewhere else.
+///
+/// The times are the caller's, in the capture clock's units — @ref ReadTicks and
+/// @ref TicksPerSecond. Nothing here stamps a clock, which is the entire point:
+/// a GPU pass's duration is known only after the fact, and a scope timed at the
+/// moment it is reported would describe the report rather than the work.
+///
+/// Placing the slice truthfully is the caller's problem. A caller that knows
+/// only durations should say so in the track's name rather than let a reader
+/// take the offsets for measurements.
+void EmitScopeOn(Track *track, const char *name, std::uint64_t beginTicks, std::uint64_t durationTicks) noexcept;
+
 // --- Read side --------------------------------------------------------------
 
 [[nodiscard]] CaptureStats GetCaptureStats();
@@ -358,8 +402,8 @@ public:
         {
             return;
         }
-        _buffer     = buffer;
-        _name       = name;
+        _buffer = buffer;
+        _name = name;
         _beginTicks = ReadTicks();
         _buffer->PushOpenScope(name, _beginTicks);
     }
@@ -384,20 +428,20 @@ public:
 
         Event record;
         record.timestampTicks = _beginTicks;
-        record.payload        = endTicks - _beginTicks;
-        record.name           = _name;
-        record.type           = EventType::Scope;
+        record.payload = endTicks - _beginTicks;
+        record.name = _name;
+        record.type = EventType::Scope;
         _buffer->ring.Push(record);
     }
 
-    ScopeTimer(const ScopeTimer &)            = delete;
+    ScopeTimer(const ScopeTimer &) = delete;
     ScopeTimer &operator=(const ScopeTimer &) = delete;
-    ScopeTimer(ScopeTimer &&)                 = delete;
-    ScopeTimer &operator=(ScopeTimer &&)      = delete;
+    ScopeTimer(ScopeTimer &&) = delete;
+    ScopeTimer &operator=(ScopeTimer &&) = delete;
 
 private:
-    Detail::ThreadBuffer *_buffer     = nullptr;
-    const char *_name       = nullptr;
+    Detail::ThreadBuffer *_buffer = nullptr;
+    const char *_name = nullptr;
     std::uint64_t _beginTicks = 0;
 };
 
@@ -410,10 +454,10 @@ public:
     explicit InitGuard(const Config &config = {}) { Initialize(config); }
     ~InitGuard() { Shutdown(); }
 
-    InitGuard(const InitGuard &)            = delete;
+    InitGuard(const InitGuard &) = delete;
     InitGuard &operator=(const InitGuard &) = delete;
-    InitGuard(InitGuard &&)                 = delete;
-    InitGuard &operator=(InitGuard &&)      = delete;
+    InitGuard(InitGuard &&) = delete;
+    InitGuard &operator=(InitGuard &&) = delete;
 };
 
 #else // !ASSISI_CHIARA_ENABLED
@@ -421,34 +465,100 @@ public:
 // Inline no-ops so glue code compiles unchanged in a default build. Nothing
 // here emits code; the .cpp is excluded from the build entirely.
 
-inline void Initialize(const Config & = {}) {}
-inline void Shutdown() {}
-inline void SetRecording(bool) {}
-inline void RegisterCurrentThread(const char *) {}
+inline void Initialize(const Config & = {})
+{
+}
+inline void Shutdown()
+{
+}
+inline void SetRecording(bool)
+{
+}
+inline void RegisterCurrentThread(const char *)
+{
+}
 
-[[nodiscard]] inline bool          IsRecording() noexcept { return false; }
-[[nodiscard]] inline std::uint64_t ReadTicks() noexcept { return 0; }
-[[nodiscard]] inline double        TicksPerSecond() { return 1.0; }
+[[nodiscard]] inline bool IsRecording() noexcept
+{
+    return false;
+}
+[[nodiscard]] inline std::uint64_t ReadTicks() noexcept
+{
+    return 0;
+}
+[[nodiscard]] inline double TicksPerSecond()
+{
+    return 1.0;
+}
 
-inline std::uint64_t               MarkFrame() { return 0; }
-[[nodiscard]] inline std::uint64_t CurrentFrame() { return 0; }
-inline void                        EmitClockSnapshot() {}
+inline std::uint64_t MarkFrame()
+{
+    return 0;
+}
+[[nodiscard]] inline std::uint64_t CurrentFrame()
+{
+    return 0;
+}
+inline void EmitClockSnapshot()
+{
+}
 
-[[nodiscard]] inline const char *InternString(std::string_view) { return ""; }
-[[nodiscard]] inline std::uint64_t NewFlowId() { return 1; }
+[[nodiscard]] inline const char *InternString(std::string_view)
+{
+    return "";
+}
+[[nodiscard]] inline std::uint64_t NewFlowId()
+{
+    return 1;
+}
 
-inline void EmitCounter(const char *, double) noexcept {}
-inline void EmitFlowBegin(const char *, std::uint64_t) noexcept {}
-inline void EmitFlowEnd(const char *, std::uint64_t) noexcept {}
-inline void EmitArgU64(const char *, std::uint64_t) noexcept {}
-inline void EmitArgString(const char *, std::string_view) {}
-inline void EmitArgStringInterned(const char *, const char *) noexcept {}
+inline void EmitCounter(const char *, double) noexcept
+{
+}
+inline void EmitFlowBegin(const char *, std::uint64_t) noexcept
+{
+}
+inline void EmitFlowEnd(const char *, std::uint64_t) noexcept
+{
+}
+inline void EmitArgU64(const char *, std::uint64_t) noexcept
+{
+}
+inline void EmitArgString(const char *, std::string_view)
+{
+}
+inline void EmitArgStringInterned(const char *, const char *) noexcept
+{
+}
 
-[[nodiscard]] inline std::uint64_t BeginAsync(const char *) { return 0; }
-inline void                        EndAsync(const char *, std::uint64_t) {}
+[[nodiscard]] inline std::uint64_t BeginAsync(const char *)
+{
+    return 0;
+}
+inline void EndAsync(const char *, std::uint64_t)
+{
+}
 
-[[nodiscard]] inline CaptureStats                GetCaptureStats() { return {}; }
-[[nodiscard]] inline std::vector<ThreadSnapshot> SnapshotThreads() { return {}; }
+/// Opaque and never dereferenced by a caller, so a build with no Chiara in it
+/// needs no definition — only a type to hold a null.
+struct Track;
+
+[[nodiscard]] inline Track *RegisterTrack(const char *)
+{
+    return nullptr;
+}
+inline void EmitScopeOn(Track *, const char *, std::uint64_t, std::uint64_t) noexcept
+{
+}
+
+[[nodiscard]] inline CaptureStats GetCaptureStats()
+{
+    return {};
+}
+[[nodiscard]] inline std::vector<ThreadSnapshot> SnapshotThreads()
+{
+    return {};
+}
 
 class ScopeTimer
 {
@@ -456,10 +566,10 @@ public:
     explicit ScopeTimer(const char *) noexcept {}
     ~ScopeTimer() = default;
 
-    ScopeTimer(const ScopeTimer &)            = delete;
+    ScopeTimer(const ScopeTimer &) = delete;
     ScopeTimer &operator=(const ScopeTimer &) = delete;
-    ScopeTimer(ScopeTimer &&)                 = delete;
-    ScopeTimer &operator=(ScopeTimer &&)      = delete;
+    ScopeTimer(ScopeTimer &&) = delete;
+    ScopeTimer &operator=(ScopeTimer &&) = delete;
 };
 
 class InitGuard
@@ -468,10 +578,10 @@ public:
     explicit InitGuard(const Config & = {}) {}
     ~InitGuard() = default;
 
-    InitGuard(const InitGuard &)            = delete;
+    InitGuard(const InitGuard &) = delete;
     InitGuard &operator=(const InitGuard &) = delete;
-    InitGuard(InitGuard &&)                 = delete;
-    InitGuard &operator=(InitGuard &&)      = delete;
+    InitGuard(InitGuard &&) = delete;
+    InitGuard &operator=(InitGuard &&) = delete;
 };
 
 #endif // ASSISI_CHIARA_ENABLED

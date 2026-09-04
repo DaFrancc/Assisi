@@ -21,6 +21,7 @@
 #include <span>
 #include <vector>
 
+#include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 
 namespace Assisi::Window
@@ -139,7 +140,10 @@ public:
 
     /// @brief Color/depth formats and sample count of the swapchain framebuffers,
     /// for constructing pipelines compatible with them ahead of the first frame.
-    [[nodiscard]] nvrhi::FramebufferInfo GetFramebufferInfo() const { return _framebuffers.at(0)->getFramebufferInfo(); }
+    [[nodiscard]] nvrhi::FramebufferInfo GetFramebufferInfo() const
+    {
+        return _framebuffers.at(0)->getFramebufferInfo();
+    }
 
     /// @name Raw Vulkan handles
     /// For integrating libraries that talk raw Vulkan directly instead of going
@@ -204,7 +208,7 @@ private:
     VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
     VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkFormat _depthFormat = VK_FORMAT_UNDEFINED;
-    bool _vsyncEnabled = true;                  // FIFO by default; see ChoosePresentMode()
+    bool _vsyncEnabled = true; // FIFO by default; see ChoosePresentMode()
     // Set when acquire/present reports VK_ERROR_OUT_OF_DATE_KHR. The window resize
     // callback only fires on a dimension change, so a *same-size* stale event
     // (display-mode / refresh-rate change, monitor hot-plug, compositor restart)
@@ -212,17 +216,17 @@ private:
     // forever. BeginFrame() rebuilds at the top of the next frame when this is set.
     // Touched only on the render thread (BeginFrame/EndFrame), so a plain bool.
     bool _swapchainStale = false;
-    float _maxAnisotropy = 1.0f;                 // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
+    float _maxAnisotropy = 1.0f; // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
     VkExtent2D _swapchainExtent{};
-    std::vector<VkImage>  _swapchainImages;
+    std::vector<VkImage> _swapchainImages;
 
     nvrhi::vulkan::DeviceHandle _nvrhiDeviceHandle;
     nvrhi::vulkan::IDevice *_nvrhiDevice = nullptr;
-    std::vector<nvrhi::TextureHandle>      _swapchainTextures;
+    std::vector<nvrhi::TextureHandle> _swapchainTextures;
     nvrhi::TextureHandle _depthTexture;
-    std::vector<nvrhi::FramebufferHandle>  _framebuffers;
+    std::vector<nvrhi::FramebufferHandle> _framebuffers;
 
     // Frames-in-flight synchronization. BeginFrame() throttles to kFramesInFlight
     // by waiting only on the event query of the frame that last used this slot,
@@ -239,10 +243,10 @@ private:
     // Create/DestroySwapchainResources).
     static constexpr uint32_t kFramesInFlight = 2;
 
-    std::array<VkSemaphore, kFramesInFlight>            _imageAvailableSemaphores{};
+    std::array<VkSemaphore, kFramesInFlight> _imageAvailableSemaphores{};
     std::array<nvrhi::EventQueryHandle, kFramesInFlight> _frameQueries;
-    std::array<bool, kFramesInFlight>                   _frameQueryPending{};
-    std::vector<VkSemaphore>                            _renderFinishedSemaphores;
+    std::array<bool, kFramesInFlight> _frameQueryPending{};
+    std::vector<VkSemaphore> _renderFinishedSemaphores;
     uint64_t _frameCounter = 0;
 
     // Per-slot GPU timer queries bracketing the whole command list, for the
@@ -267,14 +271,35 @@ private:
     {
         std::array<nvrhi::TimerQueryHandle, kMaxTimedPasses> queries;
         std::array<const char *, kMaxTimedPasses> names{};
-        uint32_t used = 0;   ///< Timers opened this frame.
+        uint32_t used = 0;    ///< Timers opened this frame.
         bool pending = false; ///< Recorded and awaiting resolve.
+        /// The capture clock when this slot's frame began recording. A pass
+        /// resolves kFramesInFlight frames after it ran, so without this the
+        /// trace would file every pass under whichever frame happened to read
+        /// it — the wrong one, always, and by a fixed amount that looks like a
+        /// measurement.
+        std::uint64_t frameBeginTicks = 0;
     };
 
     std::array<PassTimerSlot, kFramesInFlight> _passTimers;
     std::vector<PassTiming> _resolvedPassTimings;
+    /// The row the GPU's passes are drawn on. Null until the first frame that
+    /// has timings to put there, and for the whole of a build without Chiara.
+    Chiara::Track *_gpuTrack = nullptr;
+
+    /// @brief Draw the just-resolved pass timings onto the GPU track, inside the
+    /// frame they belong to.
+    ///
+    /// The widths are measured; the offsets are not. A pass's duration is all
+    /// the device reports, so the slices are packed end-to-end from
+    /// @p frameBeginTicks and their positions within the frame are arbitrary.
+    /// That is why the track is named for what it holds rather than "gpu" —
+    /// proportion and order are real, alignment is not, and a row that did not
+    /// say so would be read as a measurement it is not.
+    void EmitGpuTrackSlices(std::uint64_t frameBeginTicks);
     bool _passTimingEnabled = false;
-    bool _passTimingActive  = false; ///< The enable this frame opened with, so a mid-frame flip cannot unbalance the pairs.
+    bool _passTimingActive =
+        false; ///< The enable this frame opened with, so a mid-frame flip cannot unbalance the pairs.
     uint32_t _openPassTimer = kMaxTimedPasses; ///< Index of the open timer, or capacity when none.
     bool _passCapacityWarned = false;
 
