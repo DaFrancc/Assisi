@@ -14,9 +14,9 @@
 ///     is stored on the component and is LOCAL, rotated into world by that
 ///     Transform (see LightingSystem::WorldSpotDirection).
 
-#include <Assisi/Prelude.hpp>
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Prelude.hpp>
 
 namespace Assisi::Runtime
 {
@@ -52,7 +52,7 @@ enum class SunColorExpression : std::uint8_t
 ACOMP()
 struct DirectionalLight
 {
-    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction the light shines (unit vector).
+    AFIELD() glm::vec3 direction { 0.f, -1.f, 0.f }; ///< World-space direction the light shines (unit vector).
 
     /// @brief Take the light's colour from the sky on this same entity.
     ///
@@ -100,8 +100,7 @@ struct DirectionalLight
     /// at both ends. A rate approaching zero is a sun that has stopped, which is
     /// indistinguishable from the cycle being switched off; a period approaching
     /// zero is a strobe, which the floor below keeps out.
-    AFIELD(min = 1.0, max = 86400.0,
-           radioListen = {source = daylightCycle, value = true, behavior = vanish})
+    AFIELD(min = 1.0, max = 86400.0, radioListen = {source = daylightCycle, value = true, behavior = vanish})
     float daylightPeriodSeconds = 120.f;
 };
 
@@ -166,9 +165,9 @@ inline constexpr glm::vec3 kDaylightAxis{1.f, 0.f, 0.f};
 ACOMP()
 struct PointLight
 {
-    AFIELD() Assisi::Math::Color3 color{1.f, 1.f, 1.f};
-    AFIELD() float intensity = 1.f;           ///< May be negative (light subtraction).
-    AFIELD(min = 0) float radius = 10.f;      ///< Maximum influence range in world units; never negative.
+    AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f };
+    AFIELD() float intensity = 1.f;                  ///< May be negative (light subtraction).
+    AFIELD(min = 0) float radius = 10.f;             ///< Maximum influence range in world units; never negative.
     AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders shadow maps (six faces).
 
     /// Octaves of bias on this light's importance, when more lights want an
@@ -189,10 +188,10 @@ struct PointLight
 ACOMP()
 struct SpotLight
 {
-    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< Aim in LOCAL space; the Transform rotates it into world.
-    AFIELD() Assisi::Math::Color3 color{1.f, 1.f, 1.f}; ///< Linear-RGB colour.
-    AFIELD() float intensity   = 1.f;              ///< May be negative (light subtraction).
-    AFIELD(min = 0) float radius   = 10.f;         ///< Maximum influence range in world units; never negative.
+    AFIELD() glm::vec3 direction { 0.f, -1.f, 0.f };       ///< Aim in LOCAL space; the Transform rotates it into world.
+    AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f }; ///< Linear-RGB colour.
+    AFIELD() float intensity = 1.f;                        ///< May be negative (light subtraction).
+    AFIELD(min = 0) float radius = 10.f;                   ///< Maximum influence range in world units; never negative.
     /// Half-angle of the full-brightness cone (degrees), capped by the cutoff it
     /// sits inside. An inner cone wider than the outer one describes no falloff at
     /// all, and the shader reads the gap between them as a divisor.
@@ -204,6 +203,11 @@ struct SpotLight
     /// whatever the core happens to be. The ordering is enforced from the inner
     /// side alone, so narrowing this below the core leaves the two crossed until
     /// the core is touched — the shader treats that as a hard edge.
+    ///
+    /// The ceiling is Math::kMaxConeHalfAngleDegrees, written out because an
+    /// AFIELD bound takes a literal or a sibling field and nothing else. A test
+    /// asserts the two agree, since a cone authored wider than a shadow map can
+    /// be built for is a cone whose shadow stops before its light does.
     AFIELD(min = 0, max = 89.0) float outerAngle = 30.f;
     AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders a shadow map.
 

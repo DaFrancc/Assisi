@@ -2,6 +2,8 @@
 
 #include <Assisi/Editor/WireShapes.hpp>
 
+#include <Assisi/Math/Angles.hpp>
+
 #include <algorithm>
 
 namespace Assisi::Editor
@@ -43,8 +45,8 @@ void AddBoxWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const
     }
     // 12 edges: pairs of corners differing in exactly one axis bit.
     constexpr std::int32_t edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},  // along X
-        {0, 2}, {1, 3}, {4, 6}, {5, 7},                                 // along Y
-        {0, 4}, {1, 5}, {2, 6}, {3, 7}};                                // along Z
+        {0, 2}, {1, 3}, {4, 6}, {5, 7},                                     // along Y
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}};                                    // along Z
     for (const auto &e : edges)
     {
         AddSegment(out, model, color, c[e[0]], c[e[1]]);
@@ -99,9 +101,11 @@ void AddConeWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, cons
     {
         return;
     }
-    // Clamped short of a right angle: at ninety degrees the rim is infinitely
-    // wide and the shape stops describing anything.
-    const float halfAngle = glm::radians(std::clamp(halfAngleDegrees, 0.f, 89.f));
+    // The same ceiling a spot light's cone is clamped to where its shadow map is
+    // built, and it has to be the same one: this wireframe is what an author
+    // aims the cone by, so a gizmo drawn wider than the map can be built for is
+    // a cone whose shadow stops at a different angle than the shape promised.
+    const float halfAngle = glm::radians(std::clamp(halfAngleDegrees, 0.f, Math::kMaxConeHalfAngleDegrees));
     const float radius = std::tan(halfAngle) * height;
     const glm::vec3 rim(0.f, -height, 0.f);
 

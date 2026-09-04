@@ -73,15 +73,15 @@ public:
         /// it differs from framebufferInfo. Only read when enableEditorVisuals.
         nvrhi::FramebufferInfo overlayFramebufferInfo;
         /// Viewport size in pixels, for the initial cluster grid.
-        int32_t width  = 0;
+        int32_t width = 0;
         int32_t height = 0;
         /// Projection params (near/far/FOV) of the active camera.
         Camera camera;
         /// The scene AssetCache's bindless material-texture table + layout,
         /// threaded into the mesh pipeline (stage D). Must outlive the renderer.
         nvrhi::IBindingLayout *bindlessLayout = nullptr;
-        nvrhi::IDescriptorTable *bindlessTable  = nullptr;
-        nvrhi::IBuffer *materialTable  = nullptr;
+        nvrhi::IDescriptorTable *bindlessTable = nullptr;
+        nvrhi::IBuffer *materialTable = nullptr;
         /// Editor overlay passes: selection outline, entity icons, overlay
         /// lines. Off by default — they cost three extra pipelines and load
         /// editor-only assets (assets/editor/**), and a game has no use for
@@ -199,9 +199,9 @@ public:
     /// is under it, and a scene without one keeps the flat default.
     void ClearAmbient() { _ambient = AmbientOverride{}; }
 
-    [[nodiscard]] bool                 AmbientOverridden() const { return _ambient.active; }
+    [[nodiscard]] bool AmbientOverridden() const { return _ambient.active; }
     [[nodiscard]] Assisi::Math::Color3 AmbientColor() const { return _ambient.color; }
-    [[nodiscard]] float                AmbientIntensity() const { return _ambient.intensity; }
+    [[nodiscard]] float AmbientIntensity() const { return _ambient.intensity; }
 
     /// @brief The shadow knobs, in both halves. Applied on the next Render():
     /// a cascade count, resolution or format change reallocates the array
@@ -229,6 +229,13 @@ public:
     /// has no shadow: the first says the importance cap turned it away, the
     /// second says the atlas had no room. They are different settings.
     [[nodiscard]] Render::LocalShadowPass::Stats LastLocalShadowStats() const { return _lastLocalShadowStats; }
+
+    /// @brief Which light holds which atlas tile and how long its still layer
+    /// has stood, for the atlas inspector. Empty while tiles are not cached.
+    [[nodiscard]] std::span<const Render::LocalShadowCache::Residency> CachedShadowTiles() const
+    {
+        return _localShadowPass.CachedTiles();
+    }
 
     /// @brief Shadowed local lights the importance cap turned away in the most
     /// recent Render(). Zero is what "the cap does not bind here" looks like.
@@ -372,11 +379,11 @@ private:
     /// always-on-top overlay after the scene: a mesh silhouette, or — for a
     /// placement-only entity shown as an icon — its billboard quad (editor only).
     /// No-op when nothing is highlighted or the outline pass is unavailable.
-    void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
-                              const glm::mat4 &view, ECS::Scene &scene);
+    void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
+                              ECS::Scene &scene);
     /// @brief One entity's share of the above.
-    void DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
-                                 const glm::mat4 &viewProjection, const glm::mat4 &view, ECS::Scene &scene);
+    void DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+                                 const glm::mat4 &view, ECS::Scene &scene);
 
     /// @brief Draw world-space billboards facing the camera basis from @p view: one
     /// per placement-only entity (Transform, no MeshRenderer), one per MeshRenderer
@@ -419,6 +426,19 @@ private:
     std::vector<Geometry::BoundingSphere> _localLightVolumes;
     ShadowCasterGather _localShadowCasters;
     Render::LocalShadowCasterIndex _localCasterIndex;
+    // The cached half: which casters are moving, and the two sets the atlas is
+    // reconciled against each frame.
+    Render::ShadowCasterMobility _casterMobility;
+    std::vector<ECS::Entity> _movedEntities;
+    std::vector<Render::ShadowMover> _movedCasters;
+    std::vector<Render::ShadowMover> _dynamicCasters;
+    std::vector<Render::ShadowMover> _casterInvalidations;
+    // The scene tick the mover set was last taken at. Everything written after
+    // it has moved since, which is the whole of the invalidation input.
+    uint64_t _lastMoverTick = 0;
+    // Counts frames for the atlas's throttle phase and its tile ages. Its own
+    // counter rather than the scene's tick, which advances per write.
+    std::uint32_t _shadowFrameIndex = 0;
     // Drawn after the opaque geometry, into the pixels it left at the depth
     // clear. See SkyPass for why that ordering is the cheap one.
     Render::SkyPass _skyPass;
@@ -469,9 +489,9 @@ private:
     // triggers a rebuild. Identity forces one on the first frame.
     glm::mat4 _clusterProjection{1.f};
 
-    bool _frustumCulling = true;      // default draw path culls off-screen meshes
-    bool _sortDraws      = true;      // default draw path sorts by sort key before submit
-    bool _gpuCulling     = false;      // GPU-driven cull path (stage F1); CPU path is the default reference
+    bool _frustumCulling = true; // default draw path culls off-screen meshes
+    bool _sortDraws = true;      // default draw path sorts by sort key before submit
+    bool _gpuCulling = false;    // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     AmbientOverride _ambient;                                               // inactive: the scene lights itself
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
@@ -480,8 +500,8 @@ private:
     // and breaking it again is reported both times.
     bool _multipleSunsWarned = false;
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
-    DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
-    Render::ShadowPass::Stats _lastShadowStats; // what the shadow pass drew, for the same overlay
+    DrawStats _lastDrawStats;                             // drawn/culled from the last Render(), for the overlay
+    Render::ShadowPass::Stats _lastShadowStats;           // what the shadow pass drew, for the same overlay
     Render::LocalShadowPass::Stats _lastLocalShadowStats; // the same for the local-light atlas
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene

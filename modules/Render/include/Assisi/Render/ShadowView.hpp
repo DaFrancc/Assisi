@@ -21,6 +21,7 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/Math/Angles.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/ShadowCascades.hpp>
@@ -36,6 +37,18 @@ struct ShadowViewRect
     std::uint32_t y = 0;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+};
+
+/// @brief One tile of an atlas: the rectangle, and the atlas it was cut from.
+///
+/// The two are meaningless apart. A rectangle in texels says nothing about what
+/// fraction of a texture it is, and every use of one here — the UV transform,
+/// the filter's tap step, the inset that keeps a kernel inside its own tile —
+/// needs both. ShadowView keeps them as two fields for the same reason.
+struct ShadowAtlasTile
+{
+    ShadowViewRect rect;
+    std::uint32_t atlasResolution = 0;
 };
 
 /// @brief Where one shadow map view renders and how it is sampled.
@@ -202,6 +215,33 @@ enum PointLightFace : std::uint32_t
 /// filters here use.
 inline constexpr float kPointLightFaceOverlapDegrees = 6.0f;
 
+/// @brief Where a local light stands and how far it reaches — everything the
+/// shape of its shadow map depends on.
+///
+/// One struct rather than four arguments because these four always travel
+/// together and are always compared together: the atlas's cache asks whether a
+/// tile was recorded from where the light now stands, and a field added here
+/// that the comparison did not know about would be a light that moved without
+/// its shadow noticing.
+struct LocalShadowLightPose
+{
+    glm::vec3 position{0.f};
+    /// Where a spot aims, in world space and already normalised. Unread for a
+    /// point light, which aims in all six directions.
+    glm::vec3 direction{0.f, -1.f, 0.f};
+    /// The light's influence radius, which is also its shadow map's far plane:
+    /// nothing past it is lit, so nothing past it needs to occlude.
+    float range = 0.f;
+    /// Half-angle of the spot's outer cone, in degrees, at most
+    /// Math::kMaxConeHalfAngleDegrees. Unread for a point light.
+    float outerAngleDegrees = Math::kDefaultSpotOuterAngleDegrees;
+
+    /// Exactly, never within a tolerance: a light nothing has written carries
+    /// bit-identical values frame to frame, so any difference at all is one the
+    /// depth in its tile did not see.
+    [[nodiscard]] bool operator==(const LocalShadowLightPose &) const = default;
+};
+
 /// @brief The view for a spot light's single map.
 ///
 /// A spot is a cone, so its map is one perspective frustum with the cone's outer
@@ -214,20 +254,17 @@ inline constexpr float kPointLightFaceOverlapDegrees = 6.0f;
 /// magnitude in reach, and a fixed near plane spends the entire depth format on
 /// whichever of the two it was chosen for.
 ///
-/// @p rect is the tile the allocator handed out and @p atlasResolution the atlas
-/// it came from. The biases scale by the tile's own resolution, so a demoted
-/// light is biased as the smaller map it actually got.
-[[nodiscard]] ShadowView SpotShadowView(const glm::vec3 &position, const glm::vec3 &direction, float range,
-                                        float outerAngleDegrees, const ShadowViewRect &rect,
-                                        std::uint32_t atlasResolution, const LocalShadowSettings &settings);
+/// @p tile is what the allocator handed out. The biases scale by the tile's own
+/// resolution, so a demoted light is biased as the smaller map it actually got.
+[[nodiscard]] ShadowView SpotShadowView(const LocalShadowLightPose &pose, const ShadowAtlasTile &tile,
+                                        const LocalShadowSettings &settings);
 
 /// @brief The view for one face of a point light's cube.
 ///
 /// Six of these cover every direction. Each is a 90-degree frustum widened by
 /// kPointLightFaceOverlapDegrees so the faces overlap rather than abut.
-[[nodiscard]] ShadowView PointFaceShadowView(const glm::vec3 &position, float range, std::uint32_t face,
-                                             const ShadowViewRect &rect, std::uint32_t atlasResolution,
-                                             const LocalShadowSettings &settings);
+[[nodiscard]] ShadowView PointFaceShadowView(const LocalShadowLightPose &pose, std::uint32_t face,
+                                             const ShadowAtlasTile &tile, const LocalShadowSettings &settings);
 
 /// @brief What one texel of a tile covers per unit of distance from the light.
 ///

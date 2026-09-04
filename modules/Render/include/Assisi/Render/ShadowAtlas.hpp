@@ -109,6 +109,26 @@ public:
     /// shadow.
     [[nodiscard]] ShadowViewRect Allocate(std::uint32_t sizeClass);
 
+    /// @brief Cut the tile @p rect specifically, rather than whichever is free.
+    ///
+    /// What a cached tile needs: depth kept from last frame is depth at a
+    /// particular rectangle, so a light that keeps its contents must be handed
+    /// back the rectangle it had. Allocate() cannot serve that — it hands out
+    /// whatever the free list happens to hold, and one light entering the scene
+    /// would shift every tile after it and throw away every cache with them.
+    ///
+    /// Splits down the buddy tree along the path to @p rect, so a reservation
+    /// out of an empty atlas costs the same chain of splits an allocation does.
+    ///
+    /// @return false when @p rect is not a tile of this atlas at all — misaligned,
+    /// off the edge, or the wrong size for its class — or when any part of it has
+    /// already been handed out. A caller that is refused treats the light as new.
+    ///
+    /// Every reservation of a frame must be made before any Allocate() of it,
+    /// since an allocation takes an arbitrary free node and that node may be one
+    /// a later reservation wanted.
+    [[nodiscard]] bool Reserve(const ShadowViewRect &rect, std::uint32_t sizeClass);
+
     /// @brief How many more tiles of size class @p sizeClass the atlas can still
     /// hand out.
     ///

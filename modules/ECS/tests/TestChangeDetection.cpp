@@ -9,6 +9,8 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TestComponents.hpp>
 
+#include <vector>
+
 using namespace Assisi::ECS;
 
 TEST_CASE("ChangeDetection: Add stamps a tracked component, and the tick advances")
@@ -93,6 +95,67 @@ TEST_CASE("ChangeDetection: untracked components never stamp")
 
     scene.MarkChanged(e, Assisi::Core::Reflect::ComponentIdOf<Position>());
     CHECK(scene.CurrentChangeTick() == 0);
+}
+
+TEST_CASE("ChangeDetection: ChangedSince names what was written and nothing else")
+{
+    Scene scene;
+    const Entity still = scene.Create();
+    const Entity mover = scene.Create();
+    REQUIRE(scene.Add<Tracked>(still, {1}) != nullptr);
+    REQUIRE(scene.Add<Tracked>(mover, {2}) != nullptr);
+
+    const uint64_t bookmark = scene.CurrentChangeTick();
+
+    // A frame in which nothing was written names nobody. This is the case the
+    // shadow cache is built on: a still scene costs one scan and no work.
+    std::vector<Entity> changed;
+    scene.ChangedSince<Tracked>(bookmark, changed);
+    CHECK(changed.empty());
+
+    scene.GetMut<Tracked>(mover)->value = 20;
+    scene.ChangedSince<Tracked>(bookmark, changed);
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0] == mover);
+
+    // Appended, not assigned: one set collects several pools' changes, so a
+    // second ask must leave the first ask's answer in place.
+    scene.ChangedSince<Tracked>(bookmark, changed);
+    CHECK(changed.size() == 2);
+}
+
+TEST_CASE("ChangeDetection: ChangedSince follows a component through a swap-remove")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+    const Entity b = scene.Create();
+    REQUIRE(scene.Add<Tracked>(a, {1}) != nullptr);
+    REQUIRE(scene.Add<Tracked>(b, {2}) != nullptr);
+
+    const uint64_t bookmark = scene.CurrentChangeTick();
+    scene.GetMut<Tracked>(b)->value = 20;
+
+    // Removing a swap-pops b into a's dense slot. The scan reads the tick lane
+    // and the entity lane by the same position, so naming a here would be a
+    // shadow tile invalidated for something that never moved.
+    scene.Remove<Tracked>(a);
+
+    std::vector<Entity> changed;
+    scene.ChangedSince<Tracked>(bookmark, changed);
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0] == b);
+}
+
+TEST_CASE("ChangeDetection: an untracked pool names nobody, whatever was written")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
+    scene.GetMut<Position>(e)->x = 5.0f;
+
+    std::vector<Entity> changed;
+    scene.ChangedSince<Position>(0, changed);
+    CHECK(changed.empty());
 }
 
 TEST_CASE("ChangeDetection: swap-remove keeps ticks aligned with their components")

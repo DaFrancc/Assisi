@@ -16,9 +16,13 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/Angles.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 
+#include <algorithm>
+#include <string_view>
 #include <typeindex>
 
 namespace
@@ -34,8 +38,8 @@ const Assisi::Core::Reflect::ComponentMeta *MetaOf(const std::type_info &type)
 
 TEST_CASE("the components a mirror needs to exist and to draw are replicated")
 {
-    for (const std::type_info *type : {&typeid(Assisi::ECS::Transform), &typeid(Assisi::Runtime::MeshRenderer),
-                                       &typeid(Assisi::Runtime::Name)})
+    for (const std::type_info *type :
+         {&typeid(Assisi::ECS::Transform), &typeid(Assisi::Runtime::MeshRenderer), &typeid(Assisi::Runtime::Name)})
     {
         const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(*type);
         REQUIRE(meta != nullptr);
@@ -69,8 +73,26 @@ TEST_CASE("MeshRenderer puts its durable ids on the wire and its resolved pointe
     for (const Assisi::Core::Reflect::FieldMeta &field : meta->fields)
     {
         CAPTURE(field.name);
-        const bool durable =
-            field.name == "mesh" || field.name == "materialOverrides" || field.name == "castsShadows";
+        const bool durable = field.name == "mesh" || field.name == "materialOverrides" || field.name == "castsShadows";
         CHECK(Assisi::Core::Reflect::IsWireField(field) == durable);
     }
+}
+
+TEST_CASE("a spot cone cannot be authored wider than its shadow map can be built for")
+{
+    // Two ceilings on one angle, and they must be the same one. Everything that
+    // builds something from the cone clamps to Math::kMaxConeHalfAngleDegrees,
+    // because a rim's radius and a frustum's tan(fov/2) both diverge at a right
+    // angle; the inspector clamps to a literal, because an AFIELD bound takes a
+    // number or a sibling field and cannot name a constant. Let them drift and a
+    // cone is authorable whose shadow stops before its light does.
+    const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(typeid(Assisi::Runtime::SpotLight));
+    REQUIRE(meta != nullptr);
+
+    const auto outer =
+        std::find_if(meta->fields.begin(), meta->fields.end(), [](const Assisi::Core::Reflect::FieldMeta &field)
+                     { return field.name == std::string_view("outerAngle"); });
+    REQUIRE(outer != meta->fields.end());
+    REQUIRE(outer->hasMax);
+    CHECK(outer->maxValue == doctest::Approx(Assisi::Math::kMaxConeHalfAngleDegrees));
 }

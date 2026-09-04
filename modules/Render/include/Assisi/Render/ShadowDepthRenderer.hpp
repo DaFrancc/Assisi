@@ -54,6 +54,25 @@ namespace Assisi::Render
     return (static_cast<std::uint64_t>(meshId) << 32) | submeshIndex;
 }
 
+/// @brief Whether a caster has moved recently enough that a cached shadow map
+/// must not hold it.
+///
+/// The cached/dynamic split of the local-light atlas. A named pair rather than a
+/// bool because the two are not "the flag" and "not the flag": Still is a claim
+/// about the caster — that a kept layer may draw it once and stop paying for it
+/// — and reading `motion == Still` at the two places that act on it says which
+/// half of the tile the caster belongs to, where `!dynamic` said only that
+/// something was absent.
+enum class ShadowCasterMotion : std::uint8_t
+{
+    /// Baked into a tile's kept layer, and costing nothing again until it moves.
+    /// The conservative answer and the one every caller with no cache gets: the
+    /// sun's cascades redraw everything every frame and never read this.
+    Still = 0,
+    /// Redrawn over that layer every frame, and deliberately absent from it.
+    Moving = 1,
+};
+
 /// @brief One shadow-casting submesh instance, resolved to what a draw needs.
 ///
 /// The geometry is resolved once where the casters are gathered rather than
@@ -108,6 +127,13 @@ struct ShadowCaster
     /// depth pass reading it too is what keeps the two from disagreeing about
     /// what a piece of geometry is.
     bool doubleSided = false;
+
+    /// Which half of a cached tile this caster belongs to.
+    ///
+    /// It rides on the caster because the classification is made where the
+    /// caster is gathered — the same place its bounds and its material are
+    /// resolved — and travels through the sort with it.
+    ShadowCasterMotion motion = ShadowCasterMotion::Still;
 
     /// Row into the material table, where the alpha-testing fragment stage
     /// finds the base-colour slot and the cutoff. Unread for an opaque caster.

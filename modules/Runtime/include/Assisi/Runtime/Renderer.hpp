@@ -43,10 +43,10 @@ namespace Assisi::Runtime
 /// drawIndexedIndirect over all batch commands.
 struct DrawStats
 {
-    uint32_t drawnItems   = 0; ///< DrawItems (visible submeshes) submitted == instances.
+    uint32_t drawnItems = 0;   ///< DrawItems (visible submeshes) submitted == instances.
     uint32_t culledMeshes = 0; ///< Whole mesh entities skipped by frustum culling.
-    uint32_t batches      = 0; ///< Instanced draw commands after coalescing same-geometry runs.
-    uint32_t drawCalls    = 0; ///< drawIndexedIndirect(Count) API calls issued (~1 with one arena).
+    uint32_t batches = 0;      ///< Instanced draw commands after coalescing same-geometry runs.
+    uint32_t drawCalls = 0;    ///< drawIndexedIndirect(Count) API calls issued (~1 with one arena).
 };
 
 /// @brief Everything one DrawScene call needs, grouped so the call site reads as
@@ -55,17 +55,17 @@ struct DrawStats
 /// sensible defaults. Built at the call site with designated initializers.
 struct DrawSceneParams
 {
-    Assisi::ECS::Scene &scene;           ///< ECS scene to draw.
+    Assisi::ECS::Scene &scene;                ///< ECS scene to draw.
     const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
     const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
 
     glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix).
     glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).
     float nearZ = 0.f;         ///< Camera near plane, for the sort key's depth quantization.
-    float farZ  = 0.f;         ///< Camera far plane.
+    float farZ = 0.f;          ///< Camera far plane.
 
     bool frustumCulling = true; ///< Skip meshes outside the view frustum.
-    bool sortDraws      = true; ///< Sort the draw list by sort key before submitting.
+    bool sortDraws = true;      ///< Sort the draw list by sort key before submitting.
 
     /// @brief Take the GPU-driven cull path (stage F1) instead of the CPU
     /// extract/sort path. Requires @ref culler and @ref cullBuilder; falls back to
@@ -96,6 +96,17 @@ struct DrawSceneParams
 ///
 /// @return Drawn/culled counts and the submission's state-change tally.
 DrawStats DrawScene(const DrawSceneParams &params);
+
+/// @brief The identity the shadow atlas's cache remembers a caster by.
+///
+/// The entity's index and generation together, so a slot reused by a new entity
+/// is a different caster rather than the old one having teleported. The cache
+/// has to recognise a caster across frames in which it was not gathered at all,
+/// which is why this is a durable handle rather than a position in a span.
+[[nodiscard]] constexpr std::uint64_t ShadowCasterId(Assisi::ECS::Entity entity)
+{
+    return (static_cast<std::uint64_t>(entity.generation) << 32) | entity.index;
+}
 
 /// @brief One frame's shadow casters, and how far up-light they reach.
 ///
@@ -167,8 +178,20 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
 /// @p out.casters is sorted opaque-first and geometry-major, like the sun's, so
 /// the rows index a span whose runs still coalesce. A caster reaching no light at
 /// all is dropped rather than gathered.
-void GatherLocalShadowCasters(Assisi::ECS::Scene &scene,
-                              std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
-                              ShadowCasterGather &out, Assisi::Render::LocalShadowCasterIndex &index);
+/// @p mobility decides which half of a cached tile each caster belongs to, and
+/// is told where every still caster stands: that is the pose a tile's kept layer
+/// holds it at, and what a later demotion has to invalidate.
+void GatherLocalShadowCasters(Assisi::ECS::Scene &scene, std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
+                              Assisi::Render::ShadowCasterMobility &mobility, ShadowCasterGather &out,
+                              Assisi::Render::LocalShadowCasterIndex &index);
+
+/// @brief The shadow casters among @p changed, with where they now stand.
+///
+/// The invalidation input, and the reason it is cheap: @p changed comes from the
+/// Transform pool's change-tick lane, so it names what moved rather than what
+/// exists, and a frame in which nothing moved produces nothing here and skips
+/// the caster gather entirely.
+void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::Entity> changed,
+                        std::vector<Assisi::Render::ShadowMover> &out);
 
 } // namespace Assisi::Runtime

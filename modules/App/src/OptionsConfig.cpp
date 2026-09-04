@@ -15,9 +15,12 @@ namespace Assisi::App
 
 static Render::AaMode AaModeFromString(const std::string &str)
 {
-    if (str == "msaa")       return Render::AaMode::MSAA;
-    if (str == "fxaa")       return Render::AaMode::FXAA;
-    if (str == "msaa+fxaa")  return Render::AaMode::MSAA_FXAA;
+    if (str == "msaa")
+        return Render::AaMode::MSAA;
+    if (str == "fxaa")
+        return Render::AaMode::FXAA;
+    if (str == "msaa+fxaa")
+        return Render::AaMode::MSAA_FXAA;
     return Render::AaMode::None;
 }
 
@@ -25,17 +28,23 @@ static const char *AaModeToString(Render::AaMode mode)
 {
     switch (mode)
     {
-    case Render::AaMode::MSAA:      return "msaa";
-    case Render::AaMode::FXAA:      return "fxaa";
-    case Render::AaMode::MSAA_FXAA: return "msaa+fxaa";
-    default:                        return "none";
+    case Render::AaMode::MSAA:
+        return "msaa";
+    case Render::AaMode::FXAA:
+        return "fxaa";
+    case Render::AaMode::MSAA_FXAA:
+        return "msaa+fxaa";
+    default:
+        return "none";
     }
 }
 
 static Render::TonemapOperator TonemapOperatorFromString(const std::string &str)
 {
-    if (str == "aces")     return Render::TonemapOperator::Aces;
-    if (str == "reinhard") return Render::TonemapOperator::Reinhard;
+    if (str == "aces")
+        return Render::TonemapOperator::Aces;
+    if (str == "reinhard")
+        return Render::TonemapOperator::Reinhard;
     return Render::TonemapOperator::AgX;
 }
 
@@ -43,17 +52,23 @@ static const char *TonemapOperatorToString(Render::TonemapOperator op)
 {
     switch (op)
     {
-    case Render::TonemapOperator::Aces:     return "aces";
-    case Render::TonemapOperator::Reinhard: return "reinhard";
-    default:                                return "agx";
+    case Render::TonemapOperator::Aces:
+        return "aces";
+    case Render::TonemapOperator::Reinhard:
+        return "reinhard";
+    default:
+        return "agx";
     }
 }
 
 static Render::ShadowFilter ShadowFilterFromString(const std::string &str)
 {
-    if (str == "point") return Render::ShadowFilter::Point;
-    if (str == "pcf5x5") return Render::ShadowFilter::Pcf5x5;
-    if (str == "vogel")  return Render::ShadowFilter::Vogel;
+    if (str == "point")
+        return Render::ShadowFilter::Point;
+    if (str == "pcf5x5")
+        return Render::ShadowFilter::Pcf5x5;
+    if (str == "vogel")
+        return Render::ShadowFilter::Vogel;
     return Render::ShadowFilter::Pcf3x3;
 }
 
@@ -61,10 +76,14 @@ static const char *ShadowFilterToString(Render::ShadowFilter filter)
 {
     switch (filter)
     {
-    case Render::ShadowFilter::Point:  return "point";
-    case Render::ShadowFilter::Pcf5x5: return "pcf5x5";
-    case Render::ShadowFilter::Vogel:  return "vogel";
-    default:                           return "pcf3x3";
+    case Render::ShadowFilter::Point:
+        return "point";
+    case Render::ShadowFilter::Pcf5x5:
+        return "pcf5x5";
+    case Render::ShadowFilter::Vogel:
+        return "vogel";
+    default:
+        return "pcf3x3";
     }
 }
 
@@ -86,8 +105,7 @@ static const char *ShadowFormatToString(Render::ShadowMapFormat format)
 /// the caller's handler turns into one warning and a whole-file fallback; that
 /// is deliberate, since a file that has been mangled badly enough to have a
 /// string where a float goes is not one to trust field by field.
-template <typename T>
-void ReadField(const nlohmann::json &json, const char *key, T &field)
+template <typename T> void ReadField(const nlohmann::json &json, const char *key, T &field)
 {
     if (const auto entry = json.find(key); entry != json.end())
     {
@@ -174,6 +192,14 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 ReadField(local, "depthBiasTexels", shadows.local.depthBiasTexels);
                 ReadField(local, "slopeBias", shadows.local.slopeBias);
                 ReadField(local, "normalOffsetTexels", shadows.local.normalOffsetTexels);
+                if (local.contains("cache"))
+                {
+                    const auto &cache = local.at("cache");
+                    ReadField(cache, "enabled", shadows.local.cache.enabled);
+                    ReadField(cache, "updateBudgetFaces", shadows.local.cache.updateBudgetFaces);
+                    ReadField(cache, "promoteStillFrames", shadows.local.cache.promoteStillFrames);
+                    ReadField(cache, "movingLightUpdateDivisor", shadows.local.cache.movingLightUpdateDivisor);
+                }
             }
             if (sh.contains("selection"))
             {
@@ -232,45 +258,51 @@ OptionsConfig OptionsConfig::LoadFromJson()
 std::string OptionsConfig::ToJsonText() const
 {
     nlohmann::json json;
-    json["antiAliasing"]["mode"]        = AaModeToString(aaMode);
+    json["antiAliasing"]["mode"] = AaModeToString(aaMode);
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
-    json["toneMap"]["operator"]         = TonemapOperatorToString(tonemap.op);
-    json["toneMap"]["exposureStops"]    = tonemap.exposureStops;
-    json["toneMap"]["contrast"]         = tonemap.contrast;
-    json["toneMap"]["saturation"]       = tonemap.saturation;
+    json["toneMap"]["operator"] = TonemapOperatorToString(tonemap.op);
+    json["toneMap"]["exposureStops"] = tonemap.exposureStops;
+    json["toneMap"]["contrast"] = tonemap.contrast;
+    json["toneMap"]["saturation"] = tonemap.saturation;
 
     nlohmann::json &sun = json["shadows"]["sun"];
-    sun["enabled"]            = shadows.sun.enabled;
-    sun["cascades"]           = shadows.sun.cascadeCount;
-    sun["resolution"]         = shadows.sun.resolution;
-    sun["format"]             = ShadowFormatToString(shadows.sun.format);
-    sun["maxDistance"]        = shadows.sun.maxDistance;
-    sun["splitLambda"]        = shadows.sun.splitLambda;
-    sun["filter"]             = ShadowFilterToString(shadows.sun.filter);
-    sun["depthBiasTexels"]    = shadows.sun.depthBiasTexels;
-    sun["slopeBias"]          = shadows.sun.slopeBias;
+    sun["enabled"] = shadows.sun.enabled;
+    sun["cascades"] = shadows.sun.cascadeCount;
+    sun["resolution"] = shadows.sun.resolution;
+    sun["format"] = ShadowFormatToString(shadows.sun.format);
+    sun["maxDistance"] = shadows.sun.maxDistance;
+    sun["splitLambda"] = shadows.sun.splitLambda;
+    sun["filter"] = ShadowFilterToString(shadows.sun.filter);
+    sun["depthBiasTexels"] = shadows.sun.depthBiasTexels;
+    sun["slopeBias"] = shadows.sun.slopeBias;
     sun["normalOffsetTexels"] = shadows.sun.normalOffsetTexels;
-    sun["cascadeBlend"]       = shadows.sun.cascadeBlend;
+    sun["cascadeBlend"] = shadows.sun.cascadeBlend;
 
     nlohmann::json &local = json["shadows"]["local"];
-    local["enabled"]            = shadows.local.enabled;
-    local["atlasResolution"]    = shadows.local.atlasResolution;
-    local["format"]             = ShadowFormatToString(shadows.local.format);
-    local["faceResolution"]     = shadows.local.faceResolution;
-    local["filter"]             = ShadowFilterToString(shadows.local.filter);
-    local["depthBiasTexels"]    = shadows.local.depthBiasTexels;
-    local["slopeBias"]          = shadows.local.slopeBias;
+    local["enabled"] = shadows.local.enabled;
+    local["atlasResolution"] = shadows.local.atlasResolution;
+    local["format"] = ShadowFormatToString(shadows.local.format);
+    local["faceResolution"] = shadows.local.faceResolution;
+    local["filter"] = ShadowFilterToString(shadows.local.filter);
+    local["depthBiasTexels"] = shadows.local.depthBiasTexels;
+    local["slopeBias"] = shadows.local.slopeBias;
     local["normalOffsetTexels"] = shadows.local.normalOffsetTexels;
 
+    nlohmann::json &cache = json["shadows"]["local"]["cache"];
+    cache["enabled"] = shadows.local.cache.enabled;
+    cache["updateBudgetFaces"] = shadows.local.cache.updateBudgetFaces;
+    cache["promoteStillFrames"] = shadows.local.cache.promoteStillFrames;
+    cache["movingLightUpdateDivisor"] = shadows.local.cache.movingLightUpdateDivisor;
+
     nlohmann::json &selection = json["shadows"]["selection"];
-    selection["capEnabled"]      = shadows.selection.capEnabled;
-    selection["capSpot"]         = shadows.selection.capSpot;
-    selection["capPoint"]        = shadows.selection.capPoint;
-    selection["capHysteresis"]   = shadows.selection.capHysteresis;
+    selection["capEnabled"] = shadows.selection.capEnabled;
+    selection["capSpot"] = shadows.selection.capSpot;
+    selection["capPoint"] = shadows.selection.capPoint;
+    selection["capHysteresis"] = shadows.selection.capHysteresis;
     selection["classHysteresis"] = shadows.selection.classHysteresis;
 
-    json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
-    json["frameSync"]["fpsLimit"]       = fpsLimit;
+    json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
+    json["frameSync"]["fpsLimit"] = fpsLimit;
 
     return json.dump(4);
 }
