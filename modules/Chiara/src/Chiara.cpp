@@ -500,6 +500,19 @@ Track *RegisterTrack(const char *name)
     return Detail::CreateBuffer(name, /*ownedByThread=*/ false);
 }
 
+std::uint64_t TrackLayout::GapTicks() noexcept
+{
+    // A trace rounds a slice's begin and its duration to the nanosecond
+    // separately, so a reported end can miss the true one by half a nanosecond
+    // each way, and the next slice's reported begin by another half. Two
+    // nanoseconds clears all three.
+    constexpr double kGapSeconds = 2e-9;
+    const auto ticks = static_cast<std::uint64_t>(TicksPerSecond() * kGapSeconds);
+    // A clock too coarse for two nanoseconds still has to separate two slices,
+    // and one tick is the smallest distance it can express.
+    return std::max<std::uint64_t>(ticks, 1);
+}
+
 void EmitScopeOn(Track *track, const char *name, std::uint64_t beginTicks, std::uint64_t durationTicks) noexcept
 {
     if (track == nullptr || !IsRecording())

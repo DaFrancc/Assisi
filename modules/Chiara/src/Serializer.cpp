@@ -428,7 +428,13 @@ struct Session
     std::uint64_t originTicks    = 0;
     double ticksPerSecond = 1.0;
     bool needsComma     = false;
-    std::int32_t nextTraceTid   = 0;
+    /// Thread ids start at one. Zero is where the process_name record is
+    /// written, and a thread given it collides with that record — the importer
+    /// then has two metadata events claiming one row and names it after
+    /// whichever it resolves last. Latent for as long as nothing reached the
+    /// bottom of the range; a track registering late is the first thing that
+    /// does, since the reader walks the buffer list newest-first.
+    std::int32_t nextTraceTid = 1;
     std::uint64_t eventsWritten  = 0;
     std::uint64_t orphanedArgs   = 0;
     std::uint64_t drains         = 0;

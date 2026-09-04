@@ -1026,7 +1026,12 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     // Taken now rather than when the slot resolves, which is kFramesInFlight
     // frames later: the passes about to be recorded belong to this frame, and
     // this is the only moment that knows where this frame sits on the clock.
-    _passTimers[slot].frameBeginTicks = Chiara::ReadTicks();
+    //
+    // Zero while nothing is recording, because a tick from before the capture
+    // began sits before the trace's own origin and cannot be placed in it. The
+    // first frames of a capture therefore have no GPU row, which is the honest
+    // answer — their passes were timed against a clock the trace does not share.
+    _passTimers[slot].frameBeginTicks = Chiara::IsRecording() ? Chiara::ReadTicks() : 0;
     if (!_passTimingActive)
     {
         _resolvedPassTimings.clear();
@@ -1096,7 +1101,11 @@ void VulkanContext::EndPassTimer()
 
 void VulkanContext::EmitGpuTrackSlices(std::uint64_t frameBeginTicks)
 {
-    if (_resolvedPassTimings.empty() || !Chiara::IsRecording())
+    // A zero stamp is a slot whose frame opened before the capture did. Its
+    // ticks predate the session's origin, and a slice placed there is reported
+    // as beginning before the trace began — which reads back as one enormous
+    // negative duration rather than as the missing row it really is.
+    if (_resolvedPassTimings.empty() || frameBeginTicks == 0 || !Chiara::IsRecording())
     {
         return;
     }
@@ -1113,14 +1122,23 @@ void VulkanContext::EmitGpuTrackSlices(std::uint64_t frameBeginTicks)
     }
 
     const double ticksPerMs = Chiara::TicksPerSecond() / 1000.0;
-    std::uint64_t cursor = frameBeginTicks;
+
+    // The passes go inside a slice that starts where their frame started, so the
+    // row says which frame they belong to rather than leaving it to be inferred
+    // from a left edge that means nothing on its own. That edge lines up with
+    // the CPU's own Frame slice directly above it, which is the whole of the
+    // answer to "which frame is this".
+    Chiara::TrackLayout layout(frameBeginTicks + Chiara::TrackLayout::GapTicks());
     for (const PassTiming &pass : _resolvedPassTimings)
     {
         const auto width =
             static_cast<std::uint64_t>(std::max(0.0, static_cast<double>(pass.milliseconds)) * ticksPerMs);
-        Chiara::EmitScopeOn(_gpuTrack, pass.name, cursor, width);
-        cursor += width;
+        Chiara::EmitScopeOn(_gpuTrack, pass.name, layout.Place(width), width);
     }
+    // Emitted last and spanning them all, so nesting is by containment rather
+    // than by the order the records happen to arrive in.
+    Chiara::EmitScopeOn(_gpuTrack, "frame", frameBeginTicks,
+                        layout.End() + Chiara::TrackLayout::GapTicks() - frameBeginTicks);
 }
 
 std::span<const VulkanContext::PassTiming> VulkanContext::GetPassTimings() const

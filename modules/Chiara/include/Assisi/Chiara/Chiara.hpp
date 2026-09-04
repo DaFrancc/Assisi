@@ -373,6 +373,43 @@ using Track = Detail::ThreadBuffer;
 /// take the offsets for measurements.
 void EmitScopeOn(Track *track, const char *name, std::uint64_t beginTicks, std::uint64_t durationTicks) noexcept;
 
+/// @brief Lays measured durations out end-to-end on a track.
+///
+/// Slices packed flush against each other are reported as overlapping, and the
+/// arithmetic that does it is not the caller's: a trace writes a slice as a
+/// begin and a duration, each rounded to the nanosecond *independently*, so a
+/// slice's reported end can land past the next slice's reported begin by as much
+/// as the rounding of both. An importer rejects that in bulk — one error per
+/// slice, for as long as the run lasted.
+///
+/// So this leaves a gap wider than that error can be. It is nanoseconds against
+/// slices measured in microseconds, so it costs nothing anyone can see.
+class TrackLayout
+{
+public:
+    explicit TrackLayout(std::uint64_t beginTicks) noexcept : _cursor(beginTicks) {}
+
+    /// @brief Reserves room for a slice of @p durationTicks and returns where it
+    /// begins.
+    [[nodiscard]] std::uint64_t Place(std::uint64_t durationTicks) noexcept
+    {
+        const std::uint64_t begin = _cursor;
+        _cursor += durationTicks + GapTicks();
+        return begin;
+    }
+
+    /// @brief One gap past the last slice placed — where a slice containing all
+    /// of them may end.
+    [[nodiscard]] std::uint64_t End() const noexcept { return _cursor; }
+
+    /// @brief The gap, in the capture clock's ticks. At least one tick however
+    /// slow the clock is, so two slices are never placed at the same instant.
+    [[nodiscard]] static std::uint64_t GapTicks() noexcept;
+
+private:
+    std::uint64_t _cursor = 0;
+};
+
 // --- Read side --------------------------------------------------------------
 
 [[nodiscard]] CaptureStats GetCaptureStats();
@@ -547,6 +584,16 @@ struct Track;
 {
     return nullptr;
 }
+class TrackLayout
+{
+public:
+    explicit TrackLayout(std::uint64_t) noexcept {}
+
+    [[nodiscard]] std::uint64_t Place(std::uint64_t) noexcept { return 0; }
+    [[nodiscard]] std::uint64_t End() const noexcept { return 0; }
+    [[nodiscard]] static std::uint64_t GapTicks() noexcept { return 0; }
+};
+
 inline void EmitScopeOn(Track *, const char *, std::uint64_t, std::uint64_t) noexcept
 {
 }
