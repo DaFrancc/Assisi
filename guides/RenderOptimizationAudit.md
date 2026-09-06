@@ -12,11 +12,30 @@ PCF 3x3; one 4096 D16 local atlas with 512 faces, PCF 3x3, cache on.
 
 ImGui is out of scope.
 
+Each finding is tagged with its Linear status, cross-referenced 2026-09-06
+against the Engine team's tracker. `[tracked: ENG-nnn]` means an open issue
+covers it; `[partly tracked: ENG-nnn]` means the issue covers some of it and the
+note says what it misses; `[untracked]` means nothing in the tracker covers it.
+
+Summary: 1 finding fully tracked, 9 partly, 13 untracked.
+
+Two findings (GPU 8 and CPU item 6) are not optimizations at all. They are
+shipped violations of ENG-140's own definition of done, which closed Done on
+2026-09-04 in PR #239 — the merge at the tip of this branch. Those need a
+different conversation from the rest of this list.
+
 ---
 
 ## GPU findings, ranked by expected payoff
 
 ### 1. No depth prepass; the sort key buries depth under material
+`[partly tracked: ENG-203, ENG-149]` — ENG-203 is the coarse-depth-bucket
+alternative below, almost verbatim, plus overdraw instrumentation; it notes
+that a pure depth-major key would fight the batcher. The prepass itself lives
+inside ENG-149 as "Option B", one fork of an eight-point HZB issue, gated on an
+occlusion-heavy scene that does not exist yet and framed only as an HZB source.
+A prepass done purely for overdraw has no owner today, and neither issue
+mentions the main pass running `depthFunc = Equal`.
 - `modules/Render/include/Assisi/Render/DrawItem.hpp:113` packs the key as
   pipeline | material | mesh | depth, depth in the lowest 16 bits. Front-to-back
   only holds inside a run of the same mesh and material.
@@ -34,6 +53,10 @@ ImGui is out of scope.
 - Impact: High (proportional to overdraw). Certain. Effort: Medium.
 
 ### 2. Spot lights are cluster-culled as a full-radius sphere at the apex
+`[tracked: ENG-217]` — fully covered, and the issue goes further: it adds a
+CPU-side tight bounding sphere for half-angles under 45 degrees as a
+no-shader-change first step, the real cone test for 45-90 degrees, and a
+cluster-occupancy counter to measure it. Nothing below is missing from it.
 - `assets/shaders/cluster_cull.comp:197` ("culled by bounding sphere for
   simplicity"). A 30 degree cone fills about 7% of that sphere, so a spot is
   listed in roughly 10x the froxels it touches.
@@ -48,6 +71,8 @@ ImGui is out of scope.
 - Impact: High where spots are numerous. Certain. Effort: Small.
 
 ### 3. Shadow passes re-upload instance/indirect buffers between passes, forcing full GPU drains
+`[untracked]` — ENG-200 created the multi-call shape this exploits, but says
+nothing about upload batching or barriers.
 - `modules/Render/src/ShadowDepthRenderer.cpp:553-573`: every `Render()` call
   writes `_instanceBuffer` and `_indirectBuffer` from offset 0. The sun calls it
   once; the local pass once per 32-view chunk for the bake and again per chunk
@@ -69,6 +94,13 @@ ImGui is out of scope.
   Certain. Effort: Medium to Large.
 
 ### 4. Sun cascades are fully re-rasterized every frame
+`[partly tracked: ENG-201]` — that issue covers "stop re-rendering unchanged
+cascades" thoroughly, and per-cascade cadence falls out of its drift criterion.
+But its cadence is threshold-driven rather than a fixed round-robin, and it
+explicitly re-affirms the rejection of fix (b) below (the toroidal static
+layer, as VSM territory under ENG-80's standing decision). It also warns the
+win nearly vanishes under free-look. Half of what follows is filed; the other
+half is filed as rejected.
 - `modules/Runtime/src/Renderer.cpp:353` ("every caster is drawn, every time");
   `ShadowPass.cpp:221-239` clears all slices every frame.
 - The fit (`ShadowCascades.cpp:139-221`) is sphere-bounded and texel-snapped,
@@ -86,6 +118,8 @@ ImGui is out of scope.
   Effort: (a) Medium, (b) Large.
 
 ### 5. Scene color is RGBA16F with alpha never used
+`[untracked]` — ENG-135 (Done) is what shipped RGBA16F and is the source of
+this finding; nothing proposes narrowing it or notes that alpha is unused.
 - `modules/Render/include/Assisi/Render/PostProcess.hpp:47`
   `kSceneColorFormat = RGBA16_FLOAT`. `mesh.frag:1420`, `sky.frag:163` write
   alpha 1; `tonemap.frag:141` passes it through. No blending pipelines exist.
@@ -94,6 +128,8 @@ ImGui is out of scope.
 - Impact: Medium (bandwidth). Certain. Effort: Small.
 
 ### 6. Cascade array cleared and rendered as four separate passes
+`[untracked]` — ENG-200 parameterized the depth renderer per view and never
+revisited the pass count.
 - `ShadowPass.cpp:87-104` builds one framebuffer per slice; `:231` clears per
   slice. Each clear is endRenderPass + subresource barrier + transfer clear;
   each cascade's `setGraphicsState` ends and begins a dynamic-rendering pass.
@@ -109,6 +145,9 @@ ImGui is out of scope.
   Effort Medium, impact Medium (Low if the depth pass is purely fill-bound).
 
 ### 7. Fat vertex format, fetched at full stride by every depth pass
+`[untracked]` — the LOD track (ENG-209, ENG-210, ENG-215) is adjacent, but it
+reduces depth-pass vertex work by triangle count rather than by vertex format.
+The two compose rather than overlap.
 - `modules/Geometry/include/Assisi/Geometry/MeshData.hpp:29-36`: 48 B all
   fp32 (pos3, normal3, uv2, tangent4), 32-bit indices. Shadow layouts
   (`ShadowDepthRenderer.cpp:280`, `:335`) read 12 useful bytes per 48-byte
@@ -125,6 +164,11 @@ ImGui is out of scope.
   (normal matrix).
 
 ### 8. Whole point light re-composited when one face has a mover
+`[ENG-140 regression — not an optimization]` — ENG-140's definition of done
+states it literally: "A mover entering range dirties **only** the faces whose
+frustum contains it." The shipped code computes that mask and throws it away.
+The requirement is on record and was accepted as met; the gap has no open
+issue. See also CPU item 6, the other half of the same problem.
 - `modules/Render/src/LocalShadowCache.cpp:263-285`: `LocalShadowFaceMask`
   computes which faces a mover reaches, then discards it for movers and sets
   only `hasMovers`. `LocalShadowPass.cpp:608-619` copies the cached tile for
@@ -138,6 +182,7 @@ ImGui is out of scope.
   Small.
 
 ### 9. Shader variant bloat and unoptimized SPIR-V
+`[untracked]`
 - `mesh.frag` carries eight shadow kernels (Point / PCF3 / PCF5 / Vogel, for
   sun at `:676-751` and local at `:980-1007`) and nine debug paths
   (`:1123-1140`, `:1342`, `:1358-1372`, `:1389-1414`) selected by uniform
@@ -155,6 +200,12 @@ ImGui is out of scope.
   Small to Medium.
 
 ### 10. Smaller certain wins
+`[untracked except where noted]` — ENG-180 already covers the cull dispatch
+underfill (it names the occupancy figure) and the per-batch light re-transform,
+though not the grid resolution as a knob nor the double test. ENG-145 mentions
+Vogel-disk PCF only as where PCSS would land, never the per-tap recompute.
+ENG-204 discusses FXAA and SMAA at length without mentioning the luma-in-alpha
+trick. Everything else below is unfiled.
 - Vogel disk (`mesh.frag:591-593`, `:985-996`) recomputes sqrt + sincos per
   tap. Only the per-pixel rotation varies: precompute `vec2 kVogel[16]` and
   rotate by one per-pixel (cos, sin). 1 sincos per fragment instead of 16.
@@ -212,6 +263,8 @@ ImGui is out of scope.
 ## CPU findings
 
 ### Latent bug: exponential light-list duplication in the local caster gather
+`[untracked]` — the only correctness defect in this document with no tracker
+presence at all.
 - `modules/Runtime/src/Renderer.cpp:466-474`: for each additional LOD0
   submesh, the code inserts `reached[firstReach, end)` back into `reached`.
   The end grows every iteration, so a mesh with S submeshes reaching L lights
@@ -228,6 +281,9 @@ ImGui is out of scope.
 1. `Renderer.cpp:216`: the draw item vector is a fresh local every frame with
    no reserve; `DrawItem` is 96 B and `std::sort` moves whole structs. Reuse a
    member, sort (key, index) pairs. High, certain, small.
+   `[partly tracked: ENG-181]` — that issue owns the per-frame vector and
+   prescribes a caller-owned buffer threaded through `DrawSceneParams`. It does
+   not mention the missing reserve or shrinking the sorted element.
 2. The mesh set is walked three to four times per frame: draw extract
    (`Renderer.cpp:222`), sun gather (`:327`), local gather (`:416`), icons
    (`SceneRenderer.cpp:816`), each recomputing `TransformedBoundingSphere`
@@ -235,37 +291,65 @@ ImGui is out of scope.
    length). One extraction pass producing (entity, worldMatrix, worldSphere,
    mesh, materials, castsShadows) into a reused SoA buffer would feed all of
    them. High at scale, certain, large.
+   `[partly tracked: ENG-148]` — that issue removes the draw-extract walk for
+   static objects, on the GPU cull path only; ENG-214 (Done) removed the
+   per-(cascade x class) sweep. Neither names the three-to-four walks per frame
+   nor sharing one world sphere across them.
 3. `GatherLocalShadowCasters` allocates five scratch vectors per frame
    (`Renderer.cpp:412`, `:487`, `:508`, `:510`) and the final `swap` hands the
    persistent caster array a fresh buffer every frame, destroying its
    capacity. Make them members. High with local shadows, certain, medium.
+   `[untracked]` — ENG-181 is the same class of finding but scoped explicitly
+   to `DrawScene`.
 4. `Hierarchy.cpp:36-140`: transform propagation visits every entity every
    frame (the recompute is skipped, the visit is not) with about six guarded
    static pool lookups per entity via `ComponentIdOf<T>()`. Hoist the pools
    before the loop and pass the yielded Transform in (small); true
    incrementality needs a child index on Parent attach/detach (large).
+   `[untracked]` — ENG-177 touches `PropagateTransforms` only for the
+   stale-worldMatrix-on-detach correctness bug.
 5. Shadow caster sort comparator (`Renderer.cpp:29-38`) recomputes the
    pipeline class from bools at offset ~116 while `geometryKey` is at 0, and
    the sun sort moves 136-byte structs. Fold the class into the high bits of
    `geometryKey` at emit time; sort an index permutation. Medium, small.
+   `[untracked]` — ENG-214 requires preserving the class-major order but says
+   nothing about the comparator's cost or the element size.
 6. `LocalShadowCache.cpp:136-198`: `NoteBaked` inserts every still caster into
    the mobility map and `Update` walks the whole map each frame to find the
    dynamic ones. Keep a flat baked-pose array plus a small dynamic list.
+   `[ENG-140 regression — not an optimization]` — that issue requires in bold:
+   "Iterate entities whose tick changed this frame ... and **never** casters x
+   lights. A fully still frame must skip the caster gather entirely." The
+   shipped mobility map violates it. See also GPU finding 8.
 7. `ClusterGrid.cpp:125-127`: light buffers fully rewritten each frame
    regardless of change. Dirty-flag after the shadow-view stamping, not inside
    `Gather`. Low to medium, medium effort.
+   `[untracked]` — ENG-148 is the identical pattern for objects and is the
+   template to copy, but lights are explicitly out of its scope.
 8. `SceneRenderer.cpp:564-576`: winner-to-light resolution is a linear search
    per winner over the light pool. Carry an index on the assignment.
+   `[untracked]`
 9. `MeshCuller.cpp:85` (GPU path): `unordered_map` probe per instance per
    frame. Memoize the last (meshKey, index).
+   `[partly tracked: ENG-148]` — the probe lives inside the per-frame
+   `AddInstance` path that issue deletes, so it dissolves as a side effect.
+   ENG-148 never names it, so a partial landing leaves it unmentioned.
 10. `SceneRenderer.cpp:842` (editor only): `IsIconSuppressed` is a linear find
     inside two per-entity loops, and the list holds every collider entity.
     Sort + binary search, or a bitset by entity index.
+    `[untracked]` — ENG-156 and ENG-157 touch the same members, but only as
+    unbounded-growth leaks on early-return paths.
 11. `Renderer.cpp:256`: redundant world-centre transform; it is
     `worldSphere.center` already computed when culling is on.
+    `[untracked]` — ENG-209 notes the sphere and view distance are already in
+    hand, but only to reuse them for LOD selection.
 12. `AssetResolve.cpp:21-33`: while streaming, every material slot is
     re-resolved per frame through a 130-byte `AssetPath` by value and a string
     hash. Memoize id -> Material.
+    `[partly tracked: ENG-207 — and it points the other way]` — that issue owns
+    this code, and its "Broad" candidate fix accepts "a lookup per slot per
+    frame" as the price. Whoever picks up ENG-207 should read this item first
+    or they may make it worse. Nothing covers the `AssetPath` copy.
 
 ---
 
@@ -293,6 +377,28 @@ ImGui is out of scope.
 - Shadow depth pipeline has no fragment stage, back-face culling, slope bias,
   hardware comparison sampler, position-only vertex layout, instanced
   coalescing within a view.
+
+## Tracker status at a glance (2026-09-06)
+
+Fully tracked (1): GPU 2 — ENG-217.
+
+Partly tracked (9): GPU 1 (ENG-203, ENG-149), GPU 4 (ENG-201), GPU 8 and CPU 6
+(ENG-140 regressions), two items inside GPU 10 (ENG-180), CPU 1 (ENG-181),
+CPU 2 and CPU 9 (ENG-148), CPU 12 (ENG-207).
+
+Untracked (13): GPU 3, 5, 6, 7, 9, most of GPU 10; the CPU duplication bug,
+and CPU items 3, 4, 5, 7, 8, 10, 11.
+
+Two structural notes. The depth prepass has no owner: it exists only as one
+fork inside ENG-149's HZB work, so if it is worth doing for overdraw alone it
+is currently blocked behind a larger issue that may choose the other fork.
+And the two ENG-140 items are acceptance criteria that were written, accepted
+and not met, which is a different conversation from the rest of this list.
+
+Issues that came back on topical similarity but match nothing here: ENG-146
+(SSAO), ENG-141 (shadow diagnostics), ENG-204 (SMAA), ENG-156, ENG-157,
+ENG-177. The LOD track (ENG-209, ENG-210, ENG-215) is adjacent to GPU 7 and
+composes with it rather than overlapping.
 
 ## Suggested order
 1. Depth prepass (or the depth-major key A/B), with the normal-matrix fix
