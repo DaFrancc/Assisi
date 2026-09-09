@@ -253,6 +253,7 @@ make configure-gcc    # GCC
 make configure-clang  # Clang
 ```
 - Note: The first configure will download and build all dependencies. This takes several minutes. Subsequent runs are fast.
+- The download happens once for the whole tree, not once per build directory: the dependency sources are cloned into `out/_deps-src` and every preset is pointed at them. `make clean` keeps that cache; `make clean-deps` deletes it, which is also what makes a bumped dependency pin take effect.
 ### MacOS:
 - Currently unsupported, but you are free to fiddle around with it and submit a pull request.
 
