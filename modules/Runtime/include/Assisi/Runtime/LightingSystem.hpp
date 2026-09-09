@@ -93,6 +93,11 @@ public:
         /// Row in this type's GPU buffer, so a selection made from these names
         /// lights the shader already agrees about.
         uint32_t index = 0;
+        /// Who placed it. Nothing in the shadow path reads this — the row is
+        /// the identity everywhere downstream — but an inspector showing what
+        /// became of the selected light has only an entity to start from, and
+        /// the row it maps to is not recoverable from the scene.
+        Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
         glm::vec3 position{0.f};
         /// World-space aim. Straight down for a point light, which has none.
         glm::vec3 direction{0.f, -1.f, 0.f};

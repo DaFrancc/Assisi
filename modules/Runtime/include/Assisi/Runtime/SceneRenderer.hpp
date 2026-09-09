@@ -29,6 +29,7 @@
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/ShadowDiagnostics.hpp>
 #include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Render/SkyPass.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -241,6 +242,38 @@ public:
     /// recent Render(). Zero is what "the cap does not bind here" looks like.
     [[nodiscard]] uint32_t LastShadowDroppedByCap() const { return _lastSelection.droppedByCap; }
 
+    /// @brief Gather what became of each shadow-casting light every frame, for
+    /// an editor that is showing it.
+    ///
+    /// Off by default and off in a game, and the gate is the whole design: the
+    /// report is one row per shadow-casting light in the scene, which is work
+    /// proportional to content that nobody is reading. A closed panel pays
+    /// nothing, the same rule an unplaced feature keeps.
+    void SetShadowDiagnosticsEnabled(bool enabled)
+    {
+        _shadowDiagnosticsEnabled = enabled;
+        // The sun's half is gathered inside its pass, where the draw list it
+        // reads lives and dies within the call — so the pass is told directly
+        // rather than asked afterwards.
+        _shadowPass.SetCascadeCountsEnabled(enabled);
+        if (!enabled)
+        {
+            _shadowDiagnostics.Clear();
+        }
+    }
+    [[nodiscard]] bool ShadowDiagnosticsEnabled() const { return _shadowDiagnosticsEnabled; }
+
+    /// @brief What the shadow system did to each light in the most recent
+    /// Render(). Empty unless SetShadowDiagnosticsEnabled(true) was called.
+    [[nodiscard]] const Render::ShadowDiagnostics &ShadowDiagnostics() const { return _shadowDiagnostics; }
+
+    /// @brief The report for the light on @p entity, or null when it carries no
+    /// shadow-casting local light or nothing gathered this frame.
+    ///
+    /// The join the Render module cannot make: it names lights by their buffer
+    /// row, and an inspector has only the entity that placed one.
+    [[nodiscard]] const Render::LocalShadowLightReport *ShadowReportFor(ECS::Entity entity) const;
+
     /// @brief Drawn/culled counts from the most recent Render(); zero before the
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
@@ -363,6 +396,14 @@ private:
     /// local half.
     void RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
                             const Transform &cameraTransform, Render::MeshPass::ShadowFrameData &shadows);
+
+    /// @brief Join this frame's selection, allocation and budget into one row
+    /// per shadow-casting light. A no-op unless an editor asked for it.
+    ///
+    /// After both shadow passes have drawn, because it reports on both: the
+    /// per-cascade caster counts come from the sun's stats and everything else
+    /// from the atlas's.
+    void BuildShadowDiagnostics();
 
     /// @brief What fraction of the screen's height a light of @p range at
     /// @p position spans, from a camera at @p cameraPosition.
@@ -503,6 +544,10 @@ private:
     DrawStats _lastDrawStats;                             // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats;           // what the shadow pass drew, for the same overlay
     Render::LocalShadowPass::Stats _lastLocalShadowStats; // the same for the local-light atlas
+    // Per-light shadow outcomes for an editor readout. Gathered only while
+    // something is looking, which is what keeps a closed panel free.
+    Render::ShadowDiagnostics _shadowDiagnostics;
+    bool _shadowDiagnosticsEnabled = false;
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene
     // Render() overload: the scene tick at the end of the last propagation. 0

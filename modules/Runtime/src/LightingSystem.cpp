@@ -177,6 +177,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene)
             {
                 _shadowPoints.push_back(LocalLight{
                         .index = static_cast<uint32_t>(_pointLights.size() - 1u),
+                        .entity = entity,
                         .position = position,
                         .range = light.radius,
                         .intensity = light.intensity,
@@ -203,6 +204,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene)
             {
                 _shadowSpots.push_back(LocalLight{
                         .index = static_cast<uint32_t>(_spotLights.size() - 1u),
+                        .entity = entity,
                         .position = position,
                         .direction = direction,
                         .range = light.radius,

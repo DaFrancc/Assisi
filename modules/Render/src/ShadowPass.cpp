@@ -251,6 +251,16 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
     stats.maskedBatches = drawn.maskedBatches;
     stats.drawCalls = drawn.drawCalls;
     stats.culled = drawn.culled;
+    // Read back by the index each cascade was submitted at: the targets were
+    // built in cascade order just above, so view i of that call is cascade i.
+    if (_cascadeCounts)
+    {
+        const ShadowDrawList &list = _depthRenderer->LastDrawList();
+        for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+        {
+            stats.cascadeCasters[cascade] = ShadowViewCasterCount(list, cascade);
+        }
+    }
     return stats;
 }
 

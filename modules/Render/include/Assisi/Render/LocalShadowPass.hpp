@@ -125,6 +125,10 @@ public:
         /// Lights the update budget refused, and so lights that went unshadowed
         /// this frame rather than shadowed from a tile out of date.
         std::uint32_t deferredLights = 0;
+        /// The faces those lights were waiting to have redrawn. A point light is
+        /// six of them against a spot's one, so this is what the budget is
+        /// actually spent in and the number to compare it against.
+        std::uint32_t deferredFaces = 0;
         /// Casters drawn over the cached layer because they are moving.
         std::uint32_t dynamicCasters = 0;
     };
@@ -223,6 +227,19 @@ public:
     /// question does not arise: every tile is redrawn every frame.
     [[nodiscard]] std::span<const LocalShadowCache::Residency> CachedTiles() const { return _cache.Tiles(); }
 
+    /// @brief Which request each served tile came from and the edge it got, in
+    /// the same order @ref Tiles reports them.
+    ///
+    /// What joins a diagnostic back to the frame's requests: a light with no
+    /// entry here went unshadowed, and its plan says which mechanism did it.
+    /// Valid until the next Render().
+    [[nodiscard]] std::span<const LocalShadowServedTile> ServedTiles() const { return _servedTiles; }
+
+    /// @brief What the cache decided for each of the last Render()'s requests,
+    /// index-parallel to them. Empty while caching is off, where nothing plans
+    /// and nothing can be deferred.
+    [[nodiscard]] std::span<const LocalShadowTilePlan> Plans() const { return _plans; }
+
 private:
     [[nodiscard]] bool RebuildTargets();
     [[nodiscard]] bool RebuildPipelines();
@@ -235,7 +252,7 @@ private:
     [[nodiscard]] bool RebuildCacheTargets();
 
     /// @brief Cut tiles for every request the atlas can serve, filling @ref
-    /// _tiles, @ref _targets and @ref _servedRequests. Returns how many requests
+    /// _tiles, @ref _targets and @ref _servedTiles. Returns how many requests
     /// went unserved.
     ///
     /// Two passes, and the order between them is the point: every tile a light
@@ -348,9 +365,10 @@ private:
     std::vector<std::uint32_t> _targetFace;
     // Where each tile's views start in _targets. _tiles.size() + 1 entries.
     std::vector<std::uint32_t> _tileViewStart;
-    // The request each served tile came from, and every served face's rectangle
-    // concatenated in that order — what the cache is told to remember.
-    std::vector<std::uint32_t> _servedRequests;
+    // The request each served tile came from with the edge it got, and every
+    // served face's rectangle concatenated in that order — what the cache is
+    // told to remember. Parallel to _tiles.
+    std::vector<LocalShadowServedTile> _servedTiles;
     std::vector<ShadowViewRect> _servedRects;
     // This frame's plan, one per request, and the frame PlanFrame made it for.
     // Render remakes it when they disagree, so a caller that never calls

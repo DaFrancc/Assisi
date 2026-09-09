@@ -341,14 +341,15 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
 }
 
 void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalShadowRequest> requests,
-                              std::span<const LocalShadowTilePlan> plans, std::span<const std::uint32_t> servedRequests,
+                              std::span<const LocalShadowTilePlan> plans, std::span<const LocalShadowServedTile> served,
                               std::span<const ShadowViewRect> rects)
 {
     _report.clear();
 
     std::size_t rectCursor = 0;
-    for (const std::uint32_t index : servedRequests)
+    for (const LocalShadowServedTile &tile : served)
     {
+        const std::uint32_t index = tile.requestIndex;
         if (index >= requests.size() || index >= plans.size())
         {
             continue;
@@ -387,7 +388,10 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         row.kind = request.kind;
         row.lightIndex = request.lightIndex;
         row.faces = faces;
-        row.sizeClass = request.sizeClass;
+        // The class the tile *is*, not the one the light asked for. They differ
+        // exactly when the atlas demoted it, and reporting the request would
+        // leave the inspector showing a size no rectangle of the atlas has.
+        row.sizeClass = ShadowSizeClassOf(tile.resolution);
         row.rect = entry.rect;
         row.ageFrames = frameIndex - entry.lastBakeFrame;
     }

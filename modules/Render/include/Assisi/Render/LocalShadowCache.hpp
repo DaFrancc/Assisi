@@ -86,6 +86,21 @@ struct LocalShadowRequest
     std::uint32_t sizeClass = 0;
 };
 
+/// @brief One request that ended the frame holding a tile.
+///
+/// The request by index rather than by light, because everything parallel to the
+/// request span — the plans, the caster rows — is reached the same way. The
+/// resolution rides with it because it is what the light *got*, which is not
+/// what it asked for whenever the atlas had to demote it, and that difference is
+/// the only place the demotion is visible at all.
+struct LocalShadowServedTile
+{
+    std::uint32_t requestIndex = 0;
+    /// The tile edge in texels, one face of it — every face of a light is the
+    /// same class.
+    std::uint32_t resolution = 0;
+};
+
 /// @brief What one light's tile needs this frame.
 ///
 /// One of these per request, in the request order — which is importance order,
@@ -270,7 +285,7 @@ public:
     /// request that went unserved — refused by the budget, or refused by the
     /// atlas — is evicted, because the rectangle it held is somebody else's now.
     void Commit(std::uint32_t frameIndex, std::span<const LocalShadowRequest> requests,
-                std::span<const LocalShadowTilePlan> plans, std::span<const std::uint32_t> servedRequests,
+                std::span<const LocalShadowTilePlan> plans, std::span<const LocalShadowServedTile> served,
                 std::span<const ShadowViewRect> rects);
 
     /// @brief What the last Plan() decided, summed.

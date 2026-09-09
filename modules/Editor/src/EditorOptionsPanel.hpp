@@ -70,6 +70,11 @@ public:
     ///         rebuilding — the caller applies it, because only it can.
     [[nodiscard]] bool Draw(const Frame &frame);
 
+    /// @brief Whether the overlay is showing. What the caller gates the
+    /// renderer's per-light diagnostics on: they are gathered for this panel and
+    /// a closed one must cost nothing.
+    [[nodiscard]] bool IsOpen() const { return _showOptions; }
+
 private:
     /// @brief The sun-shadow section of the overlay: the tier presets, the
     /// cascade knobs, the biases, and the cascade debug view.

@@ -283,6 +283,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
     RenderLocalShadows(frame, scene, camera, cameraTransform, shadows);
+    // After both, because it reports on both — and outside them, because every
+    // early return either of them takes is still a frame with an answer.
+    BuildShadowDiagnostics();
 
     _lighting.Upload(frame.commandList, view);
 
@@ -481,6 +484,11 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
 {
     _lastLocalShadowStats = Render::LocalShadowPass::Stats{};
     _lastSelection.Clear();
+    // Emptied here rather than where they are refilled, because every early
+    // return below skips that — and a diagnostic reading last frame's requests
+    // against this frame's lights reports shadows that are not there.
+    _localCandidates.clear();
+    _localRequests.clear();
 
     const std::span<const LightingSystem::LocalLight> spots = _lighting.ShadowCastingSpotLights();
     const std::span<const LightingSystem::LocalLight> points = _lighting.ShadowCastingPointLights();
@@ -655,6 +663,73 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
     shadows.localActive = _lastLocalShadowStats.lights > 0;
     shadows.localSettings = _localShadowPass.Settings();
+}
+
+void SceneRenderer::BuildShadowDiagnostics()
+{
+    if (!_shadowDiagnosticsEnabled)
+    {
+        return;
+    }
+    _shadowDiagnostics.Clear();
+
+    // An inactive pass returns before it scores anything, so the candidate list
+    // is empty — but the lights are still placed, and how many want a shadow is
+    // what the readout's M means. Rebuilt from the gathered lights here rather
+    // than scored in the pass, which would make a switched-off feature do work.
+    const bool active = _localShadowPass.IsActive();
+    if (!active)
+    {
+        for (const LightingSystem::LocalLight &light : _lighting.ShadowCastingSpotLights())
+        {
+            _localCandidates.push_back(
+                    Render::LocalShadowCandidate{.kind = Render::LocalLightKind::Spot, .lightIndex = light.index});
+        }
+        for (const LightingSystem::LocalLight &light : _lighting.ShadowCastingPointLights())
+        {
+            _localCandidates.push_back(
+                    Render::LocalShadowCandidate{.kind = Render::LocalLightKind::Point, .lightIndex = light.index});
+        }
+    }
+
+    Render::BuildLocalShadowDiagnostics(
+        Render::LocalShadowDiagnosticsFrame{.candidates = _localCandidates,
+                                            .requests = _localRequests,
+                                            .plans = _localShadowPass.Plans(),
+                                            .served = _localShadowPass.ServedTiles(),
+                                            .deferredFaces = _lastLocalShadowStats.deferredFaces,
+                                            .budgetFaces = _shadowSettings.local.cache.enabled
+                                                               ? _shadowSettings.local.cache.updateBudgetFaces
+                                                               : 0u,
+                                            .active = active},
+        _shadowDiagnostics);
+
+    _shadowDiagnostics.cascadeCount = _lastShadowStats.cascades;
+    _shadowDiagnostics.cascadeCasters = _lastShadowStats.cascadeCasters;
+}
+
+const Render::LocalShadowLightReport *SceneRenderer::ShadowReportFor(ECS::Entity entity) const
+{
+    if (entity == ECS::NullEntity)
+    {
+        return nullptr;
+    }
+    // Both pools, because an entity carries one kind of light and which one is
+    // not worth asking the scene about again — the gathered rows are a handful
+    // and they are already in hand.
+    for (const auto &[pool, kind] :
+         {std::pair{_lighting.ShadowCastingSpotLights(), Render::LocalLightKind::Spot},
+          std::pair{_lighting.ShadowCastingPointLights(), Render::LocalLightKind::Point}})
+    {
+        for (const LightingSystem::LocalLight &light : pool)
+        {
+            if (light.entity == entity)
+            {
+                return _shadowDiagnostics.Find(kind, light.index);
+            }
+        }
+    }
+    return nullptr;
 }
 
 void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,
