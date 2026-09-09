@@ -65,6 +65,7 @@ constexpr const char *kWireGlyph = "\xef\x87\xa6"; // U+F1E6
 namespace
 {
 
+using Assisi::Core::Reflect::IsComponent;
 using Assisi::Editor::RadioVisibility;
 using Assisi::Editor::ScopedFieldChrome;
 
@@ -625,7 +626,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         {
             // MeshRenderer::materialOverrides is the only field of this type; it
             // gets one browse row per material slot of the resolved mesh.
-            if (meta.name == "MeshRenderer" && field.name == "materialOverrides")
+            if (IsComponent<Assisi::Runtime::MeshRenderer>(meta) && field.name == "materialOverrides")
                 edited = EditMaterialSlots(*static_cast<Assisi::Runtime::MeshRenderer *>(mut), meta, field.offset);
             else
                 ImGui::TextDisabled("%s: [unsupported vector]", field.name.c_str());
@@ -1000,7 +1001,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
 
     // A few components carry runtime state beyond their reflected fields. Wire it
     // up here so the add takes effect now rather than at the next level reload.
-    if (meta.name == "Transform")
+    if (IsComponent<Assisi::Runtime::Transform>(meta))
     {
         // Entities start transform-less, so place the new one in front of the
         // camera rather than at the world origin. GetMut, not Get: Transform is
@@ -1016,11 +1017,11 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
             tc->position = _cameraTransform.position + forward * kSpawnDistance;
         }
     }
-    else if (meta.name == "MeshRenderer")
+    else if (IsComponent<Assisi::Runtime::MeshRenderer>(meta))
     {
         ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
     }
-    else if (meta.name == "RigidBodyDescriptor")
+    else if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta))
     {
         const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
         const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
@@ -1060,7 +1061,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
     //
     // MeshRenderer needs nothing: its transient pointers are non-owning, the
     // AssetCache owns the GPU resources.
-    if (meta.name == "RigidBodyDescriptor" || meta.name == "Transform")
+    if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) || IsComponent<Assisi::Runtime::Transform>(meta))
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
         {
@@ -1640,7 +1641,7 @@ void EditorApp::DrawInspector()
     for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
         // Name belongs to the rename box above, not to this generic list.
-        if (meta->name == "Name")
+        if (IsComponent<Assisi::Runtime::Name>(*meta))
             continue;
 
         const void *compPtr =
@@ -1910,7 +1911,7 @@ void EditorApp::DrawInspector()
         std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
         {
-            if (meta->name == "Name") // owned by the rename box, never added here
+            if (IsComponent<Assisi::Runtime::Name>(*meta)) // owned by the rename box, never added here
                 continue;
             if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
                 continue;

@@ -148,4 +148,17 @@ struct ComponentMeta
     ComponentId id = kInvalidComponentId;
 };
 
+/// @brief Whether @p meta describes the component type @p T.
+///
+/// How code that walks the registry generically singles out one type. The
+/// registered id, never the registered name: a caller that special-cases a type
+/// already names it — it reaches into the component through it — so comparing
+/// the name buys no independence and costs the compiler's check. Rename or move
+/// the type and a name comparison stops matching, the special case it guarded
+/// stops happening, and nothing anywhere reports it.
+template <typename T> [[nodiscard]] bool IsComponent(const ComponentMeta &meta)
+{
+    return meta.id == ComponentIdOf<T>();
+}
+
 } // namespace Assisi::Core::Reflect
