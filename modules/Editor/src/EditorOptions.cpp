@@ -295,6 +295,26 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     changed |= ImGui::SliderFloat("Slope Bias", &shadows.sun.slopeBias, Assisi::Render::kMinSlopeBias,
                                   Assisi::Render::kMaxSlopeBias, "%.2f");
 
+    changed |= ImGui::Checkbox("Keep Still Cascades", &shadows.sun.cadence.enabled);
+    ImGui::SetItemTooltip("Keeps a cascade's depth instead of drawing it again while its fit has not moved and "
+                          "nothing has moved inside it, which skips the caster walk as well as the draw. Off is "
+                          "the per-frame baseline, exactly: every cascade, every frame.");
+
+    if (!shadows.sun.cadence.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+    changed |= ImGui::SliderFloat("Cascade Drift", &shadows.sun.cadence.driftTexels,
+                                  Assisi::Render::kMinCascadeDriftTexels, Assisi::Render::kMaxCascadeDriftTexels,
+                                  "%.2f texels");
+    ImGui::SetItemTooltip("How far a shadow edge may slide before its cascade is drawn again, in that cascade's "
+                          "own texels. Zero keeps a cascade only while its fit is unchanged; half a texel is "
+                          "inside the softness the cheapest filter already has.");
+    if (!shadows.sun.cadence.enabled)
+    {
+        ImGui::EndDisabled();
+    }
+
     if (!shadows.sun.enabled)
     {
         ImGui::EndDisabled();
@@ -485,17 +505,33 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // The sun's share, split by cascade. The total says the sun costs more than
     // it did; the split says whether that came from the near detail or the far
     // distance, which are different things to fix.
-    if (const Assisi::Render::ShadowPass::Stats sun = frame.renderer.LastShadowStats(); sun.cascades > 0)
+    if (diagnostics.cascadeCount > 0)
     {
+        const Assisi::Render::ShadowPass::Stats sun = frame.renderer.LastShadowStats();
         std::string cascades;
-        for (std::uint32_t cascade = 0; cascade < sun.cascades; ++cascade)
+        std::string ages;
+        for (std::uint32_t cascade = 0; cascade < diagnostics.cascadeCount; ++cascade)
         {
-            cascades += cascade == 0 ? "" : " / ";
+            const char *const separator = cascade == 0 ? "" : " / ";
+            cascades += separator;
             cascades += std::to_string(sun.cascadeCasters[cascade]);
+            ages += separator;
+            ages += std::to_string(diagnostics.cascadeAgeFrames[cascade]);
         }
         ImGui::Text("Cascade casters: %s", cascades.c_str());
         ImGui::SetItemTooltip("Casters drawn into each sun cascade, nearest first. A caster reaching several "
-                              "cascades is counted in each, because it is drawn into each.");
+                              "cascades is counted in each, because it is drawn into each. A cascade that kept "
+                              "its depth this frame drew nothing and reads zero.");
+
+        // The sun's half of the pay-for-what-you-place reading. Standing still
+        // under a fixed sun this settles at "0 of 4 cascades drawn" with the
+        // ages climbing; a cascade whose age never climbs while nothing moves in
+        // it is the cadence invalidating something that did not change.
+        ImGui::Text("Cascades drawn: %u of %u  |  ages %s", diagnostics.cascadesRedrawn, diagnostics.cascadeCount,
+                    ages.c_str());
+        ImGui::SetItemTooltip("Frames since each cascade was last drawn, nearest first. A near cascade trips on "
+                              "a step of the camera and a far one hardly at all, which is where the saving is — "
+                              "and the far cascades are the expensive ones.");
     }
 
     if (shadows.local.cache.enabled)

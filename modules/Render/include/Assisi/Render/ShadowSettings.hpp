@@ -218,6 +218,52 @@ inline constexpr float kMaxNormalOffsetTexels = 8.0f;
 inline constexpr float kMinCascadeBlend = 0.0f;
 inline constexpr float kMaxCascadeBlend = 1.0f;
 
+/// @brief Texels of shadow-edge drift a kept cascade may accumulate before it is
+/// drawn again.
+///
+/// Zero is not "no cadence": it is the exact-inputs skip alone, where a cascade
+/// is kept only while its fit is bit-identical and nothing has moved in it. The
+/// ceiling is where the drift is wider than the widest filter kernel, past which
+/// the lag stops reading as a slightly late edge and starts reading as a shadow
+/// detached from its caster.
+inline constexpr float kMinCascadeDriftTexels = 0.0f;
+inline constexpr float kMaxCascadeDriftTexels = 4.0f;
+
+/// @brief Keeping a cascade's depth instead of drawing it again.
+///
+/// With a fixed sun, a still camera and a still scene, every cascade renders
+/// bitwise-identical contents every frame. This is what stops that: a cascade
+/// whose fit has not moved and over which nothing has moved already holds the
+/// depth this frame wants, so the gather, the cull, the instance build and the
+/// upload are all skipped for it.
+///
+/// The saving is CPU rather than GPU. Drawing a cascade costs about 0.09 ms;
+/// walking every Transform + MeshRenderer in the scene to decide what goes into
+/// it costs more, and that is the half a kept cascade does not pay.
+///
+/// **Not scrolled or paged.** A cascade is kept whole or drawn whole. There is
+/// no page table, no toroidal addressing and no partial-region bookkeeping —
+/// that is the virtual-shadow-map form, and it is not what this is.
+struct SunShadowCadenceSettings
+{
+    /// Whether cascades are kept at all. Off is per-frame re-rendering exactly:
+    /// every cascade clears and draws every frame, which is the baseline every
+    /// measurement here is quoted against.
+    bool enabled = true;
+
+    /// Texels of tolerated shadow-edge drift.
+    ///
+    /// A cascade's own texel, so this means the same thing in a near cascade
+    /// covering a courtyard and a far one covering the district. Two things are
+    /// measured against it: how far the fitted centre has walked, and how far the
+    /// sun's rotation moves an edge over the cascade's depth range.
+    ///
+    /// Half a texel is at or below the half-texel the hardware's own bilinear
+    /// comparison already softens every edge by, so the step a re-render makes is
+    /// inside the penumbra the cheapest filter already has.
+    float driftTexels = 0.5f;
+};
+
 /// @brief The sun's shadows, as the user edits them.
 struct SunShadowSettings
 {
@@ -270,6 +316,11 @@ struct SunShadowSettings
     /// especially for a camera moving fast enough to cross a short one in a
     /// frame or two, which is when a ramp reads as a pop.
     float cascadeBlend = 0.33f;
+
+    /// What a cascade nothing has changed is allowed to skip. Nested here rather
+    /// than beside the quality knobs because it decides what is *drawn* rather
+    /// than how anything looks: at its default the picture is the same picture.
+    SunShadowCadenceSettings cadence;
 };
 
 /// @brief Bounds on how many atlas faces may be re-rendered in one frame.
@@ -504,6 +555,8 @@ struct ShadowSettings
                                                     kMaxNormalOffsetTexels, defaults.normalOffsetTexels);
     settings.cascadeBlend =
         ClampFiniteShadow(settings.cascadeBlend, kMinCascadeBlend, kMaxCascadeBlend, defaults.cascadeBlend);
+    settings.cadence.driftTexels = ClampFiniteShadow(settings.cadence.driftTexels, kMinCascadeDriftTexels,
+                                                     kMaxCascadeDriftTexels, defaults.cadence.driftTexels);
     return settings;
 }
 

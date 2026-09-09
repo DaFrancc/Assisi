@@ -281,6 +281,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // that stamp has to happen before the lights reach the GPU.
     _lighting.Gather(scene);
 
+    // Before either half draws, because both are invalidated against it and the
+    // change ticks may only be consumed once a frame.
+    UpdateShadowMovers(scene);
+
     Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
     RenderLocalShadows(frame, scene, camera, cameraTransform, shadows);
     // After both, because it reports on both — and outside them, because every
@@ -358,6 +362,15 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // `shadow-cascades` is explained by one of these or by none of them, and
     // "none of them" is the interesting answer.
     ASSISI_PROFILE_COUNTER("shadows/cascades", static_cast<double>(_lastShadowStats.cascades));
+    // What the cadence did. On a fixed sun with a still camera and a still scene
+    // `cascades` settles at zero and this at every fitted cascade, which is the
+    // whole claim in two numbers — and a capture where `cascades` never settles
+    // is a cadence invalidating something that did not change.
+    ASSISI_PROFILE_COUNTER("shadows/cascades-kept", static_cast<double>(_lastShadowStats.cascadesKept));
+    // Cascades a caster's motion dirtied, as against ones the camera or the sun
+    // moved out from under. Those are different problems with different answers.
+    ASSISI_PROFILE_COUNTER("shadows/cascades-by-motion",
+                           static_cast<double>(_sunCadence.Stats().dirtiedByMotion));
     ASSISI_PROFILE_COUNTER("shadows/instances", static_cast<double>(_lastShadowStats.instances));
     ASSISI_PROFILE_COUNTER("shadows/batches", static_cast<double>(_lastShadowStats.batches));
     // Reads zero for a scene with no cutout caster in it, which is what turns
@@ -392,6 +405,23 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     ASSISI_PROFILE_COUNTER("shadows/atlas-movers", static_cast<double>(_lastLocalShadowStats.dynamicCasters));
 }
 
+void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
+{
+    // What moved since the last frame, taken from the Transform pool's change
+    // ticks rather than by asking every caster. This is the whole invalidation
+    // input for both halves of the shadow system, and on a still frame it is
+    // empty — which is what makes a still frame free.
+    //
+    // Once per frame, before either half: the ticks are a cursor, and a second
+    // read of them would come back empty and tell the second half that nothing
+    // had moved.
+    ++_shadowFrameIndex;
+    _movedEntities.clear();
+    scene.ChangedSince<Transform>(_lastMoverTick, _movedEntities);
+    _lastMoverTick = scene.CurrentChangeTick();
+    GatherShadowMovers(scene, _movedEntities, _movedCasters);
+}
+
 Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                                   const Camera &camera, const glm::mat4 &view)
 {
@@ -415,6 +445,10 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
 
     if (!_shadowPass.IsActive() || !sun.has_value())
     {
+        // Whatever the slices hold describes a fit nothing has checked since,
+        // and a reallocation may have thrown the texture away entirely. The
+        // frame that brings the sun back draws every cascade.
+        _sunCadence.Forget();
         return shadows;
     }
 
@@ -432,23 +466,60 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     // The pass's own copy, not ours: Configure sanitized it, and the fit has to
     // agree with the array that was actually allocated.
     fitParams.settings = _shadowPass.Settings();
-    _cascadeFit = Render::FitCascades(fitParams);
+    const Render::CascadeFit candidate = Render::FitCascades(fitParams);
 
-    // After the fit, because the gather classifies against it: the sun's shadow
-    // distance lives in the cascades' own extent, and a caster that reaches no
-    // cascade is one no view wants. The fit reads nothing from the gather, so
-    // this is the order it always could have been in.
-    //
-    // One volume per cascade rather than one around all of them: the bit a
-    // caster earns here is the cascade it draws into, so the classification is
-    // what the per-view sweep used to redo, and a caster inside the shadow
-    // distance but in only one cascade now walks only that one.
-    std::array<Geometry::BoundingSphere, Render::kMaxShadowCascades> cascadeVolumes{};
-    const std::uint32_t volumeCount = Render::CascadeVolumeBounds(_cascadeFit, cascadeVolumes);
-    GatherShadowCasters(scene, sun->direction,
-                        std::span<const Geometry::BoundingSphere>(cascadeVolumes.data(), volumeCount), _shadowCasters);
+    // A reallocation leaves every slice holding depth of a texture that is gone,
+    // so nothing may be kept across one.
+    if (const std::uint32_t generation = _shadowPass.AllocationGeneration(); generation != _cascadeGeneration)
+    {
+        _cascadeGeneration = generation;
+        _sunCadence.Forget();
+    }
 
-    _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, _shadowCasters.casters);
+    // Which cascades this frame actually has to draw, and the fit to draw and
+    // sample with — which is not the candidate for a cascade being kept, because
+    // the depth in that slice was rasterized with the matrix it was fitted at.
+    _sunCadence.Plan(Render::SunShadowCadenceFrame{.frameIndex = _shadowFrameIndex,
+                                                   .settings = _shadowPass.Settings().cadence,
+                                                   .lightDirection = sun->direction,
+                                                   .movers = _movedCasters},
+                     candidate, _sunCadencePlan);
+    _cascadeFit = _sunCadencePlan.fit;
+
+    const std::span<const std::uint32_t> redraw(_sunCadencePlan.redraw.data(), _sunCadencePlan.redrawCount);
+
+    // The gather, skipped whole when nothing needs drawing. This is where the
+    // saving is: the depth pass is a fraction of a millisecond and walking every
+    // Transform + MeshRenderer to decide what goes into it is not.
+    if (redraw.empty())
+    {
+        _shadowCasters.casters.clear();
+        _shadowCasters.nearAlongLight.reset();
+        _shadowCasters.culledEntities = 0;
+    }
+    else
+    {
+        // After the fit, because the gather classifies against it: the sun's
+        // shadow distance lives in the cascades' own extent, and a caster that
+        // reaches no cascade is one no view wants. The fit reads nothing from
+        // the gather, so this is the order it always could have been in.
+        //
+        // One volume per cascade **being drawn**, in the order they are drawn:
+        // the bit a caster earns here is the view it draws into, and the views
+        // this frame submits are the redrawn cascades alone. Handing it every
+        // cascade's volume would number the bits by cascade and leave each view
+        // reading the mask of whichever cascade shares its position in the list.
+        std::array<Geometry::BoundingSphere, Render::kMaxShadowCascades> cascadeVolumes{};
+        for (std::uint32_t i = 0; i < redraw.size(); ++i)
+        {
+            cascadeVolumes[i] = Render::CascadeVolumeBounds(_cascadeFit.cascades[redraw[i]]);
+        }
+        GatherShadowCasters(scene, sun->direction,
+                            std::span<const Geometry::BoundingSphere>(cascadeVolumes.data(), redraw.size()),
+                            _shadowCasters);
+    }
+
+    _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, redraw, _shadowCasters.casters);
 
     shadows.fit = &_cascadeFit;
     shadows.settings = _shadowPass.Settings();
@@ -516,8 +587,6 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         // layer that no longer exists either.
         _localShadowSelector.Forget();
         _casterMobility.Clear();
-        // Left where it is deliberately, so the frame that turns shadows back on
-        // sees everything written while they were off as having moved.
         return;
     }
 
@@ -601,14 +670,6 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         _localLightVolumes.push_back(Geometry::BoundingSphere{light->position, light->range});
     }
 
-    // What moved since the last frame, taken from the Transform pool's change
-    // ticks rather than by asking every caster. This is the whole invalidation
-    // input, and on a still frame it is empty.
-    ++_shadowFrameIndex;
-    _movedEntities.clear();
-    scene.ChangedSince<Transform>(_lastMoverTick, _movedEntities);
-    _lastMoverTick = scene.CurrentChangeTick();
-    GatherShadowMovers(scene, _movedEntities, _movedCasters);
     _casterMobility.Update(_shadowFrameIndex, _shadowSettings.local.cache.promoteStillFrames, _movedCasters,
                            _dynamicCasters, _casterInvalidations);
 
@@ -704,8 +765,13 @@ void SceneRenderer::BuildShadowDiagnostics()
                                             .active = active},
         _shadowDiagnostics);
 
-    _shadowDiagnostics.cascadeCount = _lastShadowStats.cascades;
+    // Every fitted cascade, not only the ones drawn: a cascade that kept its
+    // depth is still a cascade the sun has, and a readout that dropped it would
+    // report the sun losing cascades whenever it stopped paying for them.
+    _shadowDiagnostics.cascadeCount = _cascadeFit.count;
     _shadowDiagnostics.cascadeCasters = _lastShadowStats.cascadeCasters;
+    _shadowDiagnostics.cascadeAgeFrames = _sunCadencePlan.ageFrames;
+    _shadowDiagnostics.cascadesRedrawn = _lastShadowStats.cascades;
 }
 
 const Render::LocalShadowLightReport *SceneRenderer::ShadowReportFor(ECS::Entity entity) const

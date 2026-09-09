@@ -40,24 +40,12 @@
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ShadowAtlas.hpp>
+#include <Assisi/Render/ShadowCascades.hpp>
 #include <Assisi/Render/ShadowImportance.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 
 namespace Assisi::Render
 {
-
-/// @brief One caster, as the cache needs to see it: who it is and where it
-/// stands.
-///
-/// The identity is opaque — the caller packs whatever is stable for it, and the
-/// scene packs an entity. Deliberately not a pointer or an index into this
-/// frame's caster span: those are re-derived every frame, and the cache has to
-/// recognise a caster across the frames in which it was not gathered at all.
-struct ShadowMover
-{
-    std::uint64_t casterId = 0;
-    Geometry::BoundingSphere worldSphere;
-};
 
 /// @brief The most faces one local light spends, which is a point light's cube.
 inline constexpr std::uint32_t kMaxLocalShadowFaces = kPointLightFaceCount;

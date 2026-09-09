@@ -105,9 +105,21 @@ struct ShadowDiagnostics
 
     /// Casters each sun cascade drew, nearest cascade first. Summed over the
     /// cascades this is the sun's whole draw cost, and the split is what says
-    /// whether it is the near detail or the far distance paying for it.
+    /// whether it is the near detail or the far distance paying for it. A
+    /// cascade that kept its depth this frame drew nothing and reads zero.
     std::array<std::uint32_t, kMaxShadowCascades> cascadeCasters{};
+    /// Cascades the sun is fitted to — every one of them, drawn this frame or
+    /// not. The two counts below are read against this one.
     std::uint32_t cascadeCount = 0;
+
+    /// Frames since each cascade's depth was drawn, nearest cascade first. Zero
+    /// is one drawn this frame; a number that keeps climbing while the camera
+    /// stands still is the cadence working, and one that keeps climbing over a
+    /// cascade something is visibly walking through is a missed invalidation.
+    std::array<std::uint32_t, kMaxShadowCascades> cascadeAgeFrames{};
+    /// Cascades drawn this frame. Zero on a still scene under a fixed sun,
+    /// which is the reading the sun's pay-for-what-you-place gate is taken from.
+    std::uint32_t cascadesRedrawn = 0;
 
     void Clear();
 

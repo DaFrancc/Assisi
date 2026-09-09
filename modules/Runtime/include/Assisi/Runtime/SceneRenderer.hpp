@@ -29,6 +29,7 @@
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/ShadowCadence.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
 #include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Render/SkyPass.hpp>
@@ -378,6 +379,14 @@ public:
     void SubmitOutline(const Render::MeshBuffer *mesh, const glm::mat4 &model, const glm::vec3 &color);
 
 private:
+    /// @brief Take this frame's moved casters off the Transform pool's change
+    /// ticks, and advance the shadow frame counter.
+    ///
+    /// Once per frame and before either shadow half, because both are
+    /// invalidated against the result and the ticks are a cursor: a second read
+    /// comes back empty and would tell the second half that nothing moved.
+    void UpdateShadowMovers(ECS::Scene &scene);
+
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
     /// fit when nothing casts, which is what makes the lookup free.
@@ -456,6 +465,14 @@ private:
     Render::ShadowPass _shadowPass;
     Render::CascadeFit _cascadeFit;
     ShadowCasterGather _shadowCasters;
+    // Which cascades still hold the right depth, and this frame's answer. The
+    // plan is a member so a steady state allocates nothing, and because the fit
+    // it publishes is what the mesh pass borrows.
+    Render::SunShadowCadence _sunCadence;
+    Render::SunShadowCadencePlan _sunCadencePlan;
+    // The cascade allocation the kept slices belong to. A different one means
+    // they hold depth of a texture that no longer exists.
+    std::uint32_t _cascadeGeneration = 0;
     // The local-light half: the shared atlas, who gets a tile in it, and the
     // casters each tile-holder reaches. Kept as members so a steady state
     // allocates nothing.

@@ -20,3 +20,7 @@ target_link_libraries(Assisi-Math
 )
 
 add_library(Assisi::Math ALIAS Assisi-Math)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

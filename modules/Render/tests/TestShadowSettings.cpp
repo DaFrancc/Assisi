@@ -19,6 +19,7 @@ TEST_CASE("Sun shadow settings are sanitized into their ranges")
     settings.slopeBias = std::numeric_limits<float>::infinity();
     settings.normalOffsetTexels = 400.f;
     settings.cascadeBlend = 4.0f;
+    settings.cadence.driftTexels = 900.f;
     settings.filter = static_cast<ShadowFilter>(77);
     settings.format = static_cast<ShadowMapFormat>(9);
 
@@ -33,8 +34,17 @@ TEST_CASE("Sun shadow settings are sanitized into their ranges")
     CHECK(safe.slopeBias == doctest::Approx(defaults.slopeBias));
     CHECK(safe.normalOffsetTexels == doctest::Approx(kMaxNormalOffsetTexels));
     CHECK(safe.cascadeBlend == doctest::Approx(kMaxCascadeBlend));
+    CHECK(safe.cadence.driftTexels == doctest::Approx(kMaxCascadeDriftTexels));
     CHECK(safe.filter == defaults.filter);
     CHECK(safe.format == defaults.format);
+
+    // A drift tolerance that is not a number falls back rather than clamping,
+    // like every other lane here. Every comparison against a NaN is false, so
+    // one reaching the cadence answers each of its two tests the opposite way
+    // from the other and the tolerance stops meaning anything at all.
+    SunShadowSettings notANumber;
+    notANumber.cadence.driftTexels = std::numeric_limits<float>::quiet_NaN();
+    CHECK(Sanitized(notANumber).cadence.driftTexels == doctest::Approx(defaults.cadence.driftTexels));
 
     // A resolution that is not a power of two rounds down, so the texel lattice
     // the snap quantises to divides the box evenly.
