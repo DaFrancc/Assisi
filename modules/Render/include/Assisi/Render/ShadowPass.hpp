@@ -66,6 +66,10 @@ public:
     struct Stats
     {
         std::uint32_t cascades = 0;  ///< Cascades rendered (0 when inactive).
+        /// Cascades that kept the depth they already held. On a still scene with
+        /// a fixed sun this is every cascade and @ref cascades is zero, which is
+        /// the reading the pay-for-what-you-place gate is taken from.
+        std::uint32_t cascadesKept = 0;
         std::uint32_t instances = 0; ///< Caster instances submitted, counted once per cascade they survive into.
         std::uint32_t batches = 0;   ///< Instanced draw commands after coalescing same-geometry runs.
         /// How many of @ref batches drew through the alpha-testing pipeline.
@@ -82,7 +86,7 @@ public:
         std::array<std::uint32_t, kMaxShadowCascades> cascadeCasters{};
     };
 
-    /// @brief Clear every cascade and draw @p casters into them.
+    /// @brief Clear the cascades @p redraw names and draw @p casters into them.
     ///
     /// @p casters must be sorted by ShadowGeometryKey — consecutive items with
     /// the same key coalesce into one instanced draw, and an unsorted span
@@ -92,7 +96,16 @@ public:
     /// named it, and no others. The cascade matrices already reach back to the
     /// casters (see CascadeFitParams), so a caster behind the camera survives
     /// the test rather than being clipped.
-    Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const ShadowCaster> casters) const;
+    ///
+    /// @p redraw is cascade indices, ascending, and a caster's view mask is
+    /// **indexed by position in it** rather than by cascade — the gather
+    /// classifies against the volumes of the cascades being drawn, in the same
+    /// order, so bit i names redraw[i]. A cascade this span does not name is
+    /// neither cleared nor drawn and keeps the depth it holds, which is only
+    /// correct while @p fit carries the matrix that depth was rasterized with.
+    /// See SunShadowCadence, which decides both together.
+    Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const std::uint32_t> redraw,
+                 std::span<const ShadowCaster> casters) const;
 
     [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }
 
@@ -114,6 +127,14 @@ public:
 
     /// @brief The settings the current allocation was built for.
     [[nodiscard]] const SunShadowSettings &Settings() const { return _settings; }
+
+    /// @brief Counts allocations of the cascade array.
+    ///
+    /// A change means the slices hold depth of a texture that no longer exists,
+    /// or no depth at all. Anything keeping a cascade across frames has to
+    /// notice that, and comparing settings for it would mean a second copy of
+    /// the rule about which of them force a reallocation.
+    [[nodiscard]] std::uint32_t AllocationGeneration() const { return _allocationGeneration; }
 
 private:
     [[nodiscard]] bool RebuildTargets();
@@ -150,6 +171,8 @@ private:
     // that needs a reallocation from one that only needs a pipeline rebuild.
     std::uint32_t _builtCascades = 0;
     std::uint32_t _builtResolution = 0;
+    // Bumped by every allocation and every release. See AllocationGeneration.
+    std::uint32_t _allocationGeneration = 0;
     ShadowMapFormat _builtFormat = ShadowMapFormat::D32;
     float _builtSlopeBias = -1.f;
 

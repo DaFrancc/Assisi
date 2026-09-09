@@ -39,6 +39,8 @@ void ShadowDiagnostics::Clear()
     budgetFaces = 0;
     cascadeCasters.fill(0);
     cascadeCount = 0;
+    cascadeAgeFrames.fill(0);
+    cascadesRedrawn = 0;
 }
 
 const LocalShadowLightReport *ShadowDiagnostics::Find(LocalLightKind kind, std::uint32_t lightIndex) const

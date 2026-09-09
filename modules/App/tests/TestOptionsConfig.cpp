@@ -23,6 +23,8 @@ TEST_CASE("Shadow settings survive a write and a read")
     written.shadows.sun.slopeBias = 3.5f;
     written.shadows.sun.normalOffsetTexels = 0.75f;
     written.shadows.sun.cascadeBlend = 0.1f;
+    written.shadows.sun.cadence.enabled = false;
+    written.shadows.sun.cadence.driftTexels = 1.5f;
 
     written.shadows.local.enabled = false;
     written.shadows.local.atlasResolution = 8192;
@@ -46,6 +48,8 @@ TEST_CASE("Shadow settings survive a write and a read")
     CHECK(read.shadows.sun.slopeBias == doctest::Approx(written.shadows.sun.slopeBias));
     CHECK(read.shadows.sun.normalOffsetTexels == doctest::Approx(written.shadows.sun.normalOffsetTexels));
     CHECK(read.shadows.sun.cascadeBlend == doctest::Approx(written.shadows.sun.cascadeBlend));
+    CHECK(read.shadows.sun.cadence.enabled == written.shadows.sun.cadence.enabled);
+    CHECK(read.shadows.sun.cadence.driftTexels == doctest::Approx(written.shadows.sun.cadence.driftTexels));
 
     CHECK(read.shadows.local.enabled == written.shadows.local.enabled);
     CHECK(read.shadows.local.atlasResolution == written.shadows.local.atlasResolution);

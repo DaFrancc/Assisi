@@ -56,6 +56,7 @@ void ShadowPass::ReleaseTargets()
     _cascadeTexture = _noCascadesTexture;
     _builtCascades = 0;
     _builtResolution = 0;
+    ++_allocationGeneration;
 }
 
 bool ShadowPass::RebuildTargets()
@@ -107,6 +108,7 @@ bool ShadowPass::RebuildTargets()
     _builtCascades = _settings.cascadeCount;
     _builtResolution = _settings.resolution;
     _builtFormat = _settings.format;
+    ++_allocationGeneration;
     return true;
 }
 
@@ -203,6 +205,7 @@ ShadowPipelines ShadowPass::PipelineSet() const
 }
 
 ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const CascadeFit &fit,
+                                     std::span<const std::uint32_t> redraw,
                                      std::span<const ShadowCaster> casters) const
 {
     Stats stats;
@@ -221,13 +224,18 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
     {
         ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-clears");
         _scratchTargets.clear();
-        _scratchTargets.reserve(cascadeCount);
-        for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+        _scratchTargets.reserve(redraw.size());
+        for (const std::uint32_t cascade : redraw)
         {
-            // Cleared whether or not anything draws into it: a stale slice would
-            // shadow this frame with last frame's geometry. The clear is this
-            // pass's business rather than the renderer's, because a cascade is
-            // rebuilt every frame and a cached map would be ruined by one.
+            if (cascade >= cascadeCount)
+            {
+                continue; // a cascade the allocation does not have
+            }
+            // Cleared because it is about to be redrawn, and only then: a slice
+            // this frame is keeping holds depth that is still what the fit
+            // describes, and clearing it would blank a shadow nothing asked to
+            // lose. The clear is this pass's business rather than the
+            // renderer's, which is what makes the two policies separable.
             commandList->clearDepthStencilTexture(
                 _cascadeTexture, nvrhi::TextureSubresourceSet(0, 1, static_cast<nvrhi::ArraySlice>(cascade), 1), true,
                 1.0f, false, 0);
@@ -246,19 +254,22 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
 
     _firstView = drawn.firstView;
     stats.cascades = drawn.views;
+    stats.cascadesKept = cascadeCount - std::min(cascadeCount, drawn.views);
     stats.instances = drawn.instances;
     stats.batches = drawn.batches;
     stats.maskedBatches = drawn.maskedBatches;
     stats.drawCalls = drawn.drawCalls;
     stats.culled = drawn.culled;
-    // Read back by the index each cascade was submitted at: the targets were
-    // built in cascade order just above, so view i of that call is cascade i.
+    // Read back by the index each cascade was *submitted* at, then filed under
+    // the cascade it was. The two are only the same when every cascade is being
+    // drawn, and reading this list by cascade index would otherwise credit a far
+    // cascade's casters to a near one.
     if (_cascadeCounts)
     {
         const ShadowDrawList &list = _depthRenderer->LastDrawList();
-        for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+        for (std::uint32_t target = 0; target < _scratchTargets.size(); ++target)
         {
-            stats.cascadeCasters[cascade] = ShadowViewCasterCount(list, cascade);
+            stats.cascadeCasters[_scratchTargets[target].view.arraySlice] = ShadowViewCasterCount(list, target);
         }
     }
     return stats;

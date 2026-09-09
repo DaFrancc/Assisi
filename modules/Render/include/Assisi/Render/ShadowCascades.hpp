@@ -33,6 +33,23 @@
 namespace Assisi::Render
 {
 
+/// @brief One caster that moved this frame: who it is and where it now stands.
+///
+/// The identity is opaque — the caller packs whatever is stable for it, and the
+/// scene packs an entity. Deliberately not a pointer or an index into a frame's
+/// caster span: those are re-derived every frame, and everything that keeps a
+/// shadow map across frames has to recognise a caster over the frames in which
+/// it was not gathered at all.
+///
+/// Both halves of the shadow system take their invalidation input as a span of
+/// these, which is what "walk the entities that moved, never all the casters"
+/// looks like at a call site.
+struct ShadowMover
+{
+    std::uint64_t casterId = 0;
+    Geometry::BoundingSphere worldSphere;
+};
+
 /// @brief One fitted cascade: the matrix the depth pass draws with, and the
 /// scalars the mesh shader needs to sample and bias it.
 struct ShadowCascade

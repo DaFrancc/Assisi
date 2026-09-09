@@ -180,6 +180,12 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 ReadField(sun, "slopeBias", shadows.sun.slopeBias);
                 ReadField(sun, "normalOffsetTexels", shadows.sun.normalOffsetTexels);
                 ReadField(sun, "cascadeBlend", shadows.sun.cascadeBlend);
+                if (sun.contains("cadence"))
+                {
+                    const auto &cadence = sun.at("cadence");
+                    ReadField(cadence, "enabled", shadows.sun.cadence.enabled);
+                    ReadField(cadence, "driftTexels", shadows.sun.cadence.driftTexels);
+                }
             }
             if (sh.contains("local"))
             {
@@ -277,6 +283,8 @@ std::string OptionsConfig::ToJsonText() const
     sun["slopeBias"] = shadows.sun.slopeBias;
     sun["normalOffsetTexels"] = shadows.sun.normalOffsetTexels;
     sun["cascadeBlend"] = shadows.sun.cascadeBlend;
+    sun["cadence"]["enabled"] = shadows.sun.cadence.enabled;
+    sun["cadence"]["driftTexels"] = shadows.sun.cadence.driftTexels;
 
     nlohmann::json &local = json["shadows"]["local"];
     local["enabled"] = shadows.local.enabled;
