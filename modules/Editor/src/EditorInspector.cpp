@@ -32,6 +32,7 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 
 #include <imgui.h>
 
@@ -1499,6 +1500,262 @@ void EditorApp::DrawLightShadowVerdict()
     ImGui::SetItemTooltip("%s", Assisi::Render::DescribeLocalShadowState(report->state));
 }
 
+namespace
+{
+/// A row of buttons that each write a value and nothing else.
+///
+/// Deliberately not a preset enum. A preset is an AUTHORITY — a level saved as
+/// "Arctic" follows the Arctic numbers wherever they go next, which is why
+/// Skybox's knobs grey out under one. A button is a SHORTCUT: click it, get
+/// sensible values, keep editing, with no Custom state to escape from and no
+/// field that quietly stops being read. Place and pacing and planet are
+/// orthogonal axes, so a preset spanning them would have to grey a day length
+/// because of where the level is, and pacing has nothing to do with place.
+///
+/// @return true if a button was pressed.
+bool ButtonRow(const char *label, std::initializer_list<const char *> names, int32_t &pressed)
+{
+    ImGui::TextDisabled("%s", label);
+    ImGui::SameLine();
+    int32_t index = 0;
+    bool any = false;
+    for (const char *name : names)
+    {
+        if (index > 0)
+        {
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton(name))
+        {
+            pressed = index;
+            any = true;
+        }
+        ++index;
+    }
+    return any;
+}
+
+/// Which quarter of the year @p dayOfYear falls in, by its northern name. The
+/// tooltip beside the season buttons says so, and a southern latitude genuinely
+/// gets the opposite season — which is correct, not a bug.
+const char *SeasonName(double dayOfYear, float yearLengthDays)
+{
+    const double fraction = yearLengthDays > 0.f ? dayOfYear / static_cast<double>(yearLengthDays) : 0.0;
+    if (fraction < 0.25)
+        return "spring";
+    if (fraction < 0.5)
+        return "summer";
+    if (fraction < 0.75)
+        return "autumn";
+    return "winter";
+}
+
+/// The moon's phase in words. Waxing and waning are the elongation's, not the
+/// lit fraction's — half lit says nothing about which way it is going.
+const char *PhaseName(float litFraction, bool waxing)
+{
+    if (litFraction < 0.03f)
+        return "new";
+    if (litFraction > 0.97f)
+        return "full";
+    if (litFraction < 0.47f)
+        return waxing ? "waxing crescent" : "waning crescent";
+    if (litFraction < 0.53f)
+        return waxing ? "first quarter" : "last quarter";
+    return waxing ? "waxing gibbous" : "waning gibbous";
+}
+
+const char *BodyName(Assisi::Runtime::LightingBody body)
+{
+    switch (body)
+    {
+    case Assisi::Runtime::LightingBody::Sun:
+        return "Sun";
+    case Assisi::Runtime::LightingBody::Moon:
+        return "Moon";
+    case Assisi::Runtime::LightingBody::None:
+        break;
+    }
+    return "nothing";
+}
+} // namespace
+
+void EditorApp::DrawTimeOfDayControls()
+{
+    using Assisi::Runtime::TimeOfDay;
+
+    TimeOfDay *clock = _scene->GetMut<TimeOfDay>(_selectedEntity);
+    if (clock == nullptr)
+    {
+        return;
+    }
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    bool edited = false;
+
+    // Scrubbing goes through Jump rather than writing the field, so a scrub
+    // counts as a cut and the cascades are redrawn on the frame it happens. A
+    // scrub that merely wrote the hour would leave the old sun's shadows up
+    // until something else invalidated them.
+    float hour = static_cast<float>(clock->hour);
+    if (ImGui::SliderFloat("Hour", &hour, 0.f, 24.f, "%.2f"))
+    {
+        edited |= Assisi::Runtime::Jump(*clock, clock->day, static_cast<double>(hour));
+    }
+
+    float dayOfYear = static_cast<float>(clock->dayOfYear);
+    if (ImGui::SliderFloat("Day of year", &dayOfYear, 0.f, clock->yearLengthDays, "%.2f"))
+    {
+        edited |= Assisi::Runtime::JumpSeason(*clock, static_cast<double>(dayOfYear));
+    }
+
+    int32_t pressed = 0;
+    if (ButtonRow("Jump to", {"Dawn", "Noon", "Dusk", "Midnight"}, pressed))
+    {
+        const double hours[] = {6.0, 12.0, 18.0, 0.0};
+        edited |= Assisi::Runtime::JumpForwardTo(*clock, hours[pressed]);
+    }
+    if (ButtonRow("Season", {"Spring eq.", "Summer", "Autumn eq.", "Winter"}, pressed))
+    {
+        edited |= Assisi::Runtime::JumpSeason(
+            *clock, 0.25 * static_cast<double>(pressed) * static_cast<double>(clock->yearLengthDays));
+    }
+    ImGui::SetItemTooltip("Northern names. A southern latitude gets the opposite season, which is correct.");
+
+    // A rate change is a plain field write and is NOT a jump: the clock is
+    // integrated, so changing the pace under it is continuous.
+    if (ButtonRow("Pace", {"24 h", "30 min", "10 min", "1 min", "6 s"}, pressed))
+    {
+        const float lengths[] = {86400.f, 1800.f, 600.f, 60.f, 6.f};
+        clock->dayLengthSeconds = lengths[pressed];
+        edited = true;
+    }
+
+    edited |= ImGui::Checkbox("Pause day", &clock->paused);
+    ImGui::SameLine();
+    edited |= ImGui::Checkbox("Freeze season", &clock->seasonsPaused);
+
+    const int32_t hourPart = static_cast<int32_t>(clock->hour);
+    const int32_t minutePart = static_cast<int32_t>((clock->hour - static_cast<double>(hourPart)) * 60.0);
+    ImGui::TextDisabled("Day %d, %02d:%02d — day %.1f of %.0f (%s)", clock->day, hourPart, minutePart,
+                        clock->dayOfYear, static_cast<double>(clock->yearLengthDays),
+                        SeasonName(clock->dayOfYear, clock->yearLengthDays));
+    ImGui::TextDisabled("declination %+.1f deg", static_cast<double>(sky.declinationDegrees));
+
+    // Polar night and the midnight sun are steady states here, not errors, and
+    // saying so is what stops the first report of "the sun is gone".
+    if (sky.daylightHours <= 0.f)
+    {
+        ImGui::TextDisabled("polar night — no sunrise at this latitude today");
+    }
+    else if (sky.daylightHours >= 24.f)
+    {
+        ImGui::TextDisabled("midnight sun — the sun does not set today");
+    }
+    else
+    {
+        ImGui::TextDisabled("daylight %.2f h", static_cast<double>(sky.daylightHours));
+    }
+
+    // The panel says "cascades never settle" at the fast end and this is why: at
+    // six seconds a day the sun turns a degree every frame.
+    ImGui::TextDisabled("sun %.4f deg/s (%.4f deg/frame at 60 Hz)",
+                        static_cast<double>(glm::degrees(sky.sunAngularVelocity)),
+                        static_cast<double>(glm::degrees(sky.sunAngularVelocity)) / 60.0);
+    ImGui::TextDisabled("lighting: %s at %.3f", BodyName(sky.light.body), static_cast<double>(sky.light.intensity));
+
+    if (edited)
+    {
+        _scene->MarkChanged(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<TimeOfDay>());
+    }
+}
+
+void EditorApp::DrawSunControls()
+{
+    using Assisi::Runtime::Sun;
+
+    Sun *sun = _scene->GetMut<Sun>(_selectedEntity);
+    if (sun == nullptr)
+    {
+        return;
+    }
+    bool edited = false;
+    int32_t pressed = 0;
+
+    if (ButtonRow("Place", {"Equator", "Mid-latitude", "Arctic Circle"}, pressed))
+    {
+        // The circle for THIS planet, computed from the tilt it actually has,
+        // rather than Earth's 66.5 quoted at a world that is not Earth.
+        const float latitudes[] = {0.f, 45.f, 90.f - sun->axialTiltDegrees};
+        sun->latitudeDegrees = latitudes[pressed];
+        edited = true;
+    }
+    if (ButtonRow("Planet", {"Earth", "No seasons", "Extreme"}, pressed))
+    {
+        const float tilts[] = {23.44f, 0.f, 45.f};
+        sun->axialTiltDegrees = tilts[pressed];
+        edited = true;
+    }
+    ImGui::SetItemTooltip("No seasons is a tilt of zero: a permanent equinox, twelve hours of day at every "
+                          "latitude, and the sun due east every morning.");
+
+    if (edited)
+    {
+        _scene->MarkChanged(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Sun>());
+    }
+}
+
+void EditorApp::DrawMoonReadout()
+{
+    const Assisi::Runtime::Moon *moon = _scene->Get<Assisi::Runtime::Moon>(_selectedEntity);
+    if (moon == nullptr)
+    {
+        return;
+    }
+    if (_scene->Get<Assisi::Runtime::Sun>(_selectedEntity) == nullptr)
+    {
+        ImGui::TextDisabled("no Sun on this entity — the moon has no ecliptic to orbit and is not drawn");
+        return;
+    }
+
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+
+    bool waxing = true;
+    if (const Assisi::Runtime::TimeOfDay *clock = _scene->Get<Assisi::Runtime::TimeOfDay>(_selectedEntity))
+    {
+        const float elongation = Assisi::Runtime::OrbitOf(*clock, *moon).elongationRadians;
+        const float turns = elongation / glm::two_pi<float>();
+        waxing = (turns - std::floor(turns)) < 0.5f;
+    }
+    ImGui::TextDisabled("phase: %s, %.0f%% lit", PhaseName(sky.moonLitFraction, waxing),
+                        static_cast<double>(sky.moonLitFraction) * 100.0);
+
+    // The fallback is a flat white disk, which looks like a perfectly plausible
+    // moon — which is exactly why it needs a line saying it is the fallback.
+    switch (_sceneRenderer.MoonTextureState())
+    {
+    case Assisi::Render::SkyPass::MoonTexture::Loaded:
+        ImGui::TextDisabled("texture: loaded");
+        break;
+    case Assisi::Render::SkyPass::MoonTexture::Failed:
+        ImGui::TextDisabled("texture: white fallback (the load failed)");
+        break;
+    case Assisi::Render::SkyPass::MoonTexture::NotLoaded:
+        ImGui::TextDisabled("texture: not yet drawn");
+        break;
+    }
+}
+
+void EditorApp::DrawClockedAimNotice()
+{
+    if (_scene->Get<Assisi::Runtime::Sun>(_selectedEntity) == nullptr)
+    {
+        return;
+    }
+    // Radio gating cannot reach across components, so this is the honest minimum:
+    // say that the field below is not read rather than leaving it looking live.
+    ImGui::TextDisabled("aim comes from the clock (Sun) — `direction` is not read");
+}
+
 void EditorApp::DrawInspector()
 {
     using namespace Assisi::Core::Reflect;
@@ -1799,6 +2056,27 @@ void EditorApp::DrawInspector()
                 meta->id == ComponentIdOf<Assisi::Runtime::PointLight>())
             {
                 DrawLightShadowVerdict();
+            }
+
+            // The clock's own controls, above the generic fields rather than
+            // instead of them: scrubbing and jumping are gestures the reflected
+            // rows cannot express, and both hours are doubles, which the generic
+            // inspector shows as a text box.
+            if (meta->id == ComponentIdOf<Assisi::Runtime::TimeOfDay>())
+            {
+                DrawTimeOfDayControls();
+            }
+            else if (meta->id == ComponentIdOf<Assisi::Runtime::Sun>())
+            {
+                DrawSunControls();
+            }
+            else if (meta->id == ComponentIdOf<Assisi::Runtime::Moon>())
+            {
+                DrawMoonReadout();
+            }
+            else if (meta->id == ComponentIdOf<Assisi::Runtime::DirectionalLight>())
+            {
+                DrawClockedAimNotice();
             }
 
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);

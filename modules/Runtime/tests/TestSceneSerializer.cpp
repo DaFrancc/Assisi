@@ -25,6 +25,7 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 
 // Private to the serializer's own translation units: the nesting tests at the
 // bottom engage a context directly, which is the one thing the public API cannot
@@ -336,6 +337,91 @@ TEST_CASE("SceneSerializer: shadow-casting flags round-trip on every caster type
     CHECK(loaded.Get<PointLight>(le)->castsShadows == false);
     CHECK(loaded.Get<SpotLight>(le)->castsShadows == false);
     CHECK(loaded.Get<MeshRenderer>(le)->castsShadows == false);
+}
+
+TEST_CASE("SceneSerializer: the time of day round-trips, and the jump counter does not")
+{
+    using Assisi::Runtime::Moon;
+    using Assisi::Runtime::Sun;
+    using Assisi::Runtime::TimeOfDay;
+
+    // Every value off its default, so a field that never serialized reads back as
+    // the default and fails rather than passing by coincidence.
+    TimeOfDay clock;
+    clock.hour = 17.375;
+    clock.day = 9;
+    clock.dayLengthSeconds = 6.f;
+    clock.paused = true;
+    clock.dayOfYear = 5.125;
+    clock.yearLengthDays = 40.f;
+    clock.seasonsPaused = true;
+    clock.jumpSerial = 77;
+
+    Sun sun;
+    sun.latitudeDegrees = -67.5f;
+    sun.axialTiltDegrees = 12.25f;
+    sun.bearingDegrees = -95.f;
+
+    Moon moon;
+    moon.intensity = 0.05f;
+    moon.color = Assisi::Math::Color3(0.2f, 0.3f, 0.4f);
+    moon.sizeDegrees = 1.75f;
+    moon.diskColor = Assisi::Math::Color3(0.9f, 0.8f, 0.7f);
+    moon.diskIntensity = 5.5f;
+    moon.cycleDays = 7.5f;
+    moon.phaseAtEpoch = 0.625f;
+    moon.inclinationDegrees = 12.f;
+    moon.nodeAtEpochDegrees = -140.f;
+    moon.nodeCycleYears = 3.25f;
+
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, clock) != nullptr);
+    REQUIRE(scene.Add(e, sun) != nullptr);
+    REQUIRE(scene.Add(e, moon) != nullptr);
+
+    const nlohmann::json saved = SceneSerializer::Save(scene);
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, saved).has_value());
+
+    const ECS::Entity le{.index = 0, .generation = 0};
+    const TimeOfDay *readClock = loaded.Get<TimeOfDay>(le);
+    REQUIRE(readClock != nullptr);
+
+    // Exactly, not approximately: both clocks are doubles precisely so that a
+    // twenty-four hour day's step survives, and a serializer that narrowed them
+    // on the way through the file would undo that where nothing else would look.
+    CHECK(readClock->hour == 17.375);
+    CHECK(readClock->dayOfYear == 5.125);
+    CHECK(readClock->day == 9);
+    CHECK(readClock->dayLengthSeconds == doctest::Approx(6.f));
+    CHECK(readClock->yearLengthDays == doctest::Approx(40.f));
+    CHECK(readClock->paused);
+    CHECK(readClock->seasonsPaused);
+
+    // The jump counter is meaningless outside the session that produced it, and a
+    // reflected one would rewrite the level file every time anybody scrubbed.
+    CHECK(readClock->jumpSerial == 0);
+    CHECK(saved.dump().find("jumpSerial") == std::string::npos);
+
+    const Sun *readSun = loaded.Get<Sun>(le);
+    REQUIRE(readSun != nullptr);
+    CHECK(readSun->latitudeDegrees == doctest::Approx(-67.5f));
+    CHECK(readSun->axialTiltDegrees == doctest::Approx(12.25f));
+    CHECK(readSun->bearingDegrees == doctest::Approx(-95.f));
+
+    const Moon *readMoon = loaded.Get<Moon>(le);
+    REQUIRE(readMoon != nullptr);
+    CHECK(readMoon->intensity == doctest::Approx(0.05f));
+    CHECK(readMoon->color.b == doctest::Approx(0.4f));
+    CHECK(readMoon->sizeDegrees == doctest::Approx(1.75f));
+    CHECK(readMoon->diskColor.r == doctest::Approx(0.9f));
+    CHECK(readMoon->diskIntensity == doctest::Approx(5.5f));
+    CHECK(readMoon->cycleDays == doctest::Approx(7.5f));
+    CHECK(readMoon->phaseAtEpoch == doctest::Approx(0.625f));
+    CHECK(readMoon->inclinationDegrees == doctest::Approx(12.f));
+    CHECK(readMoon->nodeAtEpochDegrees == doctest::Approx(-140.f));
+    CHECK(readMoon->nodeCycleYears == doctest::Approx(3.25f));
 }
 
 TEST_CASE("SceneSerializer: a level saved before the shadow flags existed casts shadows")

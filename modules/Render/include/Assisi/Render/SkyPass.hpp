@@ -4,6 +4,7 @@
 /// @file SkyPass.hpp
 /// @brief Fills the pixels the scene left empty with sky.
 
+#include <cstdint>
 #include <string>
 
 #include <nvrhi/nvrhi.h>
@@ -11,6 +12,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Sky.hpp>
+#include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Render
 {
@@ -33,6 +35,21 @@ namespace Assisi::Render
 class SkyPass
 {
 public:
+    /// @brief Whether the moon's albedo photograph has been read yet, and how it
+    /// went.
+    ///
+    /// Reported because the failure is invisible: a failed load leaves a flat
+    /// white disk, which is a perfectly plausible moon and is exactly what the
+    /// disk looked like before there was a texture at all.
+    enum class MoonTexture : std::uint8_t
+    {
+        /// Nothing has asked for a moon yet, so nothing has been opened. A level
+        /// with no Moon component stays here for ever and pays nothing.
+        NotLoaded,
+        Loaded,
+        Failed,
+    };
+
     struct InitParams
     {
         nvrhi::IDevice *device = nullptr;
@@ -41,6 +58,9 @@ public:
         nvrhi::FramebufferInfo framebufferInfo;
         std::string vertexShaderSpvPath;
         std::string pixelShaderSpvPath;
+        /// The moon's albedo, opened on the first frame a moon is actually drawn
+        /// rather than here. A level without a moon never opens it.
+        std::string moonTexturePath;
     };
 
     [[nodiscard]] bool Initialize(const InitParams &params);
@@ -65,10 +85,22 @@ public:
     ///
     /// No-op if not initialised.
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraPosition,
-              const SkySun &sun, const SkySettings &settings);
+              const SkySun &sun, const SkyMoon &moon, const SkySettings &settings);
+
+    [[nodiscard]] MoonTexture MoonTextureState() const { return _moonState; }
 
 private:
     [[nodiscard]] bool BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
+    [[nodiscard]] bool BuildBindingSet();
+
+    /// @brief Read the moon's albedo, once, on the first frame a moon is drawn.
+    ///
+    /// **sRGB, not linear.** The file is an albedo multiplied into a radiance, so
+    /// it loads the way base colour and emissive do and the GPU decodes it to
+    /// linear at sample time. Loading it linear makes every texel a quarter to a
+    /// half too dark, and the tempting "fix" — raising the disk intensity until
+    /// it looks right — buries the mistake where nobody will find it.
+    void LoadMoonTexture();
 
     nvrhi::IDevice *_device = nullptr;
 
@@ -78,6 +110,14 @@ private:
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::BindingSetHandle _bindingSet;
     nvrhi::GraphicsPipelineHandle _pipeline;
+
+    std::string _moonTexturePath;
+    /// A white 1x1 until a moon is first drawn, so a binding set always has a
+    /// real texture in it and the pipeline never has a variant. A failed load
+    /// leaves this in place, which is the flat tinted disk — degraded, not broken.
+    Texture _moon;
+    nvrhi::SamplerHandle _moonSampler;
+    MoonTexture _moonState = MoonTexture::NotLoaded;
 };
 
 } // namespace Assisi::Render

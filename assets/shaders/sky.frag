@@ -21,7 +21,16 @@ layout(binding = 256) uniform SkyConstants
     vec4 nightColor;      // xyz = linear colour, w = disk intensity
     vec4 sunDiskColor;    // xyz = disk tint, w = limb darkening
     vec4 atmosphere;      // x = sky bounce, yzw unused
+    vec4 moonDirection;   // xyz = unit direction TO the moon, w = its disk radius (radians)
+    vec4 moonRadiance;    // xyz = colour * intensity, w = its disk intensity
+    vec4 moonDiskColor;   // xyz = tint over the albedo texture, w = how much of the air's colour shift it takes
+    vec4 moonUp;          // xyz = which way the disk image's top points, w unused
 } uSky;
+
+// The moon's albedo: an orthographic photograph of the one hemisphere a tidally
+// locked moon ever shows. Loaded sRGB, so the view decodes it to linear here.
+layout(binding = 0)   uniform texture2D uMoon;
+layout(binding = 128) uniform sampler   uMoonSampler;
 
 layout(location = 0) in vec4 vFarPoint;
 layout(location = 0) out vec4 outColor;
@@ -30,6 +39,12 @@ const float kHorizonAirMass  = 35.567;
 const float kTwilightFalloff = 10.0;
 const float kHorizonSoftness = 0.01;
 const float kInvPi           = 0.31830989;
+// In units of dot(surface normal, direction to the sun). The moon is not shaded
+// by a cosine — regolith is retro-reflective and its lit face is near uniform —
+// so this is only how abruptly the terminator arrives.
+const float kMoonTerminatorSoftness = 0.05;
+const float kMinDiskRadius   = 1e-6;
+const float kMinTangentLength = 1e-6;
 
 // Air mass along a ray, relative to straight up. Kasten-Young down to the
 // horizon, held there below it: a downward ray leaves through the ground, and
@@ -83,9 +98,113 @@ float SunDiskProfile(float angleToSun, float radius, float edgeSoftness, float l
     // How far across the visible face this line of sight lands, then the cosine
     // of the angle it makes with the surface there. A ray at the rim leaves
     // through cooler material and carries less of it out.
-    float acrossFace = min(angleToSun / max(radius, 1e-6), 1.0);
+    float acrossFace = min(angleToSun / max(radius, kMinDiskRadius), 1.0);
     float faceCosine = sqrt(max(1.0 - acrossFace * acrossFace, 0.0));
     return edge * (1.0 - limbDarkening * (1.0 - faceCosine));
+}
+
+// What one body contributes to one ray. Scattering is linear in the beam, so the
+// sun's share plus the moon's is not an approximation of a two-body sky, it IS
+// the two-body sky — and it is the only form with no seam in it. Handing the
+// scattering to whichever body dominates would replace the sunset's afterglow
+// with the moon's beam in a single frame.
+//
+// `viewAirMass` and `scattered` belong to the ray alone, so main computes them
+// once and both calls share them.
+struct BodyRadiance
+{
+    vec3 beam;          // what is left of the body's light where it meets the ground
+    vec3 transmittance; // the fraction that survived, on its own
+    vec3 sky;           // what the air sends toward the eye from that beam
+    vec3 ground;        // what the ground half reflects of it
+};
+
+// A transmittance with `tint` of its colour shift left in, and all of its
+// dimming. Mixing toward its own luminance rather than toward white is what makes
+// this purely a hue control: luminance is linear, so every tint has the same
+// luminance and the knob can never brighten or darken anything.
+//
+// The moon uses it and nothing else does. A low moon reddens exactly as hard as a
+// low sun in physics, but real moonlight is a millionth of sunlight — below where
+// colour vision works — so that reddening is seen almost entirely in the grey.
+// This engine raises the moon's intensity four orders of magnitude to make night
+// playable, and this is the other half of that compromise.
+// It reaches every extinction term and no scattering coefficient, and that split
+// is the whole of it. Extinction is what turns a low body orange; the scattering
+// coefficients are why the sky is BLUE. So a moonlit sky stays blue at every
+// tint, while the sunset-coloured aureole a low moon throws around itself fades
+// with it.
+vec3 TintedTransmittance(vec3 transmittance, float tint)
+{
+    // Untouched at full tint, exactly: the sun always passes one.
+    if (tint >= 1.0)
+    {
+        return transmittance;
+    }
+    float grey = dot(transmittance, vec3(0.2126, 0.7152, 0.0722));
+    return mix(vec3(grey), transmittance, max(tint, 0.0));
+}
+
+BodyRadiance Contribution(vec3 ray, vec3 toBody, vec3 radiant, vec3 extinction, vec3 airScattering,
+                          vec3 hazeScattering, float viewAirMass, float scattered, float tint)
+{
+    float bodyAirMass = SunAirMass(toBody.y);
+    float cosGamma    = clamp(dot(ray, toBody), -1.0, 1.0);
+
+    vec3 transmittance = TintedTransmittance(exp(-extinction * bodyAirMass), tint);
+    vec3 beam = radiant * transmittance;
+
+    // Light reaching the eye crossed the atmosphere twice, in along the beam and
+    // out along the view ray, and is extinguished over both.
+    vec3 attenuation = TintedTransmittance(exp(-extinction * (bodyAirMass + viewAirMass)), tint);
+
+    // How much of the beam the haze scatters toward the eye, and which way it
+    // throws it. Its extinction is not applied here — it is in `attenuation`
+    // with the air's, so both in-scattered terms are dimmed by the same thing
+    // they were dimmed by on the way in.
+    vec3 mie = (vec3(1.0) - exp(-hazeScattering * viewAirMass)) * MiePhase(cosGamma, uSky.haze.w);
+
+    // The second bounce onward, attenuated by the body's path but not the view's.
+    // Without it the horizon goes green, where single scattering has killed the
+    // blue over thirty-odd air masses.
+    vec3 bounced = beam * (airScattering * (scattered * uSky.atmosphere.x));
+
+    BodyRadiance result;
+    result.beam          = beam;
+    result.transmittance = transmittance;
+    result.sky           = radiant * attenuation * (airScattering * (RayleighPhase(cosGamma) * scattered) + mie) + bounced;
+    result.ground        = uSky.groundColor.rgb * (beam * (max(toBody.y, 0.0) * kInvPi));
+    return result;
+}
+
+// The moon's disk: where on its photograph a ray lands, and whether that point is
+// in sunlight. The picture is orthographic and this coordinate is an orthographic
+// image plane, so a pixel of image is a pixel of moon — no unwrap, no atan, and
+// the limb's foreshortening already in the picture.
+vec3 MoonDisk(vec3 ray, vec3 toMoon, vec3 toSun, float radius)
+{
+    vec3 up    = uSky.moonUp.xyz;
+    vec3 right = cross(toMoon, up);   // forward x up = right, the camera convention
+
+    float cosGamma = clamp(dot(ray, toMoon), -1.0, 1.0);
+    float across   = acos(cosGamma) / max(radius, kMinDiskRadius);
+    vec3  offset   = ray - toMoon * cosGamma;
+    float len      = length(offset);
+    vec3  sideways = len > kMinTangentLength ? offset / len : vec3(0.0);
+
+    // Not clamped for the lookup: the sampler clamps instead, so a ray inside the
+    // profile's edge fade gets the image's border rather than a smear of its rim.
+    vec2 uv = vec2(0.5 + 0.5 * across * dot(sideways, right),
+                   0.5 - 0.5 * across * dot(sideways, up));
+
+    // Clamped here, where the coordinate has to name a point ON the sphere: past
+    // the limb there is no surface for a normal to belong to.
+    float onFace     = min(across, 1.0);
+    float faceCosine = sqrt(max(1.0 - onFace * onFace, 0.0));
+    vec3  normal     = sideways * onFace - toMoon * faceCosine;
+    float lit        = smoothstep(-kMoonTerminatorSoftness, kMoonTerminatorSoftness, dot(normal, toSun));
+
+    return texture(sampler2D(uMoon, uMoonSampler), uv).rgb * lit;
 }
 
 void main()
@@ -106,58 +225,55 @@ void main()
     vec3  extinction     = airExtinction + hazeScattering;
     float greyExtinction = (airExtinction.r + airExtinction.g + airExtinction.b) / 3.0;
 
-    float cosGamma    = clamp(dot(ray, sunDirection), -1.0, 1.0);
-    float sunAirMass  = SunAirMass(sunDirection.y);
+    vec3  moonDirection = uSky.moonDirection.xyz;
+    vec3  radiantMoon   = uSky.moonRadiance.rgb;
+
+    // The ray's own share of the work, done once for both bodies. Saturating
+    // toward one is why the horizon is bright and the zenith, with a thirtieth of
+    // the air, is not.
     float viewAirMass = ViewAirMass(ray.y);
-    float totalAirMass = sunAirMass + viewAirMass;
+    float scattered   = 1.0 - exp(-greyExtinction * viewAirMass);
 
-    // What is left of the beam where it meets the ground — the sun's own colour,
-    // and the whole reason a low sun shifts hue.
-    vec3 beam = radiantSun * exp(-extinction * sunAirMass);
+    // The sun takes the whole of the air's colour shift, always: a sunset is seen
+    // in daylight, at full colour, and is not something to soften. Only the moon
+    // has a tint, and only because its brightness is a compromise.
+    BodyRadiance fromSun  = Contribution(ray, sunDirection, radiantSun, extinction, airScattering,
+                                         hazeScattering, viewAirMass, scattered, 1.0);
+    BodyRadiance fromMoon = Contribution(ray, moonDirection, radiantMoon, extinction, airScattering,
+                                         hazeScattering, viewAirMass, scattered, uSky.moonDiskColor.w);
 
-    // Light reaching the eye crossed the atmosphere twice, in along the beam and
-    // out along the view ray, and is extinguished over both. Attenuating the sum
-    // rather than the beam alone is what keeps a sunset red on Earth: over a
-    // short path the colour is the scattering coefficient's, and over a long one
-    // the exponential wins and what survives is what it scatters LEAST.
-    vec3 attenuation = exp(-extinction * totalAirMass);
-
-    // How much air the view ray has to scatter in — a quantity, not a colour.
-    // Saturating toward one is why the horizon is bright and the zenith, with a
-    // thirtieth of the air, is not.
-    float scattered = 1.0 - exp(-greyExtinction * viewAirMass);
-
-    // How much of the beam the haze scatters toward the eye, and which way it
-    // throws it. Its extinction is not applied here — it is in `attenuation`
-    // with the air's, so both in-scattered terms are dimmed by the same thing
-    // they were dimmed by on the way in.
-    vec3 haze = (vec3(1.0) - exp(-hazeScattering * viewAirMass)) * MiePhase(cosGamma, uSky.haze.w);
-
-    // The second bounce onward, attenuated by the sun's path but not the view's.
-    // Single scattering treats light knocked out of the line of sight as lost,
-    // which over the horizon's thirty-odd air masses kills the blue exactly where
-    // the sky is deepest and leaves the horizon green. This is what air actually
-    // does with it.
-    vec3 bounced = beam * (airScattering * (scattered * uSky.atmosphere.x));
-
-    vec3 sky = radiantSun * attenuation * (airScattering * (RayleighPhase(cosGamma) * scattered) + haze) +
-               bounced + uSky.nightColor.rgb;
-
-    // The ground reflects the same beam off a Lambertian albedo, foreshortened by
-    // the sun's elevation, and gets the night colour too — so it and the sky over
-    // it fall to the same floor instead of the ground going black first.
-    vec3 ground = uSky.groundColor.rgb * (beam * (max(sunDirection.y, 0.0) * kInvPi)) + uSky.nightColor.rgb;
+    // The night floor goes to both halves, so a moonless landscape and the sky
+    // over it fall to the same floor instead of the ground going black first.
+    vec3 sky    = fromSun.sky + fromMoon.sky + uSky.nightColor.rgb;
+    vec3 ground = fromSun.ground + fromMoon.ground + uSky.nightColor.rgb;
 
     float skyward  = smoothstep(-kHorizonSoftness, kHorizonSoftness, ray.y);
     vec3  radiance = mix(ground, sky, skyward);
 
-    // The disk, gated by the same blend so the sun sets behind the ground rather
+    // Both disks, gated by the same blend so a body sets behind the ground rather
     // than shining up through it.
-    float diskIntensity = uSky.nightColor.w;
-    if (diskIntensity > 0.0)
+    float sunDiskIntensity = uSky.nightColor.w;
+    if (sunDiskIntensity > 0.0)
     {
+        float cosGamma = clamp(dot(ray, sunDirection), -1.0, 1.0);
         float profile = SunDiskProfile(acos(cosGamma), uSky.sunDirection.w, uSky.sunRadiance.w, uSky.sunDiskColor.w);
-        radiance += beam * uSky.sunDiskColor.rgb * (diskIntensity * profile * skyward);
+        radiance += fromSun.beam * uSky.sunDiskColor.rgb * (sunDiskIntensity * profile * skyward);
+    }
+
+    float moonDiskIntensity = uSky.moonRadiance.w;
+    if (moonDiskIntensity > 0.0)
+    {
+        float radius   = uSky.moonDirection.w;
+        float cosGamma = clamp(dot(ray, moonDirection), -1.0, 1.0);
+        // Limb darkening zero: the photograph already carries whatever the real
+        // limb does. The edge softness IS shared with the sun, because that is
+        // antialiasing rather than a look.
+        float profile = SunDiskProfile(acos(cosGamma), radius, uSky.sunRadiance.w, 0.0);
+        vec3  face    = MoonDisk(ray, moonDirection, sunDirection, radius);
+        // The beam is already tinted — Contribution applied it — so the disk, the
+        // aureole around it and the light on the ground all soften by the same
+        // amount and cannot disagree.
+        radiance += fromMoon.beam * uSky.moonDiskColor.rgb * face * (moonDiskIntensity * profile * skyward);
     }
 
     outColor = vec4(max(radiance * uSky.groundColor.w, vec3(0.0)), 1.0);

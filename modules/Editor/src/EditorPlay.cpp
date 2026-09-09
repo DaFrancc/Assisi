@@ -353,6 +353,10 @@ void EditorApp::StopPlay()
 
         ClearSelection();
         Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
+        // Every entity was destroyed and revived, and the clock went back to the
+        // hour play started at — so the cascades hold depth from a sun that has
+        // now moved, cast by geometry that has been rebuilt underneath them.
+        _sceneRenderer.OnSceneReplaced();
     }
 
     // A joined session loaded the *host's* level into this world, retargeting its

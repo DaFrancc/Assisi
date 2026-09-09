@@ -38,21 +38,26 @@ struct SystemContext;
 /// — that is how a mover is parked without removing the component.
 ASYSTEM(FixedUpdate) void OscillateSystem(SystemContext &ctx);
 
-/// @brief Turns every directional light whose daylight cycle is on.
+/// @brief Advances the scene's clock, daily and annual.
 ///
-/// The light sweeps about world up at whatever angle above the horizon it was
-/// aimed at, one full revolution per `daylightPeriodSeconds`. A light with the
-/// cycle off is untouched, so this costs a compare on a level's fixed suns.
+/// **Turns nothing and aims nothing.** All this does is move two numbers; where
+/// the sun and the moon end up is derived from those numbers every frame by
+/// Runtime::ResolveSky, which is what makes the first frame after a load or a
+/// time jump correct with no tick in between, and what lets the editor scrub the
+/// clock with play stopped.
+///
+/// That is the opposite trade from the daylight cycle this replaces, which
+/// integrated the light's own aim and so consumed it: stopping mid-cycle left the
+/// sun wherever it happened to be, and the level file recorded a direction rather
+/// than an hour.
 ///
 /// @par Requirements
-/// Register it in **FixedUpdate**. The step is the clock, so a day advances at
-/// the same rate whatever the frame rate did — and the sky, which takes its
-/// colour from the sun's angle, moves with it rather than independently.
+/// Register it in **FixedUpdate**. The step is simulated time, so a day advances
+/// at the same rate whatever the frame rate did.
 ///
-/// Unlike OscillateSystem this integrates rather than evaluating: it turns the
-/// aim the light has now, which is also the aim the gizmo writes and the aim a
-/// save records. See Runtime::AdvanceDaylight for why that trade falls the other
-/// way here.
-ASYSTEM(FixedUpdate) void DaylightCycleSystem(SystemContext &ctx);
+/// Each clock is held by its own pause flag, so a frozen season under a running
+/// day — the noon shadow swinging through the year — is a view rather than an
+/// error.
+ASYSTEM(FixedUpdate) void TimeOfDaySystem(SystemContext &ctx);
 
 } // namespace Assisi::App

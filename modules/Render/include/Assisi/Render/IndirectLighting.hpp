@@ -200,15 +200,24 @@ inline constexpr float kGoldenAngle = 2.39996323f;
 /// Cosine-weighted, so each is the hemisphere's irradiance over pi and multiplies
 /// an albedo directly — see IndirectLighting::Radiance.
 ///
-/// **The sun's disk is excluded.** It is the directional light, already counted
-/// once as direct lighting, and integrating it here would light every shadowed
-/// surface with the very sun it is shadowed from. Everything else the model
-/// produces is in: the scattering, the aureole around a low sun, the ground's
-/// bounce, and the night floor that keeps a moonless scene off pure black.
-[[nodiscard]] inline SkyAmbient AmbientFromSky(const SkySun &sun, const SkySettings &rawSettings)
+/// **Both disks are excluded.** Each is a directional light, already counted once
+/// as direct lighting, and integrating one here would light every shadowed
+/// surface with the very body it is shadowed from. Everything else the model
+/// produces is in: the scattering from both bodies, the aureole around a low sun,
+/// the ground's bounce, and the night floor that keeps a moonless scene off pure
+/// black — so a moonlit night has a moonlit ambient without anything asking for
+/// one.
+///
+/// Dropping the moon's disk here is also what keeps the CPU free of its albedo
+/// texture: the disk is the only term that texture multiplies, and this is the
+/// only CPU path that evaluates the sky.
+[[nodiscard]] inline SkyAmbient AmbientFromSky(const SkySun &sun, const SkyMoon &rawMoon,
+                                               const SkySettings &rawSettings)
 {
     SkySettings settings = Sanitized(rawSettings);
     settings.sunDiskIntensity = 0.0f;
+    SkyMoon moon = Sanitized(rawMoon);
+    moon.diskIntensity = 0.0f;
 
     glm::vec3 sky{0.0f};
     glm::vec3 ground{0.0f};
@@ -226,12 +235,18 @@ inline constexpr float kGoldenAngle = 2.39996323f;
         const float azimuth = static_cast<float>(i) * kGoldenAngle;
         const glm::vec3 horizontal(std::cos(azimuth) * sinZenith, 0.0f, std::sin(azimuth) * sinZenith);
 
-        sky += SkyRadiance(horizontal + glm::vec3(0.0f, cosZenith, 0.0f), sun, settings);
-        ground += SkyRadiance(horizontal - glm::vec3(0.0f, cosZenith, 0.0f), sun, settings);
+        sky += SkyRadiance(horizontal + glm::vec3(0.0f, cosZenith, 0.0f), sun, moon, settings);
+        ground += SkyRadiance(horizontal - glm::vec3(0.0f, cosZenith, 0.0f), sun, moon, settings);
     }
 
     const float perSample = 1.0f / static_cast<float>(kAmbientSampleCount);
     return SkyAmbient{.sky = sky * perSample, .ground = ground * perSample};
+}
+
+/// @brief The same two means for a sky with no moon in it.
+[[nodiscard]] inline SkyAmbient AmbientFromSky(const SkySun &sun, const SkySettings &rawSettings)
+{
+    return AmbientFromSky(sun, SkyMoon{}, rawSettings);
 }
 
 } // namespace Assisi::Render

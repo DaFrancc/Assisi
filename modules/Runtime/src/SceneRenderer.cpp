@@ -66,6 +66,11 @@ constexpr const char *kLinePixelShader = "editor/shaders/line.frag.spv";
 constexpr const char *kIconVertexShader = "editor/shaders/icon_billboard.vert.spv";
 constexpr const char *kIconPixelShader = "editor/shaders/icon_billboard.frag.spv";
 constexpr const char *kEntityIconTexture = "editor/entity_icon.png";
+
+// The moon's albedo, stamped on its disk. An engine constant rather than a field
+// on the Moon component: authoring a second moon's texture is a feature nobody
+// has asked for, and a path in a level file is a path that can rot there.
+constexpr const char *kMoonTexture = "textures/moon.jpg";
 // Outline mask for a selected icon: samples the icon so the border traces its
 // artwork. Reuses the icon billboard vertex stage (kIconVertexShader).
 constexpr const char *kIconMaskPixelShader = "editor/shaders/icon_mask.frag.spv";
@@ -149,7 +154,8 @@ bool SceneRenderer::Initialize(const InitParams &params)
     if (!_skyPass.Initialize(Render::SkyPass::InitParams{.device = _device,
                                                          .framebufferInfo = params.framebufferInfo,
                                                          .vertexShaderSpvPath = kSkyVertexShader,
-                                                         .pixelShaderSpvPath = kSkyPixelShader}))
+                                                         .pixelShaderSpvPath = kSkyPixelShader,
+                                                         .moonTexturePath = kMoonTexture}))
     {
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
     }
@@ -276,10 +282,21 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         RebuildClusterGrid(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height), camera, projection);
     }
 
+    // The scene's sky, which lights the geometry, is drawn behind it, and says
+    // where the sun and the moon are this frame.
+    //
+    // First, because everything after it depends on the answer: the sun's row in
+    // the light buffer is the direction resolved here, the cascades are fitted to
+    // that direction, and the indirect term comes off the same sky. Deriving it
+    // once at the top is also what makes the frame after a load or a time jump
+    // correct — nothing had to tick first.
+    _lastSky = ResolveSky(scene);
+    const SkyResolution &sky = _lastSky;
+
     // Gathered but not yet uploaded: the local-light atlas decides which lights
     // hold tiles and stamps each winner's view index into the light record, and
     // that stamp has to happen before the lights reach the GPU.
-    _lighting.Gather(scene);
+    _lighting.Gather(scene, &sky.light);
 
     // Before either half draws, because both are invalidated against it and the
     // change ticks may only be consumed once a frame.
@@ -292,12 +309,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     BuildShadowDiagnostics();
 
     _lighting.Upload(frame.commandList, view);
-
-    // The scene's sky, which both lights the geometry and is drawn behind it.
-    // Resolved before the geometry because the indirect term comes off it: a
-    // surface in shadow is still under the sky, and what saves it from reading
-    // as a hole is the sky's own colour arriving here.
-    const SkyResolution sky = ResolveSky(scene);
 
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
@@ -332,7 +343,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // own world and a light that moves takes the sky with it.
     if (sky.status == SkyStatus::Ready)
     {
-        _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), sky.sun, sky.settings);
+        _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), sky.sun, sky.moon,
+                      sky.settings);
     }
     // Said once, because silently dropping the sky sends someone reading shader
     // code, and saying it every frame is its own kind of unreadable.
@@ -405,6 +417,27 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     ASSISI_PROFILE_COUNTER("shadows/atlas-movers", static_cast<double>(_lastLocalShadowStats.dynamicCasters));
 }
 
+void SceneRenderer::OnSceneReplaced()
+{
+    // Both selectors, because both hold state keyed to entities that are gone: the
+    // sun's cascades hold depth of that geometry, and the atlas holds tiles for
+    // lights that no longer exist.
+    _sunCadence.Forget();
+    _localShadowSelector.Forget();
+
+    // Reset rather than carried, because the incoming scene's clock starts its own
+    // count and a serial that happened to match would skip the very Forget the
+    // load needs.
+    _jumpSerial = 0;
+    _lastSky = SkyResolution{};
+
+    // The mover bookmark goes back to the beginning, so the first frame after a
+    // load reads every caster as moved and draws every cascade. Conservative in
+    // the direction that costs one frame rather than the one that leaves a
+    // shadow behind.
+    _lastMoverTick = 0;
+}
+
 void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
 {
     // What moved since the last frame, taken from the Transform pool's change
@@ -473,6 +506,24 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     if (const std::uint32_t generation = _shadowPass.AllocationGeneration(); generation != _cascadeGeneration)
     {
         _cascadeGeneration = generation;
+        _sunCadence.Forget();
+    }
+
+    // A cut in the clock — sleeping to morning, a cutscene, a scrub — moves the
+    // sun by an arbitrary amount, and every kept cascade holds depth rasterized
+    // from where it used to be. Forgetting here, before Plan, is what makes the
+    // jump frame itself draw them all: the resolver has already produced the new
+    // direction, Gather has already uploaded it, and ShadowPass::Render will draw
+    // every cascade Plan names into this frame's command list. No frame is
+    // displayed carrying a shadow from the old sun.
+    //
+    // Measured drift would catch a large jump on its own — the tolerance is a
+    // hundredth of a degree — but this makes the guarantee independent of a
+    // setting an author can turn up, and gives a consumer with temporal history
+    // a signal that says "cut" rather than "fast".
+    if (_lastSky.jumpSerial != _jumpSerial)
+    {
+        _jumpSerial = _lastSky.jumpSerial;
         _sunCadence.Forget();
     }
 

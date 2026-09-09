@@ -532,6 +532,23 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         ImGui::SetItemTooltip("Frames since each cascade was last drawn, nearest first. A near cascade trips on "
                               "a step of the camera and a far one hardly at all, which is where the saving is — "
                               "and the far cascades are the expensive ones.");
+
+        // Why the cascades are or are not settling, beside the reading itself.
+        // "Never settles" is EXPECTED at a fast day rate — at six seconds a day
+        // the sun turns a degree a frame, which is four orders past the drift
+        // tolerance — and without this line that reads as the cadence being
+        // broken. Zero cascades for a long stretch is polar night, which is also
+        // expected and also looks wrong.
+        const Assisi::Runtime::SkyResolution &sky = frame.renderer.LastSky();
+        const char *body = sky.light.body == Assisi::Runtime::LightingBody::Sun     ? "Sun"
+                           : sky.light.body == Assisi::Runtime::LightingBody::Moon  ? "Moon"
+                                                                                    : "nothing";
+        ImGui::Text("Lit by: %s  |  sun %.4f deg/frame at 60 Hz", body,
+                    static_cast<double>(glm::degrees(sky.sunAngularVelocity)) / 60.0);
+        ImGui::SetItemTooltip("How far the sun turns per frame at the current day length. Past about a "
+                              "hundredth of a degree every cascade is redrawn every frame, which is the "
+                              "cadence working rather than failing. Nothing lighting means polar night or a "
+                              "moonless night, and no cascades are drawn at all.");
     }
 
     if (shadows.local.cache.enabled)

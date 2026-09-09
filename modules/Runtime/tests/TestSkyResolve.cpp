@@ -10,8 +10,10 @@
 #include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 
 #include <cmath>
+#include <cstdint>
 
 using namespace Assisi;
 using Assisi::Runtime::DirectionalLight;
@@ -449,4 +451,484 @@ TEST_CASE("A preset answers outright, and Custom is what reads the knobs")
     const Runtime::SkyResolution customSky = ResolveSky(scene);
     REQUIRE(customSky.status == SkyStatus::Ready);
     CHECK(customSky.settings.airThickness == doctest::Approx(0.999f));
+}
+
+namespace
+{
+using Assisi::Runtime::LightingBody;
+using Assisi::Runtime::Moon;
+using Assisi::Runtime::Sun;
+using Assisi::Runtime::TimeOfDay;
+
+/// A sun on the clock: the light, the atmosphere it is seen through, and the
+/// place on the planet its aim comes from.
+ECS::Entity AddClockedSun(ECS::Scene &scene, float latitudeDegrees = 45.f, bool tintedBySky = true)
+{
+    const ECS::Entity entity = AddSun(scene, glm::vec3(0.f, -1.f, 0.f), tintedBySky);
+    (void)scene.Add<Skybox>(entity);
+    (void)scene.Add<Sun>(entity, Sun{.latitudeDegrees = latitudeDegrees});
+    return entity;
+}
+
+TimeOfDay ClockAt(double hour, double dayOfYear = 0.0, float yearLengthDays = 12.f)
+{
+    TimeOfDay clock;
+    clock.hour = hour;
+    clock.dayOfYear = dayOfYear;
+    clock.yearLengthDays = yearLengthDays;
+    return clock;
+}
+} // namespace
+
+TEST_CASE("A Sun takes the aim from the clock, and without one the authored aim stands")
+{
+    ECS::Scene scene;
+    const glm::vec3 authored = glm::normalize(glm::vec3(0.3f, -0.7f, 0.2f));
+    const ECS::Entity entity = AddSun(scene, authored, false);
+    (void)scene.Add<Skybox>(entity);
+
+    // Bitwise, because an author who aimed a light by hand expects the direction
+    // they typed rather than one that has been through a rotation and back.
+    const Runtime::SkyResolution authoredSky = ResolveSky(scene);
+    CHECK(authoredSky.sun.directionToSun == -authored);
+    CHECK(authoredSky.light.direction == authored);
+    CHECK(authoredSky.light.body == LightingBody::Sun);
+
+    (void)scene.Add<Sun>(entity, Sun{.latitudeDegrees = 45.f});
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(6.0));
+
+    // Six in the morning on an equinox is due east, which the authored aim was
+    // nowhere near.
+    const Runtime::SkyResolution clocked = ResolveSky(scene);
+    CHECK(clocked.sun.directionToSun.x == doctest::Approx(1.f).epsilon(1e-4));
+    CHECK(clocked.sun.directionToSun.y == doctest::Approx(0.f).epsilon(1e-4));
+}
+
+TEST_CASE("A sun exactly on the horizon lights nothing, and so does the moon beside it")
+{
+    // The exact claim, made where it can be made exactly: a horizontal authored
+    // aim puts the sun's vertical component at a true zero, and BOTH ramps are
+    // zero there. That is what lets the slot change hands with nothing visible
+    // happening — as against a rule keyed to which body is brighter, which would
+    // swap precisely where the two are EQUAL and non-zero, around two percent of
+    // noon, in both tinting modes.
+    for (const bool tinted : {true, false})
+    {
+        CAPTURE(tinted);
+        ECS::Scene scene;
+        const ECS::Entity entity = AddSun(scene, glm::vec3(-1.f, 0.f, 0.f), tinted);
+        (void)scene.Add<Skybox>(entity);
+
+        const Runtime::SkyResolution sky = ResolveSky(scene);
+        REQUIRE(sky.sun.directionToSun.y == 0.f);
+        CHECK(sky.light.intensity == 0.f);
+        CHECK(sky.light.body == LightingBody::None);
+        CHECK_FALSE(sky.light.castsShadows);
+    }
+}
+
+TEST_CASE("The sun and the moon never light at once, and the slot changes hands smoothly")
+{
+    for (const bool tinted : {true, false})
+    {
+        CAPTURE(tinted);
+        ECS::Scene scene;
+        const ECS::Entity entity = AddClockedSun(scene, 45.f, tinted);
+        (void)scene.Add<Moon>(entity);
+        (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0, 3.0));
+
+        const float authored = scene.Get<DirectionalLight>(entity)->intensity;
+
+        LightingBody previous = LightingBody::None;
+        float previousIntensity = 0.f;
+        bool havePrevious = false;
+        int32_t changes = 0;
+
+        for (int32_t minute = 0; minute < 24 * 60; ++minute)
+        {
+            TimeOfDay *clock = scene.GetMut<TimeOfDay>(entity);
+            REQUIRE(clock != nullptr);
+            clock->hour = 24.0 * static_cast<double>(minute) / (24.0 * 60.0);
+
+            const Runtime::SkyResolution sky = ResolveSky(scene);
+            REQUIRE(sky.light.intensity >= 0.f);
+            REQUIRE(std::isfinite(sky.light.intensity));
+
+            // The gate, stated exactly: above the horizon the moon lights
+            // nothing, below it the sun does. Never both, at any hour, so which
+            // of the two branches is tested first decides nothing.
+            if (sky.sun.directionToSun.y >= 0.f)
+            {
+                REQUIRE(sky.light.body != LightingBody::Moon);
+            }
+            if (sky.sun.directionToSun.y <= 0.f)
+            {
+                REQUIRE(sky.light.body != LightingBody::Sun);
+            }
+
+            if (havePrevious && sky.light.body != previous)
+            {
+                ++changes;
+                // Both sides of the change are dark. Not exactly zero, because a
+                // minute of sampling straddles the crossing rather than landing
+                // on it — but under a hundredth of full, which is the claim that
+                // matters and is two orders below where a brightness rule would
+                // have put it.
+                CHECK(sky.light.intensity < authored * 0.01f);
+                CHECK(previousIntensity < authored * 0.01f);
+            }
+            previous = sky.light.body;
+            previousIntensity = sky.light.intensity;
+            havePrevious = true;
+        }
+
+        // Sunrise and sunset at least. More when the moon sets partway through
+        // the night and leaves nothing lighting until dawn — a real state, and
+        // the one a moonless night is: the scene falls to the sky's own floor
+        // rather than to black, and pays for no shadow pass while it lasts.
+        CHECK(changes >= 2);
+    }
+}
+
+TEST_CASE("The midnight sun never gives the slot up")
+{
+    // Above the Arctic Circle at midsummer the sun does not set, so the night
+    // gate never opens and the moon never lights however high it climbs. A steady
+    // state with no timer and no transition in it.
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene, 67.f);
+    (void)scene.Add<Moon>(entity);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0, 3.0));
+
+    for (int32_t minute = 0; minute < 24 * 60; minute += 5)
+    {
+        CAPTURE(minute);
+        scene.GetMut<TimeOfDay>(entity)->hour = 24.0 * static_cast<double>(minute) / (24.0 * 60.0);
+        const Runtime::SkyResolution sky = ResolveSky(scene);
+        REQUIRE(sky.sun.directionToSun.y > 0.f);
+        CHECK(sky.light.body == LightingBody::Sun);
+        CHECK(sky.daylightHours == doctest::Approx(24.f));
+    }
+}
+
+TEST_CASE("A daytime moon lights nothing, and is still in the sky")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene);
+    (void)scene.Add<Moon>(entity, Moon{.phaseAtEpoch = 0.25f});
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(15.0));
+
+    const Runtime::SkyResolution sky = ResolveSky(scene);
+    REQUIRE(sky.sun.directionToSun.y > 0.f);
+    REQUIRE(sky.moon.directionToMoon.y > 0.f);
+
+    // The sun holds the slot while it is up — not because it is checked first,
+    // but because the night gate is shut. There is no configuration in which both
+    // are lit, so the order of the two branches decides nothing.
+    CHECK(sky.light.body == LightingBody::Sun);
+    CHECK(sky.light.intensity > 0.f);
+
+    // Still drawn, still scattering, and carrying a real phase — not quite a
+    // clean half, because fifteen hours of a twenty-nine day month have already
+    // gone past the quarter the epoch put it at. That drift is the phase being
+    // geometry rather than a stored value.
+    CHECK(sky.moon.diskIntensity > 0.f);
+    CHECK(sky.moonLitFraction > 0.4f);
+    CHECK(sky.moonLitFraction < 0.7f);
+}
+
+TEST_CASE("Moonlight keeps the moon's own colour, and reddens on top of it")
+{
+    // Moon::color is a field nothing greys out, so it has to be read. The sun's
+    // authored colour is discarded under tintedBySky — the sky IS the colour
+    // there, and the inspector says so — but nothing makes that claim about the
+    // moon, and dropping it left the moon reddening from white, which is why a
+    // low moon looked like a small sunset rather than a warm moon.
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene, 45.f, /*tintedBySky=*/true);
+    Moon moon;
+    moon.phaseAtEpoch = 0.5f;
+    // Unmistakably green, so nothing else in the sky could have produced it.
+    moon.color = Assisi::Math::Color3(0.2f, 1.0f, 0.3f);
+    // The physics, full strength: this case is about the reddening existing at
+    // all, and the tint that softens it has a case of its own below.
+    moon.atmosphericTint = 1.f;
+    (void)scene.Add<Moon>(entity, moon);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0));
+
+    const Runtime::SkyResolution sky = ResolveSky(scene);
+    REQUIRE(sky.light.body == LightingBody::Moon);
+    CHECK(sky.light.color.g > sky.light.color.r);
+    CHECK(sky.light.color.g > sky.light.color.b);
+
+    // And the air still reddens it: high in the sky it keeps more of its blue
+    // than it does near the horizon, exactly as the sun does over the same path.
+    float highBlue = 0.f;
+    float lowBlue = 1.f;
+    for (int32_t minute = 0; minute < 24 * 60; minute += 5)
+    {
+        scene.GetMut<TimeOfDay>(entity)->hour = 24.0 * static_cast<double>(minute) / (24.0 * 60.0);
+        const Runtime::SkyResolution sample = ResolveSky(scene);
+        if (sample.light.body != LightingBody::Moon || sample.light.color.g <= 0.f)
+        {
+            continue;
+        }
+        const float blueness = sample.light.color.b / sample.light.color.g;
+        if (sample.moon.directionToMoon.y > 0.5f)
+        {
+            highBlue = std::max(highBlue, blueness);
+        }
+        if (sample.moon.directionToMoon.y > 0.f && sample.moon.directionToMoon.y < 0.1f)
+        {
+            lowBlue = std::min(lowBlue, blueness);
+        }
+    }
+    REQUIRE(highBlue > 0.f);
+    REQUIRE(lowBlue < 1.f);
+    // A harvest moon: the same long path that reddens a low sun reddens this.
+    CHECK(lowBlue < highBlue);
+}
+
+TEST_CASE("The moon's atmospheric tint reaches the world as well as the disk")
+{
+    // The world and the thing lighting it have to agree. If the disk were
+    // softened and the light were not, a moon that looked its own colour would
+    // still be casting sunset light on the ground.
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene, 45.f, /*tintedBySky=*/true);
+    Moon moon;
+    moon.phaseAtEpoch = 0.5f;
+    moon.atmosphericTint = 1.f;
+    (void)scene.Add<Moon>(entity, moon);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0));
+
+    // Find an hour where the moon is genuinely low, which is where the tint does
+    // anything at all.
+    bool found = false;
+    for (int32_t minute = 0; minute < 24 * 60 && !found; minute += 2)
+    {
+        scene.GetMut<TimeOfDay>(entity)->hour = 24.0 * static_cast<double>(minute) / (24.0 * 60.0);
+        const Runtime::SkyResolution sample = ResolveSky(scene);
+        found = sample.light.body == LightingBody::Moon && sample.moon.directionToMoon.y > 0.f &&
+                sample.moon.directionToMoon.y < 0.08f;
+    }
+    REQUIRE(found);
+
+    const Runtime::SkyResolution physical = ResolveSky(scene);
+    scene.GetMut<Moon>(entity)->atmosphericTint = 0.f;
+    const Runtime::SkyResolution softened = ResolveSky(scene);
+
+    REQUIRE(physical.light.body == LightingBody::Moon);
+    REQUIRE(softened.light.body == LightingBody::Moon);
+
+    // Less reddening in what lights the ground...
+    CHECK(softened.light.color.b / softened.light.color.r > physical.light.color.b / physical.light.color.r);
+    // ...and essentially no change in how much light there is, so turning the
+    // knob is not turning the night up.
+    //
+    // Near rather than exact, and the gap is not slop: TintedTransmittance holds
+    // luminance exactly, which TestSky asserts to the bit, but what lands here is
+    // that transmittance times the moon's own colour — and the moon's colour is
+    // not neutral, so the luminance of the product moves a little as the hue
+    // under it does. A few percent, against a hue swing of tens of percent.
+    const auto luminance = [](const glm::vec3 &c) { return glm::dot(c, glm::vec3(0.2126f, 0.7152f, 0.0722f)); };
+    CHECK(luminance(softened.light.color) == doctest::Approx(luminance(physical.light.color)).epsilon(0.1));
+    // The intensity is untouched outright — the knob never reaches it.
+    CHECK(softened.light.intensity == physical.light.intensity);
+}
+
+TEST_CASE("A new moon lights nothing even when it is up and the sun is down")
+{
+    // The phase is in the light, not only on the disk. Without it a new moon
+    // would light the ground as brightly as a full one.
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0));
+
+    Moon newMoon;
+    newMoon.phaseAtEpoch = 0.f;
+    Moon fullMoon;
+    fullMoon.phaseAtEpoch = 0.5f;
+
+    (void)scene.Add<Moon>(entity, fullMoon);
+    const Runtime::SkyResolution full = ResolveSky(scene);
+    REQUIRE(full.moon.directionToMoon.y > 0.f);
+    REQUIRE(full.sun.directionToSun.y < 0.f);
+    REQUIRE(full.light.body == LightingBody::Moon);
+
+    *scene.GetMut<Moon>(entity) = newMoon;
+    const Runtime::SkyResolution none = ResolveSky(scene);
+    CHECK(none.moonLitFraction < 0.01f);
+    CHECK(none.light.intensity < full.light.intensity * 0.01f);
+}
+
+TEST_CASE("The sky's own sun is unramped at every hour, including under the horizon")
+{
+    // The ramps are about what lights the WORLD. Applying them to the sky would
+    // cut the sunset off at the moment the sun touched the horizon, which is when
+    // a sunset is only starting — the twilight extension carries the beam
+    // eighteen degrees further down.
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(12.0));
+
+    const DirectionalLight *light = scene.Get<DirectionalLight>(entity);
+    REQUIRE(light != nullptr);
+    const float authored = light->intensity;
+
+    for (int32_t hour = 0; hour < 24; ++hour)
+    {
+        CAPTURE(hour);
+        scene.GetMut<TimeOfDay>(entity)->hour = static_cast<double>(hour);
+        const Runtime::SkyResolution sky = ResolveSky(scene);
+        CHECK(sky.sun.intensity == doctest::Approx(authored));
+    }
+}
+
+TEST_CASE("Winter light is warmer and dimmer than summer light with no field changed but the day")
+{
+    // Seasonal colour is not a knob and must never become one: a winter sun is
+    // redder because it is LOWER, and the transmittance already computes exactly
+    // that from the elevation the declination produced. A field for it would
+    // multiply the same reddening in twice.
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene, 45.f, true);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(12.0, 3.0));
+
+    const Runtime::SkyResolution summer = ResolveSky(scene);
+    scene.GetMut<TimeOfDay>(entity)->dayOfYear = 9.0;
+    const Runtime::SkyResolution winter = ResolveSky(scene);
+
+    REQUIRE(summer.declinationDegrees > 20.f);
+    REQUIRE(winter.declinationDegrees < -20.f);
+    CHECK(summer.daylightHours > winter.daylightHours + 6.f);
+
+    const float summerBlue = summer.light.color.b / summer.light.color.r;
+    const float winterBlue = winter.light.color.b / winter.light.color.r;
+    CHECK(winterBlue < summerBlue);
+    CHECK(winter.light.color.r < summer.light.color.r);
+}
+
+TEST_CASE("Polar night is a steady state with no lighting body and nothing to shadow")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene, 80.f);
+    // A long year, so the declination stays deep across the days sampled and this
+    // is a claim about a season rather than about one midnight.
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(12.0, 2737.0, 3650.f));
+
+    for (int32_t offset = 0; offset < 5; ++offset)
+    {
+        for (int32_t hour = 0; hour < 24; ++hour)
+        {
+            CAPTURE(offset);
+            CAPTURE(hour);
+            TimeOfDay *clock = scene.GetMut<TimeOfDay>(entity);
+            clock->dayOfYear = 2737.0 + static_cast<double>(offset);
+            clock->hour = static_cast<double>(hour);
+
+            const Runtime::SkyResolution sky = ResolveSky(scene);
+            REQUIRE(sky.sun.directionToSun.y < 0.f);
+            // No moon in this scene, so nothing lights — and the shadow flag goes
+            // with it, which is what makes three weeks of this cost nothing.
+            CHECK(sky.light.body == LightingBody::None);
+            CHECK(sky.light.intensity == 0.f);
+            CHECK_FALSE(sky.light.castsShadows);
+            CHECK(sky.daylightHours == doctest::Approx(0.f));
+        }
+    }
+}
+
+TEST_CASE("A clocked sun over a level with no atmosphere still lights it")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = AddSun(scene, glm::vec3(0.f, -1.f, 0.f), false);
+    (void)scene.Add<Sun>(entity, Sun{.latitudeDegrees = 0.f});
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(12.0));
+
+    const Runtime::SkyResolution sky = ResolveSky(scene);
+    // No Skybox, so no sky is drawn — but the light is real and the clock aims it.
+    CHECK(sky.status == SkyStatus::NoSkybox);
+    CHECK(sky.light.body == LightingBody::Sun);
+    CHECK(sky.light.intensity > 0.f);
+    CHECK(sky.sun.directionToSun.y == doctest::Approx(1.f).epsilon(1e-4));
+}
+
+TEST_CASE("The moon's image up is a usable frame wherever the moon is")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene, 67.f);
+    (void)scene.Add<Moon>(entity);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0));
+
+    for (int32_t step = 0; step < 240; ++step)
+    {
+        CAPTURE(step);
+        TimeOfDay *clock = scene.GetMut<TimeOfDay>(entity);
+        clock->day = step / 24;
+        clock->hour = static_cast<double>(step % 24);
+
+        const Runtime::SkyResolution sky = ResolveSky(scene);
+        REQUIRE(glm::length(sky.moon.imageUp) == doctest::Approx(1.f).epsilon(1e-4));
+        REQUIRE(std::abs(glm::dot(sky.moon.imageUp, sky.moon.directionToMoon)) < 1e-4f);
+    }
+}
+
+TEST_CASE("A Moon without a Sun is ignored, and a moon below the horizon lights nothing")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = AddSun(scene, glm::vec3(0.f, -1.f, 0.f), false);
+    (void)scene.Add<Skybox>(entity);
+    (void)scene.Add<Moon>(entity);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(0.0));
+
+    // No Sun, so no ecliptic for the orbit to be defined against.
+    const Runtime::SkyResolution orphaned = ResolveSky(scene);
+    CHECK(orphaned.moon.intensity == 0.f);
+    CHECK(orphaned.moon.diskIntensity == 0.f);
+
+    (void)scene.Add<Sun>(entity, Sun{.latitudeDegrees = 45.f});
+    // Noon with a new moon: the moon is at the sun's position, so it is up — and
+    // the night gate is shut anyway.
+    scene.GetMut<TimeOfDay>(entity)->hour = 12.0;
+    scene.GetMut<Moon>(entity)->phaseAtEpoch = 0.5f;
+    const Runtime::SkyResolution daytime = ResolveSky(scene);
+    // A full moon at noon is below the horizon, opposite the sun.
+    REQUIRE(daytime.moon.directionToMoon.y < 0.f);
+    CHECK(daytime.light.body == LightingBody::Sun);
+}
+
+TEST_CASE("Two suns leave every aim authored, clock or no clock")
+{
+    ECS::Scene scene;
+    const glm::vec3 authored = glm::normalize(glm::vec3(1.f, -1.f, 0.f));
+    const ECS::Entity first = AddSun(scene, authored, false);
+    (void)scene.Add<Skybox>(first);
+    (void)scene.Add<Sun>(first, Sun{});
+    (void)scene.Add<TimeOfDay>(first, ClockAt(6.0));
+    (void)AddSun(scene, glm::vec3(0.f, -1.f, 0.f), false);
+
+    const Runtime::SkyResolution sky = ResolveSky(scene);
+    CHECK(sky.status == SkyStatus::MultipleDirectionalLights);
+    // Nothing lights: with two suns the shadowed one and the drawn one could
+    // disagree, and a clock driving one would make that disagreement move.
+    CHECK(sky.light.body == LightingBody::None);
+    CHECK(sky.light.entity == ECS::NullEntity);
+}
+
+TEST_CASE("A jump shows up in the resolution, and a plain advance does not")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = AddClockedSun(scene);
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(12.0));
+
+    const std::uint32_t before = ResolveSky(scene).jumpSerial;
+
+    Assisi::Runtime::AdvanceTimeOfDay(*scene.GetMut<TimeOfDay>(entity), 1.f);
+    CHECK(ResolveSky(scene).jumpSerial == before);
+
+    // What the shadow cadence watches: a cut, as against the sun merely moving
+    // fast. Both move the sun; only one invalidates history.
+    CHECK(Assisi::Runtime::JumpForwardTo(*scene.GetMut<TimeOfDay>(entity), 6.0));
+    CHECK(ResolveSky(scene).jumpSerial == before + 1);
 }

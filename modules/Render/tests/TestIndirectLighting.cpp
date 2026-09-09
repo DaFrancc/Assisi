@@ -197,6 +197,46 @@ TEST_CASE("The sun's disk does not light the world a second time")
     }
 }
 
+TEST_CASE("The moon's disk does not light the world twice either")
+{
+    // Same rule, second body — and one more consequence besides. The moon's disk
+    // is the only term its albedo texture multiplies, and the CPU cannot sample a
+    // texture; excluding the disk here is what keeps the CPU sky a complete
+    // specification rather than one with a picture missing from it.
+    SkySettings settings;
+    settings.sunDiskIntensity = 0.0f;
+
+    SkyMoon noDisk;
+    noDisk.directionToMoon = Dir(50.0f, 120.0f);
+    noDisk.color = glm::vec3(0.75f, 0.85f, 1.0f);
+    noDisk.intensity = 0.02f;
+    // Wide enough for the lattice to land inside, for the same reason the sun's
+    // is: a half-degree disk falls between the samples and would let a term that
+    // does integrate it pass unchanged.
+    noDisk.sizeDegrees = kMaxSunSizeDegrees;
+    noDisk.diskIntensity = 0.0f;
+
+    SkyMoon brightDisk = noDisk;
+    brightDisk.diskIntensity = kMaxSunDiskIntensity;
+
+    for (const float elevation : {-20.0f, 5.0f, 60.0f})
+    {
+        const SkyAmbient without = AmbientFromSky(SunAt(elevation), noDisk, settings);
+        const SkyAmbient with = AmbientFromSky(SunAt(elevation), brightDisk, settings);
+        CHECK(with.sky.r == doctest::Approx(without.sky.r));
+        CHECK(with.sky.b == doctest::Approx(without.sky.b));
+        CHECK(with.ground.b == doctest::Approx(without.ground.b));
+    }
+
+    // What the moon DOES contribute is its scattering, and it has to survive:
+    // a night with a moon up is brighter than one without, and that is where
+    // moonlit ambient comes from.
+    const SkyAmbient moonless = AmbientFromSky(SunAt(-20.0f), settings);
+    const SkyAmbient moonlit = AmbientFromSky(SunAt(-20.0f), noDisk, settings);
+    CHECK(Luminance(moonlit.sky) > Luminance(moonless.sky));
+    CHECK(Luminance(moonlit.ground) > Luminance(moonless.ground));
+}
+
 TEST_CASE("An airless world has no sky to be lit by, and lit ground under it")
 {
     SkySettings settings;

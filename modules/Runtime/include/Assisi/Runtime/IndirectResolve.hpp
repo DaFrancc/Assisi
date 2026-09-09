@@ -42,8 +42,19 @@ struct AmbientOverride
 {
     if (!ambient.active && sky.status == SkyStatus::Ready)
     {
-        const Render::SkyAmbient fromSky = Render::AmbientFromSky(sky.sun, sky.settings);
-        return Render::HemisphereIndirect(fromSky.sky, fromSky.ground).ShaderConstants();
+        // Both bodies, so a moonlit night has a moonlit ambient without anything
+        // asking for one. Neither disk is integrated — each is already counted
+        // once as the direct light.
+        const Render::SkyAmbient fromSky = Render::AmbientFromSky(sky.sun, sky.moon, sky.settings);
+
+        // A floor, not an addition: it only ever raises, so a level that sets one
+        // is unchanged by day — the daytime term is orders above any sensible
+        // floor — and readable on a night with nothing up. Applied to both halves
+        // of the hemisphere, because "the world is at least partly lit" is about
+        // the world and not about which way a surface happens to face.
+        return Render::HemisphereIndirect(glm::max(glm::vec3(fromSky.sky), sky.minimumAmbient),
+                                          glm::max(glm::vec3(fromSky.ground), sky.minimumAmbient))
+            .ShaderConstants();
     }
     return Render::UniformIndirect(ambient.color, ambient.intensity).ShaderConstants();
 }

@@ -23,11 +23,12 @@ namespace
 {
 SkyResolution SunnyDay()
 {
-    return SkyResolution{.status = SkyStatus::Ready,
-                         .sun = SkySun{.directionToSun = glm::normalize(glm::vec3(0.3f, 0.8f, 0.2f)),
-                                       .color = glm::vec3(1.0f),
-                                       .intensity = 1.0f},
-                         .settings = SkySettings{}};
+    SkyResolution sky;
+    sky.status = SkyStatus::Ready;
+    sky.sun = SkySun{.directionToSun = glm::normalize(glm::vec3(0.3f, 0.8f, 0.2f)),
+                     .color = glm::vec3(1.0f),
+                     .intensity = 1.0f};
+    return sky;
 }
 
 float Luminance(const Color3 &linear)
@@ -50,7 +51,8 @@ TEST_CASE("A scene with no sky keeps the flat term it had before there was one")
 {
     for (const SkyStatus status : {SkyStatus::NoDirectionalLight, SkyStatus::NoSkybox})
     {
-        const SkyResolution sky{.status = status, .sun = SkySun{}, .settings = SkySettings{}};
+        SkyResolution sky;
+        sky.status = status;
         const Color3 up = FacingUp(ResolveIndirect(sky, AmbientOverride{}));
         const Color3 down = FacingDown(ResolveIndirect(sky, AmbientOverride{}));
 
@@ -65,8 +67,8 @@ TEST_CASE("A scene with no sky keeps the flat term it had before there was one")
 
 TEST_CASE("Two suns are not a sky, so nothing under them is lit by one")
 {
-    const SkyResolution sky{
-        .status = SkyStatus::MultipleDirectionalLights, .sun = SkySun{}, .settings = SkySettings{}};
+    SkyResolution sky;
+    sky.status = SkyStatus::MultipleDirectionalLights;
     const Color3 up = FacingUp(ResolveIndirect(sky, AmbientOverride{}));
     CHECK(up.b == doctest::Approx(kDefaultAmbientIntensity));
 }
@@ -114,4 +116,56 @@ TEST_CASE("An override that is not active leaves its colour unread")
     const AmbientOverride idle{.active = false, .color = Color3(1.0f, 0.0f, 0.0f), .intensity = 5.0f};
     const Color3 up = FacingUp(ResolveIndirect(SunnyDay(), idle));
     CHECK(up.b > up.r);
+}
+
+TEST_CASE("A minimum ambient floors the night without touching the day")
+{
+    // A moonless night really is very nearly black, which is correct and is often
+    // not playable. This is a floor under the sky's own answer, and a floor is
+    // exactly what it has to be: an addition would brighten noon as well.
+    SkyResolution night;
+    night.status = SkyStatus::Ready;
+    night.sun = SkySun{.directionToSun = glm::normalize(glm::vec3(0.2f, -0.6f, 0.1f)),
+                       .color = glm::vec3(1.0f),
+                       .intensity = 1.0f};
+
+    const Color3 unlitUp = FacingUp(ResolveIndirect(night, AmbientOverride{}));
+    const Color3 unlitDown = FacingDown(ResolveIndirect(night, AmbientOverride{}));
+
+    night.minimumAmbient = glm::vec3(0.35f, 0.45f, 0.7f) * 0.05f;
+    const Color3 flooredUp = FacingUp(ResolveIndirect(night, AmbientOverride{}));
+    const Color3 flooredDown = FacingDown(ResolveIndirect(night, AmbientOverride{}));
+
+    CHECK(Luminance(flooredUp) > Luminance(unlitUp));
+    // Both halves, because "the world is at least partly lit" is about the world
+    // and not about which way a surface happens to face.
+    CHECK(Luminance(flooredDown) > Luminance(unlitDown));
+    CHECK(flooredUp.b > flooredUp.r); // the floor's own hue reaches the surface
+
+    // By day the floor is inert: the sky's term is orders above any sensible one,
+    // so a level that sets a floor is unchanged at noon. This is what makes it
+    // safe to leave on rather than something to schedule against the clock.
+    SkyResolution day = SunnyDay();
+    const Color3 beforeUp = FacingUp(ResolveIndirect(day, AmbientOverride{}));
+    day.minimumAmbient = glm::vec3(0.35f, 0.45f, 0.7f) * 0.05f;
+    const Color3 afterUp = FacingUp(ResolveIndirect(day, AmbientOverride{}));
+    CHECK(afterUp.r == doctest::Approx(beforeUp.r));
+    CHECK(afterUp.g == doctest::Approx(beforeUp.g));
+    CHECK(afterUp.b == doctest::Approx(beforeUp.b));
+}
+
+TEST_CASE("A pinned ambient still outranks the floor")
+{
+    // Two answers to one question, and the author's wins. A floor that survived
+    // an override would be a second answer arriving on top of the first.
+    SkyResolution night;
+    night.status = SkyStatus::Ready;
+    night.sun = SkySun{.directionToSun = glm::normalize(glm::vec3(0.f, -1.f, 0.f)),
+                       .color = glm::vec3(1.0f),
+                       .intensity = 1.0f};
+    night.minimumAmbient = glm::vec3(0.f, 1.0f, 0.f);
+
+    const AmbientOverride pinned{.active = true, .color = Color3(1.0f, 0.0f, 0.0f), .intensity = 0.5f};
+    const Color3 up = FacingUp(ResolveIndirect(night, pinned));
+    CHECK(up.r > up.g);
 }

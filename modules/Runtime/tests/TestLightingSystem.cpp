@@ -5,10 +5,15 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/glm.hpp>
 
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
+#include <Assisi/Runtime/SkyComponents.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 
 using Assisi::Runtime::LightingSystem;
@@ -64,101 +69,113 @@ TEST_CASE("WorldSpotDirection rotates a spot's local aim into world space")
     }
 }
 
-TEST_CASE("A daylight cycle turns the sun about world up")
+namespace
 {
-    using Assisi::Runtime::AdvanceDaylight;
-    using Assisi::Runtime::DirectionalLight;
+using namespace Assisi;
+using Assisi::Runtime::DirectionalLight;
+using Assisi::Runtime::LightingBody;
+using Assisi::Runtime::Moon;
+using Assisi::Runtime::Skybox;
+using Assisi::Runtime::Sun;
+using Assisi::Runtime::TimeOfDay;
 
-    DirectionalLight light;
-    light.daylightCycle = true;
-    light.daylightPeriodSeconds = 100.f;
-    // Aimed down and to one side: a sun straight down is parallel to the axis it
-    // turns about, which is the one aim a day cannot move.
-    light.direction = glm::normalize(glm::vec3(1.f, -1.f, 0.f));
+/// A scene whose one directional light is on the clock, with an atmosphere. The
+/// light is authored bright and shadow-casting, because what these cases are
+/// about is the authored values NOT reaching the buffer when the clock says
+/// nothing is lighting.
+ECS::Entity AddClockedSunEntity(ECS::Scene &scene, double hour, bool withMoon)
+{
+    const ECS::Entity entity = scene.Create();
+    (void)scene.Add<DirectionalLight>(
+        entity, DirectionalLight{.direction = glm::vec3(0.f, -1.f, 0.f), .intensity = 7.f, .castsShadows = true});
+    (void)scene.Add<Skybox>(entity);
+    (void)scene.Add<Sun>(entity, Sun{.latitudeDegrees = 45.f});
 
-    SUBCASE("the default sun, aimed straight down, still moves")
+    TimeOfDay clock;
+    clock.hour = hour;
+    (void)scene.Add<TimeOfDay>(entity, clock);
+
+    if (withMoon)
     {
-        // The case that made this look broken: a new DirectionalLight points
-        // straight down, and turning about world *up* leaves that aim exactly
-        // where it is — the aim is the axis. A day has to move the sun a author
-        // has not touched, because that is every sun on the first run.
-        DirectionalLight fresh;
-        fresh.daylightCycle = true;
-        fresh.daylightPeriodSeconds = 100.f;
-        CHECK(fresh.direction == glm::vec3(0.f, -1.f, 0.f));
-
-        const glm::vec3 turned = AdvanceDaylight(fresh, 25.f);
-        CHECK(glm::length(turned) == doctest::Approx(1.f));
-        CHECK_FALSE(Approx3(turned, fresh.direction));
+        (void)scene.Add<Moon>(entity, Moon{.phaseAtEpoch = 0.5f});
     }
-
-    SUBCASE("the sun sets, which is what makes it a day rather than a circuit")
-    {
-        // Turning about world up sweeps the sun around at whatever elevation it
-        // was authored at and never takes it below the horizon — a polar summer,
-        // with no night in it. Over a whole cycle the vertical component has to
-        // reach both signs: light travelling downward is day, upward is night.
-        DirectionalLight sun;
-        sun.daylightCycle = true;
-        sun.daylightPeriodSeconds = 100.f;
-        sun.direction = glm::vec3(0.f, -1.f, 0.f);
-
-        float lowest = 1.f;
-        float highest = -1.f;
-        for (int step = 0; step < 16; ++step)
-        {
-            const float t = static_cast<float>(step) * (sun.daylightPeriodSeconds / 16.f);
-            const float vertical = AdvanceDaylight(sun, t).y;
-            lowest = std::min(lowest, vertical);
-            highest = std::max(highest, vertical);
-        }
-        CHECK(lowest < -0.5f); // overhead, shining down
-        CHECK(highest > 0.5f); // under the world, shining up — night
-    }
-
-    SUBCASE("a whole period comes back to where it started")
-    {
-        const glm::vec3 turned = AdvanceDaylight(light, light.daylightPeriodSeconds);
-        CHECK(Approx3(turned, light.direction));
-    }
-
-    SUBCASE("half a period is the opposite aim, about the horizon axis")
-    {
-        // Turning half a revolution about world X reverses the two components
-        // perpendicular to it and leaves the one along it alone.
-        const glm::vec3 turned = AdvanceDaylight(light, light.daylightPeriodSeconds * 0.5f);
-        CHECK(turned.x == doctest::Approx(light.direction.x));
-        CHECK(turned.y == doctest::Approx(-light.direction.y));
-        CHECK(turned.z == doctest::Approx(-light.direction.z));
-    }
-
-    SUBCASE("the cycle off leaves the aim exactly as authored")
-    {
-        // Not merely close: an author who switched the cycle off expects the
-        // direction they typed, and a rotation by zero that renormalises would
-        // still perturb the last bit.
-        DirectionalLight fixed = light;
-        fixed.daylightCycle = false;
-        const glm::vec3 turned = AdvanceDaylight(fixed, 12.5f);
-        CHECK(turned == fixed.direction);
-    }
-
-    SUBCASE("an absurd period is floored rather than divided by")
-    {
-        // A level file is hand-editable and this one divides. Zero would be a
-        // sun with no day at all; the floor turns it into the fastest day the
-        // cycle will run instead of a NaN that reaches the cascade fit.
-        DirectionalLight strobe = light;
-        strobe.daylightPeriodSeconds = 0.f;
-        const glm::vec3 turned = AdvanceDaylight(strobe, Assisi::Runtime::kMinDaylightPeriodSeconds);
-        CHECK(glm::length(turned) == doctest::Approx(1.f));
-        // A whole revolution at the floor, so it lands back where it started.
-        CHECK(Approx3(turned, strobe.direction));
-    }
-
-    SUBCASE("a non-finite step leaves the aim alone")
-    {
-        const glm::vec3 turned = AdvanceDaylight(light, std::numeric_limits<float>::quiet_NaN());
-        CHECK(turned == light.direction);
-    }
+    return entity;
 }
+} // namespace
+
+TEST_CASE("A night with nothing up uploads a dark sun, not the authored one")
+{
+    // The defect this exists for: the resolver names the sun's entity whether or
+    // not a body is lighting it, and Gather claims the row by that name. When it
+    // did not — when "nothing is lighting" was expressed by leaving the entity
+    // null — the row went unclaimed and Gather fell back to the AUTHORED aim,
+    // which lit the world at full intensity from straight overhead in the middle
+    // of the night, and fixed itself the moment either body came back up.
+    ECS::Scene scene;
+    (void)AddClockedSunEntity(scene, 0.0, /*withMoon=*/false);
+
+    const Runtime::SkyResolution sky = Runtime::ResolveSky(scene);
+    REQUIRE(sky.sun.directionToSun.y < 0.f);
+    REQUIRE(sky.light.body == LightingBody::None);
+    // Named even with nothing lighting. This is the assertion that would have
+    // caught it.
+    REQUIRE(sky.light.entity != ECS::NullEntity);
+
+    LightingSystem lighting;
+    lighting.Gather(scene, &sky.light);
+
+    REQUIRE(lighting.DirLightCount() == 1u);
+    const std::span<const Assisi::Runtime::ShadowCaster> flags = lighting.DirLightShadowFlags();
+    REQUIRE(flags.size() == 1u);
+    // Nothing lights, so nothing shadows either — which is what makes a long
+    // polar night cost no cascades at all rather than a full draw every frame.
+    CHECK(flags[0] == Assisi::Runtime::ShadowCaster::No);
+    CHECK_FALSE(lighting.ShadowCastingSun().has_value());
+}
+
+TEST_CASE("The row the clock drives carries whichever body is lighting it")
+{
+    // Midnight with a full moon up: the row is the MOON's aim, not the sun's and
+    // not the authored one.
+    ECS::Scene scene;
+    (void)AddClockedSunEntity(scene, 0.0, /*withMoon=*/true);
+
+    const Runtime::SkyResolution night = Runtime::ResolveSky(scene);
+    REQUIRE(night.light.body == LightingBody::Moon);
+    REQUIRE(night.moon.directionToMoon.y > 0.f);
+
+    LightingSystem lighting;
+    lighting.Gather(scene, &night.light);
+    REQUIRE(lighting.DirLightCount() == 1u);
+    REQUIRE(lighting.ShadowCastingSun().has_value());
+    CHECK(Approx3(lighting.ShadowCastingSun()->direction, -night.moon.directionToMoon));
+
+    // And by day the same row is the sun's.
+    scene.GetMut<TimeOfDay>(ECS::Entity{.index = 0, .generation = 0})->hour = 12.0;
+    const Runtime::SkyResolution day = Runtime::ResolveSky(scene);
+    REQUIRE(day.light.body == LightingBody::Sun);
+
+    lighting.Gather(scene, &day.light);
+    REQUIRE(lighting.ShadowCastingSun().has_value());
+    CHECK(Approx3(lighting.ShadowCastingSun()->direction, -day.sun.directionToSun));
+}
+
+TEST_CASE("A light the clock does not drive is still gathered as authored")
+{
+    // The fallback is not dead code: a directional light with no Sun beside it is
+    // aimed by hand, and Gather must leave it exactly as authored.
+    ECS::Scene scene;
+    const glm::vec3 authored = glm::normalize(glm::vec3(1.f, -2.f, 0.5f));
+    const ECS::Entity entity = scene.Create();
+    (void)scene.Add<DirectionalLight>(
+        entity, DirectionalLight{.direction = authored, .intensity = 2.f, .castsShadows = true});
+
+    const Runtime::SkyResolution sky = Runtime::ResolveSky(scene);
+    REQUIRE(sky.status == Runtime::SkyStatus::NoSkybox);
+
+    LightingSystem lighting;
+    lighting.Gather(scene, &sky.light);
+    REQUIRE(lighting.ShadowCastingSun().has_value());
+    CHECK(Approx3(lighting.ShadowCastingSun()->direction, authored));
+}
+

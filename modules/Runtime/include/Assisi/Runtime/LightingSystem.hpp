@@ -39,6 +39,11 @@ enum class ShadowCaster : uint8_t
     Yes = 1,
 };
 
+/// Declared rather than included: the sky resolver produces this and reaches for
+/// SunlightColor below, so including its header here would be a cycle for a type
+/// this only ever holds a pointer to.
+struct CelestialLight;
+
 class LightingSystem
 {
 public:
@@ -62,7 +67,14 @@ public:
     /// two: it decides which lights hold atlas tiles, and stamps each winner's
     /// view index into the light record the shader will read. Gathering and
     /// uploading in one call would have sent the lights before anything knew.
-    void Gather(Assisi::ECS::Scene &scene);
+    ///
+    /// @p celestial, when given, replaces the row of the entity it names with the
+    /// direction, colour and intensity the sky resolver derived — which is where
+    /// a clock-driven sun, a moon holding the slot at night, and the horizon ramp
+    /// between them all arrive. Every other directional light is gathered exactly
+    /// as authored. Null gathers all of them as authored, which is what a caller
+    /// with no sky resolution has.
+    void Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial = nullptr);
 
     /// @brief Send the gathered lights to the GPU and run the cull pass.
     ///
