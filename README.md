@@ -579,8 +579,9 @@ permanently rather than rotting. Press **F9** in the sandbox for the capture pan
 past out of the ring, or stream a longer session straight to disk.
 
 Chiara has no dependencies of its own, which is what lets `Core` (and therefore everything else) sit
-above it. [`scripts/chiara-analyze.py`](scripts/chiara-analyze.py) reads a capture from the terminal
-when you want numbers rather than a flame chart.
+above it. [`scripts/chiara-frame.py`](scripts/chiara-frame.py) reads a capture from the terminal when you
+want numbers rather than a flame chart, showing one frame with every scope against its own median over
+the whole recording — so a duration reads as steady state or spike.
 
 # Documentation
 Per-module overviews are in the section above, and the public API is documented with Doxygen-style
