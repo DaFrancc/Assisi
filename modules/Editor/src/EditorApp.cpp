@@ -22,6 +22,7 @@
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
@@ -85,6 +86,23 @@ void EditorApp::DrawOptionsWindow()
     {
         ApplyDisplayOptions();
     }
+
+    // The per-light shadow report is gathered for two readers and nobody else:
+    // this overlay, and the inspector line on a selected light. Asked for here,
+    // once, so the renderer has a single answer rather than two writers racing
+    // to turn it off — and so a game, which has neither reader, never pays it.
+    _sceneRenderer.SetShadowDiagnosticsEnabled(_options->IsOpen() || SelectedEntityCastsLocalShadows());
+}
+
+bool EditorApp::SelectedEntityCastsLocalShadows() const
+{
+    if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity)
+    {
+        return false;
+    }
+    const auto *spot = _scene->Get<Assisi::Runtime::SpotLight>(_selectedEntity);
+    const auto *point = _scene->Get<Assisi::Runtime::PointLight>(_selectedEntity);
+    return (spot != nullptr && spot->castsShadows) || (point != nullptr && point->castsShadows);
 }
 
 // ---------------------------------------------------------------------------

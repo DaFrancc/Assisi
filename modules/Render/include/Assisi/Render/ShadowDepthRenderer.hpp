@@ -249,6 +249,14 @@ struct ShadowDrawList
 void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters,
                          ShadowDrawList &out);
 
+/// @brief How many casters view @p view of @p list actually drew.
+///
+/// What survived that view's own cull, which is not the caster span's size and
+/// not the same for two views over one span — the whole reason a per-cascade
+/// figure says something a total does not. A view the list does not describe
+/// drew nothing.
+[[nodiscard]] std::uint32_t ShadowViewCasterCount(const ShadowDrawList &list, std::uint32_t view);
+
 /// @brief The pipeline a view draws each class of caster through, indexed by
 /// MeshPipeline.
 ///
@@ -367,6 +375,14 @@ public:
     /// from the last one.
     Stats Render(nvrhi::ICommandList *commandList, const ShadowPipelines &pipelines,
                  std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters) const;
+
+    /// @brief The draw list the most recent Render() built, for a caller that
+    /// wants what one of its views drew rather than the total.
+    ///
+    /// Valid until the next Render(), and describing that call's targets in
+    /// their own order — so a pass reads its own views back by the index it
+    /// passed them in at. See ShadowViewCasterCount.
+    [[nodiscard]] const ShadowDrawList &LastDrawList() const { return _drawList; }
 
 private:
     /// @brief Load the alpha-testing variant and build what only it needs.

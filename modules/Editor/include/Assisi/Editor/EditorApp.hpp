@@ -262,6 +262,16 @@ private:
 
     // --- ImGui panels ---
     void DrawOptionsWindow(); // hands the frame to EditorOptionsPanel and applies its result
+
+    /// @brief Whether the selection is a shadow-casting spot or point light, and
+    /// so whether the inspector has a shadow verdict to show for it. One of the
+    /// two things the renderer's per-light diagnostics are gathered for.
+    [[nodiscard]] bool SelectedEntityCastsLocalShadows() const;
+
+    /// @brief One line under a light's fields saying whether it is shadowed,
+    /// and what took its shadow if not. Draws nothing when there is no verdict.
+    void DrawLightShadowVerdict();
+
     void DrawDiagnosticsWindow();
     void DrawChiaraWindow();  // performance capture (F9); empty in builds without profiling
     void DrawLevelsWindow();

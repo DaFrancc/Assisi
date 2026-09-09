@@ -261,6 +261,23 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
     out.viewCommandStart.push_back(static_cast<std::uint32_t>(out.commands.size()));
 }
 
+std::uint32_t ShadowViewCasterCount(const ShadowDrawList &list, std::uint32_t view)
+{
+    if (view + 1u >= list.viewCommandStart.size())
+    {
+        return 0;
+    }
+    // Summed over the view's commands rather than taken from its member range:
+    // the members are what the caster masks admitted, and the frustum test that
+    // runs after them is exactly what a per-view figure is being read for.
+    std::uint32_t casters = 0;
+    for (std::uint32_t index = list.viewCommandStart[view]; index < list.viewCommandStart[view + 1u]; ++index)
+    {
+        casters += list.commands[index].instanceCount;
+    }
+    return casters;
+}
+
 bool ShadowDepthRenderer::Initialize(const InitParams &params)
 {
     _device = params.device;

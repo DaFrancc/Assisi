@@ -74,6 +74,12 @@ public:
         std::uint32_t maskedBatches = 0;
         std::uint32_t drawCalls = 0; ///< drawIndexedIndirect calls issued — one per cascade with anything in it.
         std::uint32_t culled = 0;    ///< Caster-cascade pairs no cascade drew, classification and frustum together.
+
+        /// Casters each cascade drew, nearest first. The split @ref instances
+        /// sums away: a near cascade covering a courtyard and a far one covering
+        /// the district cost very differently, and only the per-cascade figure
+        /// says which of them a rise in the total came from.
+        std::array<std::uint32_t, kMaxShadowCascades> cascadeCasters{};
     };
 
     /// @brief Clear every cascade and draw @p casters into them.
@@ -89,6 +95,14 @@ public:
     Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const ShadowCaster> casters) const;
 
     [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }
+
+    /// @brief Count the casters each cascade drew, for a diagnostic that is
+    /// showing them.
+    ///
+    /// Off by default, and the default is the point: nothing in the picture
+    /// depends on the answer, so a frame with no panel open must not walk a
+    /// cascade's commands to produce it. Cheap is not the same as free.
+    void SetCascadeCountsEnabled(bool enabled) { _cascadeCounts = enabled; }
 
     /// @brief The cascade array the mesh shader samples. Never null after a
     /// successful Initialize() — it is the one-texel empty array while the pass
@@ -130,6 +144,8 @@ private:
 
     SunShadowSettings _settings;
     bool _active = false;
+    // Whether Stats::cascadeCasters is filled. See SetCascadeCountsEnabled.
+    bool _cascadeCounts = false;
     // What the current allocation was built for, so Configure can tell an edit
     // that needs a reallocation from one that only needs a pipeline rebuild.
     std::uint32_t _builtCascades = 0;

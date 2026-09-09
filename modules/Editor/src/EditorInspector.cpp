@@ -29,6 +29,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 
@@ -64,6 +65,7 @@ constexpr const char *kWireGlyph = "\xef\x87\xa6"; // U+F1E6
 namespace
 {
 
+using Assisi::Core::Reflect::IsComponent;
 using Assisi::Editor::RadioVisibility;
 using Assisi::Editor::ScopedFieldChrome;
 
@@ -624,7 +626,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         {
             // MeshRenderer::materialOverrides is the only field of this type; it
             // gets one browse row per material slot of the resolved mesh.
-            if (meta.name == "MeshRenderer" && field.name == "materialOverrides")
+            if (IsComponent<Assisi::Runtime::MeshRenderer>(meta) && field.name == "materialOverrides")
                 edited = EditMaterialSlots(*static_cast<Assisi::Runtime::MeshRenderer *>(mut), meta, field.offset);
             else
                 ImGui::TextDisabled("%s: [unsupported vector]", field.name.c_str());
@@ -999,7 +1001,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
 
     // A few components carry runtime state beyond their reflected fields. Wire it
     // up here so the add takes effect now rather than at the next level reload.
-    if (meta.name == "Transform")
+    if (IsComponent<Assisi::Runtime::Transform>(meta))
     {
         // Entities start transform-less, so place the new one in front of the
         // camera rather than at the world origin. GetMut, not Get: Transform is
@@ -1015,11 +1017,11 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
             tc->position = _cameraTransform.position + forward * kSpawnDistance;
         }
     }
-    else if (meta.name == "MeshRenderer")
+    else if (IsComponent<Assisi::Runtime::MeshRenderer>(meta))
     {
         ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
     }
-    else if (meta.name == "RigidBodyDescriptor")
+    else if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta))
     {
         const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
         const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
@@ -1059,7 +1061,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
     //
     // MeshRenderer needs nothing: its transient pointers are non-owning, the
     // AssetCache owns the GPU resources.
-    if (meta.name == "RigidBodyDescriptor" || meta.name == "Transform")
+    if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) || IsComponent<Assisi::Runtime::Transform>(meta))
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
         {
@@ -1462,6 +1464,41 @@ void EditorApp::DrawInstanceInspector()
         ImGui::SetTooltip("This world is inspect-only.");
 }
 
+void EditorApp::DrawLightShadowVerdict()
+{
+    if (!SelectedEntityCastsLocalShadows())
+    {
+        // castsShadows is off, and the field two lines below says so. Repeating
+        // it as a verdict would read as a failure rather than a choice.
+        return;
+    }
+
+    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer.ShadowReportFor(_selectedEntity);
+    if (report == nullptr)
+    {
+        // The gather runs a frame behind the selection, and a scene with local
+        // shadows switched off entirely never gathers at all. Saying nothing
+        // beats guessing at a verdict.
+        return;
+    }
+
+    const bool shadowed = report->state == Assisi::Render::LocalShadowState::Shadowed;
+    ImGui::PushStyleColor(ImGuiCol_Text, shadowed ? ImVec4{0.65f, 0.85f, 0.65f, 1.f}
+                          : report->state == Assisi::Render::LocalShadowState::Demoted
+                              ? ImVec4{1.f, 0.82f, 0.4f, 1.f}
+                              : ImVec4{1.f, 0.5f, 0.4f, 1.f});
+    if (report->resolution == 0u)
+    {
+        ImGui::Text("Shadow: %s", Assisi::Render::LocalShadowStateName(report->state));
+    }
+    else
+    {
+        ImGui::Text("Shadow: %s at %u", Assisi::Render::LocalShadowStateName(report->state), report->resolution);
+    }
+    ImGui::PopStyleColor();
+    ImGui::SetItemTooltip("%s", Assisi::Render::DescribeLocalShadowState(report->state));
+}
+
 void EditorApp::DrawInspector()
 {
     using namespace Assisi::Core::Reflect;
@@ -1604,7 +1641,7 @@ void EditorApp::DrawInspector()
     for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
         // Name belongs to the rename box above, not to this generic list.
-        if (meta->name == "Name")
+        if (IsComponent<Assisi::Runtime::Name>(*meta))
             continue;
 
         const void *compPtr =
@@ -1754,6 +1791,16 @@ void EditorApp::DrawInspector()
             }
 #endif // ASSISI_NETWORKING
 
+            // What the shadow system actually did with this light, under its own
+            // fields. The panel's table says it for every light at once; this
+            // says it where an author is already looking at the light they think
+            // is wrong, which is the whole of the thirty-second fix.
+            if (meta->id == ComponentIdOf<Assisi::Runtime::SpotLight>() ||
+                meta->id == ComponentIdOf<Assisi::Runtime::PointLight>())
+            {
+                DrawLightShadowVerdict();
+            }
+
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // The field widgets write component memory by offset, bypassing
             // Scene::GetMut's change stamping, so the change is reported by hand.
@@ -1864,7 +1911,7 @@ void EditorApp::DrawInspector()
         std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
         {
-            if (meta->name == "Name") // owned by the rename box, never added here
+            if (IsComponent<Assisi::Runtime::Name>(*meta)) // owned by the rename box, never added here
                 continue;
             if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
                 continue;

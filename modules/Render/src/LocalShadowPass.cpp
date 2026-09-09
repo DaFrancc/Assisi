@@ -291,7 +291,7 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
     _targetFace.clear();
     _tileViewStart.clear();
     _tileViewStart.push_back(0);
-    _servedRequests.clear();
+    _servedTiles.clear();
     _servedRects.clear();
 
     _allocator.Reset(_settings.atlasResolution);
@@ -388,7 +388,8 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
         _tiles.push_back(Tile{
                 .kind = request.kind, .lightIndex = request.lightIndex, .firstView = firstView, .resolution = resolution});
         _tileViewStart.push_back(static_cast<std::uint32_t>(_targets.size()));
-        _servedRequests.push_back(static_cast<std::uint32_t>(index));
+        _servedTiles.push_back(
+                LocalShadowServedTile{.requestIndex = static_cast<std::uint32_t>(index), .resolution = resolution});
     }
     return unserved;
 }
@@ -722,10 +723,11 @@ LocalShadowPass::Stats LocalShadowPass::Render(nvrhi::ICommandList *commandList,
 
     if (caching)
     {
-        _cache.Commit(frame.frameIndex, frame.requests, _plans, _servedRequests, _servedRects);
+        _cache.Commit(frame.frameIndex, frame.requests, _plans, _servedTiles, _servedRects);
         const LocalShadowCachePlanStats &planned = _cache.Stats();
         stats.restingLights = planned.restingLights;
         stats.deferredLights = planned.deferredLights;
+        stats.deferredFaces = planned.deferredFaces;
         stats.dynamicCasters = planned.dynamicCasters;
     }
     return stats;

@@ -50,13 +50,13 @@ ShadowMover CasterAt(std::uint64_t id, const glm::vec3 &position, float radius =
 /// One tile of 512 texels per face, laid out left to right. Enough to stand in
 /// for an allocation without pulling the allocator into these tests.
 std::vector<ShadowViewRect> RectsFor(std::span<const LocalShadowRequest> requests,
-                                     std::span<const std::uint32_t> served)
+                                     std::span<const LocalShadowServedTile> served)
 {
     std::vector<ShadowViewRect> rects;
     std::uint32_t x = 0;
-    for (const std::uint32_t index : served)
+    for (const LocalShadowServedTile &tile : served)
     {
-        for (std::uint32_t face = 0; face < LocalShadowFaceCount(requests[index].kind); ++face)
+        for (std::uint32_t face = 0; face < LocalShadowFaceCount(requests[tile.requestIndex].kind); ++face)
         {
             rects.push_back(ShadowViewRect{.x = x, .y = 0, .width = 512, .height = 512});
             x += 512;
@@ -67,14 +67,14 @@ std::vector<ShadowViewRect> RectsFor(std::span<const LocalShadowRequest> request
 
 /// Serve every request whose plan the budget did not refuse, which is what the
 /// pass does when the atlas has room for all of them.
-std::vector<std::uint32_t> ServedOf(std::span<const LocalShadowTilePlan> plans)
+std::vector<LocalShadowServedTile> ServedOf(std::span<const LocalShadowTilePlan> plans)
 {
-    std::vector<std::uint32_t> served;
+    std::vector<LocalShadowServedTile> served;
     for (std::uint32_t index = 0; index < plans.size(); ++index)
     {
         if (!plans[index].deferred)
         {
-            served.push_back(index);
+            served.push_back(LocalShadowServedTile{.requestIndex = index, .resolution = 512});
         }
     }
     return served;
@@ -95,7 +95,7 @@ LocalShadowCacheFrame FrameAt(std::uint32_t index, const LocalShadowCacheSetting
 void RunFrame(LocalShadowCache &cache, const LocalShadowCacheFrame &frame, std::vector<LocalShadowTilePlan> &plans)
 {
     cache.Plan(frame, plans);
-    const std::vector<std::uint32_t> served = ServedOf(plans);
+    const std::vector<LocalShadowServedTile> served = ServedOf(plans);
     const std::vector<ShadowViewRect> rects = RectsFor(frame.requests, served);
     cache.Commit(frame.frameIndex, frame.requests, plans, served, rects);
 }

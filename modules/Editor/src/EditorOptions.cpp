@@ -25,6 +25,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace Assisi::Editor
@@ -79,6 +80,83 @@ void DrawShadowAtlasInspector(std::span<const Assisi::Render::LocalShadowCache::
             ImGui::Text("%u", Assisi::Render::ShadowSizeClassResolution(tile.sizeClass));
             ImGui::TableNextColumn();
             ImGui::Text("%u", tile.ageFrames);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TreePop();
+}
+
+/// Every shadow-casting local light and what became of it.
+///
+/// The rows nobody wants are the reason it exists: a light that lost its shadow
+/// is invisible in the picture except as "that lamp looks wrong", and which
+/// lights lose theirs changes as the camera moves. Each state names a different
+/// setting, so the column is the fix as much as the diagnosis.
+void DrawShadowLightReport(const Assisi::Render::ShadowDiagnostics &diagnostics)
+{
+    if (!ImGui::TreeNode("Shadowed Lights"))
+    {
+        return;
+    }
+    if (diagnostics.lights.empty())
+    {
+        ImGui::TextUnformatted("No local light casts a shadow.");
+        ImGui::TreePop();
+        return;
+    }
+
+    if (ImGui::BeginTable("shadow-lights", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+    {
+        ImGui::TableSetupColumn("Light");
+        ImGui::TableSetupColumn("State");
+        ImGui::TableSetupColumn("Tile");
+        ImGui::TableSetupColumn("Score");
+        ImGui::TableHeadersRow();
+
+        for (const Assisi::Render::LocalShadowLightReport &light : diagnostics.lights)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s %u", light.kind == Assisi::Render::LocalLightKind::Point ? "point" : "spot",
+                        light.lightIndex);
+
+            ImGui::TableNextColumn();
+            // Coloured only where something is off the fast path. Colouring the
+            // ordinary case too would make a healthy scene a wall of green and
+            // leave the one row that matters no easier to find. Shadows switched
+            // off is not off the fast path either — it is an answered question,
+            // and the checkbox that answered it is a few lines above.
+            const bool verdict = light.state != Assisi::Render::LocalShadowState::Shadowed &&
+                                 light.state != Assisi::Render::LocalShadowState::Disabled;
+            if (verdict)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, light.state == Assisi::Render::LocalShadowState::Demoted
+                                                         ? ImVec4{1.f, 0.82f, 0.4f, 1.f}
+                                                         : ImVec4{1.f, 0.5f, 0.4f, 1.f});
+            }
+            ImGui::TextUnformatted(Assisi::Render::LocalShadowStateName(light.state));
+            if (verdict)
+            {
+                ImGui::PopStyleColor();
+            }
+            ImGui::SetItemTooltip("%s", Assisi::Render::DescribeLocalShadowState(light.state));
+
+            ImGui::TableNextColumn();
+            if (light.resolution == 0u)
+            {
+                ImGui::TextUnformatted("—");
+            }
+            else if (light.state == Assisi::Render::LocalShadowState::Demoted)
+            {
+                ImGui::Text("%u (asked %u)", light.resolution, light.requestedResolution);
+            }
+            else
+            {
+                ImGui::Text("%u", light.resolution);
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f", static_cast<double>(light.score));
         }
         ImGui::EndTable();
     }
@@ -387,6 +465,15 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     }
 
     const Assisi::Render::LocalShadowPass::Stats local = frame.renderer.LastLocalShadowStats();
+    const Assisi::Render::ShadowDiagnostics &diagnostics = frame.renderer.ShadowDiagnostics();
+
+    // The headline: how many of the lights that asked for a shadow are getting
+    // one. Any gap here is what the rest of this section explains.
+    ImGui::Text("Shadowed: %u of %u lights", diagnostics.shadowedLights, diagnostics.castingLights);
+    ImGui::SetItemTooltip("Local lights whose castsShadows is on, against the ones actually holding an atlas "
+                          "tile this frame. A gap is not a bug — it is one of the mechanisms below bounding "
+                          "cost — but it is never meant to be a surprise.");
+
     ImGui::Text("Atlas: %u lights / %u faces  |  %.0f%% full", local.lights, local.views,
                 static_cast<double>(local.occupancy) * 100.0);
     // Three different answers to "why has that lamp no shadow", and they are
@@ -395,15 +482,56 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     ImGui::Text("Dropped by cap: %u  |  atlas full: %u  |  waiting to redraw: %u",
                 frame.renderer.LastShadowDroppedByCap(), local.unserved, local.deferredLights);
 
+    // The sun's share, split by cascade. The total says the sun costs more than
+    // it did; the split says whether that came from the near detail or the far
+    // distance, which are different things to fix.
+    if (const Assisi::Render::ShadowPass::Stats sun = frame.renderer.LastShadowStats(); sun.cascades > 0)
+    {
+        std::string cascades;
+        for (std::uint32_t cascade = 0; cascade < sun.cascades; ++cascade)
+        {
+            cascades += cascade == 0 ? "" : " / ";
+            cascades += std::to_string(sun.cascadeCasters[cascade]);
+        }
+        ImGui::Text("Cascade casters: %s", cascades.c_str());
+        ImGui::SetItemTooltip("Casters drawn into each sun cascade, nearest first. A caster reaching several "
+                              "cascades is counted in each, because it is drawn into each.");
+    }
+
     if (shadows.local.cache.enabled)
     {
         // The number the pay-for-what-you-place gate is read off, per light: on
         // a still scene every served light is resting and both draws are zero.
-        ImGui::Text("Cache: %u resting  |  %u baked / %u copied  |  %u movers", local.restingLights, local.bakedFaces,
-                    local.copiedFaces, local.dynamicCasters);
+        //
+        // Every count carries its unit, and they are three different ones. A
+        // point light is six faces, so resting lights and copied faces are an
+        // order of magnitude apart while describing the same lights — printed
+        // bare, side by side, they read as a contradiction that is not there.
+        ImGui::Text("Cache: %u of %u lights resting  |  %u baked / %u copied faces  |  %u moving casters",
+                    local.restingLights, local.lights, local.bakedFaces, local.copiedFaces, local.dynamicCasters);
+        ImGui::SetItemTooltip("Resting is per light and means nothing is moving within its reach. Baked and "
+                              "copied are per face — six of them for every point light — so the two counts are "
+                              "not comparable and are not meant to be.");
+
+        // The burst condition, said only when it happens. Walking into a room
+        // saturating the budget for a frame is the mechanism working; the same
+        // line standing still is content that has outrun it, and that is the
+        // thing that would otherwise show up as an unexplained hitch.
+        if (diagnostics.BudgetSaturated())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{1.f, 0.82f, 0.4f, 1.f});
+            ImGui::Text("Redraw budget saturated: %u of %u faces deferred", diagnostics.deferredFaces,
+                        diagnostics.budgetFaces);
+            ImGui::PopStyleColor();
+            ImGui::SetItemTooltip("Expected for a frame or two when a room opens onto many lights. If it "
+                                  "persists while nothing is moving, raise the redraw budget — the deferred "
+                                  "lights are unshadowed until it reaches them.");
+        }
 
         DrawShadowAtlasInspector(frame.renderer.CachedShadowTiles());
     }
+
+    DrawShadowLightReport(diagnostics);
 
     if (changed)
     {
