@@ -302,6 +302,11 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // change ticks may only be consumed once a frame.
     UpdateShadowMovers(scene);
 
+    // Before the shadow halves, because they select from it too: a caster's
+    // shadow is drawn from the level the camera sees it at, and all three passes
+    // measure with the one view set here.
+    _lodSelector.BeginFrame(CameraLodView(cameraTransform, camera));
+
     Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
     RenderLocalShadows(frame, scene, camera, cameraTransform, shadows);
     // After both, because it reports on both — and outside them, because every
@@ -335,7 +340,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                .sortDraws = _sortDraws,
                                                .gpuCulling = _gpuCulling,
                                                .culler = &_meshCuller,
-                                               .cullBuilder = &_cullBuilder});
+                                               .cullBuilder = &_cullBuilder,
+                                               .lodSelector = &_lodSelector});
 
     // The sky goes last, into whatever the geometry left at the depth clear. Both
     // halves of it come from the scene — the sun from a directional light, the
@@ -424,6 +430,11 @@ void SceneRenderer::OnSceneReplaced()
     // lights that no longer exist.
     _sunCadence.Forget();
     _localShadowSelector.Forget();
+
+    // The remembered LOD levels go with them, for the same reason and one more:
+    // entity indices are reused across a load, so a level held from the old
+    // scene would be read as the new occupant's.
+    _lodSelector.Clear();
 
     // Reset rather than carried, because the incoming scene's clock starts its own
     // count and a serial that happened to match would skip the very Forget the
@@ -567,7 +578,7 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         }
         GatherShadowCasters(scene, sun->direction,
                             std::span<const Geometry::BoundingSphere>(cascadeVolumes.data(), redraw.size()),
-                            _shadowCasters);
+                            &_lodSelector, _shadowCasters);
     }
 
     _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, redraw, _shadowCasters.casters);
@@ -599,6 +610,12 @@ float SceneRenderer::LocalLightScreenCoverage(const glm::vec3 &position, float r
     // distance, and the light spans `range` — so this is the light's diameter
     // over the view's height.
     return std::min(range / (distance * tanHalfFovY), 1.f);
+}
+
+LodView SceneRenderer::CameraLodView(const Transform &cameraTransform, const Camera &camera)
+{
+    return LodView{.cameraPosition = glm::vec3(cameraTransform.worldMatrix[3]),
+                   .tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f)};
 }
 
 void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
@@ -726,7 +743,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
 
     Render::LocalShadowPass::Frame shadowFrame{.requests = _localRequests,
                                                .casters = {},
-                                               .casterIndex = &_localCasterIndex,
+                                               .casterIndex = &_localShadowCasters.Index(),
                                                .movers = _dynamicCasters,
                                                .invalidations = _casterInvalidations,
                                                .frameIndex = _shadowFrameIndex};
@@ -742,16 +759,13 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     // happens to dirty it again.
     if (_localShadowPass.PlanFrame(shadowFrame))
     {
-        GatherLocalShadowCasters(scene, _localLightVolumes, _casterMobility, _localShadowCasters, _localCasterIndex);
-        shadowFrame.casters = _localShadowCasters.casters;
+        _localShadowCasters.Gather(scene, _localLightVolumes, _casterMobility, &_lodSelector);
+        _localShadowCasters.BuildIndex();
+        shadowFrame.casters = _localShadowCasters.Casters();
     }
     else
     {
-        // The index still has to describe every request, because the composite
-        // walks a row per served face whether or not it finds anything in it.
-        _localShadowCasters.casters.clear();
-        _localCasterIndex.Clear();
-        _localCasterIndex.start.assign(_localRequests.size() + 1u, 0u);
+        _localShadowCasters.Reset(static_cast<std::uint32_t>(_localRequests.size()));
     }
 
     _lastLocalShadowStats = _localShadowPass.Render(frame.commandList, shadowFrame);
@@ -1101,7 +1115,13 @@ void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::Re
 
     if (renderer != nullptr && renderer->meshBuffer != nullptr)
     {
-        _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix, color);
+        // The level the mesh pass drew this entity at, not a second opinion: a
+        // border traced around a finer silhouette than the one on screen reads
+        // as a halo.
+        _outlinePass.Draw(frame, viewProjection,
+                          Render::OutlinePass::OutlineItem{renderer->meshBuffer, transform->worldMatrix,
+                                                           _lodSelector.Remembered(entity)},
+                          color);
     }
     else if (placementIcon || loadingMesh)
     {

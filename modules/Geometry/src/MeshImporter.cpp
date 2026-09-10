@@ -685,6 +685,13 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     // is skipped below, which would otherwise desynchronize Lods.size() from the
     // lod index and write out of bounds.
     merged.Lods.assign(distinctLods.size(), LodRange{});
+    // The chain carries its own switch points from here on, so a consumer reads
+    // one number off the asset rather than re-deriving a convention. Nothing
+    // authors them yet, so every level gets the default for its position.
+    for (uint32_t level = 0; level < merged.Lods.size(); ++level)
+    {
+        merged.Lods[level].ScreenSizeThreshold = DefaultLodScreenSize(level);
+    }
 
     for (size_t i = 0; i < records.size();)
     {

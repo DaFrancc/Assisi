@@ -62,31 +62,54 @@ void SortShadowCasterOrder(const std::vector<Assisi::Render::ShadowCaster> &cast
               { return ShadowCasterOrderBefore(casters[lhs], casters[rhs]); });
 }
 
-/// @brief Append one caster per LOD0 submesh of @p mesh to @p out.
+/// @brief The submesh run @p mesh draws at level @p level.
 ///
-/// LOD0, matching the draw path: a shadow cast by a different silhouette than
-/// the one on screen is worse than a slightly expensive one.
+/// No LOD table at all is the whole submesh list — what a factory primitive
+/// looks like. A level past the end clamps, so a stale remembered level can
+/// never index off the table.
+Assisi::Geometry::LodRange LodRangeFor(const Assisi::Render::MeshBuffer &mesh, uint32_t level)
+{
+    const std::vector<Assisi::Geometry::LodRange> &lods = mesh.Lods();
+    if (lods.empty())
+    {
+        return Assisi::Geometry::LodRange{0, static_cast<uint32_t>(mesh.SubMeshes().size())};
+    }
+    return lods[std::min<std::size_t>(level, lods.size() - 1u)];
+}
+
+/// @brief One entity's contribution to a shadow map, as it comes off one query
+///        row: the geometry, its material slots, its pose, and its world bounds.
+struct ShadowCasterSource
+{
+    const Assisi::Render::MeshBuffer &mesh;
+    const MeshRenderer &meshRenderer;
+    const Transform &transform;
+    Assisi::Geometry::BoundingSphere worldSphere;
+};
+
+/// @brief Append one caster per submesh of @p source's level @p level to @p out.
 ///
-/// Shared by the sun's gather and the local lights', because a caster is the
-/// same thing to both — only what decides its @p viewMask differs.
-void EmitShadowCasters(const Assisi::Render::MeshBuffer &mesh, const MeshRenderer &meshRenderer,
-                       const Transform &transform, const Assisi::Geometry::BoundingSphere &worldSphere,
-                       std::uint32_t viewMask, Assisi::Render::ShadowCasterMotion motion,
+/// @p level is the one the draw path selected: a shadow cast by a different
+/// silhouette than the one on screen is worse than a slightly expensive one.
+///
+/// Shared by the sun's gather and the local lights' — only what decides a
+/// caster's @p viewMask differs between them.
+void EmitShadowCasters(const ShadowCasterSource &source, std::uint32_t viewMask, uint32_t level,
+                       Assisi::Render::ShadowCasterMotion motion,
                        std::vector<Assisi::Render::ShadowCaster> &out)
 {
+    const Assisi::Render::MeshBuffer &mesh = source.mesh;
     const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh.SubMeshes();
-    const std::vector<Assisi::Geometry::LodRange> &lods = mesh.Lods();
-    const Assisi::Geometry::LodRange lod0 =
-        !lods.empty() ? lods.front() : Assisi::Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+    const Assisi::Geometry::LodRange lod = LodRangeFor(mesh, level);
 
-    for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+    for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
     {
-        const uint32_t submeshIndex = lod0.FirstSubMesh + i;
+        const uint32_t submeshIndex = lod.FirstSubMesh + i;
         const Assisi::Geometry::SubMesh &subMesh = subMeshes[submeshIndex];
         // An unresolved slot casts opaquely rather than not at all: row 0 is
         // never read, because the alpha test that would read it is off.
-        const Assisi::Render::Material *material = subMesh.MaterialSlot < meshRenderer.materials.size()
-                                                       ? meshRenderer.materials[subMesh.MaterialSlot]
+        const Assisi::Render::Material *material = subMesh.MaterialSlot < source.meshRenderer.materials.size()
+                                                       ? source.meshRenderer.materials[subMesh.MaterialSlot]
                                                        : nullptr;
         const bool alphaMasked = material != nullptr && material->IsAlphaMasked();
         // The same flag the mesh pass reads. A double-sided caster is a surface
@@ -101,8 +124,8 @@ void EmitShadowCasters(const Assisi::Render::MeshBuffer &mesh, const MeshRendere
                                          .indexCount = subMesh.IndexCount,
                                          .startIndexLocation = mesh.IndexBase() + subMesh.IndexOffset,
                                          .baseVertexLocation = static_cast<int32_t>(mesh.VertexBase()),
-                                         .model = transform.worldMatrix,
-                                         .worldSphere = worldSphere,
+                                         .model = source.transform.worldMatrix,
+                                         .worldSphere = source.worldSphere,
                                          .viewMask = viewMask,
                                          .alphaMasked = alphaMasked,
                                          .doubleSided = doubleSided,
@@ -227,6 +250,9 @@ DrawStats DrawScene(const DrawSceneParams &params)
                 continue;
             }
 
+            const Assisi::Geometry::BoundingSphere worldSphere =
+                Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
+
             if (params.frustumCulling)
             {
                 // Two-level whole-mesh cull: the cheap sphere reject (one point
@@ -234,8 +260,6 @@ DrawStats DrawScene(const DrawSceneParams &params)
                 // tighter AABB refine catches ones the sphere's isotropic radius kept
                 // but the box excludes. Both are conservative — nothing visible is
                 // ever culled; the AABB just wastes fewer draws on flat/elongated meshes.
-                const Assisi::Geometry::BoundingSphere worldSphere =
-                    Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
                 if (!frustum.IntersectsSphere(worldSphere))
                 {
                     ++stats.culledMeshes;
@@ -257,16 +281,20 @@ DrawStats DrawScene(const DrawSceneParams &params)
             const float viewDistance = -(view * glm::vec4(centerWorld, 1.f)).z; // camera looks down -Z
             const uint16_t depth = Assisi::Render::QuantizeDepthFrontToBack(viewDistance, params.nearZ, params.farZ);
 
-            // LOD0 only for now (screen-size LOD selection is a later stage; the seam is
-            // ready for it). EnsureSubMeshTables guarantees at least one LOD/submesh.
-            const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
-            const std::vector<Assisi::Geometry::LodRange> &lods = mesh->Lods();
-            const Assisi::Geometry::LodRange lod0 =
-                !lods.empty() ? lods.front() : Assisi::Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+            // The same call the shadow gathers make for this instance, so the
+            // shadow is cast by the silhouette on screen.
+            const uint32_t level =
+                params.lodSelector != nullptr
+                    ? params.lodSelector->Select(entity, mesh->Lods(), worldSphere)
+                    : 0u;
 
-            for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+            const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
+            const Assisi::Geometry::LodRange lod = LodRangeFor(*mesh, level);
+            const std::size_t itemsBefore = items.size();
+
+            for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
             {
-                const uint32_t submeshIndex = lod0.FirstSubMesh + i;
+                const uint32_t submeshIndex = lod.FirstSubMesh + i;
                 const Assisi::Geometry::SubMesh &subMesh = subMeshes[submeshIndex];
                 const Assisi::Render::Material *material = subMesh.MaterialSlot < meshRenderer.materials.size()
                                                                ? meshRenderer.materials[subMesh.MaterialSlot]
@@ -284,6 +312,13 @@ DrawStats DrawScene(const DrawSceneParams &params)
                                                          .castsShadows = meshRenderer.castsShadows,
                                                          .material = material,
                                                          .model = transform.worldMatrix});
+            }
+
+            // After the loop: an instance whose every slot went unresolved drew
+            // nothing, at no level.
+            if (items.size() > itemsBefore)
+            {
+                ++stats.lodInstances[std::min<std::size_t>(level, kMaxReportedLods - 1u)];
             }
         }
     }
@@ -314,7 +349,8 @@ DrawStats DrawScene(const DrawSceneParams &params)
 }
 
 void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
-                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, ShadowCasterGather &out)
+                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, LodSelector *lodSelector,
+                         ShadowCasterGather &out)
 {
     ASSISI_PROFILE_SCOPE("shadow-gather");
 
@@ -355,8 +391,9 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
 
         // The sun redraws every cascade every frame, so nothing here is ever
         // held back from a kept layer: every caster is drawn, every time.
-        EmitShadowCasters(*mesh, meshRenderer, transform, worldSphere, viewMask,
-                          Assisi::Render::ShadowCasterMotion::Still, out.casters);
+        const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
+        const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+        EmitShadowCasters(source, viewMask, level, Assisi::Render::ShadowCasterMotion::Still, out.casters);
     }
 
     if (out.casters.empty())
@@ -388,30 +425,33 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
     }
 }
 
-void GatherLocalShadowCasters(Assisi::ECS::Scene &scene, std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
-                              Assisi::Render::ShadowCasterMobility &mobility, ShadowCasterGather &out,
-                              Assisi::Render::LocalShadowCasterIndex &index)
+void LocalShadowCasterGather::Reset(std::uint32_t lightCount)
+{
+    _casters.clear();
+    _reachedLights.clear();
+    _casterStart.assign(1, 0u);
+    _lightCount = lightCount;
+    _culledEntities = 0;
+
+    _index.Clear();
+    _index.start.assign(lightCount + 1u, 0u);
+}
+
+void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
+                                     std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
+                                     Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector)
 {
     ASSISI_PROFILE_SCOPE("local-shadow-gather");
 
-    out.casters.clear();
-    out.nearAlongLight.reset(); // meaningless for a light with a position
-    out.culledEntities = 0;
-    index.Clear();
-
+    Reset(static_cast<std::uint32_t>(lightVolumes.size()));
     if (lightVolumes.empty())
     {
-        index.start.assign(1, 0u);
         return;
     }
 
-    // Which lights each caster reaches, accumulated while the casters are
-    // gathered and inverted into the per-light rows afterwards. Inverted rather
-    // than filled directly because the rows index the *sorted* caster span, and
-    // the sort has not happened yet.
-    std::vector<std::uint32_t> reached;
-    std::vector<std::uint32_t> reachedStart;
-    reachedStart.push_back(0);
+    // Recorded per caster rather than per light because the atlas's rows index
+    // the *sorted* caster span, and the sort has not happened yet.
+    std::vector<std::uint32_t> &reached = _reachedLights;
 
     for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
     {
@@ -440,7 +480,7 @@ void GatherLocalShadowCasters(Assisi::ECS::Scene &scene, std::span<const Assisi:
         }
         if (reached.size() == firstReach)
         {
-            ++out.culledEntities;
+            ++_culledEntities;
             continue;
         }
 
@@ -461,22 +501,30 @@ void GatherLocalShadowCasters(Assisi::ECS::Scene &scene, std::span<const Assisi:
         // One row per emitted caster, not per entity: a mesh's submeshes are
         // separate casters and each needs its own row, and they all reach
         // exactly the lights the entity's sphere did.
-        const std::size_t before = out.casters.size();
-        EmitShadowCasters(*mesh, meshRenderer, transform, worldSphere, ~0u, motion, out.casters);
-        for (std::size_t emitted = before; emitted < out.casters.size(); ++emitted)
+        const std::size_t before = _casters.size();
+        const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
+        const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+        EmitShadowCasters(source, ~0u, level, motion, _casters);
+        for (std::size_t emitted = before; emitted < _casters.size(); ++emitted)
         {
             if (emitted != before)
             {
                 reached.insert(reached.end(), reached.begin() + static_cast<std::ptrdiff_t>(firstReach),
                                reached.begin() + static_cast<std::ptrdiff_t>(reached.size()));
             }
-            reachedStart.push_back(static_cast<std::uint32_t>(reached.size()));
+            _casterStart.push_back(static_cast<std::uint32_t>(reached.size()));
         }
     }
+}
 
-    index.start.assign(lightVolumes.size() + 1u, 0u);
-    if (out.casters.empty())
+void LocalShadowCasterGather::BuildIndex()
+{
+    ASSISI_PROFILE_SCOPE("local-shadow-index");
+
+    _index.start.assign(_lightCount + 1u, 0u);
+    if (_casters.empty())
     {
+        _index.caster.clear();
         return;
     }
 
@@ -484,41 +532,41 @@ void GatherLocalShadowCasters(Assisi::ECS::Scene &scene, std::span<const Assisi:
     // membership is carried through it rather than read after it. Sorting an
     // index and permuting alongside would be the same work with a second array
     // to keep in step.
-    std::vector<std::uint32_t> order(out.casters.size());
-    for (std::uint32_t i = 0; i < order.size(); ++i)
+    _order.resize(_casters.size());
+    for (std::uint32_t i = 0; i < _order.size(); ++i)
     {
-        order[i] = i;
+        _order[i] = i;
     }
-    SortShadowCasterOrder(out.casters, order);
+    SortShadowCasterOrder(_casters, _order);
 
     // Count first, then fill: a row's length is known before anything is placed,
-    // so the whole index is two linear passes and one allocation.
-    for (const std::uint32_t caster : order)
+    // so the whole index is two linear passes and no growth.
+    for (const std::uint32_t caster : _order)
     {
-        for (std::uint32_t entry = reachedStart[caster]; entry < reachedStart[caster + 1u]; ++entry)
+        for (std::uint32_t entry = _casterStart[caster]; entry < _casterStart[caster + 1u]; ++entry)
         {
-            ++index.start[reached[entry] + 1u];
+            ++_index.start[_reachedLights[entry] + 1u];
         }
     }
-    for (std::size_t light = 1; light < index.start.size(); ++light)
+    for (std::size_t light = 1; light < _index.start.size(); ++light)
     {
-        index.start[light] += index.start[light - 1u];
+        _index.start[light] += _index.start[light - 1u];
     }
 
-    std::vector<std::uint32_t> cursor(index.start.begin(), index.start.end() - 1);
-    index.caster.resize(index.start.back());
-    std::vector<Assisi::Render::ShadowCaster> sorted;
-    sorted.reserve(out.casters.size());
-    for (std::uint32_t sortedIndex = 0; sortedIndex < order.size(); ++sortedIndex)
+    _cursor.assign(_index.start.begin(), _index.start.end() - 1);
+    _index.caster.resize(_index.start.back());
+    _sorted.clear();
+    _sorted.reserve(_casters.size());
+    for (std::uint32_t sortedIndex = 0; sortedIndex < _order.size(); ++sortedIndex)
     {
-        const std::uint32_t original = order[sortedIndex];
-        sorted.push_back(out.casters[original]);
-        for (std::uint32_t entry = reachedStart[original]; entry < reachedStart[original + 1u]; ++entry)
+        const std::uint32_t original = _order[sortedIndex];
+        _sorted.push_back(_casters[original]);
+        for (std::uint32_t entry = _casterStart[original]; entry < _casterStart[original + 1u]; ++entry)
         {
-            index.caster[cursor[reached[entry]]++] = sortedIndex;
+            _index.caster[_cursor[_reachedLights[entry]]++] = sortedIndex;
         }
     }
-    out.casters.swap(sorted);
+    _casters.swap(_sorted);
 }
 
 } // namespace Assisi::Runtime

@@ -340,6 +340,15 @@ TEST_CASE("ImportMesh: a _LOD<n> node-name suffix splits geometry into LODs")
     CHECK(lod0.LocalAabb.max.x == doctest::Approx(1.0f));
     CHECK(lod1.LocalAabb.min.x == doctest::Approx(5.0f));
 
+    // Each level carries its own switch point, descending across the chain, so
+    // runtime selection reads a number off the asset rather than re-deriving a
+    // convention. Nothing authors them yet, so they are the defaults.
+    CHECK(result->Lods[0].ScreenSizeThreshold ==
+          doctest::Approx(Assisi::Geometry::DefaultLodScreenSize(0)));
+    CHECK(result->Lods[1].ScreenSizeThreshold ==
+          doctest::Approx(Assisi::Geometry::DefaultLodScreenSize(1)));
+    CHECK(result->Lods[1].ScreenSizeThreshold < result->Lods[0].ScreenSizeThreshold);
+
     fs::remove_all(root);
 }
 
