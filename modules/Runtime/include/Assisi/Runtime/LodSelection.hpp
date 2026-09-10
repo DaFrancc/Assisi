@@ -53,6 +53,13 @@ struct LodSettings
     /// what it replaced. It names a level rather than measuring one, so neither
     /// the bias nor the dead band moves it.
     int32_t forcedLevel = -1;
+
+    /// Whether each sun cascade picks a caster's level by the caster's size in
+    /// that cascade. Off draws every caster at the level the camera draws it at:
+    /// the A/B against shadow LOD alone.
+    bool shadowLod = true;
+
+    bool operator==(const LodSettings &) const = default;
 };
 
 /// @brief Where selection is measured from.
@@ -89,6 +96,33 @@ struct LodView
 /// frame without fighting over the remembered level.
 [[nodiscard]] uint32_t SelectLodLevel(std::span<const Geometry::LodRange> lods, float screenSize,
                                       uint32_t previousLevel, const LodSettings &settings);
+
+/// @brief @p worldSphere's diameter as a fraction of an orthographic view
+///        @p viewExtent world units across.
+///
+/// LodScreenSize for a shadow cascade, with the cascade's width — its texel
+/// size times its resolution — standing where the screen's height does, so the
+/// thresholds authored against the camera read the same against a cascade.
+///
+/// No distance enters it: an orthographic view draws a thing the same size
+/// wherever it stands, so the answer changes only when the caster changes
+/// cascade — which is why a shadow view needs no dead band. An unset extent
+/// measures 0, "no measurement", as LodScreenSize's unset view does.
+[[nodiscard]] float LodOrthographicSize(const Geometry::BoundingSphere &worldSphere, float viewExtent);
+
+/// @brief The level a shadow view draws a caster at, from the caster's size in
+///        that view and the level the camera draws it at.
+///
+/// What the view measures, held to @p drawnLevel or the next coarser level.
+/// Never finer: the screen has already given up that geometry, and spending a
+/// shadow pass's vertices on it buys a silhouette nobody sees. Never more than
+/// one coarser: past that the shadow near the viewer stops falling where the
+/// geometry on screen says it should.
+///
+/// A named level, selection off, shadow LOD off and an unmeasured view all
+/// draw at @p drawnLevel.
+[[nodiscard]] uint32_t SelectShadowLodLevel(std::span<const Geometry::LodRange> lods, float viewSize,
+                                            uint32_t drawnLevel, const LodSettings &settings);
 
 /// @brief What selection did with one instance, and the sizes on either side of
 ///        the level it landed on.
@@ -186,6 +220,29 @@ public:
     /// second opinion about it.
     [[nodiscard]] uint32_t Remembered(ECS::Entity entity) const;
 
+    /// @brief The width, in world units, of each shadow view the sun's gather
+    ///        classifies casters against this frame.
+    ///
+    /// Entry i is the view bit i of a caster's mask names, so this is set where
+    /// those views' volumes are built and in the same order. Per frame rather
+    /// than per call for the reason @ref BeginFrame is: the views are the
+    /// frame's, and every caster is measured against the same ones.
+    void SetShadowViews(std::span<const float> extents) { _shadowViewExtents.assign(extents.begin(), extents.end()); }
+    [[nodiscard]] size_t ShadowViewCount() const { return _shadowViewExtents.size(); }
+
+    /// @brief Which shadow views draw @p entity one level coarser than
+    ///        @p drawnLevel, the level the camera draws it at; the rest draw at it.
+    ///
+    /// Bit i is entry i of @ref SetShadowViews. A view with no extent draws at
+    /// @p drawnLevel. One level is the most a view can differ by, so the mask is
+    /// the whole answer.
+    ///
+    /// A pinned entity draws its pin in every view: the pin is looking at that
+    /// level, and a shadow cast by another one would be part of the picture that
+    /// is not.
+    [[nodiscard]] uint32_t CoarserShadowViews(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
+                                              const Geometry::BoundingSphere &worldSphere, uint32_t drawnLevel) const;
+
     /// @brief Draw @p entity at @p level whatever it measures, or release the pin
     ///        with a negative @p level.
     ///
@@ -234,6 +291,7 @@ private:
 
     LodSettings _settings;
     LodView _view;
+    std::vector<float> _shadowViewExtents;
     std::vector<Slot> _levels;
     bool _holdsDeadBand = true;
 

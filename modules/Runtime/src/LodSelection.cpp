@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <Assisi/Runtime/LodSelection.hpp>
 
@@ -62,6 +63,31 @@ uint32_t SelectLodLevel(std::span<const Geometry::LodRange> lods, float screenSi
     // Smaller than the coarsest threshold still draws that level; dropping the
     // instance is a cull, and culling is the frustum's job.
     return coarsest;
+}
+
+float LodOrthographicSize(const Geometry::BoundingSphere &worldSphere, float viewExtent)
+{
+    if (!(viewExtent > 0.f) || !(worldSphere.radius > 0.f))
+    {
+        return 0.f;
+    }
+    return std::min(2.f * worldSphere.radius / viewExtent, 1.f);
+}
+
+uint32_t SelectShadowLodLevel(std::span<const Geometry::LodRange> lods, float viewSize, uint32_t drawnLevel,
+                              const LodSettings &settings)
+{
+    const uint32_t coarsest = lods.empty() ? 0u : static_cast<uint32_t>(lods.size()) - 1u;
+    const uint32_t drawn = std::min(drawnLevel, coarsest);
+    if (!settings.enabled || !settings.shadowLod || settings.forcedLevel >= 0 || !(viewSize > 0.f))
+    {
+        return drawn;
+    }
+
+    // LOD0 as the previous level: no band, since the size a view measures does
+    // not move with the camera and so has no boundary to oscillate across.
+    const uint32_t measured = SelectLodLevel(lods, viewSize, 0u, settings);
+    return std::clamp(measured, drawn, std::min(drawn + 1u, coarsest));
 }
 
 LodReport DescribeLodSelection(std::span<const Geometry::LodRange> lods, const Geometry::BoundingSphere &worldSphere,
@@ -174,6 +200,28 @@ uint32_t LodSelector::Remembered(ECS::Entity entity) const
 {
     const Slot *const slot = Find(entity);
     return slot != nullptr ? slot->level : 0u;
+}
+
+uint32_t LodSelector::CoarserShadowViews(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
+                                         const Geometry::BoundingSphere &worldSphere, uint32_t drawnLevel) const
+{
+    if (lods.size() <= 1 || PinnedLevel(entity) >= 0)
+    {
+        return 0u;
+    }
+
+    const auto views = static_cast<uint32_t>(
+        std::min<size_t>(_shadowViewExtents.size(), static_cast<size_t>(std::numeric_limits<uint32_t>::digits)));
+    uint32_t coarser = 0;
+    for (uint32_t view = 0; view < views; ++view)
+    {
+        const float size = LodOrthographicSize(worldSphere, _shadowViewExtents[view]);
+        if (SelectShadowLodLevel(lods, size, drawnLevel, _settings) > drawnLevel)
+        {
+            coarser |= 1u << view;
+        }
+    }
+    return coarser;
 }
 
 const LodSelector::Slot *LodSelector::Find(ECS::Entity entity) const

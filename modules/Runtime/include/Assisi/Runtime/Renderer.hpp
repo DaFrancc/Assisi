@@ -146,6 +146,10 @@ struct ShadowCasterGather
     /// shadow distance's effect is a number rather than an impression: walking
     /// content past it should move this and nothing else.
     std::uint32_t culledEntities = 0;
+
+    /// Entity-view pairs drawn one level coarser than the camera draws that
+    /// entity. Zero with shadow LOD off, and in a scene with no LOD chains.
+    std::uint32_t coarserViews = 0;
 };
 
 /// @brief Collect every shadow-casting submesh in the scene, for the sun.
@@ -172,10 +176,13 @@ struct ShadowCasterGather
 /// draw time: a caster is drawn once per view it survives into, and resolving
 /// per view would repeat the lookup for every one of them.
 ///
-/// Each caster is emitted at the LOD level @p lodSelector picks for it — the
-/// same call the draw path makes, so the shadow is cast by the silhouette that
-/// is on screen rather than by a finer one nobody can see. Null selects LOD0 for
-/// everything.
+/// Each view draws a caster at the level its own texels ask for, held to the
+/// camera's level or one coarser (see LodSelector::CoarserShadowViews, whose
+/// views must be these, in this order): an entity the views disagree about is
+/// emitted once per level, each copy masked to the views that draw it. In a far
+/// cascade a coarse silhouette differs from the one on screen by less than a
+/// texel, and the depth pass pays for vertices once per view. Null selects LOD0
+/// for everything.
 ///
 /// @p out is cleared and refilled; pass the same object every frame.
 void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,

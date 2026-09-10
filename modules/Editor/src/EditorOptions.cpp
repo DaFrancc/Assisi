@@ -336,6 +336,9 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     const Assisi::Render::ShadowPass::Stats stats = frame.renderer.LastShadowStats();
     ImGui::Text("Cascades: %u  |  %u instances / %u batches", stats.cascades, stats.instances, stats.batches);
     ImGui::Text("Casters culled: %u  |  %u draw calls", stats.culled, stats.drawCalls);
+    // Reads zero on a frame whose cascades were all kept, so it is worth
+    // reading with the camera moving.
+    ImGui::Text("Shadow LOD: %u caster-cascade pairs one level coarser", frame.renderer.LastShadowLodCoarser());
 
     ImGui::Separator();
     ImGui::TextUnformatted("Local Light Shadows");
@@ -898,6 +901,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         }
         ImGui::SetItemTooltip("Auto measures each instance. A level draws every instance at it, clamped to each "
                               "mesh's own chain.");
+        lodChanged |= ImGui::Checkbox("Shadow LOD", &lod.shadowLod);
+        ImGui::SetItemTooltip("Each sun cascade may draw a caster one level coarser than the screen does, where its "
+                              "texels are too coarse to show the difference. Off casts every shadow at the "
+                              "on-screen level.");
         if (!lod.enabled)
         {
             ImGui::EndDisabled();
