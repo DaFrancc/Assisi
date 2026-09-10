@@ -128,12 +128,11 @@ void LodSelector::Clear()
     Pin(ECS::NullEntity, -1);
 }
 
-uint32_t LodSelector::Select(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
-                             const Geometry::BoundingSphere &worldSphere)
+uint32_t LodSelector::Preview(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
+                              const Geometry::BoundingSphere &worldSphere) const
 {
-    // No measurement and no table entry for a mesh with one level, so a scene
-    // without chains pays nothing here. A named level is not a measurement, so
-    // it stands in a frame with no view to measure in.
+    // A named level is not a measurement, so it stands in a frame with no view
+    // to measure in.
     const int32_t named = entity != ECS::NullEntity ? NamedLevelFor(entity) : -1;
     if (entity == ECS::NullEntity || lods.size() <= 1 || (named < 0 && !(_view.tanHalfFovY > 0.f)))
     {
@@ -145,7 +144,23 @@ uint32_t LodSelector::Select(ECS::Entity entity, std::span<const Geometry::LodRa
     LodSettings settings = _settings;
     settings.forcedLevel = named;
 
-    const uint32_t level = SelectLodLevel(lods, LodScreenSize(worldSphere, _view), Remembered(entity), settings);
+    // LOD0 as the previous level holds the band around nothing, since the band
+    // only ever applies to levels finer than the previous one.
+    const uint32_t previous = _holdsDeadBand ? Remembered(entity) : 0u;
+    return SelectLodLevel(lods, LodScreenSize(worldSphere, _view), previous, settings);
+}
+
+uint32_t LodSelector::Select(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
+                             const Geometry::BoundingSphere &worldSphere)
+{
+    const uint32_t level = Preview(entity, lods, worldSphere);
+
+    // No table entry for a mesh with one level, so a scene without chains pays
+    // nothing here.
+    if (entity == ECS::NullEntity || lods.size() <= 1)
+    {
+        return level;
+    }
 
     if (entity.index >= _levels.size())
     {

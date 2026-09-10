@@ -137,6 +137,20 @@ public:
     void SetSettings(const LodSettings &settings) { _settings = settings; }
     [[nodiscard]] const LodSettings &Settings() const { return _settings; }
 
+    /// @brief Whether a remembered level holds the dead band. On by default.
+    ///
+    /// Off while the GPU cull draws the scene: it keeps no memory per object
+    /// and so thresholds plainly, and the shadow gathers and the editor select
+    /// through here. A band held on this side alone would put a shadow or an
+    /// outline on a different level from the instance the GPU drew, for as long
+    /// as it sat in the band.
+    ///
+    /// Separate from the settings' hysteresis because it is a fact about which
+    /// path draws, not a quality knob: the settings round-trip through the
+    /// editor, and a band zeroed there would stay zeroed on the CPU path.
+    void SetHoldsDeadBand(bool holds) { _holdsDeadBand = holds; }
+    [[nodiscard]] bool HoldsDeadBand() const { return _holdsDeadBand; }
+
     /// @brief Point selection at the camera it measures from, for the frame.
     ///
     /// One view per frame rather than one per call: the draw path and both
@@ -155,6 +169,15 @@ public:
     /// pays nothing here.
     [[nodiscard]] uint32_t Select(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
                                   const Geometry::BoundingSphere &worldSphere);
+
+    /// @brief The level @ref Select would choose for @p entity now, without
+    ///        remembering it.
+    ///
+    /// For a consumer that needs the level of an instance nothing on the CPU
+    /// selected — the GPU cull's pick, which with the dead band released is a
+    /// function of the frame alone and so lands here too.
+    [[nodiscard]] uint32_t Preview(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
+                                   const Geometry::BoundingSphere &worldSphere) const;
 
     /// @brief The level @p entity was last selected at, or 0 if it never was.
     ///
@@ -212,6 +235,7 @@ private:
     LodSettings _settings;
     LodView _view;
     std::vector<Slot> _levels;
+    bool _holdsDeadBand = true;
 
     // The one pinned instance. One rather than a table because it answers "what
     // does this thing look like at LOD2", which is a question about the entity

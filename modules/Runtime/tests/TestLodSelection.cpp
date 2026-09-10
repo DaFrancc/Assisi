@@ -408,6 +408,48 @@ TEST_CASE("A selector walking an instance away and back switches once each way")
     CHECK(inbound.back() == 0);
 }
 
+TEST_CASE("Released, the dead band stops holding a remembered level")
+{
+    // Inside the band above LOD0's threshold, coming in from LOD1: held, the
+    // instance stays on LOD1; released, it takes LOD0 as plain thresholds do,
+    // which is what the GPU cull draws.
+    const std::vector<LodRange> lods = Chain(3);
+    const Entity entity{.index = 5, .generation = 1};
+    const float inBand = 3.43f; // measures 0.505, between 0.5 and 0.5 * 1.02
+
+    LodSelector held;
+    held.BeginFrame(Camera());
+    REQUIRE(held.Select(entity, lods, SphereAt(5.f, 1.f)) == 1);
+    CHECK(held.Select(entity, lods, SphereAt(inBand, 1.f)) == 1);
+
+    LodSelector released;
+    released.SetHoldsDeadBand(false);
+    released.BeginFrame(Camera());
+    REQUIRE(released.Select(entity, lods, SphereAt(5.f, 1.f)) == 1);
+    CHECK(released.Select(entity, lods, SphereAt(inBand, 1.f)) == 0);
+}
+
+TEST_CASE("Preview answers as Select would without remembering the answer")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+    const Entity entity{.index = 6, .generation = 1};
+
+    CHECK(selector.Preview(entity, lods, SphereAt(60.f, 1.f)) == 2);
+    CHECK(selector.Remembered(entity) == 0);
+
+    // With a level remembered, the preview holds the same band Select would.
+    REQUIRE(selector.Select(entity, lods, SphereAt(5.f, 1.f)) == 1);
+    CHECK(selector.Preview(entity, lods, SphereAt(3.43f, 1.f)) == 1);
+    CHECK(selector.Remembered(entity) == 1);
+
+    // A named level is previewed like any other answer.
+    selector.Pin(entity, 2);
+    CHECK(selector.Preview(entity, lods, SphereAt(2.f, 1.f)) == 2);
+    CHECK(selector.Remembered(entity) == 1);
+}
+
 TEST_CASE("A pinned entity draws at its level while the rest of the scene measures")
 {
     // The point of the pin: judge one instance at a level without moving every

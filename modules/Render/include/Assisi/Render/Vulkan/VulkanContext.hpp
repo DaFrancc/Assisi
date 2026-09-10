@@ -109,8 +109,13 @@ public:
     ///
     /// @warning Must not nest. A nested pair would time a range that contains
     /// another render-pass break, which measures the breaks rather than the
-    /// work. Prefer Render::GpuPassTimerScope, which pairs the calls for you.
-    void BeginPassTimer(const char *name);
+    /// work, so the inner one is refused. Prefer Render::GpuPassTimerScope,
+    /// which pairs the calls for you.
+    ///
+    /// @return Whether a timer was opened. Only then is there one for
+    /// EndPassTimer() to close: ending after a refusal would close the timer
+    /// that caused it, cutting the outer pass short.
+    [[nodiscard]] bool BeginPassTimer(const char *name);
 
     /// @brief Close the timer opened by the matching BeginPassTimer().
     void EndPassTimer();
@@ -306,6 +311,7 @@ private:
         false; ///< The enable this frame opened with, so a mid-frame flip cannot unbalance the pairs.
     uint32_t _openPassTimer = kMaxTimedPasses; ///< Index of the open timer, or capacity when none.
     bool _passCapacityWarned = false;
+    bool _passNestingWarned = false;
 
     nvrhi::CommandListHandle _commandList;
 

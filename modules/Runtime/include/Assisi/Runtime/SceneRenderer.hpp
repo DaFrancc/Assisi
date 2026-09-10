@@ -167,11 +167,12 @@ public:
     void SetSortDraws(bool enabled) { _sortDraws = enabled; }
     [[nodiscard]] bool SortDraws() const { return _sortDraws; }
 
-    /// @brief Take the GPU-driven cull path (stage F1) instead of the CPU
-    /// extract/sort path (off by default). A compute pass frustum-culls every
-    /// object and builds the indirect draw commands on the GPU; the CPU issues one
-    /// drawIndexedIndirectCount. An A/B toggle against the CPU path — the opaque
-    /// image is identical. No-op if the culler failed to initialize (falls back to
+    /// @brief Take the GPU-driven cull path instead of the CPU extract/sort path
+    /// (off by default). A compute pass frustum-culls every object, selects its
+    /// LOD level and builds the indirect draw commands on the GPU; the CPU issues
+    /// one drawIndexedIndirect. An A/B toggle against the CPU path — the opaque
+    /// image is identical but for instances inside the LOD dead band, which this
+    /// path does not hold. No-op if the culler failed to initialize (falls back to
     /// the CPU path). `SortDraws` doesn't affect this path; `FrustumCulling` gates
     /// the GPU frustum test.
     void SetGpuCulling(bool enabled) { _gpuCulling = enabled; }
@@ -179,9 +180,10 @@ public:
 
     /// @brief The knobs screen-size LOD selection reads (on by default).
     ///
-    /// Applies to the CPU draw path and to both shadow gathers, which select
-    /// from one table so a caster's silhouette is the one on screen. The
-    /// GPU-driven cull path measures nothing, and takes only `forcedLevel`.
+    /// Applies to both draw paths and to both shadow gathers, which select the
+    /// same way so a caster's silhouette is the one on screen. The GPU-driven
+    /// cull path keeps no memory per instance, so while it draws, `hysteresis`
+    /// is held nowhere.
     ///
     /// `bias` is the quality dial — above 1 holds a finer level further away —
     /// and `enabled` false pins everything to LOD0, which is the A/B against
@@ -215,6 +217,15 @@ public:
     /// image on screen.
     [[nodiscard]] Runtime::LodReport LodReportFor(ECS::Entity entity, const Render::MeshBuffer &mesh,
                                                   const glm::mat4 &worldMatrix) const;
+
+    /// @brief The level the mesh pass drew @p entity at, drawing @p mesh at
+    /// @p worldMatrix.
+    ///
+    /// The CPU path remembers what it drew. The GPU cull remembers nothing, but
+    /// its pick is a function of the frame alone, so the same measurement taken
+    /// here lands where it did.
+    [[nodiscard]] uint32_t DrawnLodLevel(ECS::Entity entity, const Render::MeshBuffer &mesh,
+                                         const glm::mat4 &worldMatrix) const;
 
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting
@@ -624,11 +635,16 @@ private:
 
     bool _frustumCulling = true; // default draw path culls off-screen meshes
     bool _sortDraws = true;      // default draw path sorts by sort key before submit
-    bool _gpuCulling = false;    // GPU-driven cull path (stage F1); CPU path is the default reference
+    bool _gpuCulling = false;    // GPU-driven cull path; CPU path is the default reference
     // The chosen level per entity, and the knobs that chose it. Shared by the
     // draw path, both shadow gathers and the selection outline, so every one of
     // them draws the same instance as the same geometry.
     LodSelector _lodSelector;
+
+    /// Whether the GPU cull is what draws the scene: asked for, and able to.
+    /// DrawScene falls back to the CPU path otherwise, and whatever follows the
+    /// path that drew has to follow the fallback too.
+    [[nodiscard]] bool GpuCullDraws() const { return _gpuCulling && _meshCuller.IsValid(); }
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     AmbientOverride _ambient;                                               // inactive: the scene lights itself
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs

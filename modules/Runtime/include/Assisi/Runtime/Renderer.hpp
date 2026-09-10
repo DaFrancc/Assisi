@@ -37,12 +37,13 @@ namespace Assisi::Runtime
 /// toward the count of distinct meshes; with sorting off (A/B toggle) it climbs
 /// toward drawnItems (every item its own batch).
 ///
-/// On the GPU-cull path (stages F1/F2a) the cull runs on the GPU and its survivor
+/// On the GPU-cull path the cull and LOD selection run on the GPU and their
 /// tallies are read back (a few frames stale): `drawnItems` is the surviving
-/// instances, `batches` is the coalesced instanced draws (F2a collapses identical
-/// (mesh,submesh) instances, so `batches` << `drawnItems`), `culledMeshes` is the
-/// culled instances (candidates − survivors), and `drawCalls` is the single
-/// drawIndexedIndirect over all batch commands.
+/// instances, `batches` is the coalesced instanced draws (identical
+/// (mesh,submesh) instances collapse, so `batches` << `drawnItems`),
+/// `culledMeshes` is the objects the frustum rejected, `lodInstances` is the
+/// survivors per level, and `drawCalls` is the single drawIndexedIndirect over
+/// all batch commands.
 struct DrawStats
 {
     uint32_t drawnItems = 0;   ///< DrawItems (visible submeshes) submitted == instances.
@@ -54,9 +55,6 @@ struct DrawStats
     /// bucket fold into it. Counted per instance rather than per submesh, so it
     /// reads against the entity count rather than against `drawnItems`, and a
     /// scene of single-level meshes puts everything in bucket 0.
-    ///
-    /// All zero on the GPU-cull path, which draws one level for every instance —
-    /// LOD0, or the forced one. Measured selection there is its own stage.
     std::array<uint32_t, kMaxReportedLods> lodInstances{};
 };
 
@@ -94,8 +92,8 @@ struct DrawSceneParams
     /// Where the LOD level of each instance is decided and remembered. Null
     /// draws every instance at LOD0 — what the path did before selection
     /// existed. The camera it measures from is the one it was given at
-    /// LodSelector::BeginFrame. The GPU path reads only its forced level, which
-    /// needs no measurement.
+    /// LodSelector::BeginFrame. The GPU path hands the cull pass its view, its
+    /// bias and each instance's named level, and remembers nothing.
     LodSelector *lodSelector = nullptr;
 };
 

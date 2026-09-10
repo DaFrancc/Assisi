@@ -856,7 +856,8 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // builds the indirect draw commands on the GPU, coalescing identical
         // (mesh, submesh) instances, so the CPU issues one drawIndexedIndirect instead
         // of extracting and sorting a draw list. The opaque image must come out
-        // identical to the CPU path — that is what this toggle is for. On this path the
+        // identical to the CPU path — that is what this toggle is for — but for an
+        // instance parked inside the LOD dead band, which the GPU does not hold. On this path the
         // tallies below are read back from the GPU and run a few frames stale, and
         // "Sort Draws" does nothing. Runtime only, not persisted to options.json.
         bool gpuCulling = frame.renderer.GpuCulling();
@@ -913,30 +914,20 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // Instances per level, and only the levels the scene actually reached —
         // a scene of single-level meshes says "LOD0" and stops, which is what
         // "meshes with no chain are untouched" looks like from here.
-        if (gpuCulling)
+        std::string levels;
+        for (uint32_t level = 0; level < Assisi::Runtime::kMaxReportedLods; ++level)
         {
-            // The GPU cull measures nothing, so there is no tally to show: it
-            // draws the one level it was handed.
-            const int32_t drawn = lod.enabled && lod.forcedLevel > 0 ? lod.forcedLevel : 0;
-            ImGui::TextDisabled("LOD: no per-instance pick on the GPU cull; every instance at LOD%d", drawn);
-        }
-        else
-        {
-            std::string levels;
-            for (uint32_t level = 0; level < Assisi::Runtime::kMaxReportedLods; ++level)
+            if (draw.lodInstances[level] == 0)
             {
-                if (draw.lodInstances[level] == 0)
-                {
-                    continue;
-                }
-                if (!levels.empty())
-                {
-                    levels += "  ";
-                }
-                levels += "LOD" + std::to_string(level) + ": " + std::to_string(draw.lodInstances[level]);
+                continue;
             }
-            ImGui::Text("%s", levels.empty() ? "LOD: nothing drawn" : levels.c_str());
+            if (!levels.empty())
+            {
+                levels += "  ";
+            }
+            levels += "LOD" + std::to_string(level) + ": " + std::to_string(draw.lodInstances[level]);
         }
+        ImGui::Text("%s", levels.empty() ? "LOD: nothing drawn" : levels.c_str());
 
         // A pin is set on one entity in the inspector and then goes out of sight
         // the moment that entity is deselected. Said here, it cannot become a

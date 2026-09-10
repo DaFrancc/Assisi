@@ -1528,22 +1528,6 @@ void EditorApp::DrawLodVerdict()
 
     const int32_t pinned = _sceneRenderer.PinnedLod(_selectedEntity);
 
-    if (_sceneRenderer.GpuCulling())
-    {
-        // That path measures nothing and remembers nothing, so there is no
-        // measurement to report: it draws the level it was handed, and saying
-        // otherwise would name a level nothing chose.
-        const Assisi::Runtime::LodSettings &settings = _sceneRenderer.LodSettings();
-        const int32_t named = settings.enabled ? (pinned >= 0 ? pinned : settings.forcedLevel) : 0;
-        const uint32_t drawn =
-            named > 0 ? std::min(static_cast<uint32_t>(named), lod.levelCount - 1u) : 0u;
-        ImGui::Text("LOD%u (LOD0-LOD%u)", drawn, lod.levelCount - 1u);
-        ImGui::SameLine();
-        ImGui::TextDisabled("the GPU cull names levels, it does not measure them");
-        DrawLodPin(pinned, lod.levelCount);
-        return;
-    }
-
     // "pinned" and "forced" are worth telling apart: one of them is about this
     // entity and the other is about every entity, and only one of them is
     // released by the control below.
