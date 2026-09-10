@@ -14,6 +14,8 @@ using Assisi::ECS::Entity;
 using Assisi::Geometry::BoundingSphere;
 using Assisi::Geometry::DefaultLodScreenSize;
 using Assisi::Geometry::LodRange;
+using Assisi::Runtime::DescribeLodSelection;
+using Assisi::Runtime::LodReport;
 using Assisi::Runtime::LodScreenSize;
 using Assisi::Runtime::LodSelector;
 using Assisi::Runtime::LodSettings;
@@ -70,6 +72,27 @@ TEST_CASE("LodScreenSize saturates when the camera is inside the sphere")
     // view, which is all the selection needs to know.
     CHECK(LodScreenSize(SphereAt(0.f, 1.f), Camera()) == doctest::Approx(1.f));
     CHECK(LodScreenSize(SphereAt(0.5f, 1.f), Camera()) == doctest::Approx(1.f));
+}
+
+TEST_CASE("LodScreenSize never passes 1 and never falls as the camera closes in")
+{
+    // The object fills the view at radius / tan(fovY/2) — 1.73 radii through a
+    // 60-degree lens, well outside the sphere. Capping only once the camera was
+    // inside let the ratio climb past 1 over that stretch and then snap back to
+    // it at the surface: a number that overshot and ran backwards.
+    const LodView view = Camera();
+    float previous = 0.f;
+    for (float distance = 20.f; distance > 0.f; distance -= 0.01f)
+    {
+        const float size = LodScreenSize(SphereAt(distance, 1.f), view);
+        CHECK(size <= 1.f);
+        CHECK(size >= previous);
+        previous = size;
+    }
+
+    // Exactly filling it is 1, and not a moment before.
+    CHECK(LodScreenSize(SphereAt(1.f / view.tanHalfFovY, 1.f), view) == doctest::Approx(1.f));
+    CHECK(LodScreenSize(SphereAt(1.05f / view.tanHalfFovY, 1.f), view) < 1.f);
 }
 
 TEST_CASE("An unset view measures nothing and selects LOD0")
@@ -187,6 +210,82 @@ TEST_CASE("Selection off pins every instance to LOD0")
     settings.enabled = false;
 
     CHECK(SelectLodLevel(lods, 0.001f, 2, settings) == 0);
+}
+
+TEST_CASE("A forced level draws at that level whatever the instance measures")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSettings settings;
+    settings.forcedLevel = 2;
+
+    // Filling the screen and a speck in the distance both draw LOD2: that is
+    // what looking at a level in place means.
+    CHECK(SelectLodLevel(lods, 1.f, 0, settings) == 2);
+    CHECK(SelectLodLevel(lods, 0.001f, 0, settings) == 2);
+
+    // And the finest level is forceable too, which is the comparison an artist
+    // is actually making.
+    settings.forcedLevel = 0;
+    CHECK(SelectLodLevel(lods, 0.001f, 2, settings) == 0);
+}
+
+TEST_CASE("A forced level clamps to the end of the chain")
+{
+    LodSettings settings;
+    settings.forcedLevel = 7;
+
+    // One control over meshes with chains of different depths, so the level it
+    // names is past the end of most of them.
+    CHECK(SelectLodLevel(Chain(3), 1.f, 0, settings) == 2);
+    CHECK(SelectLodLevel(Chain(1), 1.f, 0, settings) == 0);
+    CHECK(SelectLodLevel({}, 1.f, 0, settings) == 0);
+}
+
+TEST_CASE("A forced level ignores the dead band and the bias")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSettings settings;
+    settings.forcedLevel = 1;
+    settings.bias = 4.f;
+
+    // Nothing about where the instance was, or about the knobs that move the
+    // switch points, moves a level that was named rather than measured.
+    for (uint32_t previous = 0; previous < 3; ++previous)
+    {
+        CHECK(SelectLodLevel(lods, 0.9f, previous, settings) == 1);
+        CHECK(SelectLodLevel(lods, 0.01f, previous, settings) == 1);
+    }
+}
+
+TEST_CASE("Selection off outranks a forced level")
+{
+    // The off switch is the A/B against the whole feature, so it has to mean
+    // LOD0 with no exception left in it.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSettings settings;
+    settings.enabled = false;
+    settings.forcedLevel = 2;
+
+    CHECK(SelectLodLevel(lods, 1.f, 2, settings) == 0);
+}
+
+TEST_CASE("A forced level needs no view, and is the level the selector remembers")
+{
+    // A named level is not a measurement, so it holds in a frame that measured
+    // nothing. Remembering it is what keeps the selection outline on the
+    // geometry the mesh pass drew.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    LodSettings settings;
+    settings.forcedLevel = 2;
+    selector.SetSettings(settings);
+
+    const Entity entity{.index = 1, .generation = 1};
+    CHECK(selector.Select(entity, lods, SphereAt(10.f, 1.f)) == 2);
+    CHECK(selector.Remembered(entity) == 2);
+
+    selector.BeginFrame(Camera());
+    CHECK(selector.Select(entity, lods, SphereAt(2.f, 1.f)) == 2);
 }
 
 TEST_CASE("The default thresholds hold full detail past arm's length")
@@ -307,4 +406,279 @@ TEST_CASE("A selector walking an instance away and back switches once each way")
         CHECK(inbound[i] <= inbound[i - 1]); // never loses detail while approaching
     }
     CHECK(inbound.back() == 0);
+}
+
+TEST_CASE("A pinned entity draws at its level while the rest of the scene measures")
+{
+    // The point of the pin: judge one instance at a level without moving every
+    // other instance off the level it earned.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+
+    const Entity pinned{.index = 1, .generation = 1};
+    const Entity neighbour{.index = 2, .generation = 1};
+
+    selector.Pin(pinned, 2);
+    CHECK(selector.Select(pinned, lods, SphereAt(2.f, 1.f)) == 2);      // huge on screen, drawn coarse
+    CHECK(selector.Select(neighbour, lods, SphereAt(2.f, 1.f)) == 0);   // the same size, measured
+
+    // And it is the level the selector remembers, so the outline traces the
+    // geometry the mesh pass drew.
+    CHECK(selector.Remembered(pinned) == 2);
+}
+
+TEST_CASE("A pin outranks the viewport's forced level")
+{
+    // The more specific of the two wins: an artist pinning one instance while
+    // the viewport is forced is asking to see that one differently.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+
+    LodSettings settings;
+    settings.forcedLevel = 1;
+    selector.SetSettings(settings);
+
+    const Entity pinned{.index = 3, .generation = 1};
+    const Entity other{.index = 4, .generation = 1};
+    selector.Pin(pinned, 0);
+
+    CHECK(selector.Select(pinned, lods, SphereAt(60.f, 1.f)) == 0);
+    CHECK(selector.Select(other, lods, SphereAt(60.f, 1.f)) == 1);
+}
+
+TEST_CASE("Selection off outranks a pin")
+{
+    // Same rule as the forced level: off is the A/B against the whole feature
+    // and has to mean LOD0 with nothing left over.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+
+    LodSettings settings;
+    settings.enabled = false;
+    selector.SetSettings(settings);
+
+    const Entity entity{.index = 5, .generation = 1};
+    selector.Pin(entity, 2);
+    CHECK(selector.Select(entity, lods, SphereAt(2.f, 1.f)) == 0);
+}
+
+TEST_CASE("Pinning one entity releases the previous one")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+
+    const Entity first{.index = 6, .generation = 1};
+    const Entity second{.index = 7, .generation = 1};
+
+    selector.Pin(first, 2);
+    selector.Pin(second, 1);
+
+    CHECK(selector.PinnedLevel(first) == -1);
+    CHECK(selector.PinnedLevel(second) == 1);
+    CHECK(selector.Select(first, lods, SphereAt(2.f, 1.f)) == 0); // measured again
+    CHECK(selector.Select(second, lods, SphereAt(2.f, 1.f)) == 1);
+}
+
+TEST_CASE("A pin is released by hand and by a scene change")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+    const Entity entity{.index = 8, .generation = 1};
+
+    selector.Pin(entity, 2);
+    selector.Pin(entity, -1);
+    CHECK(selector.PinnedLevel(entity) == -1);
+    CHECK_FALSE(selector.HasPin());
+    CHECK(selector.Select(entity, lods, SphereAt(2.f, 1.f)) == 0);
+
+    // A kept pin would land on whatever entity reused the index, which the
+    // generation cannot catch across a scene that starts counting again.
+    selector.Pin(entity, 2);
+    selector.Clear();
+    CHECK_FALSE(selector.HasPin());
+    CHECK(selector.Select(entity, lods, SphereAt(2.f, 1.f)) == 0);
+}
+
+TEST_CASE("A pin belongs to the entity that was pinned, not to its index")
+{
+    LodSelector selector;
+    const Entity original{.index = 9, .generation = 1};
+    selector.Pin(original, 2);
+
+    CHECK(selector.PinnedLevel(Entity{.index = 9, .generation = 2}) == -1);
+    CHECK(selector.PinnedLevel(Entity{.index = 10, .generation = 1}) == -1);
+    CHECK(selector.PinnedLevel(Assisi::ECS::NullEntity) == -1);
+}
+
+TEST_CASE("A named level is the pin, then the force, and nothing when it must be measured")
+{
+    // What a consumer that cannot measure reads — the GPU cull path takes this
+    // and has no other way to reach a level.
+    LodSelector selector;
+    const Entity pinned{.index = 11, .generation = 1};
+    const Entity other{.index = 12, .generation = 1};
+
+    CHECK(selector.NamedLevelFor(other) == -1); // measure it
+
+    LodSettings settings;
+    settings.forcedLevel = 1;
+    selector.SetSettings(settings);
+    CHECK(selector.NamedLevelFor(other) == 1);
+
+    selector.Pin(pinned, 3);
+    CHECK(selector.NamedLevelFor(pinned) == 3);
+    CHECK(selector.NamedLevelFor(other) == 1);
+
+    // Off names LOD0 rather than "measure it", which is the whole of what off
+    // means to a path that cannot measure.
+    settings.enabled = false;
+    selector.SetSettings(settings);
+    CHECK(selector.NamedLevelFor(pinned) == 0);
+    CHECK(selector.NamedLevelFor(other) == 0);
+}
+
+TEST_CASE("A report names a pinned level as one nothing measured")
+{
+    // The readout must not print thresholds beside a pinned level: nothing is
+    // comparing against them, and showing them would read as a pick that agreed.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    selector.BeginFrame(Camera());
+    const Entity entity{.index = 13, .generation = 1};
+    selector.Pin(entity, 2);
+
+    LodSettings resolved = selector.Settings();
+    resolved.forcedLevel = selector.NamedLevelFor(entity);
+    const LodReport report = DescribeLodSelection(lods, SphereAt(2.f, 1.f), 2, Camera(), resolved);
+
+    CHECK(report.forced);
+    CHECK(report.dropBelow == doctest::Approx(0.f));
+    CHECK(report.regainAt == doctest::Approx(0.f));
+}
+
+TEST_CASE("A report names the level drawn and the sizes on either side of it")
+{
+    // The numbers an artist tunes a threshold against: what the instance
+    // measures, and the two sizes where it would change level.
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings; // hysteresis 0.02
+
+    const LodReport report = DescribeLodSelection(lods, SphereAt(5.f, 1.f), 1, Camera(), settings);
+
+    CHECK(report.level == 1);
+    CHECK(report.levelCount == 3);
+    CHECK(report.screenSize == doctest::Approx(LodScreenSize(SphereAt(5.f, 1.f), Camera())));
+    CHECK(report.biasedScreenSize == doctest::Approx(report.screenSize));
+    CHECK(report.dropBelow == doctest::Approx(0.25f));
+    CHECK(report.regainAt == doctest::Approx(0.5f * 1.02f)); // the dead band, included
+    CHECK_FALSE(report.forced);
+
+    // The two switch points bracket the size, which is what saying "it is on
+    // this level" means.
+    CHECK(report.biasedScreenSize >= report.dropBelow);
+    CHECK(report.biasedScreenSize < report.regainAt);
+}
+
+TEST_CASE("A report describes the level it is given rather than re-selecting one")
+{
+    // It reports what was drawn. Re-deriving the level here would show a
+    // different answer from the one on screen exactly when the two disagree,
+    // which is the moment the readout is being consulted.
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings;
+
+    const LodReport report = DescribeLodSelection(lods, SphereAt(2.f, 1.f), 2, Camera(), settings);
+    CHECK(report.level == 2);
+    CHECK(report.screenSize > 0.5f);
+}
+
+TEST_CASE("A report leaves a switch point at zero where there is no level to switch to")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings;
+
+    // Nothing is finer than LOD0 to take back...
+    const LodReport finest = DescribeLodSelection(lods, SphereAt(2.f, 1.f), 0, Camera(), settings);
+    CHECK(finest.dropBelow == doctest::Approx(0.5f));
+    CHECK(finest.regainAt == doctest::Approx(0.f));
+
+    // ...and nothing is coarser than the last level to fall to.
+    const LodReport coarsest = DescribeLodSelection(lods, SphereAt(60.f, 1.f), 2, Camera(), settings);
+    CHECK(coarsest.dropBelow == doctest::Approx(0.f));
+    CHECK(coarsest.regainAt == doctest::Approx(0.25f * 1.02f));
+}
+
+TEST_CASE("A report says a level was named rather than measured")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSettings settings;
+    settings.forcedLevel = 2;
+
+    const LodReport report = DescribeLodSelection(lods, SphereAt(2.f, 1.f), 2, Camera(), settings);
+
+    // The size is still measured and still worth reading — it is what the level
+    // would have been picked by. The thresholds are not: nothing is comparing
+    // against them, and printing them would read as a pick that agrees.
+    CHECK(report.forced);
+    CHECK(report.screenSize > 0.f);
+    CHECK(report.dropBelow == doctest::Approx(0.f));
+    CHECK(report.regainAt == doctest::Approx(0.f));
+}
+
+TEST_CASE("A report on a mesh with no chain says so and compares against nothing")
+{
+    const LodSettings settings;
+
+    const LodReport single = DescribeLodSelection(Chain(1), SphereAt(5.f, 1.f), 0, Camera(), settings);
+    CHECK(single.levelCount == 1);
+    CHECK(single.level == 0);
+    CHECK(single.dropBelow == doctest::Approx(0.f));
+    CHECK(single.regainAt == doctest::Approx(0.f));
+
+    // No table at all is the factory primitive, and it is one level too.
+    CHECK(DescribeLodSelection({}, SphereAt(5.f, 1.f), 0, Camera(), settings).levelCount == 1);
+}
+
+TEST_CASE("A report shows the bias in the size it compares, not in the thresholds")
+{
+    // The bias multiplies the measurement; the thresholds are the asset's and
+    // do not move. Showing it the other way round would have an artist edit a
+    // threshold to chase a number the asset never held.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSettings settings;
+    settings.bias = 2.f;
+
+    const LodReport report = DescribeLodSelection(lods, SphereAt(10.f, 1.f), 1, Camera(), settings);
+
+    CHECK(report.biasedScreenSize == doctest::Approx(2.f * report.screenSize));
+    CHECK(report.dropBelow == doctest::Approx(0.25f));
+}
+
+TEST_CASE("A report agrees with the level selection actually picks")
+{
+    // The two are separate walks over the same thresholds, so a change to one
+    // that misses the other shows up as a readout that brackets the wrong size.
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings;
+
+    for (float distance = 1.f; distance < 60.f; distance += 0.5f)
+    {
+        const BoundingSphere sphere = SphereAt(distance, 1.f);
+        const uint32_t level = SelectLodLevel(lods, LodScreenSize(sphere, Camera()), 0, settings);
+        const LodReport report = DescribeLodSelection(lods, sphere, level, Camera(), settings);
+
+        if (report.dropBelow > 0.f)
+        {
+            CHECK(report.biasedScreenSize >= report.dropBelow);
+        }
+        if (report.regainAt > 0.f)
+        {
+            CHECK(report.biasedScreenSize < report.regainAt);
+        }
+    }
 }

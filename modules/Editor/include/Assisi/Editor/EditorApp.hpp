@@ -272,6 +272,22 @@ private:
     /// and what took its shadow if not. Draws nothing when there is no verdict.
     void DrawLightShadowVerdict();
 
+    /// @brief A line or two under a MeshRenderer's fields: the level this
+    /// instance drew at, and the sizes on either side of it.
+    ///
+    /// A threshold is tuned by watching the measurement cross it, which is not
+    /// something an artist can see from the image — the pop is the only other
+    /// evidence, and by then they have walked past the switch.
+    void DrawLodVerdict();
+
+    /// @brief The pin control under that readout: draw the selected instance at
+    /// a level of its own, or leave it to the measurement.
+    ///
+    /// @p pinned is the level it is pinned to, or -1; @p levelCount is its
+    /// chain's depth, which is what the control offers rather than a range that
+    /// might overshoot this mesh.
+    void DrawLodPin(int32_t pinned, uint32_t levelCount);
+
     /// @name The celestial components' own inspector blocks
     ///
     /// Drawn above each component's reflected fields, never instead of them.

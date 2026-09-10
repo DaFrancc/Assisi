@@ -181,13 +181,40 @@ public:
     ///
     /// Applies to the CPU draw path and to both shadow gathers, which select
     /// from one table so a caster's silhouette is the one on screen. The
-    /// GPU-driven cull path still draws LOD0 whatever these say.
+    /// GPU-driven cull path measures nothing, and takes only `forcedLevel`.
     ///
     /// `bias` is the quality dial — above 1 holds a finer level further away —
     /// and `enabled` false pins everything to LOD0, which is the A/B against
-    /// the whole feature. A mesh with no LOD chain is unaffected either way.
+    /// the whole feature. `forcedLevel` puts every instance on one level for
+    /// inspection. A mesh with no LOD chain is unaffected by any of them.
     void SetLodSettings(const Runtime::LodSettings &settings) { _lodSelector.SetSettings(settings); }
     [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSelector.Settings(); }
+
+    /// @brief Draw @p entity at @p level whatever its size asks for, or release
+    /// the pin with a negative @p level. One entity at a time.
+    ///
+    /// Where `forcedLevel` puts the whole viewport on one level, this puts one
+    /// instance there — for judging a chain on the thing that carries it without
+    /// moving every other instance in the scene off the level it earned. Never
+    /// saved: it is a way of looking at a scene, not a fact about it.
+    void PinLod(ECS::Entity entity, int32_t level) { _lodSelector.Pin(entity, level); }
+
+    /// @brief The level @p entity is pinned to, or -1 when it is not pinned.
+    [[nodiscard]] int32_t PinnedLod(ECS::Entity entity) const { return _lodSelector.PinnedLevel(entity); }
+
+    /// @brief Whether any instance is pinned — what lets a viewport say that
+    /// something on screen is not at the level the scene's rules would give it.
+    [[nodiscard]] bool HasPinnedLod() const { return _lodSelector.HasPin(); }
+
+    /// @brief What LOD selection did with the instance on @p entity, drawing
+    /// @p mesh at @p worldMatrix.
+    ///
+    /// The join the selector cannot make on its own: it remembers levels by
+    /// entity and has no way to reach the mesh or the pose an inspector is
+    /// looking at. Measured against this frame's camera, so it answers for the
+    /// image on screen.
+    [[nodiscard]] Runtime::LodReport LodReportFor(ECS::Entity entity, const Render::MeshBuffer &mesh,
+                                                  const glm::mat4 &worldMatrix) const;
 
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting

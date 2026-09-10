@@ -17,13 +17,16 @@ float LodScreenSize(const Geometry::BoundingSphere &worldSphere, const LodView &
 
     const glm::vec3 toCenter = worldSphere.center - view.cameraPosition;
     const float distance = std::sqrt(glm::dot(toCenter, toCenter));
-    // Inside its own sphere the instance fills the view; the ratio past that
-    // point grows without bound.
+    // Inside its own sphere there is no projected size to speak of, and the
+    // division below would run to infinity at the surface.
     if (distance <= worldSphere.radius)
     {
         return 1.f;
     }
-    return worldSphere.radius / (distance * view.tanHalfFovY);
+    // Capped where the instance fills the view, which is well outside its
+    // sphere: closer is not more full, and without the cap the ratio climbs
+    // past 1 on the way in and then drops back to it at the surface.
+    return std::min(worldSphere.radius / (distance * view.tanHalfFovY), 1.f);
 }
 
 uint32_t SelectLodLevel(std::span<const Geometry::LodRange> lods, float screenSize, uint32_t previousLevel,
@@ -32,6 +35,14 @@ uint32_t SelectLodLevel(std::span<const Geometry::LodRange> lods, float screenSi
     if (lods.size() <= 1 || !settings.enabled)
     {
         return 0;
+    }
+
+    const uint32_t coarsest = static_cast<uint32_t>(lods.size()) - 1u;
+    if (settings.forcedLevel >= 0)
+    {
+        // Clamped, not rejected: one control stands over chains of every depth,
+        // and a level past the end of this one means its last.
+        return std::min(static_cast<uint32_t>(settings.forcedLevel), coarsest);
     }
 
     const float biased = screenSize * settings.bias;
@@ -50,20 +61,91 @@ uint32_t SelectLodLevel(std::span<const Geometry::LodRange> lods, float screenSi
     }
     // Smaller than the coarsest threshold still draws that level; dropping the
     // instance is a cull, and culling is the frustum's job.
-    return static_cast<uint32_t>(lods.size()) - 1u;
+    return coarsest;
+}
+
+LodReport DescribeLodSelection(std::span<const Geometry::LodRange> lods, const Geometry::BoundingSphere &worldSphere,
+                               uint32_t level, const LodView &view, const LodSettings &settings)
+{
+    LodReport report;
+    report.levelCount = std::max<uint32_t>(static_cast<uint32_t>(lods.size()), 1u);
+    report.level = std::min(level, report.levelCount - 1u);
+    report.screenSize = LodScreenSize(worldSphere, view);
+    report.biasedScreenSize = report.screenSize * settings.bias;
+    report.forced = settings.forcedLevel >= 0;
+
+    // A pinned level compares against nothing, and a chain of one has nothing to
+    // compare against: printing a threshold in either case would read as a
+    // measurement that agreed.
+    if (report.levelCount <= 1 || !settings.enabled || report.forced)
+    {
+        return report;
+    }
+
+    if (report.level + 1u < report.levelCount)
+    {
+        report.dropBelow = Geometry::LodScreenSizeThreshold(lods[report.level], report.level);
+    }
+    if (report.level > 0)
+    {
+        const uint32_t finer = report.level - 1u;
+        report.regainAt =
+            Geometry::LodScreenSizeThreshold(lods[finer], finer) * (1.f + std::max(settings.hysteresis, 0.f));
+    }
+    return report;
+}
+
+void LodSelector::Pin(ECS::Entity entity, int32_t level)
+{
+    if (level < 0 || entity == ECS::NullEntity)
+    {
+        _pinned = ECS::NullEntity;
+        _pinnedLevel = 0;
+        return;
+    }
+    _pinned = entity;
+    _pinnedLevel = static_cast<uint32_t>(level);
+}
+
+int32_t LodSelector::PinnedLevel(ECS::Entity entity) const
+{
+    return entity != ECS::NullEntity && entity == _pinned ? static_cast<int32_t>(_pinnedLevel) : -1;
+}
+
+int32_t LodSelector::NamedLevelFor(ECS::Entity entity) const
+{
+    if (!_settings.enabled)
+    {
+        return 0;
+    }
+    const int32_t pinned = PinnedLevel(entity);
+    return pinned >= 0 ? pinned : _settings.forcedLevel;
+}
+
+void LodSelector::Clear()
+{
+    _levels.clear();
+    Pin(ECS::NullEntity, -1);
 }
 
 uint32_t LodSelector::Select(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
                              const Geometry::BoundingSphere &worldSphere)
 {
     // No measurement and no table entry for a mesh with one level, so a scene
-    // without chains pays nothing here.
-    if (entity == ECS::NullEntity || !(_view.tanHalfFovY > 0.f) || lods.size() <= 1)
+    // without chains pays nothing here. A named level is not a measurement, so
+    // it stands in a frame with no view to measure in.
+    const int32_t named = entity != ECS::NullEntity ? NamedLevelFor(entity) : -1;
+    if (entity == ECS::NullEntity || lods.size() <= 1 || (named < 0 && !(_view.tanHalfFovY > 0.f)))
     {
         return 0;
     }
 
-    const uint32_t level = SelectLodLevel(lods, LodScreenSize(worldSphere, _view), Remembered(entity), _settings);
+    // The one place the two ways of naming a level are resolved into one answer;
+    // everything below this line reads a single forced level.
+    LodSettings settings = _settings;
+    settings.forcedLevel = named;
+
+    const uint32_t level = SelectLodLevel(lods, LodScreenSize(worldSphere, _view), Remembered(entity), settings);
 
     if (entity.index >= _levels.size())
     {

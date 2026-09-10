@@ -883,6 +883,20 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             ImGui::BeginDisabled();
         }
         lodChanged |= ImGui::SliderFloat("LOD Bias", &lod.bias, 0.25f, 4.f, "%.2fx");
+
+        // Every instance on one level, for looking at a level in place instead
+        // of walking backwards until it appears. The range is the deepest chain
+        // the tally reports; each mesh clamps it to its own, so a level past the
+        // end of a short chain shows that chain's last.
+        int32_t forced = lod.forcedLevel;
+        if (ImGui::SliderInt("Force LOD", &forced, -1, static_cast<int32_t>(Assisi::Runtime::kMaxReportedLods) - 1,
+                             forced < 0 ? "Auto" : "LOD %d"))
+        {
+            lod.forcedLevel = forced;
+            lodChanged = true;
+        }
+        ImGui::SetItemTooltip("Auto measures each instance. A level draws every instance at it, clamped to each "
+                              "mesh's own chain.");
         if (!lod.enabled)
         {
             ImGui::EndDisabled();
@@ -901,7 +915,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // "meshes with no chain are untouched" looks like from here.
         if (gpuCulling)
         {
-            ImGui::TextDisabled("LOD: CPU path only; the GPU cull draws LOD0");
+            // The GPU cull measures nothing, so there is no tally to show: it
+            // draws the one level it was handed.
+            const int32_t drawn = lod.enabled && lod.forcedLevel > 0 ? lod.forcedLevel : 0;
+            ImGui::TextDisabled("LOD: no per-instance pick on the GPU cull; every instance at LOD%d", drawn);
         }
         else
         {
@@ -919,6 +936,14 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 levels += "LOD" + std::to_string(level) + ": " + std::to_string(draw.lodInstances[level]);
             }
             ImGui::Text("%s", levels.empty() ? "LOD: nothing drawn" : levels.c_str());
+        }
+
+        // A pin is set on one entity in the inspector and then goes out of sight
+        // the moment that entity is deselected. Said here, it cannot become a
+        // mystery about why one thing on screen looks coarse.
+        if (frame.renderer.HasPinnedLod())
+        {
+            ImGui::TextDisabled("one instance is pinned to a level (Inspector > MeshRenderer)");
         }
 
         // Short-circuits the mesh shader to a single material channel, to look at the

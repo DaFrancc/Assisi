@@ -43,6 +43,16 @@ struct LodSettings
     /// taken back only at T*(1+hysteresis), so an instance parked on a boundary
     /// settles. Two percent is about a pixel of travel at the sizes that switch.
     float hysteresis = 0.02f;
+
+    /// The level every instance draws at, or -1 to measure for it. Clamped to
+    /// each mesh's own chain, so one control serves chains of different depths
+    /// and a mesh without one is unaffected.
+    ///
+    /// For looking at a level in place: an artist judging whether LOD2 is
+    /// acceptable cannot walk backwards until it appears and still see it beside
+    /// what it replaced. It names a level rather than measuring one, so neither
+    /// the bias nor the dead band moves it.
+    int32_t forcedLevel = -1;
 };
 
 /// @brief Where selection is measured from.
@@ -59,8 +69,9 @@ struct LodView
 
 /// @brief @p worldSphere's diameter as a fraction of the viewport's height.
 ///
-/// A camera inside the sphere gets 1 — it fills the view, and the ratio past
-/// that point grows without bound. An unset view measures 0, which is "no
+/// At most 1, reached where the sphere fills the view: nothing is more full for
+/// being closer, and that point is well outside the sphere, so a ratio left
+/// uncapped would overshoot on the way in. An unset view measures 0, which is "no
 /// measurement" rather than "vanishingly small": feeding it to a threshold
 /// compare would select the coarsest level in the chain.
 [[nodiscard]] float LodScreenSize(const Geometry::BoundingSphere &worldSphere, const LodView &view);
@@ -69,13 +80,52 @@ struct LodView
 ///        around @p previousLevel.
 ///
 /// The finest level the instance is big enough for, against thresholds raised by
-/// the hysteresis fraction for every level finer than @p previousLevel.
+/// the hysteresis fraction for every level finer than @p previousLevel. A forced
+/// level short-circuits all of that, and selection being off outranks even that:
+/// the off switch is the A/B against the whole feature and has to mean LOD0.
 ///
 /// Idempotent: feeding its own result back returns that result again, which is
 /// what lets draw-extract and the shadow gathers select the same instance in one
 /// frame without fighting over the remembered level.
 [[nodiscard]] uint32_t SelectLodLevel(std::span<const Geometry::LodRange> lods, float screenSize,
                                       uint32_t previousLevel, const LodSettings &settings);
+
+/// @brief What selection did with one instance, and the sizes on either side of
+///        the level it landed on.
+///
+/// For an inspector: an artist tuning a threshold reads the measurement against
+/// the number it is compared to, instead of walking the camera back and forth to
+/// find which side of it they are on.
+struct LodReport
+{
+    uint32_t level = 0;           ///< The level drawn.
+    uint32_t levelCount = 1;      ///< Levels in the chain; 1 is a mesh without one.
+    float screenSize = 0.f;       ///< The measurement, before the bias.
+    float biasedScreenSize = 0.f; ///< What the thresholds are compared against.
+
+    /// The size this level is held down to; under it the next coarser one takes
+    /// over. Zero where no comparison is happening — the coarsest level, which
+    /// has nothing to fall to, and a level that was named rather than measured.
+    float dropBelow = 0.f;
+
+    /// The size at which the next finer level is taken back, the dead band
+    /// included. Zero under the same rule, plus at LOD0, which has nothing finer.
+    float regainAt = 0.f;
+
+    /// The level was named rather than measured, so neither switch point above
+    /// is being compared against.
+    bool forced = false;
+};
+
+/// @brief Describe drawing @p worldSphere at @p level, as @ref LodReport.
+///
+/// Reports the level it is given rather than selecting one: it says what was
+/// drawn, and re-deriving would disagree with the screen exactly when the
+/// remembered level and a fresh measurement differ — which is the moment the
+/// readout is worth consulting.
+[[nodiscard]] LodReport DescribeLodSelection(std::span<const Geometry::LodRange> lods,
+                                             const Geometry::BoundingSphere &worldSphere, uint32_t level,
+                                             const LodView &view, const LodSettings &settings);
 
 /// @brief The level each entity drew at last, and the settings selection reads.
 ///
@@ -93,14 +143,16 @@ public:
     /// shadow gathers select the same instance within a frame, and measuring
     /// with different views would put them on different levels.
     ///
-    /// A selector never given a view measures nothing and selects LOD0.
+    /// A selector never given a view measures nothing and selects LOD0, unless
+    /// the settings name a level, which needs no measurement.
     void BeginFrame(const LodView &view) { _view = view; }
     [[nodiscard]] const LodView &View() const { return _view; }
 
     /// @brief Choose the level for @p entity and remember it.
     ///
-    /// A mesh with no chain, or a frame with no view, is LOD0 and takes no room
-    /// in the table: a scene of single-level meshes pays nothing here.
+    /// A mesh with no chain, or a frame with neither a view nor a forced level,
+    /// is LOD0 and takes no room in the table: a scene of single-level meshes
+    /// pays nothing here.
     [[nodiscard]] uint32_t Select(ECS::Entity entity, std::span<const Geometry::LodRange> lods,
                                   const Geometry::BoundingSphere &worldSphere);
 
@@ -111,9 +163,39 @@ public:
     /// second opinion about it.
     [[nodiscard]] uint32_t Remembered(ECS::Entity entity) const;
 
-    /// @brief Forget every remembered level. Call when the scene is replaced:
-    ///        the entity indices survive it and the instances do not.
-    void Clear() { _levels.clear(); }
+    /// @brief Draw @p entity at @p level whatever it measures, or release the pin
+    ///        with a negative @p level.
+    ///
+    /// One entity at a time — pinning a second releases the first. Held here
+    /// rather than on the component because it is a way of looking at a scene,
+    /// not a fact about it: it is never saved, and a level that reached content
+    /// would be a chain authored around a debugging session.
+    ///
+    /// Outranks the settings' forced level, being the more specific of the two.
+    void Pin(ECS::Entity entity, int32_t level);
+
+    /// @brief The level @p entity is pinned to, or -1 when it is not the pinned
+    ///        one.
+    [[nodiscard]] int32_t PinnedLevel(ECS::Entity entity) const;
+
+    /// @brief Whether any entity is pinned. What tells a viewport that one
+    ///        instance is not showing what the scene's rules would give it.
+    [[nodiscard]] bool HasPin() const { return _pinned != ECS::NullEntity; }
+
+    /// @brief The level named for @p entity, or -1 when nothing names one and it
+    ///        has to be measured.
+    ///
+    /// The entity's own pin first, then the settings' forced level. Selection off
+    /// names LOD0, which is the whole of what off means.
+    ///
+    /// For a consumer that cannot measure — the GPU cull path has no per-instance
+    /// answer to reach for, and a named level is the only kind it can take.
+    [[nodiscard]] int32_t NamedLevelFor(ECS::Entity entity) const;
+
+    /// @brief Forget every remembered level and release the pin. Call when the
+    ///        scene is replaced: the entity indices survive it and the instances
+    ///        do not, so a kept pin would land on whatever reused its index.
+    void Clear();
 
 private:
     // Indexed by ECS::Entity::index, grown on demand. The generation sits beside
@@ -130,6 +212,12 @@ private:
     LodSettings _settings;
     LodView _view;
     std::vector<Slot> _levels;
+
+    // The one pinned instance. One rather than a table because it answers "what
+    // does this thing look like at LOD2", which is a question about the entity
+    // being looked at, and there is one of those.
+    ECS::Entity _pinned = ECS::NullEntity;
+    uint32_t _pinnedLevel = 0;
 };
 
 } // namespace Assisi::Runtime

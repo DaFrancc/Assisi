@@ -863,6 +863,21 @@ const Render::LocalShadowLightReport *SceneRenderer::ShadowReportFor(ECS::Entity
     return nullptr;
 }
 
+Runtime::LodReport SceneRenderer::LodReportFor(ECS::Entity entity, const Render::MeshBuffer &mesh,
+                                               const glm::mat4 &worldMatrix) const
+{
+    // Whichever way this instance's level was named, the report has to read as
+    // named: a pin is the entity's own and never reaches the shared settings.
+    Runtime::LodSettings settings = _lodSelector.Settings();
+    settings.forcedLevel = _lodSelector.NamedLevelFor(entity);
+
+    // The remembered level rather than a fresh selection: this says what was
+    // drawn, and the whole-mesh bounds are what selection measured, at every
+    // level.
+    return DescribeLodSelection(mesh.Lods(), Geometry::TransformedBoundingSphere(mesh.LocalBounds(), worldMatrix),
+                                _lodSelector.Remembered(entity), _lodSelector.View(), settings);
+}
+
 void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,
                                    const Transform &cameraTransform, const Camera &camera)
 {
