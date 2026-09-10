@@ -141,6 +141,12 @@ void EmitShadowCasters(const ShadowCasterSource &source, std::uint32_t viewMask,
 // drawIndexedIndirectCount. The CPU still iterates the ECS to build the tables
 // (the cull *math* is what moved to the GPU); a dirty-tracked ECS→GPU mirror that
 // removes this gather too is stage F2. @p frustum's planes drive the GPU test.
+//
+// A named level is the one thing this path takes from LOD selection — a viewport
+// force, or the pin on one instance. Naming is not measuring, so the CPU can hand
+// each instance its level here without the per-instance measurement the compute
+// pass has no way to reach. Measuring is its own stage; until it lands this
+// path's own answer is LOD0.
 DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frustum &frustum)
 {
     Assisi::ECS::Scene &scene = params.scene;
@@ -162,9 +168,14 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
                 continue;
             }
             anyMesh = mesh; // any mesh identifies the shared arena's vertex/index buffers (single arena, F1)
+            // Nothing named for this instance is LOD0: measuring is the stage
+            // this path is still waiting on, not something to guess at here.
+            const int32_t named =
+                params.lodSelector != nullptr ? params.lodSelector->NamedLevelFor(entity) : 0;
             builder.AddInstance(mesh, transform.worldMatrix,
                                 std::span<const Assisi::Render::Material *const>(meshRenderer.materials.data(),
-                                                                                 meshRenderer.materials.size()));
+                                                                                 meshRenderer.materials.size()),
+                                static_cast<uint32_t>(std::max(named, 0)));
         }
     }
 

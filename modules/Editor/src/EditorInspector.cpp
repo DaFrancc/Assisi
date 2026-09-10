@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1500,6 +1501,133 @@ void EditorApp::DrawLightShadowVerdict()
     ImGui::SetItemTooltip("%s", Assisi::Render::DescribeLocalShadowState(report->state));
 }
 
+void EditorApp::DrawLodVerdict()
+{
+    const auto *renderer = _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity);
+    const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
+    if (renderer == nullptr || renderer->meshBuffer == nullptr || transform == nullptr)
+    {
+        return; // still loading, or nowhere to stand — nothing was drawn to report on
+    }
+
+    const Assisi::Runtime::LodReport lod =
+        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, transform->worldMatrix);
+
+    if (lod.levelCount <= 1)
+    {
+        // Worth a line rather than silence: "did my chain import" is the first
+        // question at this mesh, and the answer is either this or a level count.
+        ImGui::TextDisabled("LOD: one level (no chain)");
+        return;
+    }
+
+    const int32_t pinned = _sceneRenderer.PinnedLod(_selectedEntity);
+
+    if (_sceneRenderer.GpuCulling())
+    {
+        // That path measures nothing and remembers nothing, so there is no
+        // measurement to report: it draws the level it was handed, and saying
+        // otherwise would name a level nothing chose.
+        const Assisi::Runtime::LodSettings &settings = _sceneRenderer.LodSettings();
+        const int32_t named = settings.enabled ? (pinned >= 0 ? pinned : settings.forcedLevel) : 0;
+        const uint32_t drawn =
+            named > 0 ? std::min(static_cast<uint32_t>(named), lod.levelCount - 1u) : 0u;
+        ImGui::Text("LOD%u (LOD0-LOD%u)", drawn, lod.levelCount - 1u);
+        ImGui::SameLine();
+        ImGui::TextDisabled("the GPU cull names levels, it does not measure them");
+        DrawLodPin(pinned, lod.levelCount);
+        return;
+    }
+
+    // "pinned" and "forced" are worth telling apart: one of them is about this
+    // entity and the other is about every entity, and only one of them is
+    // released by the control below.
+    // The range rather than a count: levels are numbered from 0, so "of 5"
+    // beside the coarsest level reads as one short.
+    ImGui::Text("LOD%u (LOD0-LOD%u)%s", lod.level, lod.levelCount - 1u,
+                pinned >= 0 ? "  pinned" : lod.forced ? "  forced" : "");
+    ImGui::SameLine();
+
+    // The measurement first, which is a fraction of the screen and so never
+    // passes 1; the bias only when it is doing something, since the value it
+    // produces can pass 1 and would read as impossible on its own.
+    // Within the slider's display precision of 1, or a drag that lands at
+    // 1.0000001 would print "x 1.00 bias".
+    const float bias = _sceneRenderer.LodSettings().bias;
+    if (std::abs(bias - 1.f) < 0.005f)
+    {
+        ImGui::TextDisabled("size %.4f", static_cast<double>(lod.screenSize));
+    }
+    else
+    {
+        ImGui::TextDisabled("size %.4f x %.2f bias = %.4f", static_cast<double>(lod.screenSize),
+                            static_cast<double>(bias), static_cast<double>(lod.biasedScreenSize));
+    }
+    ImGui::SetItemTooltip("The instance's bounding-sphere diameter over the viewport's height: 1 fills the screen. "
+                          "The chain's thresholds are compared against it after the LOD bias.");
+
+    // The switch points on either side, each named only where there is one: a
+    // threshold is tuned by watching the size approach the number beside it.
+    std::string switches;
+    if (!_sceneRenderer.LodSettings().enabled)
+    {
+        switches = "selection is off — every instance draws LOD0";
+    }
+    else if (lod.forced)
+    {
+        switches = "pinned, so no threshold is being read";
+    }
+    else
+    {
+        if (lod.regainAt > 0.f)
+        {
+            switches = std::format("back to LOD{} at {:.4f}", lod.level - 1u, lod.regainAt);
+        }
+        if (lod.dropBelow > 0.f)
+        {
+            if (!switches.empty())
+            {
+                switches += "    ";
+            }
+            switches += std::format("down to LOD{} below {:.4f}", lod.level + 1u, lod.dropBelow);
+        }
+        else
+        {
+            switches += "    coarsest level";
+        }
+    }
+    ImGui::TextDisabled("%s", switches.c_str());
+
+    DrawLodPin(pinned, lod.levelCount);
+}
+
+void EditorApp::DrawLodPin(int32_t pinned, uint32_t levelCount)
+{
+    // Only the levels this chain actually has, unlike the viewport-wide force,
+    // which stands over meshes of every depth and can only offer a range.
+    const std::string preview = pinned < 0 ? "Auto" : std::format("LOD{}", pinned);
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
+    if (ImGui::BeginCombo("Pin this instance", preview.c_str()))
+    {
+        if (ImGui::Selectable("Auto", pinned < 0))
+        {
+            _sceneRenderer.PinLod(_selectedEntity, -1);
+        }
+        for (uint32_t level = 0; level < levelCount; ++level)
+        {
+            const std::string label = std::format("LOD{}", level);
+            if (ImGui::Selectable(label.c_str(), pinned == static_cast<int32_t>(level)))
+            {
+                _sceneRenderer.PinLod(_selectedEntity, static_cast<int32_t>(level));
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Draws this one instance at the level you pick, leaving every other instance on the "
+                          "level it earned. One at a time — pinning another releases this one, and so does "
+                          "loading a level. Never saved.");
+}
+
 namespace
 {
 /// A row of buttons that each write a value and nothing else.
@@ -2056,6 +2184,14 @@ void EditorApp::DrawInspector()
                 meta->id == ComponentIdOf<Assisi::Runtime::PointLight>())
             {
                 DrawLightShadowVerdict();
+            }
+
+            // Which level of the mesh's chain this instance drew at, beside the
+            // mesh that carries the chain. The overlay's tally counts levels
+            // across the scene; this is the one instance an artist is judging.
+            if (meta->id == ComponentIdOf<Assisi::Runtime::MeshRenderer>())
+            {
+                DrawLodVerdict();
             }
 
             // The clock's own controls, above the generic fields rather than

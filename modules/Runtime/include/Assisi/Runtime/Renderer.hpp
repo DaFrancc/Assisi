@@ -55,8 +55,8 @@ struct DrawStats
     /// reads against the entity count rather than against `drawnItems`, and a
     /// scene of single-level meshes puts everything in bucket 0.
     ///
-    /// All zero on the GPU-cull path, which still draws LOD0 unconditionally —
-    /// selection there is its own stage.
+    /// All zero on the GPU-cull path, which draws one level for every instance —
+    /// LOD0, or the forced one. Measured selection there is its own stage.
     std::array<uint32_t, kMaxReportedLods> lodInstances{};
 };
 
@@ -93,8 +93,9 @@ struct DrawSceneParams
 
     /// Where the LOD level of each instance is decided and remembered. Null
     /// draws every instance at LOD0 — what the path did before selection
-    /// existed, and what the GPU path still does. The camera it measures from
-    /// is the one it was given at LodSelector::BeginFrame.
+    /// existed. The camera it measures from is the one it was given at
+    /// LodSelector::BeginFrame. The GPU path reads only its forced level, which
+    /// needs no measurement.
     LodSelector *lodSelector = nullptr;
 };
 

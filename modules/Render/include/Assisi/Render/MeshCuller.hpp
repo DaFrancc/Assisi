@@ -25,6 +25,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -198,8 +199,12 @@ struct CullTables
 };
 
 /// @brief A mesh's geometry as the culler needs it — local bounds, arena base
-/// offsets, and its LOD0 submeshes. The POD the descriptor table is packed from,
-/// so the packing core (AddInstanceRaw) is device-free and unit-testable.
+/// offsets, and the submeshes of one LOD level. The POD the descriptor table is
+/// packed from, so the packing core (AddInstanceRaw) is device-free and
+/// unit-testable.
+///
+/// The bounds are the whole mesh's at every level. Selecting a level must never
+/// change the bounds selection reads, or the pick oscillates.
 struct MeshGeometry
 {
     glm::vec4 sphere{0.f};  ///< xyz = local center, w = radius.
@@ -207,7 +212,7 @@ struct MeshGeometry
     glm::vec4 aabbMax{0.f}; ///< xyz = local AABB max.
     uint32_t vertexBase = 0;
     uint32_t indexBase  = 0;
-    std::span<const GpuSubMesh> lod0Submeshes; ///< LOD0 submeshes, in draw order.
+    std::span<const GpuSubMesh> submeshes; ///< One level's submeshes, in draw order.
 };
 
 /// @brief Accumulates a frame's @ref CullTables from per-instance inputs, deduping
@@ -222,21 +227,29 @@ public:
 
     /// @brief Packing core (no device types). Interns @p meshKey's @p geometry into
     /// the descriptor table on first sight (reusing it for later instances of the
-    /// same key), then appends one object at @p model whose material slots are
-    /// @p materialIds (element i = slot i's Material::Id packed with its pipeline
-    /// by EncodeCullMaterial, or kNoMaterial when unresolved → that submesh is
-    /// skipped by the cull shader). No-op if @p geometry has no LOD0 submeshes.
-    /// @p meshKey is any stable per-mesh identity.
+    /// same key at the same @p level), then appends one object at @p model whose
+    /// material slots are @p materialIds (element i = slot i's Material::Id packed
+    /// with its pipeline by EncodeCullMaterial, or kNoMaterial when unresolved →
+    /// that submesh is skipped by the cull shader). No-op if @p geometry has no
+    /// submeshes. @p meshKey is any stable per-mesh identity.
+    ///
+    /// @p level is part of that identity, not a lookup into anything: a mesh
+    /// drawn at two levels in one frame is two geometries, and deduping on the
+    /// key alone would draw the second at the first's level.
     void AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
-                        std::span<const uint32_t> materialIds);
+                        std::span<const uint32_t> materialIds, uint32_t level = 0);
 
     /// @brief Adds one object drawing @p mesh at @p model, resolving each of the
     /// mesh's material slots from @p slotMaterials (element i = slot i's Material,
-    /// or null/short = unresolved → skipped). Extracts @p mesh's LOD0 geometry and
-    /// its materials' ids and delegates to AddInstanceRaw. No-op if @p mesh is null
-    /// or has no LOD0 submeshes.
+    /// or null/short = unresolved → skipped). Extracts @p mesh's level-@p level
+    /// geometry and its materials' ids and delegates to AddInstanceRaw. No-op if
+    /// @p mesh is null or that level has no submeshes.
+    ///
+    /// @p level clamps to the end of @p mesh's chain, so one level named for a
+    /// whole frame serves chains of every depth. The cull pass selects nothing of
+    /// its own: this path draws whatever level it is handed.
     void AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
-                     std::span<const Material *const> slotMaterials);
+                     std::span<const Material *const> slotMaterials, uint32_t level = 0);
 
     /// @brief Builds the draw-command templates from the gathered tables. Must be
     /// called once after all AddInstance* calls and before the tables are uploaded:
@@ -251,14 +264,34 @@ public:
     [[nodiscard]] const CullTables &Tables() const { return _tables; }
 
 private:
+    /// One mesh at one LOD level: what a descriptor in the table describes.
+    struct MeshLevelKey
+    {
+        const void *mesh = nullptr;
+        uint32_t level = 0;
+
+        bool operator==(const MeshLevelKey &other) const = default;
+    };
+
+    struct MeshLevelHash
+    {
+        std::size_t operator()(const MeshLevelKey &key) const
+        {
+            // The level is spread by an odd constant before it is mixed in;
+            // xoring a small integer straight onto a pointer hash would put a
+            // mesh's level 1 where a neighbouring mesh's level 0 already sits.
+            return std::hash<const void *>{}(key.mesh) ^ (static_cast<std::size_t>(key.level) * 0x9e3779b9u);
+        }
+    };
+
     CullTables _tables;
-    std::unordered_map<const void *, uint32_t> _meshIndex;
+    std::unordered_map<MeshLevelKey, uint32_t, MeshLevelHash> _meshIndex;
     // Instance slots each command template needs, parallel to
     // _tables.batchTemplates. Reused scratch, filled by Finalize.
     std::vector<uint32_t> _batchReserve;
 
     // Reused scratch so the MeshBuffer overload doesn't allocate per instance:
-    // the extracted LOD0 submeshes and material ids fed to AddInstanceRaw.
+    // the extracted submeshes and material ids fed to AddInstanceRaw.
     std::vector<GpuSubMesh> _submeshScratch;
     std::vector<uint32_t>   _materialScratch;
 };

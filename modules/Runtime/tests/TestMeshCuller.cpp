@@ -33,7 +33,7 @@ MeshGeometry MakeGeometry(std::span<const GpuSubMesh> submeshes, uint32_t vertex
     geometry.aabbMax       = glm::vec4(1.f, 2.f, 3.f, 0.f);
     geometry.vertexBase    = vertexBase;
     geometry.indexBase     = indexBase;
-    geometry.lod0Submeshes = submeshes;
+    geometry.submeshes     = submeshes;
     return geometry;
 }
 } // namespace
@@ -57,7 +57,7 @@ TEST_CASE("AddInstanceRaw packs one object, its mesh descriptor, submeshes, and 
     REQUIRE(tables.submeshes.size() == 2);
     REQUIRE(tables.objectMaterials.size() == 2);
 
-    // The mesh descriptor: LOD0 range, arena bases, and bounds carried verbatim.
+    // The mesh descriptor: submesh range, arena bases, and bounds carried verbatim.
     const auto &desc = tables.meshDescs.front();
     CHECK(desc.firstSubmesh == 0);
     CHECK(desc.submeshCount == 2);
@@ -78,7 +78,7 @@ TEST_CASE("AddInstanceRaw packs one object, its mesh descriptor, submeshes, and 
     CHECK(tables.objectMaterials[0] == 10u);
     CHECK(tables.objectMaterials[1] == 20u);
 
-    // drawCapacity is the per-object LOD0 submesh sum (the max draws the pass emits).
+    // drawCapacity is the per-object submesh sum (the max draws the pass emits).
     CHECK(tables.drawCapacity == 2);
 }
 
@@ -105,6 +105,35 @@ TEST_CASE("AddInstanceRaw dedups a repeated mesh but appends a fresh object + ma
     CHECK(tables.objects[1].materialBase == 1);
     CHECK(tables.objectMaterials[1] == 8u);
     CHECK(tables.drawCapacity == 2);
+}
+
+TEST_CASE("Two levels of one mesh get a descriptor each")
+{
+    CullTableBuilder builder;
+    // The chain: LOD0's two submeshes, LOD1's one.
+    const std::array<GpuSubMesh, 2> lod0{GpuSubMesh{0, 6, 0, 0}, GpuSubMesh{6, 6, 1, 0}};
+    const std::array<GpuSubMesh, 1> lod1{GpuSubMesh{12, 3, 0, 0}};
+    const std::array<uint32_t, 2>   mat{0u, 1u};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(lod0, 0, 0), glm::mat4(1.f), mat, /*level=*/ 0);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(lod1, 0, 0), glm::mat4(1.f), mat, /*level=*/ 1);
+
+    const CullTables &tables = builder.Tables();
+    // The mesh is one key but two geometries: deduping on the key alone would
+    // draw the second object at the first's level.
+    REQUIRE(tables.meshDescs.size() == 2);
+    REQUIRE(tables.objects.size() == 2);
+    CHECK(tables.objects[0].meshDescIndex == 0);
+    CHECK(tables.objects[1].meshDescIndex == 1);
+    CHECK(tables.meshDescs[0].submeshCount == 2);
+    CHECK(tables.meshDescs[1].submeshCount == 1);
+    REQUIRE(tables.submeshes.size() == 3);
+    CHECK(tables.submeshes[2].indexOffset == 12);
+
+    // A second instance at a level already interned still shares its descriptor.
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(lod1, 0, 0), glm::mat4(1.f), mat, /*level=*/ 1);
+    CHECK(tables.meshDescs.size() == 2);
+    CHECK(tables.objects.back().meshDescIndex == 1);
 }
 
 TEST_CASE("A second distinct mesh appends its submeshes after the first's")
@@ -138,12 +167,12 @@ TEST_CASE("An unresolved material slot packs the skip sentinel")
     const CullTables &tables = builder.Tables();
     CHECK(tables.objectMaterials[0] == 5u);
     CHECK(tables.objectMaterials[1] == kNoMaterial);
-    // Capacity still counts every LOD0 submesh — the shader skips the sentinel one
+    // Capacity still counts every submesh — the shader skips the sentinel one
     // at draw time, but the buffer is sized for the upper bound.
     CHECK(tables.drawCapacity == 2);
 }
 
-TEST_CASE("Geometry with no LOD0 submeshes is a no-op")
+TEST_CASE("Geometry with no submeshes is a no-op")
 {
     CullTableBuilder builder;
     const std::array<uint32_t, 1> mat{0u};

@@ -72,17 +72,19 @@ void CullTableBuilder::Reset()
 }
 
 void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
-                                      std::span<const uint32_t> materialIds)
+                                      std::span<const uint32_t> materialIds, uint32_t level)
 {
-    const uint32_t lod0Count = static_cast<uint32_t>(geometry.lod0Submeshes.size());
-    if (lod0Count == 0)
+    const uint32_t submeshCount = static_cast<uint32_t>(geometry.submeshes.size());
+    if (submeshCount == 0)
     {
-        return; // no LOD0 geometry — nothing to draw
+        return; // no geometry at this level — nothing to draw
     }
 
-    // Intern the mesh's descriptor on first sight; later instances reuse the index.
+    // Intern the mesh's descriptor on first sight; later instances of it at the
+    // same level reuse the index.
     uint32_t meshDescIndex;
-    if (const auto it = _meshIndex.find(meshKey); it != _meshIndex.end())
+    const MeshLevelKey key{.mesh = meshKey, .level = level};
+    if (const auto it = _meshIndex.find(key); it != _meshIndex.end())
     {
         meshDescIndex = it->second;
     }
@@ -95,13 +97,12 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
         desc.vertexBase   = geometry.vertexBase;
         desc.indexBase    = geometry.indexBase;
         desc.firstSubmesh = static_cast<uint32_t>(_tables.submeshes.size());
-        desc.submeshCount = lod0Count;
-        _tables.submeshes.insert(_tables.submeshes.end(), geometry.lod0Submeshes.begin(),
-                                 geometry.lod0Submeshes.end());
+        desc.submeshCount = submeshCount;
+        _tables.submeshes.insert(_tables.submeshes.end(), geometry.submeshes.begin(), geometry.submeshes.end());
 
         meshDescIndex = static_cast<uint32_t>(_tables.meshDescs.size());
         _tables.meshDescs.push_back(desc);
-        _meshIndex.emplace(meshKey, meshDescIndex);
+        _meshIndex.emplace(key, meshDescIndex);
     }
 
     GpuObject obj;
@@ -126,7 +127,7 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
     }
 
     _tables.objects.push_back(obj);
-    _tables.drawCapacity += lod0Count;
+    _tables.drawCapacity += submeshCount;
 }
 
 void CullTableBuilder::Finalize()
@@ -192,7 +193,7 @@ void CullTableBuilder::Finalize()
 }
 
 void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
-                                   std::span<const Material *const> slotMaterials)
+                                   std::span<const Material *const> slotMaterials, uint32_t level)
 {
     if (mesh == nullptr)
     {
@@ -200,20 +201,23 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     }
     const std::vector<Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
     const std::vector<Geometry::LodRange> &lods      = mesh->Lods();
-    const Geometry::LodRange lod0 =
-        !lods.empty() ? lods.front() : Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
-    if (lod0.SubMeshCount == 0)
+    // A level past the end of the chain is its last, and no table at all is the
+    // whole submesh list — what a factory primitive looks like.
+    const uint32_t selected = lods.empty() ? 0u : std::min<uint32_t>(level, static_cast<uint32_t>(lods.size()) - 1u);
+    const Geometry::LodRange lod =
+        !lods.empty() ? lods[selected] : Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+    if (lod.SubMeshCount == 0)
     {
-        return; // no LOD0 geometry — nothing to draw
+        return; // no geometry at this level — nothing to draw
     }
 
-    // Extract the mesh's LOD0 geometry + its resolved material ids into scratch,
-    // then pack through the pure core (kNoMaterial for an out-of-range/null slot,
+    // Extract the level's geometry + its resolved material ids into scratch, then
+    // pack through the pure core (kNoMaterial for an out-of-range/null slot,
     // matching the CPU path's `material == nullptr` skip).
     _submeshScratch.clear();
-    for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+    for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
     {
-        const Geometry::SubMesh &sm = subMeshes[lod0.FirstSubMesh + i];
+        const Geometry::SubMesh &sm = subMeshes[lod.FirstSubMesh + i];
         _submeshScratch.push_back(GpuSubMesh{sm.IndexOffset, sm.IndexCount, sm.MaterialSlot, 0u});
     }
     _materialScratch.clear();
@@ -234,9 +238,9 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     geometry.aabbMax       = glm::vec4(aabb.max, 0.f);
     geometry.vertexBase    = mesh->VertexBase();
     geometry.indexBase     = mesh->IndexBase();
-    geometry.lod0Submeshes = _submeshScratch;
+    geometry.submeshes     = _submeshScratch;
 
-    AddInstanceRaw(mesh, geometry, model, _materialScratch);
+    AddInstanceRaw(mesh, geometry, model, _materialScratch, selected);
 }
 
 // ---- MeshCuller (device) ---------------------------------------------------
