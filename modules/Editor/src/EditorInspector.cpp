@@ -1390,6 +1390,10 @@ void EditorApp::DrawInstanceInspector()
         return;
     }
 
+    // Scoped to the instance for the reason DrawInspector scopes to the entity:
+    // a half-typed field must not land on the next instance selected.
+    ImGui::PushID(static_cast<int32_t>(_selectedInstance.value));
+
     const bool editable = IsEditable();
     ImGui::BeginDisabled(!editable);
 
@@ -1461,6 +1465,7 @@ void EditorApp::DrawInstanceInspector()
     }
 
     ImGui::EndDisabled();
+    ImGui::PopID();
 
     if (!editable && ImGui::IsWindowHovered())
         ImGui::SetTooltip("This world is inspect-only.");
@@ -1908,6 +1913,13 @@ void EditorApp::DrawInspector()
         ImGui::End();
         return;
     }
+
+    // Every widget below is scoped to the entity. A click that changes the
+    // selection also takes focus from a half-typed field before this panel runs,
+    // and ImGui applies that text to whichever widget next draws with the same
+    // ID — without this scope, the same field on the newly selected entity.
+    ImGui::PushID(static_cast<int32_t>(_selectedEntity.index));
+    ImGui::PushID(static_cast<int32_t>(_selectedEntity.generation));
 
     // A resident world that is not the edited one is inspect-only, and the whole
     // panel is disabled rather than parts of it: an edit here could be neither
@@ -2406,6 +2418,8 @@ void EditorApp::DrawInspector()
     {
         HandlePhysicsEditing(anyFieldEdited);
     }
+    ImGui::PopID();
+    ImGui::PopID();
     ImGui::End();
 }
 
