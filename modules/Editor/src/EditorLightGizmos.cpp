@@ -117,10 +117,10 @@ void AddPointLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, 
 void AddSpotLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, const glm::mat4 &world,
                          const Rt::SpotLight &light, bool detailed)
 {
-    // The aim the renderer uses, not the authored local one: a spot mounted on a
-    // parent points where the parent faces, and a cone drawn along the unrotated
-    // field would disagree with the light it describes.
-    const glm::vec3 aim   = Rt::LightingSystem::WorldSpotDirection(world, light.direction);
+    // Rebuilt from the aim rather than drawn in the entity's own matrix: a scaled
+    // light would otherwise draw an ellipse claiming a reach it does not have, the
+    // same reason the point light's sphere takes only the translation.
+    const glm::vec3 aim   = Rt::SpotWorldDirection(world);
     const glm::mat4 model = glm::translate(glm::mat4(1.f), glm::vec3(world[3])) * AimAlong(aim);
 
     AddConeWireframe(out, model, color, light.outerAngle, light.radius, detailed);

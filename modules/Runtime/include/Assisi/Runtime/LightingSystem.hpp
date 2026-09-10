@@ -131,24 +131,11 @@ public:
     [[nodiscard]] std::span<const LocalLight> ShadowCastingPointLights() const { return _shadowPoints; }
     /// @}
 
-    /// @brief A spot light's aim in world space: its LOCAL direction rotated by the
-    /// entity's propagated world matrix, normalized.
-    ///
-    /// Split out of Update so the rule is testable without a device (Update needs a
-    /// command list). A spot mounted on a parent — a vehicle headlight, a held torch
-    /// — must aim where the parent faces, as its position already does.
-    ///
-    /// A direction is a vector rather than a normal, so the upper-left 3x3 is the
-    /// right transform — no inverse-transpose. Normalizing afterwards absorbs any
-    /// scale, and falls back to a fixed axis for a degenerate (zero) direction
-    /// instead of producing NaN.
-    [[nodiscard]] static glm::vec3 WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection);
-
     /// @brief The colour a directional light contributes, after the atmosphere on
     /// its own entity has had it.
     ///
-    /// Split out of Update for the same reason WorldSpotDirection is: the rule is
-    /// the feature, and Update needs a command list.
+    /// Split out of Update because the rule is the feature, and Update needs a
+    /// command list.
     ///
     /// @p atmosphere is null when the light has tintedBySky off, or when the entity
     /// carries no Skybox — and then @p color passes through untouched. Otherwise

@@ -12,9 +12,9 @@
 ///     it takes that direction over: the aim then comes from the scene's clock
 ///     and `direction` stops being read. See TimeOfDay.hpp.
 ///   - PointLight        — requires a Transform for world position.
-///   - SpotLight         — requires a Transform for world position; `direction`
-///     is stored on the component and is LOCAL, rotated into world by that
-///     Transform (see LightingSystem::WorldSpotDirection).
+///   - SpotLight         — requires a Transform, which carries both its position
+///     and its aim: the cone shines down the Transform's local -Y, so a spot is
+///     aimed by turning it (see kSpotLocalForward and SpotWorldDirection).
 
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -127,13 +127,13 @@ struct PointLight
 
 /// @brief Cone-restricted point light (flashlight / stage spotlight).
 ///
-/// Requires Transform for world position.
+/// Requires Transform, which supplies both the position and the aim: the cone
+/// shines down the entity's local -Y, so the transform gizmo is what points it.
 /// Intensity falls off with distance (same attenuation as PointLight) and
 /// is smoothly masked outside the cone between innerAngle and outerAngle.
 ACOMP()
 struct SpotLight
 {
-    AFIELD() glm::vec3 direction { 0.f, -1.f, 0.f };       ///< Aim in LOCAL space; the Transform rotates it into world.
     AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f }; ///< Linear-RGB colour.
     AFIELD() float intensity = 1.f;                        ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius = 10.f;                   ///< Maximum influence range in world units; never negative.
@@ -182,5 +182,27 @@ struct SpotLight
     AFIELD(radioListen = {source = castsShadows, value = true, behavior = grey})
     bool shadowAlwaysOn = false;
 };
+
+/// @brief The local axis a spot light shines down.
+///
+/// A convention, and the value of it matters far less than there being one
+/// place that says it. -Y because that is already the forward of the wireframe
+/// shapes a light is drawn as, so the cone in the viewport and the beam in the
+/// shader are aimed by one number rather than by two that agree by hand.
+inline constexpr glm::vec3 kSpotLocalForward{0.f, -1.f, 0.f};
+
+/// @brief A spot light's aim in world space: kSpotLocalForward carried through
+/// the entity's propagated world matrix, normalized.
+///
+/// A direction is a vector rather than a normal, so the upper-left 3x3 is the
+/// right transform — no inverse-transpose. Normalizing afterwards absorbs any
+/// scale, and a collapsed matrix falls back to straight down instead of putting
+/// a NaN in the GPU light buffer.
+[[nodiscard]] inline glm::vec3 SpotWorldDirection(const glm::mat4 &worldMatrix)
+{
+    const glm::vec3 aimed    = glm::mat3(worldMatrix) * kSpotLocalForward;
+    const float     lengthSq = glm::dot(aimed, aimed);
+    return lengthSq > 0.f ? aimed / glm::sqrt(lengthSq) : kSpotLocalForward;
+}
 
 } // namespace Assisi::Runtime

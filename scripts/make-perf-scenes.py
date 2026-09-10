@@ -187,11 +187,12 @@ def point_light_entity(name, position, color, radius, intensity):
 
 
 def spot_light_entity(name, position, color, radius, intensity):
+    # No aim of its own: a spot shines down its Transform's local -Y, and these
+    # are placed unrotated, so every one of them points straight at the floor.
     return {
         "components": {
             "SpotLight": {
                 "color": [round6(v) for v in color],
-                "direction": [0.0, -1.0, 0.0],
                 "innerAngle": 18.0,
                 "outerAngle": 32.0,
                 "intensity": intensity,

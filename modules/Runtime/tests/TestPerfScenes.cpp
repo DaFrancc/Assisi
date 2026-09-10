@@ -28,6 +28,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -264,6 +265,47 @@ TEST_CASE("Lights.alvl still carries the light counts it is quoted for")
     CHECK(stats.pointLights == 270);
     CHECK(stats.spotLights == 29);
     CHECK(stats.directionalLights == 1);
+}
+
+// The level's spot lights are a ring, every one of them aimed inward and down at
+// the middle of it. That is what the scene is *for* — a lit floor to judge a
+// crowd of local lights against — and it is a property of each light's rotation
+// alone, so a light turned wrong shows up here rather than in a screenshot
+// nobody takes.
+//
+// The tolerance is the level's own: the ring is authored to two decimal places,
+// so a light's aim agrees with the exact inward one to about a hundredth of a
+// radian and no closer. Anything actually mis-aimed misses by far more than that.
+TEST_CASE("Lights.alvl's spot ring still aims into the middle")
+{
+    ECS::Scene scene;
+    REQUIRE(SceneSerializer::LoadFromDisk(scene, LevelPath("Lights")).has_value());
+    (void)Runtime::PropagateTransforms(scene, 0u);
+
+    int32_t checked = 0;
+    for (auto [entity, transform, light] : scene.Query<Runtime::Transform, Runtime::SpotLight>())
+    {
+        (void)entity;
+        (void)light;
+        const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+        const glm::vec3 aim      = Runtime::SpotWorldDirection(transform.worldMatrix);
+
+        // Down, and by much more than it leans: the ring lights a floor.
+        CHECK(aim.y < -0.9f);
+
+        // And leaning toward the axis of the ring rather than away from it. The
+        // horizontal part of the aim is compared with the horizontal part of the
+        // way back to that axis, which is what "inward" means for a light that
+        // could be anywhere on the ring.
+        const glm::vec2 outward{position.x, position.z};
+        REQUIRE(glm::length(outward) > 1.f); // on the ring, not at its centre
+        const glm::vec2 lean{aim.x, aim.z};
+        REQUIRE(glm::length(lean) > 0.01f);
+        CHECK(glm::dot(glm::normalize(lean), glm::normalize(-outward)) > 0.999f);
+
+        ++checked;
+    }
+    CHECK(checked == 29);
 }
 
 #else // !ASSISI_SOURCE_ASSET_ROOT

@@ -50,11 +50,6 @@ void LightingSystem::Resize(nvrhi::ICommandList *commandList, int32_t width, int
     _grid.BuildClusters(commandList, width, height, nearZ, farZ, glm::inverse(projection));
 }
 
-glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection)
-{
-    return SafeDirection(glm::mat3(worldMatrix) * localDirection);
-}
-
 glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
                                         const Render::SkySettings *atmosphere)
 {
@@ -122,11 +117,9 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
     // a parented light's local position is relative to its parent. For a root,
     // worldMatrix[3] equals position.
     //
-    // A spot light's `direction` is LOCAL and is rotated into world space by the
-    // same matrix, so a headlight or a held torch aims where its parent faces — and
-    // an unparented light is aimed by its own rotation. A direction is a vector, not
-    // a normal, so the plain upper-left 3x3 is the correct transform (no
-    // inverse-transpose); SafeDirection renormalises, absorbing any scale.
+    // A spot light's aim comes off the same matrix — it shines down its own local
+    // -Y — so a headlight or a held torch points where its parent faces, and an
+    // unparented light points where it was turned. See SpotWorldDirection.
     //
     // One scope over all three queries: same CPU-side staging-array rebuild, and the
     // per-type split is already in the counters below.
@@ -163,7 +156,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
             const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
-            const glm::vec3 direction = WorldSpotDirection(transform.worldMatrix, light.direction);
+            const glm::vec3 direction = SpotWorldDirection(transform.worldMatrix);
             _spotLights.push_back({
                     .positionRadius = {position, light.radius},
                     .directionInner = {direction, innerCos},
