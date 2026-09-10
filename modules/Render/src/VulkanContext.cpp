@@ -1049,11 +1049,11 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     return frame;
 }
 
-void VulkanContext::BeginPassTimer(const char *name)
+bool VulkanContext::BeginPassTimer(const char *name)
 {
     if (!_passTimingActive || _commandList == nullptr)
     {
-        return;
+        return false;
     }
 
     const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
@@ -1062,10 +1062,15 @@ void VulkanContext::BeginPassTimer(const char *name)
     if (_openPassTimer != kMaxTimedPasses)
     {
         // Nesting would time a range containing another render-pass break, so
-        // the inner reading would be of the break rather than the work.
-        Core::Log::Warn("VulkanContext: pass timer '{}' opened inside '{}'; ignoring the inner one.", name,
-                        timers.names[_openPassTimer]);
-        return;
+        // the inner reading would be of the break rather than the work. Said
+        // once: a nesting is a fact about the code and recurs every frame.
+        if (!_passNestingWarned)
+        {
+            Core::Log::Warn("VulkanContext: pass timer '{}' opened inside '{}'; ignoring the inner one.", name,
+                            timers.names[_openPassTimer]);
+            _passNestingWarned = true;
+        }
+        return false;
     }
     if (timers.used >= kMaxTimedPasses)
     {
@@ -1075,12 +1080,13 @@ void VulkanContext::BeginPassTimer(const char *name)
                             kMaxTimedPasses);
             _passCapacityWarned = true;
         }
-        return;
+        return false;
     }
 
     _openPassTimer = timers.used;
     timers.names[timers.used] = name;
     _commandList->beginTimerQuery(timers.queries[timers.used]);
+    return true;
 }
 
 void VulkanContext::EndPassTimer()

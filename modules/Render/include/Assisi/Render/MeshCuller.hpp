@@ -16,22 +16,22 @@
 ///     uploads the tables, dispatches the cull, and exposes the output
 ///     instance/indirect/count buffers for `MeshPass::SubmitIndirect`.
 ///
-/// F1 deliberately does frustum-only culling, LOD0 only, and one command per
-/// surviving submesh (no cross-object instance coalescing). The CPU extract/sort
-/// path (stages A5–E) stays behind a runtime toggle as the pixel-exact reference
-/// to validate this against. GPU instance coalescing, screen-size LOD selection,
-/// and a dirty-tracked ECS→GPU object mirror (so the per-frame CPU table build
-/// disappears too) are stage F2.
+/// The cull is frustum-only (no occlusion). Each surviving object picks its LOD
+/// level from its on-screen size — the CPU path's measurement, thresholded
+/// plainly, since there is no per-object memory here to hold a dead band with —
+/// unless the CPU named one for it. The CPU extract/sort path stays behind a
+/// runtime toggle as the reference to validate this against.
 
 #include <array>
 #include <cstdint>
-#include <functional>
 #include <span>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ComputeShader.hpp>
@@ -43,7 +43,15 @@ class MeshBuffer;
 class Material;
 
 // ---- GPU input structs (std430) — must match mesh_cull.comp's Object/MeshDesc/
-// SubMesh. All vec3 data rides in vec4 for std430 alignment. -------------------
+// Lod/SubMesh. All vec3 data rides in vec4 for std430 alignment. ---------------
+
+/// @brief GpuObject::lodLevel for an object whose level the cull shader measures
+/// rather than being told. Must match mesh_cull.comp's MEASURE_LOD.
+inline constexpr uint32_t kMeasureLod = 0xFFFFFFFFu;
+
+/// @brief Levels the cull pass tallies survivors at; deeper chains fold into the
+/// last. Must match mesh_cull.comp's LOD_BUCKETS.
+inline constexpr uint32_t kCullLodBuckets = 8;
 
 /// @brief One scene object: an entity's placed mesh. `model` is its world
 /// matrix; `meshDescIndex` selects its geometry; the material slice
@@ -54,23 +62,41 @@ struct GpuObject
     uint32_t meshDescIndex = 0;
     uint32_t materialBase  = 0;  ///< Into CullTables::objectMaterials.
     uint32_t materialCount = 0;  ///< == the mesh's material-slot count.
-    uint32_t _pad0         = 0;
+    /// The level the CPU named, already clamped to the mesh's chain, or
+    /// kMeasureLod for the shader to pick from the object's size on screen.
+    uint32_t lodLevel      = 0;
 };
 static_assert(sizeof(GpuObject) == 80, "GpuObject must match mesh_cull.comp's std430 Object.");
 
-/// @brief One mesh's geometry record: arena base offsets, its LOD0 submesh range
-/// (into CullTables::submeshes), and local-space bounds for culling.
+/// @brief One mesh's geometry record: arena base offsets, its LOD chain (into
+/// CullTables::lods), and local-space bounds for culling.
+///
+/// The bounds are the whole mesh's at every level. Selection measures them, and
+/// a level whose pick changed the bounds it was picked from would oscillate.
 struct GpuMeshDesc
 {
     glm::vec4 sphere{0.f};  ///< xyz = local center, w = radius.
     glm::vec4 aabbMin{0.f}; ///< xyz = local AABB min.
     glm::vec4 aabbMax{0.f}; ///< xyz = local AABB max.
-    uint32_t vertexBase   = 0;
-    uint32_t indexBase    = 0;
-    uint32_t firstSubmesh = 0;  ///< Into CullTables::submeshes (LOD0 first submesh).
-    uint32_t submeshCount = 0;  ///< LOD0 submesh count.
+    uint32_t vertexBase = 0;
+    uint32_t indexBase  = 0;
+    uint32_t firstLod   = 0; ///< Into CullTables::lods; LOD0 first.
+    uint32_t lodCount   = 0; ///< At least 1.
 };
 static_assert(sizeof(GpuMeshDesc) == 64, "GpuMeshDesc must match mesh_cull.comp's std430 MeshDesc.");
+
+/// @brief One level of a mesh's chain: its submesh run and the screen size it
+/// holds down to.
+struct GpuLod
+{
+    uint32_t firstSubmesh = 0; ///< Into CullTables::submeshes (== the global batch index).
+    uint32_t submeshCount = 0;
+    /// Resolved on the CPU, the default standing in where nothing was authored,
+    /// so the shader compares against a number and nothing else.
+    float screenSizeThreshold = 0.f;
+    uint32_t _pad0 = 0;
+};
+static_assert(sizeof(GpuLod) == 16, "GpuLod must match mesh_cull.comp's std430 Lod.");
 
 /// @brief One submesh: a mesh-local index range and the material slot it draws.
 struct GpuSubMesh
@@ -136,6 +162,8 @@ struct CullTables
 {
     std::vector<GpuObject>   objects;
     std::vector<GpuMeshDesc> meshDescs;
+    std::vector<GpuLod>      lods;
+    /// Every level's submeshes; each is one batch.
     std::vector<GpuSubMesh>  submeshes;
     std::vector<uint32_t>    objectMaterials;
     /// The draw-command templates, filled by Finalize: one per (batch, live
@@ -143,10 +171,12 @@ struct CullTables
     /// MeshPipeline order, so a block draws in one multi-draw. The indirect buffer
     /// is uploaded from this each frame; the cull pass grows each instanceCount.
     std::vector<GpuDrawArgs> batchTemplates;
-    /// Sum of every object's LOD0 submesh count — the pre-cull upper bound on
-    /// instance records, so it sizes the instance buffer. Each (object, submesh)
-    /// pair reserves a slot in exactly one pipeline block, so the blocks' reserved
-    /// regions together never exceed this.
+    /// Instance slots reserved across every object — the pre-cull upper bound on
+    /// instance records, so it sizes the instance buffer. An object reserves a slot
+    /// for each submesh of every level it could land on: its named level, or the
+    /// whole chain when the shader measures it. Each such (object, submesh) pair
+    /// reserves in exactly one pipeline block, so the blocks' reserved regions
+    /// together never exceed this.
     uint32_t drawCapacity = 0;
     /// Bit p set when some gathered material draws through MeshPipeline p. A scene
     /// that places only ordinary opaque materials lights one bit and pays for one
@@ -199,12 +229,9 @@ struct CullTables
 };
 
 /// @brief A mesh's geometry as the culler needs it — local bounds, arena base
-/// offsets, and the submeshes of one LOD level. The POD the descriptor table is
-/// packed from, so the packing core (AddInstanceRaw) is device-free and
+/// offsets, its submeshes, and the LOD chain over them. The POD the descriptor
+/// table is packed from, so the packing core (AddInstanceRaw) is device-free and
 /// unit-testable.
-///
-/// The bounds are the whole mesh's at every level. Selecting a level must never
-/// change the bounds selection reads, or the pick oscillates.
 struct MeshGeometry
 {
     glm::vec4 sphere{0.f};  ///< xyz = local center, w = radius.
@@ -212,7 +239,10 @@ struct MeshGeometry
     glm::vec4 aabbMax{0.f}; ///< xyz = local AABB max.
     uint32_t vertexBase = 0;
     uint32_t indexBase  = 0;
-    std::span<const GpuSubMesh> submeshes; ///< One level's submeshes, in draw order.
+    std::span<const GpuSubMesh> submeshes; ///< The mesh's submeshes, in mesh order.
+    /// Ranges into @ref submeshes, LOD0 first. Empty is one level spanning every
+    /// submesh — what a factory primitive looks like.
+    std::span<const Geometry::LodRange> lods;
 };
 
 /// @brief Accumulates a frame's @ref CullTables from per-instance inputs, deduping
@@ -225,67 +255,53 @@ public:
     /// @brief Drops all accumulated tables and the mesh dedup map for a new frame.
     void Reset();
 
-    /// @brief Packing core (no device types). Interns @p meshKey's @p geometry into
-    /// the descriptor table on first sight (reusing it for later instances of the
-    /// same key at the same @p level), then appends one object at @p model whose
+    /// @brief Packing core (no device types). Interns @p meshKey's @p geometry —
+    /// its whole chain — into the descriptor table on first sight, reusing it for
+    /// later instances of the same key, then appends one object at @p model whose
     /// material slots are @p materialIds (element i = slot i's Material::Id packed
     /// with its pipeline by EncodeCullMaterial, or kNoMaterial when unresolved →
     /// that submesh is skipped by the cull shader). No-op if @p geometry has no
     /// submeshes. @p meshKey is any stable per-mesh identity.
     ///
-    /// @p level is part of that identity, not a lookup into anything: a mesh
-    /// drawn at two levels in one frame is two geometries, and deduping on the
-    /// key alone would draw the second at the first's level.
+    /// @p level is the level the object draws at, clamped to the end of the
+    /// chain so one level named for a whole frame serves chains of every depth,
+    /// or kMeasureLod for the shader to pick. A chain of one level is named onto
+    /// it whatever was asked: there is nothing to measure.
     void AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
-                        std::span<const uint32_t> materialIds, uint32_t level = 0);
+                        std::span<const uint32_t> materialIds, uint32_t level = kMeasureLod);
 
     /// @brief Adds one object drawing @p mesh at @p model, resolving each of the
     /// mesh's material slots from @p slotMaterials (element i = slot i's Material,
-    /// or null/short = unresolved → skipped). Extracts @p mesh's level-@p level
-    /// geometry and its materials' ids and delegates to AddInstanceRaw. No-op if
-    /// @p mesh is null or that level has no submeshes.
-    ///
-    /// @p level clamps to the end of @p mesh's chain, so one level named for a
-    /// whole frame serves chains of every depth. The cull pass selects nothing of
-    /// its own: this path draws whatever level it is handed.
+    /// or null/short = unresolved → skipped). Extracts @p mesh's geometry and its
+    /// materials' ids and delegates to AddInstanceRaw, @p level included. No-op if
+    /// @p mesh is null or has no submeshes.
     void AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
-                     std::span<const Material *const> slotMaterials, uint32_t level = 0);
+                     std::span<const Material *const> slotMaterials, uint32_t level = kMeasureLod);
 
     /// @brief Builds the draw-command templates from the gathered tables. Must be
     /// called once after all AddInstance* calls and before the tables are uploaded:
     /// each (distinct (mesh, submesh), pipeline) becomes one template with
     /// instanceCount 0 and a reserved contiguous instance region, so the cull pass
-    /// can atomically pack instances into it. The regions are sized to what each
-    /// one will actually hold rather than to the mesh's whole object count, so a
-    /// scene with one cutout material does not reserve a second instance buffer's
-    /// worth of slots that nothing writes.
+    /// can atomically pack instances into it.
+    ///
+    /// A region holds a slot for every object that could land in it: those named
+    /// onto its level, and every measured object of its mesh, since which level
+    /// those land on is only known once the pass has run. The regions are sized to
+    /// that rather than to the mesh's whole object count at every level, so a
+    /// scene with one cutout material, or a forced level, reserves nothing that
+    /// nothing writes.
     void Finalize();
 
     [[nodiscard]] const CullTables &Tables() const { return _tables; }
 
 private:
-    /// One mesh at one LOD level: what a descriptor in the table describes.
-    struct MeshLevelKey
-    {
-        const void *mesh = nullptr;
-        uint32_t level = 0;
-
-        bool operator==(const MeshLevelKey &other) const = default;
-    };
-
-    struct MeshLevelHash
-    {
-        std::size_t operator()(const MeshLevelKey &key) const
-        {
-            // The level is spread by an odd constant before it is mixed in;
-            // xoring a small integer straight onto a pointer hash would put a
-            // mesh's level 1 where a neighbouring mesh's level 0 already sits.
-            return std::hash<const void *>{}(key.mesh) ^ (static_cast<std::size_t>(key.level) * 0x9e3779b9u);
-        }
-    };
+    /// @brief The levels @p obj could draw at: its own, or its mesh's whole chain
+    ///        when the shader measures it. As [first, first + count) into
+    ///        _tables.lods.
+    [[nodiscard]] std::pair<uint32_t, uint32_t> ReachableLods(const GpuObject &obj) const;
 
     CullTables _tables;
-    std::unordered_map<MeshLevelKey, uint32_t, MeshLevelHash> _meshIndex;
+    std::unordered_map<const void *, uint32_t> _meshIndex;
     // Instance slots each command template needs, parallel to
     // _tables.batchTemplates. Reused scratch, filled by Finalize.
     std::vector<uint32_t> _batchReserve;
@@ -294,6 +310,18 @@ private:
     // the extracted submeshes and material ids fed to AddInstanceRaw.
     std::vector<GpuSubMesh> _submeshScratch;
     std::vector<uint32_t>   _materialScratch;
+};
+
+/// @brief The camera the cull pass tests and measures against, for one frame.
+struct CullView
+{
+    std::array<glm::vec4, 6> frustumPlanes{}; ///< Inward normals, normalised.
+    glm::vec3 cameraPosition{0.f};
+    /// Tangent of half the vertical field of view. Zero measures nothing, and
+    /// a measured object then draws at LOD0.
+    float tanHalfFovY = 0.f;
+    /// Multiplies the measured size before it meets the thresholds.
+    float lodBias = 1.f;
 };
 
 /// @brief Owns the GPU buffers + compute pipeline for the mesh cull pass and runs
@@ -308,13 +336,13 @@ public:
     /// @return false if the compute shader failed to build.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device);
 
-    /// @brief Uploads @p tables, clears the draw counter, and dispatches the cull
-    /// (one thread per object). @p frustumCull=false skips the frustum test so
-    /// every object survives — the GPU-path analogue of the CPU cull toggle.
-    /// No-op when @p tables is empty. After this call the output buffers hold the
-    /// frame's draws for MeshPass::SubmitIndirect.
-    void Cull(nvrhi::ICommandList *commandList, const std::array<glm::vec4, 6> &frustumPlanes,
-              const CullTables &tables, bool frustumCull);
+    /// @brief Uploads @p tables and @p view, clears the draw counter, and
+    /// dispatches the cull (one thread per object). @p frustumCull=false skips the
+    /// frustum test so every object survives — the GPU-path analogue of the CPU
+    /// cull toggle; measured objects still pick their level. No-op when @p tables
+    /// is empty. After this call the output buffers hold the frame's draws for
+    /// MeshPass::SubmitIndirect.
+    void Cull(nvrhi::ICommandList *commandList, const CullView &view, const CullTables &tables, bool frustumCull);
 
     /// @brief The instance-data buffer the cull pass wrote (UAV) and the mesh pass
     /// reads by gl_InstanceIndex (SRV). Handle stable unless a growth swapped it.
@@ -338,8 +366,21 @@ public:
     /// surviving instance), read back alongside the instance count — the coalesced
     /// draw count.
     [[nodiscard]] uint32_t SurvivorBatchCount() const;
-    /// @brief The candidate instance total for the last Cull (== tables.drawCapacity),
-    /// the pre-cull upper bound the survivor count is measured against.
+    /// @brief Objects the frustum test rejected, read back alongside the
+    /// instance count. Zero until the readback ring is primed.
+    [[nodiscard]] uint32_t CulledObjectCount() const { return _lastCulledObjects; }
+    /// @brief Surviving objects at each LOD level, LOD0 first, deeper levels
+    /// folded into the last bucket — read back alongside the instance count.
+    /// Counted per object that drew anything, not per submesh. All zero until the
+    /// readback ring is primed: which level anything landed on is only known
+    /// once the pass has run.
+    [[nodiscard]] const std::array<uint32_t, kCullLodBuckets> &SurvivorLodCounts() const
+    {
+        return _lastSurvivorLods;
+    }
+    /// @brief The reserved instance total for the last Cull (== tables.drawCapacity).
+    /// Above the number of (object, submesh) pairs once objects are measured,
+    /// since each reserves at every level it could land on.
     [[nodiscard]] uint32_t CandidateInstanceCount() const { return _lastMaxDraws; }
 
     [[nodiscard]] bool IsValid() const { return _cullShader.IsValid(); }
@@ -362,15 +403,22 @@ private:
     // Input SRV buffers (host-uploaded each Cull).
     Buffer _objectBuffer;
     Buffer _meshDescBuffer;
+    Buffer _lodBuffer;
     Buffer _submeshBuffer;
     Buffer _objectMaterialBuffer;
+
+    // The frame's CullView, as a constant buffer: it does not fit beside the
+    // counts in the push-constant block, which NVRHI caps at 128 bytes.
+    nvrhi::BufferHandle _viewConstants;
 
     // Output buffers. The instance buffer is a structured UAV (compute) + SRV
     // (mesh pass). The indirect buffer is a structured UAV that is also
     // drawIndirectArgs: uploaded with the CPU-built templates each frame, its
     // instanceCount grown atomically by the cull pass, then read as indirect args.
-    // The stats buffer (2 uints: survivor instances, live batches) is a UAV cleared
-    // and grown by the pass, read back for the overlay. All keepInitialState-seeded
+    // The stats buffer (survivor instances, live batches, culled objects, then
+    // survivors per LOD bucket) is a UAV cleared and grown by the pass, read back
+    // for the overlay.
+    // All keepInitialState-seeded
     // so NVRHI tracks + barriers UAV↔IndirectArgument (and UAV↔CopyDest on upload).
     Buffer _instanceBuffer;
     nvrhi::BufferHandle _indirectBuffer;
@@ -384,17 +432,19 @@ private:
     // Indirect commands per pipeline block of the last Cull, in pipeline order.
     std::array<uint32_t, kMeshPipelineCount> _lastCommandCounts{};
 
-    // GPU→CPU readback of the survivor stats {instances, batches}, for the overlay.
-    // A small ring of CPU-readable 2-uint buffers: each frame copies _statsBuffer
-    // into the current slot and maps the slot from kReadbackFrames ago (safely
-    // retired) — a few frames stale but never stalls the GPU. Ring depth ≥ frames
-    // the swapchain keeps in flight.
+    // GPU→CPU readback of the survivor stats, for the overlay. A small ring of
+    // CPU-readable copies: each frame copies _statsBuffer into the current slot
+    // and maps the slot from kReadbackFrames ago (safely retired) — a few frames
+    // stale but never stalls the GPU. Ring depth ≥ frames the swapchain keeps in
+    // flight.
     static constexpr uint32_t kReadbackFrames = 3;
     nvrhi::BufferHandle _statsReadback[kReadbackFrames];
     uint32_t _readbackCursor        = 0;
     uint32_t _readbackPrimed        = 0;                  // writes so far; < kReadbackFrames = not yet safe to read
     uint32_t _lastSurvivorInstances = 0;
     uint32_t _lastSurvivorBatches   = 0;
+    uint32_t _lastCulledObjects     = 0;
+    std::array<uint32_t, kCullLodBuckets> _lastSurvivorLods{};
 };
 
 } // namespace Assisi::Render

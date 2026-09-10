@@ -134,28 +134,30 @@ void EmitShadowCasters(const ShadowCasterSource &source, std::uint32_t viewMask,
     }
 }
 
-// GPU-driven cull path (stage F1). Instead of culling + emitting + sorting draws
-// on the CPU, gather every mesh entity into the culler's host tables (deduping
-// meshes into a descriptor table), let the compute pass frustum-cull and build the
-// indirect commands + per-instance records on the GPU, then issue one
-// drawIndexedIndirectCount. The CPU still iterates the ECS to build the tables
-// (the cull *math* is what moved to the GPU); a dirty-tracked ECS→GPU mirror that
-// removes this gather too is stage F2. @p frustum's planes drive the GPU test.
+// GPU-driven cull path. Instead of culling + emitting + sorting draws on the CPU,
+// gather every mesh entity into the culler's host tables (deduping meshes into a
+// descriptor table), let the compute pass frustum-cull, select each survivor's
+// LOD level and build the indirect commands + per-instance records on the GPU,
+// then issue one drawIndexedIndirect. The CPU still iterates the ECS to build the
+// tables (the cull and selection *math* is what moved to the GPU). @p frustum's
+// planes drive the GPU test.
 //
-// A named level is the one thing this path takes from LOD selection — a viewport
-// force, or the pin on one instance. Naming is not measuring, so the CPU can hand
-// each instance its level here without the per-instance measurement the compute
-// pass has no way to reach. Measuring is its own stage; until it lands this
-// path's own answer is LOD0.
+// The CPU names a level wherever one is named — a viewport force, the pin on one
+// instance, selection off — and a frame with no view to measure in is LOD0, as it
+// is on the CPU path. Everything else the pass measures.
 DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frustum &frustum)
 {
     Assisi::ECS::Scene &scene = params.scene;
     Assisi::Render::CullTableBuilder &builder = *params.cullBuilder;
+    const LodSelector *lodSelector = params.lodSelector;
 
     DrawStats stats;
 
-    // The ECS walk stage F2 exists to delete; its own profile slice is the
-    // before/after measurement for the dirty-tracked mirror.
+    // No selector at all is LOD0, what the path drew before selection existed.
+    const bool canMeasure = lodSelector != nullptr && lodSelector->View().tanHalfFovY > 0.f;
+
+    // The ECS walk the dirty-tracked object mirror exists to delete; its own
+    // profile slice is the before/after measurement for it.
     const Assisi::Render::MeshBuffer *anyMesh = nullptr;
     {
         ASSISI_PROFILE_SCOPE("cull-gather");
@@ -167,15 +169,15 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
             {
                 continue;
             }
-            anyMesh = mesh; // any mesh identifies the shared arena's vertex/index buffers (single arena, F1)
-            // Nothing named for this instance is LOD0: measuring is the stage
-            // this path is still waiting on, not something to guess at here.
-            const int32_t named =
-                params.lodSelector != nullptr ? params.lodSelector->NamedLevelFor(entity) : 0;
+            anyMesh = mesh; // any mesh identifies the shared arena's vertex/index buffers (single arena)
+            const int32_t named = lodSelector != nullptr ? lodSelector->NamedLevelFor(entity) : 0;
+            const uint32_t level = named >= 0     ? static_cast<uint32_t>(named)
+                                   : canMeasure ? Assisi::Render::kMeasureLod
+                                                : 0u;
             builder.AddInstance(mesh, transform.worldMatrix,
                                 std::span<const Assisi::Render::Material *const>(meshRenderer.materials.data(),
                                                                                  meshRenderer.materials.size()),
-                                static_cast<uint32_t>(std::max(named, 0)));
+                                level);
         }
     }
 
@@ -194,7 +196,14 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
         // Recording the compute dispatch, not running it — the cull's real cost is
         // GPU-side. A CPU spike here means buffer uploads, not culling.
         ASSISI_PROFILE_GPU_PASS(params.frame.commandList, "cull-dispatch");
-        params.culler->Cull(params.frame.commandList, frustum.Planes(), tables, params.frustumCulling);
+        Assisi::Render::CullView view{.frustumPlanes = frustum.Planes()};
+        if (lodSelector != nullptr)
+        {
+            view.cameraPosition = lodSelector->View().cameraPosition;
+            view.tanHalfFovY = lodSelector->View().tanHalfFovY;
+            view.lodBias = lodSelector->Settings().bias;
+        }
+        params.culler->Cull(params.frame.commandList, view, tables, params.frustumCulling);
     }
 
     Assisi::Render::MeshPass::IndirectDrawInputs inputs;
@@ -207,26 +216,30 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
         ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "submit-indirect");
+        const Assisi::Render::GpuPassTimerScope drawTimer{"draw-scene"};
         submitStats = params.meshPass.SubmitIndirect(params.frame, inputs);
     }
 
-    // Survivor tallies read back from the GPU (a few frames stale). F2a coalesces
-    // identical (mesh,submesh) instances into one instanced draw, so `batches` is
-    // the live batch count (falls well below drawnItems) — stage E's win, GPU-side.
-    // culledMeshes counts culled submesh-instances (candidates − survivors).
-    const uint32_t survivors = params.culler->SurvivorInstanceCount();
-    const uint32_t candidates = params.culler->CandidateInstanceCount();
-    stats.drawnItems = survivors;
-    stats.culledMeshes = candidates > survivors ? candidates - survivors : 0;
+    // Survivor tallies read back from the GPU (a few frames stale). Identical
+    // (mesh,submesh) instances coalesce into one instanced draw, so `batches` is
+    // the live batch count (falls well below drawnItems).
+    stats.drawnItems = params.culler->SurvivorInstanceCount();
+    stats.culledMeshes = params.culler->CulledObjectCount();
     stats.batches = params.culler->SurvivorBatchCount();
     stats.drawCalls = submitStats.drawCalls;
+    static_assert(Assisi::Render::kCullLodBuckets == kMaxReportedLods, "the GPU tally fills DrawStats::lodInstances");
+    std::ranges::copy(params.culler->SurvivorLodCounts(), stats.lodInstances.begin());
     return stats;
 }
 } // namespace
 
 DrawStats DrawScene(const DrawSceneParams &params)
 {
-    ASSISI_PROFILE_GPU_PASS(params.frame.commandList, "draw-scene");
+    // A label and a CPU scope, not a GPU timer: the GPU path times its cull
+    // dispatch and its draw separately, and pass timers cannot nest. Each path
+    // opens the `draw-scene` timer around its draw alone, which on the CPU path
+    // is everything this function records.
+    ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-scene");
 
     Assisi::ECS::Scene &scene = params.scene;
     const Assisi::Render::MeshPass &meshPass = params.meshPass;
@@ -350,6 +363,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
         ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-submit");
+        const Assisi::Render::GpuPassTimerScope drawTimer{"draw-scene"};
         submitStats = meshPass.Submit(params.frame, items);
     }
 

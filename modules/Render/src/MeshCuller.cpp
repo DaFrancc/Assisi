@@ -13,11 +13,10 @@ namespace Assisi::Render
 
 namespace
 {
-// mesh_cull.comp's push_constant block. 6 frustum planes + one uvec4 of counts.
-// std430: vec4 arrays and uvec4 are 16-byte aligned, so no manual padding.
+// mesh_cull.comp's push_constant block. std430: uvec4 is 16-byte aligned, so no
+// manual padding.
 struct CullPushConstants
 {
-    glm::vec4 planes[6];
     glm::uvec4 counts; // x = object count, y = cull enabled (0/1), zw unused
     /// Where each MeshPipeline's command block starts, indexed by the pipeline
     /// packed into a material entry. One lane per pipeline, which is why the enum
@@ -25,7 +24,22 @@ struct CullPushConstants
     glm::uvec4 pipelineBase;
 };
 static_assert(kMeshPipelineCount == 4, "pipelineBase is a uvec4, one lane per pipeline.");
-static_assert(sizeof(CullPushConstants) == 128, "CullPushConstants must match mesh_cull.comp's push_constant block.");
+static_assert(sizeof(CullPushConstants) == 32, "CullPushConstants must match mesh_cull.comp's push_constant block.");
+
+// mesh_cull.comp's CullViewConstants uniform block. std140: vec4 arrays have a
+// 16-byte stride and every member here is a vec4, so the layouts agree.
+struct CullViewConstants
+{
+    glm::vec4 planes[6];
+    glm::vec4 eye; // xyz = camera position, w = tan(fovY / 2)
+    glm::vec4 lod; // x = bias, yzw unused
+};
+static_assert(sizeof(CullViewConstants) == 128, "CullViewConstants must match mesh_cull.comp's uniform block.");
+
+// The stats buffer: survivor instances, live batches, culled objects, then
+// survivors per LOD bucket. Must match mesh_cull.comp's Stats block.
+constexpr uint32_t kStatsLodWord = 3u;
+constexpr uint32_t kStatsWords   = kStatsLodWord + kCullLodBuckets;
 
 // The DrawArgs the cull shader writes == VkDrawIndexedIndirectCommand (5 packed
 // 32-bit fields), so the output indirect buffer's element stride is 20.
@@ -46,6 +60,7 @@ constexpr uint32_t kCullWorkgroupSize = 64u;
 // (a growth swaps a handle and forces a binding-set rebuild). Grown geometrically.
 constexpr uint32_t kInitialObjects   = 4096u;
 constexpr uint32_t kInitialMeshes    = 1024u;
+constexpr uint32_t kInitialLods      = 4096u;
 constexpr uint32_t kInitialSubmeshes = 8192u;
 constexpr uint32_t kInitialMaterials = 8192u;
 constexpr uint32_t kInitialDraws     = 8192u;
@@ -57,6 +72,7 @@ void CullTables::Clear()
 {
     objects.clear();
     meshDescs.clear();
+    lods.clear();
     submeshes.clear();
     objectMaterials.clear();
     batchTemplates.clear();
@@ -74,40 +90,61 @@ void CullTableBuilder::Reset()
 void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
                                       std::span<const uint32_t> materialIds, uint32_t level)
 {
-    const uint32_t submeshCount = static_cast<uint32_t>(geometry.submeshes.size());
-    if (submeshCount == 0)
+    if (geometry.submeshes.empty())
     {
-        return; // no geometry at this level — nothing to draw
+        return; // no geometry — nothing to draw
     }
 
-    // Intern the mesh's descriptor on first sight; later instances of it at the
-    // same level reuse the index.
+    // Intern the mesh's descriptor on first sight; later instances of it reuse
+    // the index.
     uint32_t meshDescIndex;
-    const MeshLevelKey key{.mesh = meshKey, .level = level};
-    if (const auto it = _meshIndex.find(key); it != _meshIndex.end())
+    if (const auto it = _meshIndex.find(meshKey); it != _meshIndex.end())
     {
         meshDescIndex = it->second;
     }
     else
     {
         GpuMeshDesc desc;
-        desc.sphere       = geometry.sphere;
-        desc.aabbMin      = geometry.aabbMin;
-        desc.aabbMax      = geometry.aabbMax;
-        desc.vertexBase   = geometry.vertexBase;
-        desc.indexBase    = geometry.indexBase;
-        desc.firstSubmesh = static_cast<uint32_t>(_tables.submeshes.size());
-        desc.submeshCount = submeshCount;
-        _tables.submeshes.insert(_tables.submeshes.end(), geometry.submeshes.begin(), geometry.submeshes.end());
+        desc.sphere     = geometry.sphere;
+        desc.aabbMin    = geometry.aabbMin;
+        desc.aabbMax    = geometry.aabbMax;
+        desc.vertexBase = geometry.vertexBase;
+        desc.indexBase  = geometry.indexBase;
+        desc.firstLod   = static_cast<uint32_t>(_tables.lods.size());
+
+        // Each level's run is copied out on its own, so a level is always one
+        // contiguous run of batches whatever order or overlap the source ranges
+        // have.
+        const Geometry::LodRange whole{0, static_cast<uint32_t>(geometry.submeshes.size())};
+        const std::span<const Geometry::LodRange> chain =
+            geometry.lods.empty() ? std::span<const Geometry::LodRange>(&whole, 1u) : geometry.lods;
+        for (uint32_t chainLevel = 0; chainLevel < chain.size(); ++chainLevel)
+        {
+            const Geometry::LodRange &range = chain[chainLevel];
+            const uint32_t first = std::min<uint32_t>(range.FirstSubMesh, static_cast<uint32_t>(geometry.submeshes.size()));
+            const uint32_t count = std::min<uint32_t>(range.SubMeshCount,
+                                                      static_cast<uint32_t>(geometry.submeshes.size()) - first);
+            _tables.lods.push_back(GpuLod{.firstSubmesh = static_cast<uint32_t>(_tables.submeshes.size()),
+                                          .submeshCount = count,
+                                          .screenSizeThreshold = Geometry::LodScreenSizeThreshold(range, chainLevel)});
+            _tables.submeshes.insert(_tables.submeshes.end(), geometry.submeshes.begin() + first,
+                                     geometry.submeshes.begin() + first + count);
+        }
+        desc.lodCount = static_cast<uint32_t>(chain.size());
 
         meshDescIndex = static_cast<uint32_t>(_tables.meshDescs.size());
         _tables.meshDescs.push_back(desc);
-        _meshIndex.emplace(key, meshDescIndex);
+        _meshIndex.emplace(meshKey, meshDescIndex);
     }
 
+    const GpuMeshDesc &desc = _tables.meshDescs[meshDescIndex];
     GpuObject obj;
     obj.model         = model;
     obj.meshDescIndex = meshDescIndex;
+    // A single level is named rather than measured, so a mesh without a chain
+    // costs the shader no measurement and reserves exactly one level.
+    obj.lodLevel      = level == kMeasureLod && desc.lodCount > 1 ? kMeasureLod
+                                                                  : std::min(level, desc.lodCount - 1u);
     obj.materialBase  = static_cast<uint32_t>(_tables.objectMaterials.size());
     // Mirror the CPU path exactly: a submesh's material is materialIds[slot],
     // skipped when the slot is out of range or unresolved (kNoMaterial). The slice
@@ -127,7 +164,18 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
     }
 
     _tables.objects.push_back(obj);
-    _tables.drawCapacity += submeshCount;
+    const auto [firstLod, lodCount] = ReachableLods(obj);
+    for (uint32_t lod = firstLod; lod < firstLod + lodCount; ++lod)
+    {
+        _tables.drawCapacity += _tables.lods[lod].submeshCount;
+    }
+}
+
+std::pair<uint32_t, uint32_t> CullTableBuilder::ReachableLods(const GpuObject &obj) const
+{
+    const GpuMeshDesc &desc = _tables.meshDescs[obj.meshDescIndex];
+    return obj.lodLevel == kMeasureLod ? std::pair{desc.firstLod, desc.lodCount}
+                                       : std::pair{desc.firstLod + obj.lodLevel, 1u};
 }
 
 void CullTableBuilder::Finalize()
@@ -142,25 +190,30 @@ void CullTableBuilder::Finalize()
 
     // Count what each region will actually hold. Reserving one slot per object in
     // every block instead would multiply the instance buffer by the number of live
-    // pipelines, most of it never written.
+    // pipelines, most of it never written. A measured object counts toward every
+    // level it could land on, and may write any one of them.
     _batchReserve.assign(_tables.batchTemplates.size(), 0u);
     for (const GpuObject &obj : _tables.objects)
     {
-        const GpuMeshDesc &desc = _tables.meshDescs[obj.meshDescIndex];
-        for (uint32_t s = 0; s < desc.submeshCount; ++s)
+        const auto [firstLod, lodCount] = ReachableLods(obj);
+        for (uint32_t lod = firstLod; lod < firstLod + lodCount; ++lod)
         {
-            const uint32_t g = desc.firstSubmesh + s;
-            const uint32_t slot = _tables.submeshes[g].materialSlot;
-            if (slot >= obj.materialCount)
+            const GpuLod &range = _tables.lods[lod];
+            for (uint32_t s = 0; s < range.submeshCount; ++s)
             {
-                continue; // out of range — the cull shader skips it, as the CPU path does
+                const uint32_t g = range.firstSubmesh + s;
+                const uint32_t slot = _tables.submeshes[g].materialSlot;
+                if (slot >= obj.materialCount)
+                {
+                    continue; // out of range — the cull shader skips it, as the CPU path does
+                }
+                const uint32_t packed = _tables.objectMaterials[obj.materialBase + slot];
+                if (packed == kNoMaterial)
+                {
+                    continue; // unresolved — drawn by no pipeline
+                }
+                ++_batchReserve[_tables.CommandBase(CullMaterialPipeline(packed)) + g];
             }
-            const uint32_t packed = _tables.objectMaterials[obj.materialBase + slot];
-            if (packed == kNoMaterial)
-            {
-                continue; // unresolved — drawn by no pipeline
-            }
-            ++_batchReserve[_tables.CommandBase(CullMaterialPipeline(packed)) + g];
         }
     }
 
@@ -175,18 +228,22 @@ void CullTableBuilder::Finalize()
         const uint32_t base = _tables.CommandBase(pipeline);
         for (const GpuMeshDesc &desc : _tables.meshDescs)
         {
-            for (uint32_t s = 0; s < desc.submeshCount; ++s)
+            for (uint32_t lod = desc.firstLod; lod < desc.firstLod + desc.lodCount; ++lod)
             {
-                const uint32_t g = desc.firstSubmesh + s;
-                const uint32_t command = base + g;
-                const GpuSubMesh &sm = _tables.submeshes[g];
-                GpuDrawArgs &t  = _tables.batchTemplates[command];
-                t.indexCount    = sm.indexCount;
-                t.instanceCount = 0u; // grown atomically by the cull pass
-                t.firstIndex    = desc.indexBase + sm.indexOffset;
-                t.vertexOffset  = static_cast<int32_t>(desc.vertexBase);
-                t.firstInstance = instanceOffset; // this command's reserved instance base
-                instanceOffset += _batchReserve[command];
+                const GpuLod &range = _tables.lods[lod];
+                for (uint32_t s = 0; s < range.submeshCount; ++s)
+                {
+                    const uint32_t g = range.firstSubmesh + s;
+                    const uint32_t command = base + g;
+                    const GpuSubMesh &sm = _tables.submeshes[g];
+                    GpuDrawArgs &t  = _tables.batchTemplates[command];
+                    t.indexCount    = sm.indexCount;
+                    t.instanceCount = 0u; // grown atomically by the cull pass
+                    t.firstIndex    = desc.indexBase + sm.indexOffset;
+                    t.vertexOffset  = static_cast<int32_t>(desc.vertexBase);
+                    t.firstInstance = instanceOffset; // this command's reserved instance base
+                    instanceOffset += _batchReserve[command];
+                }
             }
         }
     }
@@ -199,25 +256,14 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     {
         return;
     }
-    const std::vector<Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
-    const std::vector<Geometry::LodRange> &lods      = mesh->Lods();
-    // A level past the end of the chain is its last, and no table at all is the
-    // whole submesh list — what a factory primitive looks like.
-    const uint32_t selected = lods.empty() ? 0u : std::min<uint32_t>(level, static_cast<uint32_t>(lods.size()) - 1u);
-    const Geometry::LodRange lod =
-        !lods.empty() ? lods[selected] : Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
-    if (lod.SubMeshCount == 0)
-    {
-        return; // no geometry at this level — nothing to draw
-    }
-
-    // Extract the level's geometry + its resolved material ids into scratch, then
+    // Extract the mesh's submeshes + its resolved material ids into scratch, then
     // pack through the pure core (kNoMaterial for an out-of-range/null slot,
-    // matching the CPU path's `material == nullptr` skip).
+    // matching the CPU path's `material == nullptr` skip). A mesh already interned
+    // this frame reads neither, but the core decides that, and both are a short
+    // copy.
     _submeshScratch.clear();
-    for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
+    for (const Geometry::SubMesh &sm : mesh->SubMeshes())
     {
-        const Geometry::SubMesh &sm = subMeshes[lod.FirstSubMesh + i];
         _submeshScratch.push_back(GpuSubMesh{sm.IndexOffset, sm.IndexCount, sm.MaterialSlot, 0u});
     }
     _materialScratch.clear();
@@ -239,8 +285,9 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     geometry.vertexBase    = mesh->VertexBase();
     geometry.indexBase     = mesh->IndexBase();
     geometry.submeshes     = _submeshScratch;
+    geometry.lods          = mesh->Lods();
 
-    AddInstanceRaw(mesh, geometry, model, _materialScratch, selected);
+    AddInstanceRaw(mesh, geometry, model, _materialScratch, level);
 }
 
 // ---- MeshCuller (device) ---------------------------------------------------
@@ -255,6 +302,8 @@ bool MeshCuller::Initialize(nvrhi::IDevice *device)
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // meshDescs
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // submeshes
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3)); // objectMaterials
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lods
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));       // view
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0)); // outInstances
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1)); // outDraws
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2)); // stats
@@ -265,8 +314,22 @@ bool MeshCuller::Initialize(nvrhi::IDevice *device)
         return false;
     }
 
+    nvrhi::BufferDesc viewDesc;
+    viewDesc.byteSize         = sizeof(CullViewConstants);
+    viewDesc.isConstantBuffer = true;
+    viewDesc.debugName        = "MeshCuller::View";
+    viewDesc.initialState     = nvrhi::ResourceStates::ConstantBuffer;
+    viewDesc.keepInitialState = true;
+    _viewConstants            = _device->createBuffer(viewDesc);
+    if (_viewConstants == nullptr)
+    {
+        Core::Log::Error("MeshCuller: failed to create the view constant buffer.");
+        return false;
+    }
+
     EnsureInput(_objectBuffer, sizeof(GpuObject), kInitialObjects, "MeshCuller::Objects");
     EnsureInput(_meshDescBuffer, sizeof(GpuMeshDesc), kInitialMeshes, "MeshCuller::MeshDescs");
+    EnsureInput(_lodBuffer, sizeof(GpuLod), kInitialLods, "MeshCuller::Lods");
     EnsureInput(_submeshBuffer, sizeof(GpuSubMesh), kInitialSubmeshes, "MeshCuller::SubMeshes");
     EnsureInput(_objectMaterialBuffer, sizeof(uint32_t), kInitialMaterials, "MeshCuller::ObjectMaterials");
     EnsureInstanceCapacity(kInitialDraws);
@@ -307,12 +370,12 @@ void MeshCuller::EnsureIndirectCapacity(uint32_t neededCommands)
 {
     if (_statsBuffer == nullptr)
     {
-        // Two-uint stats {survivor instances, live batches}, cleared each frame and
-        // grown by the shader (UAV), copied to the readback ring for the overlay.
-        // keepInitialState seeds the tracked state to UnorderedAccess so NVRHI
-        // tracks the buffer and barriers it (UAV↔CopySource for the readback copy).
+        // The stats words, cleared each frame and grown by the shader (UAV), copied
+        // to the readback ring for the overlay. keepInitialState seeds the tracked
+        // state to UnorderedAccess so NVRHI tracks the buffer and barriers it
+        // (UAV↔CopySource for the readback copy).
         nvrhi::BufferDesc statsDesc;
-        statsDesc.byteSize          = 2u * sizeof(uint32_t);
+        statsDesc.byteSize          = kStatsWords * sizeof(uint32_t);
         statsDesc.structStride      = sizeof(uint32_t);
         statsDesc.canHaveUAVs       = true;
         statsDesc.initialState      = nvrhi::ResourceStates::UnorderedAccess;
@@ -321,13 +384,13 @@ void MeshCuller::EnsureIndirectCapacity(uint32_t neededCommands)
         _statsBuffer                = _device->createBuffer(statsDesc);
         _bindingSetDirty            = true;
 
-        // CPU-readable ring for the stats readback (overlay only). Fixed 8-byte
+        // CPU-readable ring for the stats readback (overlay only). Fixed-size
         // buffers, never grow; cpuAccess=Read makes them host-visible copy targets
         // that don't participate in state tracking.
         for (nvrhi::BufferHandle &readback : _statsReadback)
         {
             nvrhi::BufferDesc readbackDesc;
-            readbackDesc.byteSize  = 2u * sizeof(uint32_t);
+            readbackDesc.byteSize  = kStatsWords * sizeof(uint32_t);
             readbackDesc.cpuAccess = nvrhi::CpuAccessMode::Read;
             readbackDesc.debugName = "MeshCuller::StatsReadback";
             readback               = _device->createBuffer(readbackDesc);
@@ -364,6 +427,8 @@ void MeshCuller::RebuildBindingSet()
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _meshDescBuffer.NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _submeshBuffer.NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, _objectMaterialBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(4, _lodBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _viewConstants));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _instanceBuffer.NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, _indirectBuffer));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, _statsBuffer));
@@ -372,8 +437,8 @@ void MeshCuller::RebuildBindingSet()
     _bindingSetDirty = false;
 }
 
-void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::vec4, 6> &frustumPlanes,
-                      const CullTables &tables, bool frustumCull)
+void MeshCuller::Cull(nvrhi::ICommandList *commandList, const CullView &view, const CullTables &tables,
+                      bool frustumCull)
 {
     const uint32_t commandCount = tables.TotalCommandCount();
     if (!IsValid() || tables.Empty() || tables.batchTemplates.size() != commandCount)
@@ -390,6 +455,7 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     EnsureInput(_objectBuffer, sizeof(GpuObject), static_cast<uint32_t>(tables.objects.size()), "MeshCuller::Objects");
     EnsureInput(_meshDescBuffer, sizeof(GpuMeshDesc), static_cast<uint32_t>(tables.meshDescs.size()),
                 "MeshCuller::MeshDescs");
+    EnsureInput(_lodBuffer, sizeof(GpuLod), static_cast<uint32_t>(tables.lods.size()), "MeshCuller::Lods");
     EnsureInput(_submeshBuffer, sizeof(GpuSubMesh), std::max<uint32_t>(1u, batchCount), "MeshCuller::SubMeshes");
     EnsureInput(_objectMaterialBuffer, sizeof(uint32_t),
                 std::max<uint32_t>(1u, static_cast<uint32_t>(tables.objectMaterials.size())),
@@ -403,6 +469,7 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
 
     _objectBuffer.Upload(commandList, tables.objects.data(), static_cast<uint32_t>(tables.objects.size()));
     _meshDescBuffer.Upload(commandList, tables.meshDescs.data(), static_cast<uint32_t>(tables.meshDescs.size()));
+    _lodBuffer.Upload(commandList, tables.lods.data(), static_cast<uint32_t>(tables.lods.size()));
     _submeshBuffer.Upload(commandList, tables.submeshes.data(), batchCount);
     if (!tables.objectMaterials.empty())
     {
@@ -425,9 +492,17 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
             const uint32_t *stats  = static_cast<const uint32_t *>(mapped);
             _lastSurvivorInstances = stats[0];
             _lastSurvivorBatches   = stats[1];
+            _lastCulledObjects     = stats[2];
+            std::copy(stats + kStatsLodWord, stats + kStatsWords, _lastSurvivorLods.begin());
             _device->unmapBuffer(_statsReadback[_readbackCursor]);
         }
     }
+
+    CullViewConstants viewConstants;
+    std::copy(view.frustumPlanes.begin(), view.frustumPlanes.end(), viewConstants.planes);
+    viewConstants.eye = glm::vec4(view.cameraPosition, view.tanHalfFovY);
+    viewConstants.lod = glm::vec4(view.lodBias, 0.f, 0.f, 0.f);
+    commandList->writeBuffer(_viewConstants, &viewConstants, sizeof(viewConstants));
 
     // Reset the stats counters before the pass grows them.
     commandList->clearBufferUInt(_statsBuffer, 0u);
@@ -439,8 +514,7 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     }
 
     CullPushConstants pc;
-    std::copy(frustumPlanes.begin(), frustumPlanes.end(), pc.planes);
-    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u, 0u, 0u);
+    pc.counts =glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u, 0u, 0u);
     // Each lane is where that pipeline's command block starts, which is what an
     // instance adds to its batch index to reach its own command. A scene using only
     // the opaque pipeline leaves every base at 0 and behaves exactly as it did
@@ -455,7 +529,7 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     _cullShader.Dispatch(commandList, _cullBindingSet, groups, 1u, 1u, &pc, sizeof(pc));
 
     // Snapshot this frame's stats into the ring for a later frame to read back.
-    commandList->copyBuffer(_statsReadback[_readbackCursor], 0, _statsBuffer, 0, 2u * sizeof(uint32_t));
+    commandList->copyBuffer(_statsReadback[_readbackCursor], 0, _statsBuffer, 0, kStatsWords * sizeof(uint32_t));
     _readbackCursor = (_readbackCursor + 1u) % kReadbackFrames;
     if (_readbackPrimed < kReadbackFrames)
     {

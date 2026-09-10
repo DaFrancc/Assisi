@@ -304,7 +304,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     // Before the shadow halves, because they select from it too: a caster's
     // shadow is drawn from the level the camera sees it at, and all three passes
-    // measure with the one view set here.
+    // measure with the one view set here. The GPU cull holds no dead band, so
+    // while it draws the gathers hold none either.
+    _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraTransform, camera));
 
     Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
@@ -809,12 +811,12 @@ void SceneRenderer::BuildShadowDiagnostics()
         for (const LightingSystem::LocalLight &light : _lighting.ShadowCastingSpotLights())
         {
             _localCandidates.push_back(
-                    Render::LocalShadowCandidate{.kind = Render::LocalLightKind::Spot, .lightIndex = light.index});
+                Render::LocalShadowCandidate{.kind = Render::LocalLightKind::Spot, .lightIndex = light.index});
         }
         for (const LightingSystem::LocalLight &light : _lighting.ShadowCastingPointLights())
         {
             _localCandidates.push_back(
-                    Render::LocalShadowCandidate{.kind = Render::LocalLightKind::Point, .lightIndex = light.index});
+                Render::LocalShadowCandidate{.kind = Render::LocalLightKind::Point, .lightIndex = light.index});
         }
     }
 
@@ -870,12 +872,30 @@ Runtime::LodReport SceneRenderer::LodReportFor(ECS::Entity entity, const Render:
     // named: a pin is the entity's own and never reaches the shared settings.
     Runtime::LodSettings settings = _lodSelector.Settings();
     settings.forcedLevel = _lodSelector.NamedLevelFor(entity);
+    // A band nothing holds would be a switch point nothing switches at.
+    if (!_lodSelector.HoldsDeadBand())
+    {
+        settings.hysteresis = 0.f;
+    }
 
-    // The remembered level rather than a fresh selection: this says what was
-    // drawn, and the whole-mesh bounds are what selection measured, at every
-    // level.
+    // The drawn level rather than a fresh selection: this says what was drawn,
+    // and the whole-mesh bounds are what selection measured, at every level.
     return DescribeLodSelection(mesh.Lods(), Geometry::TransformedBoundingSphere(mesh.LocalBounds(), worldMatrix),
-                                _lodSelector.Remembered(entity), _lodSelector.View(), settings);
+                                DrawnLodLevel(entity, mesh, worldMatrix), _lodSelector.View(), settings);
+}
+
+uint32_t SceneRenderer::DrawnLodLevel(ECS::Entity entity, const Render::MeshBuffer &mesh,
+                                      const glm::mat4 &worldMatrix) const
+{
+    if (!GpuCullDraws())
+    {
+        return _lodSelector.Remembered(entity);
+    }
+    // Only a caster the shadow gathers reached was selected on the CPU this
+    // frame; everything else the GPU measured unseen. With the dead band
+    // released, a preview is that same measurement.
+    return _lodSelector.Preview(entity, mesh.Lods(),
+                                Geometry::TransformedBoundingSphere(mesh.LocalBounds(), worldMatrix));
 }
 
 void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,
@@ -1133,10 +1153,11 @@ void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::Re
         // The level the mesh pass drew this entity at, not a second opinion: a
         // border traced around a finer silhouette than the one on screen reads
         // as a halo.
-        _outlinePass.Draw(frame, viewProjection,
-                          Render::OutlinePass::OutlineItem{renderer->meshBuffer, transform->worldMatrix,
-                                                           _lodSelector.Remembered(entity)},
-                          color);
+        _outlinePass.Draw(
+            frame, viewProjection,
+            Render::OutlinePass::OutlineItem{renderer->meshBuffer, transform->worldMatrix,
+                                             DrawnLodLevel(entity, *renderer->meshBuffer, transform->worldMatrix)},
+            color);
     }
     else if (placementIcon || loadingMesh)
     {

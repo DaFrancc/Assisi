@@ -1,25 +1,29 @@
 #version 460 core
 
 /// mesh_cull.comp
-/// GPU-driven draw-list build (mesh-material stages F1 + F2a). One thread per
-/// scene object: whole-mesh frustum cull (bounding-sphere reject, then AABB
-/// refine — the same two-level test the CPU path runs), and, for each surviving
-/// LOD0 submesh, one *instanced* draw command is grown by one and one
-/// per-instance record is scattered into that command's reserved region.
+/// GPU-driven draw-list build. One thread per scene object: whole-mesh frustum
+/// cull (bounding-sphere reject, then AABB refine — the same two-level test the
+/// CPU path runs), LOD selection from the object's size on screen, and, for each
+/// submesh of the selected level, one *instanced* draw command is grown by one and
+/// one per-instance record is scattered into that command's reserved region.
 ///
-/// F2a — GPU instance coalescing (single pass, no sort). Every distinct
-/// (mesh, submesh) is one batch: its draw command was pre-built on the CPU with
-/// instanceCount=0 and a reserved contiguous instance region (firstInstance +
-/// per-mesh object count). Here each survivor does
-/// `old = atomicAdd(outDraws[g].instanceCount, 1)` and writes its record at
-/// `firstInstance + old` — so identical (mesh, submesh) instances collapse into
-/// one instanced draw (restoring stage E's batching that F1 gave up). Materials
-/// stay per-instance (read from the record), so a batch may mix materials; only
-/// the geometry range must match. The CPU issues one drawIndexedIndirect over
-/// all batch commands — empty ones draw 0 instances (a no-op).
+/// Instance coalescing (single pass, no sort). Every distinct (mesh, submesh) —
+/// each level's submeshes being distinct — is one batch: its draw command was
+/// pre-built on the CPU with instanceCount=0 and a reserved contiguous instance
+/// region. Here each survivor does `old = atomicAdd(outDraws[g].instanceCount, 1)`
+/// and writes its record at `firstInstance + old` — so identical (mesh, submesh)
+/// instances collapse into one instanced draw. Materials stay per-instance (read
+/// from the record), so a batch may mix materials; only the geometry range must
+/// match. The CPU issues one drawIndexedIndirect over all batch commands — empty
+/// ones draw 0 instances (a no-op).
 ///
-/// F1 scope carried forward: frustum only (no occlusion), LOD0 only (no
-/// screen-size selection). Those are stage F2b/G.
+/// Selection is the CPU path's measurement against the same thresholds, with no
+/// dead band: holding one needs the level each object drew at last, and nothing
+/// here outlives the frame. The CPU names the level instead wherever one is
+/// named — a forced level, a pin, selection off, a mesh without a chain.
+///
+/// Frustum only; no occlusion. Occlusion would test the selected level, so it
+/// comes after selection rather than before it.
 ///
 /// Dispatch: ceil(objectCount / 64) workgroups of local_size_x = 64.
 
@@ -33,7 +37,7 @@ struct Object
     uint meshDescIndex;
     uint materialBase;  // into objectMaterials[]
     uint materialCount; // == the mesh's material-slot count
-    uint _pad0;
+    uint lodLevel;      // named by the CPU and already clamped, or MEASURE_LOD
 };
 
 struct MeshDesc
@@ -43,8 +47,16 @@ struct MeshDesc
     vec4 aabbMax;
     uint vertexBase;
     uint indexBase;
-    uint firstSubmesh; // into subMeshes[] (== the global batch index of submesh 0)
-    uint submeshCount;
+    uint firstLod; // into lods[]; LOD0 first
+    uint lodCount; // at least 1
+};
+
+struct Lod
+{
+    uint  firstSubmesh;        // into subMeshes[] (== the global batch index of its first submesh)
+    uint  submeshCount;
+    float screenSizeThreshold; // the default already stands in where nothing was authored
+    uint  _pad0;
 };
 
 struct SubMesh
@@ -76,6 +88,14 @@ struct DrawArgs
 
 #define NO_MATERIAL 0xFFFFFFFFu
 
+// Object.lodLevel for an object this pass picks the level of
+// (Render::kMeasureLod).
+#define MEASURE_LOD 0xFFFFFFFFu
+
+// Levels survivors are tallied at; deeper ones fold into the last
+// (Render::kCullLodBuckets).
+#define LOD_BUCKETS 8u
+
 // The MeshPipeline a slot's material draws through, packed into the top two bits
 // of its objectMaterials[] entry (Render::kCullMaterialPipelineShift). A batch is
 // one draw and a draw is one pipeline, so an instance packs into its own
@@ -84,20 +104,35 @@ struct DrawArgs
 #define PIPELINE_SHIFT 30u
 #define MATERIAL_ID_MASK ((1u << PIPELINE_SHIFT) - 1u)
 
-// ---- SSBOs ---- (SRV +0, UAV +384; see cluster_cull.comp)
+// ---- Bindings ---- (SRV +0, CBV +256, UAV +384; see cluster_cull.comp)
 
 layout(std430, binding = 0) readonly buffer Objects         { Object       objects[];         };
 layout(std430, binding = 1) readonly buffer MeshDescs       { MeshDesc     meshDescs[];       };
 layout(std430, binding = 2) readonly buffer SubMeshes       { SubMesh      subMeshes[];       };
 layout(std430, binding = 3) readonly buffer ObjectMaterials { uint         objectMaterials[]; };
+layout(std430, binding = 4) readonly buffer Lods            { Lod          lods[];            };
+
+// The frame's camera. A uniform block rather than push constants: with the
+// counts beside it, it would not fit the 128 bytes a push-constant block gets.
+layout(std140, binding = 256) uniform CullViewConstants
+{
+    vec4 planes[6]; // frustum planes (nx,ny,nz,d), inward normals, normalised
+    vec4 eye;       // xyz = camera position, w = tan(fovY / 2); w == 0 measures nothing
+    vec4 lod;       // x = bias, yzw unused
+} view;
 
 layout(std430, binding = 384) writeonly buffer OutInstances { InstanceData outInstances[]; };
 layout(std430, binding = 385) coherent  buffer OutDraws     { DrawArgs     outDraws[];     };
-layout(std430, binding = 386) coherent  buffer Stats        { uint statsInstances; uint statsBatches; };
+layout(std430, binding = 386) coherent  buffer Stats
+{
+    uint statsInstances;
+    uint statsBatches;
+    uint statsCulled;            // objects the frustum test rejected
+    uint statsLods[LOD_BUCKETS]; // surviving objects per level, counted once each
+};
 
 layout(push_constant) uniform PushConstants
 {
-    vec4  planes[6];    // frustum planes (nx,ny,nz,d), inward normals, normalised
     uvec4 counts;       // x = object count, y = cull enabled (0/1), zw unused
     uvec4 pipelineBase; // lane p = where MeshPipeline p's command block starts
 } pc;
@@ -107,7 +142,7 @@ layout(push_constant) uniform PushConstants
 bool sphereCulled(vec3 center, float radius)
 {
     for (uint i = 0u; i < 6u; ++i)
-        if (dot(pc.planes[i].xyz, center) + pc.planes[i].w < -radius)
+        if (dot(view.planes[i].xyz, center) + view.planes[i].w < -radius)
             return true;
     return false;
 }
@@ -116,14 +151,47 @@ bool aabbCulled(vec3 aabbMin, vec3 aabbMax)
 {
     for (uint i = 0u; i < 6u; ++i)
     {
-        vec3 n = pc.planes[i].xyz;
+        vec3 n = view.planes[i].xyz;
         vec3 positiveVertex = vec3(n.x >= 0.0 ? aabbMax.x : aabbMin.x,
                                    n.y >= 0.0 ? aabbMax.y : aabbMin.y,
                                    n.z >= 0.0 ? aabbMax.z : aabbMin.z);
-        if (dot(n, positiveVertex) + pc.planes[i].w < 0.0)
+        if (dot(n, positiveVertex) + view.planes[i].w < 0.0)
             return true;
     }
     return false;
+}
+
+// ---- LOD selection (mirrors Runtime::LodScreenSize + SelectLodLevel) ----
+
+// The sphere's diameter as a fraction of the viewport's height, capped at 1
+// where it fills the view. 0 when there is nothing to measure.
+float lodScreenSize(vec3 center, float radius)
+{
+    float tanHalfFovY = view.eye.w;
+    if (!(tanHalfFovY > 0.0) || !(radius > 0.0))
+        return 0.0;
+    float distance = length(center - view.eye.xyz);
+    if (distance <= radius)
+        return 1.0;
+    return min(radius / (distance * tanHalfFovY), 1.0);
+}
+
+// The finest level the object is big enough for, or its last. Plain thresholds:
+// with no remembered level, the dead band has nothing to hold.
+uint selectLod(MeshDesc mesh, uint named, vec3 center, float radius)
+{
+    if (named != MEASURE_LOD)
+        return named;
+    // The CPU names LOD0 in a frame with no view, so this only guards against
+    // an unset view reading as "tiny" and picking the coarsest level.
+    if (!(view.eye.w > 0.0))
+        return 0u;
+
+    float biased = lodScreenSize(center, radius) * view.lod.x;
+    for (uint level = 0u; level < mesh.lodCount; ++level)
+        if (biased >= lods[mesh.firstLod + level].screenSizeThreshold)
+            return level;
+    return mesh.lodCount - 1u;
 }
 
 void main()
@@ -136,12 +204,20 @@ void main()
     MeshDesc mesh  = meshDescs[obj.meshDescIndex];
     mat4     model = obj.model;
 
+    // The whole mesh's sphere, which both the cull and the selection read: the
+    // bounds do not change with the level, or a pick would move what it was
+    // picked from.
+    vec3  center   = vec3(model * vec4(mesh.sphere.xyz, 1.0));
+    float maxScale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
+    float radius   = mesh.sphere.w * maxScale;
+
     if (pc.counts.y != 0u)
     {
-        vec3  center   = vec3(model * vec4(mesh.sphere.xyz, 1.0));
-        float maxScale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
-        if (sphereCulled(center, mesh.sphere.w * maxScale))
+        if (sphereCulled(center, radius))
+        {
+            atomicAdd(statsCulled, 1u);
             return;
+        }
 
         vec3 localCenter = 0.5 * (mesh.aabbMin.xyz + mesh.aabbMax.xyz);
         vec3 localExtent = 0.5 * (mesh.aabbMax.xyz - mesh.aabbMin.xyz);
@@ -149,17 +225,24 @@ void main()
         mat3 absBasis    = mat3(abs(model[0].xyz), abs(model[1].xyz), abs(model[2].xyz));
         vec3 worldExtent = absBasis * localExtent;
         if (aabbCulled(worldCenter - worldExtent, worldCenter + worldExtent))
+        {
+            atomicAdd(statsCulled, 1u);
             return;
+        }
     }
 
-    // Survivor: append this instance to each of its LOD0 submeshes' batch. The
-    // batch index IS the global submesh index (meshDesc.firstSubmesh + s); the
-    // draw command it grows is that index within its material's pipeline half of
-    // the pre-built command table. A submesh whose slot has no resolved material is
+    uint level = selectLod(mesh, obj.lodLevel, center, radius);
+    Lod  range = lods[mesh.firstLod + level];
+
+    // Survivor: append this instance to each of its level's submeshes' batch. The
+    // batch index IS the global submesh index (range.firstSubmesh + s); the draw
+    // command it grows is that index within its material's pipeline block of the
+    // pre-built command table. A submesh whose slot has no resolved material is
     // skipped (mirrors the CPU path).
-    for (uint s = 0u; s < mesh.submeshCount; ++s)
+    bool drewAny = false;
+    for (uint s = 0u; s < range.submeshCount; ++s)
     {
-        uint g = mesh.firstSubmesh + s;
+        uint g = range.firstSubmesh + s;
 
         uint packed = NO_MATERIAL;
         if (subMeshes[g].materialSlot < obj.materialCount)
@@ -174,16 +257,22 @@ void main()
 
         // Grow this command's instance count and take the old value as our index
         // within its reserved region [firstInstance, firstInstance + reserved). The
-        // CPU sized that region by counting exactly the instances that reach this
-        // command, so it never overflows.
+        // CPU sized that region by counting every instance that could reach this
+        // command — at every level it could land on — so it never overflows.
         uint old  = atomicAdd(outDraws[command].instanceCount, 1u);
         uint slot = outDraws[command].firstInstance + old;
 
         outInstances[slot].model         = model;
         outInstances[slot].materialIndex = packed & MATERIAL_ID_MASK;
 
+        drewAny = true;
         atomicAdd(statsInstances, 1u);
         if (old == 0u)
             atomicAdd(statsBatches, 1u); // first instance of this batch — one live draw
     }
+
+    // After the loop, as the CPU path counts it: an object whose every slot went
+    // unresolved drew nothing, at no level.
+    if (drewAny)
+        atomicAdd(statsLods[min(level, LOD_BUCKETS - 1u)], 1u);
 }

@@ -19,8 +19,7 @@ GpuPassTimerScope::GpuPassTimerScope(const char *name)
         return;
     }
 
-    context->BeginPassTimer(name);
-    _opened = true;
+    _opened = context->BeginPassTimer(name);
 }
 
 GpuPassTimerScope::~GpuPassTimerScope()
