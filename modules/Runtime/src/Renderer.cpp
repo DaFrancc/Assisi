@@ -1,10 +1,12 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <algorithm>
+#include <bit>
 #include <limits>
 #include <span>
 #include <vector>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Frustum.hpp>
@@ -89,11 +91,8 @@ struct ShadowCasterSource
 
 /// @brief Append one caster per submesh of @p source's level @p level to @p out.
 ///
-/// @p level is the one the draw path selected: a shadow cast by a different
-/// silhouette than the one on screen is worse than a slightly expensive one.
-///
 /// Shared by the sun's gather and the local lights' — only what decides a
-/// caster's @p viewMask differs between them.
+/// caster's @p viewMask and @p level differs between them.
 void EmitShadowCasters(const ShadowCasterSource &source, std::uint32_t viewMask, uint32_t level,
                        Assisi::Render::ShadowCasterMotion motion,
                        std::vector<Assisi::Render::ShadowCaster> &out)
@@ -382,6 +381,12 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
     out.casters.clear();
     out.nearAlongLight.reset();
     out.culledEntities = 0;
+    out.coarserViews = 0;
+
+    // The selector's widths name views by the same bits these volumes do; a
+    // count that disagrees would measure casters against another view's texels.
+    ASSISI_ASSERT(lodSelector == nullptr || lodSelector->ShadowViewCount() == viewVolumes.size(),
+                  "LodSelector::SetShadowViews must describe the views being gathered for");
 
     float nearAlongLight = std::numeric_limits<float>::max();
 
@@ -418,7 +423,22 @@ void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirect
         // held back from a kept layer: every caster is drawn, every time.
         const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
         const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
-        EmitShadowCasters(source, viewMask, level, Assisi::Render::ShadowCasterMotion::Still, out.casters);
+        const std::uint32_t coarser =
+            lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh->Lods(), worldSphere, level) & viewMask
+                                   : 0u;
+
+        // At most two copies, each masked to the views that draw it, so every
+        // view's list still holds the entity exactly once.
+        if ((viewMask & ~coarser) != 0u)
+        {
+            EmitShadowCasters(source, viewMask & ~coarser, level, Assisi::Render::ShadowCasterMotion::Still,
+                              out.casters);
+        }
+        if (coarser != 0u)
+        {
+            EmitShadowCasters(source, coarser, level + 1u, Assisi::Render::ShadowCasterMotion::Still, out.casters);
+            out.coarserViews += static_cast<std::uint32_t>(std::popcount(coarser));
+        }
     }
 
     if (out.casters.empty())

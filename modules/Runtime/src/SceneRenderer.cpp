@@ -303,9 +303,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     UpdateShadowMovers(scene);
 
     // Before the shadow halves, because they select from it too: a caster's
-    // shadow is drawn from the level the camera sees it at, and all three passes
-    // measure with the one view set here. The GPU cull holds no dead band, so
-    // while it draws the gathers hold none either.
+    // shadow is drawn from the level the camera sees it at, or one coarser, and
+    // all three passes measure with the one view set here. The GPU cull holds no
+    // dead band, so while it draws the gathers hold none either.
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraTransform, camera));
 
@@ -401,6 +401,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // cast can reach the shadow distance. Walking content out past it moves this
     // and leaves every other shadow counter where it was.
     ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(_shadowCasters.culledEntities));
+    // Caster-cascade pairs drawn a level coarser than on screen: where shadow
+    // LOD saves vertices. Zero with it off, and in a scene with no LOD chains.
+    ASSISI_PROFILE_COUNTER("shadows/lod-coarser", static_cast<double>(_shadowCasters.coarserViews));
 
     // The local-light atlas on its own tracks. `dropped-by-cap` and `unserved`
     // answer different questions about a lamp with no shadow — the first is the
@@ -449,6 +452,30 @@ void SceneRenderer::OnSceneReplaced()
     // the direction that costs one frame rather than the one that leaves a
     // shadow behind.
     _lastMoverTick = 0;
+}
+
+void SceneRenderer::SetLodSettings(const Runtime::LodSettings &settings)
+{
+    if (settings == _lodSelector.Settings())
+    {
+        return;
+    }
+    _lodSelector.SetSettings(settings);
+    ForgetKeptShadows();
+}
+
+void SceneRenderer::PinLod(ECS::Entity entity, int32_t level)
+{
+    _lodSelector.Pin(entity, level);
+    ForgetKeptShadows();
+}
+
+void SceneRenderer::ForgetKeptShadows()
+{
+    // A kept cascade or atlas tile holds its casters at the levels chosen when
+    // it was drawn, and nothing about a still scene would ever redraw it.
+    _sunCadence.Forget();
+    _localShadowSelector.Forget();
 }
 
 void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
@@ -560,6 +587,7 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         _shadowCasters.casters.clear();
         _shadowCasters.nearAlongLight.reset();
         _shadowCasters.culledEntities = 0;
+        _shadowCasters.coarserViews = 0;
     }
     else
     {
@@ -573,11 +601,18 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         // this frame submits are the redrawn cascades alone. Handing it every
         // cascade's volume would number the bits by cascade and leave each view
         // reading the mask of whichever cascade shares its position in the list.
+        //
+        // The widths go to the selector in the same order, for the same reason:
+        // a caster's level in a view is measured against that view's texels.
         std::array<Geometry::BoundingSphere, Render::kMaxShadowCascades> cascadeVolumes{};
+        std::array<float, Render::kMaxShadowCascades> cascadeExtents{};
         for (std::uint32_t i = 0; i < redraw.size(); ++i)
         {
-            cascadeVolumes[i] = Render::CascadeVolumeBounds(_cascadeFit.cascades[redraw[i]]);
+            const Render::ShadowCascade &cascade = _cascadeFit.cascades[redraw[i]];
+            cascadeVolumes[i] = Render::CascadeVolumeBounds(cascade);
+            cascadeExtents[i] = cascade.worldUnitsPerTexel * static_cast<float>(_shadowPass.Settings().resolution);
         }
+        _lodSelector.SetShadowViews(std::span<const float>(cascadeExtents.data(), redraw.size()));
         GatherShadowCasters(scene, sun->direction,
                             std::span<const Geometry::BoundingSphere>(cascadeVolumes.data(), redraw.size()),
                             &_lodSelector, _shadowCasters);

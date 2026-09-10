@@ -15,12 +15,14 @@ using Assisi::Geometry::BoundingSphere;
 using Assisi::Geometry::DefaultLodScreenSize;
 using Assisi::Geometry::LodRange;
 using Assisi::Runtime::DescribeLodSelection;
+using Assisi::Runtime::LodOrthographicSize;
 using Assisi::Runtime::LodReport;
 using Assisi::Runtime::LodScreenSize;
 using Assisi::Runtime::LodSelector;
 using Assisi::Runtime::LodSettings;
 using Assisi::Runtime::LodView;
 using Assisi::Runtime::SelectLodLevel;
+using Assisi::Runtime::SelectShadowLodLevel;
 
 namespace
 {
@@ -699,6 +701,122 @@ TEST_CASE("A report shows the bias in the size it compares, not in the threshold
 
     CHECK(report.biasedScreenSize == doctest::Approx(2.f * report.screenSize));
     CHECK(report.dropBelow == doctest::Approx(0.25f));
+}
+
+TEST_CASE("LodOrthographicSize is the sphere's diameter over the view's width")
+{
+    // A 1 m caster in a 10 m cascade covers a tenth of it, and a 100 m cascade a
+    // hundredth — the same fraction whether the camera is next to it or not.
+    const BoundingSphere caster{.center = glm::vec3(3.f, 0.f, -40.f), .radius = 0.5f};
+    CHECK(LodOrthographicSize(caster, 10.f) == doctest::Approx(0.1f));
+    CHECK(LodOrthographicSize(caster, 100.f) == doctest::Approx(0.01f));
+
+    // Filling the view is as full as it gets, and an unfitted view measures nothing.
+    CHECK(LodOrthographicSize(BoundingSphere{.radius = 20.f}, 10.f) == doctest::Approx(1.f));
+    CHECK(LodOrthographicSize(caster, 0.f) == doctest::Approx(0.f));
+}
+
+TEST_CASE("A shadow view draws a small caster a level coarser than the camera does")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings;
+
+    // Measured 0.4 the view would take LOD1, and the camera drew LOD0.
+    CHECK(SelectShadowLodLevel(lods, 0.4f, 0, settings) == 1);
+    // Big enough in the view for LOD0, it stays where the camera has it.
+    CHECK(SelectShadowLodLevel(lods, 0.9f, 0, settings) == 0);
+}
+
+TEST_CASE("A shadow view goes at most one level coarser than the camera")
+{
+    // Measured 0.01 the view would take LOD2; the camera drew LOD0, so the
+    // shadow stops at LOD1 and keeps near-view self-shadowing on the geometry
+    // it falls on.
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings;
+    CHECK(SelectShadowLodLevel(lods, 0.01f, 0, settings) == 1);
+    CHECK(SelectShadowLodLevel(lods, 0.01f, 1, settings) == 2);
+}
+
+TEST_CASE("A shadow view never draws finer than the camera")
+{
+    // A near cascade is often denser than the screen. Measured there a caster
+    // would climb back to LOD0, and that is geometry the screen already gave up.
+    const std::vector<LodRange> lods = Chain(3);
+    const LodSettings settings;
+    CHECK(SelectShadowLodLevel(lods, 0.9f, 1, settings) == 1);
+    CHECK(SelectShadowLodLevel(lods, 0.9f, 2, settings) == 2);
+}
+
+TEST_CASE("A shadow view of a caster at its coarsest level stays there")
+{
+    const LodSettings settings;
+    CHECK(SelectShadowLodLevel(Chain(3), 0.001f, 2, settings) == 2);
+    CHECK(SelectShadowLodLevel(Chain(1), 0.001f, 0, settings) == 0);
+    CHECK(SelectShadowLodLevel({}, 0.001f, 0, settings) == 0);
+}
+
+TEST_CASE("A shadow view draws at the camera's level wherever nothing is measured")
+{
+    const std::vector<LodRange> lods = Chain(3);
+
+    // An unfitted view has no size to compare, which is not the same as tiny.
+    CHECK(SelectShadowLodLevel(lods, 0.f, 0, LodSettings{}) == 0);
+
+    // Shadow LOD off is the A/B against this alone.
+    LodSettings off;
+    off.shadowLod = false;
+    CHECK(SelectShadowLodLevel(lods, 0.01f, 0, off) == 0);
+
+    // A named level is looking at that level, shadow included.
+    LodSettings forced;
+    forced.forcedLevel = 1;
+    CHECK(SelectShadowLodLevel(lods, 0.01f, 1, forced) == 1);
+
+    // Selection off is LOD0 everywhere.
+    LodSettings disabled;
+    disabled.enabled = false;
+    CHECK(SelectShadowLodLevel(lods, 0.01f, 0, disabled) == 0);
+}
+
+TEST_CASE("The bias moves a shadow view's switch points as it moves the camera's")
+{
+    // A quality tier sets the bias and nothing else, so it has to reach here.
+    const std::vector<LodRange> lods = Chain(3);
+    LodSettings higher;
+    higher.bias = 2.f;
+    CHECK(SelectShadowLodLevel(lods, 0.3f, 0, higher) == 0);
+    CHECK(SelectShadowLodLevel(lods, 0.3f, 0, LodSettings{}) == 1);
+}
+
+TEST_CASE("CoarserShadowViews names the views that draw a caster coarser than the camera")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    const Entity entity{.index = 14, .generation = 1};
+    const BoundingSphere caster = SphereAt(2.f, 1.f); // 2 m across
+
+    // 2 m in a 3 m view is LOD0; in a 30 m view it is LOD2, held to LOD1.
+    const std::array<float, 3> extents{3.f, 30.f, 300.f};
+    selector.SetShadowViews(extents);
+    CHECK(selector.CoarserShadowViews(entity, lods, caster, 0) == 0b110u);
+
+    // A view with no extent, or none given at all, stays at the camera's level.
+    const std::array<float, 2> partial{3.f, 0.f};
+    selector.SetShadowViews(partial);
+    CHECK(selector.CoarserShadowViews(entity, lods, caster, 0) == 0u);
+}
+
+TEST_CASE("A pinned caster shadows at its pinned level in every view")
+{
+    const std::vector<LodRange> lods = Chain(3);
+    LodSelector selector;
+    const Entity entity{.index = 15, .generation = 1};
+    selector.Pin(entity, 0);
+
+    const std::array<float, 2> extents{3.f, 300.f};
+    selector.SetShadowViews(extents);
+    CHECK(selector.CoarserShadowViews(entity, lods, SphereAt(2.f, 1.f), 0) == 0u);
 }
 
 TEST_CASE("A report agrees with the level selection actually picks")

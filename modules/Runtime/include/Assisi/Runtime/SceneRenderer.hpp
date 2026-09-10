@@ -180,16 +180,21 @@ public:
 
     /// @brief The knobs screen-size LOD selection reads (on by default).
     ///
-    /// Applies to both draw paths and to both shadow gathers, which select the
-    /// same way so a caster's silhouette is the one on screen. The GPU-driven
+    /// Applies to both draw paths and to both shadow gathers. The local lights
+    /// cast at the level on screen; each sun cascade may go one level coarser
+    /// where its texels are too coarse to show the difference. The GPU-driven
     /// cull path keeps no memory per instance, so while it draws, `hysteresis`
     /// is held nowhere.
     ///
     /// `bias` is the quality dial — above 1 holds a finer level further away —
     /// and `enabled` false pins everything to LOD0, which is the A/B against
-    /// the whole feature. `forcedLevel` puts every instance on one level for
+    /// the whole feature. `shadowLod` false is the A/B against the cascades'
+    /// own pick. `forcedLevel` puts every instance on one level for
     /// inspection. A mesh with no LOD chain is unaffected by any of them.
-    void SetLodSettings(const Runtime::LodSettings &settings) { _lodSelector.SetSettings(settings); }
+    ///
+    /// A change redraws every kept shadow map, which hold casters at the
+    /// levels the old settings chose.
+    void SetLodSettings(const Runtime::LodSettings &settings);
     [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSelector.Settings(); }
 
     /// @brief Draw @p entity at @p level whatever its size asks for, or release
@@ -199,7 +204,9 @@ public:
     /// instance there — for judging a chain on the thing that carries it without
     /// moving every other instance in the scene off the level it earned. Never
     /// saved: it is a way of looking at a scene, not a fact about it.
-    void PinLod(ECS::Entity entity, int32_t level) { _lodSelector.Pin(entity, level); }
+    ///
+    /// Redraws every kept shadow map, as a settings change does.
+    void PinLod(ECS::Entity entity, int32_t level);
 
     /// @brief The level @p entity is pinned to, or -1 when it is not pinned.
     [[nodiscard]] int32_t PinnedLod(ECS::Entity entity) const { return _lodSelector.PinnedLevel(entity); }
@@ -274,6 +281,10 @@ public:
     /// when nothing casts. Read against the draw stats: cascades at 0 with a sun
     /// in the scene means the pass is inactive, not that it found nothing.
     [[nodiscard]] Render::ShadowPass::Stats LastShadowStats() const { return _lastShadowStats; }
+
+    /// @brief Caster-cascade pairs the most recent sun gather drew one level
+    /// coarser than on screen. Zero on a frame that redrew no cascade.
+    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const { return _shadowCasters.coarserViews; }
 
     /// @brief What the local-light atlas drew in the most recent Render().
     ///
@@ -459,6 +470,9 @@ private:
     /// invalidated against the result and the ticks are a cursor: a second read
     /// comes back empty and would tell the second half that nothing moved.
     void UpdateShadowMovers(ECS::Scene &scene);
+
+    /// @brief Redraw every kept cascade and atlas tile on the next frame.
+    void ForgetKeptShadows();
 
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
