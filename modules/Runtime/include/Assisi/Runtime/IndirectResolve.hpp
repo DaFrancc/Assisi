@@ -27,6 +27,14 @@ struct AmbientOverride
     float intensity = Render::kDefaultAmbientIntensity;
 };
 
+/// @brief Whether the sky's reflection probe holds a bake this frame, and how
+/// many mips it has to read roughness from.
+struct SpecularProbe
+{
+    bool ready = false;
+    float maxLod = 0.0f;
+};
+
 /// @brief The indirect term for one frame, as the shader wants it.
 ///
 /// The one place a concrete provider is named. Everything downstream — the mesh
@@ -36,9 +44,11 @@ struct AmbientOverride
 ///
 /// A pinned ambient wins over the sky rather than adding to it: an author who
 /// says what the indirect term is has answered the question, and a sky arriving
-/// on top of that answer would be a second one.
+/// on top of that answer would be a second one. It wins over the probe for the
+/// same reason — the probe is the sky's, so a pinned ambient pins it off too.
 [[nodiscard]] inline Render::IndirectConstants ResolveIndirect(const SkyResolution &sky,
-                                                               const AmbientOverride &ambient)
+                                                               const AmbientOverride &ambient,
+                                                               const SpecularProbe &probe)
 {
     if (!ambient.active && sky.status == SkyStatus::Ready)
     {
@@ -52,11 +62,25 @@ struct AmbientOverride
         // floor — and readable on a night with nothing up. Applied to both halves
         // of the hemisphere, because "the world is at least partly lit" is about
         // the world and not about which way a surface happens to face.
-        return Render::HemisphereIndirect(glm::max(glm::vec3(fromSky.sky), sky.minimumAmbient),
-                                          glm::max(glm::vec3(fromSky.ground), sky.minimumAmbient))
-            .ShaderConstants();
+        const glm::vec3 skyRadiance = glm::max(glm::vec3(fromSky.sky), sky.minimumAmbient);
+        const glm::vec3 groundRadiance = glm::max(glm::vec3(fromSky.ground), sky.minimumAmbient);
+        if (probe.ready)
+        {
+            return Render::SkyProbeIndirect(skyRadiance, groundRadiance,
+                                            Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings),
+                                            probe.maxLod)
+                .ShaderConstants();
+        }
+        return Render::HemisphereIndirect(skyRadiance, groundRadiance).ShaderConstants();
     }
     return Render::UniformIndirect(ambient.color, ambient.intensity).ShaderConstants();
+}
+
+/// @brief The same, for a frame with no reflection probe.
+[[nodiscard]] inline Render::IndirectConstants ResolveIndirect(const SkyResolution &sky,
+                                                               const AmbientOverride &ambient)
+{
+    return ResolveIndirect(sky, ambient, SpecularProbe{});
 }
 
 } // namespace Assisi::Runtime

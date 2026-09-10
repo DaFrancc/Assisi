@@ -1,0 +1,116 @@
+#version 450
+
+/// sky_prefilter.comp
+/// One mip of the sky probe's prefiltered cube: each texel is the mean radiance
+/// the captured sky sends along a GGX lobe about that texel's direction. A
+/// transcription of Render::PrefilterGgx in SpecularIbl.hpp, which is the
+/// reference the tests hold the estimator to.
+///
+/// Plain importance sampling from the capture's single mip. The captured sky
+/// has no disks in it, so its sharpest features — the horizon and the glow
+/// around a low sun — are wide against any lobe this is asked for, and no
+/// per-sample mip selection is needed to keep a sample from landing on a
+/// feature narrower than its share of the lobe.
+///
+/// Dispatch: ceil(faceSize / 8)^2 x 6 workgroups, one mip per dispatch.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// The captured sky: one mip, six faces, sampled as a cube.
+layout(binding = 0) uniform textureCube uSource;
+layout(binding = 128) uniform sampler uSourceSampler;
+
+// The mip being written, viewed as six layers. NVRHI's Vulkan backend offsets
+// UAV bindings by +384 (VulkanBindingOffsets::unorderedAccess).
+layout(binding = 384, rgba16f) uniform writeonly image2DArray uDestination;
+
+layout(push_constant) uniform PushConstants
+{
+    uint  faceSize;    // texels on a side of this mip
+    float roughness;   // perceptual roughness this mip stores
+    uint  sampleCount; // samples per texel
+    uint  padding;
+} uPush;
+
+const float kTwoPi = 6.28318530718;
+
+// Must match Render::kFloatSignificandBits: the mirrored index keeps this many
+// bits, the most a float carries exactly.
+const uint kFloatSignificandBits = 24u;
+
+// Must match Render::kMaxHelperAxisCosine.
+const float kMaxHelperAxisCosine = 0.999;
+
+// Smallest total n.l weight a texel's samples may sum to before the texel falls
+// back to the unblurred sky; only reached by a lobe with no sample above the
+// surface, which importance sampling about the normal never produces.
+const float kMinWeight = 1e-6;
+
+// Must match Render::CubeFace: Vulkan's face order and texel orientation.
+vec3 FaceDirection(uint face, vec2 uv)
+{
+    float s = 2.0 * uv.x - 1.0;
+    float t = 2.0 * uv.y - 1.0;
+    vec3 direction;
+    if      (face == 0u) direction = vec3( 1.0,   -t,   -s);
+    else if (face == 1u) direction = vec3(-1.0,   -t,    s);
+    else if (face == 2u) direction = vec3(   s,  1.0,    t);
+    else if (face == 3u) direction = vec3(   s, -1.0,   -t);
+    else if (face == 4u) direction = vec3(   s,   -t,  1.0);
+    else                 direction = vec3(  -s,   -t, -1.0);
+    return normalize(direction);
+}
+
+// Must match Render::Hammersley and Render::RadicalInverse.
+vec2 Hammersley(uint index, uint count)
+{
+    uint  mirrored = bitfieldReverse(index) >> (32u - kFloatSignificandBits);
+    float radical  = float(mirrored) / float(1u << kFloatSignificandBits);
+    return vec2(float(index) / float(count), radical);
+}
+
+// Must match Render::ImportanceSampleGgx.
+vec3 ImportanceSampleGgx(vec2 xi, float alpha, vec3 normal)
+{
+    float a2       = alpha * alpha;
+    float phi      = kTwoPi * xi.x;
+    float cosTheta = sqrt((1.0 - xi.y) / (1.0 + (a2 - 1.0) * xi.y));
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+
+    vec3 helper    = abs(normal.z) < kMaxHelperAxisCosine ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent   = normalize(cross(helper, normal));
+    vec3 bitangent = cross(normal, tangent);
+    return normalize(tangent * (sinTheta * cos(phi)) + bitangent * (sinTheta * sin(phi)) + normal * cosTheta);
+}
+
+void main()
+{
+    uvec3 id = gl_GlobalInvocationID;
+    if (id.x >= uPush.faceSize || id.y >= uPush.faceSize)
+    {
+        return;
+    }
+
+    // The normal and the view are both the reflection direction: one value per
+    // direction then serves every view, which is the split sum's bargain.
+    vec3  axis  = FaceDirection(id.z, (vec2(id.xy) + 0.5) / float(uPush.faceSize));
+    float alpha = uPush.roughness * uPush.roughness;
+
+    vec3  sum    = vec3(0.0);
+    float weight = 0.0;
+    for (uint i = 0u; i < uPush.sampleCount; ++i)
+    {
+        vec3  halfway = ImportanceSampleGgx(Hammersley(i, uPush.sampleCount), alpha, axis);
+        vec3  light   = 2.0 * dot(axis, halfway) * halfway - axis;
+        float nDotL = dot(axis, light);
+        if (nDotL > 0.0)
+        {
+            sum    += textureLod(samplerCube(uSource, uSourceSampler), light, 0.0).rgb * nDotL;
+            weight += nDotL;
+        }
+    }
+
+    vec3 radiance = weight > kMinWeight ? sum / weight
+                                        : textureLod(samplerCube(uSource, uSourceSampler), axis, 0.0).rgb;
+    imageStore(uDestination, ivec3(id), vec4(radiance, 1.0));
+}

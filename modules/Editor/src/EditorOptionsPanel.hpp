@@ -84,6 +84,10 @@ private:
     /// cascade view is a runtime look.
     static void DrawShadowSettings(const Frame &frame);
 
+    /// @brief The sky-reflection section: the switch, the probe's size and
+    /// sample count, how far the sky may move before it is baked again, and
+    /// what the probe is doing.
+    static void DrawEnvironmentSettings(const Frame &frame);
 
     bool _showOptions = false;
 

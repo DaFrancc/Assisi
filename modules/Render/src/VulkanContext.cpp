@@ -239,6 +239,17 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
         return false;
     }
 
+    // Shadow depth passes cap their slope-scaled bias with depthBiasClamp (see
+    // ShadowDepthRenderer's ApplyDepthBias). Without the feature Vulkan requires
+    // the clamp to be zero, and a zero clamp lets a caster seen edge-on push its
+    // own depth past every receiver behind it. Core 1.0 but optional; every
+    // desktop driver has it. Lock-step with the enable in CreateLogicalDevice.
+    if (features2.features.depthBiasClamp != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing depthBiasClamp");
+        return false;
+    }
+
     return true;
 }
 
@@ -365,6 +376,8 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     // non-zero firstInstance. DeviceMeetsRequirements already verified both bits.
     coreFeatures.multiDrawIndirect = VK_TRUE;
     coreFeatures.drawIndirectFirstInstance = VK_TRUE;
+    // The shadow passes' slope-bias cap. DeviceMeetsRequirements verified it.
+    coreFeatures.depthBiasClamp = VK_TRUE;
 
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

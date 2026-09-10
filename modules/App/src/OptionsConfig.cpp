@@ -221,6 +221,16 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             shadows = Render::Sanitized(shadows);
         }
 
+        if (json.contains("environment"))
+        {
+            const auto &environment = json.at("environment");
+            ReadField(environment, "enabled", cfg.environment.enabled);
+            ReadField(environment, "resolution", cfg.environment.resolution);
+            ReadField(environment, "samples", cfg.environment.sampleCount);
+            ReadField(environment, "rebakeDegrees", cfg.environment.rebakeDegrees);
+            cfg.environment = Render::Sanitized(cfg.environment);
+        }
+
         if (json.contains("frameSync"))
         {
             const auto &fs = json.at("frameSync");
@@ -308,6 +318,12 @@ std::string OptionsConfig::ToJsonText() const
     selection["capPoint"] = shadows.selection.capPoint;
     selection["capHysteresis"] = shadows.selection.capHysteresis;
     selection["classHysteresis"] = shadows.selection.classHysteresis;
+
+    nlohmann::json &probe = json["environment"];
+    probe["enabled"] = environment.enabled;
+    probe["resolution"] = environment.resolution;
+    probe["samples"] = environment.sampleCount;
+    probe["rebakeDegrees"] = environment.rebakeDegrees;
 
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;

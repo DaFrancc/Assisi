@@ -4,6 +4,7 @@
 /// @file OptionsConfig.hpp
 /// @brief User-facing runtime options persisted to options.json.
 
+#include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 
@@ -36,6 +37,10 @@ struct OptionsConfig
     /// load for the same reason, and one more: these size a GPU allocation, so
     /// a hand-typed resolution reaches createTexture if nothing clamps it.
     Render::ShadowSettings shadows;
+
+    /// @brief Whether the sky is reflected, and how finely. Sanitized on load:
+    /// the resolution sizes the probe's cubes.
+    Render::EnvironmentSettings environment;
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
