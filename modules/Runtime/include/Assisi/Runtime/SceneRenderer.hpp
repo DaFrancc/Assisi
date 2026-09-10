@@ -177,6 +177,18 @@ public:
     void SetGpuCulling(bool enabled) { _gpuCulling = enabled; }
     [[nodiscard]] bool GpuCulling() const { return _gpuCulling; }
 
+    /// @brief The knobs screen-size LOD selection reads (on by default).
+    ///
+    /// Applies to the CPU draw path and to both shadow gathers, which select
+    /// from one table so a caster's silhouette is the one on screen. The
+    /// GPU-driven cull path still draws LOD0 whatever these say.
+    ///
+    /// `bias` is the quality dial — above 1 holds a finer level further away —
+    /// and `enabled` false pins everything to LOD0, which is the A/B against
+    /// the whole feature. A mesh with no LOD chain is unaffected either way.
+    void SetLodSettings(const Runtime::LodSettings &settings) { _lodSelector.SetSettings(settings); }
+    [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSelector.Settings(); }
+
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting
     /// base colour / metallic / roughness / normal / occlusion / emissive.
@@ -445,6 +457,14 @@ private:
     [[nodiscard]] static float LocalLightScreenCoverage(const glm::vec3 &position, float range,
                                                         const glm::vec3 &cameraPosition, float tanHalfFovY);
 
+    /// @brief The view LOD selection measures against this frame.
+    ///
+    /// Derived once and handed to every consumer rather than re-derived per
+    /// pass: the draw path and the two shadow gathers select the same instance
+    /// in the same frame, and a difference in what they measured with would put
+    /// them on different levels.
+    [[nodiscard]] static LodView CameraLodView(const Transform &cameraTransform, const Camera &camera);
+
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
@@ -511,8 +531,7 @@ private:
     std::vector<Render::LocalShadowCandidate> _localCandidates;
     std::vector<Render::LocalShadowRequest> _localRequests;
     std::vector<Geometry::BoundingSphere> _localLightVolumes;
-    ShadowCasterGather _localShadowCasters;
-    Render::LocalShadowCasterIndex _localCasterIndex;
+    LocalShadowCasterGather _localShadowCasters;
     // The cached half: which casters are moving, and the two sets the atlas is
     // reconciled against each frame.
     Render::ShadowCasterMobility _casterMobility;
@@ -579,6 +598,10 @@ private:
     bool _frustumCulling = true; // default draw path culls off-screen meshes
     bool _sortDraws = true;      // default draw path sorts by sort key before submit
     bool _gpuCulling = false;    // GPU-driven cull path (stage F1); CPU path is the default reference
+    // The chosen level per entity, and the knobs that chose it. Shared by the
+    // draw path, both shadow gathers and the selection outline, so every one of
+    // them draws the same instance as the same geometry.
+    LodSelector _lodSelector;
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     AmbientOverride _ambient;                                               // inactive: the scene lights itself
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs

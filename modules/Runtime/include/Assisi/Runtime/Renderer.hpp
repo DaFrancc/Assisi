@@ -4,6 +4,7 @@
 /// @file Renderer.hpp
 /// @brief ECS-driven draw pass: iterates Transform + MeshRenderer.
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -15,6 +16,7 @@
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/LocalShadowPass.hpp>
+#include <Assisi/Runtime/LodSelection.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDepthRenderer.hpp>
@@ -47,6 +49,15 @@ struct DrawStats
     uint32_t culledMeshes = 0; ///< Whole mesh entities skipped by frustum culling.
     uint32_t batches = 0;      ///< Instanced draw commands after coalescing same-geometry runs.
     uint32_t drawCalls = 0;    ///< drawIndexedIndirect(Count) API calls issued (~1 with one arena).
+
+    /// Mesh instances drawn at each LOD level, LOD0 first; levels past the last
+    /// bucket fold into it. Counted per instance rather than per submesh, so it
+    /// reads against the entity count rather than against `drawnItems`, and a
+    /// scene of single-level meshes puts everything in bucket 0.
+    ///
+    /// All zero on the GPU-cull path, which still draws LOD0 unconditionally —
+    /// selection there is its own stage.
+    std::array<uint32_t, kMaxReportedLods> lodInstances{};
 };
 
 /// @brief Everything one DrawScene call needs, grouped so the call site reads as
@@ -79,6 +90,12 @@ struct DrawSceneParams
     /// Reused per-frame table builder for the GPU path (avoids re-allocating the
     /// host-side tables each frame); must outlive the call when @ref gpuCulling is set.
     Assisi::Render::CullTableBuilder *cullBuilder = nullptr;
+
+    /// Where the LOD level of each instance is decided and remembered. Null
+    /// draws every instance at LOD0 — what the path did before selection
+    /// existed, and what the GPU path still does. The camera it measures from
+    /// is the one it was given at LodSelector::BeginFrame.
+    LodSelector *lodSelector = nullptr;
 };
 
 /// @brief Extract, sort, and submit a draw list for every Transform+MeshRenderer
@@ -86,9 +103,9 @@ struct DrawSceneParams
 ///
 /// The producer half: each entity whose MeshRenderer is resolved is whole-mesh
 /// frustum-culled (a cheap sphere reject then an AABB refine, both conservative —
-/// nothing visible is ever culled), its LOD0 submeshes emitted as one DrawItem
-/// each (skipping slots with no resolved material), and — when `sortDraws` is
-/// true — the list is sorted by
+/// nothing visible is ever culled), the submeshes of its selected LOD emitted as
+/// one DrawItem each (skipping slots with no resolved material), and — when
+/// `sortDraws` is true — the list is sorted by
 /// DrawItem::sortKey so MeshPass::Submit records it in material/mesh-major,
 /// front-to-back order. `frustumCulling` false submits every mesh; `sortDraws`
 /// false submits in query order — both for A/B comparing the seam (the image is
@@ -156,34 +173,77 @@ struct ShadowCasterGather
 /// draw time: a caster is drawn once per view it survives into, and resolving
 /// per view would repeat the lookup for every one of them.
 ///
+/// Each caster is emitted at the LOD level @p lodSelector picks for it — the
+/// same call the draw path makes, so the shadow is cast by the silhouette that
+/// is on screen rather than by a finer one nobody can see. Null selects LOD0 for
+/// everything.
+///
 /// @p out is cleared and refilled; pass the same object every frame.
 void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
-                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, ShadowCasterGather &out);
+                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, LodSelector *lodSelector,
+                         ShadowCasterGather &out);
 
-/// @brief Every shadow-casting submesh in the scene, and which of @p lightVolumes
-/// each one reaches.
+/// @brief One frame's local-light shadow casters, the lights each one reaches,
+/// and the per-light rows the atlas reads.
 ///
-/// The local-light half of the gather above, and it differs in one way that
-/// matters: the sun sweeps a caster down-light against a cascade's volume,
-/// because the sun is infinitely far away and everything between the caster and
-/// the cascade is a potential occluder. A local light is a point with a range, so
-/// what can occlude for it is what is inside its sphere — a plain sphere-sphere
-/// test, and no sweep.
-///
-/// The result is the "cull once per light" half of the cost model. Each light's
-/// row names the casters inside its reach, and a point light's six faces then
-/// refine that row with the frustum test the draw list already makes, rather than
-/// walking the scene six times.
-///
-/// @p out.casters is sorted opaque-first and geometry-major, like the sun's, so
-/// the rows index a span whose runs still coalesce. A caster reaching no light at
-/// all is dropped rather than gathered.
-/// @p mobility decides which half of a cached tile each caster belongs to, and
-/// is told where every still caster stands: that is the pose a tile's kept layer
-/// holds it at, and what a later demotion has to invalidate.
-void GatherLocalShadowCasters(Assisi::ECS::Scene &scene, std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
-                              Assisi::Render::ShadowCasterMobility &mobility, ShadowCasterGather &out,
-                              Assisi::Render::LocalShadowCasterIndex &index);
+/// Owns its buffers and is refilled rather than rebuilt: a scene changes little
+/// between frames, so a steady state reuses the capacity instead of freeing and
+/// regrowing it.
+class LocalShadowCasterGather
+{
+public:
+    /// @brief Every shadow-casting submesh in the scene, and which of
+    /// @p lightVolumes each one reaches. A caster reaching none is dropped.
+    ///
+    /// A plain sphere-sphere test, and no sweep: a local light is a point with a
+    /// range, so what can occlude for it is what stands inside it. The sun's
+    /// gather sweeps down-light because the sun has no position to be inside of.
+    ///
+    /// @p mobility decides which half of a cached tile each caster belongs to,
+    /// and is told where every still caster stands — the pose a kept layer holds
+    /// it at, and what a later demotion has to invalidate.
+    /// @p lodSelector picks each caster's level, as the sun's gather and the draw
+    /// path do; null gathers everything at LOD0.
+    void Gather(Assisi::ECS::Scene &scene, std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
+                Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+
+    /// @brief Invert the membership into the per-light rows, and sort the casters
+    /// those rows name.
+    ///
+    /// The sort lives here because the rows name casters by position in the
+    /// sorted span; splitting the two would mean carrying a permutation between
+    /// them. Opaque-first and geometry-major, so consecutive entries coalesce.
+    void BuildIndex();
+
+    /// @brief No casters, and an empty row for each of @p lightCount lights.
+    ///
+    /// A frame that skips the gather still needs every row: the composite walks
+    /// one per served face whether or not it finds anything in it.
+    void Reset(std::uint32_t lightCount);
+
+    /// In gather order until BuildIndex sorts them.
+    [[nodiscard]] std::span<const Assisi::Render::ShadowCaster> Casters() const { return _casters; }
+    [[nodiscard]] const Assisi::Render::LocalShadowCasterIndex &Index() const { return _index; }
+    [[nodiscard]] std::uint32_t CulledEntities() const { return _culledEntities; }
+
+private:
+    std::vector<Assisi::Render::ShadowCaster> _casters;
+
+    // Light indices, concatenated: `_casterStart[i]` to `_casterStart[i + 1]` is
+    // caster i's row. `_index`'s rows are this, inverted.
+    std::vector<std::uint32_t> _reachedLights;
+    std::vector<std::uint32_t> _casterStart;
+
+    Assisi::Render::LocalShadowCasterIndex _index;
+
+    // Scratch, kept between frames for the capacity.
+    std::vector<std::uint32_t> _order;
+    std::vector<std::uint32_t> _cursor;
+    std::vector<Assisi::Render::ShadowCaster> _sorted;
+
+    std::uint32_t _lightCount = 0;
+    std::uint32_t _culledEntities = 0;
+};
 
 /// @brief The shadow casters among @p changed, with where they now stand.
 ///

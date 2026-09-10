@@ -872,9 +872,54 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // (EditorConfig::enableEditorVisuals, --no-editor-visuals).
         ImGui::Checkbox("Editor Overlays", &frame.showEditorOverlays);
 
+        // Screen-size LOD selection. Off pins every instance to LOD0, which is
+        // what the renderer drew before selection existed and the A/B against
+        // the whole feature; the bias is the quality dial, above 1 holding a
+        // finer level further out. Runtime only, not persisted.
+        Assisi::Runtime::LodSettings lod = frame.renderer.LodSettings();
+        bool lodChanged = ImGui::Checkbox("Mesh LOD", &lod.enabled);
+        if (!lod.enabled)
+        {
+            ImGui::BeginDisabled();
+        }
+        lodChanged |= ImGui::SliderFloat("LOD Bias", &lod.bias, 0.25f, 4.f, "%.2fx");
+        if (!lod.enabled)
+        {
+            ImGui::EndDisabled();
+        }
+        if (lodChanged)
+        {
+            frame.renderer.SetLodSettings(lod);
+        }
+
         const Assisi::Runtime::DrawStats draw = frame.renderer.LastDrawStats();
         ImGui::Text("Items: %u drawn / %u meshes culled", draw.drawnItems, draw.culledMeshes);
         ImGui::Text("Draws: %u batches / %u indirect calls", draw.batches, draw.drawCalls);
+
+        // Instances per level, and only the levels the scene actually reached —
+        // a scene of single-level meshes says "LOD0" and stops, which is what
+        // "meshes with no chain are untouched" looks like from here.
+        if (gpuCulling)
+        {
+            ImGui::TextDisabled("LOD: CPU path only; the GPU cull draws LOD0");
+        }
+        else
+        {
+            std::string levels;
+            for (uint32_t level = 0; level < Assisi::Runtime::kMaxReportedLods; ++level)
+            {
+                if (draw.lodInstances[level] == 0)
+                {
+                    continue;
+                }
+                if (!levels.empty())
+                {
+                    levels += "  ";
+                }
+                levels += "LOD" + std::to_string(level) + ": " + std::to_string(draw.lodInstances[level]);
+            }
+            ImGui::Text("%s", levels.empty() ? "LOD: nothing drawn" : levels.c_str());
+        }
 
         // Short-circuits the mesh shader to a single material channel, to look at the
         // PBR inputs directly. Runtime only. **This list is indexed by the enum

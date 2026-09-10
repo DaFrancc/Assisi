@@ -52,7 +52,48 @@ struct LodRange
 {
     uint32_t FirstSubMesh = 0;
     uint32_t SubMeshCount = 0;
+
+    /// @brief Screen-relative height at or above which this level is the one
+    ///        drawn: the instance's bounding-sphere diameter over the viewport's
+    ///        height. Descends across the chain, so selection takes the first
+    ///        level the instance is still big enough for.
+    ///
+    /// Zero means nothing authored one; DefaultLodScreenSize supplies the value
+    /// in that case, so a chain built without thresholds still selects.
+    float ScreenSizeThreshold = 0.f;
 };
+
+/// @brief The screen-relative height LOD 0 holds down to when the asset carries
+///        no authored threshold.
+///
+/// An eighth of the screen's height, which is further out than it sounds: an
+/// instance leaves LOD0 at `radius / (kDefaultLod0ScreenSize * tan(fovY/2))`, so
+/// a 0.3 m prop holds full detail to about 4 m and a 5 m building to about 70 m.
+/// Set against half the screen — where that prop switched at arm's length and
+/// the pop was plain — and against a value low enough that a coarse level is
+/// still carrying geometry nobody can see.
+inline constexpr float kDefaultLod0ScreenSize = 0.125f;
+
+/// @brief The screen-relative height LOD @p level takes over at when the asset
+///        carries no authored threshold, halving per level.
+///
+/// Halving because that is the ratio a level's triangle budget is authored at —
+/// a level meant for half the pixels is where half the triangles belong.
+[[nodiscard]] inline constexpr float DefaultLodScreenSize(uint32_t level)
+{
+    float threshold = kDefaultLod0ScreenSize;
+    for (uint32_t i = 0; i < level; ++i)
+    {
+        threshold *= 0.5f;
+    }
+    return threshold;
+}
+
+/// @brief @p lod's threshold, or the default for @p level when it carries none.
+[[nodiscard]] inline constexpr float LodScreenSizeThreshold(const LodRange &lod, uint32_t level)
+{
+    return lod.ScreenSizeThreshold > 0.f ? lod.ScreenSizeThreshold : DefaultLodScreenSize(level);
+}
 
 /// @brief CPU-side mesh: vertices, triangle indices, and the submesh / LOD /
 ///        material-slot tables that address them.
@@ -204,7 +245,8 @@ inline void EnsureSubMeshTables(MeshData &meshData)
     meshData.SubMeshes.push_back(whole);
 
     meshData.Lods.clear();
-    meshData.Lods.push_back(LodRange{.FirstSubMesh = 0, .SubMeshCount = 1});
+    meshData.Lods.push_back(
+        LodRange{.FirstSubMesh = 0, .SubMeshCount = 1, .ScreenSizeThreshold = DefaultLodScreenSize(0)});
 
     if (meshData.Materials.empty())
     {
