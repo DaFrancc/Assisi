@@ -37,6 +37,10 @@ bool ShadowPass::CreateNoCascadesTexture()
     desc.dimension = nvrhi::TextureDimension::Texture2DArray;
     desc.format = nvrhi::Format::D32;
     desc.isShaderResource = true;
+    // Never drawn into, but a depth-format image is sampled from the depth
+    // read-only layout, and Vulkan admits an image to that layout only if it
+    // was created usable as a depth attachment.
+    desc.isRenderTarget = true;
     desc.initialState = nvrhi::ResourceStates::ShaderResource;
     desc.keepInitialState = true;
     desc.debugName = "ShadowPass::NoCascades";
