@@ -9,6 +9,11 @@
 /// a light; the sky is what the component opts into. See Runtime::ResolveSky for
 /// the rules, including what a scene with several directional lights does.
 ///
+/// Two more components may sit on that same entity, and neither is required: a
+/// Sun makes the light's aim come from the scene's clock instead of from its
+/// `direction`, and a Moon beside it puts a second body in this sky. Both are in
+/// TimeOfDay.hpp.
+///
 /// Everything the sky's look needs is here and saved with the level, so a world
 /// is authored in the editor rather than in engine code.
 
@@ -152,6 +157,42 @@ struct Skybox
     /// disk agreeing with what lights the world; pushing it is the escape hatch
     /// for a yellow sun over a neutrally-lit scene.
     AFIELD(radioListen = {source = preset, value = Custom, behavior = grey}) glm::vec3 sunDiskColor{1.0f, 0.95f, 0.82f};
+    /// @}
+
+    /// @name The playable floor
+    ///
+    /// **Deliberately NOT greyed by the preset, and that is the whole point.** A
+    /// preset answers for the air — what this planet's atmosphere is made of and
+    /// how much of it there is. How dark a game is willing to get is not a fact
+    /// about the air, and an Arctic sky prescribing it would be a preset
+    /// answering a question it was never asked.
+    /// @{
+
+    /// The least the sky may light the world, whatever the hour.
+    ///
+    /// A moonless night is very nearly black, which is correct and is often not
+    /// playable. This is the floor under the sky's own answer: it only ever
+    /// raises, so by day it is inert — the daytime term is orders above any
+    /// sensible floor — and at night it is what keeps a scene readable.
+    ///
+    /// It floors the AMBIENT, not the sky's radiance, so the night sky stays as
+    /// dark as it is while the ground under it becomes visible. Flooring the
+    /// radiance instead would light the world by making the sky glow.
+    ///
+    /// **It has no direction and casts no shadows.** The indirect term is a
+    /// hemisphere, so it still shades an upward-facing surface differently from a
+    /// downward-facing one — but nothing is up there to cast from, which is also
+    /// true of the real thing. A night with shadows in it wants a moon, not a
+    /// bigger floor.
+    ///
+    /// Zero is off, and is the default: a level that says nothing gets the
+    /// physical answer.
+    AFIELD(min = 0, max = 10.0) float minimumAmbient = 0.f;
+
+    /// The hue that floor takes. Read only when @ref minimumAmbient is above
+    /// zero; kept authored either way so switching the floor on gives something
+    /// usable rather than grey.
+    AFIELD() glm::vec3 minimumAmbientColor{0.35f, 0.45f, 0.7f};
     /// @}
 };
 

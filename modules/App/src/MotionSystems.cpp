@@ -9,6 +9,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 
 namespace Assisi::App
 {
@@ -49,26 +50,19 @@ void OscillateSystem(SystemContext &ctx)
     }
 }
 
-void DaylightCycleSystem(SystemContext &ctx)
+void TimeOfDaySystem(SystemContext &ctx)
 {
     ECS::Scene &scene = ctx.world.scene;
-    for (auto [entity, light] : scene.Query<Runtime::DirectionalLight>())
+    for (auto [entity, clock] : scene.Query<Runtime::TimeOfDay>())
     {
-        if (!light.daylightCycle)
+        (void)clock;
+        // Written through GetMut for the same reason a Transform is: the query
+        // hands out an unstamped reference, and a write that skips the stamp
+        // leaves anything watching the component believing the hour has not
+        // moved.
+        if (Runtime::TimeOfDay *mutable_ = scene.GetMut<Runtime::TimeOfDay>(entity))
         {
-            continue;
-        }
-        // The step, not the elapsed total: this turns the aim the light already
-        // has rather than deriving one from a start it does not remember.
-        const glm::vec3 aimed = Runtime::AdvanceDaylight(light, ctx.dt);
-
-        // DirectionalLight is written through GetMut for the same reason a
-        // Transform is: the query hands out an unstamped reference, and a write
-        // that skips the stamp leaves anything watching the component believing
-        // the sun has not moved.
-        if (Runtime::DirectionalLight *mutable_ = scene.GetMut<Runtime::DirectionalLight>(entity))
-        {
-            mutable_->direction = aimed;
+            Runtime::AdvanceTimeOfDay(*mutable_, ctx.dt);
         }
     }
 }

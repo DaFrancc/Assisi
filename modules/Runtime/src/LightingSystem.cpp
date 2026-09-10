@@ -5,6 +5,7 @@
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 
 #include <Assisi/Render/GpuMarker.hpp>
 
@@ -52,35 +53,6 @@ void LightingSystem::Resize(nvrhi::ICommandList *commandList, int32_t width, int
 glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection)
 {
     return SafeDirection(glm::mat3(worldMatrix) * localDirection);
-}
-
-glm::vec3 AdvanceDaylight(const DirectionalLight &light, float seconds)
-{
-    // A light not on the cycle is left exactly where it was aimed, which is what
-    // makes running this over every directional light cost one compare on the
-    // ones that are not.
-    if (!light.daylightCycle || !std::isfinite(seconds))
-    {
-        return light.direction;
-    }
-    const float period = std::max(light.daylightPeriodSeconds, kMinDaylightPeriodSeconds);
-
-    // Turned about a horizontal axis, which is what makes this a day rather than
-    // a circuit. Turning about world up would sweep the sun around at whatever
-    // elevation it was authored at and never take it below the horizon — a polar
-    // summer, with no night in it — and it would leave the default sun, aimed
-    // straight down, exactly where it started: that aim is parallel to world up,
-    // so it maps onto itself and nothing moves at all.
-    //
-    // Which horizontal axis is arbitrary without somewhere on a planet to stand,
-    // so it is world X: the sun rises on one side, passes overhead and sets on
-    // the other. An author who wants a different bearing turns the level or aims
-    // the light off-axis, and an aim off this axis traces a tilted arc, which is
-    // what a day away from the equator looks like.
-    const float turns = seconds / period;
-    const float angle = turns * glm::two_pi<float>();
-    const glm::mat4 rotation = glm::rotate(glm::mat4(1.f), angle, kDaylightAxis);
-    return SafeDirection(glm::vec3(rotation * glm::vec4(light.direction, 0.f)));
 }
 
 glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
@@ -134,7 +106,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     Upload(commandList, view);
 }
 
-void LightingSystem::Gather(Assisi::ECS::Scene &scene)
+void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial)
 {
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
     _pointLights.clear();
@@ -217,27 +189,30 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene)
 
         for (auto [entity, light] : scene.Query<DirectionalLight>())
         {
-            // A sun taking its colour from the sky is lit by the beam as it
-            // arrives at the ground rather than as it left: dimmer and oranger the
-            // lower it is, which is what makes a lit world agree with the sky over
-            // it. Extinction dims as well as tints, and both ride in the colour —
-            // the authored intensity stays exactly what was authored.
+            // The scene's celestial light, when it is this entity's. Everything
+            // the clock decides is already in it: where the body is, whether that
+            // body is the sun or the moon, the ramp that takes both to zero at the
+            // horizon, and the atmosphere the beam crossed on the way down.
             //
-            // Only what lights surfaces is tinted. The sky scatters the light's
-            // own `color` and applies this same extinction itself, so nothing
-            // applies it twice.
-            const Skybox *skybox = light.tintedBySky ? scene.Get<Skybox>(entity) : nullptr;
-            const glm::vec3 direction = SafeDirection(light.direction);
-            const std::optional<Render::SkySettings> atmosphere =
-                skybox != nullptr ? std::optional<Render::SkySettings>(ToSkySettings(*skybox)) : std::nullopt;
-            const glm::vec3 color =
-                SunlightColor(AuthoredSunColor(light), -direction, atmosphere ? &*atmosphere : nullptr);
+            // Resolved rather than derived here because a light's colour depends
+            // on where its body IS, and only the resolver knows that — this used
+            // to reach for the entity's Skybox and tint the authored aim, which
+            // cannot answer for a sun on a clock.
+            const bool resolved = celestial != nullptr && celestial->entity == entity;
+
+            const glm::vec3 direction = resolved ? celestial->direction : SafeDirection(light.direction);
+            const glm::vec3 color = resolved ? celestial->color : AuthoredSunColor(light);
+            const float intensity = resolved ? celestial->intensity : light.intensity;
+            // A body at zero intensity draws cascades nothing can see, so the flag
+            // carries the intensity as well as the author's wish. This is what
+            // makes polar night cost nothing: no lighting body, no shadow pass.
+            const bool castsShadows = resolved ? celestial->castsShadows && intensity > 0.f : light.castsShadows;
 
             _dirLights.push_back({
-                    .directionIntensity = {direction, light.intensity},
+                    .directionIntensity = {direction, intensity},
                     .colorPad           = {color, 0.f},
                 });
-            _dirShadowFlags.push_back(AsShadowCaster(light.castsShadows));
+            _dirShadowFlags.push_back(AsShadowCaster(castsShadows));
         }
     }
 

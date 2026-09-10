@@ -24,6 +24,7 @@
 
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/LinePass.hpp>
@@ -130,10 +131,14 @@ void AddSpotLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, c
 }
 
 /// @brief A directional light's arrow, pointing the way the light travels.
+///
+/// The direction is passed rather than read off the component, because a clocked
+/// sun's is not on the component: it comes from the hour, and an arrow drawn from
+/// the authored field would point somewhere the renderer never lit from.
 void AddDirectionalLightOutline(std::vector<LineVertex> &out, const glm::vec4 &color, const glm::vec3 &position,
-                                const Rt::DirectionalLight &light)
+                                const glm::vec3 &travels)
 {
-    const glm::mat4 model = glm::translate(glm::mat4(1.f), position) * AimAlong(light.direction);
+    const glm::mat4 model = glm::translate(glm::mat4(1.f), position) * AimAlong(travels);
     AddArrowWireframe(out, model, color, kSunArrowLength);
 }
 } // namespace
@@ -180,10 +185,15 @@ void EditorApp::SubmitLightGizmos()
         AddSpotLightOutline(*style.batch, style.color, transform.worldMatrix, light, style.detailed);
     }
 
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
     for (auto [entity, light] : _scene->Query<Rt::DirectionalLight>())
     {
         const auto style = styleFor(entity, glm::vec3(Rt::AuthoredSunColor(light)));
-        AddDirectionalLightOutline(*style.batch, style.color, EntityPosition(*_scene, entity), light);
+        // The aim the renderer used, one frame behind, for the light the clock
+        // drives — so the arrow agrees with the shadows rather than with a field
+        // nothing reads.
+        const glm::vec3 travels = sky.light.entity == entity ? sky.light.direction : light.direction;
+        AddDirectionalLightOutline(*style.batch, style.color, EntityPosition(*_scene, entity), travels);
     }
 
     _sceneRenderer.SubmitOverlayLines(_lightLinesDepthTested, /*onTop=*/ false);
@@ -257,7 +267,9 @@ Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
 
     for (auto [entity, light] : _scene->Query<Rt::DirectionalLight>())
     {
-        AddDirectionalLightOutline(_lightPickOutline, kUnread, EntityPosition(*_scene, entity), light);
+        const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+        const glm::vec3 travels = sky.light.entity == entity ? sky.light.direction : light.direction;
+        AddDirectionalLightOutline(_lightPickOutline, kUnread, EntityPosition(*_scene, entity), travels);
         takeNearest(entity);
     }
 
@@ -273,6 +285,15 @@ bool EditorApp::DrawDirectionalLightGizmo()
     }
     Rt::DirectionalLight *light = _scene->Get<Rt::DirectionalLight>(_selectedEntity);
     if (light == nullptr)
+    {
+        return false;
+    }
+    // A clocked sun's aim comes from the hour, and `direction` is not read.
+    // Offering handles for it would let an author drag an arrow that snaps back
+    // on the next frame. Solving the hour back out of a dragged arrow is a nicer
+    // interaction, but it would edit a different component than the gesture
+    // opened on.
+    if (_scene->Get<Assisi::Runtime::Sun>(_selectedEntity) != nullptr)
     {
         return false;
     }

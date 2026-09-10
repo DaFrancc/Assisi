@@ -279,6 +279,29 @@ public:
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
 
+    /// @brief Whether the moon's albedo photograph loaded.
+    ///
+    /// Surfaced because the failure is invisible: a failed load leaves a flat
+    /// white disk, which is a perfectly plausible-looking moon.
+    [[nodiscard]] Render::SkyPass::MoonTexture MoonTextureState() const { return _skyPass.MoonTextureState(); }
+
+    /// @brief What the sky resolved to on the most recent Render().
+    ///
+    /// One frame behind for anything reading it outside Render — which is what
+    /// the inspector and the gizmos want, and what the shadow verdict already
+    /// does. The point is that a panel showing where the sun is shows where the
+    /// renderer actually put it, rather than re-deriving it and being able to
+    /// disagree.
+    [[nodiscard]] const SkyResolution &LastSky() const { return _lastSky; }
+
+    /// @brief Forget everything keyed to the scene that was here.
+    ///
+    /// A level load and leaving play both replace the scene wholesale, and every
+    /// cascade then holds depth of geometry that no longer exists under a sun
+    /// that may be somewhere else entirely. One frame of today's cost, at exactly
+    /// the moment a spike is invisible.
+    void OnSceneReplaced();
+
     /// @brief Mark one entity to receive an always-on-top orange silhouette
     /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The entity
     /// must carry a Transform: a resolved mesh outlines its silhouette, an entity
@@ -473,6 +496,12 @@ private:
     // The cascade allocation the kept slices belong to. A different one means
     // they hold depth of a texture that no longer exists.
     std::uint32_t _cascadeGeneration = 0;
+    // The clock's cut count as of the last frame drawn. A different one means the
+    // sun teleported and no kept cascade describes where it is now.
+    std::uint32_t _jumpSerial = 0;
+    // What the sky resolved to on the last frame, for the panels and gizmos that
+    // must show what the renderer used rather than re-deriving it.
+    SkyResolution _lastSky;
     // The local-light half: the shared atlas, who gets a tile in it, and the
     // casters each tile-holder reaches. Kept as members so a steady state
     // allocates nothing.

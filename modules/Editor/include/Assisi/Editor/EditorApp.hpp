@@ -272,6 +272,20 @@ private:
     /// and what took its shadow if not. Draws nothing when there is no verdict.
     void DrawLightShadowVerdict();
 
+    /// @name The celestial components' own inspector blocks
+    ///
+    /// Drawn above each component's reflected fields, never instead of them.
+    /// Scrubbing and jumping are gestures a field row cannot express, and the two
+    /// readouts say what the renderer actually did rather than re-deriving it.
+    /// @{
+    void DrawTimeOfDayControls();
+    void DrawSunControls();
+    void DrawMoonReadout();
+    /// Says that a clocked sun's `direction` is not read. Radio gating cannot
+    /// cross components, so this is the honest minimum.
+    void DrawClockedAimNotice();
+    /// @}
+
     void DrawDiagnosticsWindow();
     void DrawChiaraWindow();  // performance capture (F9); empty in builds without profiling
     void DrawLevelsWindow();

@@ -66,6 +66,12 @@ void FinishLoad(World &world, const LevelServices &services, AssetCacheReset res
         services.renderer.InvalidateAssetBindings();
     }
 
+    // Whatever the shadow selectors were holding described the level that was
+    // here: cascades full of that geometry's depth, under a sun the incoming
+    // level's clock may put somewhere else entirely. A level that loads at a set
+    // hour is a jump like any other, and this is where it is one.
+    services.renderer.OnSceneReplaced();
+
     RebindSceneAssetsAndPhysics(world.scene, services.cache, services.database, world.physics);
 }
 

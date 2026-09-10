@@ -817,3 +817,375 @@ TEST_CASE("A blackbody's colour is its hue, not its brightness")
     CHECK(BlackbodyColor(1e9f).b == doctest::Approx(BlackbodyColor(Assisi::Math::kMaxTemperatureKelvin).b));
     CHECK(AllFinite(BlackbodyColor(std::numeric_limits<float>::quiet_NaN())));
 }
+
+TEST_CASE("A sky with a default moon is the moonless sky, bit for bit")
+{
+    // The three-argument form is not an older API kept alive — it is the sky of a
+    // level with no Moon component, which most levels are. If the two forms ever
+    // stopped agreeing exactly, adding an unused field to SkyMoon would change
+    // every existing scene's sky by a rounding step, and nothing would say so.
+    SkySettings settings;
+    settings.sunDiskIntensity = 12.0f;
+
+    for (const float elevation : {-30.0f, -2.0f, 0.0f, 8.0f, 45.0f, 89.0f})
+    {
+        const SkySun sun = SunAt(elevation, 25.0f);
+        for (const glm::vec3 &ray : SphereLattice())
+        {
+            const glm::vec3 without = SkyRadiance(ray, sun, settings);
+            const glm::vec3 with = SkyRadiance(ray, sun, SkyMoon{}, settings);
+            REQUIRE(with.r == without.r);
+            REQUIRE(with.g == without.g);
+            REQUIRE(with.b == without.b);
+        }
+    }
+}
+
+TEST_CASE("A moon is sanitized into a usable frame")
+{
+    SkyMoon moon;
+    moon.directionToMoon = glm::vec3(0.0f, 3.0f, 0.0f);
+    // Leaning the right way but not perpendicular. A pair that is not
+    // perpendicular SKEWS the disk's image rather than rotating it, which reads
+    // as a moon squashed along one diagonal and is easy to mistake for a
+    // projection bug.
+    moon.imageUp = glm::vec3(0.0f, 0.5f, -1.0f);
+    moon.intensity = -1.0f;
+    moon.sizeDegrees = 1e9f;
+    moon.diskIntensity = std::numeric_limits<float>::quiet_NaN();
+    moon.color = glm::vec3(std::numeric_limits<float>::infinity(), 0.5f, -2.0f);
+
+    const SkyMoon safe = Sanitized(moon);
+    const SkyMoon defaults;
+
+    CHECK(glm::length(safe.directionToMoon) == doctest::Approx(1.0f));
+    CHECK(glm::length(safe.imageUp) == doctest::Approx(1.0f));
+    CHECK(std::abs(glm::dot(safe.imageUp, safe.directionToMoon)) < 1e-5f);
+    // Re-projected, not replaced: what was left after removing the parallel part
+    // still points where the caller was pointing.
+    CHECK(safe.imageUp.z < 0.0f);
+
+    CHECK(safe.intensity == doctest::Approx(0.0f));
+    CHECK(safe.sizeDegrees == doctest::Approx(kMaxSunSizeDegrees));
+    CHECK(safe.diskIntensity == doctest::Approx(defaults.diskIntensity));
+    CHECK(safe.color.r == doctest::Approx(defaults.color.r));
+    CHECK(safe.color.g == doctest::Approx(0.5f));
+    CHECK(safe.color.b == doctest::Approx(0.0f));
+
+    // An up parallel to the direction carries no information about the picture's
+    // rotation. Any perpendicular is substituted, which is an arbitrary rotation
+    // — the mildest wrong answer available, and better than a NaN reaching a
+    // uniform buffer.
+    SkyMoon degenerate;
+    degenerate.directionToMoon = glm::vec3(0.0f, 1.0f, 0.0f);
+    degenerate.imageUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    const SkyMoon fixed = Sanitized(degenerate);
+    CHECK(glm::length(fixed.imageUp) == doctest::Approx(1.0f));
+    CHECK(std::abs(glm::dot(fixed.imageUp, fixed.directionToMoon)) < 1e-5f);
+
+    CHECK(Sanitized(safe).imageUp.z == doctest::Approx(safe.imageUp.z));
+}
+
+TEST_CASE("The moon's disk lands where the moon is, at its own size and tint")
+{
+    SkySettings settings = ClearAir();
+    settings.sunDiskIntensity = 0.0f;
+
+    SkyMoon moon;
+    moon.directionToMoon = Dir(40.0f, 180.0f);
+    moon.imageUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    moon.sizeDegrees = 3.0f;
+    moon.diskIntensity = 50.0f;
+    moon.diskColor = glm::vec3(1.0f, 0.4f, 0.2f);
+    moon.intensity = 0.02f;
+
+    // Full: the sun opposite the moon, so the whole visible face is lit.
+    const SkySun sun{.directionToSun = -moon.directionToMoon, .color = glm::vec3(1.0f), .intensity = 1.0f};
+
+    const glm::vec3 onDisk = SkyRadiance(moon.directionToMoon, sun, moon, settings);
+    const glm::vec3 besideIt = SkyRadiance(Dir(40.0f, 160.0f), sun, moon, settings);
+    CHECK(Luminance(onDisk) > 20.0f * Luminance(besideIt));
+
+    SkyMoon undrawn = moon;
+    undrawn.diskIntensity = 0.0f;
+    const glm::vec3 noDisk = SkyRadiance(moon.directionToMoon, sun, undrawn, settings);
+
+    // Measured against an untinted disk in the same sky rather than against
+    // white, because the disk's colour is NOT the tint alone: the moon's beam
+    // crosses the atmosphere like the sun's and comes out redder for it. That
+    // reddening is the point of the disk agreeing with the light — comparing the
+    // raw channels to the tint would be asserting that a low moon does not go
+    // orange, which is the opposite of what this model is for.
+    SkyMoon untinted = moon;
+    untinted.diskColor = glm::vec3(1.0f);
+    const glm::vec3 tinted = onDisk - noDisk;
+    const glm::vec3 white = SkyRadiance(moon.directionToMoon, sun, untinted, settings) - noDisk;
+    CHECK(tinted.r / white.r == doctest::Approx(1.0f).epsilon(1e-3));
+    CHECK(tinted.g / white.g == doctest::Approx(0.4f).epsilon(1e-3));
+    CHECK(tinted.b / white.b == doctest::Approx(0.2f).epsilon(1e-3));
+
+    // At its own size: two degrees off centre is inside a three-degree disk and
+    // four degrees off is outside it. Fed through the sun's half-degree lane it
+    // would be dark at both.
+    CHECK(Luminance(SkyRadiance(Dir(38.0f, 180.0f), sun, moon, settings)) > 20.0f * Luminance(besideIt));
+    CHECK(Luminance(SkyRadiance(Dir(34.0f, 180.0f), sun, moon, settings)) ==
+          doctest::Approx(Luminance(besideIt)).epsilon(0.01));
+
+    CHECK(Luminance(noDisk) < Luminance(onDisk) / 100.0f);
+    // Removing the disk leaves the scattering alone: the moon is still a source.
+    CHECK(Luminance(noDisk) > 0.0f);
+}
+
+TEST_CASE("The moon's phase is where the sphere turns away from the sun")
+{
+    const glm::vec3 toMoon = Dir(50.0f, 0.0f);
+    const float radius = glm::radians(3.0f);
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    const glm::vec3 right = glm::cross(toMoon, up);
+
+    // A ray landing half way across the face on each side, and one at the centre.
+    const glm::vec3 centre = toMoon;
+    const glm::vec3 sunward = glm::normalize(toMoon + right * std::sin(0.5f * radius));
+    const glm::vec3 away = glm::normalize(toMoon - right * std::sin(0.5f * radius));
+
+    const glm::vec3 full = -toMoon;
+    CHECK(MoonDiskLit(centre, toMoon, full, radius) == doctest::Approx(1.0f));
+    CHECK(MoonDiskLit(sunward, toMoon, full, radius) == doctest::Approx(1.0f));
+    CHECK(MoonDiskLit(away, toMoon, full, radius) == doctest::Approx(1.0f));
+
+    // New: the sun behind the moon from here, so the face turned toward the
+    // viewer is the face turned away from the sun.
+    CHECK(MoonDiskLit(centre, toMoon, toMoon, radius) == doctest::Approx(0.0f));
+    CHECK(MoonDiskLit(sunward, toMoon, toMoon, radius) == doctest::Approx(0.0f));
+
+    // Quarter: the terminator runs through the centre, so the centre is half lit
+    // and the two halves are opposite. That the split follows `right` — which is
+    // built from the image's up — is what puts a crescent's horns where the sky
+    // puts them.
+    const glm::vec3 quarter = right;
+    CHECK(MoonDiskLit(sunward, toMoon, quarter, radius) > 0.9f);
+    CHECK(MoonDiskLit(away, toMoon, quarter, radius) < 0.1f);
+    CHECK(MoonDiskLit(centre, toMoon, quarter, radius) == doctest::Approx(0.5f));
+
+    // Flat across the lit face, not a cosine: a Lambert term would fall off
+    // toward the limb and read as a billiard ball, which is the single most
+    // recognisable way a rendered moon goes wrong.
+    const glm::vec3 nearLimb = glm::normalize(toMoon + right * std::sin(0.95f * radius));
+    CHECK(MoonDiskLit(nearLimb, toMoon, full, radius) == doctest::Approx(1.0f));
+}
+
+TEST_CASE("The disk image is stamped the right way up and the right way round")
+{
+    SkyMoon moon;
+    moon.directionToMoon = glm::vec3(0.0f, 0.0f, -1.0f);
+    moon.imageUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    const float radius = glm::radians(4.0f);
+    const glm::vec3 right = glm::cross(moon.directionToMoon, moon.imageUp);
+
+    const glm::vec2 centre = MoonDiskUv(moon.directionToMoon, moon, radius);
+    CHECK(centre.x == doctest::Approx(0.5f));
+    CHECK(centre.y == doctest::Approx(0.5f));
+
+    // V decreases upward, because a texture's first row is its top. Getting this
+    // sign wrong is one of exactly two ways the moon comes out wrong on screen,
+    // and neither is visible to anything but an eye.
+    const glm::vec3 upward = glm::normalize(moon.directionToMoon + moon.imageUp * std::tan(0.5f * radius));
+    const glm::vec2 above = MoonDiskUv(upward, moon, radius);
+    CHECK(above.x == doctest::Approx(0.5f));
+    CHECK(above.y == doctest::Approx(0.25f).epsilon(0.02));
+
+    // The other way: forward cross up is right, the camera convention.
+    const glm::vec3 sideways = glm::normalize(moon.directionToMoon + right * std::tan(0.5f * radius));
+    const glm::vec2 beside = MoonDiskUv(sideways, moon, radius);
+    CHECK(beside.x == doctest::Approx(0.75f).epsilon(0.02));
+    CHECK(beside.y == doctest::Approx(0.5f));
+
+    // The limb is the image's edge, so the texture's disk and the silhouette's
+    // disk are the same circle and no border of unused pixels sits between them.
+    const glm::vec3 limb = glm::normalize(moon.directionToMoon + moon.imageUp * std::tan(radius));
+    CHECK(MoonDiskUv(limb, moon, radius).y == doctest::Approx(0.0f).epsilon(0.02));
+
+    // Past the limb the coordinate keeps going rather than clamping. The sampler
+    // clamps instead, so a ray inside the profile's edge fade gets the image's
+    // border rather than a smear of its rim.
+    const glm::vec3 beyond = glm::normalize(moon.directionToMoon + right * std::tan(1.5f * radius));
+    CHECK(MoonDiskUv(beyond, moon, radius).x > 1.0f);
+}
+
+TEST_CASE("A moonlit night is brighter than a moonless one and still finite")
+{
+    SkySettings settings;
+    settings.sunDiskIntensity = 0.0f;
+
+    const SkySun sun = SunAt(-25.0f, 0.0f);
+
+    SkyMoon moon;
+    moon.directionToMoon = Dir(55.0f, 200.0f);
+    moon.imageUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    moon.color = glm::vec3(0.75f, 0.85f, 1.0f);
+    moon.intensity = 0.02f;
+
+    float lifted = 0.0f;
+    for (const glm::vec3 &ray : SphereLattice())
+    {
+        const glm::vec3 moonless = SkyRadiance(ray, sun, settings);
+        const glm::vec3 moonlit = SkyRadiance(ray, sun, moon, settings);
+        REQUIRE(AllFinite(moonlit));
+        REQUIRE(moonlit.r >= 0.0f);
+        // Additive, so the moon can only ever add. A model that handed the sky to
+        // the dominant body could take light away at the handoff, and would.
+        REQUIRE(Luminance(moonlit) >= Luminance(moonless) * 0.999f);
+        if (Luminance(moonlit) > Luminance(moonless) * 1.05f)
+        {
+            lifted += 1.0f;
+        }
+    }
+    CHECK(lifted > 0.0f);
+
+    // A moon below the horizon scatters almost nothing, for the same reason a set
+    // sun does: the twilight extension has taken its beam apart. No branch says
+    // so — it is the same air mass either way.
+    SkyMoon belowHorizon = moon;
+    belowHorizon.directionToMoon = Dir(-30.0f, 200.0f);
+    const glm::vec3 zenith(0.0f, 1.0f, 0.0f);
+    CHECK(Luminance(SkyRadiance(zenith, sun, belowHorizon, settings)) <
+          Luminance(SkyRadiance(zenith, sun, moon, settings)));
+}
+
+TEST_CASE("The atmospheric tint changes the moon's hue and never its brightness")
+{
+    // The property that makes this a correction rather than a cheat: at every
+    // setting the moon is exactly as dim, because the mix is toward the
+    // transmittance's OWN luminance rather than toward white. An author turning
+    // it down is not turning the night up.
+    const SkySettings settings;
+    for (const float elevation : {0.5f, 3.0f, 15.0f, 60.0f})
+    {
+        CAPTURE(elevation);
+        const glm::vec3 transmittance = SunlightTransmittance(Dir(elevation, 0.0f), settings);
+        const float physical = Luminance(transmittance);
+
+        for (const float tint : {0.0f, 0.2f, 0.5f, 1.0f})
+        {
+            CAPTURE(tint);
+            CHECK(Luminance(TintedTransmittance(transmittance, tint)) == doctest::Approx(physical));
+        }
+
+        // One is the physics, untouched.
+        const glm::vec3 full = TintedTransmittance(transmittance, 1.0f);
+        CHECK(full.r == doctest::Approx(transmittance.r));
+        CHECK(full.b == doctest::Approx(transmittance.b));
+
+        // Zero is grey: the moon dims through the air without shifting at all.
+        const glm::vec3 none = TintedTransmittance(transmittance, 0.0f);
+        CHECK(none.r == doctest::Approx(none.g));
+        CHECK(none.g == doctest::Approx(none.b));
+    }
+
+    // And it does move the hue where the hue is worth moving: near the horizon a
+    // fifth of the shift is a fraction of the whole of it.
+    const glm::vec3 low = SunlightTransmittance(Dir(1.0f, 0.0f), settings);
+    const glm::vec3 physical = TintedTransmittance(low, 1.0f);
+    const glm::vec3 softened = TintedTransmittance(low, 0.2f);
+    CHECK(softened.b / softened.r > physical.b / physical.r);
+}
+
+TEST_CASE("The moon's tint reaches its disk, its aureole and the ground alike")
+{
+    SkySettings settings;
+    settings.sunDiskIntensity = 0.0f;
+
+    const SkySun sun = SunAt(-30.0f, 0.0f);
+
+    SkyMoon physical;
+    physical.directionToMoon = Dir(1.5f, 180.0f);
+    physical.imageUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    physical.intensity = 0.02f;
+    physical.sizeDegrees = 4.0f;
+    physical.diskIntensity = 40.0f;
+    physical.atmosphericTint = 1.0f;
+
+    SkyMoon softened = physical;
+    softened.atmosphericTint = 0.0f;
+
+    // On the disk, a low moon keeps its colour instead of going orange.
+    const glm::vec3 hard = SkyRadiance(physical.directionToMoon, sun, physical, settings);
+    const glm::vec3 soft = SkyRadiance(softened.directionToMoon, sun, softened, settings);
+    CHECK(soft.b / soft.r > hard.b / hard.r);
+
+    // And the aureole around it. A low moon throws a sunset-coloured glow into
+    // the sky the way a low sun does, and on screen that glow is far larger than
+    // the half-degree disk inside it — so a tint that reached only the disk would
+    // read as doing nothing at all.
+    const glm::vec3 nearMoon = Dir(4.0f, 180.0f);
+    const glm::vec3 hardGlow = SkyRadiance(nearMoon, sun, physical, settings);
+    const glm::vec3 softGlow = SkyRadiance(nearMoon, sun, softened, settings);
+    CHECK(softGlow.b / softGlow.r > hardGlow.b / hardGlow.r);
+
+    // What it must NOT do is take the blue out of a moonlit sky. That blue is the
+    // air's own scattering coefficient, not a hue the air imposed on the moon, so
+    // it survives at every tint — the knob governs extinction and nothing else.
+    SkyMoon high = softened;
+    high.directionToMoon = Dir(70.0f, 180.0f);
+    const glm::vec3 overhead = SkyRadiance(Dir(60.0f, 0.0f), sun, high, settings);
+    CHECK(overhead.b > overhead.r);
+
+    // The sun is not touched at any tint — the knob is the moon's alone, and a
+    // sunset is seen in daylight, at full colour, and is not something to soften.
+    //
+    // The moon is silenced outright for this rather than merely moved away: a
+    // moon left scattering anywhere in the sky reaches this pixel too, and the
+    // difference would be its own rather than the sun's.
+    SkySettings withSunDisk = settings;
+    withSunDisk.sunDiskIntensity = 20.0f;
+    SkyMoon absentHard;
+    absentHard.atmosphericTint = 1.0f;
+    SkyMoon absentSoft;
+    absentSoft.atmosphericTint = 0.0f;
+
+    const SkySun lowSun = SunAt(1.5f, 0.0f);
+    const glm::vec3 sunHard = SkyRadiance(lowSun.directionToSun, lowSun, absentHard, withSunDisk);
+    const glm::vec3 sunSoft = SkyRadiance(lowSun.directionToSun, lowSun, absentSoft, withSunDisk);
+    // Bitwise: the sun passes a tint of one, and one returns its input untouched
+    // rather than reconstructing it, so no existing sunset moves by even an ulp.
+    CHECK(sunSoft.r == sunHard.r);
+    CHECK(sunSoft.g == sunHard.g);
+    CHECK(sunSoft.b == sunHard.b);
+}
+
+TEST_CASE("Sky constants carry the moon in its own lanes")
+{
+    SkySettings settings;
+    settings.sunSizeDegrees = 2.0f;
+
+    SkyMoon moon;
+    moon.directionToMoon = Dir(20.0f, 100.0f) * 4.0f;
+    moon.imageUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    moon.color = glm::vec3(0.5f, 0.6f, 1.0f);
+    moon.intensity = 0.04f;
+    moon.sizeDegrees = 0.75f;
+    moon.diskColor = glm::vec3(0.9f, 0.9f, 1.0f);
+    moon.diskIntensity = 3.0f;
+
+    const SkyConstants constants =
+        MakeSkyConstants(glm::mat4(1.0f), glm::vec3(0.0f), SunAt(30.0f), moon, settings);
+
+    CHECK(glm::length(glm::vec3(constants.moonDirection)) == doctest::Approx(1.0f));
+    // Its own radius lane, not the sun's: a moon fed through the sun's is drawn
+    // sun-sized, which is the defect this issue introduces and so has to close.
+    CHECK(constants.moonDirection.w == doctest::Approx(glm::radians(0.75f)));
+    CHECK(constants.sunDirection.w == doctest::Approx(glm::radians(2.0f)));
+
+    CHECK(constants.moonRadiance.r == doctest::Approx(0.5f * 0.04f));
+    CHECK(constants.moonRadiance.w == doctest::Approx(3.0f));
+    CHECK(constants.moonDiskColor.b == doctest::Approx(1.0f));
+
+    CHECK(glm::length(glm::vec3(constants.moonUp)) == doctest::Approx(1.0f));
+    CHECK(std::abs(glm::dot(glm::vec3(constants.moonUp), glm::vec3(constants.moonDirection))) < 1e-5f);
+
+    // A moonless sky uploads a moon that draws nothing and scatters nothing,
+    // rather than leaving the lanes holding whatever was there last frame.
+    const SkyConstants moonless = MakeSkyConstants(glm::mat4(1.0f), glm::vec3(0.0f), SunAt(30.0f), settings);
+    CHECK(moonless.moonRadiance.x == doctest::Approx(0.0f));
+    CHECK(moonless.moonRadiance.w == doctest::Approx(0.0f));
+}
