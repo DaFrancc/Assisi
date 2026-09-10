@@ -738,6 +738,8 @@ void EditorApp::SetupScene()
     // The saved shadow knobs, applied once here; the options panel pushes every
     // later edit. Nothing is allocated until a level with a sun in it loads.
     _sceneRenderer.SetShadowSettings(GetOptions().shadows);
+    // The same for the sky probe, which holds nothing until a sky does.
+    _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.

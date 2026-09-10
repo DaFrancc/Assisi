@@ -46,6 +46,10 @@ constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv"
 constexpr const char *kSkyVertexShader = "shaders/sky.vert.spv";
 constexpr const char *kSkyPixelShader = "shaders/sky.frag.spv";
 
+// The sky probe's GGX prefilter (see Render::SkyProbe). The capture itself goes
+// through the sky shaders above.
+constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
+
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
 // the orange border. Editor-only, so they live under editor/shaders/ — except the
@@ -158,6 +162,13 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                          .moonTexturePath = kMoonTexture}))
     {
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
+    }
+
+    // Non-fatal as well: without it a sky lights the scene with the hemisphere
+    // alone, which is what it did before there was a probe.
+    if (!_skyProbe.Initialize(_device, kSkyPrefilterShader))
+    {
+        Core::Log::Warn("SceneRenderer: sky reflections unavailable (the prefilter failed to initialise).");
     }
 
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
@@ -293,6 +304,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lastSky = ResolveSky(scene);
     const SkyResolution &sky = _lastSky;
 
+    // Before the mesh pass reads it, and off the same sky the frame is lit by.
+    const SpecularProbe probe = UpdateSkyProbe(frame, sky);
+
     // Gathered but not yet uploaded: the local-light atlas decides which lights
     // hold tiles and stamps each winner's view index into the light record, and
     // that stamp has to happen before the lights reach the GPU.
@@ -327,7 +341,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .farZ = camera.farZ,
                                                                     .dirLightCount = _lighting.DirLightCount(),
                                                                     .debugView = _debugView,
-                                                                    .indirect = ResolveIndirect(sky, _ambient),
+                                                                    .indirect = ResolveIndirect(sky, _ambient, probe),
                                                                     .shadows = shadows};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
@@ -426,6 +440,53 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     ASSISI_PROFILE_COUNTER("shadows/atlas-copied", static_cast<double>(_lastLocalShadowStats.copiedFaces));
     ASSISI_PROFILE_COUNTER("shadows/atlas-waiting", static_cast<double>(_lastLocalShadowStats.deferredLights));
     ASSISI_PROFILE_COUNTER("shadows/atlas-movers", static_cast<double>(_lastLocalShadowStats.dynamicCasters));
+
+    // A still sky bakes once and then reads zero here; a running clock shows a
+    // bake each time the sun crosses the rebake tolerance. One that never
+    // settles on a still sky is an input the comparison should not be seeing.
+    const Render::SkyProbe::Stats &probeStats = _skyProbe.LastStats();
+    ASSISI_PROFILE_COUNTER("sky-probe/baked", probeStats.bakedThisFrame ? 1.0 : 0.0);
+    ASSISI_PROFILE_COUNTER("sky-probe/age", static_cast<double>(probeStats.ageFrames));
+}
+
+SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky)
+{
+    // The probe is the sky's, so it exists exactly while a sky lights the
+    // scene: a pinned ambient answers instead of the sky, and a scene with no
+    // sky has nothing to capture. Released rather than kept in either case —
+    // pay for what you place.
+    const bool wanted = _environmentSettings.enabled && !_ambient.active && sky.status == SkyStatus::Ready &&
+                        _skyProbe.IsValid() && _skyPass.IsValid();
+    if (wanted && !_skyProbe.Configure(_environmentSettings))
+    {
+        Core::Log::Warn("SceneRenderer: sky reflections disabled (the probe targets failed to allocate).");
+        _environmentSettings.enabled = false;
+    }
+    if (!wanted || !_environmentSettings.enabled)
+    {
+        _skyProbe.Release();
+        _meshPass.SetEnvironment(nullptr);
+        return SpecularProbe{};
+    }
+
+    const Render::SkyProbeInputs inputs = Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings);
+    if (_skyProbe.NeedsBake(inputs, sky.jumpSerial))
+    {
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "sky-probe");
+        _skyProbe.Bake(frame.commandList, _skyPass, inputs, sky.jumpSerial);
+    }
+    else
+    {
+        _skyProbe.Keep();
+    }
+
+    if (!_skyProbe.IsReady())
+    {
+        _meshPass.SetEnvironment(nullptr);
+        return SpecularProbe{};
+    }
+    _meshPass.SetEnvironment(_skyProbe.SpecularTexture());
+    return SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()};
 }
 
 void SceneRenderer::OnSceneReplaced()
@@ -446,6 +507,10 @@ void SceneRenderer::OnSceneReplaced()
     // load needs.
     _jumpSerial = 0;
     _lastSky = SkyResolution{};
+
+    // The incoming scene's clock counts its cuts from zero too, so a serial that
+    // happened to match would keep a bake of the last level's sky.
+    _skyProbe.Release();
 
     // The mover bookmark goes back to the beginning, so the first frame after a
     // load reads every caster as moved and draws every cascade. Conservative in

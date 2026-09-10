@@ -33,6 +33,7 @@
 #include <Assisi/Render/ShadowDiagnostics.hpp>
 #include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Render/SkyPass.hpp>
+#include <Assisi/Render/SkyProbe.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -262,6 +263,23 @@ public:
     [[nodiscard]] Assisi::Math::Color3 AmbientColor() const { return _ambient.color; }
     [[nodiscard]] float AmbientIntensity() const { return _ambient.intensity; }
 
+    /// @brief Whether the sky is reflected, and how finely. Applied on the next
+    /// Render().
+    ///
+    /// Off lights a sky's scene exactly as it was lit before there was a probe
+    /// — hemisphere diffuse, no environment specular — and holds no texture of
+    /// it. A scene with no sky, or with a pinned ambient, never has a probe
+    /// whatever these say.
+    void SetEnvironmentSettings(const Render::EnvironmentSettings &settings)
+    {
+        _environmentSettings = Render::Sanitized(settings);
+    }
+    [[nodiscard]] const Render::EnvironmentSettings &EnvironmentSettings() const { return _environmentSettings; }
+
+    /// @brief The probe as the most recent Render() left it: its face size and
+    /// mips (both zero while it holds nothing), and how its bakes have gone.
+    [[nodiscard]] const Render::SkyProbe &SkyProbe() const { return _skyProbe; }
+
     /// @brief The shadow knobs, in both halves. Applied on the next Render():
     /// a cascade count, resolution or format change reallocates the array
     /// there, and everything else rides into the shader as a frame constant.
@@ -474,6 +492,15 @@ private:
     /// @brief Redraw every kept cascade and atlas tile on the next frame.
     void ForgetKeptShadows();
 
+    /// @brief Hold the sky probe for @p sky, baking it into @p frame's command
+    /// list when the sky has moved enough to see, and point the mesh pass at
+    /// the result. Releases it while there is no sky to reflect, a pinned
+    /// ambient, or the setting is off.
+    ///
+    /// Before UpdateFrameConstants, which is told through the returned value
+    /// whether an environment answers this frame.
+    [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
+
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
     /// fit when nothing casts, which is what makes the lookup free.
@@ -600,6 +627,10 @@ private:
     // Drawn after the opaque geometry, into the pixels it left at the depth
     // clear. See SkyPass for why that ordering is the cheap one.
     Render::SkyPass _skyPass;
+    // The sky captured and prefiltered for reflection, through _skyPass's own
+    // shader. Holds nothing while there is no sky.
+    Render::SkyProbe _skyProbe;
+    Render::EnvironmentSettings _environmentSettings;
     Render::OutlinePass _outlinePass;
     Render::IconPass _iconPass;
     Render::LinePass _linePass;

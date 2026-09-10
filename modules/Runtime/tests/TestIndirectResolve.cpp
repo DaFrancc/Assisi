@@ -18,6 +18,7 @@ using Assisi::Runtime::AmbientOverride;
 using Assisi::Runtime::ResolveIndirect;
 using Assisi::Runtime::SkyResolution;
 using Assisi::Runtime::SkyStatus;
+using Assisi::Runtime::SpecularProbe;
 
 namespace
 {
@@ -168,4 +169,49 @@ TEST_CASE("A pinned ambient still outranks the floor")
     const AmbientOverride pinned{.active = true, .color = Color3(1.0f, 0.0f, 0.0f), .intensity = 0.5f};
     const Color3 up = FacingUp(ResolveIndirect(night, pinned));
     CHECK(up.r > up.g);
+}
+
+TEST_CASE("A ready probe turns the sky's reflection on and leaves its diffuse alone")
+{
+    const SkyResolution sky = SunnyDay();
+    const Assisi::Render::IndirectConstants without = ResolveIndirect(sky, AmbientOverride{});
+    const Assisi::Render::IndirectConstants with =
+        ResolveIndirect(sky, AmbientOverride{}, SpecularProbe{.ready = true, .maxLod = 4.0f});
+
+    CHECK(without.specularEnvironment == 0.0f);
+    CHECK(with.specularEnvironment == 1.0f);
+    CHECK(with.specularMaxLod == doctest::Approx(4.0f));
+
+    // The diffuse half is the hemisphere's either way: the probe adds the
+    // reflection the hemisphere could not answer and changes nothing it could.
+    CHECK(with.skyRadiance.r == doctest::Approx(without.skyRadiance.r));
+    CHECK(with.skyRadiance.b == doctest::Approx(without.skyRadiance.b));
+    CHECK(with.groundRadiance.g == doctest::Approx(without.groundRadiance.g));
+}
+
+TEST_CASE("A probe that has not baked yet reflects nothing")
+{
+    const Assisi::Render::IndirectConstants constants =
+        ResolveIndirect(SunnyDay(), AmbientOverride{}, SpecularProbe{.ready = false, .maxLod = 4.0f});
+    CHECK(constants.specularEnvironment == 0.0f);
+    CHECK(constants.specularMaxLod == 0.0f);
+}
+
+TEST_CASE("A probe is the sky's, so nothing but a sky turns it on")
+{
+    // A ready probe left over from the last frame must not reach a scene that
+    // pinned its ambient or lost its sky: it would reflect a world the diffuse
+    // term says is not there.
+    const SpecularProbe ready{.ready = true, .maxLod = 4.0f};
+
+    const AmbientOverride indoors{.active = true, .color = Color3(0.5f), .intensity = 0.2f};
+    CHECK(ResolveIndirect(SunnyDay(), indoors, ready).specularEnvironment == 0.0f);
+
+    for (const SkyStatus status :
+         {SkyStatus::NoDirectionalLight, SkyStatus::NoSkybox, SkyStatus::MultipleDirectionalLights})
+    {
+        SkyResolution sky = SunnyDay();
+        sky.status = status;
+        CHECK(ResolveIndirect(sky, AmbientOverride{}, ready).specularEnvironment == 0.0f);
+    }
 }

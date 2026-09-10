@@ -204,6 +204,16 @@ public:
     /// grows, and a growth swaps the handle, which invalidates the cached set.
     void SetShadowViewTable(nvrhi::IBuffer *views);
 
+    /// @brief Point the shader at the sky probe's prefiltered cube (SkyProbe
+    /// owns it), or at none.
+    ///
+    /// Null binds an empty placeholder, which is what a scene with no probe
+    /// draws with. It is never sampled: the shader only reads the environment
+    /// while the frame constants say one answers, and the provider that says
+    /// so is the one that set this. A different handle invalidates the cached
+    /// set.
+    void SetEnvironment(nvrhi::ITexture *specularCube);
+
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). They describe the batching
     /// the frame collapsed to: @p instances is the per-instance records uploaded
@@ -325,6 +335,10 @@ private:
     /// (it binds via GraphicsState::indirectParams), so a growth needs no set rebuild.
     void EnsureIndirectCapacity(uint32_t commandCount) const;
 
+    /// @brief Build the BRDF table on the CPU and upload it, on a command list
+    /// of its own. Once, at Initialize.
+    [[nodiscard]] bool CreateBrdfTable();
+
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
 
@@ -386,10 +400,23 @@ private:
     // because a binding set may not have a hole in it. Permanent, not scaffolding.
     Buffer _noShadowViews;
 
+    // The sky probe's environment (SkyProbe owns it), or null for none. The
+    // placeholder stands in while there is none, for the same reason the empty
+    // view table does.
+    nvrhi::ITexture *_environmentCube = nullptr;
+    nvrhi::TextureHandle _noEnvironmentCube;
+    // The GGX lobe's integrals by (n.v, roughness): the split sum's scale and
+    // bias, and the per-light lobe's directional albedo. Owned here because
+    // every lit fragment reads it, probe or no probe.
+    nvrhi::TextureHandle _brdfTable;
+    // Trilinear and clamped, for the table and the environment cube.
+    nvrhi::SamplerHandle _clampSampler;
+
     mutable const nvrhi::IBuffer *_globalSetInstanceBuffer = nullptr;
     mutable const nvrhi::ITexture *_globalSetShadowMap = nullptr;
     mutable const nvrhi::ITexture *_globalSetShadowAtlas = nullptr;
     mutable const nvrhi::IBuffer *_globalSetShadowViewTable = nullptr;
+    mutable const nvrhi::ITexture *_globalSetEnvironmentCube = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn

@@ -87,11 +87,33 @@ public:
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraPosition,
               const SkySun &sun, const SkyMoon &moon, const SkySettings &settings);
 
+    /// @brief Fill every texel of @p target with the sky @p constants describe.
+    ///
+    /// How a reflection probe captures the sky: the same shader the screen is
+    /// drawn with, so a reflection and the sky behind it cannot disagree about
+    /// what the sky looks like. No depth test — a capture target is all sky —
+    /// and no profiler scope, because the caller's scope is the one that names
+    /// what the capture is for.
+    ///
+    /// The moon's texture is not loaded here. A capture that wants the moon's
+    /// disk has to draw a frame that shows it first; the probe leaves the disks
+    /// out, so it never does.
+    ///
+    /// The pipeline is built on the first call, against @p target's format, so
+    /// a level with no probe never builds it. Every later target must share
+    /// that format.
+    void DrawInto(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target, const SkyConstants &constants);
+
     [[nodiscard]] MoonTexture MoonTextureState() const { return _moonState; }
 
 private:
     [[nodiscard]] bool BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
     [[nodiscard]] bool BuildBindingSet();
+
+    /// @brief Upload @p constants and draw the fullscreen triangle into
+    /// @p target through @p pipeline.
+    void Submit(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target, nvrhi::IGraphicsPipeline *pipeline,
+                const nvrhi::Viewport &viewport, const SkyConstants &constants);
 
     /// @brief Read the moon's albedo, once, on the first frame a moon is drawn.
     ///
@@ -110,6 +132,9 @@ private:
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::BindingSetHandle _bindingSet;
     nvrhi::GraphicsPipelineHandle _pipeline;
+    // DrawInto's: colour only, no depth test. Independent of the scene target,
+    // so a render-target change leaves it alone.
+    nvrhi::GraphicsPipelineHandle _capturePipeline;
 
     std::string _moonTexturePath;
     /// A white 1x1 until a moon is first drawn, so a binding set always has a

@@ -597,6 +597,83 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     }
 }
 
+// The sky probe. Off is the A/B against the whole feature and draws exactly
+// what a sky drew before there was one; the rest land on the next frame, a
+// resolution change by reallocating the probe and anything that changes a bake
+// by baking again.
+void EditorOptionsPanel::DrawEnvironmentSettings(const Frame &frame)
+{
+    Assisi::Render::EnvironmentSettings environment = frame.renderer.EnvironmentSettings();
+    bool changed = false;
+
+    ImGui::TextUnformatted("Sky Reflections");
+    changed |= ImGui::Checkbox("Reflect the Sky", &environment.enabled);
+
+    if (!environment.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+
+    // Face sizes the combo offers, each a power of two inside the sanitized
+    // range. The end points are left to options.json: below 64 the horizon
+    // blurs in a mirror, and above 256 a disk-less sky has nothing left to show.
+    static constexpr uint32_t kResolutions[] = {64u, 128u, 256u};
+    static const char *kResolutionNames[] = {"64", "128", "256"};
+    int32_t resolutionIndex = 0;
+    for (int32_t i = 0; i < static_cast<int32_t>(IM_ARRAYSIZE(kResolutions)); ++i)
+    {
+        if (kResolutions[i] == environment.resolution)
+        {
+            resolutionIndex = i;
+        }
+    }
+    if (ImGui::Combo("Probe Size", &resolutionIndex, kResolutionNames, IM_ARRAYSIZE(kResolutionNames)))
+    {
+        environment.resolution = kResolutions[resolutionIndex];
+        changed = true;
+    }
+
+    int32_t samples = static_cast<int32_t>(environment.sampleCount);
+    if (ImGui::SliderInt("Probe Samples", &samples, static_cast<int32_t>(Assisi::Render::kMinProbeSampleCount),
+                         static_cast<int32_t>(Assisi::Render::kMaxProbeSampleCount)))
+    {
+        environment.sampleCount = static_cast<uint32_t>(samples);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Per texel at the first blurred mip; each rougher mip takes four times as many.");
+
+    changed |= ImGui::SliderFloat("Rebake Angle", &environment.rebakeDegrees, 0.f,
+                                  Assisi::Render::kMaxProbeRebakeDegrees, "%.2f deg");
+    ImGui::SetItemTooltip("How far the sun or moon may move before the sky is captured again. "
+                          "Zero bakes on every change.");
+
+    if (!environment.enabled)
+    {
+        ImGui::EndDisabled();
+    }
+
+    const Assisi::Render::SkyProbe &probe = frame.renderer.SkyProbe();
+    if (probe.Resolution() == 0u)
+    {
+        // Said rather than left blank: a scene with no sky, or a pinned
+        // ambient, holds no probe whatever the switch says.
+        ImGui::TextDisabled("No probe: nothing in the scene is lit by a sky.");
+    }
+    else
+    {
+        const Assisi::Render::SkyProbe::Stats &stats = probe.LastStats();
+        ImGui::Text("%ux%u, %u mips, %u bakes, kept %u frames", probe.Resolution(), probe.Resolution(),
+                    probe.MipCount(), stats.bakes, stats.ageFrames);
+    }
+
+    if (changed)
+    {
+        frame.renderer.SetEnvironmentSettings(environment);
+        frame.options.environment = frame.renderer.EnvironmentSettings();
+        frame.options.SaveToJson();
+    }
+}
+
 bool EditorOptionsPanel::Draw(const Frame &frame)
 {
     bool applyDisplay = false;
@@ -960,6 +1037,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         OptionsConfig &options = frame.options;
 
         DrawShadowSettings(frame);
+
+        ImGui::Separator();
+
+        DrawEnvironmentSettings(frame);
 
         ImGui::Separator();
 

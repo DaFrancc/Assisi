@@ -184,19 +184,58 @@ void SkyPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, co
     }
 
     const SkyConstants constants = MakeSkyConstants(glm::inverse(viewProjection), cameraPosition, sun, moon, settings);
-    frame.commandList->writeBuffer(_constantsBuffer, &constants, sizeof(constants));
+    Submit(frame.commandList, frame.framebuffer, _pipeline,
+           nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)), constants);
+}
+
+void SkyPass::DrawInto(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target, const SkyConstants &constants)
+{
+    if (!IsValid() || target == nullptr)
+    {
+        return;
+    }
+
+    if (_capturePipeline == nullptr)
+    {
+        nvrhi::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+        pipelineDesc.VS = _vertexShader;
+        pipelineDesc.PS = _pixelShader;
+        pipelineDesc.addBindingLayout(_bindingLayout);
+        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+        // No depth to test against: every texel of a capture target is sky.
+        pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
+        pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+        _capturePipeline = _device->createGraphicsPipeline(pipelineDesc, target->getFramebufferInfo());
+        if (_capturePipeline == nullptr)
+        {
+            Core::Log::Error("SkyPass: failed to create the sky capture pipeline.");
+            return;
+        }
+    }
+    const nvrhi::FramebufferInfoEx &info = target->getFramebufferInfo();
+    Submit(commandList, target, _capturePipeline,
+           nvrhi::Viewport(static_cast<float>(info.width), static_cast<float>(info.height)), constants);
+}
+
+void SkyPass::Submit(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target,
+                     nvrhi::IGraphicsPipeline *pipeline, const nvrhi::Viewport &viewport,
+                     const SkyConstants &constants)
+{
+    commandList->writeBuffer(_constantsBuffer, &constants, sizeof(constants));
 
     nvrhi::GraphicsState state;
-    state.pipeline = _pipeline;
-    state.framebuffer = frame.framebuffer;
+    state.pipeline = pipeline;
+    state.framebuffer = target;
     state.addBindingSet(_bindingSet);
-    state.viewport.addViewportAndScissorRect(
-        nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
-    frame.commandList->setGraphicsState(state);
+    state.viewport.addViewportAndScissorRect(viewport);
+    commandList->setGraphicsState(state);
 
+    // One triangle covering the target; sky.vert makes it from the index.
+    constexpr uint32_t kFullscreenTriangleVertices = 3;
     nvrhi::DrawArguments drawArgs;
-    drawArgs.vertexCount = 3;
-    frame.commandList->draw(drawArgs);
+    drawArgs.vertexCount = kFullscreenTriangleVertices;
+    commandList->draw(drawArgs);
 }
 
 } // namespace Assisi::Render

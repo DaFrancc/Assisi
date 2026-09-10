@@ -61,6 +61,18 @@ layout(std430, binding = 0) readonly buffer Materials
     MaterialRow materials[];
 };
 
+// ---- BRDF table (see Render::BuildBrdfLut) ------------------------------
+// The GGX lobe's integrals by (n.v, roughness), read once per fragment:
+//   rg = the split sum's scale and bias (A, B), with the environment's Smith
+//        term k = alpha / 2 — F0 * A + B is what the lobe reflects of an
+//        environment;
+//   b  = the per-light lobe's directional albedo at F0 = 1, with CookTorrance's
+//        own Smith term — what its multi-scatter compensation divides by.
+layout(binding = 11)  uniform texture2D uBrdfTable;
+// Trilinear and clamped: the table's edges are n.v = 0 and roughness 1 and must
+// not wrap, and the environment cube's mips are roughness, read between.
+layout(binding = 130) uniform sampler   uClampSampler;
+
 // ---- Per-frame camera + cluster-grid parameters ------------------------
 // viewProjection leads to match the vertex shader / Render::FrameConstants; the
 // fragment shader doesn't use it, but the block layout must be identical so the
@@ -80,6 +92,10 @@ layout(binding = 256) uniform FrameConstants
     // Render::IndirectConstants and IndirectRadiance below).
     vec4  indirectSky;        // rgb = radiance onto a surface facing straight up, w unused
     vec4  indirectGround;     // rgb = the same for one facing straight down, w unused
+    // x = 1 while a prefiltered environment answers the specular half, 0 when
+    // none does; y = that environment's last mip, where roughness one is
+    // stored; zw unused.
+    vec4  indirectSpecular;
     // Sun shadows (see Render::FrameConstants and ShadowCascades.hpp).
     uvec4 shadowCounts;       // x = cascade count (0 = no shadows), y = shadowed dir light, z = filter, w = cascade view
     // Local-light shadows (see Render::FrameConstants and LocalShadowPass.hpp).
@@ -328,7 +344,10 @@ Surface SampleMaterial()
 //   * Multi-scatter energy compensation. A single-scatter GGX loses the energy
 //     that would have bounced again between microfacets, which darkens rough
 //     metals; the standard fix scales the lobe by 1 + F0 (1/Ess - 1), with Ess
-//     from Karis's analytic environment-BRDF fit rather than a DFG texture.
+//     the lobe's own directional albedo from the BRDF table. The closed-form
+//     fits to that albedo are not close enough to use: Karis's is flat in n.v
+//     at full roughness, half as high again as the true albedo there, and
+//     under-compensates exactly the rough metals the term exists for.
 //
 // EON (energy-preserving Oren-Nayar, Portsmouth/Kutz/Hill 2024) replaces
 // Lambert when a material sets base_diffuse_roughness. Its per-light half is a
@@ -355,7 +374,8 @@ struct BrdfContext
     float visV;        // NdotV * (1-k) + k  — the view half of Smith
     float NdotV;
     vec3  f82;         // F82-tint coefficient; zero for dielectrics and untinted metals
-    vec3  energyComp;  // multi-scatter compensation for the specular lobe
+    vec3  energyComp;  // multi-scatter compensation for the per-light specular lobe
+    vec2  envBrdf;     // the split sum's (A, B) at this n.v and roughness
     // EON diffuse (all zero/unused unless the material opted in).
     bool  eon;
     float eonR;
@@ -391,15 +411,11 @@ BrdfContext MakeBrdfContext(vec3 N, vec3 V, Surface s, vec3 F0)
     vec3 schlickAtMu = F0 + (1.0 - F0) * om5;
     c.f82 = s.metallic * (1.0 - s.specColor) * schlickAtMu * (1.0 / (mu * om6));
 
-    // Ess, the single-scatter directional albedo, from Karis's mobile
-    // environment-BRDF fit (the split-sum DFG terms without the texture).
-    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
-    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
-    vec4  rr   = s.roughness * c0 + c1;
-    float a004 = min(rr.x * rr.x, exp2(-9.28 * NdotV)) * rr.x + rr.y;
-    vec2  AB   = vec2(-1.04, 1.04) * a004 + rr.zw; // the split-sum scale/bias
-    float Ess  = AB.x + AB.y;                      // == the lobe's albedo at F0 = 1
-    c.energyComp = vec3(1.0) + F0 * (1.0 / max(Ess, kEps) - 1.0);
+    // Ess, the per-light lobe's single-scatter directional albedo, and the
+    // environment lobe's split sum beside it: one fetch serves both.
+    vec4 table   = textureLod(sampler2D(uBrdfTable, uClampSampler), vec2(NdotV, s.roughness), 0.0);
+    c.envBrdf    = table.rg;
+    c.energyComp = vec3(1.0) + F0 * (1.0 / max(table.b, kEps) - 1.0);
 
     c.eon = s.eonDiffuse;
     if (c.eon)
@@ -1091,6 +1107,22 @@ vec3 IndirectRadiance(vec3 N, vec3 worldPos)
     return mix(uFrame.indirectGround.rgb, uFrame.indirectSky.rgb, upward);
 }
 
+// The environment a glossy surface reflects, prefiltered: mip m holds the sky
+// blurred by a GGX lobe of roughness m / last mip (see SkyProbe). Bound to a
+// black placeholder while no provider has an environment, which the branch in
+// main() then never samples.
+layout(binding = 10) uniform textureCube uEnvironmentSpecular;
+
+// Mean radiance arriving along a GGX lobe of @roughness about the reflection
+// direction @R. The GPU half of IndirectLighting::SpecularRadiance, as the
+// position-free answer a single global probe gives; a probe that stores an
+// answer per place is what the position is for.
+vec3 IndirectSpecular(vec3 R, float roughness, vec3 worldPos)
+{
+    float lod = roughness * uFrame.indirectSpecular.y;
+    return textureLod(samplerCube(uEnvironmentSpecular, uClampSampler), R, lod).rgb;
+}
+
 // ---- Main -----------------------------------------------------------------
 
 void main()
@@ -1333,7 +1365,31 @@ void main()
     // further factor of pi: the provider answers with the cosine-weighted mean
     // radiance, which is exactly what a Lambertian albedo multiplies.
     vec3 indirect = IndirectRadiance(N, vWorldPos);
-    vec3 color = indirect * albedo * surf.occlusion + Lo + surf.emissive;
+    vec3 color;
+    if (uFrame.indirectSpecular.x == 0.0)
+    {
+        // No environment to reflect: the expression the renderer had before
+        // any provider could answer one, unchanged. This is what makes a
+        // probe switched off a baseline rather than an approximation of one.
+        color = indirect * albedo * surf.occlusion + Lo + surf.emissive;
+    }
+    else
+    {
+        // The split sum. The table says how much of what arrives along the
+        // lobe the lobe reflects; the diffuse layer gets what it does not.
+        vec2 ab             = brdf.envBrdf;
+        vec3 specularAlbedo = F0 * ab.x + ab.y;
+        // Multi-scatter compensation from this lobe's own albedo at F0 = 1,
+        // A + B. The per-light lobe's is a different integral — its Smith
+        // term differs — and would compensate this lobe for losses it has not.
+        vec3 compensation   = vec3(1.0) + F0 * (1.0 / max(ab.x + ab.y, kEps) - 1.0);
+        vec3 specular       = IndirectSpecular(reflect(-V, N), surf.roughness, vWorldPos) * specularAlbedo *
+                              compensation;
+        // A metal has no diffuse layer, which is the whole difference between
+        // rough metal and grey plastic under a sky.
+        vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+        color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
+    }
 
     // Cascade view: tint the lit result rather than replacing it, so a split
     // distance and a blend band are readable against the geometry that provoked

@@ -9,6 +9,9 @@
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/ShadowView.hpp>
+#include <Assisi/Render/SpecularIbl.hpp>
+
+#include <glm/gtc/packing.hpp>
 
 #include <algorithm>
 #include <array>
@@ -69,6 +72,9 @@ struct FrameConstants
     /// up receives, then the same facing straight down, w unused in both.
     glm::vec4 indirectSky;
     glm::vec4 indirectGround;
+    /// x = 1 while a prefiltered environment answers the specular half, y =
+    /// its last mip, zw unused.
+    glm::vec4 indirectSpecular;
 
     /// x = cascade count (0 = nothing shadows this frame, and the shader takes
     /// no lookup at all), y = which directional light the cascades belong to,
@@ -131,7 +137,8 @@ ASSISI_GPU_FIELD_AFTER(FrameConstants, cameraPosition, lightCounts);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, clusterScale, cameraPosition);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectSky, clusterScale);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectGround, indirectSky);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCounts, indirectGround);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectSpecular, indirectGround);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCounts, indirectSpecular);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, localShadowCounts, shadowCounts);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowParams, localShadowCounts);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCascade, shadowParams);
@@ -193,8 +200,9 @@ bool MeshPass::Initialize(const InitParams &params)
     // with Texture_SRV. Slot map (see mesh.vert/frag's matching `binding = N`):
     //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
     //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data,
-    //   t7 = the sun's cascade array
-    //   s0 = shared sampler, s1 = the cascades' depth-comparison sampler
+    //   t7 = the sun's cascade array, t8 = shadow view table, t9 = local-light atlas,
+    //   t10 = prefiltered environment cube, t11 = BRDF table
+    //   s0 = shared sampler, s1 = the shadow comparison sampler, s2 = clamped trilinear sampler
     // No push constants: per-object data (world matrix + material id) is read from
     // the instance buffer (t6) by gl_InstanceIndex, and the material's textures
     // from the bindless table (register space 1).
@@ -215,6 +223,9 @@ bool MeshPass::Initialize(const InitParams &params)
     // One comparison sampler for both maps: the cascades and the atlas are
     // filtered identically, and only the rectangle they are read from differs.
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));              // shadow comparison sampler
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(10));         // prefiltered environment cube
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(11));         // BRDF table
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(2));              // clamped trilinear sampler
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -245,6 +256,45 @@ bool MeshPass::Initialize(const InitParams &params)
     if (_shadowSampler == nullptr)
     {
         Core::Log::Error("MeshPass: failed to create the shadow comparison sampler.");
+        return false;
+    }
+
+    // Trilinear, because the environment's mips are its roughness and reading
+    // between two of them is how a roughness between two is answered. Clamped
+    // for the BRDF table, whose edges are n.v = 0 and roughness 1 and must not
+    // wrap to the opposite ones; a cube ignores the address mode.
+    nvrhi::SamplerDesc clampSamplerDesc;
+    clampSamplerDesc.setAllFilters(true);
+    clampSamplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+    _clampSampler = device->createSampler(clampSamplerDesc);
+    if (_clampSampler == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the clamped sampler.");
+        return false;
+    }
+
+    if (!CreateBrdfTable())
+    {
+        return false;
+    }
+
+    // Bound in the environment's place while no provider has one, which is
+    // every frame of a scene with no sky. Never sampled — the shader branches
+    // on the frame constant first — and never written; it exists because a
+    // binding set may not have a hole in it.
+    nvrhi::TextureDesc noCubeDesc;
+    noCubeDesc.width = 1;
+    noCubeDesc.height = 1;
+    noCubeDesc.arraySize = kCubeFaceCount;
+    noCubeDesc.dimension = nvrhi::TextureDimension::TextureCube;
+    noCubeDesc.format = nvrhi::Format::RGBA16_FLOAT;
+    noCubeDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    noCubeDesc.keepInitialState = true;
+    noCubeDesc.debugName = "MeshPass::NoEnvironment";
+    _noEnvironmentCube = device->createTexture(noCubeDesc);
+    if (_noEnvironmentCube == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the empty environment cube.");
         return false;
     }
 
@@ -341,6 +391,8 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
 
     constants.indirectSky = glm::vec4(params.indirect.skyRadiance, 0.f);
     constants.indirectGround = glm::vec4(params.indirect.groundRadiance, 0.f);
+    constants.indirectSpecular =
+        glm::vec4(params.indirect.specularEnvironment, params.indirect.specularMaxLod, 0.f, 0.f);
 
     // Shadows. A zero cascade count is the whole of "nothing shadows this frame"
     // as far as the shader is concerned: it takes no lookup, so an unshadowed
@@ -405,11 +457,53 @@ void MeshPass::SetShadowViewTable(nvrhi::IBuffer *views)
     _shadowViewTable = views;
 }
 
+void MeshPass::SetEnvironment(nvrhi::ITexture *specularCube)
+{
+    _environmentCube = specularCube;
+}
+
+bool MeshPass::CreateBrdfTable()
+{
+    nvrhi::TextureDesc tableDesc;
+    tableDesc.width = kBrdfLutSize;
+    tableDesc.height = kBrdfLutSize;
+    // Half floats: every channel is a fraction in [0, 1], which half precision
+    // holds to a part in two thousand, and a half-float format is one every
+    // Vulkan device can filter — a 32-bit float one is not.
+    tableDesc.format = nvrhi::Format::RGBA16_FLOAT;
+    tableDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    tableDesc.keepInitialState = true;
+    tableDesc.debugName = "MeshPass::BrdfTable";
+    _brdfTable = _device->createTexture(tableDesc);
+    if (_brdfTable == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the BRDF table.");
+        return false;
+    }
+
+    // Built here rather than on demand because every lit surface reads it: the
+    // per-light lobe's energy compensation comes from its third channel.
+    const std::vector<BrdfTableTexel> table = BuildBrdfLut(kBrdfLutSize, kBrdfLutSampleCount);
+    std::vector<uint64_t> packed;
+    packed.reserve(table.size());
+    for (const BrdfTableTexel &texel : table)
+    {
+        packed.push_back(glm::packHalf4x16(glm::vec4(texel.environment, texel.directAlbedo, 0.f)));
+    }
+
+    nvrhi::CommandListHandle upload = _device->createCommandList();
+    upload->open();
+    upload->writeTexture(_brdfTable, 0, 0, packed.data(), kBrdfLutSize * sizeof(uint64_t));
+    upload->close();
+    _device->executeCommandList(upload);
+    return true;
+}
+
 nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const
 {
     if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
         _globalSetShadowMap == _shadowMap && _globalSetShadowAtlas == _shadowAtlas &&
-        _globalSetShadowViewTable == _shadowViewTable)
+        _globalSetShadowViewTable == _shadowViewTable && _globalSetEnvironmentCube == _environmentCube)
     {
         return _globalBindingSet;
     }
@@ -441,11 +535,16 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
                                                               : _noShadowViews.NativeBuffer()));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(9, _shadowAtlas));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(1, _shadowSampler));
+    nvrhi::ITexture *const environment = _environmentCube != nullptr ? _environmentCube : _noEnvironmentCube.Get();
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(10, environment));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(11, _brdfTable));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(2, _clampSampler));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;
     _globalSetShadowMap = _shadowMap;
     _globalSetShadowAtlas = _shadowAtlas;
     _globalSetShadowViewTable = _shadowViewTable;
+    _globalSetEnvironmentCube = _environmentCube;
     return _globalBindingSet;
 }
 

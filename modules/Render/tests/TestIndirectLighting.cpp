@@ -6,10 +6,12 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Render/Sky.hpp>
+#include <Assisi/Render/SkyProbeInputs.hpp>
 
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <vector>
 
 using namespace Assisi::Render;
@@ -17,6 +19,10 @@ using Assisi::Math::Color3;
 
 namespace
 {
+/// Relative error allowed of a mirror's reflection against the sky it
+/// reflects: the same direction reached through a normalise, and nothing else.
+constexpr float kMirrorTolerance = 1e-4f;
+
 /// A direction from an elevation above the horizon and an azimuth about +Y.
 glm::vec3 Dir(float elevationDegrees, float azimuthDegrees)
 {
@@ -120,6 +126,70 @@ TEST_CASE("Both halves of the seam agree: the CPU query and the shader's constan
             CHECK(queried.b == doctest::Approx(shaded.b));
         }
     }
+}
+
+TEST_CASE("A provider without an environment leaves the shader on the diffuse-only term")
+{
+    // What makes switching the probe off a baseline rather than an
+    // approximation of one: these providers write zero into the specular lane,
+    // and mesh.frag takes the expression it had before the lane existed.
+    const UniformIndirect uniform(Color3(1.0f, 0.9f, 0.8f), 0.03f);
+    const HemisphereIndirect hemisphere(Color3(0.2f, 0.35f, 0.7f), Color3(0.09f, 0.08f, 0.06f));
+    const IndirectLighting *const providers[] = {&uniform, &hemisphere};
+
+    for (const IndirectLighting *const provider : providers)
+    {
+        const IndirectConstants constants = provider->ShaderConstants();
+        CHECK(constants.specularEnvironment == 0.0f);
+        CHECK(constants.specularMaxLod == 0.0f);
+        CHECK_FALSE(provider->SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.5f).has_value());
+    }
+}
+
+TEST_CASE("The sky probe keeps the hemisphere's diffuse and reflects the sky itself")
+{
+    const SkyProbeInputs environment = MakeSkyProbeInputs(SunAt(35.0f), SkyMoon{}, SkySettings{});
+    const Color3 sky(0.2f, 0.35f, 0.7f);
+    const Color3 ground(0.09f, 0.08f, 0.06f);
+    const SkyProbeIndirect probe(sky, ground, environment, 4.0f);
+    const HemisphereIndirect hemisphere(sky, ground);
+
+    for (const glm::vec3 &normal : Normals())
+    {
+        const Color3 diffuse = probe.Radiance(glm::vec3(0.0f), normal);
+        const Color3 expected = hemisphere.Radiance(glm::vec3(0.0f), normal);
+        CHECK(diffuse.r == doctest::Approx(expected.r));
+        CHECK(diffuse.b == doctest::Approx(expected.b));
+
+        // A mirror reflects exactly the direction it faces, and a direction
+        // of this sky, not an average of it.
+        const std::optional<Color3> mirror = probe.SpecularRadiance(glm::vec3(0.0f), normal, 0.0f);
+        REQUIRE(mirror.has_value());
+        const glm::vec3 direct =
+            SkyRadiance(normal, environment.sun, environment.moon, environment.settings);
+        CHECK(mirror->r == doctest::Approx(direct.r).epsilon(kMirrorTolerance));
+        CHECK(mirror->b == doctest::Approx(direct.b).epsilon(kMirrorTolerance));
+    }
+
+    const IndirectConstants constants = probe.ShaderConstants();
+    CHECK(constants.specularEnvironment == 1.0f);
+    CHECK(constants.specularMaxLod == doctest::Approx(4.0f));
+    CHECK(constants.skyRadiance.b == doctest::Approx(sky.b));
+    CHECK(constants.groundRadiance.r == doctest::Approx(ground.r));
+}
+
+TEST_CASE("The sky probe reflects the zenith and the horizon differently")
+{
+    // The whole reason for a probe over the hemisphere: a glossy surface facing
+    // the horizon reflects the bright band there, and one facing up the deeper
+    // zenith, where the hemisphere hands both the same average.
+    const SkyProbeInputs environment = MakeSkyProbeInputs(SunAt(40.0f), SkyMoon{}, SkySettings{});
+    const SkyProbeIndirect probe(Color3(0.2f), Color3(0.1f), environment, 4.0f);
+
+    const Color3 zenith = *probe.SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.3f);
+    const Color3 horizon = *probe.SpecularRadiance(glm::vec3(0.0f), Dir(3.0f, 180.0f), 0.3f);
+    CHECK(Luminance(horizon) > Luminance(zenith));
+    CHECK(zenith.b > zenith.r);
 }
 
 TEST_CASE("A normal that is not unit length cannot drive the term negative")

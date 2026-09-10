@@ -48,7 +48,9 @@ layout(binding = 256) uniform FrameConstants
     vec4  clusterScale;
     vec4  indirectSky;
     vec4  indirectGround;
+    vec4  indirectSpecular;
     uvec4 shadowCounts;
+    uvec4 localShadowCounts;
     vec4  shadowParams;
     vec4  shadowCascade[8];
     mat4  shadowViewProjection[8];

@@ -23,11 +23,14 @@
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Sky.hpp>
+#include <Assisi/Render/SkyProbeInputs.hpp>
+#include <Assisi/Render/SpecularIbl.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace Assisi::Render
 {
@@ -57,13 +60,24 @@ struct IndirectConstants
     /// The same for one facing straight down.
     Assisi::Math::Color3 groundRadiance{0.0f};
     float groundPadding = 0.0f;
+
+    /// One while a prefiltered environment answers the specular half, and zero
+    /// otherwise. At zero mesh.frag takes the expression it had before there
+    /// was an environment at all, so every provider without one draws exactly
+    /// as it did.
+    float specularEnvironment = 0.0f;
+    /// The prefiltered cube's last mip, which is where roughness one is stored.
+    float specularMaxLod = 0.0f;
+    float specularPadding0 = 0.0f;
+    float specularPadding1 = 0.0f;
 };
 
 // Each colour has to start its own sixteen bytes, which is what its padding is
 // for. Gathering the two pads at the end would compile and pack to the same
 // size while landing the second colour halfway into the first lane.
-static_assert(sizeof(IndirectConstants) == 32 && offsetof(IndirectConstants, groundRadiance) == 16,
-              "The indirect lanes must stay two std140 vec4s, or every constant after them shifts.");
+static_assert(sizeof(IndirectConstants) == 48 && offsetof(IndirectConstants, groundRadiance) == 16 &&
+              offsetof(IndirectConstants, specularEnvironment) == 32,
+              "The indirect lanes must stay three std140 vec4s, or every constant after them shifts.");
 
 /// @brief The radiance a surface facing @p normal receives, given @p constants.
 ///
@@ -108,6 +122,28 @@ public:
     /// EvaluateIndirect(ShaderConstants(), N) equals Radiance(p, N) for every
     /// normal, which is the whole agreement between the two halves of the seam.
     [[nodiscard]] virtual IndirectConstants ShaderConstants() const = 0;
+
+    /// @brief The mean radiance arriving at @p worldPosition along a GGX lobe
+    /// of @p roughness about @p reflection — the split sum's environment half —
+    /// or nothing, for a provider that has no environment to reflect.
+    ///
+    /// Nothing is not black. A provider that answers nothing leaves the shader
+    /// drawing the indirect term as a single diffuse radiance, which is what
+    /// the renderer drew before any provider had an environment; answering
+    /// black would instead take the diffuse term's share away and replace it
+    /// with no reflection.
+    ///
+    /// This is the reference the GPU's prefiltered cube approximates, computed
+    /// by sampling, and far too slow to run per frame.
+    ///
+    /// @param reflection  Unit vector, world space.
+    /// @param roughness   Perceptual roughness.
+    [[nodiscard]] virtual std::optional<Assisi::Math::Color3> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
+                                                                               const glm::vec3 & /*reflection*/,
+                                                                               float /*roughness*/) const
+    {
+        return std::nullopt;
+    }
 };
 
 /// @brief One radiance for every direction and every place.
@@ -171,6 +207,55 @@ public:
 private:
     Assisi::Math::Color3 _sky;
     Assisi::Math::Color3 _ground;
+};
+
+/// @brief The hemisphere's diffuse, and the sky itself as the thing a glossy
+/// surface reflects.
+///
+/// The diffuse half is unchanged from HemisphereIndirect: a Lambertian surface
+/// integrates over its whole hemisphere, and the two means already are that
+/// integral for the directions that matter. The specular half is what the
+/// hemisphere cannot answer — a metal reflects the sky in a direction, not an
+/// average of it — and the GPU answers it from a cube baked out of the same sky
+/// (SkyProbe), which this prefilters by sampling as the reference.
+class SkyProbeIndirect final : public IndirectLighting
+{
+public:
+    /// @param environment  The sky the probe was baked from, disks already gone.
+    /// @param maxLod       The baked cube's last mip.
+    SkyProbeIndirect(const Assisi::Math::Color3 &skyRadiance, const Assisi::Math::Color3 &groundRadiance,
+                     const SkyProbeInputs &environment, float maxLod)
+        : _hemisphere(skyRadiance, groundRadiance), _environment(environment),
+        _maxLod(std::isfinite(maxLod) ? std::max(maxLod, 0.0f) : 0.0f)
+    {
+    }
+
+    [[nodiscard]] Assisi::Math::Color3 Radiance(const glm::vec3 &worldPosition, const glm::vec3 &normal) const override
+    {
+        return _hemisphere.Radiance(worldPosition, normal);
+    }
+
+    [[nodiscard]] IndirectConstants ShaderConstants() const override
+    {
+        IndirectConstants constants = _hemisphere.ShaderConstants();
+        constants.specularEnvironment = 1.0f;
+        constants.specularMaxLod = _maxLod;
+        return constants;
+    }
+
+    [[nodiscard]] std::optional<Assisi::Math::Color3> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
+                                                                       const glm::vec3 &reflection,
+                                                                       float roughness) const override
+    {
+        const SkyProbeInputs &sky = _environment;
+        const auto radiance = [&sky](const glm::vec3 &d) { return SkyRadiance(d, sky.sun, sky.moon, sky.settings); };
+        return Assisi::Math::Color3(PrefilterGgx(radiance, reflection, roughness, kMaxPrefilterSampleCount));
+    }
+
+private:
+    HemisphereIndirect _hemisphere;
+    SkyProbeInputs _environment;
+    float _maxLod;
 };
 
 /// @brief What the sky sends down, and what its ground half sends back up.

@@ -137,6 +137,35 @@ TEST_CASE("Hand-typed shadow values are clamped before they size an allocation")
     CHECK(read.shadows.local.faceResolution == kMaxShadowFaceResolution);
 }
 
+TEST_CASE("Sky reflection settings survive a write and a read")
+{
+    OptionsConfig written;
+    written.environment.enabled = false;
+    written.environment.resolution = 256;
+    written.environment.sampleCount = 128;
+    written.environment.rebakeDegrees = 2.5f;
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    CHECK(read.environment.enabled == written.environment.enabled);
+    CHECK(read.environment.resolution == written.environment.resolution);
+    CHECK(read.environment.sampleCount == written.environment.sampleCount);
+    CHECK(read.environment.rebakeDegrees == doctest::Approx(written.environment.rebakeDegrees));
+}
+
+TEST_CASE("A hand-typed probe size is clamped before it sizes an allocation")
+{
+    const std::string absurd = R"({ "environment": { "resolution": 100000, "samples": 0 } })";
+    const OptionsConfig read = OptionsConfig::FromJsonText(absurd);
+    CHECK(read.environment.resolution == kMaxProbeResolution);
+    CHECK(read.environment.sampleCount == kMinProbeSampleCount);
+}
+
+TEST_CASE("A settings file from before sky reflections existed turns them on at their defaults")
+{
+    const OptionsConfig read = OptionsConfig::FromJsonText(R"({ "antiAliasing": { "mode": "fxaa" } })");
+    CHECK(read.environment == EnvironmentSettings{});
+}
+
 TEST_CASE("A document that will not parse costs the settings, not the launch")
 {
     const OptionsConfig read = OptionsConfig::FromJsonText("{ this is not json");
