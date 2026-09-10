@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
@@ -28,45 +30,78 @@ bool Approx3(const glm::vec3 &a, const glm::vec3 &b)
 }
 } // namespace
 
-// A spot light's direction is local and is rotated by the entity's world matrix,
-// so a light parented to something that turns aims with it — the same rule its
-// position follows.
-TEST_CASE("WorldSpotDirection rotates a spot's local aim into world space")
+// A spot light is aimed by turning it: the beam is its Transform's local -Y
+// carried through the entity's world matrix, so a light parented to something
+// that turns aims with it — the same rule its position follows.
+TEST_CASE("SpotWorldDirection reads a spot's aim off its world matrix")
 {
-    const glm::vec3 forward{0.f, 0.f, -1.f};
+    using Assisi::Runtime::SpotWorldDirection;
+    const glm::vec3 down{0.f, -1.f, 0.f};
 
-    SUBCASE("identity leaves the local direction alone")
+    SUBCASE("an unturned spot shines straight down")
     {
-        CHECK(Approx3(LightingSystem::WorldSpotDirection(glm::mat4(1.f), forward), forward));
+        CHECK(Approx3(SpotWorldDirection(glm::mat4(1.f)), down));
     }
 
-    SUBCASE("a yawed parent turns the beam with it")
+    SUBCASE("a quarter turn about +X tips the beam from down to -Z")
     {
-        // 90 degrees about +Y takes -Z to -X.
-        const glm::mat4 yaw = glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(0.f, 1.f, 0.f));
-        CHECK(Approx3(LightingSystem::WorldSpotDirection(yaw, forward), glm::vec3(-1.f, 0.f, 0.f)));
+        const glm::mat4 pitch = glm::rotate(glm::mat4(1.f), glm::radians(90.f), glm::vec3(1.f, 0.f, 0.f));
+        CHECK(Approx3(SpotWorldDirection(pitch), glm::vec3(0.f, 0.f, -1.f)));
     }
 
     SUBCASE("translation alone does not steer the beam")
     {
         const glm::mat4 moved = glm::translate(glm::mat4(1.f), glm::vec3(10.f, -3.f, 7.f));
-        CHECK(Approx3(LightingSystem::WorldSpotDirection(moved, forward), forward));
+        CHECK(Approx3(SpotWorldDirection(moved), down));
     }
 
     SUBCASE("the result is normalized despite scale in the matrix")
     {
         const glm::mat4 scaled = glm::scale(glm::mat4(1.f), glm::vec3(5.f));
-        const glm::vec3 out    = LightingSystem::WorldSpotDirection(scaled, forward);
+        const glm::vec3 out    = SpotWorldDirection(scaled);
         CHECK(glm::length(out) == doctest::Approx(1.f));
-        CHECK(Approx3(out, forward));
+        CHECK(Approx3(out, down));
     }
 
-    SUBCASE("a degenerate local direction falls back instead of producing NaN")
+    SUBCASE("a collapsed matrix falls back instead of producing NaN")
     {
-        const glm::vec3 out = LightingSystem::WorldSpotDirection(glm::mat4(1.f), glm::vec3(0.f));
+        const glm::mat4 flattened = glm::scale(glm::mat4(1.f), glm::vec3(0.f));
+        const glm::vec3 out = SpotWorldDirection(flattened);
         CHECK(glm::length(out) == doctest::Approx(1.f));
         CHECK(out.x == out.x); // not NaN
     }
+}
+
+// The composition the deleted `direction` field bought, and the one thing that
+// had to survive losing it: a spot mounted on something that turns — a vehicle
+// headlight, a held torch — aims where the mount faces.
+TEST_CASE("a parented spot aims with its parent")
+{
+    using Assisi::ECS::Transform;
+    using Assisi::Runtime::Parent;
+    using Assisi::Runtime::SpotLight;
+    using Assisi::Runtime::SpotWorldDirection;
+
+    Assisi::ECS::Scene scene;
+
+    // The mount is tipped a quarter turn about +X, which takes -Y to -Z and +Y to +Z.
+    const Assisi::ECS::Entity mount = scene.Create();
+    REQUIRE(scene.Add(mount, Transform{.rotation = glm::angleAxis(glm::radians(90.f),
+                                                                 glm::vec3(1.f, 0.f, 0.f))}) != nullptr);
+
+    // The light is unturned in the mount's space, so all of its aim is inherited.
+    const Assisi::ECS::Entity light = scene.Create();
+    REQUIRE(scene.Add(light, Transform{.position = {0.f, 2.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(light, SpotLight{}) != nullptr);
+    REQUIRE(scene.Add(light, Parent{.parent = mount}) != nullptr);
+
+    (void)Assisi::Runtime::PropagateTransforms(scene, 0u);
+
+    const Transform *world = scene.Get<Transform>(light);
+    REQUIRE(world != nullptr);
+    CHECK(Approx3(SpotWorldDirection(world->worldMatrix), glm::vec3(0.f, 0.f, -1.f)));
+    // Position follows the same matrix, and the two must agree about the turn.
+    CHECK(Approx3(glm::vec3(world->worldMatrix[3]), glm::vec3(0.f, 0.f, 2.f)));
 }
 
 namespace
