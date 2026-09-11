@@ -354,8 +354,8 @@ inline constexpr float kMaxPenumbraWorld = 0.05f;
 ///
 /// The same function sizes the blocker search: a blocker at the map's near
 /// plane is the furthest one can be, so the search reaches as far as the kernel
-/// ever could and a search that finds nothing has seen everything the kernel
-/// would have read. mesh.frag carries the same arithmetic.
+/// ever could (see PcssSearchRadiusUv for its floor). mesh.frag carries the same
+/// arithmetic.
 [[nodiscard]] float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv);
 
 /// @brief The frame-wide numbers the sun's contact-hardening lookup needs.
@@ -368,8 +368,9 @@ struct SunPcssConstants
     float penumbraUvPerDepth = 0.f;
     /// kPcssMaxReachTexels of the map, in UV.
     float maxReachUv = 0.f;
-    /// One texel's worth of [0, 1] depth, in every cascade alike. The unit the
-    /// blocker threshold and the receiver's slope are measured in.
+    /// One texel of the map, in UV — and so one texel's worth of [0, 1] depth,
+    /// in every cascade alike. What the floor tent and the footprint bias are
+    /// sized from, and the unit the receiver's slope is limited in.
     float texelDepth = 0.f;
 };
 
@@ -380,10 +381,11 @@ struct SunPcssConstants
 /// @p cascade, for a blocker @p blockerDistance world units in front of a
 /// receiver the light meets head-on.
 ///
-/// The step the shader takes: the penumbra over the Vogel disk's radius, which
-/// is the kernel contact hardening always uses, under both the reach cap and
-/// the world cap CascadeFilterTapStepUv applies. Reported so the arithmetic the
-/// shader can only be looked at is also checkable.
+/// The penumbra over the Vogel disk's radius in taps, under both the reach cap
+/// and the world cap CascadeFilterTapStepUv applies — the disk the shader takes
+/// once the penumbra is wider than its tent floor has this radius in these
+/// steps. Reported so the arithmetic the shader can only be looked at is also
+/// checkable.
 [[nodiscard]] float CascadePcssTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings,
                                          float blockerDistance);
 

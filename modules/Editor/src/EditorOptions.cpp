@@ -282,7 +282,9 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
 
     // **Indexed by the enum value** — this list must stay in
     // Render::ShadowFilter's order.
-    static const char *kFilterNames[] = {"1 tap", "3x3 PCF", "5x5 PCF", "Vogel (16 tap)"};
+    static const char *const kFilterNames[] = {"1 tap", "3x3 PCF", "5x5 PCF", "Vogel (16 tap)"};
+    static_assert(std::size(kFilterNames) == static_cast<std::size_t>(Assisi::Render::ShadowFilter::Count),
+                  "The filter list must name every ShadowFilter.");
     int32_t filterIndex = static_cast<int32_t>(shadows.sun.filter);
     if (ImGui::Combo("Filter", &filterIndex, kFilterNames, IM_ARRAYSIZE(kFilterNames)))
     {
@@ -414,9 +416,14 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     ImGui::SetItemTooltip("The tile a light's face gets before anything demotes it. A light too far away to "
                           "fill one takes a smaller tile on its own.");
 
+    // The same values as the sun's list, named for what a local light makes of
+    // them: its 3x3 and 5x5 are tents, not grids (see Render::ShadowFilter).
+    static const char *const kLocalFilterNames[] = {"1 tap", "3x3 tent", "5x5 tent", "Vogel (16 tap)"};
+    static_assert(std::size(kLocalFilterNames) == static_cast<std::size_t>(Assisi::Render::ShadowFilter::Count),
+                  "The local filter list must name every ShadowFilter.");
     int32_t localFilterIndex = static_cast<int32_t>(shadows.local.filter);
-    if (ImGui::Combo("Filter##local", &localFilterIndex, kFilterNames,
-                     static_cast<int32_t>(Assisi::Render::kShadowFilterCount)))
+    if (ImGui::Combo("Filter##local", &localFilterIndex, kLocalFilterNames,
+                     static_cast<int32_t>(std::size(kLocalFilterNames))))
     {
         shadows.local.filter = static_cast<Assisi::Render::ShadowFilter>(localFilterIndex);
         changed = true;

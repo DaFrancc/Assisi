@@ -1,5 +1,6 @@
 add_executable(Assisi-Render-Tests
   main.cpp
+  TestBlueNoise.cpp
   TestCelestial.cpp
   TestIndirectLighting.cpp
   TestLocalShadowCache.cpp
@@ -9,6 +10,7 @@ add_executable(Assisi-Render-Tests
   TestShadowCadence.cpp
   TestShadowCascades.cpp
   TestShadowDiagnostics.cpp
+  TestShadowFiltering.cpp
   TestShadowImportance.cpp
   TestShadowSettings.cpp
   TestShadowViews.cpp

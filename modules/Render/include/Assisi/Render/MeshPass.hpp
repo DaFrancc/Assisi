@@ -345,6 +345,10 @@ private:
     /// of its own. Once, at Initialize.
     [[nodiscard]] bool CreateBrdfTable();
 
+    /// @brief Upload the blue-noise tile (see BlueNoise.hpp), on a command list
+    /// of its own. Once, at Initialize.
+    [[nodiscard]] bool CreateBlueNoiseTile();
+
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
 
@@ -415,6 +419,9 @@ private:
     // bias, and the per-light lobe's directional albedo. Owned here because
     // every lit fragment reads it, probe or no probe.
     nvrhi::TextureHandle _brdfTable;
+    // What every shadow disk turns by, per pixel. Four kilobytes and always
+    // bound: a frame that filters no disk never reads it.
+    nvrhi::TextureHandle _blueNoise;
     // Trilinear and clamped, for the table and the environment cube.
     nvrhi::SamplerHandle _clampSampler;
 

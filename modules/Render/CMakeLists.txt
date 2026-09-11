@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-Render)
 target_sources(Assisi-Render
   PUBLIC
     "include/Assisi/Render/AssetCache.hpp"
+    "include/Assisi/Render/BlueNoise.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/Celestial.hpp"
     "include/Assisi/Render/DrawItem.hpp"
@@ -28,6 +29,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/ShadowCascades.hpp"
     "include/Assisi/Render/ShadowDepthRenderer.hpp"
     "include/Assisi/Render/ShadowDiagnostics.hpp"
+    "include/Assisi/Render/ShadowFiltering.hpp"
     "include/Assisi/Render/ShadowImportance.hpp"
     "include/Assisi/Render/ShadowPass.hpp"
     "include/Assisi/Render/ShadowSettings.hpp"
@@ -44,6 +46,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/Vulkan/VulkanContext.hpp"
   PRIVATE
     "src/AssetCache.cpp"
+    "src/BlueNoise.cpp"
     "src/ShaderModule.cpp"
     "src/ClusterGrid.cpp"
     "src/ComputeShader.cpp"
@@ -65,6 +68,7 @@ target_sources(Assisi-Render
     "src/ShadowCascades.cpp"
     "src/ShadowDepthRenderer.cpp"
     "src/ShadowDiagnostics.cpp"
+    "src/ShadowFiltering.cpp"
     "src/ShadowImportance.cpp"
     "src/ShadowPass.cpp"
     "src/ShadowView.cpp"

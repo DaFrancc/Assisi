@@ -2,6 +2,8 @@
 
 #include <Assisi/Render/ShadowView.hpp>
 
+#include <Assisi/Render/ShadowFiltering.hpp>
+
 #include <algorithm>
 #include <cmath>
 
@@ -265,15 +267,32 @@ float LocalSlopeBiasClampNdc(std::uint32_t tileResolution)
     return ndcPerWorldTimesFar * worldPerTexelOverFar;
 }
 
+float LocalFilterReachTexels(ShadowFilter filter)
+{
+    // The half texel the hardware's bilinear comparison reaches past any tap.
+    constexpr float kBilinearReachTexels = 0.5f;
+    switch (filter)
+    {
+    case ShadowFilter::Pcf3x3:
+        return TentHalfWidthTexels(kPcf3FilterRadiusTaps);
+    case ShadowFilter::Pcf5x5:
+        return TentHalfWidthTexels(kPcf5FilterRadiusTaps);
+    case ShadowFilter::Vogel:
+        return kVogelFilterRadiusTaps + kBilinearReachTexels;
+    case ShadowFilter::Point:
+    case ShadowFilter::Count:
+        break;
+    }
+    return kBilinearReachTexels;
+}
+
 glm::vec4 ShadowViewClampUv(const ShadowView &view, ShadowFilter filter)
 {
     const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
     const glm::vec2 minUv(scaleOffset.z, scaleOffset.w);
     const glm::vec2 maxUv = minUv + glm::vec2(scaleOffset.x, scaleOffset.y);
 
-    // The kernel's outermost tap, plus the half texel the hardware's own
-    // bilinear comparison reaches on top of wherever a tap lands.
-    const float inset = view.filterTapStepUv * (FilterRadiusTaps(filter) + 0.5f);
+    const float inset = view.filterTapStepUv * LocalFilterReachTexels(filter);
     const glm::vec2 room = (maxUv - minUv) * 0.5f;
     if (inset >= room.x || inset >= room.y)
     {

@@ -4,9 +4,11 @@
 
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ShadowAtlas.hpp>
+#include <Assisi/Render/ShadowFiltering.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 #include <Assisi/Render/ShadowView.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -266,10 +268,24 @@ TEST_CASE("A lookup is clamped inside its tile by the filter's own reach")
     CHECK(view.clampUv.z < tileMax.x);
     CHECK(view.clampUv.w < tileMax.y);
 
-    // The inset is the kernel's reach plus the half texel the hardware's own
-    // bilinear comparison covers on top of wherever a tap lands.
-    const float expected = view.filterTapStepUv * (FilterRadiusTaps(ShadowFilter::Pcf5x5) + 0.5f);
-    CHECK(view.clampUv.x - tileMin.x == doctest::Approx(expected));
+    // The inset is as far as the tent's taps read, each tap's bilinear half
+    // texel included, at the worst sub-texel position the lookup can take.
+    const float halfWidth = TentHalfWidthTexels(kPcf5FilterRadiusTaps);
+    float worstTexels = 0.f;
+    for (std::uint32_t step = 0; step < 16u; ++step)
+    {
+        const float fraction = static_cast<float>(step) / 16.f;
+        const TentAxis axis = TentAxisTaps(fraction, halfWidth);
+        for (std::uint32_t i = 0; i < axis.count; ++i)
+        {
+            if (axis.taps[i].weight > 0.f)
+            {
+                worstTexels = std::max(worstTexels, std::abs(axis.taps[i].position - fraction) + 0.5f);
+            }
+        }
+    }
+    CHECK(view.clampUv.x - tileMin.x >= view.filterTapStepUv * worstTexels - 1e-7f);
+    CHECK(view.clampUv.x - tileMin.x == doctest::Approx(view.filterTapStepUv * LocalFilterReachTexels(ShadowFilter::Pcf5x5)));
 
     // A wider filter insets further, which is the whole point of it depending on
     // the filter at all.

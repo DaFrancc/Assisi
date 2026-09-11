@@ -568,14 +568,30 @@ const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
 const float kGoldenAngle        = 2.39996323;
 
-// The sixteen taps split into a probe and the rest. The probe's four are picked
-// for coverage — spread around the disk, and spanning its radius from near the
-// centre to the rim — so a kernel that straddles a shadow edge almost always
-// lands at least one probe tap on each side of it. Together the two lists are
-// exactly the taps 0..15, so summing both walks the same disk the single loop
-// did.
-const uint kVogelProbe[4] = uint[](0u, 4u, 11u, 15u);
-const uint kVogelRest[12] = uint[](1u, 2u, 3u, 5u, 6u, 7u, 8u, 9u, 10u, 12u, 13u, 14u);
+// Every disk decides whether it straddles an edge from this many of its own
+// taps before reading the rest: most of any shadow is umbra or open light, where
+// they agree. Must match Render::kPcssProbeTaps; every disk's tap count is a
+// multiple of it, so the probe is spaced evenly through the disk.
+const uint kDiskProbeTaps = 4u;
+
+// Contact hardening's disk: its fewest taps where it first widens past its tent
+// floor, and its most. Must match Render::kPcssMinTaps and kPcssMaxTaps. The
+// blocker search takes the fewest.
+const uint kPcssMinTaps = 16u;
+const uint kPcssMaxTaps = 64u;
+
+// Half-widths, in texels, of the tents a local light's 3x3 and 5x5 are, and of
+// the tent contact hardening never filters narrower than. Must match
+// Render::TentHalfWidthTexels and Render::kPcssFloorHalfWidthTexels.
+const float kTent3HalfWidth     = 1.5;
+const float kTent5HalfWidth     = 2.5;
+const float kPcssFloorHalfWidth = kTent3HalfWidth;
+// Must match Render::kMaxTentAxisTaps.
+const uint  kMaxTentAxisTaps    = 3u;
+
+// How far from its position a bilinear comparison reads, in texels. Must match
+// Render::kCompareFootprintTexels.
+const float kCompareFootprintTexels = 1.0;
 
 // A full turn, for the per-pixel rotation of the disk.
 const float kTwoPi = 6.28318531;
@@ -584,11 +600,6 @@ const float kTwoPi = 6.28318531;
 // receiver on the light divides by zero, and the near plane has already excluded
 // it from the map anyway.
 const float kMinAxisDepth = 1e-4;
-
-// A texel counts as a blocker only if it sits at least this far in front of the
-// receiver's plane, in texels of depth: nearer than that it is the receiver
-// itself, quantised.
-const float kPcssBlockerMinDepthTexels = 1.0;
 
 // The steepest receiver slope the plane may take, in texels of depth per texel —
 // the tangent of the light's incidence. Ten is about 84 degrees. Past it a
@@ -602,6 +613,23 @@ const float kPcssMaxReceiverSlope = 10.0;
 // undefined. Zero while no contact-hardening path is on.
 vec3 gWorldPosDx = vec3(0.0);
 vec3 gWorldPosDy = vec3(0.0);
+
+// The blue-noise tile (Render::BlueNoiseTile), repeated across the screen. Must
+// match Render::kBlueNoiseTileSize.
+layout(binding = 13) uniform texture2D uBlueNoise;
+const int kBlueNoiseTileSize = 64;
+
+// The angle every shadow disk this fragment filters is turned by, fetched once
+// at the top of main while a disk can be taken at all. Blue noise rather than a
+// hash: neighbouring pixels turn very differently, so a disk's residue reads as
+// fine grain instead of blotches — with no history to average it away, the
+// spectrum of the pattern is all there is.
+float gDiskRotation = 0.0;
+
+float BlueNoiseRotation()
+{
+    return texelFetch(uBlueNoise, ivec2(gl_FragCoord.xy) % kBlueNoiseTileSize, 0).r * kTwoPi;
+}
 
 /// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
 /// comparison is made against.
@@ -623,28 +651,145 @@ float ShadowTap(vec2 uv, uint cascade, float reference)
     return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
 }
 
-// Rotates the Vogel disk per pixel so its taps read as noise rather than as
-// repeated copies of the same rosette.
-float InterleavedGradientNoise(vec2 position)
-{
-    return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
-}
-
-/// Tap @p i of the kVogelTaps-point Vogel disk of radius @p radius, rotated by
+/// Tap @p i of a @p taps-point Vogel disk of radius @p radius, rotated by
 /// @p phi. The position depends only on the index, so the disk is the same
 /// whichever order its taps are visited in.
-vec2 VogelOffset(uint i, float phi, float radius)
+vec2 VogelOffset(uint i, float phi, float radius, uint taps)
 {
-    float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * radius;
+    float r     = sqrt((float(i) + 0.5) / float(taps)) * radius;
     float theta = float(i) * kGoldenAngle + phi;
     return vec2(r * cos(theta), r * sin(theta));
 }
 
-/// Tap @p i of the Vogel disk, rotated by @p phi and spaced by @p stepUv per
-/// radius step.
-float VogelTap(uint i, vec2 uv, uint cascade, float reference, float stepUv, float phi)
+/// Whether tap @p i of a @p taps-point disk is one of its probe taps: one in
+/// every taps / kDiskProbeTaps, taken from the middle of each run so the four
+/// span the disk from a third of its radius to near its rim.
+bool IsDiskProbe(uint i, uint taps)
 {
-    return ShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, cascade, reference);
+    uint stride = taps / kDiskProbeTaps;
+    return i % stride == stride / 2u;
+}
+
+/// The i-th probe tap's index in a @p taps-point disk.
+uint DiskProbeIndex(uint probe, uint taps)
+{
+    uint stride = taps / kDiskProbeTaps;
+    return probe * stride + stride / 2u;
+}
+
+// ---- Tents ------------------------------------------------------------------
+//
+// A tent kernel read with the bilinear comparison: each tap sits between two
+// texel centres, weighted so the hardware's own blend returns what weighting
+// both texels by the tent would. Every function here has a twin in
+// Render::ShadowFiltering.hpp.
+
+/// The fraction of a unit-area tent of half-width @p halfWidth, centred on zero,
+/// that lies below @p x.
+float TentCdf(float x, float halfWidth)
+{
+    if (x <= -halfWidth)
+    {
+        return 0.0;
+    }
+    if (x >= halfWidth)
+    {
+        return 1.0;
+    }
+    float twiceSquared = 2.0 * halfWidth * halfWidth;
+    return x <= 0.0 ? (x + halfWidth) * (x + halfWidth) / twiceSquared
+                    : 1.0 - (halfWidth - x) * (halfWidth - x) / twiceSquared;
+}
+
+/// Render::TentTexelWeight.
+float TentTexelWeight(float centre, float halfWidth, int texel)
+{
+    float low = float(texel) - 0.5 - centre;
+    return TentCdf(low + 1.0, halfWidth) - TentCdf(low, halfWidth);
+}
+
+/// Render::TentAxisTaps: x = the tap's position in texels from the centre of the
+/// lookup's own texel, y = its weight.
+uint TentAxisTaps(float fraction, float halfWidth, out vec2 taps[kMaxTentAxisTaps])
+{
+    int  first = int(floor(fraction - halfWidth + 0.5));
+    uint pairs = min(uint(halfWidth + 0.5), kMaxTentAxisTaps);
+    for (uint pair = 0u; pair < pairs; ++pair)
+    {
+        int   texel  = first + int(2u * pair);
+        float a      = TentTexelWeight(fraction, halfWidth, texel);
+        float b      = TentTexelWeight(fraction, halfWidth, texel + 1);
+        float weight = a + b;
+        taps[pair]   = vec2(float(texel) + (weight > 0.0 ? b / weight : 0.0), weight);
+    }
+    return pairs;
+}
+
+// ---- Receiver planes --------------------------------------------------------
+//
+// A comparison against a plane rather than a single depth: x = the depth at the
+// lookup, yz = how it changes per unit of UV. A flat reference is the plane
+// with no slope, so every filter below serves both.
+
+/// Render::CompareFootprintDepth: how far the plane can rise across the four
+/// texels one comparison reads.
+float CompareFootprintDepth(float texelUv, vec2 slope)
+{
+    return kCompareFootprintTexels * texelUv * (abs(slope.x) + abs(slope.y));
+}
+
+/// One comparison into @p cascade at @p uv + @p offset, against @p plane there.
+float CascadePlaneTap(uint cascade, vec2 uv, vec2 offset, vec3 plane)
+{
+    return ShadowTap(uv + offset, cascade, plane.x + dot(offset, plane.yz));
+}
+
+/// A tent of @p halfWidth texels into @p cascade.
+float FilterCascadeTent(uint cascade, vec2 uv, vec3 plane, float halfWidth)
+{
+    vec2 size     = vec2(textureSize(uShadowCascades, 0).xy);
+    vec2 texel    = uv * size - 0.5;
+    vec2 base     = floor(texel);
+    vec2 fraction = texel - base;
+    vec2 across[kMaxTentAxisTaps];
+    vec2 down[kMaxTentAxisTaps];
+    uint acrossCount = TentAxisTaps(fraction.x, halfWidth, across);
+    uint downCount   = TentAxisTaps(fraction.y, halfWidth, down);
+
+    float sum = 0.0;
+    for (uint y = 0u; y < downCount; ++y)
+    {
+        for (uint x = 0u; x < acrossCount; ++x)
+        {
+            vec2 tapUv = (base + vec2(across[x].x, down[y].x) + 0.5) / size;
+            sum += across[x].y * down[y].y * CascadePlaneTap(cascade, uv, tapUv - uv, plane);
+        }
+    }
+    return sum;
+}
+
+/// A @p taps-point Vogel disk of radius @p radiusUv into @p cascade, turned by
+/// the fragment's blue-noise angle, with the probe early-out.
+float FilterCascadeDisk(uint cascade, vec2 uv, vec3 plane, float radiusUv, uint taps)
+{
+    float sum = 0.0;
+    for (uint probe = 0u; probe < kDiskProbeTaps; ++probe)
+    {
+        sum += CascadePlaneTap(cascade, uv, VogelOffset(DiskProbeIndex(probe, taps), gDiskRotation, radiusUv, taps),
+                               plane);
+    }
+    if (sum == 0.0 || sum == float(kDiskProbeTaps))
+    {
+        return sum / float(kDiskProbeTaps);
+    }
+    for (uint i = 0u; i < taps; ++i)
+    {
+        if (!IsDiskProbe(i, taps))
+        {
+            sum += CascadePlaneTap(cascade, uv, VogelOffset(i, gDiskRotation, radiusUv, taps), plane);
+        }
+    }
+    return sum / float(taps);
 }
 
 /// The normal of the surface that was actually rasterized, facing the viewer.
@@ -685,22 +830,57 @@ float NearestBlockerDepth(vec2 uv, uint cascade, float reference)
 //
 // A fixed kernel picks one softness for every shadow; a real one is sharp where
 // its caster meets the ground and widens with the caster's height. The lookup
-// asks the map how far in front its blockers sit — searching a disk as wide as
-// the widest penumbra could be — and sizes a Vogel kernel from their mean
-// clearance.
+// asks the map how far in front its blockers sit and sizes its kernel from
+// their mean clearance — counting only the blockers whose own penumbra reaches
+// the receiver, so a tall caster's top does not widen the shadow at its base.
+//
+// The kernel is never narrower than a three-texel tent, which is also what an
+// empty search filters with: a search that finds nothing near an edge is not
+// evidence the edge is lit. Past the tent it is a Vogel disk whose tap count
+// grows with its area.
 //
 // Every tap, in the search and in the kernel, compares against the receiver's
 // own plane rather than against one depth. A wide disk on a surface the light
 // meets at an angle covers ground the surface itself recedes across, and a
 // single reference counts the receiver's own texels as blockers a hair away —
 // which collapses the kernel to stripes on exactly the surfaces it is meant to
-// soften.
+// soften. Every function here has a twin in Render::ShadowFiltering.hpp or
+// Render::ShadowCascades.hpp.
 
 /// How far a contact-hardened kernel reaches for a blocker @p gapDepth in front
-/// of its receiver. Must match Render::PcssPenumbraUv.
+/// of its receiver. Render::PcssPenumbraUv.
 float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv)
 {
     return clamp(penumbraUvPerDepth * gapDepth, 0.0, maxReachUv);
+}
+
+/// Render::PcssBlockerCounts: a blocker @p gapDepth in front, @p offsetUv from
+/// the lookup, shades the receiver only if its own penumbra reaches that far.
+bool PcssBlockerCounts(float penumbraUvPerDepth, float gapDepth, float offsetUv, float maxReachUv)
+{
+    return gapDepth > 0.0 && PcssPenumbraUv(penumbraUvPerDepth, gapDepth, maxReachUv) >= offsetUv;
+}
+
+/// Render::PcssSearchRadiusUv: as far as the widest penumbra could reach, and
+/// never less than the floor tent reads.
+float PcssSearchRadiusUv(float penumbraUvPerDepth, float referenceDepth, float maxReachUv, float floorReachUv)
+{
+    return max(PcssPenumbraUv(penumbraUvPerDepth, referenceDepth, maxReachUv), floorReachUv);
+}
+
+/// Render::PcssKernelTaps: zero where the floor tent covers the penumbra, and
+/// past it a count that grows with the disk's area.
+uint PcssKernelTaps(float penumbraUv, float floorReachUv)
+{
+    if (!(penumbraUv > floorReachUv))
+    {
+        return 0u;
+    }
+    float ratio   = penumbraUv / floorReachUv;
+    float wanted  = min(float(kPcssMinTaps) * ratio * ratio, float(kPcssMaxTaps));
+    float probes  = float(kDiskProbeTaps);
+    uint  rounded = uint(floor(wanted / probes + 0.5) * probes);
+    return clamp(rounded, kPcssMinTaps, kPcssMaxTaps);
 }
 
 /// dz/du and dz/dv of the receiving surface in a map, from where the fragment's
@@ -733,25 +913,26 @@ vec3 ShadowCoordDelta(uint cascade, vec3 dWorld)
     return vec3(d.xy * vec2(0.5, -0.5), d.z);
 }
 
-/// Mean clearance of the blockers in front of the receiver around @p uv, in
-/// [0, 1] depth, or zero where nothing stands in front of it.
+/// Mean clearance of the blockers that shade the receiver around @p uv, in
+/// [0, 1] depth, or zero where none does.
 ///
 /// Fetched rather than compared: a comparison answers whether something is in
 /// front, and the kernel's width depends on how far. Each tap is read at a texel
 /// centre and measured against the receiver's plane there, so the plane is
-/// evaluated where the depth was actually recorded.
-float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
+/// evaluated where the depth was actually recorded. The receiver's own texels
+/// sit behind the plane by the depth bias, so no threshold is needed to keep
+/// them out, and none is taken: one texel of depth was the whole of a caster's
+/// base on a coarse map.
+float CascadeBlockerGap(uint cascade, vec2 uv, vec3 plane, float floorReachUv)
 {
-    float searchUv  = PcssPenumbraUv(uFrame.shadowPcss.x, reference, uFrame.shadowPcss.y);
-    float threshold = kPcssBlockerMinDepthTexels * uFrame.shadowPcss.z;
-    vec2  size      = vec2(textureSize(uShadowCascades, 0).xy);
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    float searchUv = PcssSearchRadiusUv(uFrame.shadowPcss.x, plane.x, uFrame.shadowPcss.y, floorReachUv);
+    vec2  size     = vec2(textureSize(uShadowCascades, 0).xy);
 
     float gapSum   = 0.0;
     float blockers = 0.0;
-    for (uint i = 0u; i < kVogelTaps; ++i)
+    for (uint i = 0u; i < kPcssMinTaps; ++i)
     {
-        vec2 tapUv = uv + VogelOffset(i, phi, searchUv);
+        vec2 tapUv = uv + VogelOffset(i, gDiskRotation, searchUv, kPcssMinTaps);
         // Off the map nothing was recorded, so nothing there is a blocker.
         if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThanEqual(tapUv, vec2(1.0))))
         {
@@ -760,8 +941,8 @@ float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
         ivec2 texel  = ivec2(tapUv * size);
         vec2  centre = (vec2(texel) + 0.5) / size;
         float stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
-        float gap    = reference + dot(centre - uv, slope) - stored;
-        if (gap > threshold)
+        float gap    = plane.x + dot(centre - uv, plane.yz) - stored;
+        if (PcssBlockerCounts(uFrame.shadowPcss.x, gap, length(centre - uv), uFrame.shadowPcss.y))
         {
             gapSum += gap;
             blockers += 1.0;
@@ -770,56 +951,26 @@ float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
     return blockers > 0.0 ? gapSum / blockers : 0.0;
 }
 
-/// The Vogel kernel at @p stepUv, each tap compared against the receiver's
-/// plane where it lands. The probe early-out is the fixed Vogel filter's, for
-/// the same reason: most of a shadow is umbra, where four taps agree.
-float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, float stepUv)
-{
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-    float sum = 0.0;
-    for (uint i = 0u; i < 4u; ++i)
-    {
-        vec2 offset = VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv;
-        sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
-    }
-    if (sum == 0.0)
-    {
-        return 0.0;
-    }
-    if (sum == 4.0)
-    {
-        return 1.0;
-    }
-    for (uint i = 0u; i < 12u; ++i)
-    {
-        vec2 offset = VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv;
-        sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
-    }
-    return sum / float(kVogelTaps);
-}
-
 /// The sun through @p cascade, contact-hardened. @p uv and @p reference are the
 /// lookup SampleCascade already biased.
 float SampleCascadePcss(uint cascade, vec2 uv, float reference, float NdotL)
 {
     // Orthographic, and the depth range is the box width: a texel of depth is a
     // texel of UV, so the slope is already in the unit its limit is counted in.
-    vec2  slope = ReceiverPlaneSlope(ShadowCoordDelta(cascade, gWorldPosDx), ShadowCoordDelta(cascade, gWorldPosDy),
-                                     1.0);
-    float gap   = CascadeBlockerGap(cascade, uv, reference, slope);
-    // The search reaches as far as any kernel could, so finding nothing is the
-    // kernel's answer too.
-    if (gap == 0.0)
-    {
-        return 1.0;
-    }
+    vec2  slope        = ReceiverPlaneSlope(ShadowCoordDelta(cascade, gWorldPosDx),
+                                            ShadowCoordDelta(cascade, gWorldPosDy), 1.0);
+    float texelUv      = uFrame.shadowPcss.z;
+    vec3  plane        = vec3(reference - CompareFootprintDepth(texelUv, slope), slope);
+    float floorReachUv = kPcssFloorHalfWidth * texelUv;
+    float gap          = CascadeBlockerGap(cascade, uv, plane, floorReachUv);
+
     // The fixed kernel's world cap, on the surface rather than in the map: a
     // grazing receiver stretches a map-space reach by 1 / NdotL.
-    float worldCapUv = uFrame.shadowPcss.w * max(NdotL, kEps) /
-                       (kVogelRadiusSteps * uFrame.shadowCascade[cascade].w);
-    float stepUv     = min(PcssPenumbraUv(uFrame.shadowPcss.x, gap, uFrame.shadowPcss.y) / kVogelRadiusSteps,
-                           worldCapUv);
-    return FilterCascadePcss(cascade, uv, reference, slope, stepUv);
+    float worldCapUv = uFrame.shadowPcss.w * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w;
+    float radiusUv   = min(PcssPenumbraUv(uFrame.shadowPcss.x, gap, uFrame.shadowPcss.y), worldCapUv);
+    uint  taps       = PcssKernelTaps(radiusUv, floorReachUv);
+    return taps == 0u ? FilterCascadeTent(cascade, uv, plane, kPcssFloorHalfWidth)
+                      : FilterCascadeDisk(cascade, uv, plane, radiusUv, taps);
 }
 
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
@@ -908,36 +1059,16 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-
         // The probe taps first. A tap that lands wholly lit or wholly shadowed
         // returns exactly 1 or 0 — the comparison sampler blends only across a
         // texel — so a unanimous probe means the kernel almost certainly does
-        // not straddle an edge, and most of any frame it does not. The twelve
-        // remaining taps run only where the probe disagrees, with the same
-        // positions and the same per-pixel rotation, so a penumbra keeps its
-        // noise pattern. The probe can answer wrongly only where the rest
-        // would have disagreed with a unanimous four — the outermost fringe of
-        // a penumbra — and the rotation scatters that per pixel rather than
-        // letting it band.
-        float sum = 0.0;
-        for (uint i = 0u; i < 4u; ++i)
-        {
-            sum += VogelTap(kVogelProbe[i], uv, cascade, reference, step, phi);
-        }
-        if (sum == 0.0)
-        {
-            return 0.0;
-        }
-        if (sum == 4.0)
-        {
-            return 1.0;
-        }
-        for (uint i = 0u; i < 12u; ++i)
-        {
-            sum += VogelTap(kVogelRest[i], uv, cascade, reference, step, phi);
-        }
-        return sum / float(kVogelTaps);
+        // not straddle an edge, and most of any frame it does not. The rest
+        // run only where the probe disagrees, with the same positions and the
+        // same per-pixel rotation, so a penumbra keeps its grain pattern. The
+        // probe can answer wrongly only where the rest would have disagreed
+        // with a unanimous four — the outermost fringe of a penumbra — and the
+        // rotation scatters that per pixel rather than letting it band.
+        return FilterCascadeDisk(cascade, uv, vec3(reference, 0.0, 0.0), step * kVogelRadiusSteps, kVogelTaps);
     }
 
     // The two grid filters differ in nothing but their reach, so they are one
@@ -1129,9 +1260,9 @@ uint PointLightFace(vec3 direction)
 }
 
 /// Where @p worldPos lands in @p view's tile: atlas UV in xy, and in z the depth
-/// it would store. Projective rather than affine, so a difference of two of
-/// these is first-order only — which over one pixel's footprint is all the
-/// receiver plane asks of it.
+/// it would store. Projective, but a perspective projection still maps a plane
+/// to a plane in (u, v, depth), so the receiver plane two of these measure holds
+/// across a whole kernel and not only across a pixel.
 vec3 LocalShadowCoord(ShadowViewRow view, vec3 worldPos)
 {
     vec4 clip   = view.viewProjection * vec4(worldPos, 1.0);
@@ -1140,25 +1271,24 @@ vec3 LocalShadowCoord(ShadowViewRow view, vec3 worldPos)
     return vec3(tileUv * view.uvScaleOffset.xy + view.uvScaleOffset.zw, ndc.z);
 }
 
-/// The same search CascadeBlockerGap makes, inside one tile of the atlas.
-/// @p texelDepth is one texel of depth at the receiver's distance. Taps clamp
-/// into the tile, where a tap past its edge would read the neighbouring light.
-float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, float texelDepth)
+/// The same search CascadeBlockerGap makes, inside one tile of the atlas. Taps
+/// clamp into the tile, where a tap past its edge would read the neighbouring
+/// light.
+float LocalBlockerGap(ShadowViewRow view, vec2 uv, vec3 plane, float floorReachUv)
 {
-    float searchUv  = PcssPenumbraUv(view.pcss.x, reference, view.pcss.z);
-    float threshold = kPcssBlockerMinDepthTexels * texelDepth;
-    ivec2 size      = textureSize(uShadowAtlas, 0);
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    float searchUv = PcssSearchRadiusUv(view.pcss.x, plane.x, view.pcss.z, floorReachUv);
+    ivec2 size     = textureSize(uShadowAtlas, 0);
 
     float gapSum   = 0.0;
     float blockers = 0.0;
-    for (uint i = 0u; i < kVogelTaps; ++i)
+    for (uint i = 0u; i < kPcssMinTaps; ++i)
     {
-        vec2  tapUv  = clamp(uv + VogelOffset(i, phi, searchUv), view.clampUv.xy, view.clampUv.zw);
+        vec2  tapUv  = clamp(uv + VogelOffset(i, gDiskRotation, searchUv, kPcssMinTaps), view.clampUv.xy,
+                             view.clampUv.zw);
         ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
         vec2  centre = (vec2(texel) + 0.5) / vec2(size);
-        float gap    = reference + dot(centre - uv, slope) - texelFetch(uShadowAtlas, texel, 0).r;
-        if (gap > threshold)
+        float gap    = plane.x + dot(centre - uv, plane.yz) - texelFetch(uShadowAtlas, texel, 0).r;
+        if (PcssBlockerCounts(view.pcss.x, gap, length(centre - uv), view.pcss.z))
         {
             gapSum += gap;
             blockers += 1.0;
@@ -1167,36 +1297,61 @@ float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
     return blockers > 0.0 ? gapSum / blockers : 0.0;
 }
 
-/// One kernel tap into a tile, compared against the receiver's plane at the
+/// One comparison into a tile at @p uv + @p offset, against @p plane at the
 /// point the tap was clamped to rather than the point it aimed for.
-float LocalPcssTap(ShadowViewRow view, vec2 uv, vec2 offset, float reference, vec2 slope)
+float LocalPlaneTap(ShadowViewRow view, vec2 uv, vec2 offset, vec3 plane)
 {
     vec2 tapUv = clamp(uv + offset, view.clampUv.xy, view.clampUv.zw);
-    return LocalShadowTap(tapUv, view.clampUv, reference + dot(tapUv - uv, slope));
+    return LocalShadowTap(tapUv, view.clampUv, plane.x + dot(tapUv - uv, plane.yz));
 }
 
-/// The Vogel kernel at @p stepUv inside one tile, with the probe early-out.
-float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, float stepUv)
+/// A tent of @p halfWidth texels inside one tile. A tap the tile's clamp moves
+/// keeps its weight, which bends the tent at a tile's edge exactly as it bent
+/// the grid it replaces, and never reads the light next door.
+float FilterLocalTent(ShadowViewRow view, vec2 uv, vec3 plane, float halfWidth)
 {
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    vec2 size     = vec2(textureSize(uShadowAtlas, 0));
+    vec2 texel    = uv * size - 0.5;
+    vec2 base     = floor(texel);
+    vec2 fraction = texel - base;
+    vec2 across[kMaxTentAxisTaps];
+    vec2 down[kMaxTentAxisTaps];
+    uint acrossCount = TentAxisTaps(fraction.x, halfWidth, across);
+    uint downCount   = TentAxisTaps(fraction.y, halfWidth, down);
+
     float sum = 0.0;
-    for (uint i = 0u; i < 4u; ++i)
+    for (uint y = 0u; y < downCount; ++y)
     {
-        sum += LocalPcssTap(view, uv, VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
+        for (uint x = 0u; x < acrossCount; ++x)
+        {
+            vec2 tapUv = (base + vec2(across[x].x, down[y].x) + 0.5) / size;
+            sum += across[x].y * down[y].y * LocalPlaneTap(view, uv, tapUv - uv, plane);
+        }
     }
-    if (sum == 0.0)
+    return sum;
+}
+
+/// A @p taps-point Vogel disk of radius @p radiusUv inside one tile, turned by
+/// the fragment's blue-noise angle, with the probe early-out.
+float FilterLocalDisk(ShadowViewRow view, vec2 uv, vec3 plane, float radiusUv, uint taps)
+{
+    float sum = 0.0;
+    for (uint probe = 0u; probe < kDiskProbeTaps; ++probe)
     {
-        return 0.0;
+        sum += LocalPlaneTap(view, uv, VogelOffset(DiskProbeIndex(probe, taps), gDiskRotation, radiusUv, taps), plane);
     }
-    if (sum == 4.0)
+    if (sum == 0.0 || sum == float(kDiskProbeTaps))
     {
-        return 1.0;
+        return sum / float(kDiskProbeTaps);
     }
-    for (uint i = 0u; i < 12u; ++i)
+    for (uint i = 0u; i < taps; ++i)
     {
-        sum += LocalPcssTap(view, uv, VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
+        if (!IsDiskProbe(i, taps))
+        {
+            sum += LocalPlaneTap(view, uv, VogelOffset(i, gDiskRotation, radiusUv, taps), plane);
+        }
     }
-    return sum / float(kVogelTaps);
+    return sum / float(taps);
 }
 
 /// A local light through @p view, contact-hardened. @p biasedPos, @p uv and
@@ -1206,18 +1361,20 @@ float LocalVisibilityPcss(ShadowViewRow view, vec3 biasedPos, vec2 uv, float ref
     // A perspective texel of depth shrinks with distance while a texel of UV
     // does not, so the unit the slope is limited in is measured where the
     // receiver is.
-    float texelDepth = view.pcss.y / max(axisDepth, kMinAxisDepth);
-    vec3  here       = LocalShadowCoord(view, biasedPos);
-    vec2  slope      = ReceiverPlaneSlope(LocalShadowCoord(view, biasedPos + gWorldPosDx) - here,
-                                          LocalShadowCoord(view, biasedPos + gWorldPosDy) - here,
-                                          texelDepth / view.params.z);
-    float gap        = LocalBlockerGap(view, uv, reference, slope, texelDepth);
-    if (gap == 0.0)
-    {
-        return 1.0;
-    }
-    float stepUv = PcssPenumbraUv(view.pcss.x, gap, view.pcss.z) / kVogelRadiusSteps;
-    return FilterLocalPcss(view, uv, reference, slope, stepUv);
+    float texelDepth   = view.pcss.y / max(axisDepth, kMinAxisDepth);
+    float texelUv      = view.params.z;
+    vec3  here         = LocalShadowCoord(view, biasedPos);
+    vec2  slope        = ReceiverPlaneSlope(LocalShadowCoord(view, biasedPos + gWorldPosDx) - here,
+                                            LocalShadowCoord(view, biasedPos + gWorldPosDy) - here,
+                                            texelDepth / texelUv);
+    vec3  plane        = vec3(reference - CompareFootprintDepth(texelUv, slope), slope);
+    float floorReachUv = kPcssFloorHalfWidth * texelUv;
+    float gap          = LocalBlockerGap(view, uv, plane, floorReachUv);
+
+    float radiusUv = PcssPenumbraUv(view.pcss.x, gap, view.pcss.z);
+    uint  taps     = PcssKernelTaps(radiusUv, floorReachUv);
+    return taps == 0u ? FilterLocalTent(view, uv, plane, kPcssFloorHalfWidth)
+                      : FilterLocalDisk(view, uv, plane, radiusUv, taps);
 }
 
 /// Fraction of a local light reaching @p worldPos through view @p viewIndex:
@@ -1267,8 +1424,6 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     // light would divide by zero, and the near plane has already excluded it from
     // the map anyway.
     float reference = ndc.z - view.params.x / max(axisDepth, kMinAxisDepth);
-    float stepUv    = view.params.z;
-    vec4  clampUv   = view.clampUv;
 
     // Contact hardening replaces the fixed kernel, as it does for the sun.
     if (uFrame.localShadowCounts.z == 1u)
@@ -1279,30 +1434,21 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     uint filterMode = uFrame.localShadowCounts.x;
     if (filterMode == kShadowFilterPoint)
     {
-        return LocalShadowTap(uv, clampUv, reference);
+        return LocalShadowTap(uv, view.clampUv, reference);
     }
 
+    // A flat reference: the fixed kernels take no receiver plane, so a frame
+    // with contact hardening off pays for no derivatives.
+    vec3 plane = vec3(reference, 0.0, 0.0);
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-        float sum = 0.0;
-        for (uint i = 0u; i < kVogelTaps; i++)
-        {
-            sum += LocalShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, clampUv, reference);
-        }
-        return sum / float(kVogelTaps);
+        return FilterLocalDisk(view, uv, plane, kVogelRadiusSteps * view.params.z, kVogelTaps);
     }
 
-    int   radius = filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius;
-    float sum    = 0.0;
-    for (int y = -radius; y <= radius; ++y)
-    {
-        for (int x = -radius; x <= radius; ++x)
-        {
-            sum += LocalShadowTap(uv + vec2(float(x), float(y)) * stepUv, clampUv, reference);
-        }
-    }
-    return sum / PcfTapCount(radius);
+    // The 3x3 and 5x5 as tents: a tile's texels are the atlas's, so the tent is
+    // sampled at the grid the map actually has, and its edge moves smoothly with
+    // the lookup rather than stepping a texel at a time.
+    return FilterLocalTent(view, uv, plane, filterMode == kShadowFilterPcf5 ? kTent5HalfWidth : kTent3HalfWidth);
 }
 
 /// The same, for a spot light: one view, or no shadow at all.
@@ -1416,6 +1562,18 @@ void main()
     {
         gWorldPosDx = dFdx(vWorldPos);
         gWorldPosDy = dFdy(vWorldPos);
+    }
+
+    // One fetch for every disk the light loops take, and none on a frame that
+    // takes no disk: a Vogel filter or contact hardening on either half, for a
+    // half that is shadowing anything.
+    bool sunDisk   = uFrame.shadowCounts.x > 0u &&
+                     (uFrame.shadowPcss.x > 0.0 || uFrame.shadowCounts.z == kShadowFilterVogel);
+    bool localDisk = uFrame.localShadowCounts.y == 1u &&
+                     (uFrame.localShadowCounts.z == 1u || uFrame.localShadowCounts.x == kShadowFilterVogel);
+    if (sunDisk || localDisk)
+    {
+        gDiskRotation = BlueNoiseRotation();
     }
 
     Surface surf = SampleMaterial();

@@ -5,6 +5,7 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/AssetCache.hpp>
+#include <Assisi/Render/BlueNoise.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
@@ -18,6 +19,7 @@
 #include <cstddef>
 #include <limits>
 #include <iterator>
+#include <span>
 #include <vector>
 
 namespace Assisi::Render
@@ -105,8 +107,8 @@ struct FrameConstants
     /// zero, so zero can only mean off. A local light's ride in its view instead.
     ///
     /// The world cap rides here rather than being read off shadowParams.z,
-    /// which is quoted over the selected filter's radius; this path's kernel is
-    /// always the Vogel disk.
+    /// which is quoted over the selected filter's radius; this path sizes its
+    /// own kernel, and caps the disk's radius by it directly.
     glm::vec4 shadowPcss;
     /// One record per cascade: x = the view-space distance it ends at (what the
     /// shader selects on), y = its constant depth bias already in the [0, 1]
@@ -213,7 +215,7 @@ bool MeshPass::Initialize(const InitParams &params)
     //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
     //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data,
     //   t7 = the sun's cascade array, t8 = shadow view table, t9 = local-light atlas,
-    //   t10 = prefiltered environment cube, t11 = BRDF table
+    //   t10 = prefiltered environment cube, t11 = BRDF table, t13 = blue-noise tile
     //   s0 = shared sampler, s1 = the shadow comparison sampler, s2 = clamped trilinear sampler
     // No push constants: per-object data (world matrix + material id) is read from
     // the instance buffer (t6) by gl_InstanceIndex, and the material's textures
@@ -237,6 +239,7 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));              // shadow comparison sampler
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(10));         // prefiltered environment cube
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(11));         // BRDF table
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(13));         // blue-noise tile
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(2));              // clamped trilinear sampler
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
@@ -285,7 +288,7 @@ bool MeshPass::Initialize(const InitParams &params)
         return false;
     }
 
-    if (!CreateBrdfTable())
+    if (!CreateBrdfTable() || !CreateBlueNoiseTile())
     {
         return false;
     }
@@ -519,6 +522,31 @@ bool MeshPass::CreateBrdfTable()
     return true;
 }
 
+bool MeshPass::CreateBlueNoiseTile()
+{
+    nvrhi::TextureDesc tileDesc;
+    tileDesc.width = kBlueNoiseTileSize;
+    tileDesc.height = kBlueNoiseTileSize;
+    tileDesc.format = nvrhi::Format::R8_UNORM;
+    tileDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    tileDesc.keepInitialState = true;
+    tileDesc.debugName = "MeshPass::BlueNoise";
+    _blueNoise = _device->createTexture(tileDesc);
+    if (_blueNoise == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the blue-noise tile.");
+        return false;
+    }
+
+    const std::span<const std::uint8_t> tile = BlueNoiseTile();
+    nvrhi::CommandListHandle upload = _device->createCommandList();
+    upload->open();
+    upload->writeTexture(_blueNoise, 0, 0, tile.data(), kBlueNoiseTileSize * sizeof(std::uint8_t));
+    upload->close();
+    _device->executeCommandList(upload);
+    return true;
+}
+
 nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const
 {
     if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
@@ -558,6 +586,7 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     nvrhi::ITexture *const environment = _environmentCube != nullptr ? _environmentCube : _noEnvironmentCube.Get();
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(10, environment));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(11, _brdfTable));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(13, _blueNoise));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(2, _clampSampler));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;

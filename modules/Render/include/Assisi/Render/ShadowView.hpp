@@ -374,8 +374,8 @@ struct LocalShadowLightPose
 ///
 /// What moving along the light by one texel's world footprint does to the
 /// stored depth. LocalDepthBiasNdcTimesDistance is this times the bias setting;
-/// contact hardening wants the texel itself, as the unit its blocker threshold
-/// and slope limit are counted in.
+/// contact hardening wants the texel itself, as the unit its receiver's slope
+/// limit is counted in.
 [[nodiscard]] float LocalTexelDepthTimesDistance(std::uint32_t tileResolution, float tanHalfFov, float nearPlane,
                                                  float farPlane);
 
@@ -388,6 +388,14 @@ struct LocalShadowLightPose
 /// simply fewer of them, and a kernel quoted against the tile would step several
 /// atlas texels at a time and skip past what it is meant to be filtering.
 [[nodiscard]] float LocalFilterTapStepUv(std::uint32_t atlasResolution);
+
+/// @brief How far a local light's @p filter reads from its lookup, in texels,
+/// counting the half texel each bilinear comparison blends past its tap.
+///
+/// A local light's 3x3 and 5x5 are tents, which read no further than their
+/// half-width (see TentAxisTaps); the Vogel disk reads its radius and the half
+/// texel beyond it; a single tap reads the half texel alone.
+[[nodiscard]] float LocalFilterReachTexels(ShadowFilter filter);
 
 /// @brief The tile's interior, inset by however far the filter reaches.
 ///

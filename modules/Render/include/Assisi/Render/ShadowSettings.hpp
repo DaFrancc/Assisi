@@ -30,6 +30,13 @@ namespace Assisi::Render
 
 /// @brief The PCF kernel a shadow is filtered with.
 ///
+/// Each value names a reach in texels; each lookup fills it the way its own map
+/// allows. The sun steps its grid by a width it measures from the blocker, so
+/// its 3x3 and 5x5 are grids of that step. A local light's tile is sampled at
+/// its own texel, so its 3x3 and 5x5 are tents of that width, read with the
+/// bilinear comparison (see ShadowFiltering.hpp) — smooth, and no wider than
+/// the grid they replace.
+///
 /// These values are the wire encoding — mesh.frag switches on the integer, so
 /// reordering them changes the look of every saved options.json rather than
 /// failing to build.
@@ -38,17 +45,16 @@ enum class ShadowFilter : std::uint8_t
     /// One bilinear comparison fetch. The hardware still blends four texels, so
     /// this is soft to about a texel, not a hard-edged point sample.
     Point = 0,
-    /// 3x3 comparison taps on the texel grid.
+    /// Three texels across.
     Pcf3x3 = 1,
-    /// 5x5, same grid.
+    /// Five texels across.
     Pcf5x5 = 2,
-    /// 16 taps on a Vogel disk, rotated per pixel by an interleaved-gradient
-    /// angle. Trades the grid's banding for noise, which reads as a softer edge
-    /// than a grid of the same reach.
+    /// 16 taps on a Vogel disk, rotated per pixel by a blue-noise angle. Trades
+    /// the grid's banding for fine grain, which reads as a softer edge than a
+    /// grid of the same reach.
     Vogel = 3,
+    Count = 4,
 };
-
-inline constexpr std::uint32_t kShadowFilterCount = 4;
 
 /// @brief How far each filter's outermost tap sits from the centre, in taps.
 ///
@@ -75,10 +81,13 @@ inline constexpr float kVogelFilterRadiusTaps = 2.5f;
 /// distance — sharp where an object touches the ground, soft where its shadow
 /// falls far from it. Off samples exactly as the fixed kernel does.
 ///
-/// It replaces the selected filter rather than widening it. The kernel it
-/// sizes is always the rotated Vogel disk: a grid stepped several texels apart
-/// prints as that many offset copies of the edge, where a disk rotated per
-/// pixel reads as noise.
+/// It replaces the selected filter rather than widening it. Its kernel is never
+/// narrower than a three-texel tent — the least that hides the map's grid, and
+/// what it filters with where the penumbra is that narrow or where the search
+/// finds no blocker at all. Wider than that it is a Vogel disk rotated per pixel
+/// by blue noise, taking more taps as it widens: a grid stepped several texels
+/// apart prints as that many offset copies of the edge, where a rotated disk
+/// reads as grain.
 ///
 /// Wire encoding, like ShadowFilter: mesh.frag switches on flags derived from it
 /// and options.json stores it.
@@ -598,7 +607,7 @@ struct ShadowSettings
 {
     const SunShadowSettings defaults;
 
-    if (static_cast<std::uint32_t>(settings.filter) >= kShadowFilterCount)
+    if (settings.filter >= ShadowFilter::Count)
     {
         settings.filter = defaults.filter;
     }
@@ -631,7 +640,7 @@ struct ShadowSettings
 {
     const LocalShadowSettings defaults;
 
-    if (static_cast<std::uint32_t>(settings.filter) >= kShadowFilterCount)
+    if (settings.filter >= ShadowFilter::Count)
     {
         settings.filter = defaults.filter;
     }
@@ -715,7 +724,11 @@ struct ShadowSettings
         settings.sun.filter = ShadowFilter::Point;
         settings.local.atlasResolution = 2048;
         settings.local.faceResolution = 256;
-        settings.local.filter = ShadowFilter::Point;
+        // Not the one tap the sun takes here. A lamp's tile is a fraction of
+        // the sun's texels per metre, and a single comparison at that size
+        // prints the map's grid along every edge; four bilinear taps make it a
+        // tent, which is the least that reads as a shadow rather than a bug.
+        settings.local.filter = ShadowFilter::Pcf3x3;
         settings.selection.capSpot = 8;
         settings.selection.capPoint = 2;
         break;
@@ -749,7 +762,9 @@ struct ShadowSettings
         settings.sun.filter = ShadowFilter::Vogel;
         settings.local.atlasResolution = 8192;
         settings.local.faceResolution = 512;
-        settings.local.filter = ShadowFilter::Vogel;
+        // The widest tent rather than the Vogel disk: as wide, but smooth where
+        // the disk leaves grain, and nine taps rather than sixteen.
+        settings.local.filter = ShadowFilter::Pcf5x5;
         settings.selection.capSpot = 64;
         settings.selection.capPoint = 16;
         // Provisional, as every tier value is until its cost is measured: the
