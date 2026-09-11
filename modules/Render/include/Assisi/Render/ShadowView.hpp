@@ -123,6 +123,20 @@ struct ShadowView
     /// reach for an atlas tile, which is the only thing stopping a kernel at a
     /// tile's edge from reading the light next to it. See ShadowViewClampUv.
     glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
+
+    /// Contact hardening's reach, in target UV, per unit of [0, 1] depth between
+    /// a blocker and its receiver. See LocalPenumbraUvPerDepth. Zero for a
+    /// cascade, whose figure is frame-wide and rides in the frame constants.
+    float pcssPenumbraUvPerDepth = 0.f;
+
+    /// One texel's worth of [0, 1] depth **times** the receiver's distance from
+    /// the light, for the same reason the depth bias is quoted that way. The
+    /// unit contact hardening measures a blocker's clearance and a receiver's
+    /// slope in. Zero for a cascade.
+    float pcssTexelDepthTimesDistance = 0.f;
+
+    /// kPcssMaxReachTexels of the target, in UV. Zero for a cascade.
+    float pcssMaxReachUv = 0.f;
 };
 
 /// @brief The view's rectangle as a UV transform: xy scale, zw offset.
@@ -153,13 +167,17 @@ struct ShadowViewGpu
     /// xy = minimum UV, zw = maximum UV a lookup may sample. See
     /// ShadowView::clampUv.
     glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
+    /// x = contact hardening's penumbra per unit depth, y = one texel of depth
+    /// times distance, z = its reach cap, w unused. See ShadowView's pcss fields.
+    glm::vec4 pcss{0.f};
 };
 ASSISI_GPU_LAYOUT(ShadowViewGpu);
 ASSISI_GPU_FIRST_FIELD(ShadowViewGpu, viewProjection);
 ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, uvScaleOffset, viewProjection);
 ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, params, uvScaleOffset);
 ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, clampUv, params);
-ASSISI_GPU_NO_TAIL_PADDING(ShadowViewGpu, clampUv);
+ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, pcss, clampUv);
+ASSISI_GPU_NO_TAIL_PADDING(ShadowViewGpu, pcss);
 
 /// @brief @p view in the layout the GPU table carries it in.
 [[nodiscard]] ShadowViewGpu PackShadowView(const ShadowView &view);
@@ -340,6 +358,26 @@ struct LocalShadowLightPose
 /// slightly looser cap than it strictly needs, which errs toward acne rather than
 /// toward the leak this exists to close.
 [[nodiscard]] float LocalSlopeBiasClampNdc(std::uint32_t tileResolution);
+
+/// @brief Contact hardening's penumbra for a local light, in the tile's own
+/// UV, per unit of [0, 1] depth between a blocker and its receiver.
+///
+/// A source of radius R, a blocker at distance dB and a receiver at dR throw a
+/// penumbra R (dR - dB) / dB wide at the receiver, which in the tile's UV there
+/// is R (1/dB - 1/dR) / (2 tan(fov/2)). A perspective depth is linear in 1/d, so
+/// that difference is linear in the stored depths — this is its slope, and the
+/// shader needs only the depth difference it reads out of the map.
+[[nodiscard]] float LocalPenumbraUvPerDepth(float sourceRadius, float tanHalfFov, float nearPlane, float farPlane);
+
+/// @brief One texel of a tile's [0, 1] depth, times the receiver's distance
+/// from the light.
+///
+/// What moving along the light by one texel's world footprint does to the
+/// stored depth. LocalDepthBiasNdcTimesDistance is this times the bias setting;
+/// contact hardening wants the texel itself, as the unit its blocker threshold
+/// and slope limit are counted in.
+[[nodiscard]] float LocalTexelDepthTimesDistance(std::uint32_t tileResolution, float tanHalfFov, float nearPlane,
+                                                 float farPlane);
 
 /// @brief UV distance between adjacent filter taps in an atlas of
 /// @p atlasResolution texels a side.

@@ -225,6 +225,77 @@ TEST_CASE("A tier sets the caps, and a cap edit leaves the tier")
     CHECK(Tier(tuned) == ShadowTier::High);
 }
 
+TEST_CASE("Contact hardening is off by default and sanitized like any other wire value")
+{
+    CHECK(ShadowSettings{}.pcss == ShadowPcss::Off);
+
+    // options.json is hand-editable, and the value selects a shader path.
+    ShadowSettings hostile;
+    hostile.pcss = static_cast<ShadowPcss>(7);
+    hostile.local.sourceRadius = std::numeric_limits<float>::quiet_NaN();
+    const ShadowSettings safe = Sanitized(hostile);
+    CHECK(safe.pcss == ShadowPcss::Off);
+    CHECK(safe.local.sourceRadius == doctest::Approx(LocalShadowSettings{}.sourceRadius));
+
+    LocalShadowSettings huge;
+    huge.sourceRadius = 99.f;
+    CHECK(Sanitized(huge).sourceRadius == doctest::Approx(kMaxLocalSourceRadius));
+    LocalShadowSettings negative;
+    negative.sourceRadius = -1.f;
+    CHECK(Sanitized(negative).sourceRadius == doctest::Approx(kMinLocalSourceRadius));
+
+    // Every legal value survives.
+    for (const ShadowPcss pcss : {ShadowPcss::Off, ShadowPcss::Sun, ShadowPcss::SunAndLocals})
+    {
+        ShadowSettings settings;
+        settings.pcss = pcss;
+        CHECK(Sanitized(settings).pcss == pcss);
+    }
+}
+
+TEST_CASE("Contact hardening shades what its setting names, whatever the filter")
+{
+    // The path brings its own kernel, so no filter — the one-tap one included —
+    // turns it off behind the setting's back.
+    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
+                                      ShadowFilter::Vogel})
+    {
+        ShadowSettings settings;
+        settings.sun.filter = filter;
+        settings.local.filter = filter;
+
+        settings.pcss = ShadowPcss::Off;
+        CHECK_FALSE(PcssShadesSun(settings));
+        CHECK_FALSE(PcssShadesLocals(settings));
+
+        settings.pcss = ShadowPcss::Sun;
+        CHECK(PcssShadesSun(settings));
+        CHECK_FALSE(PcssShadesLocals(settings));
+
+        settings.pcss = ShadowPcss::SunAndLocals;
+        CHECK(PcssShadesSun(settings));
+        CHECK(PcssShadesLocals(settings));
+    }
+}
+
+TEST_CASE("Contact hardening is a tier knob, and the source's size is not")
+{
+    // Whether the search runs is a cost decision, which is what a tier is a
+    // statement about — so changing it on any tier leaves that tier.
+    for (std::uint32_t i = 0; i < kShadowTierCount; ++i)
+    {
+        const auto tier = static_cast<ShadowTier>(i);
+        ShadowSettings flipped = TierSettings(tier);
+        flipped.pcss = flipped.pcss == ShadowPcss::Off ? ShadowPcss::Sun : ShadowPcss::Off;
+        CHECK(Tier(flipped) == ShadowTier::Custom);
+    }
+
+    // How large a lamp is describes the scene, not the machine.
+    ShadowSettings ultra = TierSettings(ShadowTier::Ultra);
+    ultra.local.sourceRadius = 0.2f;
+    CHECK(Tier(ultra) == ShadowTier::Ultra);
+}
+
 TEST_CASE("Shadow memory is reported per half and in total")
 {
     // The memory column of the tier table, computed rather than quoted.

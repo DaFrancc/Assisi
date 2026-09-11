@@ -99,12 +99,16 @@ layout(binding = 256) uniform FrameConstants
     // Sun shadows (see Render::FrameConstants and ShadowCascades.hpp).
     uvec4 shadowCounts;       // x = cascade count (0 = no shadows), y = shadowed dir light, z = filter, w = cascade view
     // Local-light shadows (see Render::FrameConstants and LocalShadowPass.hpp).
-    // x = ShadowFilter for the atlas, y = 1 while any local light holds a tile.
+    // x = ShadowFilter for the atlas, y = 1 while any local light holds a tile,
+    // z = 1 while their lookups take the contact-hardening path.
     // The per-view biases and tap step ride in the view table, not here: a
     // demoted tile is biased differently from a full-size one, and a frame
     // constant could not say so.
     uvec4 localShadowCounts;
     vec4  shadowParams;       // x = UV step between PCF taps, y = blend-band fraction
+    // The sun's contact hardening: x = penumbra UV per unit depth (0 = off),
+    // y = reach cap in UV, z = one texel of depth, w = world-space penumbra cap.
+    vec4  shadowPcss;
     // Per cascade: x = view-space distance it ends at, y = constant depth bias
     // in [0,1] depth, z = normal offset in world units.
     vec4  shadowCascade[8];
@@ -178,6 +182,7 @@ struct ShadowViewRow
     vec4 uvScaleOffset; // xy = scale, zw = offset: the tile's rectangle of the atlas
     vec4 params;        // x = depth bias, y = normal offset, z = tap step, w = array slice
     vec4 clampUv;       // xy = min, zw = max UV a lookup may reach
+    vec4 pcss;          // x = penumbra UV per unit depth, y = texel of depth x distance, z = reach cap
 };
 
 layout(std430, binding = 8) readonly buffer ShadowViews { ShadowViewRow shadowViews[]; };
@@ -572,6 +577,32 @@ const float kGoldenAngle        = 2.39996323;
 const uint kVogelProbe[4] = uint[](0u, 4u, 11u, 15u);
 const uint kVogelRest[12] = uint[](1u, 2u, 3u, 5u, 6u, 7u, 8u, 9u, 10u, 12u, 13u, 14u);
 
+// A full turn, for the per-pixel rotation of the disk.
+const float kTwoPi = 6.28318531;
+
+// Nearest a receiver may be taken to sit to a local light, in world units. A
+// receiver on the light divides by zero, and the near plane has already excluded
+// it from the map anyway.
+const float kMinAxisDepth = 1e-4;
+
+// A texel counts as a blocker only if it sits at least this far in front of the
+// receiver's plane, in texels of depth: nearer than that it is the receiver
+// itself, quantised.
+const float kPcssBlockerMinDepthTexels = 1.0;
+
+// The steepest receiver slope the plane may take, in texels of depth per texel —
+// the tangent of the light's incidence. Ten is about 84 degrees. Past it a
+// surface is nearly edge-on to the light, its plane stops being measurable from
+// a pixel's neighbours, and it takes a tenth of the light it would head-on.
+const float kPcssMaxReceiverSlope = 10.0;
+
+// How the fragment's world position changes one pixel across and one down.
+// Taken at the top of main, while control flow is still uniform: every lookup
+// that reads these runs inside a per-light branch, where derivatives are
+// undefined. Zero while no contact-hardening path is on.
+vec3 gWorldPosDx = vec3(0.0);
+vec3 gWorldPosDy = vec3(0.0);
+
 /// Where @p worldPos lands in @p cascade's map: UV in xy, and in z the depth the
 /// comparison is made against.
 ///
@@ -599,14 +630,21 @@ float InterleavedGradientNoise(vec2 position)
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
-/// Tap @p i of the kVogelTaps-point Vogel disk, rotated by @p phi and spaced by
-/// @p stepUv per radius step. The position depends only on the index, so the
-/// disk is the same whichever order its taps are visited in.
+/// Tap @p i of the kVogelTaps-point Vogel disk of radius @p radius, rotated by
+/// @p phi. The position depends only on the index, so the disk is the same
+/// whichever order its taps are visited in.
+vec2 VogelOffset(uint i, float phi, float radius)
+{
+    float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * radius;
+    float theta = float(i) * kGoldenAngle + phi;
+    return vec2(r * cos(theta), r * sin(theta));
+}
+
+/// Tap @p i of the Vogel disk, rotated by @p phi and spaced by @p stepUv per
+/// radius step.
 float VogelTap(uint i, vec2 uv, uint cascade, float reference, float stepUv, float phi)
 {
-    float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
-    float theta = float(i) * kGoldenAngle + phi;
-    return ShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * stepUv, cascade, reference);
+    return ShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, cascade, reference);
 }
 
 /// The normal of the surface that was actually rasterized, facing the viewer.
@@ -641,6 +679,147 @@ float NearestBlockerDepth(vec2 uv, uint cascade, float reference)
     ivec3 size = textureSize(uShadowCascades, 0);
     ivec2 texel = clamp(ivec2(clamp(uv, vec2(0.0), vec2(1.0)) * vec2(size.xy)), ivec2(0), size.xy - 1);
     return min(reference, texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r);
+}
+
+// ---- Contact hardening (PCSS) ---------------------------------------------
+//
+// A fixed kernel picks one softness for every shadow; a real one is sharp where
+// its caster meets the ground and widens with the caster's height. The lookup
+// asks the map how far in front its blockers sit — searching a disk as wide as
+// the widest penumbra could be — and sizes a Vogel kernel from their mean
+// clearance.
+//
+// Every tap, in the search and in the kernel, compares against the receiver's
+// own plane rather than against one depth. A wide disk on a surface the light
+// meets at an angle covers ground the surface itself recedes across, and a
+// single reference counts the receiver's own texels as blockers a hair away —
+// which collapses the kernel to stripes on exactly the surfaces it is meant to
+// soften.
+
+/// How far a contact-hardened kernel reaches for a blocker @p gapDepth in front
+/// of its receiver. Must match Render::PcssPenumbraUv.
+float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv)
+{
+    return clamp(penumbraUvPerDepth * gapDepth, 0.0, maxReachUv);
+}
+
+/// dz/du and dz/dv of the receiving surface in a map, from where the fragment's
+/// screen neighbours land in it: @p dx and @p dy are the change in (u, v, depth)
+/// one pixel across and one pixel down. @p depthPerUv is one texel of depth
+/// over one texel of UV, the unit kPcssMaxReceiverSlope is counted in.
+///
+/// Exact for a flat triangle: a quad's helper lanes interpolate the same
+/// triangle, so the derivatives never straddle two surfaces.
+vec2 ReceiverPlaneSlope(vec3 dx, vec3 dy, float depthPerUv)
+{
+    float det = dx.x * dy.y - dx.y * dy.x;
+    // The pixel's footprint has collapsed to a line in the map, which leaves no
+    // plane to measure.
+    if (det == 0.0)
+    {
+        return vec2(0.0);
+    }
+    vec2  slope = vec2(dx.z * dy.y - dx.y * dy.z, dx.x * dy.z - dx.z * dy.x) / det;
+    float limit = kPcssMaxReceiverSlope * depthPerUv;
+    float len   = length(slope);
+    return len > limit ? slope * (limit / len) : slope;
+}
+
+/// How (u, v, depth) in @p cascade's map change over a world-space step
+/// @p dWorld. The cascade's mapping is affine, so this is exact at any length.
+vec3 ShadowCoordDelta(uint cascade, vec3 dWorld)
+{
+    vec3 d = mat3(uFrame.shadowViewProjection[cascade]) * dWorld;
+    return vec3(d.xy * vec2(0.5, -0.5), d.z);
+}
+
+/// Mean clearance of the blockers in front of the receiver around @p uv, in
+/// [0, 1] depth, or zero where nothing stands in front of it.
+///
+/// Fetched rather than compared: a comparison answers whether something is in
+/// front, and the kernel's width depends on how far. Each tap is read at a texel
+/// centre and measured against the receiver's plane there, so the plane is
+/// evaluated where the depth was actually recorded.
+float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
+{
+    float searchUv  = PcssPenumbraUv(uFrame.shadowPcss.x, reference, uFrame.shadowPcss.y);
+    float threshold = kPcssBlockerMinDepthTexels * uFrame.shadowPcss.z;
+    vec2  size      = vec2(textureSize(uShadowCascades, 0).xy);
+    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+
+    float gapSum   = 0.0;
+    float blockers = 0.0;
+    for (uint i = 0u; i < kVogelTaps; ++i)
+    {
+        vec2 tapUv = uv + VogelOffset(i, phi, searchUv);
+        // Off the map nothing was recorded, so nothing there is a blocker.
+        if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThanEqual(tapUv, vec2(1.0))))
+        {
+            continue;
+        }
+        ivec2 texel  = ivec2(tapUv * size);
+        vec2  centre = (vec2(texel) + 0.5) / size;
+        float stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
+        float gap    = reference + dot(centre - uv, slope) - stored;
+        if (gap > threshold)
+        {
+            gapSum += gap;
+            blockers += 1.0;
+        }
+    }
+    return blockers > 0.0 ? gapSum / blockers : 0.0;
+}
+
+/// The Vogel kernel at @p stepUv, each tap compared against the receiver's
+/// plane where it lands. The probe early-out is the fixed Vogel filter's, for
+/// the same reason: most of a shadow is umbra, where four taps agree.
+float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, float stepUv)
+{
+    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    float sum = 0.0;
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        vec2 offset = VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv;
+        sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
+    }
+    if (sum == 0.0)
+    {
+        return 0.0;
+    }
+    if (sum == 4.0)
+    {
+        return 1.0;
+    }
+    for (uint i = 0u; i < 12u; ++i)
+    {
+        vec2 offset = VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv;
+        sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
+    }
+    return sum / float(kVogelTaps);
+}
+
+/// The sun through @p cascade, contact-hardened. @p uv and @p reference are the
+/// lookup SampleCascade already biased.
+float SampleCascadePcss(uint cascade, vec2 uv, float reference, float NdotL)
+{
+    // Orthographic, and the depth range is the box width: a texel of depth is a
+    // texel of UV, so the slope is already in the unit its limit is counted in.
+    vec2  slope = ReceiverPlaneSlope(ShadowCoordDelta(cascade, gWorldPosDx), ShadowCoordDelta(cascade, gWorldPosDy),
+                                     1.0);
+    float gap   = CascadeBlockerGap(cascade, uv, reference, slope);
+    // The search reaches as far as any kernel could, so finding nothing is the
+    // kernel's answer too.
+    if (gap == 0.0)
+    {
+        return 1.0;
+    }
+    // The fixed kernel's world cap, on the surface rather than in the map: a
+    // grazing receiver stretches a map-space reach by 1 / NdotL.
+    float worldCapUv = uFrame.shadowPcss.w * max(NdotL, kEps) /
+                       (kVogelRadiusSteps * uFrame.shadowCascade[cascade].w);
+    float stepUv     = min(PcssPenumbraUv(uFrame.shadowPcss.x, gap, uFrame.shadowPcss.y) / kVogelRadiusSteps,
+                           worldCapUv);
+    return FilterCascadePcss(cascade, uv, reference, slope, stepUv);
 }
 
 /// Fraction of the sun reaching this fragment through @p cascade: 1 lit, 0 in shadow.
@@ -685,6 +864,13 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // grows with the angle to the light, which is why this stays small.
     float reference = coord.z - uFrame.shadowCascade[cascade].y;
 
+    // Contact hardening replaces the fixed kernel outright, whichever filter is
+    // selected. Everything below is that kernel, as it is with the path off.
+    if (uFrame.shadowPcss.x > 0.0)
+    {
+        return SampleCascadePcss(cascade, uv, reference, NdotL);
+    }
+
     uint filterMode = uFrame.shadowCounts.z;
 
     // The centre tap needs no kernel width, so it answers before the blocker
@@ -722,7 +908,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
+        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
 
         // The probe taps first. A tap that lands wholly lit or wholly shadowed
         // returns exactly 1 or 0 — the comparison sampler blends only across a
@@ -942,6 +1128,98 @@ uint PointLightFace(vec3 direction)
     return direction.z >= 0.0 ? kFacePositiveZ : kFaceNegativeZ;
 }
 
+/// Where @p worldPos lands in @p view's tile: atlas UV in xy, and in z the depth
+/// it would store. Projective rather than affine, so a difference of two of
+/// these is first-order only — which over one pixel's footprint is all the
+/// receiver plane asks of it.
+vec3 LocalShadowCoord(ShadowViewRow view, vec3 worldPos)
+{
+    vec4 clip   = view.viewProjection * vec4(worldPos, 1.0);
+    vec3 ndc    = clip.xyz / clip.w;
+    vec2 tileUv = ndc.xy * vec2(0.5, -0.5) + 0.5;
+    return vec3(tileUv * view.uvScaleOffset.xy + view.uvScaleOffset.zw, ndc.z);
+}
+
+/// The same search CascadeBlockerGap makes, inside one tile of the atlas.
+/// @p texelDepth is one texel of depth at the receiver's distance. Taps clamp
+/// into the tile, where a tap past its edge would read the neighbouring light.
+float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, float texelDepth)
+{
+    float searchUv  = PcssPenumbraUv(view.pcss.x, reference, view.pcss.z);
+    float threshold = kPcssBlockerMinDepthTexels * texelDepth;
+    ivec2 size      = textureSize(uShadowAtlas, 0);
+    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+
+    float gapSum   = 0.0;
+    float blockers = 0.0;
+    for (uint i = 0u; i < kVogelTaps; ++i)
+    {
+        vec2  tapUv  = clamp(uv + VogelOffset(i, phi, searchUv), view.clampUv.xy, view.clampUv.zw);
+        ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
+        vec2  centre = (vec2(texel) + 0.5) / vec2(size);
+        float gap    = reference + dot(centre - uv, slope) - texelFetch(uShadowAtlas, texel, 0).r;
+        if (gap > threshold)
+        {
+            gapSum += gap;
+            blockers += 1.0;
+        }
+    }
+    return blockers > 0.0 ? gapSum / blockers : 0.0;
+}
+
+/// One kernel tap into a tile, compared against the receiver's plane at the
+/// point the tap was clamped to rather than the point it aimed for.
+float LocalPcssTap(ShadowViewRow view, vec2 uv, vec2 offset, float reference, vec2 slope)
+{
+    vec2 tapUv = clamp(uv + offset, view.clampUv.xy, view.clampUv.zw);
+    return LocalShadowTap(tapUv, view.clampUv, reference + dot(tapUv - uv, slope));
+}
+
+/// The Vogel kernel at @p stepUv inside one tile, with the probe early-out.
+float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, float stepUv)
+{
+    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    float sum = 0.0;
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        sum += LocalPcssTap(view, uv, VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
+    }
+    if (sum == 0.0)
+    {
+        return 0.0;
+    }
+    if (sum == 4.0)
+    {
+        return 1.0;
+    }
+    for (uint i = 0u; i < 12u; ++i)
+    {
+        sum += LocalPcssTap(view, uv, VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
+    }
+    return sum / float(kVogelTaps);
+}
+
+/// A local light through @p view, contact-hardened. @p biasedPos, @p uv and
+/// @p reference are the lookup LocalVisibility already biased.
+float LocalVisibilityPcss(ShadowViewRow view, vec3 biasedPos, vec2 uv, float reference, float axisDepth)
+{
+    // A perspective texel of depth shrinks with distance while a texel of UV
+    // does not, so the unit the slope is limited in is measured where the
+    // receiver is.
+    float texelDepth = view.pcss.y / max(axisDepth, kMinAxisDepth);
+    vec3  here       = LocalShadowCoord(view, biasedPos);
+    vec2  slope      = ReceiverPlaneSlope(LocalShadowCoord(view, biasedPos + gWorldPosDx) - here,
+                                          LocalShadowCoord(view, biasedPos + gWorldPosDy) - here,
+                                          texelDepth / view.params.z);
+    float gap        = LocalBlockerGap(view, uv, reference, slope, texelDepth);
+    if (gap == 0.0)
+    {
+        return 1.0;
+    }
+    float stepUv = PcssPenumbraUv(view.pcss.x, gap, view.pcss.z) / kVogelRadiusSteps;
+    return FilterLocalPcss(view, uv, reference, slope, stepUv);
+}
+
 /// Fraction of a local light reaching @p worldPos through view @p viewIndex:
 /// 1 lit, 0 in shadow.
 ///
@@ -988,9 +1266,15 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     // where the receiver actually is. Guarded because a receiver sitting on the
     // light would divide by zero, and the near plane has already excluded it from
     // the map anyway.
-    float reference = ndc.z - view.params.x / max(axisDepth, 1e-4);
+    float reference = ndc.z - view.params.x / max(axisDepth, kMinAxisDepth);
     float stepUv    = view.params.z;
     vec4  clampUv   = view.clampUv;
+
+    // Contact hardening replaces the fixed kernel, as it does for the sun.
+    if (uFrame.localShadowCounts.z == 1u)
+    {
+        return LocalVisibilityPcss(view, biasedPos, uv, reference, axisDepth);
+    }
 
     uint filterMode = uFrame.localShadowCounts.x;
     if (filterMode == kShadowFilterPoint)
@@ -1000,13 +1284,11 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
 
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * 6.28318531;
+        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
         float sum = 0.0;
         for (uint i = 0u; i < kVogelTaps; i++)
         {
-            float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * kVogelRadiusSteps;
-            float theta = float(i) * kGoldenAngle + phi;
-            sum += LocalShadowTap(uv + vec2(r * cos(theta), r * sin(theta)) * stepUv, clampUv, reference);
+            sum += LocalShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, clampUv, reference);
         }
         return sum / float(kVogelTaps);
     }
@@ -1127,6 +1409,15 @@ vec3 IndirectSpecular(vec3 R, float roughness, vec3 worldPos)
 
 void main()
 {
+    // First, while control flow is uniform and before the masked build's
+    // discard. The branch is on frame constants, so a frame with contact
+    // hardening off pays one comparison.
+    if (uFrame.shadowPcss.x > 0.0 || uFrame.localShadowCounts.z == 1u)
+    {
+        gWorldPosDx = dFdx(vWorldPos);
+        gWorldPosDy = dFdy(vWorldPos);
+    }
+
     Surface surf = SampleMaterial();
 
 #ifdef ASSISI_ALPHA_MASK

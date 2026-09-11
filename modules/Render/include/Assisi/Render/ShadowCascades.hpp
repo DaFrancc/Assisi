@@ -343,6 +343,50 @@ inline constexpr float kMaxPenumbraWorld = 0.05f;
 /// defect this exists to catch.
 [[nodiscard]] float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings);
 
+/// @brief How far a contact-hardened kernel reaches from its centre, in UV,
+/// for a receiver whose blocker sits @p gapDepth in front of it.
+///
+/// @p gapDepth is in the map's own [0, 1] depth and @p penumbraUvPerDepth turns
+/// it into a reach; both kinds of map reduce to this one linear form, the sun's
+/// because its depth is linear and a local light's because the reciprocal of its
+/// depth is. Zero at contact, which is what makes a shadow sharp where its
+/// caster touches the ground, and capped at @p maxReachUv.
+///
+/// The same function sizes the blocker search: a blocker at the map's near
+/// plane is the furthest one can be, so the search reaches as far as the kernel
+/// ever could and a search that finds nothing has seen everything the kernel
+/// would have read. mesh.frag carries the same arithmetic.
+[[nodiscard]] float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv);
+
+/// @brief The frame-wide numbers the sun's contact-hardening lookup needs.
+struct SunPcssConstants
+{
+    /// The sun's angular radius as a tangent. The cascade's depth range is its
+    /// box width, so one unit of [0, 1] depth is one unit of UV and this needs
+    /// no cascade term: the same gap in metres softens a shadow the same in
+    /// every cascade.
+    float penumbraUvPerDepth = 0.f;
+    /// kPcssMaxReachTexels of the map, in UV.
+    float maxReachUv = 0.f;
+    /// One texel's worth of [0, 1] depth, in every cascade alike. The unit the
+    /// blocker threshold and the receiver's slope are measured in.
+    float texelDepth = 0.f;
+};
+
+/// @brief The sun's contact-hardening constants at @p settings.
+[[nodiscard]] SunPcssConstants SunPcssFrameConstants(const SunShadowSettings &settings);
+
+/// @brief UV distance between the contact-hardened kernel's taps in
+/// @p cascade, for a blocker @p blockerDistance world units in front of a
+/// receiver the light meets head-on.
+///
+/// The step the shader takes: the penumbra over the Vogel disk's radius, which
+/// is the kernel contact hardening always uses, under both the reach cap and
+/// the world cap CascadeFilterTapStepUv applies. Reported so the arithmetic the
+/// shader can only be looked at is also checkable.
+[[nodiscard]] float CascadePcssTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings,
+                                         float blockerDistance);
+
 /// @brief How far along the surface normal a sample is pushed, in world units,
 /// before the shader scales it by the sine of the light's incidence.
 ///

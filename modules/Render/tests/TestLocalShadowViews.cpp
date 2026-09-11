@@ -483,6 +483,79 @@ TEST_CASE("Every local view is packed into the row the shader reads")
     // slice lane exists for the cascade array that is not.
     CHECK(packed.params.w == doctest::Approx(0.f));
     CHECK(packed.clampUv == view.clampUv);
+    CHECK(packed.pcss.x == doctest::Approx(view.pcssPenumbraUvPerDepth));
+    CHECK(packed.pcss.y == doctest::Approx(view.pcssTexelDepthTimesDistance));
+    CHECK(packed.pcss.z == doctest::Approx(view.pcssMaxReachUv));
+    CHECK(view.pcssPenumbraUvPerDepth > 0.f);
+    CHECK(view.pcssTexelDepthTimesDistance > 0.f);
+    CHECK(view.pcssMaxReachUv > 0.f);
+}
+
+TEST_CASE("A local light's contact-hardened penumbra agrees with its own projection")
+{
+    // A source of radius R, a blocker two metres down the axis and a receiver
+    // six metres down throw a penumbra R (6 - 2) / 2 wide at the receiver. The
+    // coefficient times the depths the map would store for those two distances
+    // has to land on exactly that, measured in the atlas's UV.
+    constexpr float kSourceRadius = 0.1f;
+    constexpr float kBlocker = 2.f;
+    constexpr float kReceiver = 6.f;
+    constexpr float kOuterAngle = 30.f;
+    constexpr std::uint32_t kTileSize = 512;
+
+    LocalShadowSettings settings;
+    settings.sourceRadius = kSourceRadius;
+    const LocalShadowLightPose pose = SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 10.f, kOuterAngle);
+    const ShadowView view = SpotShadowView(pose, Tile(0, 0, kTileSize), settings);
+
+    const Projected blocker = Project(view, glm::vec3(0.f, -kBlocker, 0.f));
+    const Projected receiver = Project(view, glm::vec3(0.f, -kReceiver, 0.f));
+    REQUIRE(blocker.Inside());
+    REQUIRE(receiver.Inside());
+
+    const float penumbraWorld = kSourceRadius * (kReceiver - kBlocker) / kBlocker;
+    const float tanHalfFov = std::tan(glm::radians((kOuterAngle * 2.f + kPointLightFaceOverlapDegrees) * 0.5f));
+    const float tileUv = penumbraWorld / (2.f * tanHalfFov * kReceiver);
+    const float atlasUv = tileUv * static_cast<float>(kTileSize) / static_cast<float>(kAtlas);
+    CHECK(view.pcssPenumbraUvPerDepth * (receiver.ndc.z - blocker.ndc.z) == doctest::Approx(atlasUv).epsilon(1e-3));
+
+    // A demoted tile spends half the atlas texels on the same penumbra.
+    const ShadowView demoted = SpotShadowView(pose, Tile(0, 0, kTileSize / 2), settings);
+    CHECK(demoted.pcssPenumbraUvPerDepth == doctest::Approx(view.pcssPenumbraUvPerDepth * 0.5f));
+
+    // A point source throws no penumbra at any distance.
+    LocalShadowSettings point = settings;
+    point.sourceRadius = 0.f;
+    CHECK(SpotShadowView(pose, Tile(0, 0, kTileSize), point).pcssPenumbraUvPerDepth == 0.f);
+}
+
+TEST_CASE("A local light's texel of depth is one texel of the receiver's own footprint")
+{
+    // The blocker threshold and the slope limit are counted in these, so each has
+    // to be what one texel of the surface actually does to the stored depth at
+    // the receiver's distance — not at the far plane, where the depth curve is
+    // flattest and a texel buys the most.
+    const LocalShadowSettings settings;
+    const LocalShadowLightPose pose = SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f);
+    const ShadowView view = SpotShadowView(pose, Tile(0, 0, 512), settings);
+    const float tanHalfFov =
+        std::tan(glm::radians((pose.outerAngleDegrees * 2.f + kPointLightFaceOverlapDegrees) * 0.5f));
+    const float footprintPerDistance = LocalTexelsPerUnitDistance(512, tanHalfFov);
+
+    for (const float distance : {1.f, 3.f, 12.f})
+    {
+        CAPTURE(distance);
+        const float footprint = footprintPerDistance * distance;
+        const Projected here = Project(view, glm::vec3(0.f, -distance, 0.f));
+        const Projected further = Project(view, glm::vec3(0.f, -(distance + footprint), 0.f));
+        const float measured = further.ndc.z - here.ndc.z;
+        CHECK(view.pcssTexelDepthTimesDistance / distance == doctest::Approx(measured).epsilon(0.01));
+    }
+
+    // The reach cap is quoted in atlas texels, like the tap step: a tile's texels
+    // are the atlas's, whatever the tile's size.
+    CHECK(view.pcssMaxReachUv == doctest::Approx(kPcssMaxReachTexels / static_cast<float>(kAtlas)));
+    CHECK(SpotShadowView(pose, Tile(0, 0, 128), settings).pcssMaxReachUv == doctest::Approx(view.pcssMaxReachUv));
 }
 
 TEST_CASE("A local view never claims to be orthographic")

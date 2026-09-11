@@ -212,6 +212,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
             shadows.local.filter = preset.local.filter;
             shadows.selection.capSpot = preset.selection.capSpot;
             shadows.selection.capPoint = preset.selection.capPoint;
+            shadows.pcss = preset.pcss;
             changed = true;
         }
         ImGui::EndDisabled();
@@ -222,6 +223,21 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // memory behind it.
     ImGui::TextDisabled("%s  (%.0f MiB)", tier == Assisi::Render::ShadowTier::Custom ? "Custom" : "",
                         static_cast<double>(Assisi::Render::SunShadowMemoryBytes(shadows.sun)) / (1024.0 * 1024.0));
+
+    // Above both halves rather than inside either, because one setting names
+    // both: it stays editable with the sun off, for the lamps.
+    static const char *const kPcssNames[] = {"Off", "Sun", "Sun + Local Lights"};
+    static_assert(std::size(kPcssNames) == static_cast<std::size_t>(Assisi::Render::ShadowPcss::Count),
+                  "The contact hardening list must name every ShadowPcss.");
+    int32_t pcssIndex = static_cast<int32_t>(shadows.pcss);
+    if (ImGui::Combo("Contact Hardening", &pcssIndex, kPcssNames, static_cast<int32_t>(std::size(kPcssNames))))
+    {
+        shadows.pcss = static_cast<Assisi::Render::ShadowPcss>(pcssIndex);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Sizes each shadow's softness from how far its caster is above it: sharp where things "
+                          "touch, soft where a shadow falls far from what casts it. Replaces the filter below "
+                          "with a 16-tap disk and adds a 16-fetch search.");
 
     if (!shadows.sun.enabled)
     {
@@ -266,7 +282,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
 
     // **Indexed by the enum value** — this list must stay in
     // Render::ShadowFilter's order.
-    static const char *kFilterNames[] = {"1 tap", "3x3 PCF", "5x5 PCF", "Vogel (12 tap)"};
+    static const char *kFilterNames[] = {"1 tap", "3x3 PCF", "5x5 PCF", "Vogel (16 tap)"};
     int32_t filterIndex = static_cast<int32_t>(shadows.sun.filter);
     if (ImGui::Combo("Filter", &filterIndex, kFilterNames, IM_ARRAYSIZE(kFilterNames)))
     {
@@ -396,6 +412,13 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         shadows.local.filter = static_cast<Assisi::Render::ShadowFilter>(localFilterIndex);
         changed = true;
     }
+
+    changed |= ImGui::SliderFloat("Source Radius##local", &shadows.local.sourceRadius,
+                                  Assisi::Render::kMinLocalSourceRadius, Assisi::Render::kMaxLocalSourceRadius,
+                                  "%.2f m");
+    ImGui::SetItemTooltip("How large every spot and point light's emitter is taken to be when contact hardening "
+                          "sizes its shadows. Zero is a point source, hard everywhere. Unread unless contact "
+                          "hardening covers local lights.");
 
     changed |=
         ImGui::SliderFloat("Depth Bias##local", &shadows.local.depthBiasTexels, Assisi::Render::kMinDepthBiasTexels,

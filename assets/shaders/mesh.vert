@@ -52,6 +52,7 @@ layout(binding = 256) uniform FrameConstants
     uvec4 shadowCounts;
     uvec4 localShadowCounts;
     vec4  shadowParams;
+    vec4  shadowPcss;
     vec4  shadowCascade[8];
     mat4  shadowViewProjection[8];
 } uFrame;

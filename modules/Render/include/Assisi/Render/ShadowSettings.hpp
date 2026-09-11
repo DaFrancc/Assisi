@@ -68,6 +68,38 @@ inline constexpr float kPcf3FilterRadiusTaps = 1.f;
 inline constexpr float kPcf5FilterRadiusTaps = 2.f;
 inline constexpr float kVogelFilterRadiusTaps = 2.5f;
 
+/// @brief Which shadows size their filter from the distance to their blocker.
+///
+/// Percentage-closer soft shadows: a search of the map finds how far in front
+/// of the receiver its occluders sit, and the kernel is sized from that
+/// distance — sharp where an object touches the ground, soft where its shadow
+/// falls far from it. Off samples exactly as the fixed kernel does.
+///
+/// It replaces the selected filter rather than widening it. The kernel it
+/// sizes is always the rotated Vogel disk: a grid stepped several texels apart
+/// prints as that many offset copies of the edge, where a disk rotated per
+/// pixel reads as noise.
+///
+/// Wire encoding, like ShadowFilter: mesh.frag switches on flags derived from it
+/// and options.json stores it.
+enum class ShadowPcss : std::uint8_t
+{
+    Off = 0,
+    Sun = 1,
+    SunAndLocals = 2,
+    Count = 3,
+};
+
+/// @brief The widest a contact-hardening search or kernel may reach from its
+/// centre, in the map's own texels.
+///
+/// The honest penumbra of a blocker far from its receiver can span more of the
+/// map than sixteen taps can cover without leaving holes, and for a local light
+/// more than a whole tile. Past this a shadow stops widening rather than
+/// sampling a disk too sparse to be a penumbra. The shader receives it already
+/// converted to UV, per map.
+inline constexpr float kPcssMaxReachTexels = 16.f;
+
 /// @brief Depth format of a shadow map.
 ///
 /// Wire encoding, like ShadowFilter: it is persisted.
@@ -350,6 +382,14 @@ inline constexpr std::uint32_t kMaxPromoteStillFrames = 240;
 inline constexpr std::uint32_t kMinLightUpdateDivisor = 1;
 inline constexpr std::uint32_t kMaxLightUpdateDivisor = 3;
 
+/// @brief Bounds on a local light's emitting radius, in world units.
+///
+/// Zero is a point source, whose contact-hardened shadow is hard everywhere. A
+/// metre is a lamp the size of a window, past which the source is no longer
+/// something a single shadow map seen from its centre can stand in for.
+inline constexpr float kMinLocalSourceRadius = 0.f;
+inline constexpr float kMaxLocalSourceRadius = 1.f;
+
 /// @brief Keeping a resting light's shadow instead of redrawing it.
 ///
 /// A tile's depth is two layers: what the still geometry recorded, which changes
@@ -431,6 +471,14 @@ struct LocalShadowSettings
     float slopeBias = 2.0f;
     float normalOffsetTexels = 1.5f;
 
+    /// How large every spot and point light's emitter is taken to be, in world
+    /// units, when contact hardening sizes their penumbrae. Unread while it is
+    /// off for local lights.
+    ///
+    /// One figure for every light rather than one per light, the same way the
+    /// sun's angular size is one figure. Five centimetres is a household bulb.
+    float sourceRadius = 0.05f;
+
     /// What a resting light is allowed to skip. Nested here rather than beside
     /// the selection knobs because it is a property of the atlas itself — it
     /// doubles the atlas's memory and changes what a tile means.
@@ -493,7 +541,25 @@ struct ShadowSettings
     SunShadowSettings sun;
     LocalShadowSettings local;
     LocalShadowSelectionSettings selection;
+
+    /// Off by default: it adds a sixteen-fetch blocker search to every shadowed
+    /// fragment, which only a tier measured to afford it turns on.
+    ShadowPcss pcss = ShadowPcss::Off;
 };
+
+/// @brief Whether the sun's lookup takes the contact-hardening path. Whatever
+/// its filter: the path brings its own kernel.
+[[nodiscard]] inline bool PcssShadesSun(const ShadowSettings &settings)
+{
+    return settings.pcss != ShadowPcss::Off;
+}
+
+/// @brief Whether spot and point lights' lookups take the contact-hardening
+/// path, which only the setting that names them turns on.
+[[nodiscard]] inline bool PcssShadesLocals(const ShadowSettings &settings)
+{
+    return settings.pcss == ShadowPcss::SunAndLocals;
+}
 
 /// @brief Clamps to [low, high], substituting `fallback` for a non-finite value.
 ///
@@ -587,6 +653,8 @@ struct ShadowSettings
     settings.slopeBias = ClampFiniteShadow(settings.slopeBias, kMinSlopeBias, kMaxSlopeBias, defaults.slopeBias);
     settings.normalOffsetTexels = ClampFiniteShadow(settings.normalOffsetTexels, kMinNormalOffsetTexels,
                                                     kMaxNormalOffsetTexels, defaults.normalOffsetTexels);
+    settings.sourceRadius =
+        ClampFiniteShadow(settings.sourceRadius, kMinLocalSourceRadius, kMaxLocalSourceRadius, defaults.sourceRadius);
 
     settings.cache.updateBudgetFaces =
         std::clamp(settings.cache.updateBudgetFaces, kMinShadowBakeBudget, kMaxShadowBakeBudget);
@@ -618,6 +686,10 @@ struct ShadowSettings
     settings.sun = Sanitized(settings.sun);
     settings.local = Sanitized(settings.local);
     settings.selection = Sanitized(settings.selection);
+    if (settings.pcss >= ShadowPcss::Count)
+    {
+        settings.pcss = ShadowSettings{}.pcss;
+    }
     return settings;
 }
 
@@ -680,6 +752,10 @@ struct ShadowSettings
         settings.local.filter = ShadowFilter::Vogel;
         settings.selection.capSpot = 64;
         settings.selection.capPoint = 16;
+        // Provisional, as every tier value is until its cost is measured: the
+        // sun alone, because a local light's search is paid once per light per
+        // fragment rather than once per fragment.
+        settings.pcss = ShadowPcss::Sun;
         break;
     case ShadowTier::Medium:
     case ShadowTier::Custom:
@@ -714,7 +790,7 @@ struct ShadowSettings
         // many lights shadow, which is exactly what a tier is a statement about.
         const bool capsMatch = preset.selection.capSpot == settings.selection.capSpot &&
                                preset.selection.capPoint == settings.selection.capPoint;
-        if (sunMatches && localMatches && capsMatch)
+        if (sunMatches && localMatches && capsMatch && preset.pcss == settings.pcss)
         {
             return candidate;
         }

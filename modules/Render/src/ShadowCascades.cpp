@@ -377,6 +377,34 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
     return (kernelUv + bilinearUv) * boxWidth;
 }
 
+float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv)
+{
+    return std::clamp(penumbraUvPerDepth * gapDepth, 0.f, maxReachUv);
+}
+
+SunPcssConstants SunPcssFrameConstants(const SunShadowSettings &settings)
+{
+    // A texel of the map is 1 / resolution of UV, and — because a cascade's
+    // depth range is its box width — the same 1 / resolution of depth.
+    const float texelUv = ShadowTexelSizeUv(settings);
+    return SunPcssConstants{.penumbraUvPerDepth = kSunPenumbraPerWorldUnit,
+                            .maxReachUv = kPcssMaxReachTexels * texelUv,
+                            .texelDepth = texelUv};
+}
+
+float CascadePcssTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings, float blockerDistance)
+{
+    if (!(cascade.depthRange > 0.f))
+    {
+        return 0.f;
+    }
+    const SunPcssConstants constants = SunPcssFrameConstants(Sanitized(settings));
+    const float reachUv =
+        PcssPenumbraUv(constants.penumbraUvPerDepth, blockerDistance / cascade.depthRange, constants.maxReachUv);
+    const float worldCapUv = kMaxPenumbraWorld / (kVogelFilterRadiusTaps * cascade.depthRange);
+    return std::min(reachUv / kVogelFilterRadiusTaps, worldCapUv);
+}
+
 float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     // Texels of the cascade's own map, and nothing else. In particular not the

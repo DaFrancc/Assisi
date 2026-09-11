@@ -689,6 +689,7 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     shadows.settings = _shadowPass.Settings();
     shadows.sunLightIndex = sun->index;
     shadows.debugView = _shadowDebugView;
+    shadows.sunPcss = Render::PcssShadesSun(_shadowSettings);
     return shadows;
 }
 
@@ -891,6 +892,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
     shadows.localActive = _lastLocalShadowStats.lights > 0;
     shadows.localSettings = _localShadowPass.Settings();
+    shadows.localPcss = Render::PcssShadesLocals(_shadowSettings);
 }
 
 void SceneRenderer::BuildShadowDiagnostics()

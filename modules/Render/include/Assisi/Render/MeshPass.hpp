@@ -155,6 +155,12 @@ public:
         /// shader from here — every bias is per tile, because a demoted tile is
         /// biased differently from a full-size one, and rides in the view table.
         LocalShadowSettings localSettings;
+
+        /// Whether each half's lookup sizes its kernel from a blocker search.
+        /// Resolved by the caller (PcssShadesSun, PcssShadesLocals), so the pass
+        /// never re-derives which setting names which half.
+        bool sunPcss = false;
+        bool localPcss = false;
     };
 
     /// @brief Everything the per-frame constant buffer carries. Grouped so the

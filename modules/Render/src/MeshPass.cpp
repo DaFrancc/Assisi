@@ -81,7 +81,8 @@ struct FrameConstants
     /// z = ShadowFilter, w = 1 to tint by cascade.
     glm::uvec4 shadowCounts;
     /// x = the ShadowFilter the atlas is sampled with, y = 1 while any local
-    /// light holds a tile and the two light loops should look one up.
+    /// light holds a tile and the two light loops should look one up, z = 1
+    /// while those lookups take the contact-hardening path, w unused.
     ///
     /// The biases and the tap step are deliberately absent: a demoted tile is
     /// biased for the smaller map it got, so those belong per view rather than
@@ -97,6 +98,16 @@ struct FrameConstants
     /// map to get the step the scene actually calls for. The cascade's depth
     /// range cancels in that product, which is why no cascade term appears.
     glm::vec4 shadowParams;
+    /// The sun's contact-hardening constants (see SunPcssConstants): x = its
+    /// penumbra UV per unit of depth, y = the reach cap in UV, z = one texel of
+    /// depth, w = kMaxPenumbraWorld. All zero while the sun takes the fixed
+    /// kernel, and x is what the shader tests: the sun's own figure is never
+    /// zero, so zero can only mean off. A local light's ride in its view instead.
+    ///
+    /// The world cap rides here rather than being read off shadowParams.z,
+    /// which is quoted over the selected filter's radius; this path's kernel is
+    /// always the Vogel disk.
+    glm::vec4 shadowPcss;
     /// One record per cascade: x = the view-space distance it ends at (what the
     /// shader selects on), y = its constant depth bias already in the [0, 1]
     /// depth the shader compares in, z = its normal offset in world units,
@@ -141,7 +152,8 @@ ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectSpecular, indirectGround);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCounts, indirectSpecular);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, localShadowCounts, shadowCounts);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowParams, localShadowCounts);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCascade, shadowParams);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowPcss, shadowParams);
+ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCascade, shadowPcss);
 ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowViewProjection, shadowCascade);
 ASSISI_GPU_NO_TAIL_PADDING(FrameConstants, shadowViewProjection);
 } // namespace
@@ -406,7 +418,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     // a scene may have shadowed lamps and no sun, or a sun and no shadowed lamp,
     // and neither should pay for the other's lookup.
     constants.localShadowCounts = glm::uvec4(static_cast<uint32_t>(shadows.localSettings.filter),
-                                             shadows.localActive ? 1u : 0u, 0u, 0u);
+                                             shadows.localActive ? 1u : 0u, shadows.localPcss ? 1u : 0u, 0u);
     for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
     {
         constants.shadowCascade[i] = glm::vec4(0.f);
@@ -438,6 +450,14 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
         radiusTaps > 0.f ? kSunPenumbraPerWorldUnit / radiusTaps : std::numeric_limits<float>::max();
     constants.shadowParams = glm::vec4(ShadowTexelSizeUv(shadows.settings), shadows.settings.cascadeBlend,
                                        cappedStepNumerator, contactStepNumerator);
+
+    constants.shadowPcss = glm::vec4(0.f);
+    if (shadows.sunPcss)
+    {
+        const SunPcssConstants sunPcss = SunPcssFrameConstants(shadows.settings);
+        constants.shadowPcss =
+            glm::vec4(sunPcss.penumbraUvPerDepth, sunPcss.maxReachUv, sunPcss.texelDepth, kMaxPenumbraWorld);
+    }
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

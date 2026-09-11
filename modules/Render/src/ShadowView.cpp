@@ -80,6 +80,15 @@ ShadowView LocalShadowView(const LocalShadowLightPose &pose, const glm::vec3 &fo
     view.normalOffset = LocalNormalOffsetPerDistance(tile.rect.width, tanHalfFov, settings);
     view.filterTapStepUv = LocalFilterTapStepUv(tile.atlasResolution);
     view.clampUv = ShadowViewClampUv(view, settings.filter);
+
+    // The penumbra is quoted in the tile's UV and the lookup samples the
+    // atlas's, so it shrinks by the tile's share of the atlas.
+    const LocalShadowSettings safe = Sanitized(settings);
+    const float tileShare = ShadowViewUvScaleOffset(view).x;
+    view.pcssPenumbraUvPerDepth =
+        LocalPenumbraUvPerDepth(safe.sourceRadius, tanHalfFov, nearPlane, safeRange) * tileShare;
+    view.pcssTexelDepthTimesDistance = LocalTexelDepthTimesDistance(tile.rect.width, tanHalfFov, nearPlane, safeRange);
+    view.pcssMaxReachUv = kPcssMaxReachTexels * view.filterTapStepUv;
     return view;
 }
 } // namespace
@@ -111,6 +120,7 @@ ShadowViewGpu PackShadowView(const ShadowView &view)
     packed.params =
         glm::vec4(view.depthBias, view.normalOffset, view.filterTapStepUv, static_cast<float>(view.arraySlice));
     packed.clampUv = view.clampUv;
+    packed.pcss = glm::vec4(view.pcssPenumbraUvPerDepth, view.pcssTexelDepthTimesDistance, view.pcssMaxReachUv, 0.f);
     return packed;
 }
 
@@ -204,6 +214,30 @@ float LocalNormalOffsetPerDistance(std::uint32_t tileResolution, float tanHalfFo
 {
     const LocalShadowSettings safe = Sanitized(settings);
     return safe.normalOffsetTexels * LocalTexelsPerUnitDistance(tileResolution, tanHalfFov);
+}
+
+float LocalPenumbraUvPerDepth(float sourceRadius, float tanHalfFov, float nearPlane, float farPlane)
+{
+    if (!(sourceRadius > 0.f) || !(tanHalfFov > 0.f) || !std::isfinite(farPlane) || farPlane <= nearPlane ||
+        nearPlane <= 0.f)
+    {
+        return 0.f;
+    }
+    // Stored depth is far (d - near) / ((far - near) d), so 1/dB - 1/dR is the
+    // depth difference times (far - near) / (near far).
+    return sourceRadius * (farPlane - nearPlane) / (2.f * tanHalfFov * nearPlane * farPlane);
+}
+
+float LocalTexelDepthTimesDistance(std::uint32_t tileResolution, float tanHalfFov, float nearPlane, float farPlane)
+{
+    const float perDistance = LocalTexelsPerUnitDistance(tileResolution, tanHalfFov);
+    if (perDistance <= 0.f || !std::isfinite(farPlane) || farPlane <= nearPlane || nearPlane <= 0.f)
+    {
+        return 0.f;
+    }
+    // The footprint at distance z times what a world unit is worth in depth
+    // there, as in LocalDepthBiasNdcTimesDistance: the product is this over z.
+    return perDistance * nearPlane * farPlane / (farPlane - nearPlane);
 }
 
 float LocalFilterTapStepUv(std::uint32_t atlasResolution)
