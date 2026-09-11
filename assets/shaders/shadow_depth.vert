@@ -39,12 +39,15 @@ layout(std430, binding = 0) readonly buffer ShadowInstances
 // The view being drawn. A push constant rather than a constant buffer because
 // it changes between the draws of a single frame, and this is the only thing
 // that does.
+//
+// A cascade's casters upstream of its near plane are flattened onto it by the
+// pipeline's depth clamp rather than by anything here — see
+// ShadowDepthRenderer::CreatePipeline. Clamping z per vertex instead bends every
+// triangle that crosses the plane, recording it further from the light than it
+// is, and the far plane then cuts a tall caster's bent triangle short.
 layout(push_constant) uniform PushConstants
 {
-    mat4  lightViewProjection;
-    // x = 1 while this view projects orthographically, and so may pancake. See
-    // the clamp at the end of main, and Render::ShadowView::orthographic.
-    uvec4 pancake;
+    mat4 lightViewProjection;
 } pc;
 
 void main()
@@ -55,31 +58,4 @@ void main()
     vMaterialIndex = instance.materialIndex;
 #endif
     gl_Position = pc.lightViewProjection * (instance.model * vec4(inPosition, 1.0));
-
-    // Pancaking: a caster upstream of the view's near plane is flattened onto it
-    // rather than clipped away. Without this a wall behind the camera stops
-    // casting into the frame the moment it crosses the near plane.
-    //
-    // The alternative is to pull every view's near plane back to the furthest
-    // upstream caster in the scene, which is what this replaces. That kept the
-    // geometry but spent the whole depth range on empty space above it: a view
-    // covering ten metres would carry a range of hundreds, and on a 16-bit map
-    // the quantisation step grows past the bias meant to cover it. Clamping
-    // costs the flattened caster its own depth ordering, which is no loss —
-    // nothing upstream of the near plane is a receiver in this view.
-    //
-    // Valid only because the projection is orthographic and w is exactly 1, so
-    // this is a clamp in the depth the comparison will use. It needs no device
-    // feature, unlike disabling depth clip.
-    //
-    // Which is why it is gated. A local light projects perspectively: the depth
-    // the comparison uses is z / w, so clamping z on the vertices that fall
-    // upstream and not on their neighbours leaves an interpolated depth that
-    // describes no surface — nearer than the truth along part of the triangle
-    // and further along the rest. Further is a leak, and a whole floor spanning
-    // a light's faces is exactly the geometry that straddles the plane.
-    if (pc.pancake.x == 1u)
-    {
-        gl_Position.z = max(gl_Position.z, 0.0);
-    }
 }

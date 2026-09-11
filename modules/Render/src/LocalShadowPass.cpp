@@ -205,7 +205,8 @@ bool LocalShadowPass::RebuildPipelines()
     for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
     {
         _pipelines[index] = _depthRenderer->CreatePipeline(_atlasFramebuffer, static_cast<MeshPipeline>(index),
-                                                           _settings.slopeBias, slopeBiasClamp);
+                                                           _settings.slopeBias, slopeBiasClamp,
+                                                           ShadowProjection::Perspective);
     }
     if (_pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr)
     {

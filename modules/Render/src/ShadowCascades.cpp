@@ -186,8 +186,8 @@ CascadeFit FitCascades(const CascadeFitParams &params)
         const glm::vec3 center = SnapToTexelGrid(sphere.center, lightRotation, worldUnitsPerTexel);
 
         // The slice's own extent along the light, and nothing more. A caster
-        // upstream of the near plane still reaches the map: shadow_depth.vert
-        // flattens it onto the plane rather than letting it clip, which costs it
+        // upstream of the near plane still reaches the map: the depth pass clamps
+        // it onto the plane rather than letting it clip, which costs it
         // an ordering it does not need — nothing upstream of the near plane is a
         // receiver in this view.
         //

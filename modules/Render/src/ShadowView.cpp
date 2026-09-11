@@ -123,8 +123,8 @@ ShadowView CascadeShadowView(const ShadowCascade &cascade, std::uint32_t slice, 
     view.rect = ShadowViewRect{.x = 0, .y = 0, .width = safe.resolution, .height = safe.resolution};
     view.targetResolution = safe.resolution;
     view.arraySlice = slice;
-    // A cascade fits an ortho box, which is what lets the depth pass pancake a
-    // caster upstream of the near plane instead of clipping it.
+    // A cascade fits an ortho box, which is what lets the cull keep a caster
+    // upstream of the near plane for the depth pass to flatten onto it.
     view.orthographic = true;
     view.depthBias = CascadeDepthBiasNdc(cascade, safe);
     view.normalOffset = CascadeNormalOffsetWorld(cascade, safe);

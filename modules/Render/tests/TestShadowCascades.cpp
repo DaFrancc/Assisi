@@ -304,7 +304,7 @@ TEST_CASE("A cascade's depth range is its own slice, whatever the scene holds")
     // map's quantisation step is this range over 65536 — so a range stretched to
     // reach the furthest caster in the scene puts the step above the bias meant
     // to cover it. Casters upstream of the near plane reach the map by being
-    // flattened onto it in shadow_depth.vert, not by widening this.
+    // clamped onto it in the depth pass, not by widening this.
     CascadeFitParams params = DefaultParams();
     params.settings.cascadeCount = 1;
     params.settings.maxDistance = 40.f;
@@ -919,7 +919,7 @@ TEST_CASE("A caster up-light of the volume reaches it, wherever the camera looks
 
     // Far enough up-light that the caster's own sphere is nowhere near the
     // volume — the sweep is the only thing that keeps it, which is the case
-    // WithoutNearPlane() and the vertex shader's pancaking exist for.
+    // WithoutNearPlane() and the cascade pipeline's depth clamp exist for.
     const glm::vec3 upLight = bounds.center - light * (bounds.radius * 4.f);
     const Assisi::Geometry::BoundingSphere overhead{.center = upLight, .radius = 1.f};
     REQUIRE(glm::length(overhead.center - bounds.center) > bounds.radius + overhead.radius);

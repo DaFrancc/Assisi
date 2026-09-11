@@ -1,0 +1,48 @@
+diff --git a/include/nvrhi/nvrhi.h b/include/nvrhi/nvrhi.h
+index d82a7bf..38a3fe9 100644
+--- a/include/nvrhi/nvrhi.h
++++ b/include/nvrhi/nvrhi.h
+@@ -1062,6 +1062,9 @@ namespace nvrhi
+         RasterCullMode cullMode = RasterCullMode::Back;
+         bool frontCounterClockwise = false;
+         bool depthClipEnable = false;
++        // Vulkan only: clamp fragment depth to the viewport's range instead of
++        // clipping against the near and far planes. Needs the depthClamp feature.
++        bool depthClampEnable = false;
+         bool scissorEnable = false;
+         bool multisampleEnable = false;
+         bool antialiasedLineEnable = false;
+@@ -1089,6 +1092,7 @@ namespace nvrhi
+         constexpr RasterState& setDepthClipEnable(bool value) { depthClipEnable = value; return *this; }
+         constexpr RasterState& enableDepthClip() { depthClipEnable = true; return *this; }
+         constexpr RasterState& disableDepthClip() { depthClipEnable = false; return *this; }
++        constexpr RasterState& setDepthClampEnable(bool value) { depthClampEnable = value; return *this; }
+         constexpr RasterState& setScissorEnable(bool value) { scissorEnable = value; return *this; }
+         constexpr RasterState& enableScissor() { scissorEnable = true; return *this; }
+         constexpr RasterState& disableScissor() { scissorEnable = false; return *this; }
+diff --git a/src/vulkan/vulkan-graphics.cpp b/src/vulkan/vulkan-graphics.cpp
+index 57e4c96..7a8d67d 100644
+--- a/src/vulkan/vulkan-graphics.cpp
++++ b/src/vulkan/vulkan-graphics.cpp
+@@ -318,7 +318,7 @@ namespace nvrhi::vulkan
+             .setScissorCount(1);
+
+         auto rasterizer = vk::PipelineRasterizationStateCreateInfo()
+-                            // .setDepthClampEnable(??)
++                            .setDepthClampEnable(rasterState.depthClampEnable)
+                             // .setRasterizerDiscardEnable(??)
+                             .setPolygonMode(convertFillMode(rasterState.fillMode))
+                             .setCullMode(convertCullMode(rasterState.cullMode))
+diff --git a/src/vulkan/vulkan-meshlets.cpp b/src/vulkan/vulkan-meshlets.cpp
+index c0c0565..1787709 100644
+--- a/src/vulkan/vulkan-meshlets.cpp
++++ b/src/vulkan/vulkan-meshlets.cpp
+@@ -100,7 +100,7 @@ namespace nvrhi::vulkan
+             .setScissorCount(1);
+
+         auto rasterizer = vk::PipelineRasterizationStateCreateInfo()
+-                            // .setDepthClampEnable(??)
++                            .setDepthClampEnable(rasterState.depthClampEnable)
+                             // .setRasterizerDiscardEnable(??)
+                             .setPolygonMode(convertFillMode(rasterState.fillMode))
+                             .setCullMode(convertCullMode(rasterState.cullMode))

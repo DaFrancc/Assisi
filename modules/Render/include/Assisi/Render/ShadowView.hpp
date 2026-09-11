@@ -30,6 +30,19 @@
 namespace Assisi::Render
 {
 
+/// @brief How a shadow map's views project, which decides how the depth pass
+/// may treat a caster outside the view's depth range.
+enum class ShadowProjection : std::uint8_t
+{
+    /// A local light's frustum. Casters are clipped against the near and far
+    /// planes: the comparison depth is z / w, and clipping is what removes the
+    /// region behind the light.
+    Perspective = 0,
+    /// A sun cascade's box. Fragment depth is clamped to the range instead, so a
+    /// caster upstream of the near plane is flattened onto it and still casts.
+    Orthographic = 1,
+};
+
 /// @brief A rectangle of a shadow-map target, in texels.
 struct ShadowViewRect
 {
@@ -72,19 +85,12 @@ struct ShadowView
 
     /// Whether this view projects orthographically.
     ///
-    /// Two things in the depth pass are only valid when it does, and both are
-    /// silently wrong when it does not:
-    ///
-    ///   * **Pancaking.** shadow_depth.vert clamps a caster upstream of the near
-    ///     plane onto it rather than letting it clip. That is a clamp in the
-    ///     depth the comparison uses only while `w` is exactly 1. Under a
-    ///     perspective projection the comparison depth is `z / w`, so clamping
-    ///     `z` on some vertices of a triangle and not others leaves an
-    ///     interpolated depth that means nothing — too near in places, too far in
-    ///     others, and too far is a leak.
-    ///   * **Dropping the near plane from the cull.** A perspective frustum's
-    ///     four side planes extended form a double cone, so without the near
-    ///     plane the mirrored half behind the light passes the test.
+    /// Decides whether the cull may drop the near plane, which it must for a
+    /// cascade: a caster upstream of the plane still shadows the slice, and the
+    /// cascade pipelines flatten it onto the plane (ShadowProjection). Under a
+    /// perspective projection it must not — the frustum's four side planes
+    /// extended form a double cone, so without the near plane the mirrored half
+    /// behind the light passes the test.
     ///
     /// False by default: a view that has not said gets the conservative
     /// treatment, which costs a caster its pancaking rather than corrupting a map.

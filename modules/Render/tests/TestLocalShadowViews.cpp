@@ -489,12 +489,10 @@ TEST_CASE("A local view never claims to be orthographic")
 {
     const LocalShadowSettings settings;
 
-    // Two things in the depth pass are valid only under an orthographic
-    // projection, and both are silent when they are wrong: pancaking a caster
-    // onto the near plane, which is a clamp in comparison depth only while w is
-    // 1, and dropping the near plane from the cull, which under perspective
-    // admits the mirrored cone behind the light. A local view saying yes here
-    // would turn both on.
+    // Dropping the near plane from the cull is valid only under an orthographic
+    // projection, and silent when it is wrong: under perspective it admits the
+    // mirrored cone behind the light. A local view saying yes here would turn
+    // it on.
     CHECK_FALSE(SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(0, 0, 512), settings)
                 .orthographic);
     for (std::uint32_t face = 0; face < kPointLightFaceCount; ++face)

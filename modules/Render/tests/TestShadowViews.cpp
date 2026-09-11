@@ -244,9 +244,9 @@ TEST_CASE("A caster between the light and the slice still casts into it")
     // world's z = 50 and anything beyond that is upstream of the view — nearer
     // the light than everything the view shades.
     //
-    // Such a caster shadows every surface in the slice, and shadow_depth.vert
-    // flattens it onto the near plane rather than letting it clip, precisely so
-    // that it can. Culling it here undoes that before the rasterizer sees it,
+    // Such a caster shadows every surface in the slice, and the cascade
+    // pipeline's depth clamp flattens it onto the near plane rather than letting
+    // it clip, precisely so that it can. Culling it here undoes that before the rasterizer sees it,
     // and the shape of the bug is a shadow that disappears as the camera walks
     // toward it: the nearest cascade's slice closes in around the viewer, its
     // near plane rises past whatever is overhead, and the shadow of that thing

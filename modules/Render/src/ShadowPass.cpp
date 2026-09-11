@@ -131,7 +131,7 @@ bool ShadowPass::RebuildPipeline()
     {
         _pipelines[index] = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(),
                                                            static_cast<MeshPipeline>(index), _settings.slopeBias,
-                                                           slopeBiasClamp);
+                                                           slopeBiasClamp, ShadowProjection::Orthographic);
     }
     // The opaque single-sided class is the one nothing can do without: it is
     // what every other class falls back to. A null masked entry is not a
