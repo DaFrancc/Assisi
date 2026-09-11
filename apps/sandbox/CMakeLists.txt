@@ -214,9 +214,10 @@ assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
 assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
     "shaders/mesh.vert.invariant.spv" ASSISI_INVARIANT_POSITION)
 
-# Screen-space occlusion's first step, for a multisampled depth buffer.
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/ssao_depth.frag"
-    "shaders/ssao_depth.frag.msaa.spv" ASSISI_MSAA_DEPTH)
+# The scene-distance step every screen-space feature reads, for a multisampled
+# depth buffer.
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/scene_distance.frag"
+    "shaders/scene_distance.frag.msaa.spv" ASSISI_MSAA_DEPTH)
 
 add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

@@ -31,18 +31,20 @@ constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
 // pass's masked pipeline (see MeshPass::InitParams).
 constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
 
-// The depth prepass screen-space occlusion reads, and the lit pass's vertex
+// The depth prepass every screen-space feature reads, and the lit pass's vertex
 // stage for drawing over it (see MeshPass::PreparePrepass). Loaded only once a
-// frame asks for occlusion.
+// frame asks for scene depth.
 constexpr const char *kSceneDepthVertexShader = "shaders/mesh.vert.depth.spv";
 constexpr const char *kSceneMaskedDepthVertexShader = "shaders/mesh.vert.depth.masked.spv";
 constexpr const char *kSceneMaskedDepthPixelShader = "shaders/mesh_depth.frag.spv";
 constexpr const char *kSceneInvariantVertexShader = "shaders/mesh.vert.invariant.spv";
 
-// Screen-space occlusion's four fullscreen steps (see Render::SsaoPass).
+// The prepass's depth as a distance per pixel (see Render::SceneDistancePass).
 constexpr const char *kFullscreenVertexShader = "shaders/fullscreen.vert.spv";
-constexpr const char *kSsaoDepthShader = "shaders/ssao_depth.frag.spv";
-constexpr const char *kSsaoMultisampleDepthShader = "shaders/ssao_depth.frag.msaa.spv";
+constexpr const char *kSceneDistanceShader = "shaders/scene_distance.frag.spv";
+constexpr const char *kSceneMultisampleDistanceShader = "shaders/scene_distance.frag.msaa.spv";
+
+// Screen-space occlusion's three fullscreen steps (see Render::SsaoPass).
 constexpr const char *kSsaoOcclusionShader = "shaders/ssao.frag.spv";
 constexpr const char *kSsaoBlurShader = "shaders/ssao_blur.frag.spv";
 
@@ -192,12 +194,22 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: sky reflections unavailable (the prefilter failed to initialise).");
     }
 
+    // Non-fatal: without it no screen-space feature runs, and the frame is the
+    // one there was before any of them existed.
+    if (!_sceneDistancePass.Initialize(
+            Render::SceneDistancePass::InitParams{.device = _device,
+                                                  .vertexShaderSpvPath = kFullscreenVertexShader,
+                                                  .distanceShaderSpvPath = kSceneDistanceShader,
+                                                  .multisampleDistanceShaderSpvPath = kSceneMultisampleDistanceShader}))
+    {
+        Core::Log::Warn("SceneRenderer: scene depth unavailable (its pipelines failed to initialise); ambient "
+                        "occlusion is off.");
+    }
+
     // Non-fatal too: without it the indirect term is unoccluded, which is what
     // it was before there was any occlusion.
     if (!_ssaoPass.Initialize(Render::SsaoPass::InitParams{.device = _device,
                                                            .vertexShaderSpvPath = kFullscreenVertexShader,
-                                                           .depthShaderSpvPath = kSsaoDepthShader,
-                                                           .multisampleDepthShaderSpvPath = kSsaoMultisampleDepthShader,
                                                            .occlusionShaderSpvPath = kSsaoOcclusionShader,
                                                            .blurShaderSpvPath = kSsaoBlurShader}))
     {
@@ -382,9 +394,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .screenOcclusion = prepass};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
-    // With occlusion on, this is the depth prepass: the same extract, cull and
-    // sort as ever, drawn as depth alone, and kept for the lit pass below to
-    // shade. With it off, it is the lit pass, exactly as it always was.
+    // With scene depth wanted, this is the depth prepass: the same extract, cull
+    // and sort as ever, drawn as depth alone, and kept for the lit pass below to
+    // shade. Without, it is the lit pass, exactly as it always was.
     _lastDrawStats = DrawScene(DrawSceneParams{.scene = scene,
                                                .meshPass = _meshPass,
                                                .frame = frame,
@@ -403,12 +415,13 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     if (prepass)
     {
+        _sceneDistancePass.Render(frame.commandList, projection);
         _ssaoPass.Render(frame.commandList,
                          Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
 
         // Under the name the lit pass has always been measured by, so a capture
-        // with occlusion on reads `draw-scene` against its own history and the
-        // prepass and occlusion as the new rows beside it.
+        // with a prepass reads `draw-scene` against its own history and the
+        // prepass, the distance and occlusion as the new rows beside it.
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "draw-scene");
         _lastDrawStats.drawCalls += _meshPass.Redraw(frame, Render::MeshPassStage::LitAfterPrepass).drawCalls;
     }
@@ -547,7 +560,8 @@ bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
 {
     // Released rather than kept while off — pay for what you place. A frame
     // with no depth texture to read has nothing to occlude from.
-    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && frame.depthTexture != nullptr;
+    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid() &&
+                        frame.depthTexture != nullptr;
     if (wanted)
     {
         if (!_meshPass.PreparePrepass())
@@ -555,7 +569,8 @@ bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
             Core::Log::Warn("SceneRenderer: ambient occlusion disabled (the depth prepass failed to build).");
             _ssaoSettings.enabled = false;
         }
-        else if (!_ssaoPass.Configure(frame.width, frame.height, frame.depthTexture))
+        else if (!_sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture) ||
+                 !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture()))
         {
             Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
             _ssaoSettings.enabled = false;
@@ -564,6 +579,7 @@ bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
     if (!wanted || !_ssaoSettings.enabled)
     {
         _ssaoPass.Release();
+        _sceneDistancePass.Release();
         _meshPass.SetAmbientOcclusion(nullptr);
         return false;
     }

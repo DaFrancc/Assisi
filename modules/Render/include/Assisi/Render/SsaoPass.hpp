@@ -18,9 +18,9 @@
 namespace Assisi::Render
 {
 
-/// @brief Four fullscreen steps over single-sampled targets: the depth as a
-/// distance (ssao_depth.frag), the hemisphere test (ssao.frag), and the two
-/// axes of a depth-aware blur (ssao_blur.frag).
+/// @brief Three fullscreen steps over single-sampled targets: the hemisphere
+/// test (ssao.frag) and the two axes of a depth-aware blur (ssao_blur.frag),
+/// both reading SceneDistancePass's distance per pixel.
 ///
 /// **Nothing exists until a frame asks for it.** Initialize builds the pipelines
 /// and nothing else; the targets arrive with Configure and leave with Release,
@@ -33,9 +33,6 @@ public:
         nvrhi::IDevice *device = nullptr;
         /// Shared fullscreen-triangle vertex stage.
         std::string vertexShaderSpvPath;
-        std::string depthShaderSpvPath;
-        /// The same step reading a multisampled depth buffer.
-        std::string multisampleDepthShaderSpvPath;
         std::string occlusionShaderSpvPath;
         std::string blurShaderSpvPath;
     };
@@ -45,16 +42,17 @@ public:
 
     [[nodiscard]] bool IsValid() const { return _occlusionPipeline != nullptr; }
 
-    /// @brief Hold targets of @p width x @p height reading @p depth, rebuilding
-    /// only what a changed size or a changed depth buffer invalidates.
+    /// @brief Hold targets of @p width x @p height reading @p distance — the
+    /// scene's distance per pixel, from SceneDistancePass — rebuilding only what a
+    /// changed size or a changed input invalidates.
     /// @return false if a target could not be allocated; the pass then holds
     /// nothing.
-    [[nodiscard]] bool Configure(uint32_t width, uint32_t height, nvrhi::ITexture *depth);
+    [[nodiscard]] bool Configure(uint32_t width, uint32_t height, nvrhi::ITexture *distance);
 
     /// @brief Free every target and every set over them.
     void Release();
 
-    /// @brief Everything one run reads besides the depth buffer.
+    /// @brief Everything one run reads besides the scene's distance.
     struct Frame
     {
         glm::mat4 projection{1.f};
@@ -62,9 +60,9 @@ public:
         SsaoSettings settings;
     };
 
-    /// @brief Record the four steps into @p commandList. The result is in
+    /// @brief Record the three steps into @p commandList. The result is in
     /// OcclusionTexture() when it returns.
-    /// @pre Configure succeeded.
+    /// @pre Configure succeeded, and the distance it was given holds this frame's.
     void Render(nvrhi::ICommandList *commandList, const Frame &frame) const;
 
     /// @brief The blurred visible fraction, one per pixel; null while nothing
@@ -75,7 +73,6 @@ public:
 private:
     enum class Step : uint32_t
     {
-        Depth,
         Occlusion,
         BlurHorizontal,
         BlurVertical,
@@ -92,23 +89,20 @@ private:
     nvrhi::ShaderHandle _vertexShader;
     nvrhi::BindingLayoutHandle _singleInputLayout;
     nvrhi::BindingLayoutHandle _blurLayout;
-    nvrhi::GraphicsPipelineHandle _depthPipeline;
-    nvrhi::GraphicsPipelineHandle _multisampleDepthPipeline;
     nvrhi::GraphicsPipelineHandle _occlusionPipeline;
     nvrhi::GraphicsPipelineHandle _blurPipeline;
     nvrhi::BufferHandle _constants;
 
     uint32_t _width = 0;
     uint32_t _height = 0;
-    nvrhi::ITexture *_depth = nullptr;
+    // SceneDistancePass's target. Not owned.
+    nvrhi::ITexture *_distance = nullptr;
 
-    // Distance per pixel, then the raw occlusion, then the half-blurred one.
-    // The vertical pass writes back into _occlusion, so the texture mesh.frag
-    // reads is one handle for the life of a configuration.
-    nvrhi::TextureHandle _distance;
+    // The raw occlusion, then the half-blurred one. The vertical pass writes
+    // back into _occlusion, so the texture mesh.frag reads is one handle for the
+    // life of a configuration.
     nvrhi::TextureHandle _occlusion;
     nvrhi::TextureHandle _blurScratch;
-    nvrhi::FramebufferHandle _distanceFramebuffer;
     nvrhi::FramebufferHandle _occlusionFramebuffer;
     nvrhi::FramebufferHandle _blurScratchFramebuffer;
 

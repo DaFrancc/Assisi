@@ -34,6 +34,7 @@
 #include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Render/SkyPass.hpp>
 #include <Assisi/Render/SkyProbe.hpp>
+#include <Assisi/Render/SceneDistancePass.hpp>
 #include <Assisi/Render/SsaoPass.hpp>
 #include <Assisi/Render/SsaoSettings.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -511,9 +512,10 @@ private:
     /// whether an environment answers this frame.
     [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
 
-    /// @brief Hold screen-space occlusion's targets and the prepass pipelines
-    /// for @p frame, and point the mesh pass at the result. Releases all of it
-    /// while the setting is off, and turns the setting off if any of it fails.
+    /// @brief Hold the prepass pipelines, the scene distance target and
+    /// occlusion's targets for @p frame, and point the mesh pass at the result.
+    /// Releases all of it while the setting is off, and turns the setting off if
+    /// any of it fails.
     ///
     /// @return whether this frame draws a depth prepass and runs occlusion.
     [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame);
@@ -648,8 +650,11 @@ private:
     // shader. Holds nothing while there is no sky.
     Render::SkyProbe _skyProbe;
     Render::EnvironmentSettings _environmentSettings;
-    // Reads the depth prepass's depth, between it and the lit pass. Holds
-    // nothing while the setting is off.
+    // The depth prepass's depth as a distance, for every screen-space feature.
+    // Holds nothing while occlusion, the only one, is off.
+    Render::SceneDistancePass _sceneDistancePass;
+    // Reads that distance, between the prepass and the lit pass. Holds nothing
+    // while the setting is off.
     Render::SsaoPass _ssaoPass;
     Render::SsaoSettings _ssaoSettings;
     Render::OutlinePass _outlinePass;
