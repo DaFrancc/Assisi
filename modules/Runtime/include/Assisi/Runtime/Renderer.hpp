@@ -95,7 +95,19 @@ struct DrawSceneParams
     /// LodSelector::BeginFrame. The GPU path hands the cull pass its view, its
     /// bias and each instance's named level, and remembers nothing.
     LodSelector *lodSelector = nullptr;
+
+    /// Which of the mesh pass's pipeline sets draws the list. A DepthPrepass
+    /// draws depth alone and leaves the list prepared for MeshPass::Redraw to
+    /// shade; it is timed as `depth-prepass` rather than `draw-scene`, so the
+    /// lit pass that follows keeps the name it has always been measured under.
+    Assisi::Render::MeshPassStage stage = Assisi::Render::MeshPassStage::Lit;
 };
+
+/// @brief The GPU timer DrawScene opens around its draws for @p stage.
+[[nodiscard]] constexpr const char *DrawSceneTimerName(Assisi::Render::MeshPassStage stage)
+{
+    return stage == Assisi::Render::MeshPassStage::DepthPrepass ? "depth-prepass" : "draw-scene";
+}
 
 /// @brief Extract, sort, and submit a draw list for every Transform+MeshRenderer
 ///        entity in the scene, through the shared mesh pass.

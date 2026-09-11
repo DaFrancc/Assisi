@@ -185,6 +185,37 @@ TEST_CASE("A settings file from before sky reflections existed turns them on at 
     CHECK(read.environment == EnvironmentSettings{});
 }
 
+TEST_CASE("Ambient occlusion settings survive a write and a read")
+{
+    OptionsConfig written;
+    written.ambientOcclusion.enabled = true;
+    written.ambientOcclusion.sampleCount = 20;
+    written.ambientOcclusion.radius = 1.25f;
+    written.ambientOcclusion.strength = 1.75f;
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    CHECK(read.ambientOcclusion.enabled == written.ambientOcclusion.enabled);
+    CHECK(read.ambientOcclusion.sampleCount == written.ambientOcclusion.sampleCount);
+    CHECK(read.ambientOcclusion.radius == doctest::Approx(written.ambientOcclusion.radius));
+    CHECK(read.ambientOcclusion.strength == doctest::Approx(written.ambientOcclusion.strength));
+}
+
+TEST_CASE("A hand-typed occlusion kernel is clamped before it reaches a shader")
+{
+    // The sample count is a loop bound over a fixed-size kernel in a constant
+    // buffer; past its capacity the shader reads off the end.
+    const std::string absurd = R"({ "ambientOcclusion": { "samples": 100000, "radius": -3.0 } })";
+    const OptionsConfig read = OptionsConfig::FromJsonText(absurd);
+    CHECK(read.ambientOcclusion.sampleCount == kMaxSsaoSampleCount);
+    CHECK(read.ambientOcclusion.radius == doctest::Approx(kMinSsaoRadius));
+}
+
+TEST_CASE("A settings file from before ambient occlusion existed loads it off, at its defaults")
+{
+    const OptionsConfig read = OptionsConfig::FromJsonText(R"({ "antiAliasing": { "mode": "fxaa" } })");
+    CHECK(read.ambientOcclusion == SsaoSettings{});
+}
+
 TEST_CASE("A document that will not parse costs the settings, not the launch")
 {
     const OptionsConfig read = OptionsConfig::FromJsonText("{ this is not json");

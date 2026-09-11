@@ -94,7 +94,8 @@ layout(binding = 256) uniform FrameConstants
     vec4  indirectGround;     // rgb = the same for one facing straight down, w unused
     // x = 1 while a prefiltered environment answers the specular half, 0 when
     // none does; y = that environment's last mip, where roughness one is
-    // stored; zw unused.
+    // stored; z = 1 while screen-space occlusion ran this frame and darkens the
+    // indirect term, 0 when it did not; w unused.
     vec4  indirectSpecular;
     // Sun shadows (see Render::FrameConstants and ShadowCascades.hpp).
     uvec4 shadowCounts;       // x = cascade count (0 = no shadows), y = shadowed dir light, z = filter, w = cascade view
@@ -124,6 +125,7 @@ const uint kDebugRoughness = 3u;
 const uint kDebugNormal    = 4u;
 const uint kDebugOcclusion = 5u;
 const uint kDebugEmissive  = 6u;
+const uint kDebugScreenOcclusion = 7u;
 
 // ---- Clustered light buffers (must match Render::ClusterGrid GPU structs) --
 // StructuredBuffer_SRV shares the shaderResource (+0) space with Texture_SRV, so
@@ -1405,6 +1407,33 @@ vec3 IndirectSpecular(vec3 R, float roughness, vec3 worldPos)
     return textureLod(samplerCube(uEnvironmentSpecular, uClampSampler), R, lod).rgb;
 }
 
+// What fraction of each pixel's hemisphere the depth buffer leaves open, from
+// Render::SsaoPass. A one-texel placeholder while no occlusion ran this frame,
+// which nothing reads: every read is behind the frame constant that says one did.
+layout(binding = 12) uniform texture2D uScreenOcclusion;
+
+// Visibility, not radiance, so it is applied to what the provider answered and
+// never enters IndirectRadiance(): every provider is occluded the same way, and
+// none of them has to know. The light loops never see it — shadow maps already
+// answer visibility for direct light, and a second answer would darken a sunlit
+// crease the sun can plainly reach.
+float ScreenOcclusion()
+{
+    return texelFetch(uScreenOcclusion, ivec2(gl_FragCoord.xy), 0).r;
+}
+
+// The share of the environment's reflection that survives an occlusion of @ao,
+// for a lobe of GGX @alpha seen at @nDotV. Render::SpecularOcclusion.
+float SpecularOcclusion(float nDotV, float ao, float alpha)
+{
+    // The fit's own constants: how quickly the exponent falls with roughness,
+    // and where it starts for a mirror.
+    const float kExponentPerAlpha = -16.0;
+    const float kMirrorExponent   = -1.0;
+    float exponent = exp2(kExponentPerAlpha * alpha + kMirrorExponent);
+    return clamp(pow(nDotV + ao, exponent) - 1.0 + ao, 0.0, 1.0);
+}
+
 // ---- Main -----------------------------------------------------------------
 
 void main()
@@ -1457,6 +1486,8 @@ void main()
             outColor = vec4(vec3(surf.occlusion), 1.0);
         else if (debugMode == kDebugEmissive)
             outColor = vec4(pow(surf.emissive, vec3(1.0 / 2.2)), 1.0);
+        else if (debugMode == kDebugScreenOcclusion)
+            outColor = vec4(vec3(uFrame.indirectSpecular.z != 0.0 ? ScreenOcclusion() : 1.0), 1.0);
         else
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
@@ -1656,13 +1687,28 @@ void main()
     // further factor of pi: the provider answers with the cosine-weighted mean
     // radiance, which is exactly what a Lambertian albedo multiplies.
     vec3 indirect = IndirectRadiance(N, vWorldPos);
+
+    // Screen-space occlusion joins the material's map by taking the darker of
+    // the two rather than their product: a baked map already holds the asset's
+    // own creases, and the depth buffer sees those same creases again.
+    // Everything that reads it sits behind the frame constant, so a frame
+    // without it evaluates exactly the expressions it did before it existed.
+    bool screenOccluded = uFrame.indirectSpecular.z != 0.0;
+    float screenOcclusion = 1.0;
+    float occlusion = surf.occlusion;
+    if (screenOccluded)
+    {
+        screenOcclusion = ScreenOcclusion();
+        occlusion = min(occlusion, screenOcclusion);
+    }
+
     vec3 color;
     if (uFrame.indirectSpecular.x == 0.0)
     {
         // No environment to reflect: the expression the renderer had before
         // any provider could answer one, unchanged. This is what makes a
         // probe switched off a baseline rather than an approximation of one.
-        color = indirect * albedo * surf.occlusion + Lo + surf.emissive;
+        color = indirect * albedo * occlusion + Lo + surf.emissive;
     }
     else
     {
@@ -1679,7 +1725,20 @@ void main()
         // A metal has no diffuse layer, which is the whole difference between
         // rough metal and grey plastic under a sky.
         vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
-        color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
+        if (screenOccluded)
+        {
+            // A reflection is occluded less than the diffuse term by the same
+            // crease when its lobe is narrow and points out of it, so it takes
+            // its own share of the screen's answer rather than the answer itself.
+            float alpha = surf.roughness * surf.roughness;
+            float specularOcclusion =
+                min(surf.occlusion, SpecularOcclusion(brdf.NdotV, screenOcclusion, alpha));
+            color = diffuse * occlusion + specular * specularOcclusion + Lo + surf.emissive;
+        }
+        else
+        {
+            color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
+        }
     }
 
     // Cascade view: tint the lit result rather than replacing it, so a split

@@ -14,6 +14,7 @@ add_executable(Assisi-Render-Tests
   TestShadowViews.cpp
   TestSky.cpp
   TestSpecularIbl.cpp
+  TestSsao.cpp
   TestTonemap.cpp
 )
 

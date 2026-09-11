@@ -697,6 +697,52 @@ void EditorOptionsPanel::DrawEnvironmentSettings(const Frame &frame)
     }
 }
 
+// Screen-space occlusion. Off is the A/B against the whole feature — no depth
+// prepass, no targets, the lit pass as it always was — and every other knob
+// lands on the next frame without reallocating anything.
+void EditorOptionsPanel::DrawAmbientOcclusionSettings(const Frame &frame)
+{
+    Assisi::Render::SsaoSettings occlusion = frame.renderer.SsaoSettings();
+    bool changed = false;
+
+    ImGui::TextUnformatted("Ambient Occlusion");
+    changed |= ImGui::Checkbox("Screen-Space Occlusion", &occlusion.enabled);
+    ImGui::SetItemTooltip("Darkens creases and contact points in the indirect light. Adds a depth prepass.");
+
+    if (!occlusion.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+
+    int32_t samples = static_cast<int32_t>(occlusion.sampleCount);
+    if (ImGui::SliderInt("Occlusion Samples", &samples, static_cast<int32_t>(Assisi::Render::kMinSsaoSampleCount),
+                         static_cast<int32_t>(Assisi::Render::kMaxSsaoSampleCount)))
+    {
+        occlusion.sampleCount = static_cast<uint32_t>(samples);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Per pixel. The cost of the pass rises in step with this.");
+
+    changed |= ImGui::SliderFloat("Occlusion Radius", &occlusion.radius, Assisi::Render::kMinSsaoRadius,
+                                  Assisi::Render::kMaxSsaoRadius, "%.2f m");
+    ImGui::SetItemTooltip("How far from a surface an occluder is looked for.");
+
+    changed |= ImGui::SliderFloat("Occlusion Strength", &occlusion.strength, Assisi::Render::kMinSsaoStrength,
+                                  Assisi::Render::kMaxSsaoStrength, "%.2f");
+
+    if (!occlusion.enabled)
+    {
+        ImGui::EndDisabled();
+    }
+
+    if (changed)
+    {
+        frame.renderer.SetSsaoSettings(occlusion);
+        frame.options.ambientOcclusion = frame.renderer.SsaoSettings();
+        frame.options.SaveToJson();
+    }
+}
+
 bool EditorOptionsPanel::Draw(const Frame &frame)
 {
     bool applyDisplay = false;
@@ -1048,7 +1094,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // PBR inputs directly. Runtime only. **This list is indexed by the enum
         // value** — it must stay in Render::MaterialDebugView's order.
         static const char *kDebugViewNames[] = {"Off",    "Base Color", "Metallic", "Roughness",
-                                                "Normal", "Occlusion",  "Emissive"};
+                                                "Normal", "Occlusion",  "Emissive", "Screen Occlusion"};
         int32_t debugViewIndex = static_cast<int32_t>(frame.renderer.DebugView());
         if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
         {
@@ -1064,6 +1110,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         ImGui::Separator();
 
         DrawEnvironmentSettings(frame);
+
+        ImGui::Separator();
+
+        DrawAmbientOcclusionSettings(frame);
 
         ImGui::Separator();
 

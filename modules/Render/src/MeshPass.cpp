@@ -73,7 +73,7 @@ struct FrameConstants
     glm::vec4 indirectSky;
     glm::vec4 indirectGround;
     /// x = 1 while a prefiltered environment answers the specular half, y =
-    /// its last mip, zw unused.
+    /// its last mip, z = 1 while screen-space occlusion ran this frame, w unused.
     glm::vec4 indirectSpecular;
 
     /// x = cascade count (0 = nothing shadows this frame, and the shader takes
@@ -169,6 +169,10 @@ bool MeshPass::Initialize(const InitParams &params)
     _bindlessLayout = params.bindlessLayout;
     _bindlessTable = params.bindlessTable;
     _materialTable = params.materialTable;
+    _depthVertexShaderPath = params.depthVertexShaderSpvPath;
+    _maskedDepthVertexShaderPath = params.maskedDepthVertexShaderSpvPath;
+    _maskedDepthPixelShaderPath = params.maskedDepthPixelShaderSpvPath;
+    _invariantVertexShaderPath = params.invariantVertexShaderSpvPath;
 
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _pixelShaders[kPixelShaderOpaque] = LoadSpirvShader(device, params.pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
@@ -213,7 +217,7 @@ bool MeshPass::Initialize(const InitParams &params)
     //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
     //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data,
     //   t7 = the sun's cascade array, t8 = shadow view table, t9 = local-light atlas,
-    //   t10 = prefiltered environment cube, t11 = BRDF table
+    //   t10 = prefiltered environment cube, t11 = BRDF table, t12 = screen-space occlusion
     //   s0 = shared sampler, s1 = the shadow comparison sampler, s2 = clamped trilinear sampler
     // No push constants: per-object data (world matrix + material id) is read from
     // the instance buffer (t6) by gl_InstanceIndex, and the material's textures
@@ -238,6 +242,7 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(10));         // prefiltered environment cube
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(11));         // BRDF table
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(2));              // clamped trilinear sampler
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(12));         // screen-space occlusion
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -310,6 +315,22 @@ bool MeshPass::Initialize(const InitParams &params)
         return false;
     }
 
+    // Bound in screen-space occlusion's place on every frame it does not run,
+    // for the same reason and on the same terms: never sampled, never written.
+    nvrhi::TextureDesc noOcclusionDesc;
+    noOcclusionDesc.width = 1;
+    noOcclusionDesc.height = 1;
+    noOcclusionDesc.format = nvrhi::Format::R8_UNORM;
+    noOcclusionDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    noOcclusionDesc.keepInitialState = true;
+    noOcclusionDesc.debugName = "MeshPass::NoAmbientOcclusion";
+    _noAmbientOcclusion = device->createTexture(noOcclusionDesc);
+    if (_noAmbientOcclusion == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the empty occlusion texture.");
+        return false;
+    }
+
     nvrhi::BufferDesc frameConstantsDesc;
     frameConstantsDesc.byteSize = sizeof(FrameConstants);
     frameConstantsDesc.isConstantBuffer = true;
@@ -339,6 +360,15 @@ bool MeshPass::Initialize(const InitParams &params)
 
 bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 {
+    // The prepass's sets were built against the old framebuffer, and the next
+    // PreparePrepass rebuilds them against this one.
+    _framebufferInfo = framebufferInfo;
+    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
+    {
+        _prepassPipelines[i] = nullptr;
+        _afterPrepassPipelines[i] = nullptr;
+    }
+
     // The pipelines differ only in their pixel shader and their cull mode. Building
     // them from one desc is what keeps everything else identical: a cutout surface,
     // or the inside of one, must shade and depth-test exactly as the opaque front
@@ -373,8 +403,101 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     return true;
 }
 
+bool MeshPass::PreparePrepass()
+{
+    if (_prepassPipelines[0] != nullptr && _afterPrepassPipelines[0] != nullptr)
+    {
+        return true;
+    }
+
+    const auto load = [this](nvrhi::ShaderHandle &shader, const std::string &path, nvrhi::ShaderType type)
+    {
+        if (shader == nullptr)
+        {
+            shader = LoadSpirvShader(_device, path, type);
+        }
+        return shader != nullptr;
+    };
+    if (!load(_depthVertexShader, _depthVertexShaderPath, nvrhi::ShaderType::Vertex) ||
+        !load(_maskedDepthVertexShader, _maskedDepthVertexShaderPath, nvrhi::ShaderType::Vertex) ||
+        !load(_maskedDepthPixelShader, _maskedDepthPixelShaderPath, nvrhi::ShaderType::Pixel) ||
+        !load(_invariantVertexShader, _invariantVertexShaderPath, nvrhi::ShaderType::Vertex))
+    {
+        return false;
+    }
+
+    // The same desc the lit set is built from, so the three differ in nothing
+    // but what is set below: a surface that rasterized differently in the
+    // prepass would hold depth the lit pass cannot match.
+    nvrhi::GraphicsPipelineDesc desc;
+    desc.primType = nvrhi::PrimitiveType::TriangleList;
+    desc.inputLayout = _inputLayout;
+    desc.addBindingLayout(_bindingLayout);
+    desc.addBindingLayout(_bindlessLayout);
+    desc.renderState.rasterState.frontCounterClockwise = true;
+    desc.renderState.depthStencilState.depthTestEnable = true;
+
+    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
+    {
+        const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
+        const bool masked = MeshPipelineIsMasked(pipeline);
+        desc.renderState.rasterState.cullMode =
+            MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
+
+        // Depth and nothing else. The scene framebuffer has a colour target,
+        // and a pipeline with no fragment stage leaves what it would write
+        // there undefined, so the mask is what keeps the clear intact for the
+        // sky. An opaque surface gets no fragment stage at all, which is what
+        // keeps early depth rejection whole.
+        desc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
+        desc.PS = masked ? _maskedDepthPixelShader : nullptr;
+        desc.renderState.depthStencilState.depthWriteEnable = true;
+        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Less;
+        desc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
+        _prepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
+
+        // Shades each pixel once, for the surface the prepass kept there: equal
+        // passes it and everything behind fails. The depth is already written,
+        // and writing it again would only cost bandwidth.
+        desc.VS = _invariantVertexShader;
+        desc.PS = _pixelShaders[masked ? kPixelShaderMasked : kPixelShaderOpaque];
+        desc.renderState.depthStencilState.depthWriteEnable = false;
+        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+        desc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
+        _afterPrepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
+
+        if (_prepassPipelines[i] == nullptr || _afterPrepassPipelines[i] == nullptr)
+        {
+            Core::Log::Error("MeshPass: failed to create the depth prepass pipelines.");
+            for (uint32_t j = 0; j < kMeshPipelineCount; ++j)
+            {
+                _prepassPipelines[j] = nullptr;
+                _afterPrepassPipelines[j] = nullptr;
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+const nvrhi::GraphicsPipelineHandle *MeshPass::PipelinesFor(MeshPassStage stage) const
+{
+    switch (stage)
+    {
+    case MeshPassStage::DepthPrepass:    return _prepassPipelines;
+    case MeshPassStage::LitAfterPrepass: return _afterPrepassPipelines;
+    case MeshPassStage::Lit:
+    case MeshPassStage::Count:           break;
+    }
+    return _pipelines;
+}
+
 void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const FrameConstantsParams &params) const
 {
+    // A new frame has submitted nothing yet. Without this, a frame whose draw
+    // path found nothing to submit would leave Redraw replaying the last one's.
+    _lastSubmission = Submission::None;
+
     FrameConstants constants;
     constants.viewProjection = params.viewProjection;
     constants.view = params.view;
@@ -403,8 +526,11 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
 
     constants.indirectSky = glm::vec4(params.indirect.skyRadiance, 0.f);
     constants.indirectGround = glm::vec4(params.indirect.groundRadiance, 0.f);
-    constants.indirectSpecular =
-        glm::vec4(params.indirect.specularEnvironment, params.indirect.specularMaxLod, 0.f, 0.f);
+    // z is not the provider's: occlusion is visibility, applied to whatever
+    // radiance the provider answered, and rides in this lane only because the
+    // lane belongs to the indirect term it darkens.
+    constants.indirectSpecular = glm::vec4(params.indirect.specularEnvironment, params.indirect.specularMaxLod,
+                                           params.screenOcclusion ? 1.f : 0.f, 0.f);
 
     // Shadows. A zero cascade count is the whole of "nothing shadows this frame"
     // as far as the shader is concerned: it takes no lookup, so an unshadowed
@@ -482,6 +608,11 @@ void MeshPass::SetEnvironment(nvrhi::ITexture *specularCube)
     _environmentCube = specularCube;
 }
 
+void MeshPass::SetAmbientOcclusion(nvrhi::ITexture *occlusion)
+{
+    _ambientOcclusion = occlusion;
+}
+
 bool MeshPass::CreateBrdfTable()
 {
     nvrhi::TextureDesc tableDesc;
@@ -523,7 +654,8 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
 {
     if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
         _globalSetShadowMap == _shadowMap && _globalSetShadowAtlas == _shadowAtlas &&
-        _globalSetShadowViewTable == _shadowViewTable && _globalSetEnvironmentCube == _environmentCube)
+        _globalSetShadowViewTable == _shadowViewTable && _globalSetEnvironmentCube == _environmentCube &&
+        _globalSetAmbientOcclusion == _ambientOcclusion)
     {
         return _globalBindingSet;
     }
@@ -559,12 +691,16 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(10, environment));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(11, _brdfTable));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(2, _clampSampler));
+    nvrhi::ITexture *const occlusion =
+        _ambientOcclusion != nullptr ? _ambientOcclusion : _noAmbientOcclusion.Get();
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(12, occlusion));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;
     _globalSetShadowMap = _shadowMap;
     _globalSetShadowAtlas = _shadowAtlas;
     _globalSetShadowViewTable = _shadowViewTable;
     _globalSetEnvironmentCube = _environmentCube;
+    _globalSetAmbientOcclusion = _ambientOcclusion;
     return _globalBindingSet;
 }
 
@@ -587,7 +723,8 @@ void MeshPass::EnsureIndirectCapacity(uint32_t commandCount) const
     _indirectCapacity = capacity;
 }
 
-MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items) const
+MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items,
+                                       MeshPassStage stage) const
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
     SubmitStats stats;
@@ -693,6 +830,20 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     commandList->writeBuffer(_indirectBuffer, commands.data(),
                              commands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
 
+    _lastSubmission = Submission::Cpu;
+    stats.drawCalls = RecordCpuDraws(frame, stage).drawCalls;
+    return stats;
+}
+
+MeshPass::SubmitStats MeshPass::RecordCpuDraws(const RenderFrame &frame, MeshPassStage stage) const
+{
+    nvrhi::ICommandList *const commandList = frame.commandList;
+    SubmitStats stats;
+    const std::vector<nvrhi::DrawIndexedIndirectArguments> &commands = _scratchCommands;
+    const std::vector<const MeshBuffer *> &batchMeshes = _scratchBatchMeshes;
+    const std::vector<MeshPipeline> &batchPipelines = _scratchBatchPipelines;
+    const nvrhi::GraphicsPipelineHandle *const pipelines = PipelinesFor(stage);
+
     nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(_instanceBuffer.NativeBuffer());
 
     // Multi-draw each maximal run of batches that share the same arena vertex/index
@@ -715,7 +866,7 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
         }
 
         nvrhi::GraphicsState state;
-        state.pipeline = _pipelines[static_cast<uint32_t>(pipeline)];
+        state.pipeline = pipelines[static_cast<uint32_t>(pipeline)];
         state.framebuffer = frame.framebuffer;
         state.addBindingSet(globalBindingSet); // set 0: frame/sampler/lights/material table/instances
         state.addBindingSet(_bindlessTable);   // set 1: bindless textures
@@ -735,7 +886,27 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     return stats;
 }
 
-MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const
+MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in,
+                                               MeshPassStage stage) const
+{
+    _lastSubmission = Submission::Indirect;
+    _lastIndirect = in;
+    return RecordIndirectDraws(frame, in, stage);
+}
+
+MeshPass::SubmitStats MeshPass::Redraw(const RenderFrame &frame, MeshPassStage stage) const
+{
+    switch (_lastSubmission)
+    {
+    case Submission::Cpu:      return RecordCpuDraws(frame, stage);
+    case Submission::Indirect: return RecordIndirectDraws(frame, _lastIndirect, stage);
+    case Submission::None:     break;
+    }
+    return SubmitStats{};
+}
+
+MeshPass::SubmitStats MeshPass::RecordIndirectDraws(const RenderFrame &frame, const IndirectDrawInputs &in,
+                                                    MeshPassStage stage) const
 {
     SubmitStats stats;
     uint32_t totalCommands = 0;
@@ -778,7 +949,7 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
         {
             continue; // a pipeline nothing was placed for has no block to draw
         }
-        state.pipeline = _pipelines[p];
+        state.pipeline = PipelinesFor(stage)[p];
         commandList->setGraphicsState(state);
         commandList->drawIndexedIndirect(firstCommand * sizeof(nvrhi::DrawIndexedIndirectArguments), count);
         ++stats.drawCalls;

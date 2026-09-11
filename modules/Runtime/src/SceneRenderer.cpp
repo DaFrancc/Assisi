@@ -31,6 +31,21 @@ constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
 // pass's masked pipeline (see MeshPass::InitParams).
 constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
 
+// The depth prepass screen-space occlusion reads, and the lit pass's vertex
+// stage for drawing over it (see MeshPass::PreparePrepass). Loaded only once a
+// frame asks for occlusion.
+constexpr const char *kSceneDepthVertexShader = "shaders/mesh.vert.depth.spv";
+constexpr const char *kSceneMaskedDepthVertexShader = "shaders/mesh.vert.depth.masked.spv";
+constexpr const char *kSceneMaskedDepthPixelShader = "shaders/mesh_depth.frag.spv";
+constexpr const char *kSceneInvariantVertexShader = "shaders/mesh.vert.invariant.spv";
+
+// Screen-space occlusion's four fullscreen steps (see Render::SsaoPass).
+constexpr const char *kFullscreenVertexShader = "shaders/fullscreen.vert.spv";
+constexpr const char *kSsaoDepthShader = "shaders/ssao_depth.frag.spv";
+constexpr const char *kSsaoMultisampleDepthShader = "shaders/ssao_depth.frag.msaa.spv";
+constexpr const char *kSsaoOcclusionShader = "shaders/ssao.frag.spv";
+constexpr const char *kSsaoBlurShader = "shaders/ssao_blur.frag.spv";
+
 // The sun's cascade depth pass — a vertex stage and nothing else, since the
 // pipeline writes depth and no colour (see Render::ShadowPass).
 constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
@@ -142,6 +157,12 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                            .vertexShaderSpvPath = kSceneVertexShader,
                                                            .pixelShaderSpvPath = kScenePixelShader,
                                                            .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
+                                                           .depthVertexShaderSpvPath = kSceneDepthVertexShader,
+                                                           .maskedDepthVertexShaderSpvPath =
+                                                               kSceneMaskedDepthVertexShader,
+                                                           .maskedDepthPixelShaderSpvPath =
+                                                               kSceneMaskedDepthPixelShader,
+                                                           .invariantVertexShaderSpvPath = kSceneInvariantVertexShader,
                                                            .clusterGrid = &_lighting.Grid(),
                                                            .bindlessLayout = params.bindlessLayout,
                                                            .bindlessTable = params.bindlessTable,
@@ -169,6 +190,18 @@ bool SceneRenderer::Initialize(const InitParams &params)
     if (!_skyProbe.Initialize(_device, kSkyPrefilterShader))
     {
         Core::Log::Warn("SceneRenderer: sky reflections unavailable (the prefilter failed to initialise).");
+    }
+
+    // Non-fatal too: without it the indirect term is unoccluded, which is what
+    // it was before there was any occlusion.
+    if (!_ssaoPass.Initialize(Render::SsaoPass::InitParams{.device = _device,
+                                                           .vertexShaderSpvPath = kFullscreenVertexShader,
+                                                           .depthShaderSpvPath = kSsaoDepthShader,
+                                                           .multisampleDepthShaderSpvPath = kSsaoMultisampleDepthShader,
+                                                           .occlusionShaderSpvPath = kSsaoOcclusionShader,
+                                                           .blurShaderSpvPath = kSsaoBlurShader}))
+    {
+        Core::Log::Warn("SceneRenderer: ambient occlusion unavailable (its pipelines failed to initialise).");
     }
 
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
@@ -331,6 +364,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     _lighting.Upload(frame.commandList, view);
 
+    // Before the frame constants, which say whether the lit pass reads it.
+    const bool prepass = PrepareScreenOcclusion(frame);
+
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
         const Render::MeshPass::FrameConstantsParams frameConstants{.viewProjection = projection * view,
@@ -342,9 +378,13 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .dirLightCount = _lighting.DirLightCount(),
                                                                     .debugView = _debugView,
                                                                     .indirect = ResolveIndirect(sky, _ambient, probe),
-                                                                    .shadows = shadows};
+                                                                    .shadows = shadows,
+                                                                    .screenOcclusion = prepass};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
+    // With occlusion on, this is the depth prepass: the same extract, cull and
+    // sort as ever, drawn as depth alone, and kept for the lit pass below to
+    // shade. With it off, it is the lit pass, exactly as it always was.
     _lastDrawStats = DrawScene(DrawSceneParams{.scene = scene,
                                                .meshPass = _meshPass,
                                                .frame = frame,
@@ -357,7 +397,21 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                .gpuCulling = _gpuCulling,
                                                .culler = &_meshCuller,
                                                .cullBuilder = &_cullBuilder,
-                                               .lodSelector = &_lodSelector});
+                                               .lodSelector = &_lodSelector,
+                                               .stage = prepass ? Render::MeshPassStage::DepthPrepass
+                                                                : Render::MeshPassStage::Lit});
+
+    if (prepass)
+    {
+        _ssaoPass.Render(frame.commandList,
+                         Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
+
+        // Under the name the lit pass has always been measured by, so a capture
+        // with occlusion on reads `draw-scene` against its own history and the
+        // prepass and occlusion as the new rows beside it.
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "draw-scene");
+        _lastDrawStats.drawCalls += _meshPass.Redraw(frame, Render::MeshPassStage::LitAfterPrepass).drawCalls;
+    }
 
     // The sky goes last, into whatever the geometry left at the depth clear. Both
     // halves of it come from the scene — the sun from a directional light, the
@@ -487,6 +541,36 @@ SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, co
     }
     _meshPass.SetEnvironment(_skyProbe.SpecularTexture());
     return SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()};
+}
+
+bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
+{
+    // Released rather than kept while off — pay for what you place. A frame
+    // with no depth texture to read has nothing to occlude from.
+    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && frame.depthTexture != nullptr;
+    if (wanted)
+    {
+        if (!_meshPass.PreparePrepass())
+        {
+            Core::Log::Warn("SceneRenderer: ambient occlusion disabled (the depth prepass failed to build).");
+            _ssaoSettings.enabled = false;
+        }
+        else if (!_ssaoPass.Configure(frame.width, frame.height, frame.depthTexture))
+        {
+            Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
+            _ssaoSettings.enabled = false;
+        }
+    }
+    if (!wanted || !_ssaoSettings.enabled)
+    {
+        _ssaoPass.Release();
+        _meshPass.SetAmbientOcclusion(nullptr);
+        return false;
+    }
+    // After Configure: a reallocation swaps the texture handle, and the mesh
+    // pass rebuilds its binding set when it notices.
+    _meshPass.SetAmbientOcclusion(_ssaoPass.OcclusionTexture());
+    return true;
 }
 
 void SceneRenderer::OnSceneReplaced()

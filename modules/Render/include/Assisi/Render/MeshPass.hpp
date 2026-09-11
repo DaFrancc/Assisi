@@ -47,6 +47,24 @@ enum class MaterialDebugView : uint32_t
     Normal,
     Occlusion,
     Emissive,
+    /// What screen-space occlusion left open at each pixel; white on a frame it
+    /// did not run.
+    ScreenOcclusion,
+};
+
+/// @brief Which of the mesh pass's three pipeline sets a draw goes through.
+///
+/// Lit is the only one a frame without a depth prepass ever touches. The other
+/// two exist for screen-space occlusion, which has to read the scene's depth
+/// before the lit pass runs: the prepass writes that depth, and the lit pass
+/// after it shades exactly the surfaces the prepass kept and writes no depth of
+/// its own.
+enum class MeshPassStage : uint8_t
+{
+    Lit,
+    DepthPrepass,
+    LitAfterPrepass,
+    Count
 };
 
 /// @brief What the shadow lookup draws instead of shading, for diagnosis.
@@ -98,6 +116,15 @@ public:
         /// branch because a shader that can discard costs its whole pipeline
         /// early depth rejection, which opaque geometry must not pay for.
         std::string maskedPixelShaderSpvPath;
+        /// The depth prepass's builds, loaded the first time a frame asks for a
+        /// prepass (PreparePrepass) and never before: the vertex stage alone,
+        /// the same with the varyings the alpha test reads, and that test.
+        std::string depthVertexShaderSpvPath;
+        std::string maskedDepthVertexShaderSpvPath;
+        std::string maskedDepthPixelShaderSpvPath;
+        /// The lit pass's vertex stage with an invariant position, for drawing
+        /// after a prepass — see mesh.vert.
+        std::string invariantVertexShaderSpvPath;
         /// Must outlive the pass — its light buffers bind into every binding set.
         const ClusterGrid *clusterGrid = nullptr;
         /// The AssetCache's bindless material-texture table + layout (stage D):
@@ -126,6 +153,16 @@ public:
     /// don't depend on FramebufferInfo) stay valid and cached.
     /// @pre IsValid() — call Initialize() first.
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
+
+    /// @brief Build the DepthPrepass and LitAfterPrepass pipelines, if they are
+    /// not built already for the current framebuffer.
+    ///
+    /// Lazy, so a renderer that never asks for a prepass never loads its shaders
+    /// or holds its pipelines. A RebuildPipeline drops them, and the next call
+    /// here builds them against the new framebuffer.
+    /// @return false if a shader failed to load or a pipeline to build; the two
+    /// stages are then unusable and the caller should draw Lit alone.
+    [[nodiscard]] bool PreparePrepass();
 
     /// @brief What the mesh shader needs to sample the sun's cascades.
     ///
@@ -180,6 +217,10 @@ public:
         /// answer and never asks which provider gave it.
         IndirectConstants indirect;
         ShadowFrameData shadows;
+        /// Whether SetAmbientOcclusion's texture holds this frame's screen-space
+        /// occlusion. False leaves the shader reading no texture and taking the
+        /// indirect expressions it had before there was any.
+        bool screenOcclusion = false;
     };
 
     /// @brief Updates the per-frame constant buffer (view-projection + camera view
@@ -219,6 +260,14 @@ public:
     /// so is the one that set this. A different handle invalidates the cached
     /// set.
     void SetEnvironment(nvrhi::ITexture *specularCube);
+
+    /// @brief Point the shader at screen-space occlusion's result (SsaoPass
+    /// owns it), or at none.
+    ///
+    /// Null binds a placeholder, on the same terms as the environment's: the
+    /// shader reads the texture only on a frame whose constants say occlusion
+    /// ran. A different handle invalidates the cached set.
+    void SetAmbientOcclusion(nvrhi::ITexture *occlusion);
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). They describe the batching
@@ -267,8 +316,12 @@ public:
     /// adjacent, so they coalesce — the sort drives instancing, not binds.
     /// Items must reference live resources (valid until the frame is submitted).
     /// @param frame  The frame's command list + framebuffer + viewport size.
+    /// @param stage  Which pipeline set records the draws. A DepthPrepass
+    ///               submission is kept, and Redraw replays it lit.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
-    [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items) const;
+    ///      PreparePrepass() succeeded, for any stage but Lit.
+    [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items,
+                                     MeshPassStage stage = MeshPassStage::Lit) const;
 
     /// @brief The GPU-built draw list a MeshCuller produced this frame (stage F1):
     /// the compute pass wrote the per-instance records and grew each batch
@@ -304,7 +357,17 @@ public:
     /// reports the survivor/batch tallies from the culler.
     /// @pre IsValid(), UpdateFrameConstants() this frame, and a MeshCuller::Cull
     ///      recorded into the same command list ahead of this call.
-    [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const;
+    [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in,
+                                             MeshPassStage stage = MeshPassStage::Lit) const;
+
+    /// @brief Record this frame's last Submit or SubmitIndirect again, through
+    /// @p stage's pipelines.
+    ///
+    /// What the lit pass after a prepass draws with: the same instance records
+    /// and indirect commands, already uploaded, so both passes draw the very same
+    /// list and nothing is extracted, sorted, culled or uploaded twice.
+    /// Draws nothing when nothing has been submitted since UpdateFrameConstants.
+    [[nodiscard]] SubmitStats Redraw(const RenderFrame &frame, MeshPassStage stage) const;
 
     bool IsValid() const
     {
@@ -345,6 +408,16 @@ private:
     /// of its own. Once, at Initialize.
     [[nodiscard]] bool CreateBrdfTable();
 
+    /// @brief The pipeline set @p stage draws through.
+    [[nodiscard]] const nvrhi::GraphicsPipelineHandle *PipelinesFor(MeshPassStage stage) const;
+
+    /// @brief Record the CPU path's prepared commands through @p stage.
+    [[nodiscard]] SubmitStats RecordCpuDraws(const RenderFrame &frame, MeshPassStage stage) const;
+
+    /// @brief Record @p in's commands through @p stage.
+    [[nodiscard]] SubmitStats RecordIndirectDraws(const RenderFrame &frame, const IndirectDrawInputs &in,
+                                                  MeshPassStage stage) const;
+
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
 
@@ -371,6 +444,33 @@ private:
     // carry and whether they cull back faces. A draw run selects its own off the
     // sort key.
     nvrhi::GraphicsPipelineHandle _pipelines[kMeshPipelineCount];
+
+    // The prepass's two sets, empty until PreparePrepass builds them and dropped
+    // by RebuildPipeline, which is why the framebuffer they are built against is
+    // kept. The shaders stay once loaded: they do not depend on the framebuffer.
+    nvrhi::FramebufferInfo _framebufferInfo;
+    std::string _depthVertexShaderPath;
+    std::string _maskedDepthVertexShaderPath;
+    std::string _maskedDepthPixelShaderPath;
+    std::string _invariantVertexShaderPath;
+    nvrhi::ShaderHandle _depthVertexShader;
+    nvrhi::ShaderHandle _maskedDepthVertexShader;
+    nvrhi::ShaderHandle _maskedDepthPixelShader;
+    nvrhi::ShaderHandle _invariantVertexShader;
+    nvrhi::GraphicsPipelineHandle _prepassPipelines[kMeshPipelineCount];
+    nvrhi::GraphicsPipelineHandle _afterPrepassPipelines[kMeshPipelineCount];
+
+    // Which path this frame's draws were last submitted through, and for the GPU
+    // path what it was handed, so Redraw can replay them. The CPU path's own
+    // scratch below already holds its commands.
+    enum class Submission : uint8_t
+    {
+        None,
+        Cpu,
+        Indirect
+    };
+    mutable Submission _lastSubmission = Submission::None;
+    mutable IndirectDrawInputs _lastIndirect;
     nvrhi::BufferHandle _frameConstantsBuffer;
 
     // The sun's cascade array (ShadowPass owns it). Non-owning: a reallocation
@@ -411,6 +511,10 @@ private:
     // view table does.
     nvrhi::ITexture *_environmentCube = nullptr;
     nvrhi::TextureHandle _noEnvironmentCube;
+    // Screen-space occlusion's result (SsaoPass owns it), or null for none, and
+    // its stand-in on the same terms as the environment's.
+    nvrhi::ITexture *_ambientOcclusion = nullptr;
+    nvrhi::TextureHandle _noAmbientOcclusion;
     // The GGX lobe's integrals by (n.v, roughness): the split sum's scale and
     // bias, and the per-light lobe's directional albedo. Owned here because
     // every lit fragment reads it, probe or no probe.
@@ -423,6 +527,7 @@ private:
     mutable const nvrhi::ITexture *_globalSetShadowAtlas = nullptr;
     mutable const nvrhi::IBuffer *_globalSetShadowViewTable = nullptr;
     mutable const nvrhi::ITexture *_globalSetEnvironmentCube = nullptr;
+    mutable const nvrhi::ITexture *_globalSetAmbientOcclusion = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn

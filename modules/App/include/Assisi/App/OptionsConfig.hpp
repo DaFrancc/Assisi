@@ -7,6 +7,7 @@
 #include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
+#include <Assisi/Render/SsaoSettings.hpp>
 
 #include <cstdint>
 #include <string>
@@ -41,6 +42,10 @@ struct OptionsConfig
     /// @brief Whether the sky is reflected, and how finely. Sanitized on load:
     /// the resolution sizes the probe's cubes.
     Render::EnvironmentSettings environment;
+
+    /// @brief Screen-space ambient occlusion. Sanitized on load: the sample
+    /// count bounds a loop over a fixed-size kernel.
+    Render::SsaoSettings ambientOcclusion;
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
