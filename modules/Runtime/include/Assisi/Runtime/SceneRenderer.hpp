@@ -34,6 +34,8 @@
 #include <Assisi/Render/ShadowPass.hpp>
 #include <Assisi/Render/SkyPass.hpp>
 #include <Assisi/Render/SkyProbe.hpp>
+#include <Assisi/Render/SsaoPass.hpp>
+#include <Assisi/Render/SsaoSettings.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -276,6 +278,14 @@ public:
     }
     [[nodiscard]] const Render::EnvironmentSettings &EnvironmentSettings() const { return _environmentSettings; }
 
+    /// @brief Whether screen-space occlusion darkens the indirect term, and how.
+    /// Applied on the next Render().
+    ///
+    /// Off draws the frame there was before it existed — no depth prepass, the
+    /// lit pass through its own pipelines — and holds no texture of it.
+    void SetSsaoSettings(const Render::SsaoSettings &settings) { _ssaoSettings = Render::Sanitized(settings); }
+    [[nodiscard]] const Render::SsaoSettings &SsaoSettings() const { return _ssaoSettings; }
+
     /// @brief The probe as the most recent Render() left it: its face size and
     /// mips (both zero while it holds nothing), and how its bakes have gone.
     [[nodiscard]] const Render::SkyProbe &SkyProbe() const { return _skyProbe; }
@@ -501,6 +511,13 @@ private:
     /// whether an environment answers this frame.
     [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
 
+    /// @brief Hold screen-space occlusion's targets and the prepass pipelines
+    /// for @p frame, and point the mesh pass at the result. Releases all of it
+    /// while the setting is off, and turns the setting off if any of it fails.
+    ///
+    /// @return whether this frame draws a depth prepass and runs occlusion.
+    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame);
+
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
     /// fit when nothing casts, which is what makes the lookup free.
@@ -631,6 +648,10 @@ private:
     // shader. Holds nothing while there is no sky.
     Render::SkyProbe _skyProbe;
     Render::EnvironmentSettings _environmentSettings;
+    // Reads the depth prepass's depth, between it and the lit pass. Holds
+    // nothing while the setting is off.
+    Render::SsaoPass _ssaoPass;
+    Render::SsaoSettings _ssaoSettings;
     Render::OutlinePass _outlinePass;
     Render::IconPass _iconPass;
     Render::LinePass _linePass;

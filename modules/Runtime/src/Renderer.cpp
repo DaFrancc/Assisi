@@ -215,8 +215,8 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
         ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "submit-indirect");
-        const Assisi::Render::GpuPassTimerScope drawTimer{"draw-scene"};
-        submitStats = params.meshPass.SubmitIndirect(params.frame, inputs);
+        const Assisi::Render::GpuPassTimerScope drawTimer{DrawSceneTimerName(params.stage)};
+        submitStats = params.meshPass.SubmitIndirect(params.frame, inputs, params.stage);
     }
 
     // Survivor tallies read back from the GPU (a few frames stale). Identical
@@ -362,8 +362,8 @@ DrawStats DrawScene(const DrawSceneParams &params)
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
         ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-submit");
-        const Assisi::Render::GpuPassTimerScope drawTimer{"draw-scene"};
-        submitStats = meshPass.Submit(params.frame, items);
+        const Assisi::Render::GpuPassTimerScope drawTimer{DrawSceneTimerName(params.stage)};
+        submitStats = meshPass.Submit(params.frame, items, params.stage);
     }
 
     stats.drawnItems = submitStats.instances;

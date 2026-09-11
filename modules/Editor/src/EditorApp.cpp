@@ -740,6 +740,8 @@ void EditorApp::SetupScene()
     _sceneRenderer.SetShadowSettings(GetOptions().shadows);
     // The same for the sky probe, which holds nothing until a sky does.
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
+    // And for screen-space occlusion, which holds nothing while it is off.
+    _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.

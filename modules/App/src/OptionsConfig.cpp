@@ -255,6 +255,16 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             cfg.environment = Render::Sanitized(cfg.environment);
         }
 
+        if (json.contains("ambientOcclusion"))
+        {
+            const auto &occlusion = json.at("ambientOcclusion");
+            ReadField(occlusion, "enabled", cfg.ambientOcclusion.enabled);
+            ReadField(occlusion, "samples", cfg.ambientOcclusion.sampleCount);
+            ReadField(occlusion, "radius", cfg.ambientOcclusion.radius);
+            ReadField(occlusion, "strength", cfg.ambientOcclusion.strength);
+            cfg.ambientOcclusion = Render::Sanitized(cfg.ambientOcclusion);
+        }
+
         if (json.contains("frameSync"))
         {
             const auto &fs = json.at("frameSync");
@@ -351,6 +361,12 @@ std::string OptionsConfig::ToJsonText() const
     probe["resolution"] = environment.resolution;
     probe["samples"] = environment.sampleCount;
     probe["rebakeDegrees"] = environment.rebakeDegrees;
+
+    nlohmann::json &occlusion = json["ambientOcclusion"];
+    occlusion["enabled"] = ambientOcclusion.enabled;
+    occlusion["samples"] = ambientOcclusion.sampleCount;
+    occlusion["radius"] = ambientOcclusion.radius;
+    occlusion["strength"] = ambientOcclusion.strength;
 
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;

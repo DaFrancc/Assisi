@@ -195,5 +195,21 @@ assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "sh
 assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/shadow_depth.vert"
     "shaders/shadow_depth.vert.masked.spv" ASSISI_ALPHA_MASK)
 
+# The depth prepass screen-space occlusion reads, and the lit pass that draws
+# over it. The plain mesh.vert build stays the lit pass whenever there is no
+# prepass, so a frame with occlusion off draws through exactly the stage it
+# always did; these three declare their position invariant so the lit pass's
+# depth matches the prepass's to the bit.
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
+    "shaders/mesh.vert.depth.spv" ASSISI_DEPTH_ONLY)
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
+    "shaders/mesh.vert.depth.masked.spv" ASSISI_DEPTH_ONLY ASSISI_ALPHA_MASK)
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
+    "shaders/mesh.vert.invariant.spv" ASSISI_INVARIANT_POSITION)
+
+# Screen-space occlusion's first step, for a multisampled depth buffer.
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/ssao_depth.frag"
+    "shaders/ssao_depth.frag.msaa.spv" ASSISI_MSAA_DEPTH)
+
 add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

@@ -89,6 +89,10 @@ private:
     /// what the probe is doing.
     static void DrawEnvironmentSettings(const Frame &frame);
 
+    /// @brief The screen-space occlusion section: the switch, the sample count,
+    /// the radius and the strength.
+    static void DrawAmbientOcclusionSettings(const Frame &frame);
+
     bool _showOptions = false;
 
     /// NVIDIA GPU telemetry (clocks/power/util/temp). Initialises NVML on first

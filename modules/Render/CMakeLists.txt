@@ -37,6 +37,9 @@ target_sources(Assisi-Render
     "include/Assisi/Render/SkyProbe.hpp"
     "include/Assisi/Render/SkyProbeInputs.hpp"
     "include/Assisi/Render/SpecularIbl.hpp"
+    "include/Assisi/Render/Ssao.hpp"
+    "include/Assisi/Render/SsaoPass.hpp"
+    "include/Assisi/Render/SsaoSettings.hpp"
     "include/Assisi/Render/Texture.hpp"
     "include/Assisi/Render/Tonemap.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
@@ -70,6 +73,7 @@ target_sources(Assisi-Render
     "src/ShadowView.cpp"
     "src/SkyPass.cpp"
     "src/SkyProbe.cpp"
+    "src/SsaoPass.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )

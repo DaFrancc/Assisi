@@ -3,8 +3,9 @@ ISSUE WORKFLOW
 
 One agent, one issue, one conversation. The agent reading this does all of it —
 setup, the work, the gate, and landing it — in the main session, where the
-programmer can watch it happen. There is no orchestrator and no worker. Do NOT
-spawn a subagent for any part of this; the visible progress is the point.
+programmer can watch it happen. The one subagent is the planner in step 8,
+which is handed a brief and returns a plan. Do NOT spawn a subagent for any
+other part of this; the visible progress is the point.
 
 When the issue is landed, the conversation is over. The programmer opens a new
 one for the next issue.
@@ -62,7 +63,9 @@ long-lived branch:
 HARD LIMITS
 -----------
 
-  - Do NOT spawn subagents. Do the work yourself, in this conversation.
+  - Do NOT spawn subagents, except the fable-planner agent in step 8.
+    Everything else — the investigation included — you do yourself, in this
+    conversation.
   - Do NOT push, open a PR, or merge anything before the programmer approves at
     the gate. Nothing reaches the remote before that, with the single exception
     of the branch creation in step 6.
@@ -122,9 +125,52 @@ PART 1 — SETUP
 PART 2 — THE WORK
 -----------------
 
- 8. Make a plan using a fable agent. The programmer does NOT need to approve it; it exists so you go
-    in with one. Say it out loud in the conversation — being watchable is the
-    reason this runs in the main session.
+ 8. Plan. You do the investigation; the fable-planner agent writes the plan
+    from what you found. Fable plans better than you and costs far more per
+    token, so it gets the judgement and none of the legwork: every file it
+    opens and every line it writes should be one only it could usefully spend.
+    The programmer does NOT need to approve the plan; it exists so you go in
+    with one.
+
+    a. Investigate, here in the main session where it can be watched. Read the
+       issue, the scope decisions that bear on it, and the code it touches.
+       Find the patterns the change should follow, the tests that cover the
+       area, and anything that looks like a trap. Do not hand this to a search
+       subagent.
+
+    b. Skip Fable when the issue is 2 points or fewer, or confined to one file,
+       and the investigation turned up no design question you are unsure of.
+       Write the plan yourself and go to 8e.
+
+    c. Write the brief. It is all the context Fable gets, so it carries
+       everything the plan needs and nothing it does not:
+         - the issue description, verbatim;
+         - the scope decisions that apply, quoted rather than summarised;
+         - each file involved, with the excerpts that matter and their line
+           numbers — excerpts, not whole files;
+         - the patterns to follow, and where the area's tests live;
+         - the CONVENTIONS below that the change will run into;
+         - what you are unsure of.
+
+    d. Spawn the fable-planner agent. Its prompt is fable_planner.txt,
+       verbatim, followed by the brief. It can Read the files the brief names
+       but cannot search, so where the brief leaves a gap it replies with
+       questions instead of a plan. Look the answers up —
+       do not guess — and continue the same agent with SendMessage (a deferred
+       tool; load it with ToolSearch("select:SendMessage")). Allow one round of
+       questions, and a second only if the answers raised a new one. A question
+       only the programmer can answer goes to step 9.
+
+       Never use a fork for this: a fork inherits this whole conversation and
+       runs on your model, not Fable. If the fable-planner agent type is not
+       available, spawn a general-purpose agent with model "fable" and the same
+       prompt. Nothing takes its search tools away there, so the rules in
+       fable_planner.txt are all that keep it from exploring.
+
+    e. Say the plan out loud in the conversation — being watchable is the
+       reason this runs in the main session. Relay Fable's plan as written. If
+       you disagree with part of it, say which part and why; do not quietly
+       deviate.
  9. If the plan needs a decision only the programmer can make, stop and ask
     before continuing.
 10. Write the test cases first, where a test would prove the bug exists or is
