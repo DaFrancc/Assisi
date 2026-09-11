@@ -386,6 +386,15 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         changed = true;
     }
 
+    int32_t localFormatIndex = static_cast<int32_t>(shadows.local.format);
+    if (ImGui::Combo("Depth Format##local", &localFormatIndex, kFormatNames, IM_ARRAYSIZE(kFormatNames)))
+    {
+        shadows.local.format = static_cast<Assisi::Render::ShadowMapFormat>(localFormatIndex);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("D32 doubles the atlas's memory. A local light's depth range is its own reach, so D16 "
+                          "is millimetres there.");
+
     static const char *const kFaceNames[] = {"128", "256", "512", "1024", "2048"};
     static constexpr std::uint32_t kFaceResolutions[] = {128u, 256u, 512u, 1024u, 2048u};
     static_assert(std::size(kFaceNames) == std::size(kFaceResolutions), "Every face class needs a label.");
