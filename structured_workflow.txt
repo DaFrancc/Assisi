@@ -152,9 +152,10 @@ PART 2 — THE WORK
          - the CONVENTIONS below that the change will run into;
          - what you are unsure of.
 
-    d. Spawn the fable-planner agent with the brief as its prompt. It can Read
-       the files the brief names but cannot search, so where the brief leaves a
-       gap it replies with questions instead of a plan. Look the answers up —
+    d. Spawn the fable-planner agent. Its prompt is fable_planner.txt,
+       verbatim, followed by the brief. It can Read the files the brief names
+       but cannot search, so where the brief leaves a gap it replies with
+       questions instead of a plan. Look the answers up —
        do not guess — and continue the same agent with SendMessage (a deferred
        tool; load it with ToolSearch("select:SendMessage")). Allow one round of
        questions, and a second only if the answers raised a new one. A question
@@ -162,9 +163,9 @@ PART 2 — THE WORK
 
        Never use a fork for this: a fork inherits this whole conversation and
        runs on your model, not Fable. If the fable-planner agent type is not
-       available, spawn a general-purpose agent with model "fable" and put the
-       planner's rules — Read only the named files, ask rather than search,
-       reply in the fixed plan shape — at the top of the brief.
+       available, spawn a general-purpose agent with model "fable" and the same
+       prompt. Nothing takes its search tools away there, so the rules in
+       fable_planner.txt are all that keep it from exploring.
 
     e. Say the plan out loud in the conversation — being watchable is the
        reason this runs in the main session. Relay Fable's plan as written. If
