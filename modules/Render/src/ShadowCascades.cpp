@@ -186,8 +186,8 @@ CascadeFit FitCascades(const CascadeFitParams &params)
         const glm::vec3 center = SnapToTexelGrid(sphere.center, lightRotation, worldUnitsPerTexel);
 
         // The slice's own extent along the light, and nothing more. A caster
-        // upstream of the near plane still reaches the map: shadow_depth.vert
-        // flattens it onto the plane rather than letting it clip, which costs it
+        // upstream of the near plane still reaches the map: the depth pass clamps
+        // it onto the plane rather than letting it clip, which costs it
         // an ordering it does not need — nothing upstream of the near plane is a
         // receiver in this view.
         //
@@ -375,6 +375,34 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
     // adds anything.
     const float bilinearUv = 0.5f / static_cast<float>(std::max(safe.resolution, 1u));
     return (kernelUv + bilinearUv) * boxWidth;
+}
+
+float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv)
+{
+    return std::clamp(penumbraUvPerDepth * gapDepth, 0.f, maxReachUv);
+}
+
+SunPcssConstants SunPcssFrameConstants(const SunShadowSettings &settings)
+{
+    // A texel of the map is 1 / resolution of UV, and — because a cascade's
+    // depth range is its box width — the same 1 / resolution of depth.
+    const float texelUv = ShadowTexelSizeUv(settings);
+    return SunPcssConstants{.penumbraUvPerDepth = kSunPenumbraPerWorldUnit,
+                            .maxReachUv = kPcssMaxReachTexels * texelUv,
+                            .texelDepth = texelUv};
+}
+
+float CascadePcssTapStepUv(const ShadowCascade &cascade, const SunShadowSettings &settings, float blockerDistance)
+{
+    if (!(cascade.depthRange > 0.f))
+    {
+        return 0.f;
+    }
+    const SunPcssConstants constants = SunPcssFrameConstants(Sanitized(settings));
+    const float reachUv =
+        PcssPenumbraUv(constants.penumbraUvPerDepth, blockerDistance / cascade.depthRange, constants.maxReachUv);
+    const float worldCapUv = kMaxPenumbraWorld / (kVogelFilterRadiusTaps * cascade.depthRange);
+    return std::min(reachUv / kVogelFilterRadiusTaps, worldCapUv);
 }
 
 float CascadeNormalOffsetWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)

@@ -87,6 +87,28 @@ static const char *ShadowFilterToString(Render::ShadowFilter filter)
     }
 }
 
+static Render::ShadowPcss ShadowPcssFromString(const std::string &str)
+{
+    if (str == "sun")
+        return Render::ShadowPcss::Sun;
+    if (str == "sunAndLocals")
+        return Render::ShadowPcss::SunAndLocals;
+    return Render::ShadowPcss::Off;
+}
+
+static const char *ShadowPcssToString(Render::ShadowPcss pcss)
+{
+    switch (pcss)
+    {
+    case Render::ShadowPcss::Sun:
+        return "sun";
+    case Render::ShadowPcss::SunAndLocals:
+        return "sunAndLocals";
+    default:
+        return "off";
+    }
+}
+
 static Render::ShadowMapFormat ShadowFormatFromString(const std::string &str)
 {
     return str == "d16" ? Render::ShadowMapFormat::D16 : Render::ShadowMapFormat::D32;
@@ -166,6 +188,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
         {
             const auto &sh = json.at("shadows");
             Render::ShadowSettings &shadows = cfg.shadows;
+            ReadMapped(sh, "pcss", shadows.pcss, ShadowPcssFromString);
             if (sh.contains("sun"))
             {
                 const auto &sun = sh.at("sun");
@@ -198,6 +221,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 ReadField(local, "depthBiasTexels", shadows.local.depthBiasTexels);
                 ReadField(local, "slopeBias", shadows.local.slopeBias);
                 ReadField(local, "normalOffsetTexels", shadows.local.normalOffsetTexels);
+                ReadField(local, "sourceRadius", shadows.local.sourceRadius);
                 if (local.contains("cache"))
                 {
                     const auto &cache = local.at("cache");
@@ -281,6 +305,8 @@ std::string OptionsConfig::ToJsonText() const
     json["toneMap"]["contrast"] = tonemap.contrast;
     json["toneMap"]["saturation"] = tonemap.saturation;
 
+    json["shadows"]["pcss"] = ShadowPcssToString(shadows.pcss);
+
     nlohmann::json &sun = json["shadows"]["sun"];
     sun["enabled"] = shadows.sun.enabled;
     sun["cascades"] = shadows.sun.cascadeCount;
@@ -305,6 +331,7 @@ std::string OptionsConfig::ToJsonText() const
     local["depthBiasTexels"] = shadows.local.depthBiasTexels;
     local["slopeBias"] = shadows.local.slopeBias;
     local["normalOffsetTexels"] = shadows.local.normalOffsetTexels;
+    local["sourceRadius"] = shadows.local.sourceRadius;
 
     nlohmann::json &cache = json["shadows"]["local"]["cache"];
     cache["enabled"] = shadows.local.cache.enabled;

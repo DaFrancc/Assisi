@@ -250,6 +250,17 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
         return false;
     }
 
+    // The sun's cascades flatten casters above their near plane onto it by
+    // clamping each fragment's depth (ShadowDepthRenderer). Clamping vertices
+    // instead bends every triangle that crosses the plane, and the far plane
+    // then cuts tall casters short. Core 1.0 but optional; every desktop driver
+    // has it. Lock-step with the enable in CreateLogicalDevice.
+    if (features2.features.depthClamp != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing depthClamp");
+        return false;
+    }
+
     return true;
 }
 
@@ -378,6 +389,8 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     coreFeatures.drawIndirectFirstInstance = VK_TRUE;
     // The shadow passes' slope-bias cap. DeviceMeetsRequirements verified it.
     coreFeatures.depthBiasClamp = VK_TRUE;
+    // The cascades' per-fragment pancaking. DeviceMeetsRequirements verified it.
+    coreFeatures.depthClamp = VK_TRUE;
 
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

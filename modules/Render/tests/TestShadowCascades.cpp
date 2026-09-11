@@ -304,7 +304,7 @@ TEST_CASE("A cascade's depth range is its own slice, whatever the scene holds")
     // map's quantisation step is this range over 65536 — so a range stretched to
     // reach the furthest caster in the scene puts the step above the bias meant
     // to cover it. Casters upstream of the near plane reach the map by being
-    // flattened onto it in shadow_depth.vert, not by widening this.
+    // clamped onto it in the depth pass, not by widening this.
     CascadeFitParams params = DefaultParams();
     params.settings.cascadeCount = 1;
     params.settings.maxDistance = 40.f;
@@ -674,6 +674,112 @@ TEST_CASE("Raising quality narrows what the shadow reads through")
     }
 }
 
+TEST_CASE("Contact hardening softens a blocker's shadow the same in every cascade")
+{
+    // A penumbra is a width in the world: an occluder a metre above the ground
+    // throws the same soft edge whichever cascade happens to be recording it. A
+    // coefficient that carried a cascade term would print a step in softness at
+    // every seam, and the blend band would smear it rather than hide it.
+    constexpr float kBlockerDistance = 1.f;
+    for (const ShadowTier tier : {ShadowTier::Low, ShadowTier::Medium, ShadowTier::High, ShadowTier::Ultra})
+    {
+        CAPTURE(static_cast<std::uint32_t>(tier));
+        CascadeFitParams params = DefaultParams();
+        params.settings = Sanitized(TierSettings(tier).sun);
+        const SunPcssConstants constants = SunPcssFrameConstants(params.settings);
+
+        const CascadeFit fit = FitCascades(params);
+        REQUIRE(fit.count > 0);
+        for (std::uint32_t i = 0; i < fit.count; ++i)
+        {
+            CAPTURE(i);
+            const ShadowCascade &cascade = fit.cascades[i];
+            const float gap = kBlockerDistance / cascade.depthRange;
+            REQUIRE(gap <= 1.f);
+            const float reachUv = PcssPenumbraUv(constants.penumbraUvPerDepth, gap, constants.maxReachUv);
+            REQUIRE(reachUv < constants.maxReachUv);
+            CHECK(reachUv * 2.f * cascade.radius == doctest::Approx(kSunPenumbraPerWorldUnit * kBlockerDistance));
+        }
+    }
+}
+
+TEST_CASE("A contact-hardened penumbra is zero at contact and grows with the gap until its cap")
+{
+    // Growing with the gap is also what lets the shader answer "lit" when its
+    // blocker search comes back empty: the search is sized for the widest gap
+    // there can be, so no kernel reaches further than it looked.
+    const SunPcssConstants constants = SunPcssFrameConstants(TierSettings(ShadowTier::Ultra).sun);
+
+    CHECK(PcssPenumbraUv(constants.penumbraUvPerDepth, 0.f, constants.maxReachUv) == 0.f);
+    // A "blocker" behind the receiver is not one, and must not widen anything.
+    CHECK(PcssPenumbraUv(constants.penumbraUvPerDepth, -0.25f, constants.maxReachUv) == 0.f);
+
+    float previous = 0.f;
+    for (const float gap : {0.001f, 0.01f, 0.1f, 0.5f, 1.f})
+    {
+        const float reach = PcssPenumbraUv(constants.penumbraUvPerDepth, gap, constants.maxReachUv);
+        CHECK(reach >= previous);
+        CHECK(reach <= constants.maxReachUv);
+        previous = reach;
+    }
+    CHECK(PcssPenumbraUv(constants.penumbraUvPerDepth, 0.001f, constants.maxReachUv) <
+          PcssPenumbraUv(constants.penumbraUvPerDepth, 0.01f, constants.maxReachUv));
+    CHECK(PcssPenumbraUv(constants.penumbraUvPerDepth, 1.0e6f, constants.maxReachUv) ==
+          doctest::Approx(constants.maxReachUv));
+}
+
+TEST_CASE("The sun's contact-hardening constants are quoted in the map's own texels")
+{
+    for (const std::uint32_t resolution : {1024u, 2048u, 4096u})
+    {
+        CAPTURE(resolution);
+        SunShadowSettings settings;
+        settings.resolution = resolution;
+        const SunPcssConstants constants = SunPcssFrameConstants(settings);
+        CHECK(constants.maxReachUv * static_cast<float>(resolution) == doctest::Approx(kPcssMaxReachTexels));
+        CHECK(constants.texelDepth * static_cast<float>(resolution) == doctest::Approx(1.f));
+        CHECK(constants.penumbraUvPerDepth == doctest::Approx(kSunPenumbraPerWorldUnit));
+    }
+}
+
+TEST_CASE("Contact hardening widens past a texel near the camera and never past the world cap")
+{
+    CascadeFitParams params = DefaultParams();
+    params.settings = Sanitized(TierSettings(ShadowTier::Ultra).sun);
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count > 1);
+
+    // At contact the kernel collapses: the shadow is as sharp as the map.
+    CHECK(CascadePcssTapStepUv(fit.cascades[0], params.settings, 0.f) == 0.f);
+
+    // Five metres of clearance is a penumbra of a couple of centimetres, which in
+    // the nearest cascade is many texels — the softness the fixed kernel, pinned
+    // to a texel, cannot produce at all.
+    constexpr float kFarBlocker = 5.f;
+    CHECK(CascadePcssTapStepUv(fit.cascades[0], params.settings, kFarBlocker) >
+          CascadeFilterTapStepUv(fit.cascades[0], params.settings) * 2.f);
+
+    // Whatever the distance, no cascade's kernel reaches further into the world
+    // than the cap that keeps a filter from reading through a wall. The kernel
+    // is the Vogel disk whichever filter is selected, so the one-tap filter's
+    // settings are held to the same bound.
+    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Vogel})
+    {
+        params.settings.filter = filter;
+        for (std::uint32_t i = 0; i < fit.count; ++i)
+        {
+            CAPTURE(i);
+            const ShadowCascade &cascade = fit.cascades[i];
+            for (const float distance : {0.1f, 1.f, kFarBlocker, 50.f})
+            {
+                CAPTURE(distance);
+                const float step = CascadePcssTapStepUv(cascade, params.settings, distance);
+                CHECK(step * kVogelFilterRadiusTaps * 2.f * cascade.radius <= kMaxPenumbraWorld + 1e-4f);
+            }
+        }
+    }
+}
+
 namespace
 {
 // 1080p, the gate resolution. A seam's visibility is a screen-space fact, so
@@ -919,7 +1025,7 @@ TEST_CASE("A caster up-light of the volume reaches it, wherever the camera looks
 
     // Far enough up-light that the caster's own sphere is nowhere near the
     // volume — the sweep is the only thing that keeps it, which is the case
-    // WithoutNearPlane() and the vertex shader's pancaking exist for.
+    // WithoutNearPlane() and the cascade pipeline's depth clamp exist for.
     const glm::vec3 upLight = bounds.center - light * (bounds.radius * 4.f);
     const Assisi::Geometry::BoundingSphere overhead{.center = upLight, .radius = 1.f};
     REQUIRE(glm::length(overhead.center - bounds.center) > bounds.radius + overhead.radius);

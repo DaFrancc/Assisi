@@ -27,15 +27,10 @@ constexpr std::uint32_t kInitialCasterCapacity = 1024u;
 struct ShadowDepthPushConstants
 {
     glm::mat4 lightViewProjection{1.f};
-    /// x = 1 to flatten a caster upstream of the near plane onto it instead of
-    /// letting it clip. Only an orthographic view may ask for it — see
-    /// ShadowView::orthographic. yzw unused.
-    glm::uvec4 pancake{0u, 0u, 0u, 0u};
 };
 ASSISI_GPU_LAYOUT(ShadowDepthPushConstants);
 ASSISI_GPU_FIRST_FIELD(ShadowDepthPushConstants, lightViewProjection);
-ASSISI_GPU_FIELD_AFTER(ShadowDepthPushConstants, pancake, lightViewProjection);
-ASSISI_GPU_NO_TAIL_PADDING(ShadowDepthPushConstants, pancake);
+ASSISI_GPU_NO_TAIL_PADDING(ShadowDepthPushConstants, lightViewProjection);
 
 /// @brief Apply the caster-side depth bias to @p state.
 ///
@@ -231,8 +226,8 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
 
         // An orthographic view is open at the near end. A caster between the
         // light and this slice is upstream of the slice's near plane and still
-        // shadows every surface in it; shadow_depth.vert flattens such a caster
-        // onto that plane rather than letting it clip, and rejecting it here
+        // shadows every surface in it; the cascade pipeline's depth clamp
+        // flattens such a caster onto that plane, and rejecting it here
         // would undo that before the rasterizer ever saw it. The symptom is a
         // shadow that vanishes as the camera approaches, because the nearest
         // cascade's slice — and with it its near plane — closes in around the
@@ -399,7 +394,8 @@ bool ShadowDepthRenderer::CanAlphaTest() const
 
 nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFramebuffer *prototype,
                                                                   MeshPipeline pipeline, float slopeBias,
-                                                                  float slopeBiasClamp) const
+                                                                  float slopeBiasClamp,
+                                                                  ShadowProjection projection) const
 {
     const bool masked = MeshPipelineIsMasked(pipeline);
     if (prototype == nullptr || !IsReady() || (masked && !CanAlphaTest()))
@@ -445,6 +441,9 @@ nvrhi::GraphicsPipelineHandle ShadowDepthRenderer::CreatePipeline(nvrhi::IFrameb
     // viewport, which flips the winding the rasterizer perceives.
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
     pipelineDesc.renderState.rasterState.depthClipEnable = true;
+    // Vulkan stops clipping against the near and far planes while clamping, so
+    // this one flag is the whole of pancaking. See the declaration.
+    pipelineDesc.renderState.rasterState.depthClampEnable = projection == ShadowProjection::Orthographic;
     ApplyDepthBias(pipelineDesc.renderState.rasterState, slopeBias, slopeBiasClamp);
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
@@ -662,9 +661,7 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
                 state.indirectParams = _indirectBuffer;
                 commandList->setGraphicsState(state);
 
-                const ShadowDepthPushConstants pushConstants{
-                    .lightViewProjection = targets[index].view.viewProjection,
-                    .pancake = glm::uvec4(targets[index].view.orthographic ? 1u : 0u, 0u, 0u, 0u)};
+                const ShadowDepthPushConstants pushConstants{.lightViewProjection = targets[index].view.viewProjection};
                 commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
 
                 commandList->drawIndexedIndirect(runStart * sizeof(nvrhi::DrawIndexedIndirectArguments),

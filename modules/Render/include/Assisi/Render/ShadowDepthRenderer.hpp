@@ -334,8 +334,19 @@ public:
     /// masked class carries the alpha test, a double-sided class rasterizes both
     /// faces. Returns null for a masked class when the alpha-testing variant did
     /// not load, which the caller falls back from rather than dropping casters.
+    ///
+    /// @p projection is how every view drawn through the pipeline projects. An
+    /// orthographic one pancakes: fragment depth is clamped to the view's range
+    /// instead of clipped against it, so a caster upstream of the near plane is
+    /// flattened onto it and one straddling the plane keeps its true depth
+    /// inside. Clamping per fragment is what makes that exact; clamping vertices
+    /// bends every triangle that crosses the plane, and the far plane then cuts
+    /// the bent triangle in the wrong place. A perspective view must clip — its
+    /// depth is z / w, and the region behind the light that clipping removes
+    /// would otherwise be drawn clamped.
     [[nodiscard]] nvrhi::GraphicsPipelineHandle CreatePipeline(nvrhi::IFramebuffer *prototype, MeshPipeline pipeline,
-                                                               float slopeBias, float slopeBiasClamp) const;
+                                                               float slopeBias, float slopeBiasClamp,
+                                                               ShadowProjection projection) const;
 
     /// @brief Start a frame's view table.
     ///

@@ -30,6 +30,19 @@
 namespace Assisi::Render
 {
 
+/// @brief How a shadow map's views project, which decides how the depth pass
+/// may treat a caster outside the view's depth range.
+enum class ShadowProjection : std::uint8_t
+{
+    /// A local light's frustum. Casters are clipped against the near and far
+    /// planes: the comparison depth is z / w, and clipping is what removes the
+    /// region behind the light.
+    Perspective = 0,
+    /// A sun cascade's box. Fragment depth is clamped to the range instead, so a
+    /// caster upstream of the near plane is flattened onto it and still casts.
+    Orthographic = 1,
+};
+
 /// @brief A rectangle of a shadow-map target, in texels.
 struct ShadowViewRect
 {
@@ -72,19 +85,12 @@ struct ShadowView
 
     /// Whether this view projects orthographically.
     ///
-    /// Two things in the depth pass are only valid when it does, and both are
-    /// silently wrong when it does not:
-    ///
-    ///   * **Pancaking.** shadow_depth.vert clamps a caster upstream of the near
-    ///     plane onto it rather than letting it clip. That is a clamp in the
-    ///     depth the comparison uses only while `w` is exactly 1. Under a
-    ///     perspective projection the comparison depth is `z / w`, so clamping
-    ///     `z` on some vertices of a triangle and not others leaves an
-    ///     interpolated depth that means nothing — too near in places, too far in
-    ///     others, and too far is a leak.
-    ///   * **Dropping the near plane from the cull.** A perspective frustum's
-    ///     four side planes extended form a double cone, so without the near
-    ///     plane the mirrored half behind the light passes the test.
+    /// Decides whether the cull may drop the near plane, which it must for a
+    /// cascade: a caster upstream of the plane still shadows the slice, and the
+    /// cascade pipelines flatten it onto the plane (ShadowProjection). Under a
+    /// perspective projection it must not — the frustum's four side planes
+    /// extended form a double cone, so without the near plane the mirrored half
+    /// behind the light passes the test.
     ///
     /// False by default: a view that has not said gets the conservative
     /// treatment, which costs a caster its pancaking rather than corrupting a map.
@@ -117,6 +123,20 @@ struct ShadowView
     /// reach for an atlas tile, which is the only thing stopping a kernel at a
     /// tile's edge from reading the light next to it. See ShadowViewClampUv.
     glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
+
+    /// Contact hardening's reach, in target UV, per unit of [0, 1] depth between
+    /// a blocker and its receiver. See LocalPenumbraUvPerDepth. Zero for a
+    /// cascade, whose figure is frame-wide and rides in the frame constants.
+    float pcssPenumbraUvPerDepth = 0.f;
+
+    /// One texel's worth of [0, 1] depth **times** the receiver's distance from
+    /// the light, for the same reason the depth bias is quoted that way. The
+    /// unit contact hardening measures a blocker's clearance and a receiver's
+    /// slope in. Zero for a cascade.
+    float pcssTexelDepthTimesDistance = 0.f;
+
+    /// kPcssMaxReachTexels of the target, in UV. Zero for a cascade.
+    float pcssMaxReachUv = 0.f;
 };
 
 /// @brief The view's rectangle as a UV transform: xy scale, zw offset.
@@ -147,13 +167,17 @@ struct ShadowViewGpu
     /// xy = minimum UV, zw = maximum UV a lookup may sample. See
     /// ShadowView::clampUv.
     glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
+    /// x = contact hardening's penumbra per unit depth, y = one texel of depth
+    /// times distance, z = its reach cap, w unused. See ShadowView's pcss fields.
+    glm::vec4 pcss{0.f};
 };
 ASSISI_GPU_LAYOUT(ShadowViewGpu);
 ASSISI_GPU_FIRST_FIELD(ShadowViewGpu, viewProjection);
 ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, uvScaleOffset, viewProjection);
 ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, params, uvScaleOffset);
 ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, clampUv, params);
-ASSISI_GPU_NO_TAIL_PADDING(ShadowViewGpu, clampUv);
+ASSISI_GPU_FIELD_AFTER(ShadowViewGpu, pcss, clampUv);
+ASSISI_GPU_NO_TAIL_PADDING(ShadowViewGpu, pcss);
 
 /// @brief @p view in the layout the GPU table carries it in.
 [[nodiscard]] ShadowViewGpu PackShadowView(const ShadowView &view);
@@ -334,6 +358,26 @@ struct LocalShadowLightPose
 /// slightly looser cap than it strictly needs, which errs toward acne rather than
 /// toward the leak this exists to close.
 [[nodiscard]] float LocalSlopeBiasClampNdc(std::uint32_t tileResolution);
+
+/// @brief Contact hardening's penumbra for a local light, in the tile's own
+/// UV, per unit of [0, 1] depth between a blocker and its receiver.
+///
+/// A source of radius R, a blocker at distance dB and a receiver at dR throw a
+/// penumbra R (dR - dB) / dB wide at the receiver, which in the tile's UV there
+/// is R (1/dB - 1/dR) / (2 tan(fov/2)). A perspective depth is linear in 1/d, so
+/// that difference is linear in the stored depths — this is its slope, and the
+/// shader needs only the depth difference it reads out of the map.
+[[nodiscard]] float LocalPenumbraUvPerDepth(float sourceRadius, float tanHalfFov, float nearPlane, float farPlane);
+
+/// @brief One texel of a tile's [0, 1] depth, times the receiver's distance
+/// from the light.
+///
+/// What moving along the light by one texel's world footprint does to the
+/// stored depth. LocalDepthBiasNdcTimesDistance is this times the bias setting;
+/// contact hardening wants the texel itself, as the unit its blocker threshold
+/// and slope limit are counted in.
+[[nodiscard]] float LocalTexelDepthTimesDistance(std::uint32_t tileResolution, float tanHalfFov, float nearPlane,
+                                                 float farPlane);
 
 /// @brief UV distance between adjacent filter taps in an atlas of
 /// @p atlasResolution texels a side.

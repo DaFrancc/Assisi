@@ -672,6 +672,38 @@ FetchContent_Declare(nvrhi
 )
 FetchContent_MakeAvailable(nvrhi)
 
+# NVRHI's Vulkan backend never sets depthClampEnable, and the sun's cascades need
+# it: they flatten casters above their near plane onto it, which done per vertex
+# bends every long triangle crossing that plane, and lets the far plane cut a
+# chunk off the bottom of a tall caster. The patch adds RasterState::
+# depthClampEnable, off by default, so no other pipeline changes.
+#
+# Applied here rather than as a FetchContent PATCH_COMMAND because the shared
+# source cache (cmake/AssisiConfigureCached.cmake) skips the patch step, and a
+# cache cloned before the patch existed would otherwise never receive it. The
+# reverse check makes it a no-op on a source that already has it; a pin bump
+# the patch no longer fits stops the configure rather than building without it.
+find_package(Git REQUIRED)
+set(_nvrhi_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/nvrhi-depth-clamp.patch")
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_nvrhi_patch}"
+    WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
+    RESULT_VARIABLE _nvrhi_patched
+    OUTPUT_QUIET ERROR_QUIET
+)
+if (NOT _nvrhi_patched EQUAL 0)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" apply "${_nvrhi_patch}"
+        WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
+        RESULT_VARIABLE _nvrhi_patch_rc
+    )
+    if (NOT _nvrhi_patch_rc EQUAL 0)
+        message(FATAL_ERROR "Could not apply ${_nvrhi_patch} to ${nvrhi_SOURCE_DIR}. "
+                            "Refresh the patch against the pinned NVRHI commit.")
+    endif()
+    message(STATUS "NVRHI: applied nvrhi-depth-clamp.patch")
+endif()
+
 # --- glslang (GLSL -> SPIR-V compiler, used as a build-time tool only)
 set(ENABLE_OPT              OFF CACHE BOOL "" FORCE) # avoids needing SPIRV-Tools-opt / update_glslang_sources.py
 set(ENABLE_HLSL             OFF CACHE BOOL "" FORCE)

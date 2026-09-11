@@ -34,6 +34,8 @@ TEST_CASE("Shadow settings survive a write and a read")
     written.shadows.local.depthBiasTexels = 0.5f;
     written.shadows.local.slopeBias = 1.25f;
     written.shadows.local.normalOffsetTexels = 4.f;
+    written.shadows.local.sourceRadius = 0.3f;
+    written.shadows.pcss = ShadowPcss::SunAndLocals;
 
     const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
 
@@ -59,6 +61,23 @@ TEST_CASE("Shadow settings survive a write and a read")
     CHECK(read.shadows.local.depthBiasTexels == doctest::Approx(written.shadows.local.depthBiasTexels));
     CHECK(read.shadows.local.slopeBias == doctest::Approx(written.shadows.local.slopeBias));
     CHECK(read.shadows.local.normalOffsetTexels == doctest::Approx(written.shadows.local.normalOffsetTexels));
+    CHECK(read.shadows.local.sourceRadius == doctest::Approx(written.shadows.local.sourceRadius));
+    CHECK(read.shadows.pcss == written.shadows.pcss);
+}
+
+TEST_CASE("Every contact-hardening setting survives a write and a read, and a typo is off")
+{
+    for (const ShadowPcss pcss : {ShadowPcss::Off, ShadowPcss::Sun, ShadowPcss::SunAndLocals})
+    {
+        OptionsConfig written;
+        written.shadows.pcss = pcss;
+        CHECK(OptionsConfig::FromJsonText(written.ToJsonText()).shadows.pcss == pcss);
+    }
+
+    // An unrecognised value costs that one field, and what it costs it is the
+    // cheap answer rather than a search nobody asked for.
+    const OptionsConfig typo = OptionsConfig::FromJsonText(R"({ "shadows": { "pcss": "sunAndLocal" } })");
+    CHECK(typo.shadows.pcss == ShadowPcss::Off);
 }
 
 TEST_CASE("The two shadow halves are written to their own sections")
