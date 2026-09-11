@@ -61,8 +61,10 @@ struct OptionsConfig
     /// hand-edited into nonsense costs the settings, never the launch.
     [[nodiscard]] static OptionsConfig FromJsonText(std::string_view text);
 
-    /// @brief The current settings as an options document. Round-trips through
-    /// FromJsonText: every field written here is a field read there.
+    /// @brief The settings that differ from the defaults, as an options document,
+    /// with floats rounded to four decimal places. Round-trips through
+    /// FromJsonText: every field read there that is not written here is at its
+    /// default, so a setting nobody changed follows the defaults as they change.
     [[nodiscard]] std::string ToJsonText() const;
 
     /// @brief Reads options.json from the user root.

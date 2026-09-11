@@ -85,17 +85,17 @@ TEST_CASE("The two shadow halves are written to their own sections")
     // They are separate documents' worth of knobs, and a reader that pointed
     // both at one section would silently have each overwrite the other's
     // same-named fields — filter, and all three biases.
-    const std::string text = OptionsConfig{}.ToJsonText();
-    CHECK(text.find("\"sun\"") != std::string::npos);
-    CHECK(text.find("\"local\"") != std::string::npos);
-
     OptionsConfig differing;
     differing.shadows.sun.filter = ShadowFilter::Point;
     differing.shadows.local.filter = ShadowFilter::Vogel;
     differing.shadows.sun.slopeBias = 1.f;
     differing.shadows.local.slopeBias = 7.f;
 
-    const OptionsConfig read = OptionsConfig::FromJsonText(differing.ToJsonText());
+    const std::string text = differing.ToJsonText();
+    CHECK(text.find("\"sun\"") != std::string::npos);
+    CHECK(text.find("\"local\"") != std::string::npos);
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(text);
     CHECK(read.shadows.sun.filter == ShadowFilter::Point);
     CHECK(read.shadows.local.filter == ShadowFilter::Vogel);
     CHECK(read.shadows.sun.slopeBias == doctest::Approx(1.f));
@@ -214,6 +214,35 @@ TEST_CASE("A settings file from before ambient occlusion existed loads it off, a
 {
     const OptionsConfig read = OptionsConfig::FromJsonText(R"({ "antiAliasing": { "mode": "fxaa" } })");
     CHECK(read.ambientOcclusion == SsaoSettings{});
+}
+
+TEST_CASE("Only settings that differ from the defaults are written, so the rest follow the defaults")
+{
+    // Nothing changed writes nothing: a default written out would pin it, and a
+    // later change to that default would never reach this file.
+    CHECK(OptionsConfig{}.ToJsonText() == "{}");
+
+    OptionsConfig one;
+    one.shadows.local.filter = ShadowFilter::Point;
+    const std::string text = one.ToJsonText();
+    CHECK(text.find("\"filter\"") != std::string::npos);
+    CHECK(text.find("depthBiasTexels") == std::string::npos);
+    CHECK(text.find("\"sun\"") == std::string::npos);
+    CHECK(text.find("antiAliasing") == std::string::npos);
+}
+
+TEST_CASE("A float is saved to four decimal places, so a slider dragged back to its default is the default")
+{
+    OptionsConfig nearly;
+    nearly.shadows.local.depthBiasTexels += 0.00001f;
+    CHECK(nearly.ToJsonText() == "{}");
+
+    OptionsConfig moved;
+    moved.shadows.local.depthBiasTexels = 0.123456f;
+    const std::string text = moved.ToJsonText();
+    CHECK(text.find("0.1235") != std::string::npos);
+    CHECK(text.find("0.123456") == std::string::npos);
+    CHECK(OptionsConfig::FromJsonText(text).shadows.local.depthBiasTexels == doctest::Approx(0.1235f));
 }
 
 TEST_CASE("A document that will not parse costs the settings, not the launch")
