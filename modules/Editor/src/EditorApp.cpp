@@ -285,6 +285,12 @@ void EditorApp::OnStart()
     if (IsCapturing())
     {
         AdoptLevelCamera();
+        const Assisi::App::PerfCaptureConfig &capture = _editorConfig.perfCapture;
+        if (capture.hasCameraPose)
+        {
+            AimCamera(glm::vec3(capture.cameraEye[0], capture.cameraEye[1], capture.cameraEye[2]),
+                      glm::vec3(capture.cameraTarget[0], capture.cameraTarget[1], capture.cameraTarget[2]));
+        }
     }
 
     // A play-in-editor client: enter Play as a joiner straight away. Nothing else
