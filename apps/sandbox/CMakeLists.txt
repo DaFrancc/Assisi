@@ -114,7 +114,8 @@ add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 # the exe and the app would keep running a stale shader.
 #
 # Auto-discovered, like the assets glob above — a new .vert/.frag/.comp under
-# assets/shaders/ just needs the file created, no CMakeLists.txt edit.
+# assets/shaders/ just needs the file created, no CMakeLists.txt edit. A .glsl
+# file is a piece another shader #includes, never compiled on its own.
 file(GLOB_RECURSE _sandbox_vk_shader_sources
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES false
@@ -147,10 +148,16 @@ function(assisi_sandbox_compile_shader _shader_in _spv_rel)
     get_filename_component(_spv_rel_dir "${_spv_rel}" DIRECTORY)
     string(REPLACE "/" "_" _shader_flat "${_spv_rel}")
     set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}")
+    # The depfile names every file the source #includes, so editing one of the
+    # .glsl pieces a shader is assembled from rebuilds it; DEPENDS alone would
+    # see only the top-level source.
+    set(_shader_dep "${_shader_out}.d")
     add_custom_command(
         OUTPUT "${_shader_out}"
-        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 ${_defines} "${_shader_in}" -o "${_shader_out}"
+        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 ${_defines} --depfile "${_shader_dep}"
+                "${_shader_in}" -o "${_shader_out}"
         DEPENDS "${_shader_in}" glslang-standalone
+        DEPFILE "${_shader_dep}"
         COMMENT "Compiling ${_spv_rel}"
         VERBATIM
     )
