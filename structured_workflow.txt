@@ -122,7 +122,7 @@ PART 1 — SETUP
 PART 2 — THE WORK
 -----------------
 
- 8. Make a plan. The programmer does NOT need to approve it; it exists so you go
+ 8. Make a plan using a fable agent. The programmer does NOT need to approve it; it exists so you go
     in with one. Say it out loud in the conversation — being watchable is the
     reason this runs in the main session.
  9. If the plan needs a decision only the programmer can make, stop and ask
