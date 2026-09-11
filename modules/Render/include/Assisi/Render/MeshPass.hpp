@@ -93,9 +93,8 @@ enum class ShadowDebugView : uint32_t
     /// yellow is the kernel finding light its centre did not. Every stage that
     /// can add light is on screen at once, so a leak names its own stage.
     Taps,
+    Count,
 };
-
-inline constexpr uint32_t kShadowDebugViewCount = 4;
 
 class MeshPass
 {

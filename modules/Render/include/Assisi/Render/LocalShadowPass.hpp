@@ -59,6 +59,39 @@ struct LocalShadowCasterIndex
     void Clear();
 };
 
+/// @brief What the pass was last built with — the part of it a settings change
+/// can leave stale.
+struct LocalShadowBuiltState
+{
+    std::uint32_t atlasResolution = 0;
+    std::uint32_t clearTileSize = 0;
+    float slopeBias = -1.f;
+    ShadowMapFormat format = ShadowMapFormat::D16;
+    bool hasTargets = false;
+    bool hasPipelines = false;
+    bool cacheEnabled = false;
+};
+
+/// @brief Which parts of the pass a settings change invalidates.
+struct LocalShadowRebuild
+{
+    /// The atlas texture and its framebuffer: its size or format moved.
+    bool targets = false;
+    /// The depth pipelines: the rasterizer state baked into them moved.
+    bool pipelines = false;
+    /// The kept-depth atlas and the clear tile: they follow the live atlas's
+    /// shape and the largest face class.
+    bool cacheTargets = false;
+    /// Every kept tile. Its depth was drawn with state that no longer holds —
+    /// by a pipeline since rebuilt, or into a texture since replaced — and a
+    /// resting light would otherwise show it for as long as it rests.
+    bool forgetTiles = false;
+};
+
+/// @brief What moving from @p built to @p next invalidates.
+[[nodiscard]] LocalShadowRebuild LocalShadowRebuildFor(const LocalShadowBuiltState &built,
+                                                       const LocalShadowSettings &next);
+
 class LocalShadowPass
 {
 public:
@@ -205,10 +238,7 @@ public:
     /// against and reproduces exactly.
     Stats Render(nvrhi::ICommandList *commandList, const Frame &frame);
 
-    [[nodiscard]] bool IsActive() const
-    {
-        return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr;
-    }
+    [[nodiscard]] bool IsActive() const { return _active && HasPipelines(); }
 
     /// @brief The atlas the mesh shader samples. Never null after a successful
     /// Initialize() — the one-texel empty atlas while the pass is inactive.
@@ -243,7 +273,11 @@ public:
 private:
     [[nodiscard]] bool RebuildTargets();
     [[nodiscard]] bool RebuildPipelines();
-    [[nodiscard]] ShadowPipelines PipelineSet() const;
+    /// @brief Whether every size class has its opaque pipeline, which is the
+    /// one a class cannot draw without.
+    [[nodiscard]] bool HasPipelines() const;
+    /// @brief The pipelines a tile of @p sizeClass draws through.
+    [[nodiscard]] ShadowPipelines PipelineSet(std::uint32_t sizeClass) const;
     void ReleaseTargets();
     /// @brief Create the one-texel atlas bound while the pass is inactive.
     [[nodiscard]] bool CreateNoAtlasTexture();
@@ -316,7 +350,12 @@ private:
     nvrhi::IDevice *_device = nullptr;
     const ShadowDepthRenderer *_depthRenderer = nullptr;
 
-    std::array<nvrhi::GraphicsPipelineHandle, kMeshPipelineCount> _pipelines;
+    // One set per tile size class. The slope-bias cap is rasterizer state, baked
+    // into a pipeline rather than set per draw, and it has to be a texel of the
+    // tile being drawn: a cap sized for the smallest tile opens several texels of
+    // contact gap under a large one, and one sized for the largest lets acne
+    // through on a small one.
+    std::array<std::array<nvrhi::GraphicsPipelineHandle, kMeshPipelineCount>, kShadowSizeClassCount> _pipelines;
 
     nvrhi::TextureHandle _atlasTexture;
     // One framebuffer for the whole atlas: every tile is a rectangle of the same

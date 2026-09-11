@@ -16,10 +16,6 @@ namespace Assisi::Render
 
 namespace
 {
-// Distance per pixel in metres. Full float: a half would round a distance of
-// fifty metres to the nearest few centimetres, which is coarser than the bias
-// that stops a surface occluding itself.
-constexpr nvrhi::Format kDistanceFormat = nvrhi::Format::R32_FLOAT;
 // A visible fraction in [0, 1]; eight bits is finer than anything the blur leaves.
 constexpr nvrhi::Format kOcclusionFormat = nvrhi::Format::R8_UNORM;
 
@@ -67,14 +63,10 @@ bool SsaoPass::Initialize(const InitParams &params)
     _device = params.device;
 
     _vertexShader = LoadSpirvShader(_device, params.vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
-    const nvrhi::ShaderHandle depthShader =
-        LoadSpirvShader(_device, params.depthShaderSpvPath, nvrhi::ShaderType::Pixel);
-    const nvrhi::ShaderHandle multisampleDepthShader =
-        LoadSpirvShader(_device, params.multisampleDepthShaderSpvPath, nvrhi::ShaderType::Pixel);
     const nvrhi::ShaderHandle occlusionShader =
         LoadSpirvShader(_device, params.occlusionShaderSpvPath, nvrhi::ShaderType::Pixel);
     const nvrhi::ShaderHandle blurShader = LoadSpirvShader(_device, params.blurShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !depthShader || !multisampleDepthShader || !occlusionShader || !blurShader)
+    if (!_vertexShader || !occlusionShader || !blurShader)
     {
         return false;
     }
@@ -105,13 +97,11 @@ bool SsaoPass::Initialize(const InitParams &params)
         desc.renderState.depthStencilState.depthWriteEnable = false;
         return _device->createGraphicsPipeline(desc, SingleTargetInfo(target));
     };
-    _depthPipeline = makePipeline(depthShader, _singleInputLayout, kDistanceFormat);
-    _multisampleDepthPipeline = makePipeline(multisampleDepthShader, _singleInputLayout, kDistanceFormat);
     _blurPipeline = makePipeline(blurShader, _blurLayout, kOcclusionFormat);
     // Last, because IsValid() reads it: a pass whose other pipelines failed
     // must not report itself usable.
     const nvrhi::GraphicsPipelineHandle occlusion = makePipeline(occlusionShader, _singleInputLayout, kOcclusionFormat);
-    if (!_depthPipeline || !_multisampleDepthPipeline || !_blurPipeline || !occlusion)
+    if (!_blurPipeline || !occlusion)
     {
         Core::Log::Error("SsaoPass: failed to create the pipelines.");
         return false;
@@ -134,22 +124,22 @@ bool SsaoPass::Initialize(const InitParams &params)
     return true;
 }
 
-bool SsaoPass::Configure(uint32_t width, uint32_t height, nvrhi::ITexture *depth)
+bool SsaoPass::Configure(uint32_t width, uint32_t height, nvrhi::ITexture *distance)
 {
-    if (width == 0 || height == 0 || depth == nullptr)
+    if (width == 0 || height == 0 || distance == nullptr)
     {
         Release();
         return false;
     }
     const bool resized = width != _width || height != _height || _occlusion == nullptr;
-    if (!resized && depth == _depth)
+    if (!resized && distance == _distance)
     {
         return true;
     }
 
     _width = width;
     _height = height;
-    _depth = depth;
+    _distance = distance;
     if (resized && !CreateTargets())
     {
         Core::Log::Error("SsaoPass: failed to allocate the {}x{} targets.", width, height);
@@ -182,17 +172,15 @@ bool SsaoPass::CreateTargets()
         return _device->createFramebuffer(desc);
     };
 
-    _distance = makeTarget(kDistanceFormat, "SsaoPass::Distance");
     _occlusion = makeTarget(kOcclusionFormat, "SsaoPass::Occlusion");
     _blurScratch = makeTarget(kOcclusionFormat, "SsaoPass::BlurScratch");
-    if (!_distance || !_occlusion || !_blurScratch)
+    if (!_occlusion || !_blurScratch)
     {
         return false;
     }
-    _distanceFramebuffer = makeFramebuffer(_distance);
     _occlusionFramebuffer = makeFramebuffer(_occlusion);
     _blurScratchFramebuffer = makeFramebuffer(_blurScratch);
-    return _distanceFramebuffer && _occlusionFramebuffer && _blurScratchFramebuffer;
+    return _occlusionFramebuffer && _blurScratchFramebuffer;
 }
 
 void SsaoPass::CreateBindingSets()
@@ -214,7 +202,6 @@ void SsaoPass::CreateBindingSets()
         return _device->createBindingSet(desc, _blurLayout);
     };
 
-    _bindingSets[static_cast<uint32_t>(Step::Depth)] = singleInput(_depth);
     _bindingSets[static_cast<uint32_t>(Step::Occlusion)] = singleInput(_distance);
     _bindingSets[static_cast<uint32_t>(Step::BlurHorizontal)] = blur(_occlusion);
     _bindingSets[static_cast<uint32_t>(Step::BlurVertical)] = blur(_blurScratch);
@@ -226,13 +213,11 @@ void SsaoPass::Release()
     {
         set = nullptr;
     }
-    _distanceFramebuffer = nullptr;
     _occlusionFramebuffer = nullptr;
     _blurScratchFramebuffer = nullptr;
-    _distance = nullptr;
     _occlusion = nullptr;
     _blurScratch = nullptr;
-    _depth = nullptr;
+    _distance = nullptr;
     _width = 0;
     _height = 0;
 }
@@ -262,10 +247,6 @@ void SsaoPass::Render(nvrhi::ICommandList *commandList, const Frame &frame) cons
     commandList->writeBuffer(_constants, &constants, sizeof(constants));
 
     {
-        ASSISI_PROFILE_GPU_PASS(commandList, "ssao-depth");
-        RunStep(commandList, Step::Depth);
-    }
-    {
         ASSISI_PROFILE_GPU_PASS(commandList, "ssao-occlusion");
         RunStep(commandList, Step::Occlusion);
     }
@@ -282,10 +263,6 @@ void SsaoPass::RunStep(nvrhi::ICommandList *commandList, Step step) const
     BlurAxis axis(0);
     switch (step)
     {
-    case Step::Depth:
-        state.pipeline = _depth->getDesc().sampleCount > 1 ? _multisampleDepthPipeline : _depthPipeline;
-        state.framebuffer = _distanceFramebuffer;
-        break;
     case Step::Occlusion:
         state.pipeline = _occlusionPipeline;
         state.framebuffer = _occlusionFramebuffer;

@@ -14,7 +14,7 @@ layout(location = 0) in vec2 vTexCoords;
 layout(location = 0) out float outOcclusion;
 
 layout(binding = 0) uniform texture2D uOcclusion;
-// Distance in metres per pixel (ssao_depth.frag), for telling surfaces apart.
+// Distance in metres per pixel (scene_distance.frag), for telling surfaces apart.
 layout(binding = 1) uniform texture2D uDistance;
 
 // Mirrors Render::SsaoConstants.

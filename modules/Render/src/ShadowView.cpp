@@ -79,7 +79,6 @@ ShadowView LocalShadowView(const LocalShadowLightPose &pose, const glm::vec3 &fo
     view.depthBias = LocalDepthBiasNdcTimesDistance(tile.rect.width, nearPlane, safeRange, tanHalfFov, settings);
     view.normalOffset = LocalNormalOffsetPerDistance(tile.rect.width, tanHalfFov, settings);
     view.filterTapStepUv = LocalFilterTapStepUv(tile.atlasResolution);
-    view.clampUv = ShadowViewClampUv(view, settings.filter);
 
     // The penumbra is quoted in the tile's UV and the lookup samples the
     // atlas's, so it shrinks by the tile's share of the atlas.
@@ -88,7 +87,11 @@ ShadowView LocalShadowView(const LocalShadowLightPose &pose, const glm::vec3 &fo
     view.pcssPenumbraUvPerDepth =
         LocalPenumbraUvPerDepth(safe.sourceRadius, tanHalfFov, nearPlane, safeRange) * tileShare;
     view.pcssTexelDepthTimesDistance = LocalTexelDepthTimesDistance(tile.rect.width, tanHalfFov, nearPlane, safeRange);
-    view.pcssMaxReachUv = kPcssMaxReachTexels * view.filterTapStepUv;
+    view.pcssMaxHalfWidthTexels = LocalPcssMaxHalfWidthTexels(LocalGuardTexels(tile.rect.width, fov));
+
+    // Wide enough for whichever kernel the lookup takes, fixed or contact-hardened.
+    const float halfWidth = std::max(LocalFilterHalfWidthTexels(safe.filter), view.pcssMaxHalfWidthTexels);
+    view.clampUv = ShadowViewClampUv(view, halfWidth + kLocalGatherMarginTexels);
     return view;
 }
 } // namespace
@@ -120,7 +123,8 @@ ShadowViewGpu PackShadowView(const ShadowView &view)
     packed.params =
         glm::vec4(view.depthBias, view.normalOffset, view.filterTapStepUv, static_cast<float>(view.arraySlice));
     packed.clampUv = view.clampUv;
-    packed.pcss = glm::vec4(view.pcssPenumbraUvPerDepth, view.pcssTexelDepthTimesDistance, view.pcssMaxReachUv, 0.f);
+    packed.pcss =
+        glm::vec4(view.pcssPenumbraUvPerDepth, view.pcssTexelDepthTimesDistance, view.pcssMaxHalfWidthTexels, 0.f);
     return packed;
 }
 
@@ -251,8 +255,10 @@ float LocalSlopeBiasClampNdc(std::uint32_t tileResolution)
     {
         return 0.f;
     }
-    // One texel's worth of depth at the far plane, which is where the depth
-    // curve is flattest and a texel therefore buys the most NDC.
+    // One texel's worth of depth at the far plane. A texel's footprint grows with
+    // distance while a world unit's worth of depth falls with its square, so a
+    // texel spans the least depth out there — and a cap of one texel at the far
+    // plane is under a texel everywhere nearer.
     //
     // Both terms carry a factor of the far plane and it cancels: what a texel
     // covers grows with the range, and what a world unit is worth in depth
@@ -265,15 +271,45 @@ float LocalSlopeBiasClampNdc(std::uint32_t tileResolution)
     return ndcPerWorldTimesFar * worldPerTexelOverFar;
 }
 
-glm::vec4 ShadowViewClampUv(const ShadowView &view, ShadowFilter filter)
+float LocalFilterHalfWidthTexels(ShadowFilter filter)
+{
+    switch (filter)
+    {
+    case ShadowFilter::Point:
+        return kLocalPointHalfWidthTexels;
+    case ShadowFilter::Pcf5x5:
+        return kLocalPcf5HalfWidthTexels;
+    case ShadowFilter::Vogel:
+        return kLocalVogelHalfWidthTexels;
+    case ShadowFilter::Pcf3x3:
+    default:
+        return kLocalPcf3HalfWidthTexels;
+    }
+}
+
+float LocalGuardTexels(std::uint32_t tileResolution, float fovDegrees)
+{
+    const float fov = std::clamp(fovDegrees, kMinLocalFovDegrees, kMaxLocalFovDegrees);
+    const float covered = std::max(fov - kPointLightFaceOverlapDegrees, 0.f);
+    // The tile spans tan(fov/2) either side of its centre; the light covers
+    // tan(covered/2) of that, and the rest is the margin.
+    const float coveredShare = std::tan(glm::radians(covered) * 0.5f) / std::tan(glm::radians(fov) * 0.5f);
+    return 0.5f * static_cast<float>(tileResolution) * (1.f - coveredShare);
+}
+
+float LocalPcssMaxHalfWidthTexels(float guardTexels)
+{
+    const float room = std::isfinite(guardTexels) ? guardTexels - kLocalGatherMarginTexels : 0.f;
+    return std::clamp(room, 0.f, kLocalPcssMaxHalfWidthTexels);
+}
+
+glm::vec4 ShadowViewClampUv(const ShadowView &view, float reachTexels)
 {
     const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
     const glm::vec2 minUv(scaleOffset.z, scaleOffset.w);
     const glm::vec2 maxUv = minUv + glm::vec2(scaleOffset.x, scaleOffset.y);
 
-    // The kernel's outermost tap, plus the half texel the hardware's own
-    // bilinear comparison reaches on top of wherever a tap lands.
-    const float inset = view.filterTapStepUv * (FilterRadiusTaps(filter) + 0.5f);
+    const float inset = view.filterTapStepUv * std::max(reachTexels, 0.f);
     const glm::vec2 room = (maxUv - minUv) * 0.5f;
     if (inset >= room.x || inset >= room.y)
     {

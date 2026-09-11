@@ -161,7 +161,7 @@ TEST_CASE("A packed view carries every lane the table promises")
     view.filterTapStepUv = 1.f / 2048.f;
     view.pcssPenumbraUvPerDepth = 0.25f;
     view.pcssTexelDepthTimesDistance = 0.0005f;
-    view.pcssMaxReachUv = 16.f / 2048.f;
+    view.pcssMaxHalfWidthTexels = 6.f;
 
     const ShadowViewGpu packed = PackShadowView(view);
 
@@ -175,7 +175,7 @@ TEST_CASE("A packed view carries every lane the table promises")
     CHECK(packed.params.w == doctest::Approx(3.f));
     CHECK(packed.pcss.x == doctest::Approx(view.pcssPenumbraUvPerDepth));
     CHECK(packed.pcss.y == doctest::Approx(view.pcssTexelDepthTimesDistance));
-    CHECK(packed.pcss.z == doctest::Approx(view.pcssMaxReachUv));
+    CHECK(packed.pcss.z == doctest::Approx(view.pcssMaxHalfWidthTexels));
 }
 
 TEST_CASE("A cascade becomes a view that agrees with the cascade math")

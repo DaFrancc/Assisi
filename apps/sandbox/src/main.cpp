@@ -24,6 +24,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 
@@ -71,6 +72,14 @@ constexpr const char *kUsage =
     "  --capture-size <WxH>    resolution to render at, e.g. 2560x1440 or\n"
     "                          1920x1080. Defaults to game.json's window size\n"
     "  --capture-out <path>    write the JSON report here as well as the log\n"
+    "  --capture-image <path>  write a PNG of the frame after the last measured\n"
+    "                          one, without the debug UI. Alone, it measures one\n"
+    "                          frame after the warm-up\n"
+    "  --capture-camera <ex,ey,ez,tx,ty,tz>\n"
+    "                          stand the camera at e looking at t, instead of the\n"
+    "                          level's active Camera\n"
+    "  --capture-options <path> run with this options file instead of the\n"
+    "                          user's options.json, which is left untouched\n"
     "  --capture-passes        also time each pass separately. OFF by default:\n"
     "                          per-pass timers force render-pass breaks, so a\n"
     "                          run with them on measures a frame that differs\n"
@@ -124,6 +133,35 @@ bool ParseResolution(std::string_view text, std::int32_t &width, std::int32_t &h
 
     width  = parsedWidth;
     height = parsedHeight;
+    return true;
+}
+
+// Parses "ex,ey,ez,tx,ty,tz" into a camera eye and target.
+bool ParseCameraPose(std::string_view text, std::array<float, 3> &eye, std::array<float, 3> &target)
+{
+    std::array<float, 6> values{};
+    const char *cursor = text.data();
+    const char *const end = text.data() + text.size();
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        const auto parsed = std::from_chars(cursor, end, values[i]);
+        if (parsed.ec != std::errc{})
+        {
+            return false;
+        }
+        cursor = parsed.ptr;
+        const bool last = i + 1 == values.size();
+        if (last ? cursor != end : (cursor == end || *cursor != ','))
+        {
+            return false;
+        }
+        if (!last)
+        {
+            ++cursor;
+        }
+    }
+    eye    = {values[0], values[1], values[2]};
+    target = {values[3], values[4], values[5]};
     return true;
 }
 
@@ -342,6 +380,34 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
             }
             capture.outputPath = argv[++i];
         }
+        else if (arg == "--capture-image")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--capture-image requires a path\n\n%s", kUsage);
+                return false;
+            }
+            capture.imagePath = argv[++i];
+        }
+        else if (arg == "--capture-options")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--capture-options requires a path\n\n%s", kUsage);
+                return false;
+            }
+            capture.optionsPath = argv[++i];
+        }
+        else if (arg == "--capture-camera")
+        {
+            if (i + 1 >= argc || !ParseCameraPose(argv[i + 1], capture.cameraEye, capture.cameraTarget))
+            {
+                std::fprintf(stderr, "--capture-camera expects ex,ey,ez,tx,ty,tz\n\n%s", kUsage);
+                return false;
+            }
+            ++i;
+            capture.hasCameraPose = true;
+        }
         else
         {
             std::fprintf(stderr, "Unknown argument '%.*s'\n\n%s", static_cast<int>(arg.size()), arg.data(), kUsage);
@@ -372,6 +438,12 @@ int main(int argc, char **argv)
     if (shouldExit)
     {
         return EXIT_SUCCESS;
+    }
+    // A picture on its own needs a run to take it from; one measured frame is the
+    // shortest there is.
+    if (!capture.imagePath.empty() && capture.frames == 0)
+    {
+        capture.frames = 1;
     }
 
     // --connect on its own means the headless test client; --connect with

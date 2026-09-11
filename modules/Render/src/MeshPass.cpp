@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <limits>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Render
@@ -33,6 +34,39 @@ namespace
 // (Declared as MeshPass::InstanceData in the header so the pass can hold a
 // reusable scratch vector of them across frames.)
 using InstanceData = MeshPass::InstanceData;
+
+// Where each of the pass's resources sits in its register space. Each must match
+// the layout(binding = …) mesh.frag and mesh.vert declare it at; the backend
+// offsets samplers and constant buffers into their own ranges, so the same
+// number in two of these is two different bindings.
+enum class ResourceSlot : uint32_t
+{
+    Materials = 0,
+    PointLights = 1,
+    SpotLights = 2,
+    DirLights = 3,
+    LightIndices = 4,
+    LightGrids = 5,
+    Instances = 6,
+    ShadowCascades = 7,
+    ShadowViews = 8,
+    ShadowAtlas = 9,
+    Environment = 10,
+    BrdfTable = 11,
+    ScreenOcclusion = 12,
+};
+
+enum class SamplerSlot : uint32_t
+{
+    Material = 0,
+    Shadow = 1,
+    Clamp = 2,
+};
+
+enum class ConstantBufferSlot : uint32_t
+{
+    Frame = 0,
+};
 
 // Starting instance-buffer capacity (records). Grows geometrically past this when
 // a frame draws more items; the first level typically fits without a growth. Also
@@ -82,7 +116,8 @@ struct FrameConstants
     glm::uvec4 shadowCounts;
     /// x = the ShadowFilter the atlas is sampled with, y = 1 while any local
     /// light holds a tile and the two light loops should look one up, z = 1
-    /// while those lookups take the contact-hardening path, w unused.
+    /// while those lookups take the contact-hardening path, w = the atlas
+    /// format's depth steps (see ShadowMapDepthSteps).
     ///
     /// The biases and the tap step are deliberately absent: a demoted tile is
     /// biased for the smaller map it got, so those belong per view rather than
@@ -213,36 +248,32 @@ bool MeshPass::Initialize(const InitParams &params)
     // Set 0 — the one binding set every draw shares (stage D). Texture_SRV/Sampler
     // are separate descriptors in NVRHI's Vulkan backend (HLSL t/s split, not
     // GLSL's combined sampler2D); StructuredBuffer_SRV shares the t-register space
-    // with Texture_SRV. Slot map (see mesh.vert/frag's matching `binding = N`):
-    //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
-    //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data,
-    //   t7 = the sun's cascade array, t8 = shadow view table, t9 = local-light atlas,
-    //   t10 = prefiltered environment cube, t11 = BRDF table, t12 = screen-space occlusion
-    //   s0 = shared sampler, s1 = the shadow comparison sampler, s2 = clamped trilinear sampler
-    // No push constants: per-object data (world matrix + material id) is read from
-    // the instance buffer (t6) by gl_InstanceIndex, and the material's textures
-    // from the bindless table (register space 1).
+    // with Texture_SRV. The slots are ResourceSlot, SamplerSlot and
+    // ConstantBufferSlot. No push constants: per-object data (world matrix +
+    // material id) is read from the instance buffer by gl_InstanceIndex, and the
+    // material's textures from the bindless table (register space 1).
     nvrhi::BindingLayoutDesc bindingLayoutDesc;
     bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));       // FrameConstants
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));              // shared sampler
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)); // material table
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // pointLights
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // spotLights
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3)); // dirLights
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lightIndexList
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(5)); // lightGrid
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(6)); // per-instance data
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(7));          // sun cascade array
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(8)); // shadow view table
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(9));          // local-light shadow atlas
+    using nvrhi::BindingLayoutItem;
+    bindingLayoutDesc.addItem(BindingLayoutItem::ConstantBuffer(std::to_underlying(ConstantBufferSlot::Frame)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Material)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::Materials)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::PointLights)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::SpotLights)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::DirLights)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::LightIndices)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::LightGrids)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::Instances)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::ShadowViews)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas)));
     // One comparison sampler for both maps: the cascades and the atlas are
     // filtered identically, and only the rectangle they are read from differs.
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(1));              // shadow comparison sampler
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(10));         // prefiltered environment cube
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(11));         // BRDF table
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(2));              // clamped trilinear sampler
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(12));         // screen-space occlusion
+    bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Shadow)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::Environment)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Clamp)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion)));
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -543,8 +574,9 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     // The local half switches on its own flag rather than on the cascade count:
     // a scene may have shadowed lamps and no sun, or a sun and no shadowed lamp,
     // and neither should pay for the other's lookup.
-    constants.localShadowCounts = glm::uvec4(static_cast<uint32_t>(shadows.localSettings.filter),
-                                             shadows.localActive ? 1u : 0u, shadows.localPcss ? 1u : 0u, 0u);
+    constants.localShadowCounts =
+        glm::uvec4(static_cast<uint32_t>(shadows.localSettings.filter), shadows.localActive ? 1u : 0u,
+                   shadows.localPcss ? 1u : 0u, ShadowMapDepthSteps(shadows.localSettings.format));
     for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
     {
         constants.shadowCascade[i] = glm::vec4(0.f);
@@ -667,33 +699,38 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     // instance-buffer growth, a cascade reallocation, or an explicit
     // InvalidateBindingSets() — not per frame.
     nvrhi::BindingSetDesc bindingSetDesc;
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _frameConstantsBuffer));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, _materialTable));
-    bindingSetDesc.addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _clusterGrid->PointLightBuffer().NativeBuffer()));
-    bindingSetDesc.addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _clusterGrid->SpotLightBuffer().NativeBuffer()));
-    bindingSetDesc.addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(3, _clusterGrid->DirLightBuffer().NativeBuffer()));
-    bindingSetDesc.addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(4, _clusterGrid->LightIndexBuffer().NativeBuffer()));
-    bindingSetDesc.addItem(
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(5, _clusterGrid->LightGridBuffer().NativeBuffer()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(6, instanceBuffer));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(7, _shadowMap));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(
-                               8, _shadowViewTable != nullptr ? _shadowViewTable
-                                                              : _noShadowViews.NativeBuffer()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(9, _shadowAtlas));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(1, _shadowSampler));
+    using nvrhi::BindingSetItem;
+    nvrhi::IBuffer *const shadowViews =
+        _shadowViewTable != nullptr ? _shadowViewTable : _noShadowViews.NativeBuffer();
     nvrhi::ITexture *const environment = _environmentCube != nullptr ? _environmentCube : _noEnvironmentCube.Get();
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(10, environment));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(11, _brdfTable));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(2, _clampSampler));
     nvrhi::ITexture *const occlusion =
         _ambientOcclusion != nullptr ? _ambientOcclusion : _noAmbientOcclusion.Get();
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(12, occlusion));
+    bindingSetDesc.addItem(
+        BindingSetItem::ConstantBuffer(std::to_underlying(ConstantBufferSlot::Frame), _frameConstantsBuffer));
+    bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Material), _sampler));
+    bindingSetDesc.addItem(
+        BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::Materials), _materialTable));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::PointLights),
+                                                                _clusterGrid->PointLightBuffer().NativeBuffer()));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::SpotLights),
+                                                                _clusterGrid->SpotLightBuffer().NativeBuffer()));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::DirLights),
+                                                                _clusterGrid->DirLightBuffer().NativeBuffer()));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::LightIndices),
+                                                                _clusterGrid->LightIndexBuffer().NativeBuffer()));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::LightGrids),
+                                                                _clusterGrid->LightGridBuffer().NativeBuffer()));
+    bindingSetDesc.addItem(
+        BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::Instances), instanceBuffer));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades), _shadowMap));
+    bindingSetDesc.addItem(
+        BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::ShadowViews), shadowViews));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas), _shadowAtlas));
+    bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Shadow), _shadowSampler));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::Environment), environment));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable), _brdfTable));
+    bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Clamp), _clampSampler));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion), occlusion));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;
     _globalSetShadowMap = _shadowMap;

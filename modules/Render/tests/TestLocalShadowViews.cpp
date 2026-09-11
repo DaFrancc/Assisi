@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/LocalShadowPass.hpp>
 #include <Assisi/Render/ShadowAtlas.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 #include <Assisi/Render/ShadowView.hpp>
@@ -266,18 +267,33 @@ TEST_CASE("A lookup is clamped inside its tile by the filter's own reach")
     CHECK(view.clampUv.z < tileMax.x);
     CHECK(view.clampUv.w < tileMax.y);
 
-    // The inset is the kernel's reach plus the half texel the hardware's own
-    // bilinear comparison covers on top of wherever a tap lands.
-    const float expected = view.filterTapStepUv * (FilterRadiusTaps(ShadowFilter::Pcf5x5) + 0.5f);
+    // The inset is the widest kernel the lookup may take — the fixed filter's or
+    // the contact-hardened one's — plus the texels a gathered tent reads past it.
+    const float halfWidth = std::max(LocalFilterHalfWidthTexels(ShadowFilter::Pcf5x5), view.pcssMaxHalfWidthTexels);
+    const float expected = view.filterTapStepUv * (halfWidth + kLocalGatherMarginTexels);
     CHECK(view.clampUv.x - tileMin.x == doctest::Approx(expected));
+}
 
-    // A wider filter insets further, which is the whole point of it depending on
-    // the filter at all.
-    LocalShadowSettings narrow = settings;
-    narrow.filter = ShadowFilter::Point;
-    const ShadowView narrowView =
-        SpotShadowView(SpotPose(glm::vec3(0.f), glm::vec3(0.f, -1.f, 0.f), 20.f), Tile(1024, 2048, 512), narrow);
-    CHECK(narrowView.clampUv.x < view.clampUv.x);
+TEST_CASE("A point face's inset never reaches past the margin its face was drawn with")
+{
+    // The clamp is lossless only while it trims texels the face drew beyond what
+    // it covers. A point face has the narrowest margin of any local view, so it
+    // is the one that has to fit, at every tile size the allocator hands out.
+    for (const ShadowFilter filter : {ShadowFilter::Point, ShadowFilter::Pcf3x3, ShadowFilter::Pcf5x5,
+                                      ShadowFilter::Vogel})
+    {
+        for (std::uint32_t size = kMinShadowFaceResolution; size <= kMaxShadowFaceResolution; size *= 2u)
+        {
+            CAPTURE(size);
+            LocalShadowSettings settings;
+            settings.filter = filter;
+            const ShadowView view = PointFaceShadowView(PointPose(glm::vec3(0.f), 20.f), kPointLightFacePositiveX,
+                                                        Tile(0, 0, size, kMaxShadowAtlasResolution), settings);
+            const float insetTexels =
+                (view.clampUv.x - ShadowViewUvScaleOffset(view).z) / view.filterTapStepUv;
+            CHECK(insetTexels <= LocalGuardTexels(size, 90.f + kPointLightFaceOverlapDegrees) + 1e-3f);
+        }
+    }
 }
 
 TEST_CASE("The smallest tile the allocator can hand out still has an interior")
@@ -305,7 +321,7 @@ TEST_CASE("A tile narrower than its kernel collapses to its centre rather than i
     view.rect = TileAt(0, 0, 4);
     view.targetResolution = 8192;
     view.filterTapStepUv = LocalFilterTapStepUv(8192);
-    const glm::vec4 clampUv = ShadowViewClampUv(view, ShadowFilter::Vogel);
+    const glm::vec4 clampUv = ShadowViewClampUv(view, kLocalVogelHalfWidthTexels + kLocalGatherMarginTexels);
 
     CHECK(clampUv.x <= clampUv.z);
     CHECK(clampUv.y <= clampUv.w);
@@ -485,10 +501,10 @@ TEST_CASE("Every local view is packed into the row the shader reads")
     CHECK(packed.clampUv == view.clampUv);
     CHECK(packed.pcss.x == doctest::Approx(view.pcssPenumbraUvPerDepth));
     CHECK(packed.pcss.y == doctest::Approx(view.pcssTexelDepthTimesDistance));
-    CHECK(packed.pcss.z == doctest::Approx(view.pcssMaxReachUv));
+    CHECK(packed.pcss.z == doctest::Approx(view.pcssMaxHalfWidthTexels));
     CHECK(view.pcssPenumbraUvPerDepth > 0.f);
     CHECK(view.pcssTexelDepthTimesDistance > 0.f);
-    CHECK(view.pcssMaxReachUv > 0.f);
+    CHECK(view.pcssMaxHalfWidthTexels > 0.f);
 }
 
 TEST_CASE("A local light's contact-hardened penumbra agrees with its own projection")
@@ -552,10 +568,39 @@ TEST_CASE("A local light's texel of depth is one texel of the receiver's own foo
         CHECK(view.pcssTexelDepthTimesDistance / distance == doctest::Approx(measured).epsilon(0.01));
     }
 
-    // The reach cap is quoted in atlas texels, like the tap step: a tile's texels
-    // are the atlas's, whatever the tile's size.
-    CHECK(view.pcssMaxReachUv == doctest::Approx(kPcssMaxReachTexels / static_cast<float>(kAtlas)));
-    CHECK(SpotShadowView(pose, Tile(0, 0, 128), settings).pcssMaxReachUv == doctest::Approx(view.pcssMaxReachUv));
+}
+
+TEST_CASE("A contact-hardened kernel is as wide as its tile's margin allows, within its bounds")
+{
+    // A large tile's margin is wider than the cap, so the cap is what binds.
+    CHECK(LocalPcssMaxHalfWidthTexels(LocalGuardTexels(2048, 96.f)) == doctest::Approx(kLocalPcssMaxHalfWidthTexels));
+
+    // A small one's is not: the kernel stops where the margin, less what a
+    // gathered tent reads past its edge, runs out.
+    const float guard = LocalGuardTexels(128, 96.f);
+    REQUIRE(guard - kLocalGatherMarginTexels < kLocalPcssMaxHalfWidthTexels);
+    CHECK(LocalPcssMaxHalfWidthTexels(guard) == doctest::Approx(guard - kLocalGatherMarginTexels));
+
+    // And a tile with no margin at all gets no room past its filter's own tent.
+    CHECK(LocalPcssMaxHalfWidthTexels(0.f) == doctest::Approx(0.f));
+}
+
+TEST_CASE("A tile's margin is the texels between what its light covers and what it drew")
+{
+    // A point face covers 90 degrees of a 96-degree frustum: the margin is the
+    // share of the half-tile past tan(45) out of tan(48).
+    const float expected = 0.5f * 512.f * (1.f - 1.f / std::tan(glm::radians(48.f)));
+    CHECK(LocalGuardTexels(512, 96.f) == doctest::Approx(expected));
+    // Twice the texels, twice the margin.
+    CHECK(LocalGuardTexels(1024, 96.f) == doctest::Approx(expected * 2.f));
+}
+
+TEST_CASE("Each fixed filter names its own tent")
+{
+    CHECK(LocalFilterHalfWidthTexels(ShadowFilter::Point) == doctest::Approx(kLocalPointHalfWidthTexels));
+    CHECK(LocalFilterHalfWidthTexels(ShadowFilter::Pcf3x3) == doctest::Approx(kLocalPcf3HalfWidthTexels));
+    CHECK(LocalFilterHalfWidthTexels(ShadowFilter::Pcf5x5) == doctest::Approx(kLocalPcf5HalfWidthTexels));
+    CHECK(LocalFilterHalfWidthTexels(ShadowFilter::Vogel) == doctest::Approx(kLocalVogelHalfWidthTexels));
 }
 
 TEST_CASE("A local view never claims to be orthographic")
@@ -597,4 +642,41 @@ TEST_CASE("A face's index and its axis are the same six, in the same order")
 
     // A zero direction lands somewhere rather than nowhere.
     CHECK(PointLightFaceOf(glm::vec3(0.f)) < kPointLightFaceCount);
+}
+
+TEST_CASE("A changed slope bias throws away every kept tile")
+{
+    // The slope bias is baked into the depth pipelines, so a kept tile's depth
+    // was drawn with the old one. A resting light never redraws its tile, so
+    // unless the tile is forgotten the new setting never reaches the screen.
+    const LocalShadowSettings settings;
+    const LocalShadowBuiltState built{.atlasResolution = settings.atlasResolution,
+                                      .clearTileSize = settings.faceResolution,
+                                      .slopeBias = settings.slopeBias,
+                                      .format = settings.format,
+                                      .hasTargets = true,
+                                      .hasPipelines = true,
+                                      .cacheEnabled = settings.cache.enabled};
+
+    const LocalShadowRebuild unchanged = LocalShadowRebuildFor(built, settings);
+    CHECK_FALSE(unchanged.targets);
+    CHECK_FALSE(unchanged.pipelines);
+    CHECK_FALSE(unchanged.cacheTargets);
+    CHECK_FALSE(unchanged.forgetTiles);
+
+    LocalShadowSettings flatter = settings;
+    flatter.slopeBias = 0.f;
+    const LocalShadowRebuild rebuild = LocalShadowRebuildFor(built, flatter);
+    CHECK(rebuild.pipelines);
+    CHECK(rebuild.forgetTiles);
+    // The kept-depth textures are the right shape still; only their contents
+    // are stale.
+    CHECK_FALSE(rebuild.cacheTargets);
+    CHECK_FALSE(rebuild.targets);
+
+    // A bias the shader applies per lookup changes nothing that was drawn.
+    LocalShadowSettings lookupOnly = settings;
+    lookupOnly.depthBiasTexels = 0.f;
+    lookupOnly.normalOffsetTexels = 0.f;
+    CHECK_FALSE(LocalShadowRebuildFor(built, lookupOnly).forgetTiles);
 }

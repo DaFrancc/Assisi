@@ -517,13 +517,14 @@ void ShadowDepthRenderer::BeginFrame()
 }
 
 ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *commandList,
-                                                       const ShadowPipelines &pipelines,
                                                        std::span<const ShadowDepthTarget> targets,
                                                        std::span<const ShadowCaster> casters) const
 {
     Stats stats;
     stats.firstView = static_cast<std::uint32_t>(_views.size());
-    if (!IsReady() || commandList == nullptr || pipelines.For(MeshPipeline::Opaque) == nullptr || targets.empty())
+    const bool everyTargetDraws = std::ranges::all_of(
+        targets, [](const ShadowDepthTarget &target) { return target.pipelines.For(MeshPipeline::Opaque) != nullptr; });
+    if (!IsReady() || commandList == nullptr || !everyTargetDraws || targets.empty())
     {
         return stats;
     }
@@ -602,6 +603,7 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
 
         const std::uint32_t viewEnd = drawList.viewCommandStart[index + 1u];
         const nvrhi::Viewport viewport = ShadowViewViewport(targets[index].view);
+        const ShadowPipelines &pipelines = targets[index].pipelines;
 
         // One multi-draw per run of commands sharing an arena's buffers, inside
         // one pipeline class — the classes carry different pipelines, so a run

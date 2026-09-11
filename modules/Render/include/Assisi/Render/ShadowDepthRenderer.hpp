@@ -174,13 +174,34 @@ struct ShadowInstanceData
 };
 static_assert(sizeof(ShadowInstanceData) == 80, "ShadowInstanceData must match the shader's std430 array stride.");
 
-/// @brief One view and the target it draws into.
+/// @brief The pipeline a view draws each class of caster through, indexed by
+/// MeshPipeline.
+///
+/// A null masked entry means alpha-tested casters fall back to the opaque
+/// pipeline of the same cull mode — a solid silhouette, which is what a build
+/// without the alpha-testing variant gets. Losing the hole is worse than losing
+/// the shadow, so the caster is never simply dropped.
+struct ShadowPipelines
+{
+    std::array<nvrhi::IGraphicsPipeline *, kMeshPipelineCount> byPipeline{};
+
+    [[nodiscard]] nvrhi::IGraphicsPipeline *For(MeshPipeline pipeline) const
+    {
+        return byPipeline[static_cast<std::uint32_t>(pipeline)];
+    }
+};
+
+/// @brief One view, the target it draws into, and the pipelines it draws with.
 struct ShadowDepthTarget
 {
     ShadowView view;
     /// The framebuffer the view's rectangle is a rectangle of. Never read while
     /// the draw list is built — only when it is submitted.
     nvrhi::IFramebuffer *framebuffer = nullptr;
+    /// Per view rather than per call, because the rasterizer's slope-bias cap is
+    /// baked into a pipeline and belongs to the texel of the map being drawn: an
+    /// atlas's tiles differ in size within one call.
+    ShadowPipelines pipelines{};
 };
 
 /// @brief The instances and indirect commands one frame's views submit.
@@ -256,23 +277,6 @@ void BuildShadowDrawList(std::span<const ShadowDepthTarget> targets, std::span<c
 /// figure says something a total does not. A view the list does not describe
 /// drew nothing.
 [[nodiscard]] std::uint32_t ShadowViewCasterCount(const ShadowDrawList &list, std::uint32_t view);
-
-/// @brief The pipeline a view draws each class of caster through, indexed by
-/// MeshPipeline.
-///
-/// A null masked entry means alpha-tested casters fall back to the opaque
-/// pipeline of the same cull mode — a solid silhouette, which is what a build
-/// without the alpha-testing variant gets. Losing the hole is worse than losing
-/// the shadow, so the caster is never simply dropped.
-struct ShadowPipelines
-{
-    std::array<nvrhi::IGraphicsPipeline *, kMeshPipelineCount> byPipeline{};
-
-    [[nodiscard]] nvrhi::IGraphicsPipeline *For(MeshPipeline pipeline) const
-    {
-        return byPipeline[static_cast<std::uint32_t>(pipeline)];
-    }
-};
 
 /// @brief The depth-only pipeline and the buffers that feed it, shared by every
 /// kind of shadow map.
@@ -379,13 +383,13 @@ public:
         std::uint32_t culled = 0;    ///< Caster-view pairs no view drew, mask and frustum test together.
     };
 
-    /// @brief Draw @p casters into every target, with @p pipelines.
+    /// @brief Draw @p casters into every target, each with its own pipelines.
     ///
     /// The targets are not cleared: that is the target owner's policy, and it
     /// differs between a cascade redrawn every frame and an atlas tile kept
     /// from the last one.
-    Stats Render(nvrhi::ICommandList *commandList, const ShadowPipelines &pipelines,
-                 std::span<const ShadowDepthTarget> targets, std::span<const ShadowCaster> casters) const;
+    Stats Render(nvrhi::ICommandList *commandList, std::span<const ShadowDepthTarget> targets,
+                 std::span<const ShadowCaster> casters) const;
 
     /// @brief The draw list the most recent Render() built, for a caller that
     /// wants what one of its views drew rather than the total.

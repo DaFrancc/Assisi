@@ -23,6 +23,21 @@ void LocalShadowCasterIndex::Clear()
     caster.clear();
 }
 
+LocalShadowRebuild LocalShadowRebuildFor(const LocalShadowBuiltState &built, const LocalShadowSettings &next)
+{
+    const LocalShadowSettings safe = Sanitized(next);
+    LocalShadowRebuild rebuild;
+    rebuild.targets = !built.hasTargets || safe.atlasResolution != built.atlasResolution || safe.format != built.format;
+    rebuild.pipelines = rebuild.targets || !built.hasPipelines || safe.slopeBias != built.slopeBias;
+    // The kept-depth atlas is the live one's shape, so it follows it, and the
+    // clear tile follows the face class it has to be able to blank.
+    rebuild.cacheTargets =
+        rebuild.targets || safe.cache.enabled != built.cacheEnabled ||
+        (safe.cache.enabled && std::min(safe.faceResolution, safe.atlasResolution) != built.clearTileSize);
+    rebuild.forgetTiles = rebuild.cacheTargets || rebuild.pipelines;
+    return rebuild;
+}
+
 bool LocalShadowPass::Initialize(const InitParams &params)
 {
     _device = params.device;
@@ -191,29 +206,28 @@ bool LocalShadowPass::RebuildPipelines()
         return false;
     }
 
-    // Sized against the smallest tile the atlas can hand out, which is the
-    // coarsest map any light here will be sampled from. A cap sized for the
-    // largest tile would be too tight for a demoted light and let acne through
-    // on exactly the lights that were already the worst served.
-    //
-    // One value for every tile because the cap is rasterizer state, and that is
-    // baked into the pipeline rather than set per draw. Serving each size class
-    // its own cap means a pipeline set per class, which is the honest version of
-    // "per-tile bias auto-scaled by tile resolution" and is not what this does.
-    const float slopeBiasClamp = LocalSlopeBiasClampNdc(kMinShadowFaceResolution);
-
-    for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
+    for (std::uint32_t sizeClass = 0; sizeClass < kShadowSizeClassCount; ++sizeClass)
     {
-        _pipelines[index] = _depthRenderer->CreatePipeline(_atlasFramebuffer, static_cast<MeshPipeline>(index),
-                                                           _settings.slopeBias, slopeBiasClamp,
-                                                           ShadowProjection::Perspective);
+        const float slopeBiasClamp = LocalSlopeBiasClampNdc(ShadowSizeClassResolution(sizeClass));
+        for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
+        {
+            _pipelines[sizeClass][index] =
+                _depthRenderer->CreatePipeline(_atlasFramebuffer, static_cast<MeshPipeline>(index), _settings.slopeBias,
+                                               slopeBiasClamp, ShadowProjection::Perspective);
+        }
     }
-    if (_pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr)
+    if (!HasPipelines())
     {
         return false;
     }
     _builtSlopeBias = _settings.slopeBias;
     return true;
+}
+
+bool LocalShadowPass::HasPipelines() const
+{
+    return std::ranges::all_of(_pipelines, [](const auto &set)
+                               { return set[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; });
 }
 
 bool LocalShadowPass::Configure(const LocalShadowSettings &settings, bool active)
@@ -234,56 +248,48 @@ bool LocalShadowPass::Configure(const LocalShadowSettings &settings, bool active
         return true;
     }
 
-    const LocalShadowSettings safe = Sanitized(settings);
-    const bool targetsStale =
-        _atlasFramebuffer == nullptr || safe.atlasResolution != _builtResolution || safe.format != _builtFormat;
-    const bool pipelinesStale =
-        _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr || safe.slopeBias != _builtSlopeBias;
-    // The kept-depth atlas is the live one's shape, so it follows it, and the
-    // clear tile follows the face class it has to be able to blank.
-    const bool cacheStale =
-        targetsStale || safe.cache.enabled != _builtCacheEnabled ||
-        (safe.cache.enabled && std::min(safe.faceResolution, safe.atlasResolution) != _builtClearTileSize);
-    _settings = safe;
+    const LocalShadowRebuild rebuild =
+        LocalShadowRebuildFor(LocalShadowBuiltState{.atlasResolution = _builtResolution,
+                                                    .clearTileSize = _builtClearTileSize,
+                                                    .slopeBias = _builtSlopeBias,
+                                                    .format = _builtFormat,
+                                                    .hasTargets = _atlasFramebuffer != nullptr,
+                                                    .hasPipelines = HasPipelines(),
+                                                    .cacheEnabled = _builtCacheEnabled},
+                              settings);
+    _settings = Sanitized(settings);
 
-    if (!targetsStale && !pipelinesStale && !cacheStale)
+    if (!rebuild.targets && !rebuild.pipelines && !rebuild.cacheTargets)
     {
         _active = true;
         return true;
     }
 
-    if (targetsStale && !RebuildTargets())
+    const bool rebuilt = (!rebuild.targets || RebuildTargets()) && (!rebuild.cacheTargets || RebuildCacheTargets()) &&
+                         (!rebuild.pipelines || RebuildPipelines());
+    if (!rebuilt)
     {
         ReleaseTargets();
         _pipelines = {};
         _active = false;
         return false;
     }
-    if (cacheStale && !RebuildCacheTargets())
+    if (rebuild.forgetTiles)
     {
-        ReleaseTargets();
-        _pipelines = {};
-        _active = false;
-        return false;
-    }
-    if ((targetsStale || pipelinesStale) && !RebuildPipelines())
-    {
-        ReleaseTargets();
-        _pipelines = {};
-        _active = false;
-        return false;
+        _cache.Forget();
     }
 
     _active = true;
     return true;
 }
 
-ShadowPipelines LocalShadowPass::PipelineSet() const
+ShadowPipelines LocalShadowPass::PipelineSet(std::uint32_t sizeClass) const
 {
     ShadowPipelines set;
+    const auto &pipelines = _pipelines[std::min(sizeClass, kShadowSizeClassCount - 1u)];
     for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
     {
-        set.byPipeline[index] = _pipelines[index];
+        set.byPipeline[index] = pipelines[index];
     }
     return set;
 }
@@ -318,16 +324,21 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
             continue;
         }
         const std::uint32_t faces = LocalShadowFaceCount(requests[index].kind);
+        // The class the kept rectangles were cut at, read off the rectangles
+        // themselves. It is not the request's whenever the atlas demoted the
+        // light when it was cut, and reserving at the request's would fail on
+        // every such tile — unserving the light on alternate frames.
+        const std::uint32_t keptClass = ShadowSizeClassOf(plan.rect[0].width);
         bool held = true;
         for (std::uint32_t face = 0; face < faces && held; ++face)
         {
-            held = _allocator.Reserve(plan.rect[face], requests[index].sizeClass);
+            held = _allocator.Reserve(plan.rect[face], keptClass);
         }
         // A partial reservation cannot be given back until the next Reset, so a
         // light that lost even one face keeps the rest rather than stranding
         // them — its remaining faces are still its own depth, and the next frame
         // reconciles. It is simply not served this frame.
-        assignedClass[index] = held ? requests[index].sizeClass : kUnserved;
+        assignedClass[index] = held ? keptClass : kUnserved;
     }
 
     // Pass two: fresh tiles, demoting until the atlas can serve them.
@@ -384,7 +395,9 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
             const ShadowView view = request.kind == LocalLightKind::Point
                                         ? PointFaceShadowView(request.pose, face, tile, _settings)
                                         : SpotShadowView(request.pose, tile, _settings);
-            _targets.push_back(ShadowDepthTarget{.view = view, .framebuffer = _atlasFramebuffer});
+            _targets.push_back(ShadowDepthTarget{.view = view,
+                                                 .framebuffer = _atlasFramebuffer,
+                                                 .pipelines = PipelineSet(ShadowSizeClassOf(tile.rect.width))});
             _targetRequest.push_back(static_cast<std::uint32_t>(index));
             _targetFace.push_back(face);
             _servedRects.push_back(tile.rect);
@@ -476,7 +489,7 @@ ShadowDepthRenderer::Stats LocalShadowPass::RenderTargets(nvrhi::ICommandList *c
         }
 
         const ShadowDepthRenderer::Stats drawn =
-            _depthRenderer->Render(commandList, PipelineSet(), targets.subspan(start, count), _chunkCasters);
+            _depthRenderer->Render(commandList, targets.subspan(start, count), _chunkCasters);
         if (first)
         {
             total.firstView = drawn.firstView;
@@ -671,6 +684,10 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
         // is drawn — which is the pass exactly as it was before there was a
         // cache, and the baseline the cached path is measured against.
         _plans.assign(frame.requests.size(), LocalShadowTilePlan{});
+        // So every face needs every caster, every frame. The plans mark no face
+        // dirty, which here means nothing, and asking them would skip the gather
+        // and draw each face over a cleared atlas from an empty caster list.
+        return !_plans.empty();
     }
 
     // A tile with a dirty face needs the *still* casters, which have not moved

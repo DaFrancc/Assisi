@@ -246,14 +246,15 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Cas
 
             _scratchTargets.push_back(
                 ShadowDepthTarget{.view = CascadeShadowView(fit.cascades[cascade], cascade, _settings),
-                                  .framebuffer = _cascadeFramebuffers[cascade]});
+                                  .framebuffer = _cascadeFramebuffers[cascade],
+                                  .pipelines = PipelineSet()});
         }
     }
 
     ShadowDepthRenderer::Stats drawn;
     {
         ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-depth");
-        drawn = _depthRenderer->Render(commandList, PipelineSet(), _scratchTargets, casters);
+        drawn = _depthRenderer->Render(commandList, _scratchTargets, casters);
     }
 
     _firstView = drawn.firstView;

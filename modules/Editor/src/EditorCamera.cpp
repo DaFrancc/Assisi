@@ -224,6 +224,14 @@ glm::quat LookRotation(glm::vec3 forwardWanted)
 }
 } // namespace
 
+void EditorApp::AimCamera(const glm::vec3 &eye, const glm::vec3 &target)
+{
+    _cameraTransform.position = eye;
+    _cameraTransform.rotation = LookRotation(target - eye);
+    SyncYawPitchFromRotation();
+    RefreshCameraMatrix();
+}
+
 void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))

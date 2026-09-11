@@ -114,7 +114,8 @@ add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 # the exe and the app would keep running a stale shader.
 #
 # Auto-discovered, like the assets glob above — a new .vert/.frag/.comp under
-# assets/shaders/ just needs the file created, no CMakeLists.txt edit.
+# assets/shaders/ just needs the file created, no CMakeLists.txt edit. A .glsl
+# file is a piece another shader #includes, never compiled on its own.
 file(GLOB_RECURSE _sandbox_vk_shader_sources
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES false
@@ -147,10 +148,16 @@ function(assisi_sandbox_compile_shader _shader_in _spv_rel)
     get_filename_component(_spv_rel_dir "${_spv_rel}" DIRECTORY)
     string(REPLACE "/" "_" _shader_flat "${_spv_rel}")
     set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}")
+    # The depfile names every file the source #includes, so editing one of the
+    # .glsl pieces a shader is assembled from rebuilds it; DEPENDS alone would
+    # see only the top-level source.
+    set(_shader_dep "${_shader_out}.d")
     add_custom_command(
         OUTPUT "${_shader_out}"
-        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 ${_defines} "${_shader_in}" -o "${_shader_out}"
+        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 ${_defines} --depfile "${_shader_dep}"
+                "${_shader_in}" -o "${_shader_out}"
         DEPENDS "${_shader_in}" glslang-standalone
+        DEPFILE "${_shader_dep}"
         COMMENT "Compiling ${_spv_rel}"
         VERBATIM
     )
@@ -207,9 +214,10 @@ assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
 assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
     "shaders/mesh.vert.invariant.spv" ASSISI_INVARIANT_POSITION)
 
-# Screen-space occlusion's first step, for a multisampled depth buffer.
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/ssao_depth.frag"
-    "shaders/ssao_depth.frag.msaa.spv" ASSISI_MSAA_DEPTH)
+# The scene-distance step every screen-space feature reads, for a multisampled
+# depth buffer.
+assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/scene_distance.frag"
+    "shaders/scene_distance.frag.msaa.spv" ASSISI_MSAA_DEPTH)
 
 add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

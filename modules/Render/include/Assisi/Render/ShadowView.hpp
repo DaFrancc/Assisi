@@ -135,8 +135,9 @@ struct ShadowView
     /// slope in. Zero for a cascade.
     float pcssTexelDepthTimesDistance = 0.f;
 
-    /// kPcssMaxReachTexels of the target, in UV. Zero for a cascade.
-    float pcssMaxReachUv = 0.f;
+    /// The widest a contact-hardened kernel through this tile may get, as a tent
+    /// half-width in texels. See LocalPcssMaxHalfWidthTexels. Zero for a cascade.
+    float pcssMaxHalfWidthTexels = 0.f;
 };
 
 /// @brief The view's rectangle as a UV transform: xy scale, zw offset.
@@ -168,7 +169,8 @@ struct ShadowViewGpu
     /// ShadowView::clampUv.
     glm::vec4 clampUv{0.f, 0.f, 1.f, 1.f};
     /// x = contact hardening's penumbra per unit depth, y = one texel of depth
-    /// times distance, z = its reach cap, w unused. See ShadowView's pcss fields.
+    /// times distance, z = its widest half-width in texels, w unused. See
+    /// ShadowView's pcss fields.
     glm::vec4 pcss{0.f};
 };
 ASSISI_GPU_LAYOUT(ShadowViewGpu);
@@ -389,16 +391,65 @@ struct LocalShadowLightPose
 /// atlas texels at a time and skip past what it is meant to be filtering.
 [[nodiscard]] float LocalFilterTapStepUv(std::uint32_t atlasResolution);
 
-/// @brief The tile's interior, inset by however far the filter reaches.
+/// @brief Half-widths, in texels, of the tent a local light's lookup is
+/// filtered through, for each fixed filter.
+///
+/// Every local filter is one tent — each texel weighted by how much of a
+/// triangle of this half-width covers it, compared against the receiver's own
+/// plane at that texel's centre — so an edge is a smooth ramp with no noise.
+/// 1.5 and 2.5 are the 3x3 and 5x5 tent PCF Unity and Filament ship. Point is
+/// the narrowest that blends each texel into its neighbours across its whole
+/// width, as the hardware's bilinear comparison does; anything narrower snaps
+/// between texels and prints them as steps. Vogel is the widest: a rotated Vogel
+/// disk trades staircasing for grain, which only temporal accumulation hides, so
+/// here it names the softest tent instead. mesh.frag carries the same four
+/// numbers.
+///
+/// Contact hardening widens a lookup past its filter's tent and never narrows
+/// it, so the filter is also the least blur a contact-hardened shadow gets.
+inline constexpr float kLocalPointHalfWidthTexels = 1.f;
+inline constexpr float kLocalPcf3HalfWidthTexels = 1.5f;
+inline constexpr float kLocalPcf5HalfWidthTexels = 2.5f;
+inline constexpr float kLocalVogelHalfWidthTexels = 3.5f;
+
+/// @brief The widest tent a contact-hardened local lookup takes, as a
+/// half-width in texels. It bounds the cost of the blocker search and the
+/// kernel, which both grow with its square.
+inline constexpr float kLocalPcssMaxHalfWidthTexels = 6.f;
+
+/// @brief Texels a local lookup reads beyond its tent's half-width: one for the
+/// texel the tent's edge lands in, and one because texels are read in 2x2
+/// blocks.
+inline constexpr float kLocalGatherMarginTexels = 2.f;
+
+/// @brief The tent half-width, in texels, @p filter takes for a local light.
+[[nodiscard]] float LocalFilterHalfWidthTexels(ShadowFilter filter);
+
+/// @brief How many texels of a tile lie between the edge of what its light
+/// covers and the edge of what it recorded.
+///
+/// A face or a cone is drawn kPointLightFaceOverlapDegrees wider than it
+/// covers, so a kernel at its edge still reads this light's depth. This is that
+/// margin at the tile's edge, where it is narrowest.
+[[nodiscard]] float LocalGuardTexels(std::uint32_t tileResolution, float fovDegrees);
+
+/// @brief The widest tent a contact-hardened lookup through a tile may take: as
+/// wide as kLocalPcssMaxHalfWidthTexels, but never reading past the tile's
+/// guard band. The shader never goes narrower than the selected filter's own
+/// tent, whatever this says.
+[[nodiscard]] float LocalPcssMaxHalfWidthTexels(float guardTexels);
+
+/// @brief The tile's interior, inset by @p reachTexels.
 ///
 /// A tile in an atlas has no border to clamp against: the sampler's own clamp is
-/// to the whole texture, so a tap that leaves the tile lands in the neighbouring
-/// light's depth and reports whatever that light saw. Every lookup is clamped to
-/// this rectangle instead, which is the tile minus the kernel's radius on each
-/// side. The overlap the faces are drawn with is what makes that inset lossless —
-/// the geometry the inset trims off is geometry the neighbouring face also has.
+/// to the whole texture, so a texel read past the tile lands in the neighbouring
+/// light's depth and reports whatever that light saw. Every lookup's centre is
+/// clamped to this rectangle instead, which is the tile minus the lookup's reach
+/// on each side. The overlap the faces are drawn with is what makes that inset
+/// lossless — the geometry the inset trims off is geometry the neighbouring face
+/// also has.
 ///
 /// Returned as UV, in the atlas's own space: xy = minimum, zw = maximum.
-[[nodiscard]] glm::vec4 ShadowViewClampUv(const ShadowView &view, ShadowFilter filter);
+[[nodiscard]] glm::vec4 ShadowViewClampUv(const ShadowView &view, float reachTexels);
 
 } // namespace Assisi::Render

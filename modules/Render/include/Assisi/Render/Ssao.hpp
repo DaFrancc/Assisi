@@ -5,7 +5,7 @@
 /// @brief The math of screen-space ambient occlusion: the kernel, the per-pixel
 /// rotation, and the depth arithmetic the passes share.
 ///
-/// Every function here has a transcription in ssao_depth.frag, ssao.frag,
+/// Every function here has a transcription in scene_distance.frag, ssao.frag,
 /// ssao_blur.frag or mesh.frag, and the two must agree — this side exists so the
 /// claims the shaders rest on can be checked without a GPU.
 ///
@@ -107,7 +107,7 @@ struct SsaoProjection
 /// @brief The distance in front of the camera a stored depth came from.
 ///
 /// Inverts clip z / clip w = (depthBias * z + depthScale) / -z for z, which is
-/// the whole of ssao_depth.frag.
+/// the whole of scene_distance.frag.
 [[nodiscard]] inline float SsaoLinearDepth(float depth, const SsaoProjection &projection)
 {
     return projection.depthScale / (depth + projection.depthBias);

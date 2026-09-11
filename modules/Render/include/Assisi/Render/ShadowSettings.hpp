@@ -75,10 +75,11 @@ inline constexpr float kVogelFilterRadiusTaps = 2.5f;
 /// distance — sharp where an object touches the ground, soft where its shadow
 /// falls far from it. Off samples exactly as the fixed kernel does.
 ///
-/// It replaces the selected filter rather than widening it. The kernel it
-/// sizes is always the rotated Vogel disk: a grid stepped several texels apart
-/// prints as that many offset copies of the edge, where a disk rotated per
-/// pixel reads as noise.
+/// For the sun it replaces the selected filter, and the kernel it sizes is
+/// always the rotated Vogel disk: a grid stepped several texels apart prints as
+/// that many offset copies of the edge, where a disk rotated per pixel reads as
+/// noise. For spot and point lights it widens the selected filter's tent and
+/// never narrows it (see kLocalPointHalfWidthTexels).
 ///
 /// Wire encoding, like ShadowFilter: mesh.frag switches on flags derived from it
 /// and options.json stores it.
@@ -110,6 +111,17 @@ enum class ShadowMapFormat : std::uint8_t
 };
 
 inline constexpr std::uint32_t kShadowMapFormatCount = 2;
+
+/// @brief How many steps a depth format divides [0, 1] into, or zero for a
+/// float format, whose steps are too fine to bias against.
+///
+/// A lookup's bias never goes below one of these steps: the stored depth is
+/// rounded to one, so a receiver compared against itself can land either side.
+[[nodiscard]] constexpr std::uint32_t ShadowMapDepthSteps(ShadowMapFormat format)
+{
+    constexpr std::uint32_t kD16Steps = 65535u;
+    return format == ShadowMapFormat::D16 ? kD16Steps : 0u;
+}
 
 /// @brief A named point in the knob space below.
 ///
@@ -467,9 +479,18 @@ struct LocalShadowSettings
 
     ShadowFilter filter = ShadowFilter::Pcf3x3;
 
-    float depthBiasTexels = 1.5f;
-    float slopeBias = 2.0f;
-    float normalOffsetTexels = 1.5f;
+    /// Every texel a lookup reads is compared against the receiver's own plane at
+    /// that texel, so no bias has to cover the kernel's width, and each of these
+    /// pulls every shadow off its caster by its own size. What is left for the
+    /// constant is the depth format's rounding, which the shader floors it at.
+    float depthBiasTexels = 0.25f;
+    /// Slope-scaled, applied by the rasterizer as the map is drawn, and capped
+    /// below a texel (see LocalSlopeBiasClampNdc).
+    float slopeBias = 0.5f;
+    /// Under a texel: enough to clear the texels a curved receiver's tangent
+    /// plane parts from, not enough to walk a lookup out from under the occluder
+    /// beside it.
+    float normalOffsetTexels = 0.75f;
 
     /// How large every spot and point light's emitter is taken to be, in world
     /// units, when contact hardening sizes their penumbrae. Unread while it is
@@ -731,8 +752,10 @@ struct ShadowSettings
         settings.sun.format = ShadowMapFormat::D32;
         settings.sun.maxDistance = 80.0f;
         settings.sun.filter = ShadowFilter::Pcf5x5;
+        // A face twice Medium's across, in the same atlas: a lamp near the
+        // camera takes it, and a distant one demotes to what it can fill.
         settings.local.atlasResolution = 4096;
-        settings.local.faceResolution = 512;
+        settings.local.faceResolution = 1024;
         settings.local.filter = ShadowFilter::Pcf5x5;
         settings.selection.capSpot = 32;
         settings.selection.capPoint = 8;
@@ -747,9 +770,14 @@ struct ShadowSettings
         settings.sun.format = ShadowMapFormat::D32;
         settings.sun.maxDistance = 100.0f;
         settings.sun.filter = ShadowFilter::Vogel;
+        // Sharpness at a lamp comes from texels, not from the filter: a 512 face
+        // spreads a quarter of the sky over 512 texels, a centimetre and more
+        // at arm's length, and any kernel wide enough to hide those texels'
+        // steps blurs a thin caster's shadow down to a smear. The largest face,
+        // for the lamps near enough to fill it, with the 5x5 tent over it.
         settings.local.atlasResolution = 8192;
-        settings.local.faceResolution = 512;
-        settings.local.filter = ShadowFilter::Vogel;
+        settings.local.faceResolution = 2048;
+        settings.local.filter = ShadowFilter::Pcf5x5;
         settings.selection.capSpot = 64;
         settings.selection.capPoint = 16;
         // Provisional, as every tier value is until its cost is measured: the
