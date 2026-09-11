@@ -7,8 +7,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 namespace Assisi::App
 {
@@ -305,8 +307,84 @@ OptionsConfig OptionsConfig::LoadFromJson()
     return FromJsonText(*text);
 }
 
+namespace
+{
+/// @brief Every setting in @p options, defaults included.
+nlohmann::json FullJson(const OptionsConfig &options);
+
+/// Decimal places a saved float keeps. Finer than any slider can be set by hand,
+/// and coarse enough that dragging one back to its default lands on it.
+constexpr double kSavedFloatScale = 1e4;
+
+/// @brief @p json with every floating-point number rounded to
+/// kSavedFloatScale, recursively.
+nlohmann::json RoundFloats(nlohmann::json json)
+{
+    if (json.is_number_float())
+    {
+        return std::round(json.get<double>() * kSavedFloatScale) / kSavedFloatScale;
+    }
+    if (json.is_structured())
+    {
+        for (nlohmann::json &child : json)
+        {
+            child = RoundFloats(std::move(child));
+        }
+    }
+    return json;
+}
+
+/// @brief The keys of @p value that differ from @p defaults, recursively, with
+/// objects left empty by that dropped.
+nlohmann::json ChangedFrom(const nlohmann::json &value, const nlohmann::json &defaults)
+{
+    nlohmann::json changed = nlohmann::json::object();
+    for (auto entry = value.begin(); entry != value.end(); ++entry)
+    {
+        const auto fallback = defaults.find(entry.key());
+        if (fallback == defaults.end())
+        {
+            changed[entry.key()] = entry.value();
+        }
+        else if (entry->is_object() && fallback->is_object())
+        {
+            nlohmann::json nested = ChangedFrom(*entry, *fallback);
+            if (!nested.empty())
+            {
+                changed[entry.key()] = std::move(nested);
+            }
+        }
+        // Both sides are already rounded (see RoundFloats), so a value a slider
+        // left within rounding of its default compares equal to it.
+        else if (*entry != *fallback)
+        {
+            changed[entry.key()] = entry.value();
+        }
+    }
+    return changed;
+}
+} // namespace
+
 std::string OptionsConfig::ToJsonText() const
 {
+    // Only what differs from the defaults. A value written out at its default
+    // would pin it: a later change to the default would never reach this user.
+    return ChangedFrom(RoundFloats(FullJson(*this)), RoundFloats(FullJson(OptionsConfig{}))).dump(4);
+}
+
+namespace
+{
+nlohmann::json FullJson(const OptionsConfig &options)
+{
+    const Render::AaMode aaMode = options.aaMode;
+    const int32_t msaaSamples = options.msaaSamples;
+    const Render::TonemapSettings &tonemap = options.tonemap;
+    const Render::ShadowSettings &shadows = options.shadows;
+    const Render::EnvironmentSettings &environment = options.environment;
+    const Render::SsaoSettings &ambientOcclusion = options.ambientOcclusion;
+    const FrameSyncMode frameSync = options.frameSync;
+    const std::int16_t fpsLimit = options.fpsLimit;
+
     nlohmann::json json;
     json["antiAliasing"]["mode"] = AaModeToString(aaMode);
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
@@ -371,8 +449,9 @@ std::string OptionsConfig::ToJsonText() const
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;
 
-    return json.dump(4);
+    return json;
 }
+} // namespace
 
 void OptionsConfig::SaveToJson() const
 {

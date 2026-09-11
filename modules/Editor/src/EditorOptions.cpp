@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Editor
@@ -340,11 +341,11 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // changes the picture, which is why they are a list with an off entry rather
     // than checkboxes that could be left on by accident.
     static const char *const kShadowDebugNames[] = {"Off", "Cascades", "Occluder Margin", "Filter Taps"};
-    static_assert(std::size(kShadowDebugNames) == Assisi::Render::kShadowDebugViewCount,
+    static_assert(std::size(kShadowDebugNames) == std::to_underlying(Assisi::Render::ShadowDebugView::Count),
                   "The debug view list must name every ShadowDebugView.");
     int debugView = static_cast<int>(frame.renderer.ShadowDebugView());
     if (ImGui::Combo("Shadow View", &debugView, kShadowDebugNames,
-                     static_cast<int>(Assisi::Render::kShadowDebugViewCount)))
+                     static_cast<int>(Assisi::Render::ShadowDebugView::Count)))
     {
         frame.renderer.SetShadowDebugView(static_cast<Assisi::Render::ShadowDebugView>(debugView));
     }

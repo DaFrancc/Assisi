@@ -747,6 +747,11 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     {
         createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
+    // A frame capture copies the finished image out of the swapchain.
+    if (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+    {
+        createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     createInfo.preTransform = capabilities.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;

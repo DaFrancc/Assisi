@@ -251,8 +251,10 @@ float LocalSlopeBiasClampNdc(std::uint32_t tileResolution)
     {
         return 0.f;
     }
-    // One texel's worth of depth at the far plane, which is where the depth
-    // curve is flattest and a texel therefore buys the most NDC.
+    // One texel's worth of depth at the far plane. A texel's footprint grows with
+    // distance while a world unit's worth of depth falls with its square, so a
+    // texel spans the least depth out there — and a cap of one texel at the far
+    // plane is under a texel everywhere nearer.
     //
     // Both terms carry a factor of the far plane and it cancels: what a texel
     // covers grows with the range, and what a world unit is worth in depth

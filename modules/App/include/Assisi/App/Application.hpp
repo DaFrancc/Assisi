@@ -21,6 +21,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <span>
 
 namespace Assisi::App
@@ -326,6 +327,11 @@ private:
     /// same pay-for-what-you-place rule the thing exists to check.
     std::unique_ptr<PerfCapture> _perfCapture;
 
+    /// See PerfCaptureConfig::imagePath and optionsPath. The options path is read
+    /// in Initialize, which is what loads the options.
+    std::string _captureImagePath;
+    std::string _captureOptionsPath;
+
     /// Resolution a capture asked to render at, 0 when it did not ask. Applied
     /// in InitializePresentation rather than at SetPerfCapture, because
     /// Initialize() reloads _config from game.json in between.
@@ -335,6 +341,11 @@ private:
     /// Whether the capture asked for per-pass timers. Off by default because
     /// they change the frame's render-pass structure — see PerfCaptureConfig.
     bool _capturePerPassTiming = false;
+
+    /// Whether the next frame is the one to write to _captureImagePath. Armed once
+    /// the measured frames are done: the image is taken from inside a frame,
+    /// before the debug UI draws, so it has to be the next one.
+    bool _captureImagePending = false;
 
     /// NVML readings taken alongside a capture's frame times. Its worker spins
     /// up on the first Poll(), so a non-capture run never initialises NVML —

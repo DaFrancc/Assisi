@@ -35,6 +35,7 @@
 /// than a feature usually costs. Capture mode therefore produces one side of a
 /// comparison; the gate is two captures taken back to back.
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -173,6 +174,14 @@ struct PerfCaptureConfig
     /// human-readable summary still goes to the log.
     std::string outputPath;
 
+    /// Where to write a PNG of the frame after the last measured one, taken
+    /// before the debug UI draws. Empty writes none.
+    std::string imagePath;
+
+    /// An options file to run with instead of the user's options.json, so a
+    /// capture can pin its settings without touching them. Empty uses the user's.
+    std::string optionsPath;
+
     /// The level the numbers belong to, recorded in the report so a stray file
     /// can still say what it measured.
     std::string levelPath;
@@ -183,6 +192,12 @@ struct PerfCaptureConfig
     /// than an edit to a committed config file.
     int32_t width  = 0;
     int32_t height = 0;
+
+    /// Where the camera stands and the point it looks at, overriding the level's
+    /// active Camera. Ignored unless hasCameraPose.
+    std::array<float, 3> cameraEye{};
+    std::array<float, 3> cameraTarget{};
+    bool hasCameraPose = false;
 
     /// Measure each pass separately as well as the frame.
     ///

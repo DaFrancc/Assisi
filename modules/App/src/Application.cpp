@@ -23,6 +23,7 @@
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 
@@ -32,7 +33,9 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -170,6 +173,18 @@ bool Application::InitializeCore()
 
     _config  = AppConfig::LoadFromJson();
     _options = OptionsConfig::LoadFromJson();
+    if (!_captureOptionsPath.empty())
+    {
+        std::ifstream file(_captureOptionsPath);
+        if (!file)
+        {
+            Core::Log::Error("PerfCapture: could not open options '{}'.", _captureOptionsPath);
+            return false;
+        }
+        std::stringstream text;
+        text << file.rdbuf();
+        _options = OptionsConfig::FromJsonText(text.str());
+    }
 
     // A capture must not be paced. Under vsync the frame time is the display's
     // refresh interval and the GPU idles between presents — which both hides the
@@ -346,6 +361,8 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     _captureWidth         = config.width;
     _captureHeight        = config.height;
     _capturePerPassTiming = config.perPassTiming;
+    _captureImagePath     = config.imagePath;
+    _captureOptionsPath   = config.optionsPath;
 }
 
 void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
@@ -377,7 +394,7 @@ void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
         }
     }
 
-    if (!_perfCapture->IsComplete())
+    if (!_perfCapture->IsComplete() || _captureImagePending)
     {
         return;
     }
@@ -398,7 +415,13 @@ void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
     {
         Core::Log::Error("PerfCapture: the report could not be written.");
     }
-    RequestClose();
+    if (_captureImagePath.empty())
+    {
+        RequestClose();
+        return;
+    }
+    // RenderFrame takes the image on the next frame and closes after it.
+    _captureImagePending = true;
 }
 
 namespace
@@ -925,6 +948,18 @@ void Application::RenderFrame()
         _postProcess.RunAfterOverlays(frame->commandList, *frame);
     }
 
+    // The finished frame, before the debug UI draws over it.
+    Render::FrameCapture frameCapture;
+    bool captureImage = false;
+    if (_captureImagePending && !_closeRequested)
+    {
+        captureImage = frameCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
+        if (!captureImage)
+        {
+            RequestClose();
+        }
+    }
+
     {
         // Split three ways because the three costs move for unrelated reasons:
         // `imgui-begin` is the backend's per-frame setup plus the texture sweep,
@@ -949,6 +984,14 @@ void Application::RenderFrame()
     {
         ASSISI_PROFILE_SCOPE("end-frame");
         vulkanContext->EndFrame();
+    }
+
+    // After EndFrame, which submits the list the copy was recorded on. The flag
+    // stays set so the capture's report is not written a second time.
+    if (captureImage)
+    {
+        (void)frameCapture.Write(vulkanContext->GetDevice(), _captureImagePath);
+        RequestClose();
     }
 }
 

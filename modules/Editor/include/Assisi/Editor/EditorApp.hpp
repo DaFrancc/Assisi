@@ -249,6 +249,9 @@ private:
     /// wants their fly camera where they left it.
     void AdoptLevelCamera();
 
+    /// @brief Puts the editor camera at @p eye, looking at @p target.
+    void AimCamera(const glm::vec3 &eye, const glm::vec3 &target);
+
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
     void UpdateCamera(float dt);

@@ -41,9 +41,10 @@ inline constexpr float kDefaultSsaoStrength = 1.0f;
 /// saved with the options and not in the level.
 struct SsaoSettings
 {
-    /// Off draws exactly the frame there was before the pass existed: no depth
-    /// prepass, no occlusion targets, and a lit pass through the pipelines it
-    /// always used.
+    /// Off holds no occlusion target and runs no hemisphere test, and the
+    /// indirect term takes the expressions it had before occlusion existed. The
+    /// depth prepass belongs to scene depth rather than to this, and still runs
+    /// while anything else reads it.
     bool enabled = false;
     uint32_t sampleCount = kDefaultSsaoSampleCount;
     float radius = kDefaultSsaoRadius;
