@@ -318,16 +318,21 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
             continue;
         }
         const std::uint32_t faces = LocalShadowFaceCount(requests[index].kind);
+        // The class the kept rectangles were cut at, read off the rectangles
+        // themselves. It is not the request's whenever the atlas demoted the
+        // light when it was cut, and reserving at the request's would fail on
+        // every such tile — unserving the light on alternate frames.
+        const std::uint32_t keptClass = ShadowSizeClassOf(plan.rect[0].width);
         bool held = true;
         for (std::uint32_t face = 0; face < faces && held; ++face)
         {
-            held = _allocator.Reserve(plan.rect[face], requests[index].sizeClass);
+            held = _allocator.Reserve(plan.rect[face], keptClass);
         }
         // A partial reservation cannot be given back until the next Reset, so a
         // light that lost even one face keeps the rest rather than stranding
         // them — its remaining faces are still its own depth, and the next frame
         // reconciles. It is simply not served this frame.
-        assignedClass[index] = held ? requests[index].sizeClass : kUnserved;
+        assignedClass[index] = held ? keptClass : kUnserved;
     }
 
     // Pass two: fresh tiles, demoting until the atlas can serve them.
@@ -671,6 +676,10 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
         // is drawn — which is the pass exactly as it was before there was a
         // cache, and the baseline the cached path is measured against.
         _plans.assign(frame.requests.size(), LocalShadowTilePlan{});
+        // So every face needs every caster, every frame. The plans mark no face
+        // dirty, which here means nothing, and asking them would skip the gather
+        // and draw each face over a cleared atlas from an empty caster list.
+        return !_plans.empty();
     }
 
     // A tile with a dirty face needs the *still* casters, which have not moved
