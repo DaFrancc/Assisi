@@ -104,6 +104,27 @@ TYPES: dict[str, TypeCodegen] = {
         'Vec4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
         '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
+    # Math::Color3 / Color4 — linear RGB(A). Deliberately the same JSON as their
+    # vectors (a flat float array, same order), so a field that changes between
+    # the two loads every file written under the other spelling and re-saves
+    # byte-identically. Only the FieldType differs, which is what lets an editor
+    # offer a colour picker. Both spellings accepted, like ECS::Entity's.
+    'Math::Color3': TypeCodegen(
+        'Color3',
+        '{{ {a}.x, {a}.y, {a}.z }}',
+        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
+    'Assisi::Math::Color3': TypeCodegen(
+        'Color3',
+        '{{ {a}.x, {a}.y, {a}.z }}',
+        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
+    'Math::Color4': TypeCodegen(
+        'Color4',
+        '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
+        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
+    'Assisi::Math::Color4': TypeCodegen(
+        'Color4',
+        '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
+        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
     'glm::quat': TypeCodegen(
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',

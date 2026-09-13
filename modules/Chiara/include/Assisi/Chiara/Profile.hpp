@@ -3,7 +3,7 @@
 
 /// @file Profile.hpp
 /// @brief The instrumentation macros — the only Chiara header most call sites
-///        need (design: docs/chiara-design-notes.md §3).
+///        need.
 ///
 /// ```cpp
 /// void Application::RenderFrame()

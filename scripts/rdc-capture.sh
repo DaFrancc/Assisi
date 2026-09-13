@@ -2,8 +2,7 @@
 # Launch the sandbox under RenderDoc so a frame can be captured with F12.
 #
 # Exists because two things about this are not guessable, and both fail in ways
-# that look like an engine bug rather than a tooling one — see
-# docs/gpu-profiling-guide.md for the long version:
+# that look like an engine bug rather than a tooling one:
 #
 #   1. RenderDoc cannot capture Wayland. It does not expose
 #      VK_KHR_wayland_surface, so window creation fails outright with

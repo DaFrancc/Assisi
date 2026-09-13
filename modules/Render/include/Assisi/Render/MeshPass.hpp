@@ -11,7 +11,7 @@
 /// parameters, the material's glTF metallic-roughness factors fetched from the
 /// AssetCache's material table (and its textures from the bindless table) by that
 /// id, and clustered point/spot/directional lighting (see ClusterGrid) read
-/// directly from cube_min.frag. Nothing binds per-draw — the whole span draws
+/// directly from mesh.frag. Nothing binds per-draw — the whole span draws
 /// against one binding set + the bindless table as instanced indirect commands,
 /// built either on the CPU (Submit) or by a MeshCuller (SubmitIndirect).
 
@@ -25,16 +25,19 @@
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
 #include <Assisi/Render/DrawItem.hpp>
+#include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/ShadowCascades.hpp>
+#include <Assisi/Render/ShadowSettings.hpp>
 
 namespace Assisi::Render
 {
 /// @brief Which material channel the mesh pass visualizes instead of the lit
 /// result. None = the normal render; the rest short-circuit the shader to one
 /// channel for debugging. Values must match the `kDebug*` constants in
-/// cube_min.frag (packed into FrameConstants).
+/// mesh.frag (packed into FrameConstants).
 enum class MaterialDebugView : uint32_t
 {
     None = 0,
@@ -44,13 +47,54 @@ enum class MaterialDebugView : uint32_t
     Normal,
     Occlusion,
     Emissive,
+    /// What screen-space occlusion left open at each pixel; white on a frame it
+    /// did not run.
+    ScreenOcclusion,
 };
 
-/// @brief The ambient term every surface gets for free, when nobody says otherwise.
+/// @brief Which of the mesh pass's three pipeline sets a draw goes through.
 ///
-/// Named rather than left as a literal in three places; anything that wants a
-/// different one passes it.
-inline constexpr float kDefaultAmbientIntensity = 0.03f;
+/// Lit is the only one a frame without a depth prepass ever touches. The other
+/// two exist for screen-space occlusion, which has to read the scene's depth
+/// before the lit pass runs: the prepass writes that depth, and the lit pass
+/// after it shades exactly the surfaces the prepass kept and writes no depth of
+/// its own.
+enum class MeshPassStage : uint8_t
+{
+    Lit,
+    DepthPrepass,
+    LitAfterPrepass,
+    Count
+};
+
+/// @brief What the shadow lookup draws instead of shading, for diagnosis.
+///
+/// Wire encoding: the shader switches on the integer. Separate from
+/// MaterialDebugView because these describe the lookup rather than the surface,
+/// and because two of them have to run the lookup to have anything to report.
+enum class ShadowDebugView : uint32_t
+{
+    None = 0,
+    /// Tint the lit result by which cascade each pixel sampled — the view that
+    /// makes a split distance or a blend band visible.
+    Cascades,
+    /// The distance, in metres, between the fragment and the occluder the map
+    /// recorded at its own lookup: red where one sits nearer the light (which is
+    /// what shadow looks like), green where nothing does, blue where the lookup
+    /// left the cascade. Reads the centre texel unfiltered, because the
+    /// comparison sampler returns a fraction and a fraction cannot distinguish
+    /// the map holding the wrong occluder from it holding the right one at the
+    /// wrong depth.
+    Margin,
+    /// The visibility that shades the pixel, against the two narrower answers
+    /// inside it: red is what SunVisibility returns, green this cascade's own
+    /// filtered lookup, blue its centre tap. Black and white are the two correct
+    /// cases; red alone is the blend relighting what its cascade shadowed, and
+    /// yellow is the kernel finding light its centre did not. Every stage that
+    /// can add light is on screen at once, so a leak names its own stage.
+    Taps,
+    Count,
+};
 
 class MeshPass
 {
@@ -66,6 +110,20 @@ public:
         /// Compiled-SPIR-V shader paths (see ShaderModule.hpp).
         std::string vertexShaderSpvPath;
         std::string pixelShaderSpvPath;
+        /// The same pixel shader built with its alpha-test discard enabled — the
+        /// MeshPipeline::Mask pipeline's. It is a separate build rather than a
+        /// branch because a shader that can discard costs its whole pipeline
+        /// early depth rejection, which opaque geometry must not pay for.
+        std::string maskedPixelShaderSpvPath;
+        /// The depth prepass's builds, loaded the first time a frame asks for a
+        /// prepass (PreparePrepass) and never before: the vertex stage alone,
+        /// the same with the varyings the alpha test reads, and that test.
+        std::string depthVertexShaderSpvPath;
+        std::string maskedDepthVertexShaderSpvPath;
+        std::string maskedDepthPixelShaderSpvPath;
+        /// The lit pass's vertex stage with an invariant position, for drawing
+        /// after a prepass — see mesh.vert.
+        std::string invariantVertexShaderSpvPath;
         /// Must outlive the pass — its light buffers bind into every binding set.
         const ClusterGrid *clusterGrid = nullptr;
         /// The AssetCache's bindless material-texture table + layout (stage D):
@@ -95,19 +153,120 @@ public:
     /// @pre IsValid() — call Initialize() first.
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
 
-    /// @brief Updates the per-frame constant buffer (view-projection + camera view
-    /// matrix + cluster-grid parameters). Call once per frame, before Submit. The
-    /// vertex shader multiplies @p viewProjection by each instance's world matrix
-    /// for clip position, so the model matrix never leaves the GPU.
+    /// @brief Build the DepthPrepass and LitAfterPrepass pipelines, if they are
+    /// not built already for the current framebuffer.
     ///
-    /// @p ambientColor / @p ambientIntensity are the uniform term every surface
-    /// receives regardless of what lights it. The editor turns it up to inspect a
-    /// model without having to light one.
-    void UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection, const glm::mat4 &view,
-                              uint32_t screenWidth, uint32_t screenHeight, float nearZ, float farZ,
-                              uint32_t dirLightCount, MaterialDebugView debugView = MaterialDebugView::None,
-                              const glm::vec3 &ambientColor = glm::vec3(1.f, 1.f, 1.f),
-                              float ambientIntensity = kDefaultAmbientIntensity) const;
+    /// Lazy, so a renderer that never asks for a prepass never loads its shaders
+    /// or holds its pipelines. A RebuildPipeline drops them, and the next call
+    /// here builds them against the new framebuffer.
+    /// @return false if a shader failed to load or a pipeline to build; the two
+    /// stages are then unusable and the caller should draw Lit alone.
+    [[nodiscard]] bool PreparePrepass();
+
+    /// @brief What the mesh shader needs to sample the sun's cascades.
+    ///
+    /// A null @ref fit — or one whose count is zero — means no shadowing sun
+    /// this frame, and the shader skips the lookup on a frame constant rather
+    /// than sampling a map that holds nothing. @ref localActive is the same
+    /// switch for the local half, and the two are independent: a scene may have
+    /// a shadowed sun and no shadowed lamp, or the reverse.
+    struct ShadowFrameData
+    {
+        /// This frame's fitted cascades. Not retained past the call.
+        const CascadeFit *fit = nullptr;
+        /// The knobs the fit was made with; the filter, blend band and biases
+        /// ride into the shader from here.
+        SunShadowSettings settings;
+        /// Which directional light the cascades belong to, as an index into the
+        /// buffer the shader reads. Only that light's radiance is shadowed.
+        uint32_t sunLightIndex = 0;
+        /// Which diagnostic overlay the shadow lookup draws, if any.
+        ShadowDebugView debugView = ShadowDebugView::None;
+
+        /// Whether any local light holds an atlas tile this frame. False leaves
+        /// both light loops taking no lookup at all, which is what a scene with
+        /// no shadowed lamp in it pays.
+        bool localActive = false;
+        /// The knobs the atlas was drawn with. Only the filter reaches the
+        /// shader from here — every bias is per tile, because a demoted tile is
+        /// biased differently from a full-size one, and rides in the view table.
+        LocalShadowSettings localSettings;
+
+        /// Whether each half's lookup sizes its kernel from a blocker search.
+        /// Resolved by the caller (PcssShadesSun, PcssShadesLocals), so the pass
+        /// never re-derives which setting names which half.
+        bool sunPcss = false;
+        bool localPcss = false;
+    };
+
+    /// @brief Everything the per-frame constant buffer carries. Grouped so the
+    /// call site names what it sets rather than counting a dozen arguments.
+    struct FrameConstantsParams
+    {
+        glm::mat4 viewProjection{1.f};
+        glm::mat4 view{1.f};
+        uint32_t screenWidth = 0;
+        uint32_t screenHeight = 0;
+        float nearZ = 0.f;
+        float farZ = 0.f;
+        uint32_t dirLightCount = 0;
+        MaterialDebugView debugView = MaterialDebugView::None;
+        /// What reaches a surface from everything that is not a light, as the
+        /// frame's indirect-lighting provider answered it. The pass carries the
+        /// answer and never asks which provider gave it.
+        IndirectConstants indirect;
+        ShadowFrameData shadows;
+        /// Whether SetAmbientOcclusion's texture holds this frame's screen-space
+        /// occlusion. False leaves the shader reading no texture and taking the
+        /// indirect expressions it had before there was any.
+        bool screenOcclusion = false;
+    };
+
+    /// @brief Updates the per-frame constant buffer (view-projection + camera view
+    /// matrix + cluster-grid parameters + the sun's cascades). Call once per
+    /// frame, before Submit. The vertex shader multiplies the view-projection by
+    /// each instance's world matrix for clip position, so the model matrix never
+    /// leaves the GPU.
+    void UpdateFrameConstants(nvrhi::ICommandList *commandList, const FrameConstantsParams &params) const;
+
+    /// @brief Point the shader at the sun's cascade array (ShadowPass owns it).
+    ///
+    /// Never null in practice — the shadow pass keeps a one-texel empty array
+    /// bound while it is inactive, so the binding set never has a hole in it.
+    /// A different handle invalidates the cached set, which is what a resolution
+    /// or cascade-count change produces.
+    void SetShadowMap(nvrhi::ITexture *cascades);
+
+    /// @brief Point the shader at the local-light atlas (LocalShadowPass owns
+    /// it), on the same terms as the cascade array above.
+    void SetShadowAtlas(nvrhi::ITexture *atlas);
+
+    /// @brief Point the shader at the frame's shadow view table
+    /// (ShadowDepthRenderer owns it).
+    ///
+    /// Null before anything has drawn a shadow map, which is the state a scene
+    /// with no shadows in it stays in: the pass binds a one-row empty table in
+    /// its place, because a binding set may not have a hole in it. The table
+    /// grows, and a growth swaps the handle, which invalidates the cached set.
+    void SetShadowViewTable(nvrhi::IBuffer *views);
+
+    /// @brief Point the shader at the sky probe's prefiltered cube (SkyProbe
+    /// owns it), or at none.
+    ///
+    /// Null binds an empty placeholder, which is what a scene with no probe
+    /// draws with. It is never sampled: the shader only reads the environment
+    /// while the frame constants say one answers, and the provider that says
+    /// so is the one that set this. A different handle invalidates the cached
+    /// set.
+    void SetEnvironment(nvrhi::ITexture *specularCube);
+
+    /// @brief Point the shader at screen-space occlusion's result (SsaoPass
+    /// owns it), or at none.
+    ///
+    /// Null binds a placeholder, on the same terms as the environment's: the
+    /// shader reads the texture only on a frame whose constants say occlusion
+    /// ran. A different handle invalidates the cached set.
+    void SetAmbientOcclusion(nvrhi::ITexture *occlusion);
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). They describe the batching
@@ -126,7 +285,7 @@ public:
 
     /// @brief One per-object record: uploaded into the instance buffer each frame
     /// and indexed in the vertex shader by gl_InstanceIndex (each draw sets its
-    /// startInstanceLocation). Mirrors cube_min.vert's `InstanceData` std430
+    /// startInstanceLocation). Mirrors mesh.vert's `InstanceData` std430
     /// struct — mat4 (0..63) + uint (64), padded to the 16-byte array stride
     /// std430 gives the struct.
     ///
@@ -156,8 +315,12 @@ public:
     /// adjacent, so they coalesce — the sort drives instancing, not binds.
     /// Items must reference live resources (valid until the frame is submitted).
     /// @param frame  The frame's command list + framebuffer + viewport size.
+    /// @param stage  Which pipeline set records the draws. A DepthPrepass
+    ///               submission is kept, and Redraw replays it lit.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
-    [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items) const;
+    ///      PreparePrepass() succeeded, for any stage but Lit.
+    [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items,
+                                     MeshPassStage stage = MeshPassStage::Lit) const;
 
     /// @brief The GPU-built draw list a MeshCuller produced this frame (stage F1):
     /// the compute pass wrote the per-instance records and grew each batch
@@ -170,12 +333,15 @@ public:
         /// t6 in place of the CPU path's own instance buffer.
         nvrhi::IBuffer *instanceBuffer = nullptr;
         /// The batch draw commands (one DrawIndexedIndirectArguments per distinct
-        /// (mesh, submesh)); the cull pass grew each one's instanceCount. Empty
-        /// batches carry instanceCount 0 and draw nothing.
+        /// (mesh, submesh, pipeline)); the cull pass grew each one's instanceCount.
+        /// Empty batches carry instanceCount 0 and draw nothing.
         nvrhi::IBuffer *indirectBuffer = nullptr;
-        /// Number of batch commands to draw (CPU-known — every batch has a command,
-        /// so this is the count for a plain drawIndexedIndirect; no count buffer).
-        uint32_t commandCount = 0;
+        /// Commands per MeshPipeline block, in pipeline order. The blocks are laid
+        /// out in that same order, so a block's offset is the sum of the counts
+        /// before it. Zero for a pipeline the frame placed no material for, which
+        /// costs it no commands and no draw call. CPU-known — every batch has a
+        /// command in its block — so no count buffer.
+        uint32_t commandCounts[kMeshPipelineCount] = {};
         /// The shared GeometryArena's vertex/index buffers every draw addresses.
         /// F1 assumes a single arena (as stage E does — one drawIndexedIndirect
         /// group); a second arena would need per-arena count buffers.
@@ -185,14 +351,34 @@ public:
 
     /// @brief Draws a GPU-culled frame: binds the global set against @p in's
     /// instance buffer, points the pipeline at the cull pass's batch-command
-    /// buffer, and issues one `drawIndexedIndirect` over @p in.commandCount
-    /// commands (empty batches draw 0 instances). Reports the API call in
-    /// `drawCalls`; the caller reports the survivor/batch tallies from the culler.
+    /// buffer, and issues one `drawIndexedIndirect` per pipeline half (empty
+    /// batches draw 0 instances). Reports the API calls in `drawCalls`; the caller
+    /// reports the survivor/batch tallies from the culler.
     /// @pre IsValid(), UpdateFrameConstants() this frame, and a MeshCuller::Cull
     ///      recorded into the same command list ahead of this call.
-    [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const;
+    [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in,
+                                             MeshPassStage stage = MeshPassStage::Lit) const;
 
-    bool IsValid() const { return _pipeline != nullptr; }
+    /// @brief Record this frame's last Submit or SubmitIndirect again, through
+    /// @p stage's pipelines.
+    ///
+    /// What the lit pass after a prepass draws with: the same instance records
+    /// and indirect commands, already uploaded, so both passes draw the very same
+    /// list and nothing is extracted, sorted, culled or uploaded twice.
+    /// Draws nothing when nothing has been submitted since UpdateFrameConstants.
+    [[nodiscard]] SubmitStats Redraw(const RenderFrame &frame, MeshPassStage stage) const;
+
+    bool IsValid() const
+    {
+        for (const nvrhi::GraphicsPipelineHandle &pipeline : _pipelines)
+        {
+            if (pipeline == nullptr)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /// @brief Drops the cached global binding set so the next Submit rebuilds it.
     /// Called on level unload (SceneRenderer::InvalidateAssetBindings). Every handle
@@ -204,9 +390,10 @@ public:
 private:
     /// @brief Builds (once, then caches) the pass's single binding set: frame
     /// constants, the shared sampler, the clustered-light buffers, the material
-    /// table, and the per-instance buffer at t6 — @p instanceBuffer, which is the
-    /// pass's own (CPU path) or the MeshCuller's (GPU path). Rebuilt when that
-    /// buffer handle changes (a growth, or a switch between paths) or after
+    /// table, the per-instance buffer at t6 — @p instanceBuffer, which is the
+    /// pass's own (CPU path) or the MeshCuller's (GPU path) — and the sun's
+    /// cascade array at t7. Rebuilt when either handle changes (a growth, a
+    /// switch between paths, a cascade reallocation) or after
     /// InvalidateBindingSets().
     nvrhi::IBindingSet *GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const;
 
@@ -216,16 +403,78 @@ private:
     /// (it binds via GraphicsState::indirectParams), so a growth needs no set rebuild.
     void EnsureIndirectCapacity(uint32_t commandCount) const;
 
+    /// @brief Build the BRDF table on the CPU and upload it, on a command list
+    /// of its own. Once, at Initialize.
+    [[nodiscard]] bool CreateBrdfTable();
+
+    /// @brief The pipeline set @p stage draws through.
+    [[nodiscard]] const nvrhi::GraphicsPipelineHandle *PipelinesFor(MeshPassStage stage) const;
+
+    /// @brief Record the CPU path's prepared commands through @p stage.
+    [[nodiscard]] SubmitStats RecordCpuDraws(const RenderFrame &frame, MeshPassStage stage) const;
+
+    /// @brief Record @p in's commands through @p stage.
+    [[nodiscard]] SubmitStats RecordIndirectDraws(const RenderFrame &frame, const IndirectDrawInputs &in,
+                                                  MeshPassStage stage) const;
+
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
 
+    /// @brief Pixel-shader builds the pass loads: the same GLSL with and without
+    /// the alpha-test discard. Fewer than the pipelines, because cull mode is
+    /// rasterizer state — it needs a pipeline of its own but not a second shader.
+    enum PixelShaderVariant : uint32_t
+    {
+        kPixelShaderOpaque = 0,
+        kPixelShaderMasked = 1,
+        kPixelShaderVariantCount,
+    };
+
     nvrhi::ShaderHandle _vertexShader;
-    nvrhi::ShaderHandle _pixelShader;
+    nvrhi::ShaderHandle _pixelShaders[kPixelShaderVariantCount];
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::SamplerHandle _sampler;
-    nvrhi::GraphicsPipelineHandle _pipeline;
+    // Depth-comparison sampler for the cascades: the hardware compares the
+    // reference against four texels and blends the results, so even a one-tap
+    // lookup comes back filtered rather than as a hard 0 or 1.
+    nvrhi::SamplerHandle _shadowSampler;
+    // One pipeline per MeshPipeline, differing only in which pixel shader they
+    // carry and whether they cull back faces. A draw run selects its own off the
+    // sort key.
+    nvrhi::GraphicsPipelineHandle _pipelines[kMeshPipelineCount];
+
+    // The prepass's two sets, empty until PreparePrepass builds them and dropped
+    // by RebuildPipeline, which is why the framebuffer they are built against is
+    // kept. The shaders stay once loaded: they do not depend on the framebuffer.
+    nvrhi::FramebufferInfo _framebufferInfo;
+    std::string _depthVertexShaderPath;
+    std::string _maskedDepthVertexShaderPath;
+    std::string _maskedDepthPixelShaderPath;
+    std::string _invariantVertexShaderPath;
+    nvrhi::ShaderHandle _depthVertexShader;
+    nvrhi::ShaderHandle _maskedDepthVertexShader;
+    nvrhi::ShaderHandle _maskedDepthPixelShader;
+    nvrhi::ShaderHandle _invariantVertexShader;
+    nvrhi::GraphicsPipelineHandle _prepassPipelines[kMeshPipelineCount];
+    nvrhi::GraphicsPipelineHandle _afterPrepassPipelines[kMeshPipelineCount];
+
+    // Which path this frame's draws were last submitted through, and for the GPU
+    // path what it was handed, so Redraw can replay them. The CPU path's own
+    // scratch below already holds its commands.
+    enum class Submission : uint8_t
+    {
+        None,
+        Cpu,
+        Indirect
+    };
+    mutable Submission _lastSubmission = Submission::None;
+    mutable IndirectDrawInputs _lastIndirect;
     nvrhi::BufferHandle _frameConstantsBuffer;
+
+    // The sun's cascade array (ShadowPass owns it). Non-owning: a reallocation
+    // swaps the handle, which invalidates the cached global set.
+    nvrhi::ITexture *_shadowMap = nullptr;
 
     // The AssetCache's bindless material-texture table + its layout, and its
     // material table (stage D). Non-owning: the AssetCache owns them and keeps the
@@ -244,9 +493,40 @@ private:
     // by the pass, unlike the AssetCache-owned tables above.
     mutable Buffer _instanceBuffer;
     mutable nvrhi::BindingSetHandle _globalBindingSet;
-    // The instance-buffer handle _globalBindingSet was built against; a mismatch
-    // means the buffer grew and the set must be rebuilt.
+    // The instance-buffer and cascade-array handles _globalBindingSet was built
+    // against; a mismatch in either means the set must be rebuilt.
+    // The local-light atlas (LocalShadowPass owns it) and the frame's shadow view
+    // table (ShadowDepthRenderer owns it). Non-owning, and both swap handles on a
+    // reallocation, which invalidates the cached global set.
+    nvrhi::ITexture *_shadowAtlas = nullptr;
+    nvrhi::IBuffer *_shadowViewTable = nullptr;
+    // Bound in the view table's place while there is no table — which for a
+    // scene that shadows nothing is every frame. One row, never read; it exists
+    // because a binding set may not have a hole in it. Permanent, not scaffolding.
+    Buffer _noShadowViews;
+
+    // The sky probe's environment (SkyProbe owns it), or null for none. The
+    // placeholder stands in while there is none, for the same reason the empty
+    // view table does.
+    nvrhi::ITexture *_environmentCube = nullptr;
+    nvrhi::TextureHandle _noEnvironmentCube;
+    // Screen-space occlusion's result (SsaoPass owns it), or null for none, and
+    // its stand-in on the same terms as the environment's.
+    nvrhi::ITexture *_ambientOcclusion = nullptr;
+    nvrhi::TextureHandle _noAmbientOcclusion;
+    // The GGX lobe's integrals by (n.v, roughness): the split sum's scale and
+    // bias, and the per-light lobe's directional albedo. Owned here because
+    // every lit fragment reads it, probe or no probe.
+    nvrhi::TextureHandle _brdfTable;
+    // Trilinear and clamped, for the table and the environment cube.
+    nvrhi::SamplerHandle _clampSampler;
+
     mutable const nvrhi::IBuffer *_globalSetInstanceBuffer = nullptr;
+    mutable const nvrhi::ITexture *_globalSetShadowMap = nullptr;
+    mutable const nvrhi::ITexture *_globalSetShadowAtlas = nullptr;
+    mutable const nvrhi::IBuffer *_globalSetShadowViewTable = nullptr;
+    mutable const nvrhi::ITexture *_globalSetEnvironmentCube = nullptr;
+    mutable const nvrhi::ITexture *_globalSetAmbientOcclusion = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn
@@ -261,5 +541,6 @@ private:
     mutable std::vector<InstanceData>                        _scratchInstances;
     mutable std::vector<nvrhi::DrawIndexedIndirectArguments> _scratchCommands;
     mutable std::vector<const MeshBuffer *>                  _scratchBatchMeshes;
+    mutable std::vector<MeshPipeline>                        _scratchBatchPipelines;
 };
 } /* namespace Assisi::Render */

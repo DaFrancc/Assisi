@@ -1,7 +1,7 @@
 add_library(Assisi-Editor)
 Assisi_apply_defaults(Assisi-Editor)
 
-# The editor tooling library (docs/editor-extraction-plan.md). A library, not
+# The editor tooling library. A library, not
 # an executable: component reflection registers per final binary, so the
 # editor must be linked INTO the same executable as the game code it inspects
 # (the Phase 2 GameEditor target). Nothing links this except editor
@@ -14,6 +14,8 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/EditorApp.hpp"
     "include/Assisi/Editor/InspectorFieldChrome.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
+    "include/Assisi/Editor/SystemSearch.hpp"
+    "include/Assisi/Editor/WireShapes.hpp"
   PRIVATE
     "src/ColliderPose.cpp"
     "src/EditHistory.cpp"
@@ -25,15 +27,20 @@ target_sources(Assisi-Editor
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"
     "src/EditorLevels.cpp"
+    "src/EditorLightGizmos.cpp"
+    "src/EditorMaterialPanel.cpp"
     "src/EditorOptions.cpp"
     "src/EditorOptionsPanel.hpp"
     "src/EditorPlay.cpp"
+    "src/EditorSystemsPanel.cpp"
     "src/EditorWorlds.cpp"
     "src/GizmoDrag.cpp"
     "src/InspectorFieldChrome.cpp"
     "src/InstanceGesture.cpp"
     "src/PrePlayState.cpp"
     "src/ScenePick.cpp"
+    "src/SystemSearch.cpp"
+    "src/WireShapes.cpp"
     "src/ImGuiQueries.hpp"
 )
 

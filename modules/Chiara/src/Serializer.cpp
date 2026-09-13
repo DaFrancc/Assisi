@@ -31,6 +31,15 @@ namespace
 
 constexpr std::int32_t kProcessId = 1;
 
+/// @brief The lowest id a thread or track may be given.
+///
+/// One, not zero: the process_name record is written against tid zero, so a row
+/// given that id collides with it and an importer names the row after whichever
+/// of the two metadata events it resolves last. Latent while nothing reached the
+/// bottom of the range — a track is the first thing that does, since it
+/// registers late and the reader walks the buffer list newest-first.
+constexpr std::int32_t kFirstTraceTid = 1;
+
 /// @brief A slice being assembled: a finished scope, or one still running that
 /// was recovered from a shadow stack.
 struct Slice
@@ -142,9 +151,17 @@ private:
 };
 
 /// @brief Converts a raw tick value to microseconds since the trace origin.
+///
+/// The subtraction is in double rather than in ticks. A record can predate the
+/// origin — the rings hold more than the window a capture asks for, and a slice
+/// at the very edge of one is older than the origin taken when the dump began —
+/// and an unsigned difference turns that into eighteen quintillion ticks rather
+/// than a small negative. What reaches the trace is then a timestamp of 4.8e15
+/// microseconds and a duration of minus five billion, which reads as corruption
+/// rather than as the one stale record it is.
 [[nodiscard]] double ToMicroseconds(std::uint64_t ticks, std::uint64_t originTicks, double ticksPerSecond)
 {
-    const double elapsed = static_cast<double>(ticks - originTicks);
+    const double elapsed = static_cast<double>(ticks) - static_cast<double>(originTicks);
     return elapsed * 1'000'000.0 / ticksPerSecond;
 }
 
@@ -428,7 +445,7 @@ struct Session
     std::uint64_t originTicks    = 0;
     double ticksPerSecond = 1.0;
     bool needsComma     = false;
-    std::int32_t nextTraceTid   = 0;
+    std::int32_t nextTraceTid = kFirstTraceTid;
     std::uint64_t eventsWritten  = 0;
     std::uint64_t orphanedArgs   = 0;
     std::uint64_t drains         = 0;
@@ -569,7 +586,7 @@ bool BeginSession(const std::filesystem::path &path)
     session.originTicks     = ReadTicks();
     session.ticksPerSecond  = TicksPerSecond();
     session.needsComma      = false;
-    session.nextTraceTid    = 0;
+    session.nextTraceTid    = kFirstTraceTid;
     session.eventsWritten   = 0;
     session.orphanedArgs    = 0;
     session.drains          = 0;

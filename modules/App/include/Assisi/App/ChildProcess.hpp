@@ -19,7 +19,7 @@
 /// from its own side — its own death.
 ///
 /// POSIX first, deliberately: the GameNetworkingSockets chain has never built on
-/// Windows (docs/replication-plan-v4.md §5), so a Windows implementation would
+/// Windows, so a Windows implementation would
 /// be dead code today. The Windows path fails to spawn and says so, rather than
 /// silently pretending.
 

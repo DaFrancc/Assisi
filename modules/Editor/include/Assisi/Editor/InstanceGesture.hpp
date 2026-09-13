@@ -6,7 +6,7 @@
 /// frame an edit site grabs it to the frame every site has let go.
 ///
 /// An instance has no root entity to grab — the root evaporates at expansion
-/// (docs/blueprint-system-concept.md) — so "moving an instance" means moving a
+/// — so "moving an instance" means moving a
 /// field on a table row and carrying every member the placement reaches. Two
 /// sites do that: the gizmo handles and the Inspector's Placement fields. They
 /// share one gesture, because they are one edit as far as the author is concerned,

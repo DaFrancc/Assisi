@@ -8,19 +8,25 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Camera.hpp"
     "include/Assisi/Runtime/Components.hpp"
     "include/Assisi/Runtime/Hierarchy.hpp"
+    "include/Assisi/Runtime/IndirectResolve.hpp"
     "include/Assisi/Runtime/LightComponents.hpp"
     "include/Assisi/Runtime/LightingSystem.hpp"
     "include/Assisi/Runtime/Lifecycle.hpp"
+    "include/Assisi/Runtime/LodSelection.hpp"
     "include/Assisi/Runtime/Naming.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
     "include/Assisi/Runtime/SceneRenderer.hpp"
     "include/Assisi/Runtime/SceneSerializer.hpp"
+    "include/Assisi/Runtime/SkyComponents.hpp"
+    "include/Assisi/Runtime/SkyResolve.hpp"
+    "include/Assisi/Runtime/TimeOfDay.hpp"
   PRIVATE
     "src/AssetResolve.cpp"
     "src/Blueprint.cpp"
     "src/Camera.cpp"
     "src/Hierarchy.cpp"
     "src/LightingSystem.cpp"
+    "src/LodSelection.cpp"
     "src/Naming.cpp"
     "src/Renderer.cpp"
     "src/SceneRenderer.cpp"
@@ -31,6 +37,8 @@ target_sources(Assisi-Runtime
     "src/SceneSerializerInstances.hpp"
     "src/SceneSerializerLevel.cpp"
     "src/SceneSerializerRefs.cpp"
+    "src/SkyResolve.cpp"
+    "src/TimeOfDay.cpp"
 )
 
 target_include_directories(Assisi-Runtime
@@ -55,6 +63,8 @@ assisi_reflect(
     include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
     include/Assisi/Runtime/NameComponent.hpp
+    include/Assisi/Runtime/SkyComponents.hpp
+    include/Assisi/Runtime/TimeOfDay.hpp
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)

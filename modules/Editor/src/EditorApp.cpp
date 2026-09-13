@@ -22,6 +22,7 @@
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
@@ -51,9 +52,13 @@ namespace Assisi::Editor
 EditorApp::EditorApp(EditorConfig config)
     : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
 {
-    // Application reads this during Initialize(), which runs before OnStart, so
-    // it cannot wait for a hook — hence the constructor body.
+    // Application reads these during Initialize(), which runs before OnStart, so
+    // they cannot wait for a hook — hence the constructor body.
     SetRestrictedViewer(_editorConfig.restrictedViewer);
+    if (_editorConfig.perfCapture.frames > 0)
+    {
+        SetPerfCapture(_editorConfig.perfCapture);
+    }
 }
 
 EditorApp::~EditorApp() = default;
@@ -81,6 +86,23 @@ void EditorApp::DrawOptionsWindow()
     {
         ApplyDisplayOptions();
     }
+
+    // The per-light shadow report is gathered for two readers and nobody else:
+    // this overlay, and the inspector line on a selected light. Asked for here,
+    // once, so the renderer has a single answer rather than two writers racing
+    // to turn it off — and so a game, which has neither reader, never pays it.
+    _sceneRenderer.SetShadowDiagnosticsEnabled(_options->IsOpen() || SelectedEntityCastsLocalShadows());
+}
+
+bool EditorApp::SelectedEntityCastsLocalShadows() const
+{
+    if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity)
+    {
+        return false;
+    }
+    const auto *spot = _scene->Get<Assisi::Runtime::SpotLight>(_selectedEntity);
+    const auto *point = _scene->Get<Assisi::Runtime::PointLight>(_selectedEntity);
+    return (spot != nullptr && spot->castsShadows) || (point != nullptr && point->castsShadows);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +125,40 @@ void EditorApp::SetupCamera()
     // Projection is left at the member initialiser in EditorApp.hpp: 60 deg FOV,
     // 0.1..200 clip, active.
     RefreshCameraMatrix();
+}
+
+void EditorApp::AdoptLevelCamera()
+{
+    if (_scene == nullptr)
+    {
+        return;
+    }
+
+    for (auto [entity, camera] : _scene->Query<Assisi::Runtime::Camera>())
+    {
+        if (!camera.isActive)
+        {
+            continue;
+        }
+        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
+        if (transform == nullptr)
+        {
+            continue;
+        }
+
+        _cameraTransform.position = transform->position;
+        _cameraTransform.rotation = transform->rotation;
+        _camera                   = camera;
+        // The editor's own camera is never the level's, so it must not be left
+        // marked active — two active cameras is a state nothing else expects.
+        _camera.isActive = false;
+        SyncYawPitchFromRotation();
+        RefreshCameraMatrix();
+        return;
+    }
+
+    Assisi::Core::Log::Warn("Capture: the level has no active Camera; using the editor's default view. "
+                            "The numbers will be of whatever sits near the origin.");
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +208,7 @@ void EditorApp::OnStart()
     // own list, resolved through SystemCatalog, which every ASYSTEM declaration in
     // the link has already populated — the game registers nothing here. Each world
     // gets its own instances of them, so a system's cross-frame state does not
-    // advance N× across resident worlds
-    // (docs/world-system-binding-design-notes.md).
+    // advance N× across resident worlds.
     if (!_warnedGameRenderSystems && !Assisi::App::SystemCatalog::Instance().All().empty())
     {
         for (const Assisi::App::SystemDefinition &definition : Assisi::App::SystemCatalog::Instance().All())
@@ -194,6 +249,7 @@ void EditorApp::OnStart()
     // transaction, or undo takes the value back and leaves the record claiming the
     // instance changed it.
     _history.emplace(*_scene, MakeEditRebindHook(), &_world->instances);
+    InstallHistoryHooks(*_history);
 
     // Give every asset a `.aast` GUID sidecar and build the GUID→path database.
     // Editor-only, hence here and not in Application: a shipped game consumes a
@@ -217,6 +273,23 @@ void EditorApp::OnStart()
         else if (!LoadLevelFromPath(_editorConfig.startupLevel))
         {
             Assisi::Core::Log::Warn("Startup level '{}' could not be loaded.", _editorConfig.startupLevel);
+        }
+    }
+
+    // A capture looks at what the scene says to look at. The editor's own camera
+    // is a fixed pose aimed at the origin, which is reproducible but arbitrary —
+    // it frames whatever happens to be near the origin rather than what the
+    // scene was composed to show. Snapping to the level's active Camera makes
+    // the view part of the committed contract, so two captures of the same
+    // scene are pictures of the same thing.
+    if (IsCapturing())
+    {
+        AdoptLevelCamera();
+        const Assisi::App::PerfCaptureConfig &capture = _editorConfig.perfCapture;
+        if (capture.hasCameraPose)
+        {
+            AimCamera(glm::vec3(capture.cameraEye[0], capture.cameraEye[1], capture.cameraEye[2]),
+                      glm::vec3(capture.cameraTarget[0], capture.cameraTarget[1], capture.cameraTarget[2]));
         }
     }
 
@@ -329,8 +402,10 @@ void EditorApp::ReimportAssets()
     }
 
     // Force the browser to re-read on next open: a reimport may have created files
-    // it lists (it filters by extension and never shows `.aast` itself).
+    // it lists (it filters by extension and never shows `.aast` itself). The
+    // Material panel's picker is rebuilt from the database for the same reason.
     _assetBrowserDirty = true;
+    _materialListDirty = true;
 }
 
 bool EditorApp::ReconcileMeshMaterials()
@@ -653,6 +728,7 @@ void EditorApp::SetupScene()
     // assets/editor/**.
     if (!_sceneRenderer.Initialize({.device = device,
                                     .framebufferInfo = GetSceneFramebufferInfo(),
+                                    .overlayFramebufferInfo = GetOverlayFramebufferInfo(),
                                     .width = fbSize.Width,
                                     .height = fbSize.Height,
                                     .camera = _camera,
@@ -664,6 +740,15 @@ void EditorApp::SetupScene()
         RequestClose();
         return;
     }
+    _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
+    // The saved shadow knobs, applied once here; the options panel pushes every
+    // later edit. Nothing is allocated until a level with a sun in it loads.
+    _sceneRenderer.SetShadowSettings(GetOptions().shadows);
+    // The same for the sky probe, which holds nothing until a sky does.
+    _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
+    // And for screen-space occlusion, which holds nothing while it is off.
+    _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
     _thumbnailCache.Initialize(device, &Jobs(), Assisi::Render::ColorSpace::Linear);
@@ -683,7 +768,9 @@ void EditorApp::OnResize(int32_t width, int32_t height)
 
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
+    // The overlay target's sample count moves with the scene's, so the same
+    // notification covers both.
+    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo, GetOverlayFramebufferInfo()))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
     }
@@ -747,14 +834,33 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         ASSISI_PROFILE_SCOPE("collider-wireframes");
         SubmitColliderWireframes();
 
+        // A light's reach, on the same terms and in the same batch pass: it is
+        // the only thing in the viewport that says what a radius or a cone angle
+        // actually covers.
+        SubmitLightGizmos();
+
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
         // and an unmarked origin is also an unclickable one.
         SubmitInstanceIcons();
     }
+    // A material debug view puts channel values in the scene target instead of
+    // radiance, and the tone map must not rescale numbers meant to be read off
+    // the screen.
+    SetTonemapPassthrough(_sceneRenderer.DebugView() != Assisi::Render::MaterialDebugView::None);
+
     // The propagation bookmark comes from the world, not the renderer: one renderer
     // serves several worlds once more than one is resident.
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
+}
+
+void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
+{
+    if (!_sceneRenderer.IsValid() || !_scene)
+    {
+        return;
+    }
+    _sceneRenderer.RenderOverlays(frame, *_scene, _cameraTransform, _camera);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
@@ -920,11 +1026,13 @@ void EditorApp::OnUpdate(float dt)
 
     // The blueprint rig's ambient, re-applied every frame rather than at the two
     // transitions: the renderer is shared by every world, so a knob left turned up
-    // would light the level the author went back to.
+    // would light the level the author went back to. Clearing rather than pinning
+    // the default is what hands a level back its own indirect lighting — a pinned
+    // ambient overrides the sky, and a level's sky is most of what lights it.
     if (InBlueprintMode())
         _sceneRenderer.SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
     else
-        _sceneRenderer.SetAmbient(glm::vec3(1.f), Assisi::Render::kDefaultAmbientIntensity);
+        _sceneRenderer.ClearAmbient();
 
     // A travel a game system asked for last frame. Systems run inside the walk over
     // the resident worlds, and travelling from there would invalidate that walk and
@@ -1089,6 +1197,12 @@ void EditorApp::FlushDeferred()
 // Undo/redo (editor-only)
 // ---------------------------------------------------------------------------
 
+void EditorApp::InstallHistoryHooks(Assisi::Editor::EditHistory &history)
+{
+    history.SetAssetApplyHook([this](std::string_view typeName, const Assisi::Core::AssetPath &path,
+                                     const nlohmann::json &state) { ApplyAssetState(typeName, path, state); });
+}
+
 Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
@@ -1161,7 +1275,7 @@ bool EditorApp::IsEditable() const
     // Every history binds the *edited* world's scene by reference, and Save writes
     // that scene — so an edit made while a different world is shown would be
     // captured into the wrong scene's history and could never be saved. Other
-    // resident worlds are inspect-only (docs/multi-scene-design-notes.md).
+    // resident worlds are inspect-only.
     return _world != nullptr && _world == _worlds.Edited();
 }
 
@@ -1201,12 +1315,15 @@ std::vector<Assisi::Editor::EditHistory *> EditorApp::AllHistories()
 bool EditorApp::IsSceneDirty()
 {
     // Tracks the *editing* history, where saves happen, never the paused scratch.
+    // The system list is dirty on its own flag: it is a property of the file that
+    // no entity carries, so editing it moves no history token.
     if (InBlueprintMode())
     {
-        return _blueprintHistory.has_value() &&
-               _blueprintHistory->CurrentStateToken() != _blueprintSavedToken;
+        return _blueprintSystemsEdited ||
+               (_blueprintHistory.has_value() &&
+                _blueprintHistory->CurrentStateToken() != _blueprintSavedToken);
     }
-    return _history.has_value() && _history->CurrentStateToken() != _savedStateToken;
+    return _systemsEdited || (_history.has_value() && _history->CurrentStateToken() != _savedStateToken);
 }
 
 std::string EditorApp::EntityDisplayName(Assisi::ECS::Entity entity) const
@@ -1493,15 +1610,22 @@ void EditorApp::OnImGui()
     if (!blueprintMode)
     {
         { ASSISI_PROFILE_SCOPE("panel/levels");     DrawLevelsWindow(); }
-        { ASSISI_PROFILE_SCOPE("panel/blueprints"); DrawBlueprintsWindow(); }
     }
+    // Both modes: nesting is what a blueprint editor is for, and an instance placed
+    // in one is an `instances` entry in its file exactly as it is in a level's.
+    { ASSISI_PROFILE_SCOPE("panel/blueprints"); DrawBlueprintsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/blueprint-mode"); DrawBlueprintEditorWindow(); }
+    // Both modes: a blueprint carries its own required-system list, saved by the
+    // same path, so the panel is as much about what is in front of you here as it
+    // is about a level.
+    { ASSISI_PROFILE_SCOPE("panel/systems");      DrawRequiredSystemsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/inspector");    DrawInspector(); }
     if (!blueprintMode)
     {
         { ASSISI_PROFILE_SCOPE("panel/hello-image"); DrawHelloImageWindow(); }
     }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
+    { ASSISI_PROFILE_SCOPE("panel/material");      DrawMaterialEditor(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
     { ASSISI_PROFILE_SCOPE("panel/save-confirm-modal"); DrawSaveConfirmModal(); }
 #if defined(ASSISI_NETWORKING)
@@ -1534,6 +1658,19 @@ void EditorApp::OnImGui()
     // sweep point keeps the capture model simple. Playing captures nothing.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
         history->EndFrameSweep(_captureEditingActive);
+
+    // The bound baseline's life is that same gesture's. It exists so the values a
+    // bound-settle would consume survive the intermediate states of one
+    // interaction — the 4 on the way to 40 — and what ends an interaction is
+    // exactly what the sweep above reads: no widget still being manipulated.
+    //
+    // Deliberately not an ImGui activation edge. Ctrl+clicking a drag box turns it
+    // into a text box, crossing that edge in the middle of a single gesture, so a
+    // baseline keyed to it is dropped the moment typing begins.
+    if (!_captureEditingActive)
+    {
+        _boundBaseline.active = false;
+    }
 
     // Show unsaved changes in the OS window title, re-setting it only when the
     // dirty state flips rather than every frame. The base title is the game's own,

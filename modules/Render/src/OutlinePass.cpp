@@ -254,7 +254,7 @@ bool OutlinePass::EnsureMask(uint32_t width, uint32_t height)
 }
 
 void OutlinePass::RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection,
-                                   const MeshBuffer &mesh)
+                                   const MeshBuffer &mesh, uint32_t lodLevel)
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
 
@@ -270,14 +270,16 @@ void OutlinePass::RecordSilhouette(const RenderFrame &frame, const glm::mat4 &mo
 
     commandList->setPushConstants(&modelViewProjection, sizeof(modelViewProjection));
 
-    // LOD0's submeshes — or the whole index buffer if the mesh has no LOD table
-    // (e.g. a factory primitive).
+    // The selected level's submeshes — or the whole index buffer if the mesh has
+    // no LOD table (e.g. a factory primitive). Clamped, so a level from a mesh
+    // that has since been swapped for a shorter chain traces the last one
+    // instead of reading off the table.
     if (!mesh.Lods().empty() && !mesh.SubMeshes().empty())
     {
-        const Geometry::LodRange &lod0 = mesh.Lods().front();
-        for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+        const Geometry::LodRange &lod = mesh.Lods()[std::min<size_t>(lodLevel, mesh.Lods().size() - 1u)];
+        for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
         {
-            const Geometry::SubMesh &subMesh = mesh.SubMeshes()[lod0.FirstSubMesh + i];
+            const Geometry::SubMesh &subMesh = mesh.SubMeshes()[lod.FirstSubMesh + i];
             nvrhi::DrawArguments drawArgs;
             drawArgs.vertexCount         = subMesh.IndexCount;
             drawArgs.startIndexLocation  = mesh.IndexBase() + subMesh.IndexOffset;
@@ -368,16 +370,15 @@ void OutlinePass::DrawOutlines(const RenderFrame &frame, const glm::mat4 &viewPr
         {
             continue;
         }
-        RecordSilhouette(frame, viewProjection * item.model, *item.mesh);
+        RecordSilhouette(frame, viewProjection * item.model, *item.mesh, item.lodLevel);
     }
 
     RecordEdgePass(frame, color);
 }
 
-void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const MeshBuffer &mesh,
-                       const glm::mat4 &model, const glm::vec3 &color)
+void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const OutlineItem &item,
+                       const glm::vec3 &color)
 {
-    const OutlineItem item{&mesh, model};
     DrawOutlines(frame, viewProjection, std::span<const OutlineItem>(&item, 1), color);
 }
 

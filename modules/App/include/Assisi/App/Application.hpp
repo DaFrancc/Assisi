@@ -7,10 +7,12 @@
 
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/InputContext.hpp>
@@ -19,6 +21,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <span>
 
 namespace Assisi::App
@@ -84,6 +87,20 @@ public:
 
     [[nodiscard]] bool IsRestrictedViewer() const { return _restrictedViewer; }
 
+    /// @brief Run as a performance capture: measure a fixed number of frames,
+    /// print the medians, write the report, and exit. Must be called before
+    /// Initialize().
+    ///
+    /// This is what makes a performance gate one command rather than a person
+    /// watching an ImGui graph and forming an impression. It also forces the
+    /// pacing off — a capture under vsync measures the display, not the
+    /// renderer — and turns per-pass timing on, since a capture is exactly the
+    /// case where the render-pass splits those cost are worth paying.
+    void SetPerfCapture(const PerfCaptureConfig &config);
+
+    /// @brief Whether this process is a capture run.
+    [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
+
     /// @brief Brings up the engine (asset system, window, renderer, ImGui,
     /// input, post-process). Must be called once, after construction and before
     /// Run(). In headless mode only the simulation half is brought up.
@@ -107,6 +124,15 @@ protected:
     /// Not pure: a headless app never receives this call and should not have to
     /// write an empty override to say so.
     virtual void OnRender(Render::RenderFrame & /*frame*/) {}
+    /// @brief Called after the tone map, into a display-encoded target that still
+    /// carries the depth the scene wrote. For content whose colours are already
+    /// what they should look like on screen — editor chrome — so the tone map
+    /// does not restate them. Only called by apps that answer UsesOverlayStage().
+    virtual void OnRenderOverlays(Render::RenderFrame & /*frame*/) {}
+    /// @brief Whether this app draws display-referred content after the tone map.
+    /// The seam costs a target and a copy, so it exists only where it is used.
+    /// Read during Initialize(), so it must answer from constructor-set state.
+    [[nodiscard]] virtual bool UsesOverlayStage() const { return false; }
     virtual void OnImGui() {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
@@ -166,8 +192,7 @@ protected:
     /// (ctx.events); this accessor is for app code outside a system.
     Core::EventQueue &GetEvents() { return _events; }
 
-    /// @brief The engine's shared task scheduler (design:
-    /// docs/job-system-design-notes.md). Owned by Application; its main-thread
+    /// @brief The engine's shared task scheduler. Owned by Application; its main-thread
     /// queue is drained once per frame in Run() just before OnUpdate. Use
     /// Jobs().RunOnMain(...) to marshal background results back to a safe point,
     /// ParallelFor(...) to fan work out, or Run(pool, fn) for async chains.
@@ -184,6 +209,10 @@ protected:
     [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
 
     void      RequestClose();
+
+    /// @brief Feed one frame to the running capture, and close the app once it
+    /// has the frames it asked for.
+    void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
     int32_t   GetFps()             const { return _fps; }
 
     /// @brief Averaged CPU main-thread work per frame, in milliseconds —
@@ -200,6 +229,16 @@ protected:
     /// not the swapchain's own FramebufferInfo directly, so they're already
     /// correct if an anti-aliasing mode is active from a saved options.json.
     nvrhi::FramebufferInfo GetSceneFramebufferInfo() const { return _postProcess.SceneFramebufferInfo(); }
+
+    /// @brief The FramebufferInfo OnRenderOverlays()'s `frame` is compatible
+    /// with. Build overlay pipelines against this: it differs from the scene's,
+    /// which is HDR.
+    nvrhi::FramebufferInfo GetOverlayFramebufferInfo() const { return _postProcess.OverlayFramebufferInfo(); }
+
+    /// @brief Tells the post chain that this frame's scene target holds display
+    /// values rather than radiance, so the tone map must copy it through. For the
+    /// material debug views, which show a channel raw.
+    void SetTonemapPassthrough(bool passthrough) { _postProcess.SetTonemapPassthrough(passthrough); }
 
     /// @brief The persisted user options (AA mode, MSAA samples, frame-sync
     /// mode, FPS cap) the engine consumes each frame in Run(). Exposed mutable
@@ -252,7 +291,7 @@ private:
     /// Declared first so the capture runtime is up before anything else exists —
     /// in particular before _jobs spawns its workers, which register themselves
     /// with it — and so it is torn down last. Inert and empty unless built with
-    /// -c (see docs/chiara-design-notes.md).
+    /// -c.
     Chiara::InitGuard _chiara;
 
     AppConfig _config;
@@ -282,6 +321,36 @@ private:
     /// the windowed loop is cleaner asking one flag than dereferencing a pointer
     /// that may not exist.
     bool _closeRequested = false;
+
+    /// Null unless this process is a capture run — see SetPerfCapture. Held by
+    /// pointer so a normal run carries no sample buffers at all, which is the
+    /// same pay-for-what-you-place rule the thing exists to check.
+    std::unique_ptr<PerfCapture> _perfCapture;
+
+    /// See PerfCaptureConfig::imagePath and optionsPath. The options path is read
+    /// in Initialize, which is what loads the options.
+    std::string _captureImagePath;
+    std::string _captureOptionsPath;
+
+    /// Resolution a capture asked to render at, 0 when it did not ask. Applied
+    /// in InitializePresentation rather than at SetPerfCapture, because
+    /// Initialize() reloads _config from game.json in between.
+    int32_t _captureWidth  = 0;
+    int32_t _captureHeight = 0;
+
+    /// Whether the capture asked for per-pass timers. Off by default because
+    /// they change the frame's render-pass structure — see PerfCaptureConfig.
+    bool _capturePerPassTiming = false;
+
+    /// Whether the next frame is the one to write to _captureImagePath. Armed once
+    /// the measured frames are done: the image is taken from inside a frame,
+    /// before the debug UI draws, so it has to be the next one.
+    bool _captureImagePending = false;
+
+    /// NVML readings taken alongside a capture's frame times. Its worker spins
+    /// up on the first Poll(), so a non-capture run never initialises NVML —
+    /// the F11 overlay keeps its own for the same reason.
+    Render::GpuTelemetry _captureTelemetry;
 
     /// See GetSimTick(). Monotonic for the process's lifetime; never reset.
     std::uint64_t _simTick = 0;

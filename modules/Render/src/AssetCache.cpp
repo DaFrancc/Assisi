@@ -27,6 +27,46 @@ namespace
 /// @brief The fallback mesh path used for empty/unrecognised mesh references.
 const Core::AssetPath kCubePrimitive{std::string_view{"prim://cube"}};
 
+// The primitive-shape ladder. Paths mirror Core/AssetId.cpp's built-in table;
+// tessellations come from Geometry::PrimitiveTessellation rather than the
+// factory defaults, which are tuned for editor collider silhouettes (see the
+// note there). Registered eagerly but built lazily — ResolvePrimitive only
+// invokes a factory on first use, so a level that names none of these pays for
+// none of them.
+struct PrimitiveDesc
+{
+    std::string_view path;
+    Geometry::MeshData (*factory)();
+};
+
+const std::array<PrimitiveDesc, 8> kShapePrimitives = {{
+    {"prim://sphere-low",
+     [] {
+         return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereLowSlices,
+                                               Geometry::PrimitiveTessellation::kSphereLowStacks);
+     }},
+    {"prim://sphere",
+     [] {
+         return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereSlices,
+                                               Geometry::PrimitiveTessellation::kSphereStacks);
+     }},
+    {"prim://sphere-high",
+     [] {
+         return Geometry::CreateUnitSphereMesh(Geometry::PrimitiveTessellation::kSphereHighSlices,
+                                               Geometry::PrimitiveTessellation::kSphereHighStacks);
+     }},
+    {"prim://icosphere-low",
+     [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereLowSubdivisions); }},
+    {"prim://icosphere",
+     [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereSubdivisions); }},
+    {"prim://icosphere-high",
+     [] { return Geometry::CreateIcosphereMesh(Geometry::PrimitiveTessellation::kIcosphereHighSubdivisions); }},
+    {"prim://cylinder",
+     [] { return Geometry::CreateUnitCylinderMesh(Geometry::PrimitiveTessellation::kCylinderSlices); }},
+    {"prim://cylinder-high",
+     [] { return Geometry::CreateUnitCylinderMesh(Geometry::PrimitiveTessellation::kCylinderHighSlices); }},
+}};
+
 // `prim://` solid-colour texture primitives — a material's per-channel defaults,
 // owned by the cache like any other engine-generated asset so a device rebuild
 // regenerates them uniformly (see AssetCache.hpp). Each carries its own fixed
@@ -118,6 +158,10 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Color
                           "AssetCache::MaterialTable");
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
+    for (const PrimitiveDesc &primitive : kShapePrimitives)
+    {
+        _primitiveFactories.emplace(Core::AssetPath{primitive.path}, primitive.factory);
+    }
 
     // White sRGB stands in for empty baseColor/emissive channels; white *linear*
     // for metallic-roughness/occlusion (sampling 1.0 leaves the per-material
@@ -482,6 +526,49 @@ const Material *AssetCache::ResolveMaterial(const Core::AssetId &id)
     return ResolveMaterialPath(PathForId(id));
 }
 
+bool AssetCache::UpdateMaterialFactors(const Core::AssetId &id, const Geometry::MaterialData &data)
+{
+    const std::unordered_map<Core::AssetPath, Material>::iterator it = _materials.find(PathForId(id));
+    if (it == _materials.end())
+    {
+        return false;
+    }
+
+    Material &material = it->second;
+    MarkMaterialAuthored(it->first);
+    // Copied, not aliased: Create writes through to _textures, and passing its
+    // own member back in by reference would be a self-assignment mid-rebuild.
+    const MaterialTextures textures = material.Textures();
+    material.Create(_device, material.Id(), data, textures);
+    WriteMaterialToTable(material);
+    return true;
+}
+
+bool AssetCache::ReloadMaterial(const Core::AssetId &id, const Geometry::MaterialData &data)
+{
+    const Core::AssetPath path = PathForId(id);
+    if (path.Empty())
+    {
+        return false;
+    }
+
+    // Built in place under a new id: the same map entry, so every pointer already
+    // handed out for this material stays valid and reads the new id from it. A
+    // path with no entry yet gets one here rather than waiting for a load.
+    MarkMaterialAuthored(path);
+    BuildMaterial(_materials[path], data, MintMaterialId());
+    return true;
+}
+
+void AssetCache::MarkMaterialAuthored(const Core::AssetPath &path)
+{
+    // The editor's copy now outranks the file's. A load kicked before this may
+    // still be in flight, and its publish would overwrite the live material with
+    // what is on disk — which is exactly the state the author has not saved yet.
+    _authoredMaterials.insert(path);
+    _missingMaterialWarned.erase(path);
+}
+
 const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
 {
     if (path.Empty())
@@ -770,6 +857,15 @@ void AssetCache::PublishMesh(PendingPublish publish)
 void AssetCache::PublishMaterial(PendingPublish publish)
 {
     _materialLoading.erase(publish.path);
+
+    // A load kicked before the editor took this material over. Its payload is the
+    // file's contents, which are older than the live edits — publishing it would
+    // silently revert whatever has not been saved yet. The decoded textures go
+    // out of scope here; the recorded upload list is simply not submitted.
+    if (_authoredMaterials.contains(publish.path))
+    {
+        return;
+    }
 
     // The channel textures were created + recorded on the decode worker; hand its
     // closed list to the batch so FlushUploads submits it (the memcpy already ran).
@@ -1148,6 +1244,7 @@ void AssetCache::Clear()
     _materials.clear();
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();
+    _authoredMaterials.clear();
 
     // Cancel any in-flight thumbnail decodes and drop resident thumbnails too, so a
     // full reset leaves nothing behind. The editor's thumbnail cache is a separate

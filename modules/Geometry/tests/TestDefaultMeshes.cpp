@@ -2,13 +2,18 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 #include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
 
+using Assisi::Geometry::CreateIcosphereMesh;
 using Assisi::Geometry::CreateUnitCubeMesh;
+using Assisi::Geometry::CreateUnitCylinderMesh;
+using Assisi::Geometry::CreateUnitSphereMesh;
 using Assisi::Geometry::MeshData;
 using Assisi::Geometry::Vertex;
 
@@ -46,4 +51,170 @@ TEST_CASE("CreateUnitCubeMesh: every face maps its texture upright, not mirrored
         const float handedness = glm::dot(glm::cross(tangent, bitangent), v0.Normal);
         CHECK(handedness < 0.0f); // >= 0 means the face is mirrored/flipped
     }
+}
+
+namespace
+{
+// Every vertex of a mesh that is going to be shaded needs a usable tangent
+// frame: finite, unit length, and perpendicular to its own normal. The sphere
+// and cylinder were silhouette-only meshes until they became `prim://`
+// primitives, so this is the property that had to start holding.
+void CheckTangentFrame(const MeshData &mesh)
+{
+    REQUIRE(!mesh.Vertices.empty());
+
+    for (std::size_t i = 0; i < mesh.Vertices.size(); ++i)
+    {
+        CAPTURE(i);
+        const Vertex &vertex = mesh.Vertices[i];
+
+        REQUIRE(std::isfinite(vertex.Tangent.x));
+        REQUIRE(std::isfinite(vertex.Tangent.y));
+        REQUIRE(std::isfinite(vertex.Tangent.z));
+
+        const glm::vec3 tangent{vertex.Tangent};
+        CHECK(glm::length(tangent) == doctest::Approx(1.0f).epsilon(0.001f));
+        CHECK(std::abs(glm::dot(tangent, vertex.Normal)) < 0.001f);
+        CHECK(std::abs(vertex.Tangent.w) == doctest::Approx(1.0f));
+    }
+}
+} // namespace
+
+// A UV sphere's poles are the degenerate case: every quad there collapses to
+// zero area in UV space, so the accumulated tangent is exactly zero and
+// normalising it would put NaN in the vertex buffer. Checked at the coarsest
+// tessellation too, where the poles are the largest share of the mesh.
+namespace
+{
+// Every primitive here is convex and centred on the origin, so a triangle faces
+// outward exactly when its counter-clockwise winding normal agrees with the
+// direction from the origin to its centroid. MeshPass rasterises with
+// frontCounterClockwise = true and back-face culling, so a triangle that fails
+// this is culled when it should be drawn — the surface renders inside-out, and
+// you see the far wall of the object through the near one.
+//
+// This went unchecked for as long as these meshes were only ever drawn as
+// collider silhouettes, where winding is irrelevant. Promoting them to prim://
+// scene geometry is what made it matter.
+void CheckOutwardWinding(const MeshData &mesh, std::size_t expectedDegenerate = 0)
+{
+    REQUIRE(mesh.Indices.size() % 3 == 0);
+    REQUIRE(!mesh.Indices.empty());
+
+    std::size_t degenerate = 0;
+    for (std::size_t i = 0; i < mesh.Indices.size(); i += 3)
+    {
+        CAPTURE(i);
+        const Vertex &v0 = mesh.Vertices[mesh.Indices[i]];
+        const Vertex &v1 = mesh.Vertices[mesh.Indices[i + 1]];
+        const Vertex &v2 = mesh.Vertices[mesh.Indices[i + 2]];
+
+        const glm::vec3 faceNormal = glm::cross(v1.Position - v0.Position, v2.Position - v0.Position);
+        const glm::vec3 centroid   = (v0.Position + v1.Position + v2.Position) / 3.0f;
+
+        // A UV sphere's pole quads collapse to zero area — two of their three
+        // corners are the same point. They have no orientation to check, and the
+        // rasteriser discards them. Counted rather than ignored, so a change
+        // that degenerates a mesh wholesale cannot hide behind this skip.
+        if (glm::length(faceNormal) < 1e-6f)
+        {
+            ++degenerate;
+            continue;
+        }
+
+        CHECK(glm::dot(faceNormal, centroid) > 0.0f);
+
+        // ...and the shading normals must agree with the winding, or lighting
+        // contradicts the silhouette even where the triangle survives culling.
+        CHECK(glm::dot(faceNormal, v0.Normal) > 0.0f);
+    }
+    CHECK(degenerate == expectedDegenerate);
+}
+} // namespace
+
+TEST_CASE("Primitives wind counter-clockwise when seen from outside")
+{
+    CheckOutwardWinding(CreateUnitCubeMesh());
+
+    // A UV sphere's pole rows are one degenerate triangle per slice at each end.
+    CheckOutwardWinding(CreateUnitSphereMesh(48, 24), 2 * 48);
+    CheckOutwardWinding(CreateUnitSphereMesh(5, 3), 2 * 5);
+
+    CheckOutwardWinding(CreateUnitCylinderMesh());
+    CheckOutwardWinding(CreateUnitCylinderMesh(5));
+
+    // The icosphere has no poles, so none of its triangles collapse.
+    CheckOutwardWinding(CreateIcosphereMesh(0));
+    CheckOutwardWinding(CreateIcosphereMesh(2));
+}
+
+TEST_CASE("CreateUnitSphereMesh: every vertex carries a usable tangent frame")
+{
+    CheckTangentFrame(CreateUnitSphereMesh());
+    CheckTangentFrame(CreateUnitSphereMesh(3, 2));
+}
+
+TEST_CASE("CreateUnitCylinderMesh: every vertex carries a usable tangent frame")
+{
+    CheckTangentFrame(CreateUnitCylinderMesh());
+    CheckTangentFrame(CreateUnitCylinderMesh(3));
+}
+
+TEST_CASE("CreateIcosphereMesh: every vertex carries a usable tangent frame")
+{
+    CheckTangentFrame(CreateIcosphereMesh(0));
+    CheckTangentFrame(CreateIcosphereMesh(3));
+}
+
+// Subdividing splits each triangle in four, and the shared edge midpoints must
+// be welded rather than duplicated — an unwelded icosphere still looks right but
+// carries four times the vertices it needs and splits its normals along every
+// edge. Euler's formula pins the welded vertex count exactly.
+TEST_CASE("CreateIcosphereMesh: subdivision welds shared edge midpoints")
+{
+    for (uint32_t subdivisions = 0; subdivisions <= 3; ++subdivisions)
+    {
+        CAPTURE(subdivisions);
+        const MeshData mesh = CreateIcosphereMesh(subdivisions);
+
+        const std::size_t faces = static_cast<std::size_t>(20) << (2 * subdivisions);
+        CHECK(mesh.Indices.size() / 3 == faces);
+        // V = F/2 + 2 for a closed triangulated surface.
+        CHECK(mesh.Vertices.size() == faces / 2 + 2);
+
+        for (const Vertex &vertex : mesh.Vertices)
+        {
+            CHECK(glm::length(vertex.Position) == doctest::Approx(1.0f).epsilon(0.001f));
+        }
+    }
+}
+
+// The perf reference scenes publish exact triangle counts as part of their
+// contract, and those numbers only mean anything if the ladder the scenes are
+// built from keeps the tessellation they were computed against. Changing a rung
+// is allowed; changing it without moving the published numbers is the bug this
+// catches.
+TEST_CASE("The prim:// tessellation ladder matches the counts the perf scenes publish")
+{
+    namespace Tessellation = Assisi::Geometry::PrimitiveTessellation;
+
+    const auto sphereTriangles = [](uint32_t slices, uint32_t stacks)
+                                 { return CreateUnitSphereMesh(slices, stacks).Indices.size() / 3; };
+    const auto cylinderTriangles = [](uint32_t slices)
+                                   { return CreateUnitCylinderMesh(slices).Indices.size() / 3; };
+    const auto icosphereTriangles = [](uint32_t subdivisions)
+                                    { return CreateIcosphereMesh(subdivisions).Indices.size() / 3; };
+
+    CHECK(CreateUnitCubeMesh().Indices.size() / 3 == 12);
+
+    CHECK(sphereTriangles(Tessellation::kSphereLowSlices, Tessellation::kSphereLowStacks) == 144);
+    CHECK(sphereTriangles(Tessellation::kSphereSlices, Tessellation::kSphereStacks) == 576);
+    CHECK(sphereTriangles(Tessellation::kSphereHighSlices, Tessellation::kSphereHighStacks) == 4096);
+
+    CHECK(icosphereTriangles(Tessellation::kIcosphereLowSubdivisions) == 320);
+    CHECK(icosphereTriangles(Tessellation::kIcosphereSubdivisions) == 1280);
+    CHECK(icosphereTriangles(Tessellation::kIcosphereHighSubdivisions) == 20480);
+
+    CHECK(cylinderTriangles(Tessellation::kCylinderSlices) == 96);
+    CHECK(cylinderTriangles(Tessellation::kCylinderHighSlices) == 256);
 }

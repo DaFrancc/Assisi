@@ -125,7 +125,7 @@ public:
 /* The Jolt state that is genuinely process-global and worth sharing across every
    PhysicsWorld: the library globals (allocator, Factory, type registration) and
    the job-system thread pool. Multi-scene runs several PhysicsWorlds side by side
-   (docs/multi-scene-design-notes.md §1); a pool per world would spawn
+   a pool per world would spawn
    hardware_concurrency() threads *per resident level* and oversubscribe the
    machine, so the pool is shared and every world's Update() dispatches onto it.
 

@@ -150,7 +150,7 @@ public:
     // installs no Jolt contact listener at all, so the simulation never makes the
     // call. It is per world, and a system that needs contacts switches it on for
     // itself when it runs — so a world whose level named no such system never pays
-    // for it (docs/world-system-binding-design-notes.md §3).
+    // for it.
 
     /// @brief Starts or stops recording new contacts during Update().
     /// Turning it off also drops whatever is currently logged.
@@ -201,14 +201,14 @@ public:
     ///
     /// @param parentWorld Optional; see ParentWorldFn. Pass it whenever a body
     ///                    might be parented — members of a blueprint instance
-    ///                    routinely are (docs/blueprint-system-concept.md §12).
+    ///                    routinely are.
     void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld = {});
 
     /// @brief Writes each dynamic body's *last stepped* pose into its Transform,
     /// with no blend.
     ///
-    /// For worlds that simulate but are not rendered (a second resident level —
-    /// docs/multi-scene-design-notes.md §1). Interpolation exists to smooth
+    /// For worlds that simulate but are not rendered (a second resident level).
+    /// Interpolation exists to smooth
     /// physics against a faster display; with nothing being displayed there is
     /// nothing to smooth against, and the render path that would normally call
     /// InterpolateTransforms never runs for these worlds — so without this their

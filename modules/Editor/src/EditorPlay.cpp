@@ -258,6 +258,7 @@ void EditorApp::PausePlay()
     if (Assisi::App::World *edited = _worlds.Edited())
     {
         _pausedHistory.emplace(edited->scene, MakeEditRebindHook(), &edited->instances);
+        InstallHistoryHooks(*_pausedHistory);
     }
     SetPlayState(PlayState::Paused);
 }
@@ -352,6 +353,10 @@ void EditorApp::StopPlay()
 
         ClearSelection();
         Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
+        // Every entity was destroyed and revived, and the clock went back to the
+        // hour play started at — so the cascades hold depth from a sun that has
+        // now moved, cast by geometry that has been rebuilt underneath them.
+        _sceneRenderer.OnSceneReplaced();
     }
 
     // A joined session loaded the *host's* level into this world, retargeting its
@@ -872,7 +877,7 @@ void EditorApp::DrawGameControlWindow()
 
     // During play only. Play/Stop's snapshot-and-restore is defined for the edited
     // world alone, and a second resident level that nothing simulates has no restore
-    // story (docs/multi-scene-design-notes.md).
+    // story.
     const bool canAddWorld =
         (playing || paused) && !networked && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
     ImGui::BeginDisabled(!canAddWorld);

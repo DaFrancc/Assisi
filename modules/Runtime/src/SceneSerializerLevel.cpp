@@ -135,7 +135,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     {
         // The entity's `name` key already carries it; emitting it here as well would
         // put the same string in two places with no rule about which wins.
-        if (meta->name == "Name")
+        if (Core::Reflect::IsComponent<Name>(*meta))
             continue;
 
         meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)

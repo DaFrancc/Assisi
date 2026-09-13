@@ -19,8 +19,6 @@
 ///
 /// The zero-cost contract is separate: with no provider installed the wire
 /// bytes must be *identical* to an identity-filter run.
-///
-/// See docs/replication-messaging-relevancy-plan-v1.md M1.
 
 #include <doctest/doctest.h>
 

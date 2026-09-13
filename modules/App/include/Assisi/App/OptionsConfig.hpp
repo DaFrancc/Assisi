@@ -4,9 +4,14 @@
 /// @file OptionsConfig.hpp
 /// @brief User-facing runtime options persisted to options.json.
 
+#include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
+#include <Assisi/Render/ShadowSettings.hpp>
+#include <Assisi/Render/SsaoSettings.hpp>
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace Assisi::App
 {
@@ -25,12 +30,42 @@ struct OptionsConfig
     Render::AaMode aaMode      = Render::AaMode::None;
     int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
 
+    /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
+    /// hand-editable and these lanes reach a shader.
+    Render::TonemapSettings tonemap;
+
+    /// @brief The shadow knobs, in their sun and local halves. Sanitized on
+    /// load for the same reason, and one more: these size a GPU allocation, so
+    /// a hand-typed resolution reaches createTexture if nothing clamps it.
+    Render::ShadowSettings shadows;
+
+    /// @brief Whether the sky is reflected, and how finely. Sanitized on load:
+    /// the resolution sizes the probe's cubes.
+    Render::EnvironmentSettings environment;
+
+    /// @brief Screen-space ambient occlusion. Sanitized on load: the sample
+    /// count bounds a loop over a fixed-size kernel.
+    Render::SsaoSettings ambientOcclusion;
+
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
     /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel
     /// values: -1 means unlimited (no CPU-side cap); 0 is invalid and never stored.
     /// Any positive value is the FPS cap the frame pacer targets.
     std::int16_t fpsLimit = -1;
+
+    /// @brief Parse @p text as an options document.
+    ///
+    /// Anything the document does not mention keeps its default, and a document
+    /// that will not parse at all yields defaults entire — a file someone
+    /// hand-edited into nonsense costs the settings, never the launch.
+    [[nodiscard]] static OptionsConfig FromJsonText(std::string_view text);
+
+    /// @brief The settings that differ from the defaults, as an options document,
+    /// with floats rounded to four decimal places. Round-trips through
+    /// FromJsonText: every field read there that is not written here is at its
+    /// default, so a setting nobody changed follows the defaults as they change.
+    [[nodiscard]] std::string ToJsonText() const;
 
     /// @brief Reads options.json from the user root.
     /// Returns defaults if the file is missing or malformed.

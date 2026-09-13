@@ -3,7 +3,7 @@
 /// @file EditorBlueprintMode.cpp
 /// @brief Editing a blueprint in its own world, with its own light.
 ///
-/// A blueprint is an ordinary level file (docs/blueprint-system-concept.md), so
+/// A blueprint is an ordinary level file, so
 /// editing one is opening it as a level — no second format, no second loader. What
 /// this file adds is the *mode*: the level you came from stays resident behind it,
 /// the blueprint world takes the edited role and its own undo stack, and the panels
@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <tuple>
 
 namespace Assisi::Editor
 {
@@ -81,14 +82,16 @@ Assisi::ECS::Entity EditorApp::BlueprintSunEntity() const
     // A query rather than a stored handle, for the same reason instance membership
     // is: the sun is an ordinary entity and the author may delete it. A handle
     // would go stale silently and the panel would edit a slot something else owns.
-    for (auto [entity, light, tag] :
-         _blueprintWorld->scene.Query<Assisi::Runtime::DirectionalLight, Assisi::Runtime::EditorOnly>())
-    {
-        (void)light;
-        (void)tag;
-        return entity;
-    }
-    return Assisi::ECS::NullEntity;
+    // begin()/end() and not a range-for that returns on its first pass: MSVC reads such
+    // a loop's increment as unreachable and /WX makes C4702 an error. Only the debug
+    // preset trips it — /O2 folds the loop away first — so the range-for form fails md
+    // while ms stays green, which is a nasty way to find out.
+    auto sunlit = _blueprintWorld->scene.Query<Assisi::Runtime::DirectionalLight, Assisi::Runtime::EditorOnly>();
+    auto first  = sunlit.begin();
+    if (first == sunlit.end())
+        return Assisi::ECS::NullEntity;
+
+    return std::get<0>(*first);
 }
 
 void EditorApp::AddBlueprintEditorRig(Assisi::App::World &world)
@@ -174,7 +177,11 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
 
     ClearSelection();
     _blueprintHistory.emplace(world.scene, MakeEditRebindHook(), &world.instances);
-    _blueprintSavedToken = 0; // freshly loaded == what is on disk
+    InstallHistoryHooks(*_blueprintHistory);
+    _blueprintSavedToken    = 0; // freshly loaded == what is on disk
+    _blueprintSystemsEdited = false;
+    _addSystemBuf[0]        = '\0';
+    _addSystemSelected      = 0;
 
     Assisi::Core::Log::Info("Blueprint editor: editing '{}' (world '{}').", source, world.name);
 }
@@ -190,7 +197,10 @@ void EditorApp::CloseBlueprintEditor()
     // Drop the history *first*: it binds the scene by reference and holds entity
     // handles into it, and the world is about to be destroyed under both.
     _blueprintHistory.reset();
-    _blueprintSavedToken = 0;
+    _blueprintSavedToken    = 0;
+    _blueprintSystemsEdited = false;
+    _addSystemBuf[0]        = '\0';
+    _addSystemSelected      = 0;
     ClearSelection();
 
     // Same aliasing hazard a level load guards against, and the same fix: an armed

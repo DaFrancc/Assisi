@@ -8,7 +8,7 @@
 /// These live here rather than in Assisi::Physics because a system needs a
 /// SystemContext, and App is the layer that owns one — Physics deliberately does
 /// not depend on it. They are plain functions, never installed automatically: a
-/// file names the ones it needs (docs/blueprint-system-concept.md §8), so a world
+/// file names the ones it needs, so a world
 /// that has no use for one does not run it.
 
 #include <Assisi/Core/Reflect/Annotations.hpp>

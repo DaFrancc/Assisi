@@ -9,7 +9,7 @@
 /// saying "this instance changed that field" for a field it no longer changes —
 /// and from then on that member stops following its blueprint. That is exactly
 /// the disease recorded overrides were introduced to cure, reintroduced through
-/// undo (docs/blueprint-system-concept.md §10).
+/// undo.
 ///
 /// So the assertion that matters is not "the override is written" but "the
 /// override and the value move together, in one Ctrl-Z".

@@ -7,8 +7,7 @@
 /// NetSync knows how to carry an instance record and how to bind `base + i` to
 /// entities. It deliberately does not know what a blueprint *is* — expansion is
 /// Runtime's job, the instance table is World's, and the manifest is App's, none
-/// of which NetSync depends on. These are the adapters that supply all three
-/// (docs/blueprint-implementation-plan.md, stage 7b R4 / 7c).
+/// of which NetSync depends on. These are the adapters that supply all three.
 ///
 /// **The manifest is the content set, unmodified.** A blueprint is named on the
 /// wire by its index into `ContentSet::paths`, which costs two bytes instead of

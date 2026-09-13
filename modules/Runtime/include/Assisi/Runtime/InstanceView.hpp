@@ -5,8 +5,7 @@
 /// @brief The undefined primary template that generated typed views specialize.
 ///
 /// For blueprints stable enough to be part of the code, a generator reads the
-/// file and emits one specialization per opted-in blueprint
-/// (docs/blueprint-system-concept.md §7):
+/// file and emits one specialization per opted-in blueprint:
 ///
 /// ```cpp
 /// if (auto car = SpawnBlueprint<Car>(world, at))

@@ -115,7 +115,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
 
         for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
         {
-            if (meta->name == "Name")
+            if (Core::Reflect::IsComponent<Name>(*meta))
                 continue; // the entity's `name` key already carries it
 
             const void *component = meta->getByEntity(&scene, entity.index, entity.generation);

@@ -11,6 +11,7 @@ target_sources(Assisi-App
     "include/Assisi/App/LevelRuntime.hpp"
     "include/Assisi/App/OptionsConfig.hpp"
     "include/Assisi/App/PhysicsSystems.hpp"
+    "include/Assisi/App/MotionSystems.hpp"
     "include/Assisi/App/SystemCatalog.hpp"
     "include/Assisi/App/SystemRegistry.hpp"
     "include/Assisi/App/World.hpp"
@@ -25,6 +26,8 @@ target_sources(Assisi-App
     "src/CrashReport.cpp"
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
+    "src/PerfCapture.cpp"
+    "src/MotionSystems.cpp"
     "src/PhysicsSystems.cpp"
     "src/SystemCatalog.cpp"
     "src/SystemRegistry.cpp"
@@ -65,6 +68,7 @@ assisi_reflect(
   TARGET Assisi-App
   HEADERS
     include/Assisi/App/PhysicsSystems.hpp
+    include/Assisi/App/MotionSystems.hpp
 )
 
 add_library(Assisi::App ALIAS Assisi-App)

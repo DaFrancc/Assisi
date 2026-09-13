@@ -35,6 +35,7 @@
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #if defined(ASSISI_NETWORKING)
@@ -62,6 +63,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -71,6 +73,14 @@
 
 namespace Assisi::Editor
 {
+
+/// @brief Whether a blueprint can be placed into the file being edited.
+enum class NestVerdict : std::uint8_t
+{
+    Valid,      ///< Nothing stands in the way.
+    WouldCycle, ///< Its closure already reaches the edited file; the pair would expand forever.
+    Unreadable, ///< It does not flatten at all — a cycle of its own, a missing nested file, bad JSON.
+};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -137,9 +147,55 @@ struct EditorConfig
     /// editor binary. Distinct from the F11 "Editor overlays" checkbox, which
     /// only hides the overlays per frame.
     bool enableEditorVisuals = true;
+
+    /// Run as a performance capture rather than interactively: measure a fixed
+    /// number of frames, print the medians, write the report, exit. Set by
+    /// `--capture`; `frames == 0` means an ordinary interactive run.
+    ///
+    /// The editor is the measurement harness rather than a separate program,
+    /// because a separate one would measure a renderer nobody ships. What the
+    /// capture does change is the camera: it snaps to the level's active Camera
+    /// entity, so the view is the scene's own rather than the editor's default
+    /// fly-camera pose. A measurement scene that could not choose what its
+    /// numbers are a picture of would not be a contract.
+    App::PerfCaptureConfig perfCapture;
+
+    /// Start with the GPU-driven cull path on. Off by default, matching
+    /// SceneRenderer — the CPU path is the reference implementation. Exposed
+    /// here so the two can be A/B'd by a capture run rather than only by
+    /// clicking the F11 checkbox, which is not something a measurement can do.
+    bool gpuCulling = false;
 };
 
 class EditorOptionsPanel;
+
+/// @brief What the fields a bound-settle can move held when the current field
+/// edit began.
+///
+/// Settling consumes what it moves, and a typed value arrives one character at a
+/// time: typing 40 into a cap passes through 4, and a clamp applied at that
+/// instant drags the capped field to 4 and leaves it there when the 0 lands.
+/// Restoring these before each settle makes the capped field follow *what it was*
+/// against the current cap, rather than a running minimum of every value the cap
+/// passed through on the way.
+///
+/// Lives for one widget interaction — captured when a field takes focus, dropped
+/// when it loses it — so releasing a drag commits what is on screen. The
+/// component itself is never shadowed: the capped field really does hold each
+/// intermediate value, and the scene is told about it.
+struct BoundBaseline
+{
+    Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
+    Assisi::Core::Reflect::ComponentId component{};
+    /// The field being edited, which is the one value never restored — that would
+    /// be writing over what is being typed.
+    std::size_t editedField = 0;
+    /// Index into the component's field list, and the value it held. Only fields
+    /// whose bound names a sibling are here, so this is empty for almost every
+    /// component.
+    std::vector<std::pair<std::size_t, double>> values;
+    bool active = false;
+};
 
 class EditorApp : public Assisi::App::Application
 {
@@ -176,6 +232,11 @@ public:
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
     void OnRender(Assisi::Render::RenderFrame &frame) override;
+    void OnRenderOverlays(Assisi::Render::RenderFrame &frame) override;
+    /// The editor's chrome is exactly what the overlay seam is for. It rides on
+    /// the same switch as the overlay passes themselves, so a viewer build with
+    /// them off pays for neither.
+    [[nodiscard]] bool UsesOverlayStage() const override { return _editorConfig.enableEditorVisuals; }
     void OnImGui() override;
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
@@ -187,6 +248,18 @@ private:
     // --- Setup ---
     void SetupCamera();
     void SetupScene();
+
+    /// @brief Move the editor camera onto the loaded level's active Camera
+    /// entity, and adopt its projection. No-op when the level has none, which
+    /// leaves the editor's default pose.
+    ///
+    /// Used by capture runs so the scene decides what its numbers are a picture
+    /// of. Deliberately not applied interactively: an author opening a level
+    /// wants their fly camera where they left it.
+    void AdoptLevelCamera();
+
+    /// @brief Puts the editor camera at @p eye, looking at @p target.
+    void AimCamera(const glm::vec3 &eye, const glm::vec3 &target);
 
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
@@ -201,6 +274,46 @@ private:
 
     // --- ImGui panels ---
     void DrawOptionsWindow(); // hands the frame to EditorOptionsPanel and applies its result
+
+    /// @brief Whether the selection is a shadow-casting spot or point light, and
+    /// so whether the inspector has a shadow verdict to show for it. One of the
+    /// two things the renderer's per-light diagnostics are gathered for.
+    [[nodiscard]] bool SelectedEntityCastsLocalShadows() const;
+
+    /// @brief One line under a light's fields saying whether it is shadowed,
+    /// and what took its shadow if not. Draws nothing when there is no verdict.
+    void DrawLightShadowVerdict();
+
+    /// @brief A line or two under a MeshRenderer's fields: the level this
+    /// instance drew at, and the sizes on either side of it.
+    ///
+    /// A threshold is tuned by watching the measurement cross it, which is not
+    /// something an artist can see from the image — the pop is the only other
+    /// evidence, and by then they have walked past the switch.
+    void DrawLodVerdict();
+
+    /// @brief The pin control under that readout: draw the selected instance at
+    /// a level of its own, or leave it to the measurement.
+    ///
+    /// @p pinned is the level it is pinned to, or -1; @p levelCount is its
+    /// chain's depth, which is what the control offers rather than a range that
+    /// might overshoot this mesh.
+    void DrawLodPin(int32_t pinned, uint32_t levelCount);
+
+    /// @name The celestial components' own inspector blocks
+    ///
+    /// Drawn above each component's reflected fields, never instead of them.
+    /// Scrubbing and jumping are gestures a field row cannot express, and the two
+    /// readouts say what the renderer actually did rather than re-deriving it.
+    /// @{
+    void DrawTimeOfDayControls();
+    void DrawSunControls();
+    void DrawMoonReadout();
+    /// Says that a clocked sun's `direction` is not read. Radio gating cannot
+    /// cross components, so this is the honest minimum.
+    void DrawClockedAimNotice();
+    /// @}
+
     void DrawDiagnosticsWindow();
     void DrawChiaraWindow();  // performance capture (F9); empty in builds without profiling
     void DrawLevelsWindow();
@@ -208,9 +321,35 @@ private:
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
+    void DrawMaterialEditor();   // reflection-driven `.amat` property editor
     void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7)
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump
+
+    /// @brief The edited world's required-system list: search-and-add from the
+    /// catalog, mute, and remove.
+    ///
+    /// One panel for both a level and an open blueprint, because both are a world
+    /// whose `systemNames` a save writes back — `_world` is whichever of the two
+    /// is being edited, so this needs no mode of its own.
+    void DrawRequiredSystemsWindow();
+
+    /// @brief Adds @p name to the edited world's required list and installs it.
+    /// No-op for a name already there, which is what keeps the list a set.
+    void AddRequiredSystem(const std::string &name);
+
+    /// @brief Drops @p name from the edited world's required list.
+    ///
+    /// The system is muted rather than unregistered: taking an entry out of a
+    /// live registry would rebind every After()/Before() edge that named it, and
+    /// nothing in the engine uninstalls systems. It stops running now and is not
+    /// installed on the next load, which is the whole of what removal means.
+    void RemoveRequiredSystem(const std::string &name);
+
+    /// @brief Marks the edited world's system list changed since its last save,
+    /// so IsSceneDirty() reports it. The list is not entity data and so leaves no
+    /// trace in the undo history the dirty marker otherwise reads.
+    void MarkSystemsEdited();
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity
     /// @brief Draws the manipulator and applies whatever it produced this frame.
     /// Returns whether the handles are held.
@@ -347,10 +486,50 @@ private:
     void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
                                const glm::vec3 &color);
 
+    // --- Light visualisation ---
+    /// @brief Draw every light's reach as an overlay: a point light's sphere, a
+    /// spot's two cones, a directional light's arrow.
+    ///
+    /// A light is invisible otherwise. Its billboard says where it is and nothing
+    /// about what it does, so a radius is authored by typing a number and
+    /// checking the result frame by frame — which is the loop this removes.
+    ///
+    /// The selected light draws in the selection colour and shows more: the inner
+    /// cone as well as the outer, and its axis. Everything else is drawn thinly
+    /// enough to sit under a scene full of lights.
+    void SubmitLightGizmos();
+
+    /// @brief The light whose outline the cursor is on, or NullEntity.
+    ///
+    /// The outline, not the volume it encloses: a point light's sphere is where
+    /// its falloff ends, and treating its inside as the light's own would make
+    /// everything the light reaches unclickable — which is most of a room. So a
+    /// click lands on the drawn lines, within a few pixels of them.
+    ///
+    /// @p tOut is how far the grabbed point is, on the same scale PickEntity
+    /// reports, so the caller can take whichever hit is nearer.
+    [[nodiscard]] Assisi::ECS::Entity PickLightOutline(glm::vec2 mousePos, float &tOut);
+
     // --- Gizmo state ---
     /// @brief True while the transform gizmo is hovered or being dragged. Entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
     [[nodiscard]] bool IsUsingGizmo() const;
+
+    /// @brief Drive the selected directional light's aim with the rotate gizmo,
+    /// in place of the transform one.
+    ///
+    /// A directional light has no position — only a direction — so the ordinary
+    /// gizmo has nothing to grab on the two thirds of the time it is translating
+    /// or scaling, and rotating the entity's Transform would turn a matrix the
+    /// light never reads. This turns the light's own `direction` field instead.
+    ///
+    /// Drawn at the entity's world position where it has a Transform, and at the
+    /// world origin where it does not — a sun commonly has none, and a gizmo with
+    /// nowhere to be is a gizmo nobody can reach.
+    ///
+    /// @return true when it took the frame's gizmo, which the transform gizmo
+    /// checks so the two never draw over each other.
+    [[nodiscard]] bool DrawDirectionalLightGizmo();
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -360,6 +539,13 @@ private:
     /// field (a MeshRenderer material slot), listing only materials, and opens it.
     void OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
                                  int32_t slot);
+    /// @brief Arms the browser to write into the open material's texture channel
+    /// at @p fieldOffset, listing only images, and opens it.
+    ///
+    /// The material panel edits a MaterialData the editor owns rather than a
+    /// component in a pool, so the target is the panel itself — see
+    /// AssetBrowserTarget.
+    void OpenAssetBrowserForMaterialField(std::size_t fieldOffset);
     /// @brief Resolves @p vpath to an AssetId, writes it into the pinned browser
     /// target field, and closes.
     void SelectAsset(std::string_view vpath);
@@ -371,8 +557,113 @@ private:
     /// lists. Called only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
 
+    // --- Material authoring ---
+    /// @brief Load @p vpath into the material editor and open it. A material
+    /// already open with unsaved edits is replaced — the panel edits one at a
+    /// time, and the working copy is not a document stack.
+    void OpenMaterialEditor(std::string_view vpath);
+
+    /// @brief Push the working material into the live asset cache so the open
+    /// scene shows it immediately.
+    ///
+    /// @p channelsChanged selects which half of the mutation contract applies: a
+    /// factor edit rewrites the constants row under the same id, while a texture
+    /// change has to evict and reload, which mints a new id and re-resolves every
+    /// scene pointer. Deciding it here (rather than diffing inside the cache)
+    /// keeps the expensive path something a caller opts into knowingly.
+    void ApplyMaterialEdit(bool channelsChanged);
+
+    /// @brief Write the working material to its path and adopt it as the saved
+    /// state. Returns false (having logged) if the write failed, in which case
+    /// the editor stays dirty rather than pretending the edit landed.
+    bool SaveOpenMaterial();
+
+    /// @brief Write @p seed as a new `.amat` under @p dirVirtualPath, named from
+    /// @p stem with a free suffix, reimport so the reconcile pass mints its GUID
+    /// sidecar, and open it in the editor. Backs both New and Duplicate — they
+    /// differ only in the seed.
+    void CreateMaterial(std::string_view dirVirtualPath, std::string_view stem,
+                        const Assisi::Geometry::MaterialData &seed);
+
+    /// @brief Clear the panel, ending any preview. The panel window stays.
+    void CloseMaterialEditor();
+
+    /// @brief Rebuild _materialList from the asset database.
+    void RefreshMaterialList();
+
+    /// @brief Rename the open material to @p stem, keeping it in its current
+    /// folder, and re-point the panel at the new path. Returns false (having
+    /// logged) if the name is taken or the move failed, leaving the panel where
+    /// it was.
+    bool RenameOpenMaterial(std::string_view stem);
+
+    /// @brief Bind the open material to the mesh slot the panel was opened from,
+    /// remembering what that slot held. No-op without a captured target.
+    void BeginMaterialPreview();
+
+    /// @brief Drop the preview binding. @p restore puts the remembered slot list
+    /// back; pass false when a real assignment has superseded the preview, where
+    /// restoring would undo the author's actual choice.
+    void EndMaterialPreview(bool restore);
+
+    /// @brief Open @p vpath with a preview target: the mesh slot it was reached
+    /// from, which is the object the author is authoring this material *for*.
+    ///
+    /// The target outlives the material, so New/Duplicate from the panel preview
+    /// onto the same slot — that is the whole point of arriving from one.
+    void OpenMaterialEditorForSlot(std::string_view vpath, Assisi::ECS::Entity entity, std::size_t fieldOffset,
+                                   int32_t slot);
+
+    /// @brief Forget the preview slot, ending any preview on it. For opening a
+    /// material with no object context — the picker, or the browser's menu.
+    void ClearMaterialPreviewTarget();
+
+    /// @brief Adopt @p state as the live value of asset @p path — the replay end
+    /// of an EditHistory AssetDelta. Updates the open panel if it is that asset,
+    /// and pushes the value to the renderer either way, so undoing an edit to a
+    /// material you have since closed still changes what you see.
+    void ApplyAssetState(std::string_view typeName, const Assisi::Core::AssetPath &path,
+                         const nlohmann::json &state);
+
+    /// @brief Close the open material-edit gesture, pushing one transaction for
+    /// the whole of it. No-op when nothing is open or the value did not move.
+    ///
+    /// A gesture spans a drag: it opens on the first edited frame and closes once
+    /// no widget is active, so scrubbing a slider is one undo step rather than
+    /// one per frame — the same coalescing the Inspector's end-of-frame sweep
+    /// gives component fields.
+    void CommitMaterialGesture();
+
+    /// @brief The preview target's material-slot list, or null when the target is
+    /// gone (no target captured, entity destroyed, MeshRenderer removed).
+    std::vector<Assisi::Core::AssetId> *MaterialPreviewSlots();
+
+    /// @brief Delete @p vpath and its `.aast` sidecar, then reimport.
+    ///
+    /// References to it are deliberately not chased down: a MeshRenderer slot
+    /// holding the dead GUID resolves to the fallback material and keeps the id,
+    /// so restoring the file from version control restores the binding. Rewriting
+    /// every referrer to nil would make the deletion unrecoverable.
+    void DeleteMaterial(std::string_view vpath);
+
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+
+    /// @brief Draw the widget for one reflected field at @p fp, chosen by its
+    /// type alone, and return whether the value changed.
+    ///
+    /// The half of the field renderer that needs no owner, so it serves any
+    /// FieldMeta list — a component's or a reflected asset's (see
+    /// DrawMaterialEditor). Types that cannot be drawn from a value alone (an
+    /// AssetId's browse target, an EntityRef's scene, an AssetIdVector's mesh)
+    /// are the caller's to handle before delegating here; they land on the
+    /// "unsupported" label if it does not.
+    /// @p bounds is the field's clamp already resolved against the object being
+    /// drawn — Reflect::ResolveFieldBounds — because a bound may name a sibling
+    /// field rather than a constant, and this half of the renderer holds only the
+    /// one field's address.
+    bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                        const Assisi::Core::Reflect::FieldBounds &bounds);
     // The inspector's replication surfaces. Every one reads or writes a
     // NetSync::Replicated marker, so without networking there is no component
     // for them to be about and the inspector has no replication block.
@@ -473,6 +764,11 @@ private:
     void ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present);
     /// @brief Builds the rebind hook bound to this app (shared by both histories).
     Assisi::Editor::EditHistory::RebindHook MakeEditRebindHook();
+
+    /// @brief Wire the hooks a freshly constructed history needs beyond its
+    /// rebind. Called at every construction site so a new one cannot quietly
+    /// lose asset undo.
+    void InstallHistoryHooks(Assisi::Editor::EditHistory &history);
     /// @brief The history that captures and applies edits *right now*, or nullptr
     /// when editing must not be captured. Editing -> the persistent main history;
     /// Paused -> a scratch history discarded when play resumes or stops; Playing ->
@@ -725,6 +1021,8 @@ private:
         /// it belongs to.
         std::uint64_t previousSavedToken = 0;
         bool savedTokenIsBlueprint = false;
+        /// Whether the system list was unsaved before this save cleared that too.
+        bool previousSystemsEdited = false;
     };
     std::optional<PendingSaveConfirm> _pendingSaveConfirm;
 
@@ -799,6 +1097,26 @@ private:
     /// The instance is *authored* — level content, written back when the level
     /// saves — which is what distinguishes it from a runtime SpawnBlueprint.
     void PlaceBlueprintInstance(const std::string &source);
+
+    /// @brief Whether @p source can be placed into the file being edited, and if
+    /// not, which of the two reasons it is.
+    ///
+    /// WouldCycle means the edited file's own path is in @p source's closure —
+    /// covering both placing a file into itself and the long way round, a nesting
+    /// several files deep that arrives back. It matters most in the blueprint
+    /// editor, where nesting is the point, but it guards a level too: a `.alvl`
+    /// can be placed as a blueprint, including the one being edited.
+    ///
+    /// **Memoized, and deliberately allowed to go stale.** A failed definition is
+    /// never cached by the blueprint layer — by design, so a file fixed on disk
+    /// works the moment it is fixed — which means asking this per row per frame
+    /// would re-read and re-log every broken file for as long as the list is open.
+    /// The verdicts are dropped when the edited file changes and when the file
+    /// list is rescanned; a hand-edit in between leaves this panel saying the old
+    /// thing. That is cosmetic and nothing rests on it: the flattener refuses a
+    /// cycle wherever it is reached, and a load that reaches one refuses the whole
+    /// file.
+    [[nodiscard]] NestVerdict NestingVerdict(const std::string &source);
 
     /// @brief Saves the selected entity and its subtree as a blueprint, then
     /// replaces them with an instance of it.
@@ -1235,6 +1553,10 @@ private:
     };
     std::optional<PendingOverrideReset> _pendingOverrideReset;
 
+    /// See BoundBaseline: what a bound-settle would otherwise consume while a
+    /// value is being typed one character at a time.
+    BoundBaseline _boundBaseline;
+
     /// The blueprint instance the selection is *about*, or 0 for none.
     ///
     /// Selection has two modes. Clicking an instance's row selects the instance —
@@ -1283,6 +1605,19 @@ private:
     // every frame.
     std::vector<Assisi::Render::LineVertex> _colliderLinesDepthTested;
     std::vector<Assisi::Render::LineVertex> _colliderLinesOnTop;
+
+    // The same split for the light gizmos, and separate batches rather than
+    // shared ones because a light's reach and a body's collider are unrelated
+    // overlays that happen to be drawn the same way — sharing would make either
+    // one's absence depend on the other's ordering.
+    std::vector<Assisi::Render::LineVertex> _lightLinesDepthTested;
+    std::vector<Assisi::Render::LineVertex> _lightLinesOnTop;
+
+    // One light's outline at a time, rebuilt and cleared per light while a click
+    // is resolved. A member only to keep its storage between clicks; nothing here
+    // survives the call that fills it.
+    std::vector<Assisi::Render::LineVertex> _lightPickOutline;
+
     std::vector<Assisi::ECS::Entity>        _colliderEntities;
 
     // --- Entity list ---
@@ -1299,6 +1634,19 @@ private:
     // edge, which is what keeps a drag its own undo entry rather than merged with a
     // later edit. See GizmoDrag.hpp.
     Assisi::Editor::GizmoDrag _gizmoDrag;
+
+    // The same, for a directional light's aim, which is its own drag against its
+    // own component. Separate from the one above rather than shared: they hold
+    // different components, and Release names the component it commits — one
+    // drag serving both would commit whichever the last caller happened to pass.
+    Assisi::Editor::GizmoDrag _lightDrag;
+
+    // Whether the light-aim handles were held this frame. Shaped like
+    // _captureEditingActive: raised by the draw, read after it. Separate from the
+    // draw's return value, which says whether it *drew* — the caller needs both,
+    // and conflating them let the transform gizmo draw a second set of handles
+    // over these on every frame a sun was selected and not dragged.
+    bool _lightGizmoHeld = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
@@ -1322,6 +1670,10 @@ private:
     // The main history's state token at the last successful SaveLevel (0 = base /
     // freshly loaded). IsSceneDirty() compares the live token against it.
     std::uint64_t _savedStateToken = 0;
+    // The level's required-system list has changed since its last save. A second
+    // dirty signal beside the token above because the list is not entity data:
+    // adding or removing one leaves the undo history, and so the token, untouched.
+    bool _systemsEdited = false;
 
     // --- Blueprint editing mode ---
     // The world holding the blueprint being edited, or null when none is open. It
@@ -1333,10 +1685,12 @@ private:
     std::string _blueprintReturnWorld;
     // _blueprintHistory's token at the blueprint's last successful save.
     std::uint64_t _blueprintSavedToken = 0;
+    // _systemsEdited's counterpart for the open blueprint's own system list.
+    bool _blueprintSystemsEdited = false;
     // The lighting the blueprint editor works by. The sun is an entity (so the
     // gizmo and inspector reach it like anything else); ambient is a renderer knob,
     // since there is no such component and nothing about it belongs in a file.
-    glm::vec3 _blueprintAmbientColor{1.f, 1.f, 1.f};
+    Assisi::Math::Color3 _blueprintAmbientColor{1.f, 1.f, 1.f};
     float _blueprintAmbient = 0.25f;
     // Deferred, for the same reason level loads are: opening resolves assets and
     // touches GPU state, and a panel runs mid-frame.
@@ -1462,6 +1816,13 @@ private:
     // editing the text resets it to the first row, Enter adds the highlighted one.
     int32_t _addComponentSelected = 0;
 
+    // --- Required Systems panel ---
+    // The same pair for the systems search field. Its own, not shared with the
+    // Inspector's: both panels are open at once and a shared buffer would let one
+    // field's text steer the other's list.
+    char _addSystemBuf[64] = {};
+    int32_t _addSystemSelected = 0;
+
     // --- Eyedropper ---
     // While armed, the next scene entity-pick is written into the captured
     // EntityRef field instead of changing the selection. The target is pinned by
@@ -1477,14 +1838,43 @@ private:
     // directory and writes the picked path back into the field. The target is
     // pinned by (entity, component meta, field offset) and re-resolved at write
     // time — same anti-dangling scheme as the eyedropper above.
+    /// @brief Which of the two things a pick writes into.
+    ///
+    /// A component field is addressed indirectly, by (entity, meta, offset),
+    /// because its pool can move while the browser sits open. The material
+    /// panel's working copy is owned by this object and cannot move, so it is
+    /// addressed by field offset alone.
+    enum class AssetBrowserTarget : std::uint8_t
+    {
+        ComponentField,
+        MaterialField,
+    };
+
+    /// @brief What the browser lists. Independent of the write target: picking a
+    /// material slot and picking a material's texture channel are both scalar
+    /// writes, and differ only in what is worth showing.
+    enum class AssetBrowserFilter : std::uint8_t
+    {
+        All,       ///< Images, meshes and materials.
+        Materials, ///< `.amat` only — a mesh's material slot.
+        Textures,  ///< Images only — a material's texture channel.
+    };
+
     bool _assetBrowserOpen        = false;
+    AssetBrowserTarget _assetBrowserTarget = AssetBrowserTarget::ComponentField;
+    AssetBrowserFilter _assetBrowserFilter = AssetBrowserFilter::All;
     Assisi::ECS::Entity _assetBrowserEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
     std::size_t _assetBrowserFieldOffset = 0;
     /// @brief -1 when the target field is a scalar asset field; >= 0 when it is
-    /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot). In
-    /// the latter mode the browser lists only materials (and folders).
+    /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot).
     int32_t _assetBrowserVectorSlot  = -1;
+    /// @brief Which material a MaterialField pick was armed for. The browser
+    /// stays open across frames, and the panel can be pointed at a different
+    /// `.amat` in between — without this, the pick would land at the same field
+    /// offset in whatever material happened to be open. The component path pins
+    /// its target by entity for the same reason.
+    Assisi::Core::AssetPath _assetBrowserMaterialPath;
     std::string _assetBrowserDir;                                 ///< Current dir, relative to the asset root ("" = root).
 
     // Cached listing of _assetBrowserDir — re-read only on navigation / open /
@@ -1501,6 +1891,55 @@ private:
     // _assetCache so a level load (which Clears that) doesn't drop thumbnails.
     Assisi::Render::AssetCache _thumbnailCache;
 
+    // --- Material editor ---
+    // Edits one `.amat` at a time, reflection-driven off MaterialData's field
+    // table. Two copies are kept: the working one every widget writes, and the
+    // last saved one, which is what makes both "is it dirty" and Revert exact
+    // rather than a flag that can drift from the data.
+    /// Whether the panel window is up. Opened from a material slot's Edit button
+    /// or the browser's context menu, closed by its own X — it is a tool you
+    /// reach for, not a permanent fixture.
+    bool _materialEditorOpen = false;
+    /// Virtual path of the open `.amat`, empty when none.
+    Assisi::Core::AssetPath _materialEditorPath;
+    /// Every `.amat` the database knows, for the panel's picker. Cached because
+    /// AssetDatabase::Assets() builds its vector per call and is a reimport-cold
+    /// path, not a per-frame one.
+    std::vector<Assisi::Core::AssetPath> _materialList;
+    bool _materialListDirty = true;
+    Assisi::Geometry::MaterialData _materialEditorData;    ///< Working copy; the panel's widgets write this.
+    Assisi::Geometry::MaterialData _materialEditorSaved;   ///< Last state written to disk; Revert restores it.
+    /// Rename box contents. Held separately from the path so a half-typed name is
+    /// not a rename — the move happens when the button is pressed, not per key.
+    char _materialEditorNameBuf[128] = {};
+
+    // The open edit gesture, if any: the material's reflected JSON as it stood
+    // when the drag started. Held as JSON rather than as a MaterialData because
+    // that is what an AssetDelta carries, so the transaction is assembled from
+    // it without a second conversion.
+    bool _materialGestureOpen = false;
+    nlohmann::json _materialGestureBefore;
+
+    // --- Material live preview ---
+    // A material being authored is normally on nothing: it was created from a
+    // mesh slot's browse button, and until it is actually picked, that slot still
+    // holds whatever it held before. The preview binds it to that slot anyway, so
+    // there is something on screen to judge the edits against.
+    //
+    // Provisional in both directions: the binding is not an edit (it records no
+    // undo, because the restore below is what reverses it) and it never outlives
+    // the panel.
+    bool _materialPreviewActive = false;
+    /// The slot the browser was opened for, captured when the panel took over —
+    /// the browser's own target is overwritten the next time it opens.
+    Assisi::ECS::Entity _materialPreviewEntity = Assisi::ECS::NullEntity;
+    std::size_t _materialPreviewFieldOffset = 0;
+    int32_t _materialPreviewSlot = -1;   ///< -1 when the panel was not opened from a slot.
+    /// The slot list exactly as it was before the preview overwrote it. Stored
+    /// whole rather than as one entry: the list is sparse (short means "mesh
+    /// default"), so restoring one element cannot undo a resize.
+    std::vector<Assisi::Core::AssetId> _materialPreviewRestore;
+
     // --- Levels panel ---
     std::vector<std::string> _levelFiles;
     int32_t _selectedLevel = 0;
@@ -1513,6 +1952,14 @@ private:
     /// level is legal, and the editor should not pretend otherwise.
     std::vector<std::string> _blueprintFiles;
     int32_t _selectedBlueprint = 0;
+    // NestingVerdict's memo, and the edited file it was reached against. A verdict
+    // costs a flatten of the candidate, and a *failed* flatten is never cached
+    // below this layer — so without these the open dropdown would re-read and
+    // re-log every broken file every frame. Dropped whole when the edited file
+    // changes or the list is rescanned; see NestingVerdict for why lagging a
+    // hand-edit in between is harmless.
+    std::map<std::string, NestVerdict> _nestVerdicts;
+    std::string _nestVerdictsFor;
     char _newBlueprintName[128] = {};
 
     // --- World and level operations deferred out of ImGui ---

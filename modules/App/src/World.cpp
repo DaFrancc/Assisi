@@ -241,7 +241,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     // swap: the moment it goes Active the frame loop will dispatch it.
     //
     // **A failed install fails the travel.** An unknown system name is a hard
-    // error by design (docs/blueprint-system-concept.md §8): a level that loads
+    // error by design: a level that loads
     // anyway looks fine and simply has no behaviour.
     if (!ApplySystems(incoming, header.systems, levelPath))
     {

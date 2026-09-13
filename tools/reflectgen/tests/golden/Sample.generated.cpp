@@ -57,23 +57,23 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
         "SampleAllTypes",
         typeid(T),
         {
-            { "f", Assisi::Core::Reflect::FieldType::Float, offsetof(T, f), false, false },
-            { "d", Assisi::Core::Reflect::FieldType::Double, offsetof(T, d), false, false },
-            { "i32", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, i32), false, false },
-            { "u32", Assisi::Core::Reflect::FieldType::UInt32, offsetof(T, u32), false, false },
-            { "i64", Assisi::Core::Reflect::FieldType::Int64, offsetof(T, i64), false, false },
-            { "u64", Assisi::Core::Reflect::FieldType::UInt64, offsetof(T, u64), false, false },
-            { "flag", Assisi::Core::Reflect::FieldType::Bool, offsetof(T, flag), false, false },
-            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, 4, false },
-            { "v2", Assisi::Core::Reflect::FieldType::Vec2, offsetof(T, v2), false, false },
-            { "v3", Assisi::Core::Reflect::FieldType::Vec3, offsetof(T, v3), false, false },
-            { "v4", Assisi::Core::Reflect::FieldType::Vec4, offsetof(T, v4), false, false },
-            { "q", Assisi::Core::Reflect::FieldType::Quat, offsetof(T, q), false, false },
-            { "m", Assisi::Core::Reflect::FieldType::Mat4, offsetof(T, m), false, false },
-            { "assetPath", Assisi::Core::Reflect::FieldType::AssetPath, offsetof(T, assetPath), false, false },
-            { "label", Assisi::Core::Reflect::FieldType::String, offsetof(T, label), false, false },
-            { "paths", Assisi::Core::Reflect::FieldType::AssetPathVector, offsetof(T, paths), false, false },
-            { "runtimeCache", Assisi::Core::Reflect::FieldType::Float, offsetof(T, runtimeCache), true, false }
+            { .name = "f", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, f) },
+            { .name = "d", .type = Assisi::Core::Reflect::FieldType::Double, .offset = offsetof(T, d) },
+            { .name = "i32", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, i32) },
+            { .name = "u32", .type = Assisi::Core::Reflect::FieldType::UInt32, .offset = offsetof(T, u32) },
+            { .name = "i64", .type = Assisi::Core::Reflect::FieldType::Int64, .offset = offsetof(T, i64) },
+            { .name = "u64", .type = Assisi::Core::Reflect::FieldType::UInt64, .offset = offsetof(T, u64) },
+            { .name = "flag", .type = Assisi::Core::Reflect::FieldType::Bool, .offset = offsetof(T, flag) },
+            { .name = "shape", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, shape), .enumConstants = { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, .enumSize = 4 },
+            { .name = "v2", .type = Assisi::Core::Reflect::FieldType::Vec2, .offset = offsetof(T, v2) },
+            { .name = "v3", .type = Assisi::Core::Reflect::FieldType::Vec3, .offset = offsetof(T, v3) },
+            { .name = "v4", .type = Assisi::Core::Reflect::FieldType::Vec4, .offset = offsetof(T, v4) },
+            { .name = "q", .type = Assisi::Core::Reflect::FieldType::Quat, .offset = offsetof(T, q) },
+            { .name = "m", .type = Assisi::Core::Reflect::FieldType::Mat4, .offset = offsetof(T, m) },
+            { .name = "assetPath", .type = Assisi::Core::Reflect::FieldType::AssetPath, .offset = offsetof(T, assetPath) },
+            { .name = "label", .type = Assisi::Core::Reflect::FieldType::String, .offset = offsetof(T, label) },
+            { .name = "paths", .type = Assisi::Core::Reflect::FieldType::AssetPathVector, .offset = offsetof(T, paths) },
+            { .name = "runtimeCache", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, runtimeCache), .transient = true }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -168,7 +168,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
         "SampleRef",
         typeid(T),
         {
-            { "target", Assisi::Core::Reflect::FieldType::EntityRef, offsetof(T, target), false, false }
+            { .name = "target", .type = Assisi::Core::Reflect::FieldType::EntityRef, .offset = offsetof(T, target) }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -314,10 +314,10 @@ static const bool _reflectgen_SampleRadio = []() -> bool
         "SampleRadio",
         typeid(T),
         {
-            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 1, false },
-            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, false, true, false, 0.0f, 0.f, {}, 0, false, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
+            { .name = "mode", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, mode), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 },
+            { .name = "intensity", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, intensity), .radioSource = "mode", .radioValues = { 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { .name = "sub", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, .enumSize = 4, .enumSigned = true, .radioSource = "mode", .radioValues = { 1, 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { .name = "level", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, level), .hasMin = true, .minValue = 0.0f, .radioSource = "sub", .radioValues = { 1 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Grey }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -387,8 +387,8 @@ static const bool _reflectgen_SampleReplicated = []() -> bool
         "SampleReplicated",
         typeid(T),
         {
-            { "shared", Assisi::Core::Reflect::FieldType::Float, offsetof(T, shared), false, false },
-            { "serverOnly", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, serverOnly), false, true }
+            { .name = "shared", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, shared) },
+            { .name = "serverOnly", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, serverOnly), .norep = true }
         },
         [](const void* ptr) -> nlohmann::json
         {

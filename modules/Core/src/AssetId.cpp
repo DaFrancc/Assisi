@@ -101,11 +101,19 @@ std::span<const BuiltinAssetEntry> BuiltinAssets() noexcept
     // The reserved ids that stand in for the renderer's `prim://` primitives.
     // Nil is deliberately absent — it is the "no asset" sentinel, not a
     // resolvable primitive. Path spellings mirror Render/AssetCache.cpp.
-    static constexpr std::array<BuiltinAssetEntry, 4> kEntries{{
+    static constexpr std::array<BuiltinAssetEntry, 12> kEntries{{
         {BuiltinAssetId::Cube, "prim://cube"},
         {BuiltinAssetId::White, "prim://white"},
         {BuiltinAssetId::WhiteLinear, "prim://white-linear"},
         {BuiltinAssetId::FlatNormal, "prim://flat-normal"},
+        {BuiltinAssetId::SphereLow, "prim://sphere-low"},
+        {BuiltinAssetId::Sphere, "prim://sphere"},
+        {BuiltinAssetId::SphereHigh, "prim://sphere-high"},
+        {BuiltinAssetId::IcosphereLow, "prim://icosphere-low"},
+        {BuiltinAssetId::Icosphere, "prim://icosphere"},
+        {BuiltinAssetId::IcosphereHigh, "prim://icosphere-high"},
+        {BuiltinAssetId::Cylinder, "prim://cylinder"},
+        {BuiltinAssetId::CylinderHigh, "prim://cylinder-high"},
     }};
     return kEntries;
 }

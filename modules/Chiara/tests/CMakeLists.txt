@@ -10,6 +10,7 @@ add_executable(Assisi-Chiara-Tests
   TestOverhead.cpp
   TestSerializer.cpp
   TestThreads.cpp
+  TestTracks.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Chiara-Tests)

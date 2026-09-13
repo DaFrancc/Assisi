@@ -130,7 +130,7 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
 TEST_CASE("SystemRegistry: ActiveWorldOnly systems run only in the active world")
 {
     // One InputContext, N resident worlds: a controller system must not apply the
-    // same keypresses in every world (docs/multi-scene-design-notes.md §1).
+    // same keypresses in every world.
     WorldManager worlds;
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;

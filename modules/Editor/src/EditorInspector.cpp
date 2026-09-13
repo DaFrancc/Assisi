@@ -13,6 +13,7 @@
 /// close on exactly the frame it mattered.
 
 #include <Assisi/Editor/EditorApp.hpp>
+#include "ImGuiQueries.hpp"
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetId.hpp>
@@ -29,8 +30,10 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
 
 #include <imgui.h>
 
@@ -39,6 +42,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -64,6 +68,7 @@ constexpr const char *kWireGlyph = "\xef\x87\xa6"; // U+F1E6
 namespace
 {
 
+using Assisi::Core::Reflect::IsComponent;
 using Assisi::Editor::RadioVisibility;
 using Assisi::Editor::ScopedFieldChrome;
 
@@ -163,11 +168,19 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
         cur = FindField(meta, cur->radioSource);
     }
 
-    const auto readEnum = [component](const FieldMeta *fm) -> std::int64_t
-                          {
-                              const void *fp = static_cast<const char *>(component) + fm->offset;
-                              return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
-                          };
+    // A broadcaster is an enum or a bool, and a bool is read as the 0 or 1 the
+    // parser recorded for `false` and `true`. It cannot go through
+    // ReadEnumValue: a bool field carries no enumSize, so that would read a
+    // zero-width integer rather than the byte.
+    const auto readSource = [component](const FieldMeta *fm) -> std::int64_t
+                            {
+                                const void *fp = static_cast<const char *>(component) + fm->offset;
+                                if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
+                                {
+                                    return *static_cast<const bool *>(fp) ? 1 : 0;
+                                }
+                                return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
+                            };
 
     // Fold from the root down toward `field` (chain front). `state` holds the
     // resolved visibility of the source one level up.
@@ -181,7 +194,7 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
             state = RadioVisibility::Hidden; // an inactive source hides its listeners
             continue;
         }
-        const std::int64_t current = readEnum(source);
+        const std::int64_t current = readSource(source);
         bool match   = false;
         for (const std::int64_t value : listener->radioValues)
         {
@@ -200,6 +213,265 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
 
 } // namespace
 
+bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                               const Assisi::Core::Reflect::FieldBounds &bounds)
+{
+    using namespace Assisi::Core::Reflect;
+
+    bool edited = false;
+    switch (field.type)
+    {
+    case FieldType::Float:
+    {
+        // AFIELD(min=/max=) hints, already resolved — a bound naming a sibling
+        // field is that sibling's current value. DragFloat reads min==max==0 as
+        // "no clamp", so an open side substitutes ±FLT_MAX; AlwaysClamp is what
+        // makes the bounds hold for Ctrl+click text entry too.
+        const float minBound = bounds.hasMin ? static_cast<float>(bounds.minValue) : -FLT_MAX;
+        const float maxBound = bounds.hasMax ? static_cast<float>(bounds.maxValue) : FLT_MAX;
+        edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
+                                  "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Double:
+    {
+        edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
+        // InputDouble cannot clamp, so the bounds are applied after the edit.
+        if (edited)
+        {
+            double &value = *static_cast<double *>(fp);
+            if (bounds.hasMin)
+            {
+                value = std::max(value, bounds.minValue);
+            }
+            if (bounds.hasMax)
+            {
+                value = std::min(value, bounds.maxValue);
+            }
+        }
+        break;
+    }
+    case FieldType::Int32:
+    {
+        // reflectgen guarantees an integer field's bounds are integral and in
+        // range, so these casts are exact.
+        const int32_t minBound = bounds.hasMin ? static_cast<int32_t>(bounds.minValue) : INT32_MIN;
+        const int32_t maxBound = bounds.hasMax ? static_cast<int32_t>(bounds.maxValue) : INT32_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt32:
+    {
+        const uint32_t minBound = bounds.hasMin ? static_cast<uint32_t>(bounds.minValue) : 0u;
+        const uint32_t maxBound = bounds.hasMax ? static_cast<uint32_t>(bounds.maxValue) : UINT32_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Int64:
+    {
+        // Bounds arrive as double, exact only to 2^53. Past that a bound would
+        // silently round, so the open range stops at what is representable
+        // rather than pretending to honour it.
+        constexpr int64_t kExact   = 1LL << 53;
+        const int64_t minBound = bounds.hasMin ? static_cast<int64_t>(bounds.minValue) : -kExact;
+        const int64_t maxBound = bounds.hasMax ? static_cast<int64_t>(bounds.maxValue) : kExact;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt64:
+    {
+        constexpr uint64_t kExact   = 1ULL << 53;
+        const uint64_t minBound = bounds.hasMin ? static_cast<uint64_t>(bounds.minValue) : 0u;
+        const uint64_t maxBound = bounds.hasMax ? static_cast<uint64_t>(bounds.maxValue) : kExact;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Bool:
+        edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
+        break;
+    case FieldType::Enum:
+    {
+        // Stored as the underlying integer, whose width varies per AENUM —
+        // hence the read/write at field.enumSize rather than a plain int.
+        const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
+        const char *preview = "(unknown)";
+        for (const auto &constant : field.enumConstants)
+        {
+            if (constant.value == value)
+            {
+                preview = constant.name.c_str();
+                break;
+            }
+        }
+        if (ImGui::BeginCombo(field.name.c_str(), preview))
+        {
+            for (const auto &constant : field.enumConstants)
+            {
+                const bool selected = (constant.value == value);
+                if (ImGui::Selectable(constant.name.c_str(), selected))
+                {
+                    WriteEnumValue(fp, field.enumSize, constant.value);
+                    edited = true;
+                }
+                if (selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        break;
+    }
+    case FieldType::String:
+    {
+        // Core::ShortString is the only String type today.
+        auto *str = static_cast<Assisi::Core::ShortString *>(fp);
+        char buf[Assisi::Core::kShortStringMax + 1];
+        str->ToCStr(buf, sizeof(buf));
+        if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+        {
+            str->Assign(buf);
+            edited = true;
+        }
+        break;
+    }
+    case FieldType::EntityName:
+    {
+        // The String box over the wider buffer. Not the entity's own Name —
+        // that one has to stay unique, so the rename box above owns it.
+        auto *name = static_cast<Assisi::Core::EntityName *>(fp);
+        char buf[Assisi::Core::kEntityNameMax + 1];
+        name->ToCStr(buf, sizeof(buf));
+        if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+        {
+            name->Assign(buf);
+            edited = true;
+        }
+        break;
+    }
+    case FieldType::Vec2:
+        edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        break;
+    case FieldType::Vec3:
+        edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        break;
+    case FieldType::Vec4:
+        edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        break;
+    // Colours are linear and may exceed 1 (an emissive factor is a radiance
+    // multiplier, not a display colour), so the picker runs in float/HDR mode
+    // — the default 8-bit mode would quantize the value and clamp the range.
+    case FieldType::Color3:
+        edited = ImGui::ColorEdit3(field.name.c_str(), static_cast<float *>(fp),
+                                   ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+        break;
+    case FieldType::Color4:
+        edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
+                                   ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
+                                   ImGuiColorEditFlags_AlphaPreviewHalf);
+        break;
+    case FieldType::Quat:
+    {
+        auto *quat  = static_cast<glm::quat *>(fp);
+        glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
+        if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
+        {
+            *quat  = glm::normalize(glm::quat(glm::radians(euler)));
+            edited = true;
+        }
+        break;
+    }
+    default:
+        // Either a type only an owning component can draw (the caller handles
+        // those before delegating here) or one nothing draws yet.
+        ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
+        break;
+    }
+    return edited;
+}
+
+namespace
+{
+
+/// @brief Whether @p baseline is the one for this field's current edit.
+bool BoundBaselineMatches(const BoundBaseline &baseline, Assisi::ECS::Entity entity,
+                          const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t editedField)
+{
+    return baseline.active && baseline.entity == entity && baseline.component == meta.id &&
+           baseline.editedField == editedField;
+}
+
+/// @brief Remember every field a bound-settle could move, before this edit's
+/// first intermediate value reaches them.
+///
+/// Only fields whose bound *names* a sibling: a literal bound is not something
+/// another field's edit can push against, so there is nothing to restore.
+void CaptureBoundBaseline(BoundBaseline &baseline, Assisi::ECS::Entity entity,
+                          const Assisi::Core::Reflect::ComponentMeta &meta, const void *object,
+                          std::size_t editedField)
+{
+    baseline.values.clear();
+    baseline.entity      = entity;
+    baseline.component   = meta.id;
+    baseline.editedField = editedField;
+    baseline.active      = true;
+
+    for (std::size_t i = 0; i < meta.fields.size(); ++i)
+    {
+        const Assisi::Core::Reflect::FieldMeta &field = meta.fields[i];
+        if (field.minField.empty() && field.maxField.empty())
+        {
+            continue;
+        }
+        double value = 0.0;
+        if (Assisi::Core::Reflect::ReadNumericField(field, object, value))
+        {
+            baseline.values.emplace_back(i, value);
+        }
+    }
+}
+
+/// @brief Put the remembered values back, so the settle that follows measures
+/// against what the fields were rather than what the last keystroke left them.
+///
+/// The field being edited is skipped — restoring it would write over what is
+/// being typed. A baseline belonging to another entity or component is ignored
+/// rather than applied, since its indices mean nothing here.
+/// @return Whether any field's value actually changed, which the caller owes the
+/// scene as a change notification.
+bool RestoreBoundBaseline(const BoundBaseline &baseline, Assisi::ECS::Entity entity,
+                          const Assisi::Core::Reflect::ComponentMeta &meta, void *object,
+                          std::size_t editedField)
+{
+    if (!BoundBaselineMatches(baseline, entity, meta, editedField))
+    {
+        return false;
+    }
+
+    bool moved = false;
+    for (const auto &[index, value] : baseline.values)
+    {
+        if (index == editedField || index >= meta.fields.size())
+        {
+            continue;
+        }
+        const Assisi::Core::Reflect::FieldMeta &field = meta.fields[index];
+        double current = 0.0;
+        if (Assisi::Core::Reflect::ReadNumericField(field, object, current) && current != value &&
+            Assisi::Core::Reflect::WriteNumericField(field, object, value))
+        {
+            moved = true;
+        }
+    }
+    return moved;
+}
+
+} // namespace
+
 bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     using namespace Assisi::Core::Reflect;
@@ -207,8 +479,12 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
     bool anyEditable   = false;
     bool anyFieldEdited = false;
 
-    for (const auto &field : meta.fields)
+    // By index, because the bound baseline names fields by position: it has to
+    // say which one is being edited, and that is the one value it must not
+    // restore over.
+    for (std::size_t fieldIndex = 0; fieldIndex < meta.fields.size(); ++fieldIndex)
     {
+        const FieldMeta &field = meta.fields[fieldIndex];
         if (field.transient)
             continue;
         anyEditable = true;
@@ -233,160 +509,14 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             ImGui::BeginDisabled();
         }
 
+        // The cases here are the ones that need the *owning component* — a
+        // browse target pinned as (entity, meta, offset), a scene to list
+        // entities from, or a sibling field. Everything decided by the field's
+        // type alone falls through to EditFieldValue, which the material panel
+        // shares.
         bool edited = false;
         switch (field.type)
         {
-        case FieldType::Float:
-        {
-            // AFIELD(min=/max=) hints. DragFloat reads min==max==0 as "no clamp",
-            // so an open side substitutes ±FLT_MAX; AlwaysClamp is what makes the
-            // bounds hold for Ctrl+click text entry too.
-            const float minBound = field.hasMin ? field.minValue : -FLT_MAX;
-            const float maxBound = field.hasMax ? field.maxValue : FLT_MAX;
-            edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
-                                      "%.3f", ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::Double:
-        {
-            edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
-            // InputDouble cannot clamp, so the bounds are applied after the edit.
-            if (edited)
-            {
-                double &value = *static_cast<double *>(fp);
-                if (field.hasMin)
-                {
-                    value = std::max(value, static_cast<double>(field.minValue));
-                }
-                if (field.hasMax)
-                {
-                    value = std::min(value, static_cast<double>(field.maxValue));
-                }
-            }
-            break;
-        }
-        case FieldType::Int32:
-        {
-            // reflectgen guarantees an integer field's bounds are integral and in
-            // range, so these casts are exact.
-            const int32_t minBound = field.hasMin ? static_cast<int32_t>(field.minValue) : INT32_MIN;
-            const int32_t maxBound = field.hasMax ? static_cast<int32_t>(field.maxValue) : INT32_MAX;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::UInt32:
-        {
-            const uint32_t minBound = field.hasMin ? static_cast<uint32_t>(field.minValue) : 0u;
-            const uint32_t maxBound = field.hasMax ? static_cast<uint32_t>(field.maxValue) : UINT32_MAX;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::Int64:
-        {
-            // Bounds arrive as double, exact only to 2^53. Past that a bound would
-            // silently round, so the open range stops at what is representable
-            // rather than pretending to honour it.
-            constexpr int64_t kExact   = 1LL << 53;
-            const int64_t minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
-            const int64_t maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::UInt64:
-        {
-            constexpr uint64_t kExact   = 1ULL << 53;
-            const uint64_t minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
-            const uint64_t maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
-                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
-            break;
-        }
-        case FieldType::Bool:
-            edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
-            break;
-        case FieldType::Enum:
-        {
-            // Stored as the underlying integer, whose width varies per AENUM —
-            // hence the read/write at field.enumSize rather than a plain int.
-            const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
-            const char *preview = "(unknown)";
-            for (const auto &constant : field.enumConstants)
-            {
-                if (constant.value == value)
-                {
-                    preview = constant.name.c_str();
-                    break;
-                }
-            }
-            if (ImGui::BeginCombo(field.name.c_str(), preview))
-            {
-                for (const auto &constant : field.enumConstants)
-                {
-                    const bool selected = (constant.value == value);
-                    if (ImGui::Selectable(constant.name.c_str(), selected))
-                    {
-                        WriteEnumValue(fp, field.enumSize, constant.value);
-                        edited = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            break;
-        }
-        case FieldType::String:
-        {
-            // Core::ShortString is the only String type today.
-            auto *str = static_cast<Assisi::Core::ShortString *>(fp);
-            char buf[Assisi::Core::kShortStringMax + 1];
-            str->ToCStr(buf, sizeof(buf));
-            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
-            {
-                str->Assign(buf);
-                edited = true;
-            }
-            break;
-        }
-        case FieldType::EntityName:
-        {
-            // The String box over the wider buffer. Not the entity's own Name —
-            // that one has to stay unique, so the rename box above owns it.
-            auto *name = static_cast<Assisi::Core::EntityName *>(fp);
-            char buf[Assisi::Core::kEntityNameMax + 1];
-            name->ToCStr(buf, sizeof(buf));
-            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
-            {
-                name->Assign(buf);
-                edited = true;
-            }
-            break;
-        }
-        case FieldType::Vec2:
-            edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-            break;
-        case FieldType::Vec3:
-            edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-            break;
-        case FieldType::Vec4:
-            edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-            break;
-        case FieldType::Quat:
-        {
-            auto *quat  = static_cast<glm::quat *>(fp);
-            glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
-            if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
-            {
-                *quat  = glm::normalize(glm::quat(glm::radians(euler)));
-                edited = true;
-            }
-            break;
-        }
         case FieldType::AssetPath:
         {
             auto *ap = static_cast<Assisi::Core::AssetPath *>(fp);
@@ -499,7 +629,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         {
             // MeshRenderer::materialOverrides is the only field of this type; it
             // gets one browse row per material slot of the resolved mesh.
-            if (meta.name == "MeshRenderer" && field.name == "materialOverrides")
+            if (IsComponent<Assisi::Runtime::MeshRenderer>(meta) && field.name == "materialOverrides")
                 edited = EditMaterialSlots(*static_cast<Assisi::Runtime::MeshRenderer *>(mut), meta, field.offset);
             else
                 ImGui::TextDisabled("%s: [unsupported vector]", field.name.c_str());
@@ -512,16 +642,16 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Named by source and id rather than by id alone: the number is a
             // per-world counter and means nothing to the author on its own.
             const auto describe = [this](Assisi::ECS::InstanceId id) -> std::string
-            {
-                if (!id.IsValid())
-                    return "(none)";
-                if (_world == nullptr)
-                    return std::format("instance {}", id.value);
-                const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
-                if (row == nullptr)
-                    return std::format("instance {} (missing)", id.value);
-                return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
-            };
+                                  {
+                                      if (!id.IsValid())
+                                          return "(none)";
+                                      if (_world == nullptr)
+                                          return std::format("instance {}", id.value);
+                                      const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
+                                      if (row == nullptr)
+                                          return std::format("instance {} (missing)", id.value);
+                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+                                  };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
             {
@@ -549,7 +679,9 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             break;
         }
         default:
-            ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
+            // Resolved here, against the component being drawn: a bound naming a
+            // sibling is only a number once there is an object to read it from.
+            edited = EditFieldValue(fp, field, ResolveFieldBounds(field, meta.fields, mut));
             break;
         }
 
@@ -595,7 +727,35 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             }
         }
 
-        anyFieldEdited |= edited;
+        // Also on the frame the widget lets go, whether or not it reported an
+        // edit: Escape reverts a text field's own value silently, and without a
+        // settle there the capped field keeps the half-typed number.
+        const bool finishing = ImGui::IsItemDeactivated();
+        bool settled = false;
+        if (edited || finishing)
+        {
+            // Captured on this field's *first* edit of the gesture, not on
+            // ImGui's activation edge. Ctrl+clicking a drag box turns it into a
+            // text box, which deactivates and reactivates mid-gesture — a
+            // baseline keyed to that edge is dropped exactly when the typing
+            // starts, which is the one case it exists for. Here the capped fields
+            // are still pristine, since no settle has run for this gesture yet,
+            // so it is the same snapshot the activation edge would have taken.
+            if (!BoundBaselineMatches(_boundBaseline, _selectedEntity, meta, fieldIndex))
+            {
+                CaptureBoundBaseline(_boundBaseline, _selectedEntity, meta, mut, fieldIndex);
+            }
+
+            // A field that caps another has just moved, so the capped one may be
+            // out of range — and its own widget will not run again until the next
+            // frame, by which point the drag has moved on. Settling here keeps the
+            // pair consistent every frame of the drag, and inside the same gesture,
+            // so one undo puts both back.
+            settled = RestoreBoundBaseline(_boundBaseline, _selectedEntity, meta, mut, fieldIndex);
+            settled = SettleDependentBounds(meta.fields, mut) || settled;
+        }
+
+        anyFieldEdited |= edited || settled;
         ImGui::PopID();
     }
 
@@ -646,6 +806,32 @@ bool EditorApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
             OpenAssetBrowserForSlot(meta, fieldOffset, static_cast<int32_t>(slot));
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Browse materials (.amat)");
+        ImGui::SameLine();
+
+        // Edit what this slot actually draws: its override, or — when there is
+        // none — the material the mesh imported for the slot, which is the thing
+        // on screen. Both are ordinary `.amat` files, and the panel shows the
+        // path, so editing a shared mesh default is visible rather than implied.
+        const Assisi::Core::AssetId effectiveId =
+            slotId.IsNil() ? _assetDatabase.SlotMaterial(mrc.mesh, static_cast<std::uint32_t>(slot)) : slotId;
+        const std::optional<std::string> effectivePath = _assetDatabase.PathFor(effectiveId);
+        ImGui::BeginDisabled(!effectivePath.has_value());
+        if (ImGui::Button("Edit"))
+        {
+            OpenMaterialEditorForSlot(*effectivePath, _selectedEntity, fieldOffset, static_cast<int32_t>(slot));
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            if (!effectivePath.has_value())
+                ImGui::SetTooltip("This slot has no material file to edit.");
+            else if (slotId.IsNil())
+                ImGui::SetTooltip("Edit '%s' — the mesh's own material for this slot, shared by everything "
+                                  "that uses this mesh.",
+                                  effectivePath->c_str());
+            else
+                ImGui::SetTooltip("Edit '%s' in the Material panel.", effectivePath->c_str());
+        }
         ImGui::SameLine();
 
         // Labelled by the mesh's imported material name, index if it has none.
@@ -818,7 +1004,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
 
     // A few components carry runtime state beyond their reflected fields. Wire it
     // up here so the add takes effect now rather than at the next level reload.
-    if (meta.name == "Transform")
+    if (IsComponent<Assisi::Runtime::Transform>(meta))
     {
         // Entities start transform-less, so place the new one in front of the
         // camera rather than at the world origin. GetMut, not Get: Transform is
@@ -834,11 +1020,11 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
             tc->position = _cameraTransform.position + forward * kSpawnDistance;
         }
     }
-    else if (meta.name == "MeshRenderer")
+    else if (IsComponent<Assisi::Runtime::MeshRenderer>(meta))
     {
         ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
     }
-    else if (meta.name == "RigidBodyDescriptor")
+    else if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta))
     {
         const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
         const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
@@ -878,7 +1064,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
     //
     // MeshRenderer needs nothing: its transient pointers are non-owning, the
     // AssetCache owns the GPU resources.
-    if (meta.name == "RigidBodyDescriptor" || meta.name == "Transform")
+    if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) || IsComponent<Assisi::Runtime::Transform>(meta))
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
         {
@@ -1205,6 +1391,10 @@ void EditorApp::DrawInstanceInspector()
         return;
     }
 
+    // Scoped to the instance for the reason DrawInspector scopes to the entity:
+    // a half-typed field must not land on the next instance selected.
+    ImGui::PushID(static_cast<int32_t>(_selectedInstance.value));
+
     const bool editable = IsEditable();
     ImGui::BeginDisabled(!editable);
 
@@ -1276,9 +1466,412 @@ void EditorApp::DrawInstanceInspector()
     }
 
     ImGui::EndDisabled();
+    ImGui::PopID();
 
     if (!editable && ImGui::IsWindowHovered())
         ImGui::SetTooltip("This world is inspect-only.");
+}
+
+void EditorApp::DrawLightShadowVerdict()
+{
+    if (!SelectedEntityCastsLocalShadows())
+    {
+        // castsShadows is off, and the field two lines below says so. Repeating
+        // it as a verdict would read as a failure rather than a choice.
+        return;
+    }
+
+    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer.ShadowReportFor(_selectedEntity);
+    if (report == nullptr)
+    {
+        // The gather runs a frame behind the selection, and a scene with local
+        // shadows switched off entirely never gathers at all. Saying nothing
+        // beats guessing at a verdict.
+        return;
+    }
+
+    const bool shadowed = report->state == Assisi::Render::LocalShadowState::Shadowed;
+    ImGui::PushStyleColor(ImGuiCol_Text, shadowed ? ImVec4{0.65f, 0.85f, 0.65f, 1.f}
+                          : report->state == Assisi::Render::LocalShadowState::Demoted
+                              ? ImVec4{1.f, 0.82f, 0.4f, 1.f}
+                              : ImVec4{1.f, 0.5f, 0.4f, 1.f});
+    if (report->resolution == 0u)
+    {
+        ImGui::Text("Shadow: %s", Assisi::Render::LocalShadowStateName(report->state));
+    }
+    else
+    {
+        ImGui::Text("Shadow: %s at %u", Assisi::Render::LocalShadowStateName(report->state), report->resolution);
+    }
+    ImGui::PopStyleColor();
+    ImGui::SetItemTooltip("%s", Assisi::Render::DescribeLocalShadowState(report->state));
+}
+
+void EditorApp::DrawLodVerdict()
+{
+    const auto *renderer = _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity);
+    const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
+    if (renderer == nullptr || renderer->meshBuffer == nullptr || transform == nullptr)
+    {
+        return; // still loading, or nowhere to stand — nothing was drawn to report on
+    }
+
+    const Assisi::Runtime::LodReport lod =
+        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, transform->worldMatrix);
+
+    if (lod.levelCount <= 1)
+    {
+        // Worth a line rather than silence: "did my chain import" is the first
+        // question at this mesh, and the answer is either this or a level count.
+        ImGui::TextDisabled("LOD: one level (no chain)");
+        return;
+    }
+
+    const int32_t pinned = _sceneRenderer.PinnedLod(_selectedEntity);
+
+    // "pinned" and "forced" are worth telling apart: one of them is about this
+    // entity and the other is about every entity, and only one of them is
+    // released by the control below.
+    // The range rather than a count: levels are numbered from 0, so "of 5"
+    // beside the coarsest level reads as one short.
+    ImGui::Text("LOD%u (LOD0-LOD%u)%s", lod.level, lod.levelCount - 1u,
+                pinned >= 0 ? "  pinned" : lod.forced ? "  forced" : "");
+    ImGui::SameLine();
+
+    // The measurement first, which is a fraction of the screen and so never
+    // passes 1; the bias only when it is doing something, since the value it
+    // produces can pass 1 and would read as impossible on its own.
+    // Within the slider's display precision of 1, or a drag that lands at
+    // 1.0000001 would print "x 1.00 bias".
+    const float bias = _sceneRenderer.LodSettings().bias;
+    if (std::abs(bias - 1.f) < 0.005f)
+    {
+        ImGui::TextDisabled("size %.4f", static_cast<double>(lod.screenSize));
+    }
+    else
+    {
+        ImGui::TextDisabled("size %.4f x %.2f bias = %.4f", static_cast<double>(lod.screenSize),
+                            static_cast<double>(bias), static_cast<double>(lod.biasedScreenSize));
+    }
+    ImGui::SetItemTooltip("The instance's bounding-sphere diameter over the viewport's height: 1 fills the screen. "
+                          "The chain's thresholds are compared against it after the LOD bias.");
+
+    // The switch points on either side, each named only where there is one: a
+    // threshold is tuned by watching the size approach the number beside it.
+    std::string switches;
+    if (!_sceneRenderer.LodSettings().enabled)
+    {
+        switches = "selection is off — every instance draws LOD0";
+    }
+    else if (lod.forced)
+    {
+        switches = "pinned, so no threshold is being read";
+    }
+    else
+    {
+        if (lod.regainAt > 0.f)
+        {
+            switches = std::format("back to LOD{} at {:.4f}", lod.level - 1u, lod.regainAt);
+        }
+        if (lod.dropBelow > 0.f)
+        {
+            if (!switches.empty())
+            {
+                switches += "    ";
+            }
+            switches += std::format("down to LOD{} below {:.4f}", lod.level + 1u, lod.dropBelow);
+        }
+        else
+        {
+            switches += "    coarsest level";
+        }
+    }
+    ImGui::TextDisabled("%s", switches.c_str());
+
+    DrawLodPin(pinned, lod.levelCount);
+}
+
+void EditorApp::DrawLodPin(int32_t pinned, uint32_t levelCount)
+{
+    // Only the levels this chain actually has, unlike the viewport-wide force,
+    // which stands over meshes of every depth and can only offer a range.
+    const std::string preview = pinned < 0 ? "Auto" : std::format("LOD{}", pinned);
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
+    if (ImGui::BeginCombo("Pin this instance", preview.c_str()))
+    {
+        if (ImGui::Selectable("Auto", pinned < 0))
+        {
+            _sceneRenderer.PinLod(_selectedEntity, -1);
+        }
+        for (uint32_t level = 0; level < levelCount; ++level)
+        {
+            const std::string label = std::format("LOD{}", level);
+            if (ImGui::Selectable(label.c_str(), pinned == static_cast<int32_t>(level)))
+            {
+                _sceneRenderer.PinLod(_selectedEntity, static_cast<int32_t>(level));
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Draws this one instance at the level you pick, leaving every other instance on the "
+                          "level it earned. One at a time — pinning another releases this one, and so does "
+                          "loading a level. Never saved.");
+}
+
+namespace
+{
+/// A row of buttons that each write a value and nothing else.
+///
+/// Deliberately not a preset enum. A preset is an AUTHORITY — a level saved as
+/// "Arctic" follows the Arctic numbers wherever they go next, which is why
+/// Skybox's knobs grey out under one. A button is a SHORTCUT: click it, get
+/// sensible values, keep editing, with no Custom state to escape from and no
+/// field that quietly stops being read. Place and pacing and planet are
+/// orthogonal axes, so a preset spanning them would have to grey a day length
+/// because of where the level is, and pacing has nothing to do with place.
+///
+/// @return true if a button was pressed.
+bool ButtonRow(const char *label, std::initializer_list<const char *> names, int32_t &pressed)
+{
+    ImGui::TextDisabled("%s", label);
+    ImGui::SameLine();
+    int32_t index = 0;
+    bool any = false;
+    for (const char *name : names)
+    {
+        if (index > 0)
+        {
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton(name))
+        {
+            pressed = index;
+            any = true;
+        }
+        ++index;
+    }
+    return any;
+}
+
+/// Which quarter of the year @p dayOfYear falls in, by its northern name. The
+/// tooltip beside the season buttons says so, and a southern latitude genuinely
+/// gets the opposite season — which is correct, not a bug.
+const char *SeasonName(double dayOfYear, float yearLengthDays)
+{
+    const double fraction = yearLengthDays > 0.f ? dayOfYear / static_cast<double>(yearLengthDays) : 0.0;
+    if (fraction < 0.25)
+        return "spring";
+    if (fraction < 0.5)
+        return "summer";
+    if (fraction < 0.75)
+        return "autumn";
+    return "winter";
+}
+
+/// The moon's phase in words. Waxing and waning are the elongation's, not the
+/// lit fraction's — half lit says nothing about which way it is going.
+const char *PhaseName(float litFraction, bool waxing)
+{
+    if (litFraction < 0.03f)
+        return "new";
+    if (litFraction > 0.97f)
+        return "full";
+    if (litFraction < 0.47f)
+        return waxing ? "waxing crescent" : "waning crescent";
+    if (litFraction < 0.53f)
+        return waxing ? "first quarter" : "last quarter";
+    return waxing ? "waxing gibbous" : "waning gibbous";
+}
+
+const char *BodyName(Assisi::Runtime::LightingBody body)
+{
+    switch (body)
+    {
+    case Assisi::Runtime::LightingBody::Sun:
+        return "Sun";
+    case Assisi::Runtime::LightingBody::Moon:
+        return "Moon";
+    case Assisi::Runtime::LightingBody::None:
+        break;
+    }
+    return "nothing";
+}
+} // namespace
+
+void EditorApp::DrawTimeOfDayControls()
+{
+    using Assisi::Runtime::TimeOfDay;
+
+    TimeOfDay *clock = _scene->GetMut<TimeOfDay>(_selectedEntity);
+    if (clock == nullptr)
+    {
+        return;
+    }
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    bool edited = false;
+
+    // Scrubbing goes through Jump rather than writing the field, so a scrub
+    // counts as a cut and the cascades are redrawn on the frame it happens. A
+    // scrub that merely wrote the hour would leave the old sun's shadows up
+    // until something else invalidated them.
+    float hour = static_cast<float>(clock->hour);
+    if (ImGui::SliderFloat("Hour", &hour, 0.f, 24.f, "%.2f"))
+    {
+        edited |= Assisi::Runtime::Jump(*clock, clock->day, static_cast<double>(hour));
+    }
+
+    float dayOfYear = static_cast<float>(clock->dayOfYear);
+    if (ImGui::SliderFloat("Day of year", &dayOfYear, 0.f, clock->yearLengthDays, "%.2f"))
+    {
+        edited |= Assisi::Runtime::JumpSeason(*clock, static_cast<double>(dayOfYear));
+    }
+
+    int32_t pressed = 0;
+    if (ButtonRow("Jump to", {"Dawn", "Noon", "Dusk", "Midnight"}, pressed))
+    {
+        const double hours[] = {6.0, 12.0, 18.0, 0.0};
+        edited |= Assisi::Runtime::JumpForwardTo(*clock, hours[pressed]);
+    }
+    if (ButtonRow("Season", {"Spring eq.", "Summer", "Autumn eq.", "Winter"}, pressed))
+    {
+        edited |= Assisi::Runtime::JumpSeason(
+            *clock, 0.25 * static_cast<double>(pressed) * static_cast<double>(clock->yearLengthDays));
+    }
+    ImGui::SetItemTooltip("Northern names. A southern latitude gets the opposite season, which is correct.");
+
+    // A rate change is a plain field write and is NOT a jump: the clock is
+    // integrated, so changing the pace under it is continuous.
+    if (ButtonRow("Pace", {"24 h", "30 min", "10 min", "1 min", "6 s"}, pressed))
+    {
+        const float lengths[] = {86400.f, 1800.f, 600.f, 60.f, 6.f};
+        clock->dayLengthSeconds = lengths[pressed];
+        edited = true;
+    }
+
+    edited |= ImGui::Checkbox("Pause day", &clock->paused);
+    ImGui::SameLine();
+    edited |= ImGui::Checkbox("Freeze season", &clock->seasonsPaused);
+
+    const int32_t hourPart = static_cast<int32_t>(clock->hour);
+    const int32_t minutePart = static_cast<int32_t>((clock->hour - static_cast<double>(hourPart)) * 60.0);
+    ImGui::TextDisabled("Day %d, %02d:%02d — day %.1f of %.0f (%s)", clock->day, hourPart, minutePart,
+                        clock->dayOfYear, static_cast<double>(clock->yearLengthDays),
+                        SeasonName(clock->dayOfYear, clock->yearLengthDays));
+    ImGui::TextDisabled("declination %+.1f deg", static_cast<double>(sky.declinationDegrees));
+
+    // Polar night and the midnight sun are steady states here, not errors, and
+    // saying so is what stops the first report of "the sun is gone".
+    if (sky.daylightHours <= 0.f)
+    {
+        ImGui::TextDisabled("polar night — no sunrise at this latitude today");
+    }
+    else if (sky.daylightHours >= 24.f)
+    {
+        ImGui::TextDisabled("midnight sun — the sun does not set today");
+    }
+    else
+    {
+        ImGui::TextDisabled("daylight %.2f h", static_cast<double>(sky.daylightHours));
+    }
+
+    // The panel says "cascades never settle" at the fast end and this is why: at
+    // six seconds a day the sun turns a degree every frame.
+    ImGui::TextDisabled("sun %.4f deg/s (%.4f deg/frame at 60 Hz)",
+                        static_cast<double>(glm::degrees(sky.sunAngularVelocity)),
+                        static_cast<double>(glm::degrees(sky.sunAngularVelocity)) / 60.0);
+    ImGui::TextDisabled("lighting: %s at %.3f", BodyName(sky.light.body), static_cast<double>(sky.light.intensity));
+
+    if (edited)
+    {
+        _scene->MarkChanged(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<TimeOfDay>());
+    }
+}
+
+void EditorApp::DrawSunControls()
+{
+    using Assisi::Runtime::Sun;
+
+    Sun *sun = _scene->GetMut<Sun>(_selectedEntity);
+    if (sun == nullptr)
+    {
+        return;
+    }
+    bool edited = false;
+    int32_t pressed = 0;
+
+    if (ButtonRow("Place", {"Equator", "Mid-latitude", "Arctic Circle"}, pressed))
+    {
+        // The circle for THIS planet, computed from the tilt it actually has,
+        // rather than Earth's 66.5 quoted at a world that is not Earth.
+        const float latitudes[] = {0.f, 45.f, 90.f - sun->axialTiltDegrees};
+        sun->latitudeDegrees = latitudes[pressed];
+        edited = true;
+    }
+    if (ButtonRow("Planet", {"Earth", "No seasons", "Extreme"}, pressed))
+    {
+        const float tilts[] = {23.44f, 0.f, 45.f};
+        sun->axialTiltDegrees = tilts[pressed];
+        edited = true;
+    }
+    ImGui::SetItemTooltip("No seasons is a tilt of zero: a permanent equinox, twelve hours of day at every "
+                          "latitude, and the sun due east every morning.");
+
+    if (edited)
+    {
+        _scene->MarkChanged(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Sun>());
+    }
+}
+
+void EditorApp::DrawMoonReadout()
+{
+    const Assisi::Runtime::Moon *moon = _scene->Get<Assisi::Runtime::Moon>(_selectedEntity);
+    if (moon == nullptr)
+    {
+        return;
+    }
+    if (_scene->Get<Assisi::Runtime::Sun>(_selectedEntity) == nullptr)
+    {
+        ImGui::TextDisabled("no Sun on this entity — the moon has no ecliptic to orbit and is not drawn");
+        return;
+    }
+
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+
+    bool waxing = true;
+    if (const Assisi::Runtime::TimeOfDay *clock = _scene->Get<Assisi::Runtime::TimeOfDay>(_selectedEntity))
+    {
+        const float elongation = Assisi::Runtime::OrbitOf(*clock, *moon).elongationRadians;
+        const float turns = elongation / glm::two_pi<float>();
+        waxing = (turns - std::floor(turns)) < 0.5f;
+    }
+    ImGui::TextDisabled("phase: %s, %.0f%% lit", PhaseName(sky.moonLitFraction, waxing),
+                        static_cast<double>(sky.moonLitFraction) * 100.0);
+
+    // The fallback is a flat white disk, which looks like a perfectly plausible
+    // moon — which is exactly why it needs a line saying it is the fallback.
+    switch (_sceneRenderer.MoonTextureState())
+    {
+    case Assisi::Render::SkyPass::MoonTexture::Loaded:
+        ImGui::TextDisabled("texture: loaded");
+        break;
+    case Assisi::Render::SkyPass::MoonTexture::Failed:
+        ImGui::TextDisabled("texture: white fallback (the load failed)");
+        break;
+    case Assisi::Render::SkyPass::MoonTexture::NotLoaded:
+        ImGui::TextDisabled("texture: not yet drawn");
+        break;
+    }
+}
+
+void EditorApp::DrawClockedAimNotice()
+{
+    if (_scene->Get<Assisi::Runtime::Sun>(_selectedEntity) == nullptr)
+    {
+        return;
+    }
+    // Radio gating cannot reach across components, so this is the honest minimum:
+    // say that the field below is not read rather than leaving it looking live.
+    ImGui::TextDisabled("aim comes from the clock (Sun) — `direction` is not read");
 }
 
 void EditorApp::DrawInspector()
@@ -1305,6 +1898,13 @@ void EditorApp::DrawInspector()
         ImGui::End();
         return;
     }
+
+    // Every widget below is scoped to the entity. A click that changes the
+    // selection also takes focus from a half-typed field before this panel runs,
+    // and ImGui applies that text to whichever widget next draws with the same
+    // ID — without this scope, the same field on the newly selected entity.
+    ImGui::PushID(static_cast<int32_t>(_selectedEntity.index));
+    ImGui::PushID(static_cast<int32_t>(_selectedEntity.generation));
 
     // A resident world that is not the edited one is inspect-only, and the whole
     // panel is disabled rather than parts of it: an edit here could be neither
@@ -1423,7 +2023,7 @@ void EditorApp::DrawInspector()
     for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
         // Name belongs to the rename box above, not to this generic list.
-        if (meta->name == "Name")
+        if (IsComponent<Assisi::Runtime::Name>(*meta))
             continue;
 
         const void *compPtr =
@@ -1522,7 +2122,7 @@ void EditorApp::DrawInspector()
         // otherwise looks like any other entity's, right up until a save turns the
         // edit into an override. The marking doubles as the cheap substitute for
         // an override validator: a component shown as overridden that nobody
-        // touched is visible at once. See docs/blueprint-system-concept.md.
+        // touched is visible at once.
         if (const nlohmann::json *claim = OverrideClaimFor(_selectedEntity, meta->name))
         {
             ImGui::SameLine();
@@ -1572,6 +2172,45 @@ void EditorApp::DrawInspector()
                 }
             }
 #endif // ASSISI_NETWORKING
+
+            // What the shadow system actually did with this light, under its own
+            // fields. The panel's table says it for every light at once; this
+            // says it where an author is already looking at the light they think
+            // is wrong, which is the whole of the thirty-second fix.
+            if (meta->id == ComponentIdOf<Assisi::Runtime::SpotLight>() ||
+                meta->id == ComponentIdOf<Assisi::Runtime::PointLight>())
+            {
+                DrawLightShadowVerdict();
+            }
+
+            // Which level of the mesh's chain this instance drew at, beside the
+            // mesh that carries the chain. The overlay's tally counts levels
+            // across the scene; this is the one instance an artist is judging.
+            if (meta->id == ComponentIdOf<Assisi::Runtime::MeshRenderer>())
+            {
+                DrawLodVerdict();
+            }
+
+            // The clock's own controls, above the generic fields rather than
+            // instead of them: scrubbing and jumping are gestures the reflected
+            // rows cannot express, and both hours are doubles, which the generic
+            // inspector shows as a text box.
+            if (meta->id == ComponentIdOf<Assisi::Runtime::TimeOfDay>())
+            {
+                DrawTimeOfDayControls();
+            }
+            else if (meta->id == ComponentIdOf<Assisi::Runtime::Sun>())
+            {
+                DrawSunControls();
+            }
+            else if (meta->id == ComponentIdOf<Assisi::Runtime::Moon>())
+            {
+                DrawMoonReadout();
+            }
+            else if (meta->id == ComponentIdOf<Assisi::Runtime::DirectionalLight>())
+            {
+                DrawClockedAimNotice();
+            }
 
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // The field widgets write component memory by offset, bypassing
@@ -1625,37 +2264,11 @@ void EditorApp::DrawInspector()
     ImGui::TextUnformatted("Add Component");
     ImGui::SetNextItemWidth(-1.f);
 
-    // Keyboard navigation of the suggestion list. A single-line InputText swallows
-    // these keys, so the only way to see them is its callbacks: Tab arrives as
-    // Completion, the arrows as History, any text change as Edit. The callback
-    // records intent only; the highlight moves below, once this frame's match
-    // count is known.
-    struct SuggestionNav
-    {
-        int32_t move  = 0;     // -1 = up, +1 = down (Tab or arrows)
-        bool reset = false;    // text edited -> snap back to the first row
-    };
-    SuggestionNav nav;
-    const auto navCallback = [](ImGuiInputTextCallbackData *data) -> int
-                             {
-                                 auto *n = static_cast<SuggestionNav *>(data->UserData);
-                                 switch (data->EventFlag)
-                                 {
-                                 case ImGuiInputTextFlags_CallbackCompletion: n->move = +1; break; // Tab
-                                 case ImGuiInputTextFlags_CallbackHistory:
-                                     n->move = data->EventKey == ImGuiKey_UpArrow ? -1 : +1; // Up / Down
-                                     break;
-                                 case ImGuiInputTextFlags_CallbackEdit: n->reset = true; break; // typed or deleted
-                                 default: break;
-                                 }
-                                 return 0;
-                             };
-
+    ImGuiSuggestionNav nav;
     const bool entered =
         ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
-                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
-                         ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackEdit,
-                         navCallback, &nav);
+                         ImGuiInputTextFlags_EnterReturnsTrue | kImGuiSuggestionNavFlags,
+                         ImGuiSuggestionNavCallback, &nav);
 
     const auto toLower = [](std::string text)
                          {
@@ -1683,7 +2296,7 @@ void EditorApp::DrawInspector()
         std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
         {
-            if (meta->name == "Name") // owned by the rename box, never added here
+            if (IsComponent<Assisi::Runtime::Name>(*meta)) // owned by the rename box, never added here
                 continue;
             if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
                 continue;
@@ -1706,22 +2319,13 @@ void EditorApp::DrawInspector()
         constexpr std::size_t kMaxSuggestions = 8;
         const std::size_t shown           = std::min(matches.size(), kMaxSuggestions);
 
-        // Resolve this frame's navigation into the highlight index: an edit snaps
-        // it to the top, Tab/arrows step it with wrap-around across the shown rows.
-        if (nav.reset)
-            _addComponentSelected = 0;
+        _addComponentSelected = ImGuiAdvanceSuggestion(_addComponentSelected, nav, shown);
         if (shown == 0)
         {
-            _addComponentSelected = 0;
             ImGui::TextDisabled("(no matching component)");
         }
         else
         {
-            if (nav.move != 0)
-                _addComponentSelected =
-                    (_addComponentSelected + nav.move + static_cast<int32_t>(shown)) % static_cast<int32_t>(shown);
-            _addComponentSelected = std::clamp(_addComponentSelected, 0, static_cast<int32_t>(shown) - 1);
-
             // Enter adds the highlighted row; clicking a row adds it directly.
             if (entered)
             {
@@ -1764,6 +2368,8 @@ void EditorApp::DrawInspector()
     {
         HandlePhysicsEditing(anyFieldEdited);
     }
+    ImGui::PopID();
+    ImGui::PopID();
     ImGui::End();
 }
 

@@ -6,8 +6,7 @@
 ///
 /// A file lists the individual systems it needs, by name — closer to a module
 /// import than an include. There are no named profiles: one vocabulary, and
-/// "which systems does this level install?" is answerable from the file
-/// (docs/blueprint-system-concept.md §8).
+/// "which systems does this level install?" is answerable from the file.
 ///
 /// A system is `(phase, name, function, ordering, scope)`, and data can supply
 /// only the name — so the definitions live here, and the catalog is *generated*
@@ -169,7 +168,7 @@ void DrainSystemInstalls(World &world);
 /// list from `Runtime::ParseSystemNames` — one reader, so they cannot come to
 /// different conclusions about what the file names. That matters because the
 /// second check runs *after* the scene has been replaced, where refusing costs
-/// the open level (ENG-126; `App/tests/TestLevelSystemsPrecheck.cpp` pins the
+/// the open level (`App/tests/TestLevelSystemsPrecheck.cpp` pins the
 /// agreement). Anything that gives one of them its own reader, or its own
 /// predicate, re-opens that window.
 [[nodiscard]] bool LevelSystemsAreDeclared(std::string_view virtualPath);

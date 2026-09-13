@@ -43,6 +43,10 @@ public:
     {
         const MeshBuffer *mesh;
         glm::mat4 model;
+        /// Which LOD of @ref mesh to trace, clamped to the chain. The level the
+        /// mesh pass drew, so the border sits on the silhouette that is on
+        /// screen rather than on a finer one behind it.
+        uint32_t lodLevel = 0;
     };
 
     /// @param sceneFramebufferInfo  Format/samples of the framebuffer the edge
@@ -69,11 +73,11 @@ public:
 
     [[nodiscard]] bool IsValid() const { return _maskPipeline != nullptr && _edgePipeline != nullptr; }
 
-    /// @brief Outline @p mesh at @p model in @p color, on top of the scene.
+    /// @brief Outline one @p item in @p color, on top of the scene.
     /// @p viewProjection is the camera's projection*view. No-op if not initialised
     /// or the mesh has no GPU buffers.
-    void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const MeshBuffer &mesh,
-              const glm::mat4 &model, const glm::vec3 &color);
+    void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const OutlineItem &item,
+              const glm::vec3 &color);
 
     /// @brief Outline a batch of meshes as one merged border of @p color. Their
     /// silhouettes union into a single mask, so overlapping meshes share one
@@ -97,7 +101,8 @@ private:
     /// the edge pass's binding set for a new viewport size. No-op when already that
     /// size.
     [[nodiscard]] bool EnsureMask(uint32_t width, uint32_t height);
-    void RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection, const MeshBuffer &mesh);
+    void RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection, const MeshBuffer &mesh,
+                          uint32_t lodLevel);
     void RecordBillboardMaskPass(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                                  const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize);
     /// @brief (Re)build the billboard mask's binding set for @p iconTexture, reusing

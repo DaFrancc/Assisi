@@ -208,7 +208,7 @@ enum class RejectReason : std::uint8_t
     /// from a car whose wheels moved. That is a development-time cost and never a
     /// shipping one, and it buys the property blueprint replication depends on —
     /// after a successful join, both machines are known to expand any blueprint
-    /// identically (docs/blueprint-system-concept.md §9).
+    /// identically.
     ContentMismatch = 3,
 };
 
@@ -226,18 +226,16 @@ enum class RejectReason : std::uint8_t
 /// hash-equal builds that pair happily and then misparse each other, silently:
 /// exactly the failure the handshake exists to prevent.
 ///
-///  - 3 → 4: `ServerHello.clientId` (docs/replication-messaging-relevancy-plan-v1.md M0).
-///  - 4 → 5: `MessageType::Intent` and its envelope (same plan, M4).
-///  - 5 → 6: the snapshot's message section, and `MessageType::Announcement`
-///    (same plan, M5).
-///  - 6 → 7: `ClientHello.contentSetHash` and `RejectReason::ContentMismatch`
-///    (docs/blueprint-system-concept.md §9).
+///  - 3 → 4: `ServerHello.clientId`.
+///  - 4 → 5: `MessageType::Intent` and its envelope.
+///  - 5 → 6: the snapshot's message section, and `MessageType::Announcement`.
+///  - 6 → 7: `ClientHello.contentSetHash` and `RejectReason::ContentMismatch`.
 ///  - 7 → 8: the snapshot gained an instance-record section, ahead of despawns.
 ///    A v7 client reads that count as its despawn count and desyncs the whole
 ///    stream, so this is a refuse-to-join change, not a tolerable one.
 ///  - 8 → 9: an instance record carries **which of its members exist** — one bit
-///    for "all of them", and one bit per member when they do not
-///    (docs/blueprint-review-round7-findings.md B8). Nothing on the wire said so
+///    for "all of them", and one bit per member when they do not. Nothing on
+///    the wire said so
 ///    before, so a member pruned on the host was expanded and bound by every
 ///    later joiner and no despawn ever named it. Same section, one bit wider in
 ///    the common case, and a v8 client would read the presence bit as the first

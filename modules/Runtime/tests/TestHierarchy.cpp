@@ -268,7 +268,7 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
 TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the child" *
           doctest::should_fail())
 {
-    // ENG-117, open, and the mirror of the attach case above. Attaching is caught
+    // Open, and the mirror of the attach case above. Attaching is caught
     // because Parent is ACOMP(tracked) and Add stamps its change tick; detaching
     // through Remove<Parent> stamps nothing and leaves no component behind to
     // carry a tick, so Hierarchy.cpp:81's

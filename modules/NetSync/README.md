@@ -17,8 +17,7 @@ module cannot set a game's network policy by editing one of its own headers:
 `ACOMP(replicable)` grants a capability, `game.json`'s `neverReplicate` is the
 game's veto, the `Replicated` marker is the entity's opt-in, its `excluded` mask
 is that entity's opt-out, and `AFIELD(norep)` keeps a field off the wire while
-still saving it to disk. See `Assisi/Core/Reflect/Annotations.hpp` and
-docs/replication-optin-plan-v1.md.
+still saving it to disk. See `Assisi/Core/Reflect/Annotations.hpp`.
 
 **Relevancy** — one sorted `NetId` set per connection, intersected with the live
 set at four seams in `SendSnapshot` before anything else runs. No provider is the
@@ -47,10 +46,3 @@ dispatch site; the server sends *events*, either riding the snapshot (where
 ordering against the entity they name is free) or as tick-stamped announcements
 the client defers against.
 
-## Reading order
-
-- docs/replication-plan-v4.md — transport, snapshots, baselines, body state.
-- docs/replication-optin-plan-v1.md — the five gates.
-- docs/replication-messaging-relevancy-plan-v1.md — relevancy, control, messages.
-
-Each supersedes the previous one only where it says so; all three are current.

@@ -135,7 +135,7 @@ TEST_CASE("AssetDatabase skips a malformed sidecar without clobbering it")
 
 TEST_CASE("AssetDatabase treats a zero-byte sidecar as malformed, not unreadable")
 {
-    // ENG-117 suspected that ReadWholeFile (AssetDatabase.cpp:30) rejects an
+    // A comment sweep suspected that ReadWholeFile (AssetDatabase.cpp:30) rejects an
     // empty file: `buffer << stream.rdbuf()` does set failbit when it inserts no
     // characters, so a zero-byte sidecar looked like an I/O error. It sets that
     // bit on `buffer` — the ostringstream being written to — and the guard at

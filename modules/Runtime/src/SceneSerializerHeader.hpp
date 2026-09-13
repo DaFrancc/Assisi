@@ -21,8 +21,7 @@ namespace Assisi::Runtime
 /// filling `LevelHeader::systems` for the `ApplySystems` call that happens after
 /// the scene has already been replaced. Only the first can refuse cheaply — it
 /// runs while the level on screen is still the one that was there. The second
-/// runs past the point of no return, where a refusal costs the open level
-/// (ENG-114 made that survivable; ENG-126 is about it not happening at all).
+/// runs past the point of no return, where a refusal costs the open level.
 ///
 /// So the early check is only a real gate while it sees exactly what the late one
 /// will. Two copies of this loop in two translation units would agree by
@@ -37,7 +36,7 @@ namespace Assisi::Runtime
 inline std::vector<std::string> ParseSystemNames(const nlohmann::json &doc)
 {
     std::vector<std::string> out;
-    const auto               systems = doc.find("systems");
+    const auto systems = doc.find("systems");
     if (systems == doc.end() || !systems->is_array())
         return out;
 

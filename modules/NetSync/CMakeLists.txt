@@ -44,7 +44,7 @@ target_include_directories(Assisi-NetSync
 # same reason it was the module NetSync was told to imitate — Core + ECS + Jolt,
 # render-free — and under local simulation both halves of the protocol read and
 # write bodies directly, because the render-side Transform is not the physics
-# truth (docs/replication-plan-v4.md §3.3).
+# truth.
 target_link_libraries(Assisi-NetSync
   PUBLIC
     Assisi::Core

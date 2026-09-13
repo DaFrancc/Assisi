@@ -29,7 +29,18 @@ void EditorApp::HandleEntityPicking()
         !input.IsMouseCaptured() && !ImGuiWantsMouse() && !IsUsingGizmo())
     {
         float entityT = 0.f;
-        const Assisi::ECS::Entity picked  = PickEntity(input.MousePosition(), entityT);
+        Assisi::ECS::Entity picked = PickEntity(input.MousePosition(), entityT);
+
+        // A light's outline is clickable along the lines themselves, and competes
+        // on distance like anything else. Resolved before the eyedropper so it can
+        // be picked up as a reference the same way a meshed entity can.
+        float outlineT = 0.f;
+        const Assisi::ECS::Entity light = PickLightOutline(input.MousePosition(), outlineT);
+        if (light != Assisi::ECS::NullEntity && outlineT < entityT)
+        {
+            picked  = light;
+            entityT = outlineT;
+        }
 
         // An armed eyedropper consumes the click to fill its EntityRef field; the
         // selection does not move.
@@ -213,6 +224,14 @@ glm::quat LookRotation(glm::vec3 forwardWanted)
 }
 } // namespace
 
+void EditorApp::AimCamera(const glm::vec3 &eye, const glm::vec3 &target)
+{
+    _cameraTransform.position = eye;
+    _cameraTransform.rotation = LookRotation(target - eye);
+    SyncYawPitchFromRotation();
+    RefreshCameraMatrix();
+}
+
 void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
@@ -306,7 +325,12 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     // one.
     ray.cameraRight = glm::vec3(view[0][0], view[1][0], view[2][0]);
     ray.cameraUp    = glm::vec3(view[0][1], view[1][1], view[2][1]);
-    ray.valid       = true;
+    // The same transform the overlay's lines are drawn through, so a screen-space
+    // pick measures against where a line actually landed rather than a second
+    // opinion about where it should have.
+    ray.viewProjection = projection * view;
+    ray.viewportSize   = glm::vec2(w, h);
+    ray.valid          = true;
     return ray;
 }
 

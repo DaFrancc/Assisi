@@ -2,8 +2,7 @@
 #pragma once
 
 /// @file Event.hpp
-/// @brief The 32-byte capture record and the single-producer ring that holds it
-///        (design: docs/chiara-design-notes.md §4).
+/// @brief The 32-byte capture record and the single-producer ring that holds it.
 ///
 /// Kept free of any runtime state so the collector, the serializer and the tests
 /// all agree on one definition, and so a ring can be built standalone in a test

@@ -8,14 +8,17 @@
 ///
 /// Placement:
 ///   - DirectionalLight  — direction is stored directly on the component;
-///     no Transform is needed (it has no world position).
+///     no Transform is needed (it has no world position). A Sun component beside
+///     it takes that direction over: the aim then comes from the scene's clock
+///     and `direction` stops being read. See TimeOfDay.hpp.
 ///   - PointLight        — requires a Transform for world position.
-///   - SpotLight         — requires a Transform for world position; `direction`
-///     is stored on the component and is LOCAL, rotated into world by that
-///     Transform (see LightingSystem::WorldSpotDirection).
+///   - SpotLight         — requires a Transform, which carries both its position
+///     and its aim: the cone shines down the Transform's local -Y, so a spot is
+///     aimed by turning it (see kSpotLocalForward and SpotWorldDirection).
 
-#include <Assisi/Prelude.hpp>
+#include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Prelude.hpp>
 
 namespace Assisi::Runtime
 {
@@ -28,16 +31,77 @@ namespace Assisi::Runtime
 // word plus a regen, with one caveat worth knowing: the flag is a protocol-hash
 // input, so builds either side of that change refuse to pair.
 
-/// @brief Infinite-distance directional light (sun / moon).
+// `castsShadows` defaults ON on all three types, and the default is the whole
+// point: an unshadowed light passes through walls, so leaving it off by default
+// would make every newly placed light wrong until someone noticed. Turning it
+// off is a cost decision the author makes deliberately.
+
+/// @brief How a directional light's own colour is written down.
+///
+/// Two spellings of one thing. Kelvin is how light sources are actually
+/// specified — 3000 K reads as afternoon, 6500 K as an overcast noon — and RGB is
+/// there for a sun that is not a blackbody at all.
+AENUM()
+enum class SunColorExpression : std::uint8_t
+{
+    Rgb,         ///< Whatever `color` says.
+    Temperature, ///< A blackbody at `temperatureKelvin`.
+};
+
+/// @brief Infinite-distance directional light.
 ///
 /// No position, no falloff.  Multiple directional lights are supported.
+///
+/// A moon is not one of these. The scene's moon rides the Moon component beside
+/// a Sun and takes over this same light at night, so there is one shadowed
+/// directional light rather than two — see TimeOfDay.hpp.
 ACOMP()
 struct DirectionalLight
 {
-    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction the light shines (unit vector).
-    AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
+    AFIELD() glm::vec3 direction { 0.f, -1.f, 0.f }; ///< World-space direction the light shines (unit vector).
+
+    /// @brief Take the light's colour from the sky on this same entity.
+    ///
+    /// On, the world is lit by what is left of the sun after that atmosphere: at
+    /// sunset it goes orange and dimmer because that is what reaches the ground
+    /// by then, and it matches the sky it sits under with no system keeping the
+    /// two in step. Off is for lighting that is art-directed rather than
+    /// physical.
+    ///
+    /// Does nothing without a Skybox on this entity — there is no atmosphere to
+    /// take a colour from, and @ref color is used as authored.
+    AFIELD(radioBroadcast) bool tintedBySky = true;
+
+    /// Which of the two below says what colour this sun is. Both vanish while the
+    /// sky is supplying one, because then neither is read.
+    AFIELD(radioBroadcast, radioListen = {source = tintedBySky, value = false, behavior = vanish})
+    SunColorExpression colorExpression = SunColorExpression::Rgb;
+
+    /// Linear-RGB colour, under SunColorExpression::Rgb.
+    AFIELD(radioListen = {source = colorExpression, value = Rgb, behavior = grey})
+    Assisi::Math::Color3 color{1.f, 1.f, 1.f};
+
+    /// Colour temperature, under SunColorExpression::Temperature. Low is warm:
+    /// about 2800 K for tungsten, 5800 for daylight, 6500 for an overcast sky,
+    /// past 10000 for a blue north sky. Morning and afternoon light differ here.
+    AFIELD(min = 1667.0, max = 25000.0, radioListen = {source = colorExpression, value = Temperature, behavior = grey})
+    float temperatureKelvin = 5778.f;
+
     AFIELD() float intensity = 1.f;
+    AFIELD() bool castsShadows = true; ///< Whether this light renders a shadow map.
 };
+
+/// @brief The sun's own colour, however it was written down.
+///
+/// One place resolves the two spellings, so nothing downstream has to know there
+/// were two. Not what lights the world when @ref DirectionalLight::tintedBySky is
+/// on — see LightingSystem::SunlightColor for that.
+[[nodiscard]] inline glm::vec3 AuthoredSunColor(const DirectionalLight &light)
+{
+    return light.colorExpression == SunColorExpression::Temperature
+               ? Assisi::Math::BlackbodyColor(light.temperatureKelvin)
+               : glm::vec3(light.color);
+}
 
 /// @brief Omnidirectional point light with distance falloff.
 ///
@@ -46,25 +110,99 @@ struct DirectionalLight
 ACOMP()
 struct PointLight
 {
-    AFIELD() glm::vec3 color{1.f, 1.f, 1.f}; ///< Linear-RGB colour.
-    AFIELD() float intensity = 1.f;           ///< May be negative (light subtraction).
-    AFIELD(min = 0) float radius = 10.f;      ///< Maximum influence range in world units; never negative.
+    AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f };
+    AFIELD() float intensity = 1.f;                  ///< May be negative (light subtraction).
+    AFIELD(min = 0) float radius = 10.f;             ///< Maximum influence range in world units; never negative.
+    AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders shadow maps (six faces).
+
+    /// Octaves of bias on this light's importance, when more lights want an
+    /// atlas tile than the atlas can serve. See SpotLight::shadowPriority.
+    AFIELD(min = -8.0, max = 8.0, radioListen = {source = castsShadows, value = true, behavior = grey})
+    float shadowPriority = 0.f;
+    /// Never loses its shadow to the cap, whatever it scores.
+    /// See SpotLight::shadowAlwaysOn.
+    AFIELD(radioListen = {source = castsShadows, value = true, behavior = grey})
+    bool shadowAlwaysOn = false;
 };
 
 /// @brief Cone-restricted point light (flashlight / stage spotlight).
 ///
-/// Requires Transform for world position.
+/// Requires Transform, which supplies both the position and the aim: the cone
+/// shines down the entity's local -Y, so the transform gizmo is what points it.
 /// Intensity falls off with distance (same attenuation as PointLight) and
 /// is smoothly masked outside the cone between innerAngle and outerAngle.
 ACOMP()
 struct SpotLight
 {
-    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< Aim in LOCAL space; the Transform rotates it into world.
-    AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
-    AFIELD() float intensity   = 1.f;              ///< May be negative (light subtraction).
-    AFIELD(min = 0) float radius   = 10.f;         ///< Maximum influence range in world units; never negative.
-    AFIELD() float innerAngle  = 15.f;             ///< Half-angle of the full-brightness cone (degrees).
-    AFIELD() float outerAngle  = 30.f;             ///< Half-angle of the cutoff cone (degrees).
+    AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f }; ///< Linear-RGB colour.
+    AFIELD() float intensity = 1.f;                        ///< May be negative (light subtraction).
+    AFIELD(min = 0) float radius = 10.f;                   ///< Maximum influence range in world units; never negative.
+    /// Half-angle of the full-brightness cone (degrees), capped by the cutoff it
+    /// sits inside. An inner cone wider than the outer one describes no falloff at
+    /// all, and the shader reads the gap between them as a divisor.
+    AFIELD(min = 0, max = outerAngle) float innerAngle = 15.f;
+
+    /// Half-angle of the cutoff cone (degrees). Deliberately not floored by
+    /// @ref innerAngle: the outer angle is the light's actual reach and the one
+    /// an author aims first, and a floor there would stop that drag dead at
+    /// whatever the core happens to be. The ordering is enforced from the inner
+    /// side alone, so narrowing this below the core leaves the two crossed until
+    /// the core is touched — the shader treats that as a hard edge.
+    ///
+    /// The ceiling is Math::kMaxConeHalfAngleDegrees, written out because an
+    /// AFIELD bound takes a literal or a sibling field and nothing else. A test
+    /// asserts the two agree, since a cone authored wider than a shadow map can
+    /// be built for is a cone whose shadow stops before its light does.
+    AFIELD(min = 0, max = 89.0) float outerAngle = 30.f;
+    AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders a shadow map.
+
+    /// Octaves of bias on this light's importance, when more lights want an
+    /// atlas tile than the atlas can serve.
+    ///
+    /// A light is ordered by what it contributes to the image — how much of the
+    /// screen it fills, and how bright it is. This says the geometry has it
+    /// wrong: +1 is "treat this as twice as important", -1 as half. Octaves
+    /// rather than an addition because the score is a product, and a number
+    /// added to it would mean something different at every distance.
+    ///
+    /// Does nothing until the cap actually binds, which on sensible content is
+    /// never — the defaults sit above what a level places.
+    AFIELD(min = -8.0, max = 8.0, radioListen = {source = castsShadows, value = true, behavior = grey})
+    float shadowPriority = 0.f;
+
+    /// Never loses its shadow to the cap, whatever it scores.
+    ///
+    /// Separate from the bias above, and not a very large value of it, because a
+    /// bias big enough to always win depends on what else the level places —
+    /// which is not something an author can know while placing this one. A key
+    /// light whose shadow is the shot wants a promise rather than a number.
+    ///
+    /// It outranks the cap, not the atlas: a pinned light still needs a tile to
+    /// be cut, and takes a smaller one rather than none when the atlas is full.
+    AFIELD(radioListen = {source = castsShadows, value = true, behavior = grey})
+    bool shadowAlwaysOn = false;
 };
+
+/// @brief The local axis a spot light shines down.
+///
+/// A convention, and the value of it matters far less than there being one
+/// place that says it. -Y because that is already the forward of the wireframe
+/// shapes a light is drawn as, so the cone in the viewport and the beam in the
+/// shader are aimed by one number rather than by two that agree by hand.
+inline constexpr glm::vec3 kSpotLocalForward{0.f, -1.f, 0.f};
+
+/// @brief A spot light's aim in world space: kSpotLocalForward carried through
+/// the entity's propagated world matrix, normalized.
+///
+/// A direction is a vector rather than a normal, so the upper-left 3x3 is the
+/// right transform — no inverse-transpose. Normalizing afterwards absorbs any
+/// scale, and a collapsed matrix falls back to straight down instead of putting
+/// a NaN in the GPU light buffer.
+[[nodiscard]] inline glm::vec3 SpotWorldDirection(const glm::mat4 &worldMatrix)
+{
+    const glm::vec3 aimed    = glm::mat3(worldMatrix) * kSpotLocalForward;
+    const float     lengthSq = glm::dot(aimed, aimed);
+    return lengthSq > 0.f ? aimed / glm::sqrt(lengthSq) : kSpotLocalForward;
+}
 
 } // namespace Assisi::Runtime

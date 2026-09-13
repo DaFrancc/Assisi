@@ -22,6 +22,7 @@ add_executable(Assisi-Core-Tests
   TestContentHash.cpp
   TestDiagnostics.cpp
   TestEventQueue.cpp
+  TestFieldBounds.cpp
   TestJobSystem.cpp
   TestLogger.cpp
   TestTrivialString.cpp

@@ -70,7 +70,29 @@ public:
     ///         rebuilding — the caller applies it, because only it can.
     [[nodiscard]] bool Draw(const Frame &frame);
 
+    /// @brief Whether the overlay is showing. What the caller gates the
+    /// renderer's per-light diagnostics on: they are gathered for this panel and
+    /// a closed one must cost nothing.
+    [[nodiscard]] bool IsOpen() const { return _showOptions; }
+
 private:
+    /// @brief The sun-shadow section of the overlay: the tier presets, the
+    /// cascade knobs, the biases, and the cascade debug view.
+    ///
+    /// Split out because it is a third of the panel on its own, and because the
+    /// two halves of it persist differently — the knobs are saved settings, the
+    /// cascade view is a runtime look.
+    static void DrawShadowSettings(const Frame &frame);
+
+    /// @brief The sky-reflection section: the switch, the probe's size and
+    /// sample count, how far the sky may move before it is baked again, and
+    /// what the probe is doing.
+    static void DrawEnvironmentSettings(const Frame &frame);
+
+    /// @brief The screen-space occlusion section: the switch, the sample count,
+    /// the radius and the strength.
+    static void DrawAmbientOcclusionSettings(const Frame &frame);
+
     bool _showOptions = false;
 
     /// NVIDIA GPU telemetry (clocks/power/util/temp). Initialises NVML on first

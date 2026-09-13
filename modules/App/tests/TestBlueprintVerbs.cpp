@@ -8,7 +8,7 @@
 /// when asked and discarded. Every case here is really a test of that — a member
 /// destroyed on its own simply is not found next time, a pruned entity keeps
 /// living and stops being reachable, and a loose neighbour is never touched
-/// because it was never in the answer (docs/blueprint-system-concept.md §7).
+/// because it was never in the answer.
 
 #include <doctest/doctest.h>
 

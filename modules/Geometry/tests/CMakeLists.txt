@@ -5,6 +5,7 @@ add_executable(Assisi-Geometry-Tests
   TestDefaultMeshes.cpp
   TestMeshImporter.cpp
   TestMaterialFile.cpp
+  TestMaterialAuthoring.cpp
   TestAssetImport.cpp
 )
 
@@ -19,6 +20,13 @@ target_include_directories(Assisi-Geometry-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-Geometry-Tests
   PRIVATE
     Assisi::Geometry
+)
+
+# LogCapture.hpp, for the import tests whose subject is a warning. Reached in the
+# Runtime tests rather than copied: a second copy drifts, and both copies would
+# claim to be the one sink the logger installs.
+target_include_directories(Assisi-Geometry-Tests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../Runtime/tests"
 )
 
 # MaterialData's AssetTypeRegistry registration lives in the generated OBJECT

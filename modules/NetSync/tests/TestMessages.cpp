@@ -15,8 +15,6 @@
 /// name in different namespaces, taking different message types; if the bindings
 /// resolved names anywhere but the declaration's own scope, one would silently
 /// answer for the other.
-///
-/// See docs/replication-messaging-relevancy-plan-v1.md M3.
 
 #include <doctest/doctest.h>
 

@@ -23,7 +23,7 @@
 /// shipped build no resolver is set and the hint is simply omitted — saving does
 /// not happen there. This mirrors how `EntityRef` reaches the SceneSerializer:
 /// generated serialize code (which ships) calls a free function whose context is
-/// supplied out-of-band. See docs/asset-database-architecture.md D2.
+/// supplied out-of-band.
 
 #include <functional>
 #include <string>

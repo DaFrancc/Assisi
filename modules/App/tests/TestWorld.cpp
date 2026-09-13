@@ -2,7 +2,7 @@
 
 /// Tests for App::WorldManager — the invariants the rest of the app relies on:
 /// stable addresses, deterministic iteration, and roles that cannot be
-/// destroyed out from under their holders. See docs/multi-scene-design-notes.md.
+/// destroyed out from under their holders.
 
 #include <doctest/doctest.h>
 
@@ -149,7 +149,7 @@ std::size_t ThreadCount()
 TEST_CASE("Resident worlds share one physics thread pool")
 {
     // The multi-scene rule: N worlds must not mean N Jolt thread pools, each
-    // sized to the machine (docs/multi-scene-design-notes.md §1). Measured
+    // sized to the machine. Measured
     // rather than asserted structurally, because the sharing lives inside
     // PhysicsWorld's private impl.
     // Sampled here because it has to be read before the first world exists, but
@@ -650,7 +650,7 @@ TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
 }
 
 // ---------------------------------------------------------------------------
-// Systems (docs/blueprint-system-concept.md §8)
+// Systems
 //
 // A level names the systems it wants; ASYSTEM declarations reach the catalog by
 // being linked. The cases below use the ones in support/TestSystems.hpp.

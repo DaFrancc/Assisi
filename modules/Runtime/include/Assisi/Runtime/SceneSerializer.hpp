@@ -46,7 +46,7 @@
 /// trip.
 ///
 /// There is **no v1 reader**: a positional path would keep the exact failure
-/// names exist to remove (docs/blueprint-system-concept.md §6).
+/// names exist to remove.
 ///
 /// A file is refused outright — the load fails and leaves an empty scene — for a
 /// duplicate name, a missing or empty name, a name too long for Runtime::Name,
@@ -92,7 +92,7 @@ struct LevelHeader
     std::vector<LevelInstance> instances;
 
     /// @brief The systems this file needs, by name — closer to a module import
-    /// than an include (docs/blueprint-system-concept.md §8).
+    /// than an include.
     ///
     /// The list is a **union, not a concatenation** — naming a system twice, or
     /// two nested blueprints both naming `Bounce`, installs it once — and **file
@@ -375,7 +375,7 @@ public:
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///
-    /// Entity migration (docs/multi-scene-design-notes.md §2, S4): the entities
+    /// Entity migration: the entities
     /// in @p entities are serialized out of @p src, recreated in @p dst as fresh
     /// entities, and destroyed in @p src. This is a **third** EntityRef mapping
     /// mode, distinct from the two above:

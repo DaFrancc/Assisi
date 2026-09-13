@@ -43,7 +43,7 @@ bool ChildProcess::Spawn(const std::filesystem::path &executable, const std::vec
                          const std::vector<std::string> &, const std::filesystem::path &)
 {
     // Deliberately unimplemented rather than approximated: the networking chain
-    // this exists to serve has never built here (docs/replication-plan-v4.md §5),
+    // this exists to serve has never built here,
     // so a Windows path would be untested code guarding an untested feature.
     Core::Log::Error("ChildProcess: spawning '{}' is not implemented on Windows.", executable.string());
     return false;

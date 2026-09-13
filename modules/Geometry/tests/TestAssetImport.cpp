@@ -168,6 +168,38 @@ constexpr std::string_view kMaterialGltfChangedGeometry = R"({
   ]
 })";
 
+// kMaterialGltf with a KHR_materials_ior block added and nothing else changed.
+// The material differs only in an OpenPBR base-layer field, which is exactly the
+// case a comparison written before those fields existed would call unchanged.
+constexpr std::string_view kMaterialGltfChangedIor = R"({
+  "asset": { "version": "2.0" },
+  "extensionsUsed": [ "KHR_materials_ior" ],
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ {
+    "name": "Wood",
+    "pbrMetallicRoughness": {
+      "baseColorFactor": [0.8, 0.6, 0.4, 1.0],
+      "baseColorTexture": { "index": 0 }
+    },
+    "extensions": { "KHR_materials_ior": { "ior": 2.4 } }
+  } ],
+  "textures": [ { "source": 0 } ],
+  "images": [ { "uri": "wood.png" } ],
+  "buffers": [ { "uri": "triangle.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
 // Writes the glTF, its external buffer, a stand-in texture, and the glTF's
 // `.aast` sidecar (as the reconcile pass would have, with @p gltfId). Points
 // AssetSystem at the fresh root and returns it.
@@ -246,6 +278,25 @@ TEST_CASE("ExplodeGltfMaterials writes a .amat + sidecar and the glTF manifest")
     CHECK(material->BaseColorFactor.x == doctest::Approx(0.8f));
     CHECK(material->BaseColorFactor.z == doctest::Approx(0.4f));
     CHECK(material->BaseColorTexture == woodId);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ExplodeGltfMaterials carries an imported KHR extension value into the .amat")
+{
+    const AssetId gltfId = MintAssetId();
+    const fs::path root  = WriteMaterialAssets(gltfId);
+    OverwriteGltf(root, kMaterialGltfChangedIor);
+    const auto resolve = [](std::string_view) -> AssetId { return {}; };
+
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolve).has_value());
+
+    // The explosion pass writes whatever MaterialData carries, so the glTF's
+    // ior arrives in the authored material with no work of its own.
+    const std::expected<Assisi::Geometry::MaterialData, Assisi::Geometry::MaterialFileError> material =
+        DeserializeMaterial(ReadFile(root / "model_Wood.amat"));
+    REQUIRE(material.has_value());
+    CHECK(material->SpecularIor == doctest::Approx(2.4f));
 
     fs::remove_all(root);
 }
@@ -374,6 +425,25 @@ TEST_CASE("ReconcileGltfMaterials: a non-material change refreshes the hash only
     fs::remove_all(root);
 }
 
+TEST_CASE("ReconcileGltfMaterials: an OpenPBR-only material change is seen as a change")
+{
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    // A comparison blind to the OpenPBR fields would classify this GeometryOnly
+    // and refresh the hash, which loses the author's new ior for good: the
+    // source stops looking stale, so nothing ever offers to regenerate it.
+    OverwriteGltf(root, kMaterialGltfChangedIor);
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::ConflictStale);
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::ConflictStale);
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("ReconcileGltfMaterials: a new slot is materialized (additive)")
 {
     const AssetId gltfId = MintAssetId();
@@ -438,6 +508,40 @@ TEST_CASE("DiffGltfMaterials: a changed factor is reported as a per-slot conflic
     fs::remove_all(root);
 }
 
+TEST_CASE("DiffGltfMaterials: an authored specular-AA setting counts as a change")
+{
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    // Nothing in glTF says anything about specular AA, so a re-import always
+    // produces the default. Turning it off is therefore *only* ever an authored
+    // decision, and a diff that missed it would report the slot unchanged — the
+    // reconciler would refresh the source hash and the author's choice would be
+    // overwritten with nothing left to report it as stale.
+    std::expected<Assisi::Geometry::MaterialData, Assisi::Geometry::MaterialFileError> stored =
+        DeserializeMaterial(ReadFile(root / "model_Wood.amat"));
+    REQUIRE(stored.has_value());
+    stored->SpecularAntiAliasing = false;
+    const std::expected<std::string, Assisi::Geometry::MaterialFileError> text =
+        Assisi::Geometry::SerializeMaterial(*stored);
+    REQUIRE(text.has_value());
+    {
+        std::ofstream amat(root / "model_Wood.amat", std::ios::binary | std::ios::trunc);
+        amat.write(text->data(), static_cast<std::streamsize>(text->size()));
+    }
+
+    const MaterialDiff diff = DiffGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(diff.valid);
+    REQUIRE(diff.slots.size() == 1);
+    CHECK(diff.slots[0].change == SlotChange::Changed);
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Removed")
 {
     const AssetId gltfId = MintAssetId();
@@ -461,7 +565,7 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 
     // The reverse (one material exploded, source grows to two) reports slot 1
     // Added — the additive-safe case, no conflict.
-    // ENG-117, open: `root2` is not a second root — see the case below.
+    // Open: `root2` is not a second root — see the case below.
     const fs::path root2   = WriteMaterialAssets(MintAssetId());
     const auto resMat2 = [&root2](const AssetId &id) { return ResolveMaterialPathIn(root2, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
@@ -480,7 +584,7 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 TEST_CASE("WriteMaterialAssets hands out a root per call, not one shared directory" *
           doctest::should_fail())
 {
-    // ENG-117, open, and a test-integrity finding rather than a product bug: the
+    // Open, and a test-integrity finding rather than a product bug: the
     // Added/Removed case above reads as running its two halves against two
     // independent roots, and does not. WriteMaterialAssets pins the fixed
     // directory `assisi_assetimport_test`, so its second call wipes and recreates

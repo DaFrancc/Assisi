@@ -85,7 +85,7 @@ template <typename T> struct SparseSet
 
         if (removedPos != lastPos)
         {
-            _dense[removedPos]    = std::move(_dense[lastPos]);
+            _dense[removedPos] = std::move(_dense[lastPos]);
             _entities[removedPos] = _entities[lastPos];
 
             /* Re-point the sparse entry of the entity that was moved into the gap. */
@@ -198,6 +198,32 @@ template <typename T> struct SparseSet
         return _changeTicks[_sparse[entity.index]];
     }
 
+    /// @brief Appends every entity here whose component was written after
+    /// `sinceTick`.
+    ///
+    /// The inverse question to ChangeTick's: a consumer that must react to what
+    /// moved asks this rather than testing each entity it might care about, and
+    /// so costs what changed rather than what exists. The scan itself is over the
+    /// tick lane alone — a packed vector of integers, touching no component data
+    /// — so a still frame reads one array and appends nothing.
+    ///
+    /// Untracked pools append nothing, which reads as "nothing changed". That is
+    /// wrong in the direction that skips work, so only ACOMP(tracked) types may
+    /// be asked.
+    ///
+    /// @p out is appended to, never cleared: several pools' changes accumulate
+    /// into one set.
+    void ChangedSince(uint64_t sinceTick, std::vector<Entity> &out) const
+    {
+        if (!_tracksChanges)
+            return;
+        for (std::size_t pos = 0; pos < _changeTicks.size(); ++pos)
+        {
+            if (_changeTicks[pos] > sinceTick)
+                out.push_back(_entities[pos]);
+        }
+    }
+
 #ifndef NDEBUG
     /// @brief Debug-only counter bumped on every structural change (Add / Remove
     /// / Clear). A Query iterator snapshots this at construction and re-checks it
@@ -217,9 +243,9 @@ private:
 #endif
     }
 
-    std::vector<uint32_t> _sparse; ///< Indexed by entity index → dense position.
-    std::vector<T> _dense;         ///< Packed component values.
-    std::vector<Entity> _entities; ///< Entity that owns each dense slot.
+    std::vector<uint32_t> _sparse;      ///< Indexed by entity index → dense position.
+    std::vector<T> _dense;              ///< Packed component values.
+    std::vector<Entity> _entities;      ///< Entity that owns each dense slot.
     std::vector<uint64_t> _changeTicks; ///< Parallel to _dense; per-component last-written tick. Empty when untracked.
     bool _tracksChanges = false;        ///< Whether the _changeTicks lane is maintained (ACOMP(tracked)).
 #ifndef NDEBUG

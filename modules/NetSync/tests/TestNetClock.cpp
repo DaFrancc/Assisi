@@ -119,7 +119,7 @@ TEST_CASE("an overfull server queue shrinks the lead — gradually")
 TEST_CASE("a deeply overfull server queue shrinks the lead as readily as a barely overfull one" *
           doctest::should_fail())
 {
-    // ENG-117, open. NetClock.cpp:45 guards the decrement with `target > excess`
+    // Open. NetClock.cpp:45 guards the decrement with `target > excess`
     // instead of a floor on `target`, so the deeper the overrun the less likely
     // the shrink is to happen at all — the inverse of what the comment above it
     // ("shrink one tick at a time") describes, and wrong in exactly the case

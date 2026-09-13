@@ -4,7 +4,6 @@
 /// @file World.hpp
 /// @brief A level at runtime — scene + physics + the state that is per-level
 ///        rather than per-app — and the manager that owns every resident one.
-///        Design: docs/multi-scene-design-notes.md.
 ///
 /// Several worlds can be resident at once, because one "the scene" plus one
 /// "the physics world" only carries a host that never has two levels alive: a
@@ -87,14 +86,14 @@ struct World
     /// thing a blueprint leaves on the entities is the ECS::BlueprintMember tag,
     /// which says *which* instance an entity belongs to and never *what* that
     /// instance is. Ids are per world and restart at 1 on every load, because the
-    /// table is discarded with the world (docs/blueprint-system-concept.md §2).
+    /// table is discarded with the world.
     Runtime::InstanceTable instances;
 
     /// This world's game systems, installed once from its level's list (see
     /// WorldManager::ApplySystems). Per world rather than per app because a
     /// system's cross-frame state lives in its registered lambda's captures: one
     /// shared instance running over several worlds would advance that state N×
-    /// too fast (docs/multi-scene-design-notes.md §1). Empty until the level's
+    /// too fast. Empty until the level's
     /// list is applied, which is deliberate — Create() installs nothing.
     SystemRegistry systems;
 
@@ -562,7 +561,7 @@ void SyncUnrenderedWorld(World &world);
 /// Transforms must pass this, or a parented body is created at its local pose and
 /// then drifts by its parent's transform every frame afterwards. Blueprint
 /// instances make parented bodies ordinary rather than exotic — a car's wheels
-/// are under its body (docs/blueprint-system-concept.md §12).
+/// are under its body.
 ///
 /// The lookup reads `Transform::worldMatrix`, which is transient and computed by
 /// Runtime::PropagateTransforms, so **propagate before building bodies** from a

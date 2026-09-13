@@ -655,7 +655,7 @@ private:
     /// False in four cases, the last two by policy:
     ///  - no physics world, or no RigidBody — nothing to observe;
     ///  - an authored-static descriptor, whose pose is authored data and travels
-    ///    as a Transform (docs/replication-plan-v4.md);
+    ///    as a Transform;
     ///  - the descriptor is *excluded*, so the client will never build a body to
     ///    correct — a visual-only mirror;
     ///  - the Transform is excluded on a bodied entity, so the client could
