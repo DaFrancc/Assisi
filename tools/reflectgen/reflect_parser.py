@@ -374,7 +374,7 @@ def parse_enum_constants(body: str) -> list:
 # Signed types are absent deliberately: the top bit of a signed field is the sign,
 # so the highest enumerator would set a negative value and every comparison
 # against it would be wrong.
-_BITMASK_WIDTHS = {'uint32_t': 32, 'uint64_t': 64}
+_BITMASK_WIDTHS = {'uint8_t': 8, 'uint16_t': 16, 'uint32_t': 32, 'uint64_t': 64}
 
 
 def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:

@@ -183,6 +183,18 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::Double:
         writer.WriteDouble(LoadPod<double>(address));
         return true;
+    case FieldType::Int8:
+        writer.WriteInt8(LoadPod<std::int8_t>(address));
+        return true;
+    case FieldType::UInt8:
+        writer.WriteUInt8(LoadPod<std::uint8_t>(address));
+        return true;
+    case FieldType::Int16:
+        writer.WriteInt16(LoadPod<std::int16_t>(address));
+        return true;
+    case FieldType::UInt16:
+        writer.WriteUInt16(LoadPod<std::uint16_t>(address));
+        return true;
     case FieldType::Int32:
         writer.WriteInt32(LoadPod<std::int32_t>(address));
         return true;
@@ -320,6 +332,18 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
         return true;
     case FieldType::Double:
         StorePod(address, reader.ReadDouble());
+        return true;
+    case FieldType::Int8:
+        StorePod(address, reader.ReadInt8());
+        return true;
+    case FieldType::UInt8:
+        StorePod(address, reader.ReadUInt8());
+        return true;
+    case FieldType::Int16:
+        StorePod(address, reader.ReadInt16());
+        return true;
+    case FieldType::UInt16:
+        StorePod(address, reader.ReadUInt16());
         return true;
     case FieldType::Int32:
         StorePod(address, reader.ReadInt32());
@@ -461,6 +485,10 @@ const char *FieldTypeName(FieldType type)
     {
     case FieldType::Float: return "f32";
     case FieldType::Double: return "f64";
+    case FieldType::Int8: return "i8";
+    case FieldType::UInt8: return "u8";
+    case FieldType::Int16: return "i16";
+    case FieldType::UInt16: return "u16";
     case FieldType::Int32: return "i32";
     case FieldType::UInt32: return "u32";
     case FieldType::Int64: return "i64";

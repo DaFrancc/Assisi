@@ -261,6 +261,38 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
                                    nullptr, ImGuiSliderFlags_AlwaysClamp);
         break;
     }
+    case FieldType::Int8:
+    {
+        const int8_t minBound = bounds.hasMin ? static_cast<int8_t>(bounds.minValue) : INT8_MIN;
+        const int8_t maxBound = bounds.hasMax ? static_cast<int8_t>(bounds.maxValue) : INT8_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S8, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt8:
+    {
+        const uint8_t minBound = bounds.hasMin ? static_cast<uint8_t>(bounds.minValue) : 0u;
+        const uint8_t maxBound = bounds.hasMax ? static_cast<uint8_t>(bounds.maxValue) : UINT8_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U8, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Int16:
+    {
+        const int16_t minBound = bounds.hasMin ? static_cast<int16_t>(bounds.minValue) : INT16_MIN;
+        const int16_t maxBound = bounds.hasMax ? static_cast<int16_t>(bounds.maxValue) : INT16_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S16, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt16:
+    {
+        const uint16_t minBound = bounds.hasMin ? static_cast<uint16_t>(bounds.minValue) : 0u;
+        const uint16_t maxBound = bounds.hasMax ? static_cast<uint16_t>(bounds.maxValue) : UINT16_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U16, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
     case FieldType::UInt32:
     {
         // An unsigned field carrying enumerators is a bitmask — a set of them, one

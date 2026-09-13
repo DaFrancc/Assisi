@@ -58,6 +58,13 @@ enum class FieldType : std::uint8_t
     Color3,
     Color4,
     Unknown,
+    /// The narrow integers, appended after Unknown rather than beside their
+    /// wider siblings so no existing value shifts. Reading these back at the
+    /// wrong width would not fail — it would write over the neighbouring field.
+    Int8,
+    UInt8,
+    Int16,
+    UInt16,
 };
 
 /// @brief One enumerator of a reflected `enum class` (FieldType::Enum).

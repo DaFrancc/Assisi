@@ -72,6 +72,22 @@ TYPES: dict[str, TypeCodegen] = {
         'Double',
         '{a}',
         'if (!Assisi::Core::Reflect::ReadDouble(j, _comp, "{f}", {a})) return false;'),
+    'int8_t':    TypeCodegen(
+        'Int8',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadInt8(j, _comp, "{f}", {a})) return false;'),
+    'uint8_t':   TypeCodegen(
+        'UInt8',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadUInt8(j, _comp, "{f}", {a})) return false;'),
+    'int16_t':   TypeCodegen(
+        'Int16',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadInt16(j, _comp, "{f}", {a})) return false;'),
+    'uint16_t':  TypeCodegen(
+        'UInt16',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadUInt16(j, _comp, "{f}", {a})) return false;'),
     'int32_t':   TypeCodegen(
         'Int32',
         '{a}',
@@ -286,7 +302,7 @@ UNSUPPORTED_TYPES: dict[str, str] = {
     'unsigned long':      'use uint64_t — unsigned long is 32-bit on Windows and 64-bit elsewhere',
     'long long':          'use int64_t',
     'unsigned long long': 'use uint64_t',
-    'short':              'use int16_t',
-    'unsigned short':     'use uint16_t',
+    'short':              'use int16_t — short has an implementation-defined width',
+    'unsigned short':     'use uint16_t — unsigned short has an implementation-defined width',
     'char':               'use int8_t/uint8_t for a number, or Core::ShortString for text',
 }

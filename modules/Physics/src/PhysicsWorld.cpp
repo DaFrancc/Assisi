@@ -146,6 +146,30 @@ bool ChannelsAgree(std::uint32_t maskA, std::uint32_t channelBitA, std::uint32_t
     return (maskA & channelBitB) != 0u && (maskB & channelBitA) != 0u;
 }
 
+/// @brief Identifies one pair of bodies, whichever order they are named in.
+///
+/// Two BodyIDs' index+sequence numbers packed into one value, the lower first.
+/// A type of its own rather than a bare integer because nothing about it is a
+/// number: adding to it, comparing it for order, or handing it to anything
+/// expecting a count are all meaningless, and a bare uint64_t invites all three.
+///
+/// Deliberately **not** a Core::StrongId. That marker declares a type's wire
+/// form, and this one has none — it is built from live BodyIDs, which mean
+/// nothing outside the process that issued them.
+struct PairKey
+{
+    std::uint64_t value = 0;
+
+    friend constexpr bool operator==(PairKey, PairKey) = default;
+};
+
+/// Supplied to the map rather than specializing std::hash, which would mean
+/// opening namespace std for a type that never leaves this file.
+struct PairKeyHash
+{
+    std::size_t operator()(PairKey key) const noexcept { return std::hash<std::uint64_t>{}(key.value); }
+};
+
 namespace BPLayers
 {
 static constexpr JPH::BroadPhaseLayer Static(0);
@@ -512,7 +536,7 @@ struct PhysicsWorld::Impl
 
     /// Every pair currently touching, keyed by both bodies. Survives across steps
     /// — it is the memory that makes Enter, Stay and Exit distinguishable.
-    std::unordered_map<std::uint64_t, PairState> pairs;
+    std::unordered_map<PairKey, PairState, PairKeyHash> pairs;
 
     /// Exits for pairs whose body was destroyed before the next step could notice.
     /// Held here because the entity behind a removed body is forgotten with it, so
@@ -525,13 +549,13 @@ struct PhysicsWorld::Impl
     std::uint64_t step = 0;
 
     /// Orders the two ids so a pair has one key whichever way Jolt reports it.
-    static std::uint64_t PairKey(const JPH::BodyID &a, const JPH::BodyID &b)
+    static PairKey KeyFor(const JPH::BodyID &a, const JPH::BodyID &b)
     {
         const std::uint32_t ka = a.GetIndexAndSequenceNumber();
         const std::uint32_t kb = b.GetIndexAndSequenceNumber();
         const std::uint32_t lo = ka < kb ? ka : kb;
         const std::uint32_t hi = ka < kb ? kb : ka;
-        return (static_cast<std::uint64_t>(hi) << 32) | static_cast<std::uint64_t>(lo);
+        return PairKey{(static_cast<std::uint64_t>(hi) << 32) | static_cast<std::uint64_t>(lo)};
     }
 
     ECS::Entity EntityFor(const JPH::BodyID &id) const
@@ -678,7 +702,7 @@ void PhysicsWorld::Impl::ResolveContactEvents()
     // No Jolt worker is inside a callback here, so the buffer is ours alone.
     for (const TouchRecord &touch : touchedThisStep)
     {
-        const std::uint64_t key = PairKey(touch.id1, touch.id2);
+        const PairKey key = KeyFor(touch.id1, touch.id2);
         const auto [it, inserted] = pairs.try_emplace(key);
         PairState &state = it->second;
 

@@ -893,6 +893,32 @@ class EnumTest(unittest.TestCase):
                          [("Count", 0), ("A", 1)])
 
 
+class NarrowIntegerTest(unittest.TestCase):
+    _WIDTHS = [('int8_t', 'Int8'), ('uint8_t', 'UInt8'), ('int16_t', 'Int16'), ('uint16_t', 'UInt16')]
+
+    def test_each_narrow_width_reflects_as_its_own_field_type(self):
+        for cpp, field_type in self._WIDTHS:
+            with self.subTest(cpp=cpp):
+                src = (f"#include <cstdint>\nnamespace N {{\n"
+                       f"ACOMP()\nstruct C {{ AFIELD() {cpp} v = 0; }};\n}}\n")
+                cpp_out = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+                # Its own type, not a promotion to the 32-bit one: the codec reads
+                # back at the width the field actually occupies, and a wider read
+                # would overwrite whatever sits after it.
+                self.assertIn(f"FieldType::{field_type}", cpp_out)
+                self.assertIn(f"Read{field_type}(j, _comp, \"v\", comp.v)", cpp_out)
+
+    def test_implementation_defined_spellings_are_still_rejected(self):
+        # The advice these give now names a type that exists; the rejection itself
+        # has to stay, because the widths are still platform-dependent.
+        for spelling in ('short', 'unsigned short', 'int', 'unsigned'):
+            with self.subTest(spelling=spelling):
+                src = (f"namespace N {{\nACOMP()\n"
+                       f"struct C {{ AFIELD() {spelling} v; }};\n}}\n")
+                with self.assertRaises(ValueError):
+                    reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+
+
 class BitmaskTest(unittest.TestCase):
     _SRC = (
         "#include <cstdint>\n"
