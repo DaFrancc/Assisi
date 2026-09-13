@@ -496,6 +496,12 @@ struct PhysicsWorld::Impl
     /// NullEntity for that side rather than a wrong handle.
     std::unordered_map<JPH::uint32, ECS::Entity> bodyEntities;
 
+    /// The same association read the other way, for the one question that asks it
+    /// that way: "which body is this entity's?". A query given an entity to ignore
+    /// resolves it once here, rather than mapping every candidate body back to an
+    /// entity to compare — the filter runs per body reached, and this runs once.
+    std::unordered_map<ECS::Entity, JPH::BodyID> entityBodies;
+
     /// One body pair seen touching during the step Jolt is running.
     ///
     /// Deliberately not an event: the callbacks cannot tell Enter from Stay
@@ -562,6 +568,13 @@ struct PhysicsWorld::Impl
     {
         const auto it = bodyEntities.find(id.GetIndexAndSequenceNumber());
         return it == bodyEntities.end() ? ECS::NullEntity : it->second;
+    }
+
+    /// The body @p entity owns, or an invalid id if it has none.
+    JPH::BodyID BodyFor(ECS::Entity entity) const
+    {
+        const auto it = entityBodies.find(entity);
+        return it == entityBodies.end() ? JPH::BodyID{} : it->second;
     }
 
     /// Records that a pair touched. Called from Jolt's narrow phase — i.e.
@@ -965,7 +978,10 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     // be switched on later in the world's life, and rebuilding the map then would
     // mean walking the scene.
     if (!body.bodyId.IsInvalid())
+    {
         _impl->bodyEntities[body.bodyId.GetIndexAndSequenceNumber()] = entity;
+        _impl->entityBodies[entity]                                 = body.bodyId;
+    }
 
     return body;
 }
@@ -990,6 +1006,7 @@ void PhysicsWorld::Clear()
     _impl->dynamicBodyIds.clear();
     _impl->snapshots.clear();
     _impl->bodyEntities.clear();
+    _impl->entityBodies.clear();
 
     // Every pair and event names bodies that no longer exist — and, after a level
     // load, entity handles that mean something entirely different. No Exit is
@@ -1043,7 +1060,10 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
 
     // Last, because the Exits queued above were built from it: the entity behind
     // this body stops being knowable here.
+    const ECS::Entity gone = _impl->EntityFor(id);
     _impl->bodyEntities.erase(key);
+    if (gone != ECS::NullEntity)
+        _impl->entityBodies.erase(gone);
 }
 
 void PhysicsWorld::Update(float deltaTime)
@@ -1088,27 +1108,25 @@ namespace
 /// starts inside itself, and every convex shape reports a hit at distance 0 for
 /// a cast that begins inside it. Filtering by entity rather than by body id lets
 /// a caller name the thing it knows about.
-/// Takes the body→entity map directly rather than the world: PhysicsWorld::Impl
-/// is private, and nothing here needs more of it than this one lookup.
-class IgnoreEntityFilter final : public JPH::BodyFilter
+/// Hides one body from a query.
+///
+/// Takes a BodyID rather than an entity, and overrides the *unlocked* half of
+/// the filter, because both cost less where this runs. Jolt asks this question
+/// once per body a query reaches, and asks the unlocked form first — answering
+/// there is an integer compare, and skips locking a body only to reject it.
+/// Resolving the caller's entity to a BodyID happens once, before the query.
+class IgnoreBodyFilter final : public JPH::BodyFilter
 {
 public:
-    IgnoreEntityFilter(const std::unordered_map<JPH::uint32, ECS::Entity> &entities, ECS::Entity ignore)
-        : _entities(entities), _ignore(ignore)
-    {
-    }
+    explicit IgnoreBodyFilter(const JPH::BodyID &ignore) : _ignore(ignore) {}
 
-    bool ShouldCollideLocked(const JPH::Body &body) const override
+    bool ShouldCollide(const JPH::BodyID &bodyId) const override
     {
-        if (_ignore == ECS::NullEntity)
-            return true;
-        const auto it = _entities.find(body.GetID().GetIndexAndSequenceNumber());
-        return it == _entities.end() || it->second != _ignore;
+        return bodyId.GetIndexAndSequenceNumber() != _ignore.GetIndexAndSequenceNumber();
     }
 
 private:
-    const std::unordered_map<JPH::uint32, ECS::Entity> &_entities;
-    ECS::Entity _ignore;
+    JPH::BodyID _ignore;
 };
 
 /// A sweep shorter than this is treated as no sweep at all.
@@ -1139,7 +1157,7 @@ std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep,
 
     JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
     const FilterLayerFilter layerFilter{filter};
-    const IgnoreEntityFilter bodyFilter{_impl->bodyEntities, ignore};
+    const IgnoreBodyFilter  bodyFilter{_impl->BodyFor(ignore)};
 
     // The broad-phase filter accepts everything: a query carries no motion type,
     // so it has no business skipping the tree of things that do not move — which
@@ -1193,7 +1211,7 @@ std::optional<QueryHit> PhysicsWorld::CastShape(const ColliderShapeDesc &shape, 
     const JPH::ShapeCastSettings settings;
     JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
     const FilterLayerFilter layerFilter{filter};
-    const IgnoreEntityFilter bodyFilter{_impl->bodyEntities, ignore};
+    const IgnoreBodyFilter  bodyFilter{_impl->BodyFor(ignore)};
 
     // Zero base offset, so the contact points come back in world space. Jolt is
     // built here at single precision, where the offset buys no accuracy.
@@ -1226,7 +1244,7 @@ std::vector<ECS::Entity> PhysicsWorld::Overlap(const ColliderShapeDesc &shape, c
     const JPH::CollideShapeSettings settings;
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
     const FilterLayerFilter layerFilter{filter};
-    const IgnoreEntityFilter bodyFilter{_impl->bodyEntities, ignore};
+    const IgnoreBodyFilter  bodyFilter{_impl->BodyFor(ignore)};
 
     _impl->physicsSystem.GetNarrowPhaseQuery().CollideShape(
         MakeShape(shape), JPH::Vec3::sReplicate(1.f), transform, settings, JPH::RVec3::sZero(), collector,
