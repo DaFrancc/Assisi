@@ -456,6 +456,22 @@ public:
     /// velocity to set.
     void SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity);
 
+    /// @brief Changes what an existing body is and what it interacts with.
+    ///
+    /// Use this to apply inspector edits to the channel or the collides-with mask
+    /// at runtime. Without it the descriptor and the live body disagree, and the
+    /// edit appears to do nothing until something rebuilds the body from the
+    /// descriptor — which reads as the change taking effect one play session late.
+    ///
+    /// Moving a body onto or off the Trigger channel makes it a sensor or stops
+    /// it being one. A body that becomes a sensor while dynamic is made kinematic,
+    /// the same rule AddBody applies; one that stops being a sensor keeps whatever
+    /// motion it had, so restore that from the descriptor if it matters.
+    void SetBodyCollisionFilter(const RigidBody &body, CollisionFilter filter);
+
+    /// @brief What @p body is, and what it interacts with.
+    [[nodiscard]] CollisionFilter GetBodyCollisionFilter(const RigidBody &body) const;
+
     /// @brief Replaces the collision shape of an existing body.
     ///
     /// Use this to apply inspector edits to the collider (shape type or its

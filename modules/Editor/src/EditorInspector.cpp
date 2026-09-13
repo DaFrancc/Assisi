@@ -940,6 +940,13 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
                     .radius      = desc->radius,
                     .halfHeight  = desc->halfHeight});
             _physics->SetBodyCCD(*rbc, desc->enableCCD);
+
+            // The channel and its mask live on the body's collision layer, which
+            // nothing else here writes. Left out, an edit changes the descriptor
+            // and not the simulation, and only shows up once something rebuilds
+            // the body from the descriptor — a play session later.
+            _physics->SetBodyCollisionFilter(
+                *rbc, Assisi::Physics::CollisionFilter{desc->collidesWith, desc->channel});
         }
     }
 

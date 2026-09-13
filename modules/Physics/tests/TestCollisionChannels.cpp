@@ -129,6 +129,57 @@ TEST_CASE("A floor whose mask excludes the body's channel is fallen through too"
     CHECK(HeightOf(scene, world, box) < -5.f);
 }
 
+TEST_CASE("Changing a body's filter takes effect on the next step, not the next rebuild")
+{
+    // The editor edits the descriptor, and the descriptor is only turned back into
+    // a body when the world is rebuilt. So a filter change that is not pushed to
+    // the live body does nothing at all until the next level load — which reads,
+    // from the outside, as the edit applying one play session late.
+    ECS::Scene scene;
+    Physics::PhysicsWorld world;
+
+    (void)SpawnFloor(scene, world);
+    const ECS::Entity box = SpawnBox(scene, world, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f},
+                                     /*isStatic=*/ false, Physics::CollisionChannel::World,
+                                     Physics::AllChannels);
+
+    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
+    REQUIRE(body != nullptr);
+
+    world.SetBodyCollisionFilter(*body, Physics::CollisionFilter{Without(Physics::CollisionChannel::World),
+                                                                 Physics::CollisionChannel::Character});
+
+    // Reads back as set, and — the part that matters — the simulation agrees.
+    const Physics::CollisionFilter now = world.GetBodyCollisionFilter(*body);
+    CHECK(now.channel == Physics::CollisionChannel::Character);
+    CHECK(now.collidesWith == Without(Physics::CollisionChannel::World));
+
+    Step(world);
+    CHECK(HeightOf(scene, world, box) < -5.f);
+}
+
+TEST_CASE("A body moved onto the Trigger channel stops blocking immediately")
+{
+    // The same edit for the case that also flips a body flag rather than only
+    // layer bits: sensor-ness is not in the layer, so a filter change that
+    // repacked the layer alone would leave a solid body on the trigger channel.
+    ECS::Scene scene;
+    Physics::PhysicsWorld world;
+
+    (void)SpawnFloor(scene, world);
+    const ECS::Entity box = SpawnBox(scene, world, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f},
+                                     /*isStatic=*/ false, Physics::CollisionChannel::World,
+                                     Physics::AllChannels);
+
+    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
+    REQUIRE(body != nullptr);
+    world.SetBodyCollisionFilter(*body, Physics::CollisionFilter{Physics::AllChannels,
+                                                                 Physics::CollisionChannel::Trigger});
+
+    Step(world);
+    CHECK(HeightOf(scene, world, box) < -5.f); // passed through the floor
+}
+
 TEST_CASE("A body made dynamic at runtime starts colliding with the static world")
 {
     // The motion type lives in the object layer beside the channel, and the layer

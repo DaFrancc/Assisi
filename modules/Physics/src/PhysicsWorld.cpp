@@ -1603,6 +1603,40 @@ void PhysicsWorld::SetBodyLinearVelocity(const RigidBody &body, glm::vec3 veloci
     bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
 }
 
+void PhysicsWorld::SetBodyCollisionFilter(const RigidBody &body, CollisionFilter filter)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
+
+    const bool sensor = filter.channel == CollisionChannel::Trigger;
+
+    // The motion type rides in the layer beside the channel, so it has to be
+    // carried across rather than defaulted — repacking without it would quietly
+    // move the body to another broad-phase tree.
+    BodyMotion motion = MotionOf(bodies.GetObjectLayer(body.bodyId));
+    if (sensor && motion == BodyMotion::Dynamic)
+        motion = BodyMotion::Kinematic;
+
+    bodies.SetObjectLayer(body.bodyId, PackLayer(filter, motion));
+
+    if (motion != BodyMotion::Static)
+        bodies.ActivateBody(body.bodyId);
+
+    // Sensor-ness is a body flag rather than part of the layer, and Jolt exposes
+    // no interface-level setter for it.
+    JPH::BodyLockWrite lock(_impl->physicsSystem.GetBodyLockInterface(), body.bodyId);
+    if (lock.Succeeded())
+        lock.GetBody().SetIsSensor(sensor);
+}
+
+CollisionFilter PhysicsWorld::GetBodyCollisionFilter(const RigidBody &body) const
+{
+    if (!_impl->physicsSystem.GetBodyInterface().IsAdded(body.bodyId))
+        return CollisionFilter{};
+    return _impl->FilterOf(body.bodyId);
+}
+
 void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
