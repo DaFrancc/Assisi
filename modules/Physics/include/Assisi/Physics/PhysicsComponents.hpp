@@ -45,6 +45,36 @@ enum class ColliderShape : std::uint8_t
     Cylinder, ///< Cylinder from `radius` + `halfHeight`.
 };
 
+/// @brief What kind of thing a body is, for deciding what it interacts with.
+///
+/// A body is on exactly one channel and carries a mask of the channels it
+/// collides with; two bodies interact only if each one's mask includes the
+/// other's channel. The same pair applies to a query, which is a participant
+/// like any other — a line-of-sight ray is something on @ref Visibility, and a
+/// surface opts out of being seen by dropping that channel from its own mask.
+///
+/// Append only. An enumerator's value is its bit position in every mask stored
+/// in a level file, so inserting one silently re-aims every mask authored under
+/// the old numbering.
+AENUM()
+enum class CollisionChannel : std::uint8_t
+{
+    World,      ///< Ordinary physical matter: floors, walls, props, crates.
+    Character,  ///< Player and NPC bodies.
+    Trigger,    ///< A volume that detects what enters it and blocks nothing.
+    Visibility, ///< Queries only: line of sight, editor picking.
+    Camera,     ///< Queries only: camera collision.
+    Count,
+};
+
+/// @brief Every channel — the mask a body carries unless it narrows it.
+///
+/// One bit per channel, so a body defaults to interacting with everything and an
+/// author subtracts rather than having to enumerate. Built from `Count` so it
+/// widens with the enum instead of needing a matching edit.
+inline constexpr std::uint32_t AllChannels =
+    (1u << static_cast<std::uint32_t>(CollisionChannel::Count)) - 1u;
+
 /// @brief Serializable descriptor for a rigid body's collider.
 ///
 /// Stored in the level file; consumed at load time to create a RigidBody and the
@@ -67,7 +97,34 @@ struct RigidBodyDescriptor
     float radius = 0.5f; ///< Sphere/Capsule/Cylinder radius.
     AFIELD(min = 0.0, radioListen = {source = shape, value = {Capsule, Cylinder}, behavior = vanish})
     float halfHeight = 0.5f;              ///< Capsule/Cylinder half-height of the cylindrical part.
-    AFIELD() bool isStatic  = false;      ///< True = immovable static body.
+
+    /// The channels this body collides with — one bit per CollisionChannel, at
+    /// that enumerator's value. Interaction needs both sides to agree, so
+    /// clearing a bit here stops the pair whatever the other body says.
+    ///
+    /// uint32_t rather than uint16_t because 16-bit fields are not reflected;
+    /// only the low `CollisionChannel::Count` bits are ever read.
+    AFIELD(bitmask = CollisionChannel) uint32_t collidesWith = AllChannels;
+
+    /// @brief Which channel this body is on.
+    ///
+    /// `Trigger` is not just a label: it makes the body a sensor, detected by
+    /// what enters it and blocking nothing. That is why there is no separate
+    /// "is trigger" flag — a solid body on the trigger channel, or a
+    /// pass-through body on any other, cannot be expressed and could only be a
+    /// mistake.
+    AFIELD() CollisionChannel channel = CollisionChannel::World;
+
+    /// True = immovable static body.
+    ///
+    /// For a `Trigger` body this chooses how faithfully it detects rather than
+    /// whether it moves. Unticked builds a sensor that never sleeps: it notices
+    /// bodies already at rest, including when the volume is moved onto them, and
+    /// costs a place in the simulation's active set for the level's lifetime.
+    /// Ticked builds one that costs nothing while nothing awake is near it, and
+    /// which learns about a resting body only when that body is woken — which
+    /// creating or moving the volume does for whatever it then encloses.
+    AFIELD() bool isStatic  = false;
     AFIELD() bool enableCCD = false;      ///< Enable continuous collision detection (dynamic only).
 };
 
@@ -80,10 +137,8 @@ struct RigidBodyDescriptor
 /// contact normal and scaling it by @ref rebound. Only the linear velocity is
 /// touched; spin, mass, and the solver's own response are left alone.
 ///
-/// Needs a RigidBody to act on, and only reports contacts in a world whose
-/// PhysicsWorld has contact reporting switched on (PhysicsWorld::SetContactReporting) —
-/// which the bounce system does for itself when it runs, so a world whose level
-/// did not name that system pays nothing.
+/// Needs a RigidBody to act on. Acts only on the step a body arrives, never
+/// while it rests, and never on a sensor — nothing passed through resisted it.
 ///
 /// Replicated, despite the bounce itself being a local guess at what the server's
 /// bounce did. Under local simulation the client runs its own physics, and a

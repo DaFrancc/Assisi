@@ -60,6 +60,11 @@ class FieldInfo:
     cpp_type:  str
     args:      AnnotArgs
     enum_info: Optional[EnumInfo]  = None  # set when cpp_type names an AENUM enum
+    # The AENUM whose enumerators are the bits of this integer field, named by
+    # AFIELD(bitmask = EnumName). Distinct from enum_info: the field stores a set
+    # of enumerators, not one of them, so its C++ type is an integer and the enum
+    # never appears in the declaration.
+    bitmask_info: Optional[EnumInfo] = None
     radio:     Optional[RadioInfo] = None  # set by _resolve_radio after parsing
     # Why this field's type reaches an InstanceView without spelling one — an
     # alias, an alias of an alias, a struct that holds one. Set from
@@ -330,6 +335,12 @@ def parse_enum_constants(body: str) -> list:
     0x-hex, possibly negative). A non-integer initializer (e.g. referencing
     another constant or an expression) is a hard error — reflectgen needs the
     concrete value to serialize by number and to drive the editor combo.
+
+    A trailing `Count` enumerator is dropped. It names how many enumerators
+    there are, not a value anything may hold, so leaving it in would offer it in
+    every editor dropdown and let a level select it. Only the last one is
+    dropped: `Count` anywhere else is an ordinary enumerator that happens to
+    share the name.
     """
     constants: list = []
     next_value = 0
@@ -350,7 +361,59 @@ def parse_enum_constants(body: str) -> list:
             value = next_value
         constants.append((enum_name, value))
         next_value = value + 1
+    if constants and constants[-1][0] == 'Count':
+        constants.pop()
     return constants
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bitmask (an integer field holding a set of enumerators)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Reflected unsigned integer spellings, and how many bits each one can hold.
+# Signed types are absent deliberately: the top bit of a signed field is the sign,
+# so the highest enumerator would set a negative value and every comparison
+# against it would be wrong.
+_BITMASK_WIDTHS = {'uint8_t': 8, 'uint16_t': 16, 'uint32_t': 32, 'uint64_t': 64}
+
+
+def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
+    """Attach the AENUM named by AFIELD(bitmask = EnumName) to an integer field.
+
+    The field stores one bit per enumerator, at the enumerator's own value, so
+    the enum's values are bit indices and must fit the field's width.
+    """
+    named = f.args.get('bitmask')
+    if named is None:
+        return
+    named = str(named).strip()
+
+    if f.cpp_type not in _BITMASK_WIDTHS:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' is AFIELD(bitmask = {named}) but its type is "
+            f"'{f.cpp_type}'. A bitmask must be one of: {', '.join(sorted(_BITMASK_WIDTHS))}.")
+
+    info = enums.get(named)
+    if info is None:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' names '{named}' as its bitmask, but no AENUM "
+            f"by that name is declared in this header.")
+
+    if not info.constants:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' names '{named}' as its bitmask, but that enum "
+            f"has no enumerators to make bits of.")
+
+    width   = _BITMASK_WIDTHS[f.cpp_type]
+    highest = max(value for _, value in info.constants)
+    lowest  = min(value for _, value in info.constants)
+    if lowest < 0 or highest >= width:
+        raise ValueError(
+            f"{header_name}: enum '{named}' has enumerator values in [{lowest}, {highest}], "
+            f"which do not all index a bit of a {width}-bit '{f.cpp_type}' field '{f.name}'. "
+            f"A bitmask enum's values are bit positions, so they must be in [0, {width - 1}].")
+
+    f.bitmask_info = info
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1037,6 +1100,10 @@ def parse_header_full(path: Path) -> tuple[list, list, list]:
     for msg in messages:
         for f in msg.fields:
             f.enum_info = enums.get(f.cpp_type)
+
+    for owner in (*components, *messages):
+        for f in owner.fields:
+            _resolve_bitmask(f, enums, path.name)
 
     # The InstanceView storage ban is on storing one, not on spelling one, so a
     # field's type is resolved through this header's aliases and holder structs

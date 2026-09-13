@@ -58,6 +58,13 @@ enum class FieldType : std::uint8_t
     Color3,
     Color4,
     Unknown,
+    /// The narrow integers, appended after Unknown rather than beside their
+    /// wider siblings so no existing value shifts. Reading these back at the
+    /// wrong width would not fail — it would write over the neighbouring field.
+    Int8,
+    UInt8,
+    Int16,
+    UInt16,
 };
 
 /// @brief One enumerator of a reflected `enum class` (FieldType::Enum).
@@ -134,8 +141,14 @@ struct FieldMeta
     std::string minField{};
     std::string maxField{};
 
-    // Populated only for FieldType::Enum: the enumerators to offer in an editor,
-    // in declaration order. Empty for every other field type.
+    // The enumerators to offer in an editor, in declaration order. Populated for
+    // a FieldType::Enum field, which holds one of them, and for an unsigned
+    // integer field annotated AFIELD(bitmask = ...), which holds a set of them —
+    // one bit per enumerator, at the enumerator's own value. `enumSize` tells the
+    // two apart: non-zero for the enum, zero for the bitmask. Empty otherwise.
+    //
+    // A trailing `Count` enumerator is absent: it counts the others rather than
+    // naming a value, so offering it would let an editor select it.
     std::vector<EnumConstant> enumConstants{};
 
     // The enum's underlying storage, so an editor reads/writes the field at its

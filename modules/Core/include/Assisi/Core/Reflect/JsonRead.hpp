@@ -41,6 +41,16 @@ namespace Assisi::Core::Reflect
 
 /// @brief Reads an integer field. A JSON number with a fractional part is a
 /// category error here, not a silent truncation.
+///
+/// The narrow widths reject a value too large for the field for the same reason:
+/// a JSON integer outside an int8_t's range would otherwise keep its low byte and
+/// load as a different number entirely.
+[[nodiscard]] bool ReadInt8(const nlohmann::json &j, const char *component, const char *field, int8_t &out);
+[[nodiscard]] bool ReadUInt8(const nlohmann::json &j, const char *component, const char *field,
+                             uint8_t &out);
+[[nodiscard]] bool ReadInt16(const nlohmann::json &j, const char *component, const char *field, int16_t &out);
+[[nodiscard]] bool ReadUInt16(const nlohmann::json &j, const char *component, const char *field,
+                              uint16_t &out);
 [[nodiscard]] bool ReadInt32(const nlohmann::json &j, const char *component, const char *field, int32_t &out);
 [[nodiscard]] bool ReadUInt32(const nlohmann::json &j, const char *component, const char *field,
                               uint32_t &out);

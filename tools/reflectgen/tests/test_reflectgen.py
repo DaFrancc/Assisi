@@ -872,6 +872,95 @@ class EnumTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _parse_source(src)
 
+    def test_trailing_count_enumerator_is_dropped(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { A, B, Count };\n"
+               "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        info = _parse_source(src)[0].fields[0].enum_info
+        # Count says how many there are; it is not a value the field may hold, so
+        # an editor must not offer it and a codec must not name it.
+        self.assertEqual(info.constants, [("A", 0), ("B", 1)])
+        self.assertNotIn('"Count"', reflectgen.generate_cpp(_parse_source(src), "N/C.hpp"))
+
+    def test_count_that_is_not_last_is_kept(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { Count, A };\n"
+               "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        # Only a trailing Count is the idiom. Elsewhere it is an ordinary
+        # enumerator that happens to share the name, and dropping it would
+        # silently renumber nothing but hide a real value.
+        self.assertEqual(_parse_source(src)[0].fields[0].enum_info.constants,
+                         [("Count", 0), ("A", 1)])
+
+
+class NarrowIntegerTest(unittest.TestCase):
+    _WIDTHS = [('int8_t', 'Int8'), ('uint8_t', 'UInt8'), ('int16_t', 'Int16'), ('uint16_t', 'UInt16')]
+
+    def test_each_narrow_width_reflects_as_its_own_field_type(self):
+        for cpp, field_type in self._WIDTHS:
+            with self.subTest(cpp=cpp):
+                src = (f"#include <cstdint>\nnamespace N {{\n"
+                       f"ACOMP()\nstruct C {{ AFIELD() {cpp} v = 0; }};\n}}\n")
+                cpp_out = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+                # Its own type, not a promotion to the 32-bit one: the codec reads
+                # back at the width the field actually occupies, and a wider read
+                # would overwrite whatever sits after it.
+                self.assertIn(f"FieldType::{field_type}", cpp_out)
+                self.assertIn(f"Read{field_type}(j, _comp, \"v\", comp.v)", cpp_out)
+
+    def test_implementation_defined_spellings_are_still_rejected(self):
+        # The advice these give now names a type that exists; the rejection itself
+        # has to stay, because the widths are still platform-dependent.
+        for spelling in ('short', 'unsigned short', 'int', 'unsigned'):
+            with self.subTest(spelling=spelling):
+                src = (f"namespace N {{\nACOMP()\n"
+                       f"struct C {{ AFIELD() {spelling} v; }};\n}}\n")
+                with self.assertRaises(ValueError):
+                    reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+
+
+class BitmaskTest(unittest.TestCase):
+    _SRC = (
+        "#include <cstdint>\n"
+        "namespace N {\n"
+        "AENUM()\nenum class Channel : uint8_t { World, Character, Trigger, Count };\n"
+        "ACOMP()\nstruct Body { AFIELD(bitmask = Channel) uint32_t collidesWith = 0; };\n"
+        "}\n"
+    )
+
+    def test_bitmask_field_carries_the_enums_constants(self):
+        field = _parse_source(self._SRC)[0].fields[0]
+        self.assertIsNone(field.enum_info)  # the field's own type is an integer
+        self.assertIsNotNone(field.bitmask_info)
+        self.assertEqual(field.bitmask_info.constants,
+                         [("World", 0), ("Character", 1), ("Trigger", 2)])
+
+    def test_bitmask_emits_constants_without_an_enum_size(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._SRC), "N/Body.hpp")
+        self.assertIn('{ "Trigger", 2 }', cpp)
+        self.assertIn("FieldType::UInt32", cpp)
+        # enumSize is what separates "holds one of these" from "holds a set of
+        # these"; a bitmask that emitted one would be read back as an enum.
+        self.assertNotIn(".enumSize", cpp)
+
+    def test_bitmask_on_a_signed_field_is_rejected(self):
+        src = self._SRC.replace("uint32_t collidesWith", "int32_t collidesWith")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_bitmask_naming_an_unknown_enum_is_rejected(self):
+        src = self._SRC.replace("bitmask = Channel", "bitmask = NoSuchEnum")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_enumerator_too_large_for_the_field_is_rejected(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { A = 0, B = 32 };\n"
+               "ACOMP()\nstruct C { AFIELD(bitmask = E) uint32_t m = 0; };\n}\n")
+        # Bit 32 does not exist in a 32-bit field; shifting into it is undefined.
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
     def _enum_size(self, underlying_decl: str):
         """Parse `enum class E <underlying_decl> { A, B }` and return its EnumInfo."""
         src = (f"#include <cstdint>\nnamespace N {{\n"

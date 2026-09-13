@@ -261,8 +261,64 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
                                    nullptr, ImGuiSliderFlags_AlwaysClamp);
         break;
     }
+    case FieldType::Int8:
+    {
+        const int8_t minBound = bounds.hasMin ? static_cast<int8_t>(bounds.minValue) : INT8_MIN;
+        const int8_t maxBound = bounds.hasMax ? static_cast<int8_t>(bounds.maxValue) : INT8_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S8, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt8:
+    {
+        const uint8_t minBound = bounds.hasMin ? static_cast<uint8_t>(bounds.minValue) : 0u;
+        const uint8_t maxBound = bounds.hasMax ? static_cast<uint8_t>(bounds.maxValue) : UINT8_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U8, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::Int16:
+    {
+        const int16_t minBound = bounds.hasMin ? static_cast<int16_t>(bounds.minValue) : INT16_MIN;
+        const int16_t maxBound = bounds.hasMax ? static_cast<int16_t>(bounds.maxValue) : INT16_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S16, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
+    case FieldType::UInt16:
+    {
+        const uint16_t minBound = bounds.hasMin ? static_cast<uint16_t>(bounds.minValue) : 0u;
+        const uint16_t maxBound = bounds.hasMax ? static_cast<uint16_t>(bounds.maxValue) : UINT16_MAX;
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U16, fp, 1.f, &minBound, &maxBound,
+                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        break;
+    }
     case FieldType::UInt32:
     {
+        // An unsigned field carrying enumerators is a bitmask — a set of them, one
+        // bit per enumerator at its own value — rather than a number anyone would
+        // want to type. AFIELD(bitmask = ...) is what puts them here; an enum field
+        // holding exactly one of them is told apart by its non-zero enumSize.
+        if (!field.enumConstants.empty() && field.enumSize == 0)
+        {
+            uint32_t &mask = *static_cast<uint32_t *>(fp);
+            if (ImGui::TreeNodeEx(field.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                for (const auto &constant : field.enumConstants)
+                {
+                    const uint32_t bit = 1u << static_cast<uint32_t>(constant.value);
+                    bool set = (mask & bit) != 0u;
+                    if (ImGui::Checkbox(constant.name.c_str(), &set))
+                    {
+                        mask   = set ? (mask | bit) : (mask & ~bit);
+                        edited = true;
+                    }
+                }
+                ImGui::TreePop();
+            }
+            break;
+        }
+
         const uint32_t minBound = bounds.hasMin ? static_cast<uint32_t>(bounds.minValue) : 0u;
         const uint32_t maxBound = bounds.hasMax ? static_cast<uint32_t>(bounds.maxValue) : UINT32_MAX;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
@@ -884,6 +940,13 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
                     .radius      = desc->radius,
                     .halfHeight  = desc->halfHeight});
             _physics->SetBodyCCD(*rbc, desc->enableCCD);
+
+            // The channel and its mask live on the body's collision layer, which
+            // nothing else here writes. Left out, an edit changes the descriptor
+            // and not the simulation, and only shows up once something rebuilds
+            // the body from the descriptor — a play session later.
+            _physics->SetBodyCollisionFilter(
+                *rbc, Assisi::Physics::CollisionFilter{desc->collidesWith, desc->channel});
         }
     }
 

@@ -206,6 +206,13 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
         parts.append(f'.enumSize = {f.enum_info.size}')
         if f.enum_info.is_signed:
             parts.append('.enumSigned = true')
+    elif f.bitmask_info is not None:
+        # A bitmask carries its enumerators the same way an enum does, and leaves
+        # enumSize zero. That pair is what tells the two apart: an integer field
+        # with constants holds a set of them, one per bit at the enumerator's own
+        # value; a field with constants and a width holds exactly one.
+        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.bitmask_info.constants)
+        parts.append(f'.enumConstants = {{ {consts} }}')
 
     if f.radio is not None and f.radio.source != '':
         values = ', '.join(str(v) for v in f.radio.values)

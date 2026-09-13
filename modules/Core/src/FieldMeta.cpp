@@ -39,6 +39,10 @@ bool ReadNumericField(const FieldMeta &field, const void *object, double &out)
     {
     case FieldType::Float:  out = static_cast<double>(*static_cast<const float *>(address)); return true;
     case FieldType::Double: out = *static_cast<const double *>(address); return true;
+    case FieldType::Int8:   out = *static_cast<const std::int8_t *>(address); return true;
+    case FieldType::UInt8:  out = *static_cast<const std::uint8_t *>(address); return true;
+    case FieldType::Int16:  out = *static_cast<const std::int16_t *>(address); return true;
+    case FieldType::UInt16: out = *static_cast<const std::uint16_t *>(address); return true;
     case FieldType::Int32:  out = *static_cast<const std::int32_t *>(address); return true;
     case FieldType::UInt32: out = *static_cast<const std::uint32_t *>(address); return true;
     case FieldType::Int64:  out = static_cast<double>(*static_cast<const std::int64_t *>(address)); return true;
@@ -54,6 +58,10 @@ bool WriteNumericField(const FieldMeta &field, void *object, double value)
     {
     case FieldType::Float:  *static_cast<float *>(address)         = static_cast<float>(value); return true;
     case FieldType::Double: *static_cast<double *>(address)        = value; return true;
+    case FieldType::Int8:   *static_cast<std::int8_t *>(address)   = static_cast<std::int8_t>(value); return true;
+    case FieldType::UInt8:  *static_cast<std::uint8_t *>(address)  = static_cast<std::uint8_t>(value); return true;
+    case FieldType::Int16:  *static_cast<std::int16_t *>(address)  = static_cast<std::int16_t>(value); return true;
+    case FieldType::UInt16: *static_cast<std::uint16_t *>(address) = static_cast<std::uint16_t>(value); return true;
     case FieldType::Int32:  *static_cast<std::int32_t *>(address)  = static_cast<std::int32_t>(value); return true;
     case FieldType::UInt32: *static_cast<std::uint32_t *>(address) = static_cast<std::uint32_t>(value); return true;
     case FieldType::Int64:  *static_cast<std::int64_t *>(address)  = static_cast<std::int64_t>(value); return true;

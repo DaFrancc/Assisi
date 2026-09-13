@@ -215,8 +215,8 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     transform->position = {0.f, 10.f, 0.f};
 
     const Assisi::Physics::RigidBody body = world.physics.AddBody(
-        {0.f, 10.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
-        Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic);
+        Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 10.f, 0.f}},
+        Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic, {});
     REQUIRE(world.scene.Add<Assisi::Physics::RigidBody>(entity, body) != nullptr);
 
     constexpr float kStep = 1.f / 60.f;
@@ -257,9 +257,10 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
                                const Assisi::ECS::Entity entity = world.scene.Create();
                                world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
                                const Assisi::Physics::RigidBody body =
-                                   world.physics.AddBody(at, glm::quat{1.f, 0.f, 0.f, 0.f},
-                                                         Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
-                                                         Assisi::Physics::BodyMotion::Dynamic);
+                                   world.physics.AddBody(
+                                       Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, at},
+                                       Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
+                                       Assisi::Physics::BodyMotion::Dynamic, {});
                                (void)world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
                                return entity;
                            };
@@ -268,9 +269,9 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     const Assisi::ECS::Entity b = spawnBody(caught, {0.f, 5.f, 0.f});
 
     // Only the second world has ground under it.
-    caught.physics.AddBody({0.f, 0.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+    caught.physics.AddBody(Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}},
                            Assisi::Physics::PhysicsWorld::ColliderShapeDesc{.halfExtents = {50.f, 0.5f, 50.f}},
-                           Assisi::Physics::BodyMotion::Static);
+                           Assisi::Physics::BodyMotion::Static, {});
 
     falling.simulate = true;
     caught.simulate  = true;
@@ -539,9 +540,9 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
 
     // A live dynamic body in the running world, so its Update() does real solver
     // work (island builder, temp allocator) concurrently with the worker's build.
-    (void)start.physics.AddBody({0.f, 20.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+    (void)start.physics.AddBody(Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 20.f, 0.f}},
                                 Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
-                                Assisi::Physics::BodyMotion::Dynamic);
+                                Assisi::Physics::BodyMotion::Dynamic, {});
 
     World *const loading = worlds.BeginLoadLevel("levels/Big.alvl");
     REQUIRE(loading != nullptr);
