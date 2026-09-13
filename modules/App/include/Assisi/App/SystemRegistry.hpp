@@ -232,6 +232,26 @@ private:
     /// — After()/Before() bind to the first entry of a name.
     [[nodiscard]] bool Has(std::string_view name) const;
 
+    /// @brief Stop running the system called @p name — or start again — without
+    /// unregistering it.
+    ///
+    /// A muted system keeps its slot, its ordering edges and whatever its lambda
+    /// has accumulated; it is skipped at dispatch and nothing else changes.
+    /// Removing and re-adding it instead would do neither: entries are
+    /// append-only because After()/Before() bind to the first entry of a name.
+    ///
+    /// The mute lives on the entry, so a Clear() — the editor re-targeting a
+    /// world, or a play session ending — takes it with the rest. Deliberate: a
+    /// mute that outlived its entry would silence the next level to name the same
+    /// system, with nothing on screen saying why.
+    ///
+    /// Naming a system that is not registered does nothing.
+    void SetEnabled(std::string_view name, bool enabled);
+
+    /// @brief Whether @p name would run. True for a name that is not registered:
+    /// nothing is muting it.
+    [[nodiscard]] bool IsEnabled(std::string_view name) const;
+
     /// @brief Drops every registered system, in every phase.
     ///
     /// Registration is otherwise append-only, and re-registering a name corrupts
@@ -261,6 +281,9 @@ private:
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
             bool activeOnly = false;
+            /// Cleared by SetEnabled to skip this system at dispatch while leaving
+            /// everything else about it in place — the editor's per-system mute.
+            bool enabled = true;
             /// Set by SystemHandle::RequireAny(). Empty means "always eligible";
             /// otherwise the system runs only while the scene holds at least one
             /// of these components.

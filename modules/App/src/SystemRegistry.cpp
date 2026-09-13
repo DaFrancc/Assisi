@@ -197,8 +197,14 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/ false, {},
-                             Chiara::InternString(name)});
+    phase.entries.push_back({.name       = std::string(name),
+                             .fn         = std::move(fn),
+                             .after      = {},
+                             .before     = {},
+                             .activeOnly = false,
+                             .enabled    = true,
+                             .requireAny = {},
+                             .chiaraName = Chiara::InternString(name)});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -259,6 +265,8 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
     for (std::size_t i : phase.sorted)
     {
         const typename Phase<Ctx>::Entry &entry = phase.entries[i];
+        if (!entry.enabled)
+            continue;
         if (skipActiveOnly && entry.activeOnly)
             continue;
         if (!eligible(entry))
@@ -363,6 +371,44 @@ bool SystemRegistry::Has(std::string_view name) const
             return true;
     }
     return false;
+}
+
+void SystemRegistry::SetEnabled(std::string_view name, bool enabled)
+{
+    // Every phase, not the first hit: Add() warns about a duplicate name but does
+    // not refuse it, so a name can reach more than one entry and muting half of
+    // them would be the confusing outcome.
+    for (Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (auto &entry : phase.entries)
+        {
+            if (entry.name == name)
+                entry.enabled = enabled;
+        }
+    }
+    for (auto &entry : _renderPhase.entries)
+    {
+        if (entry.name == name)
+            entry.enabled = enabled;
+    }
+}
+
+bool SystemRegistry::IsEnabled(std::string_view name) const
+{
+    for (const Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (const auto &entry : phase.entries)
+        {
+            if (entry.name == name && !entry.enabled)
+                return false;
+        }
+    }
+    for (const auto &entry : _renderPhase.entries)
+    {
+        if (entry.name == name && !entry.enabled)
+            return false;
+    }
+    return true;
 }
 
 void SystemRegistry::Clear()
