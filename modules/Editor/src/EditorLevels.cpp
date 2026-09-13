@@ -41,6 +41,11 @@ namespace Assisi::Editor
 namespace
 {
 
+/// A blueprint that cannot be placed in the file being edited because it already
+/// reaches that file. Red, and used on the name itself rather than on a badge
+/// beside it: the file is the thing that is wrong, and it stays selectable.
+constexpr ImVec4 kCycleColor{0.95f, 0.35f, 0.35f, 1.f};
+
 // The whole file as bytes, or nullopt if it is missing or unreadable — one answer
 // for both, because the only caller is a save asking what it is about to
 // overwrite. Read binary so a byte-for-byte restore does not depend on levels
@@ -186,8 +191,16 @@ void EditorApp::DrawBlueprintsWindow()
 {
     ImGui::Begin("Blueprints");
 
-    ImGui::TextWrapped("A blueprint is an ordinary level file you place copies of. Editing the file fixes "
-                       "every copy on the next load.");
+    if (InBlueprintMode())
+    {
+        ImGui::TextWrapped("Blueprints placed here nest inside the one being edited: the file records an "
+                           "instance, not a copy, so fixing the inner file fixes it everywhere.");
+    }
+    else
+    {
+        ImGui::TextWrapped("A blueprint is an ordinary level file you place copies of. Editing the file "
+                           "fixes every copy on the next load.");
+    }
     ImGui::Separator();
 
     const bool editable = (_playState == PlayState::Editing) && IsEditable();
@@ -208,36 +221,107 @@ void EditorApp::DrawBlueprintsWindow()
         _selectedBlueprint =
             std::clamp(_selectedBlueprint, 0, static_cast<int32_t>(_blueprintFiles.size()) - 1);
 
+        const std::string &selected = _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)];
+
+        // A file that reaches the edited one cannot go inside it, and one that does
+        // not flatten cannot go anywhere. Both are shown, and still selectable,
+        // rather than filtered out: they are real files and reasonable things to
+        // look for, and hiding one answers the search with silence instead of with
+        // the reason.
+        const NestVerdict verdict = NestingVerdict(selected);
+        const bool blocked = verdict != NestVerdict::Valid;
+
+        // Pushed around BeginCombo alone, which is where the closed combo's text is
+        // drawn. Leaving it pushed would tint the popup's rows too, and those carry
+        // their own verdicts.
         ImGui::SetNextItemWidth(-1.f);
-        if (ImGui::BeginCombo("##blueprint", _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)].c_str()))
+        if (blocked)
+            ImGui::PushStyleColor(ImGuiCol_Text, kCycleColor);
+        const bool listOpen = ImGui::BeginCombo("##blueprint", selected.c_str());
+        if (blocked)
+            ImGui::PopStyleColor();
+
+        if (listOpen)
         {
             for (int32_t i = 0; i < static_cast<int32_t>(_blueprintFiles.size()); ++i)
             {
-                const bool selected = (i == _selectedBlueprint);
-                if (ImGui::Selectable(_blueprintFiles[static_cast<std::size_t>(i)].c_str(), selected))
+                const std::string &file = _blueprintFiles[static_cast<std::size_t>(i)];
+                const bool isSelected = (i == _selectedBlueprint);
+                const bool rowBlocked = NestingVerdict(file) != NestVerdict::Valid;
+
+                if (rowBlocked)
+                    ImGui::PushStyleColor(ImGuiCol_Text, kCycleColor);
+                if (ImGui::Selectable(file.c_str(), isSelected))
                     _selectedBlueprint = i;
-                if (selected)
+                if (rowBlocked)
+                    ImGui::PopStyleColor();
+
+                if (isSelected)
                     ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
         }
 
         const float halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        ImGui::BeginDisabled(blocked);
         if (ImGui::Button("Place instance", ImVec2(halfW, 0.f)))
-            PlaceBlueprintInstance(_blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)]);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Adds a copy in front of the camera. Undoable.");
+            PlaceBlueprintInstance(selected);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            switch (verdict)
+            {
+            case NestVerdict::WouldCycle:
+                ImGui::SetTooltip("This file already contains the one being edited, so nesting it would "
+                                  "expand forever.");
+                break;
+            case NestVerdict::Unreadable:
+                ImGui::SetTooltip("This file cannot be read — it contains itself, or names a nested file "
+                                  "that is missing or malformed. The log says which.");
+                break;
+            case NestVerdict::Valid:
+                ImGui::SetTooltip("Adds a copy in front of the camera. Undoable.");
+                break;
+            }
+        }
 
         ImGui::SameLine();
+        // One blueprint world at a time: opening a second would stand up two worlds
+        // claiming the same role, and only one of them could save.
+        ImGui::BeginDisabled(InBlueprintMode());
         // Deferred, not opened here: opening loads assets and creates a world, and
         // this runs mid-frame. The safe point in OnUpdate picks it up next frame.
         if (ImGui::Button("Edit", ImVec2(-1.f, 0.f)))
-            _pendingBlueprintOpen = _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)];
-        if (ImGui::IsItemHovered())
+            _pendingBlueprintOpen = selected;
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
-            ImGui::SetTooltip("Opens the file in its own world with an editor sun, so you can work on it "
-                              "directly. This level stays loaded behind it, and saving brings its copies "
-                              "up to date.");
+            ImGui::SetTooltip(InBlueprintMode()
+                                  ? "Close the blueprint you are editing first — only one can be open."
+                                  : "Opens the file in its own world with an editor sun, so you can work "
+                              "on it directly. This level stays loaded behind it, and saving brings "
+                              "its copies up to date.");
+        }
+
+        // Said on the panel, not only on hover: the button is dead and the file is
+        // red, and an author who has not hovered either deserves to know which file
+        // is the problem rather than that something is.
+        if (blocked)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, kCycleColor);
+            if (verdict == NestVerdict::WouldCycle)
+            {
+                ImGui::TextWrapped("'%s' already contains '%s', so placing it would nest the pair inside "
+                                   "itself forever.",
+                                   selected.c_str(), _world != nullptr ? _world->levelPath.c_str() : "");
+            }
+            else
+            {
+                ImGui::TextWrapped("'%s' does not load: it contains itself, or a file it nests is missing "
+                                   "or malformed. See the log.",
+                                   selected.c_str());
+            }
+            ImGui::PopStyleColor();
         }
     }
     ImGui::EndDisabled();
@@ -326,12 +410,67 @@ void EditorApp::ScanBlueprints()
 {
     _blueprintFiles = Assisi::App::ScanContentPaths();
     _selectedBlueprint = 0;
+    // The list is what Refresh is for, so this is where a verdict about a file that
+    // has changed on disk gets to be re-reached.
+    _nestVerdicts.clear();
+}
+
+NestVerdict EditorApp::NestingVerdict(const std::string &source)
+{
+    // No file to nest into: nothing can be refused on account of one.
+    if (_world == nullptr || _world->levelPath.empty())
+        return NestVerdict::Valid;
+
+    // Every verdict was reached against one edited path, so a different one
+    // invalidates all of them at once rather than entry by entry.
+    if (_nestVerdictsFor != _world->levelPath)
+    {
+        _nestVerdicts.clear();
+        _nestVerdictsFor = _world->levelPath;
+    }
+    if (const auto found = _nestVerdicts.find(source); found != _nestVerdicts.end())
+        return found->second;
+
+    NestVerdict verdict = NestVerdict::Valid;
+    const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(source);
+    if (!definition)
+    {
+        // Includes a file that contains itself: the flatten refuses on its own
+        // stack and logs the chain, so the file is unplaceable for its own reasons
+        // before this one is consulted.
+        verdict = NestVerdict::Unreadable;
+    }
+    else
+    {
+        // `closure` is the source plus every file it reaches, so this catches
+        // placing a file into itself and the long way round in one comparison.
+        const std::vector<std::string> &closure = (*definition)->closure;
+        if (std::find(closure.begin(), closure.end(), _world->levelPath) != closure.end())
+            verdict = NestVerdict::WouldCycle;
+    }
+
+    _nestVerdicts.emplace(source, verdict);
+    return verdict;
 }
 
 void EditorApp::PlaceBlueprintInstance(const std::string &source)
 {
     if (_scene == nullptr || _world == nullptr || !IsEditable())
         return;
+
+    // Before anything is created. The expansion itself would succeed — the members
+    // are built from what is on disk now, which does not contain this instance yet
+    // — and the file would only become unloadable at the save.
+    if (NestingVerdict(source) == NestVerdict::WouldCycle)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' cannot be placed in '{}' — that file is already reachable "
+                                 "from it by instancing, so the two would expand forever.",
+                                 source, _world->levelPath);
+        return;
+    }
+    // A file that does not flatten at all is left to the placement below, which
+    // names the member or the nested file at fault. Saying "unreadable" here would
+    // replace that with less.
 
     // In front of the camera, like every other create gesture here: placing at the
     // origin means hunting for it.
@@ -741,6 +880,7 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     const std::string previousLevelPath = _world->levelPath;
     const bool blueprint         = InBlueprintMode();
     const std::uint64_t previousSavedToken = blueprint ? _blueprintSavedToken : _savedStateToken;
+    const bool previousSystemsEdited = blueprint ? _blueprintSystemsEdited : _systemsEdited;
 
     // Carry the world's systems back into the file. A Scene does not know them; they
     // are a property of the level, so a save that dropped them would silently strip
@@ -753,17 +893,26 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     // travel and (later) the network level handshake read it.
     _world->levelPath = virtualPath;
 
+    // What was just written may nest differently from the copy those verdicts were
+    // reached against — this very save is how an author adds a nesting.
+    _nestVerdicts.clear();
+
     // Record the history position that now matches disk; IsSceneDirty compares
     // against it to drive the title bar's unsaved-changes marker. Which history that
     // is depends on whether a blueprint or a level is being edited.
+    // The system list went into the header above, so whichever of the two was
+    // pending is on disk now as well.
     if (blueprint)
     {
         if (_blueprintHistory)
             _blueprintSavedToken = _blueprintHistory->CurrentStateToken();
+        _blueprintSystemsEdited = false;
     }
-    else if (_history)
+    else
     {
-        _savedStateToken = _history->CurrentStateToken();
+        if (_history)
+            _savedStateToken = _history->CurrentStateToken();
+        _systemsEdited = false;
     }
 
     // Every live copy of what was just written catches up, wherever it is resident.
@@ -783,7 +932,8 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
                                                  .world                 = _world,
                                                  .previousLevelPath     = previousLevelPath,
                                                  .previousSavedToken    = previousSavedToken,
-                                                 .savedTokenIsBlueprint = blueprint};
+                                                 .savedTokenIsBlueprint = blueprint,
+                                                 .previousSystemsEdited = previousSystemsEdited};
     }
 
     return true;
@@ -843,9 +993,15 @@ void EditorApp::CancelPendingSave()
     {
         _world->levelPath = save.previousLevelPath;
         if (save.savedTokenIsBlueprint)
-            _blueprintSavedToken = save.previousSavedToken;
+        {
+            _blueprintSavedToken    = save.previousSavedToken;
+            _blueprintSystemsEdited = save.previousSystemsEdited;
+        }
         else
+        {
             _savedStateToken = save.previousSavedToken;
+            _systemsEdited   = save.previousSystemsEdited;
+        }
     }
 
     // The copies were never touched, so there is nothing to put back about them, and
@@ -898,6 +1054,9 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     _lightDrag.Abandon();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
+    _systemsEdited   = false; // ...and its system list is the one the file named
+    _addSystemBuf[0] = '\0';  // a half-typed search names systems of the level that left
+    _addSystemSelected = 0;
 
     // A load expands every instance from the files as they are now, so nothing this
     // world holds can still be behind one — the stale/pending re-expansion state

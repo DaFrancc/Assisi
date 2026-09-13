@@ -14,6 +14,7 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/EditorApp.hpp"
     "include/Assisi/Editor/InspectorFieldChrome.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
+    "include/Assisi/Editor/SystemSearch.hpp"
     "include/Assisi/Editor/WireShapes.hpp"
   PRIVATE
     "src/ColliderPose.cpp"
@@ -31,12 +32,14 @@ target_sources(Assisi-Editor
     "src/EditorOptions.cpp"
     "src/EditorOptionsPanel.hpp"
     "src/EditorPlay.cpp"
+    "src/EditorSystemsPanel.cpp"
     "src/EditorWorlds.cpp"
     "src/GizmoDrag.cpp"
     "src/InspectorFieldChrome.cpp"
     "src/InstanceGesture.cpp"
     "src/PrePlayState.cpp"
     "src/ScenePick.cpp"
+    "src/SystemSearch.cpp"
     "src/WireShapes.cpp"
     "src/ImGuiQueries.hpp"
 )

@@ -1315,12 +1315,15 @@ std::vector<Assisi::Editor::EditHistory *> EditorApp::AllHistories()
 bool EditorApp::IsSceneDirty()
 {
     // Tracks the *editing* history, where saves happen, never the paused scratch.
+    // The system list is dirty on its own flag: it is a property of the file that
+    // no entity carries, so editing it moves no history token.
     if (InBlueprintMode())
     {
-        return _blueprintHistory.has_value() &&
-               _blueprintHistory->CurrentStateToken() != _blueprintSavedToken;
+        return _blueprintSystemsEdited ||
+               (_blueprintHistory.has_value() &&
+                _blueprintHistory->CurrentStateToken() != _blueprintSavedToken);
     }
-    return _history.has_value() && _history->CurrentStateToken() != _savedStateToken;
+    return _systemsEdited || (_history.has_value() && _history->CurrentStateToken() != _savedStateToken);
 }
 
 std::string EditorApp::EntityDisplayName(Assisi::ECS::Entity entity) const
@@ -1607,9 +1610,15 @@ void EditorApp::OnImGui()
     if (!blueprintMode)
     {
         { ASSISI_PROFILE_SCOPE("panel/levels");     DrawLevelsWindow(); }
-        { ASSISI_PROFILE_SCOPE("panel/blueprints"); DrawBlueprintsWindow(); }
     }
+    // Both modes: nesting is what a blueprint editor is for, and an instance placed
+    // in one is an `instances` entry in its file exactly as it is in a level's.
+    { ASSISI_PROFILE_SCOPE("panel/blueprints"); DrawBlueprintsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/blueprint-mode"); DrawBlueprintEditorWindow(); }
+    // Both modes: a blueprint carries its own required-system list, saved by the
+    // same path, so the panel is as much about what is in front of you here as it
+    // is about a level.
+    { ASSISI_PROFILE_SCOPE("panel/systems");      DrawRequiredSystemsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/inspector");    DrawInspector(); }
     if (!blueprintMode)
     {

@@ -178,7 +178,10 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     ClearSelection();
     _blueprintHistory.emplace(world.scene, MakeEditRebindHook(), &world.instances);
     InstallHistoryHooks(*_blueprintHistory);
-    _blueprintSavedToken = 0; // freshly loaded == what is on disk
+    _blueprintSavedToken    = 0; // freshly loaded == what is on disk
+    _blueprintSystemsEdited = false;
+    _addSystemBuf[0]        = '\0';
+    _addSystemSelected      = 0;
 
     Assisi::Core::Log::Info("Blueprint editor: editing '{}' (world '{}').", source, world.name);
 }
@@ -194,7 +197,10 @@ void EditorApp::CloseBlueprintEditor()
     // Drop the history *first*: it binds the scene by reference and holds entity
     // handles into it, and the world is about to be destroyed under both.
     _blueprintHistory.reset();
-    _blueprintSavedToken = 0;
+    _blueprintSavedToken    = 0;
+    _blueprintSystemsEdited = false;
+    _addSystemBuf[0]        = '\0';
+    _addSystemSelected      = 0;
     ClearSelection();
 
     // Same aliasing hazard a level load guards against, and the same fix: an armed

@@ -63,6 +63,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -72,6 +73,14 @@
 
 namespace Assisi::Editor
 {
+
+/// @brief Whether a blueprint can be placed into the file being edited.
+enum class NestVerdict : std::uint8_t
+{
+    Valid,      ///< Nothing stands in the way.
+    WouldCycle, ///< Its closure already reaches the edited file; the pair would expand forever.
+    Unreadable, ///< It does not flatten at all — a cycle of its own, a missing nested file, bad JSON.
+};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -316,6 +325,31 @@ private:
     void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7)
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump
+
+    /// @brief The edited world's required-system list: search-and-add from the
+    /// catalog, mute, and remove.
+    ///
+    /// One panel for both a level and an open blueprint, because both are a world
+    /// whose `systemNames` a save writes back — `_world` is whichever of the two
+    /// is being edited, so this needs no mode of its own.
+    void DrawRequiredSystemsWindow();
+
+    /// @brief Adds @p name to the edited world's required list and installs it.
+    /// No-op for a name already there, which is what keeps the list a set.
+    void AddRequiredSystem(const std::string &name);
+
+    /// @brief Drops @p name from the edited world's required list.
+    ///
+    /// The system is muted rather than unregistered: taking an entry out of a
+    /// live registry would rebind every After()/Before() edge that named it, and
+    /// nothing in the engine uninstalls systems. It stops running now and is not
+    /// installed on the next load, which is the whole of what removal means.
+    void RemoveRequiredSystem(const std::string &name);
+
+    /// @brief Marks the edited world's system list changed since its last save,
+    /// so IsSceneDirty() reports it. The list is not entity data and so leaves no
+    /// trace in the undo history the dirty marker otherwise reads.
+    void MarkSystemsEdited();
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity
     /// @brief Draws the manipulator and applies whatever it produced this frame.
     /// Returns whether the handles are held.
@@ -987,6 +1021,8 @@ private:
         /// it belongs to.
         std::uint64_t previousSavedToken = 0;
         bool savedTokenIsBlueprint = false;
+        /// Whether the system list was unsaved before this save cleared that too.
+        bool previousSystemsEdited = false;
     };
     std::optional<PendingSaveConfirm> _pendingSaveConfirm;
 
@@ -1061,6 +1097,26 @@ private:
     /// The instance is *authored* — level content, written back when the level
     /// saves — which is what distinguishes it from a runtime SpawnBlueprint.
     void PlaceBlueprintInstance(const std::string &source);
+
+    /// @brief Whether @p source can be placed into the file being edited, and if
+    /// not, which of the two reasons it is.
+    ///
+    /// WouldCycle means the edited file's own path is in @p source's closure —
+    /// covering both placing a file into itself and the long way round, a nesting
+    /// several files deep that arrives back. It matters most in the blueprint
+    /// editor, where nesting is the point, but it guards a level too: a `.alvl`
+    /// can be placed as a blueprint, including the one being edited.
+    ///
+    /// **Memoized, and deliberately allowed to go stale.** A failed definition is
+    /// never cached by the blueprint layer — by design, so a file fixed on disk
+    /// works the moment it is fixed — which means asking this per row per frame
+    /// would re-read and re-log every broken file for as long as the list is open.
+    /// The verdicts are dropped when the edited file changes and when the file
+    /// list is rescanned; a hand-edit in between leaves this panel saying the old
+    /// thing. That is cosmetic and nothing rests on it: the flattener refuses a
+    /// cycle wherever it is reached, and a load that reaches one refuses the whole
+    /// file.
+    [[nodiscard]] NestVerdict NestingVerdict(const std::string &source);
 
     /// @brief Saves the selected entity and its subtree as a blueprint, then
     /// replaces them with an instance of it.
@@ -1614,6 +1670,10 @@ private:
     // The main history's state token at the last successful SaveLevel (0 = base /
     // freshly loaded). IsSceneDirty() compares the live token against it.
     std::uint64_t _savedStateToken = 0;
+    // The level's required-system list has changed since its last save. A second
+    // dirty signal beside the token above because the list is not entity data:
+    // adding or removing one leaves the undo history, and so the token, untouched.
+    bool _systemsEdited = false;
 
     // --- Blueprint editing mode ---
     // The world holding the blueprint being edited, or null when none is open. It
@@ -1625,6 +1685,8 @@ private:
     std::string _blueprintReturnWorld;
     // _blueprintHistory's token at the blueprint's last successful save.
     std::uint64_t _blueprintSavedToken = 0;
+    // _systemsEdited's counterpart for the open blueprint's own system list.
+    bool _blueprintSystemsEdited = false;
     // The lighting the blueprint editor works by. The sun is an entity (so the
     // gizmo and inspector reach it like anything else); ambient is a renderer knob,
     // since there is no such component and nothing about it belongs in a file.
@@ -1753,6 +1815,13 @@ private:
     // Keyboard highlight into the suggestion list: Tab/Down advance it, Up retreats,
     // editing the text resets it to the first row, Enter adds the highlighted one.
     int32_t _addComponentSelected = 0;
+
+    // --- Required Systems panel ---
+    // The same pair for the systems search field. Its own, not shared with the
+    // Inspector's: both panels are open at once and a shared buffer would let one
+    // field's text steer the other's list.
+    char _addSystemBuf[64] = {};
+    int32_t _addSystemSelected = 0;
 
     // --- Eyedropper ---
     // While armed, the next scene entity-pick is written into the captured
@@ -1883,6 +1952,14 @@ private:
     /// level is legal, and the editor should not pretend otherwise.
     std::vector<std::string> _blueprintFiles;
     int32_t _selectedBlueprint = 0;
+    // NestingVerdict's memo, and the edited file it was reached against. A verdict
+    // costs a flatten of the candidate, and a *failed* flatten is never cached
+    // below this layer — so without these the open dropdown would re-read and
+    // re-log every broken file every frame. Dropped whole when the edited file
+    // changes or the list is rescanned; see NestingVerdict for why lagging a
+    // hand-edit in between is harmless.
+    std::map<std::string, NestVerdict> _nestVerdicts;
+    std::string _nestVerdictsFor;
     char _newBlueprintName[128] = {};
 
     // --- World and level operations deferred out of ImGui ---
