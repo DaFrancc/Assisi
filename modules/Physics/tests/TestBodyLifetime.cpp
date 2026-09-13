@@ -76,7 +76,8 @@ TEST_CASE("GetBodyTransform refuses a handle that names nothing, like its siblin
     // The other reachable shape: a handle that named a real body until it was
     // removed. The velocity accessor answers zero for this one by contract.
     const Physics::RigidBody removed =
-        world.AddBody({3.f, 4.f, 5.f}, glm::quat{1.f, 0.f, 0.f, 0.f}, kBall, Physics::BodyMotion::Dynamic);
+        world.AddBody(Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {3.f, 4.f, 5.f}}, kBall,
+                      Physics::BodyMotion::Dynamic, {});
     REQUIRE_FALSE(removed.bodyId.IsInvalid());
     world.RemoveBody(removed);
 
@@ -98,12 +99,13 @@ TEST_CASE("removing a handle that names nothing leaves the bodies that do alone"
     Physics::PhysicsWorld world;
 
     const Physics::RigidBody ground =
-        world.AddBody({0.f, -1.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+        world.AddBody(Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
                       Physics::PhysicsWorld::ColliderShapeDesc{.shape       = Physics::ColliderShape::Box,
                                                                .halfExtents = {20.f, 1.f, 20.f}},
-                      Physics::BodyMotion::Static);
+                      Physics::BodyMotion::Static, {});
     const Physics::RigidBody falling =
-        world.AddBody({0.f, 4.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f}, kBall, Physics::BodyMotion::Dynamic);
+        world.AddBody(Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 4.f, 0.f}}, kBall,
+                      Physics::BodyMotion::Dynamic, {});
     REQUIRE_FALSE(ground.bodyId.IsInvalid());
     REQUIRE_FALSE(falling.bodyId.IsInvalid());
 

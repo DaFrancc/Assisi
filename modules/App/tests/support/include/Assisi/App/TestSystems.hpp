@@ -106,11 +106,6 @@ inline void ActiveOnlySystem(SystemContext &ctx)
 
 inline void ContactsSystem(SystemContext &ctx)
 {
-    // Its own need, turned on where the need is. Costs one branch per fixed step,
-    // and survives a world that turns it back off.
-    if (!ctx.world.physics.IsContactReporting())
-        ctx.world.physics.SetContactReporting(true);
-
     RunCounts::Instance().Record(ctx.world, "Contacts");
 }
 

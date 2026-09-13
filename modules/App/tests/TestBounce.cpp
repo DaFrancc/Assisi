@@ -1,15 +1,17 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-/// Tests for the contact log (Physics::PhysicsWorld's opt-in record of collisions
-/// that began during a step) and for App::BounceSystem, the first consumer of it.
+/// Tests for PhysicsWorld's contact events and for App::BounceSystem, the first
+/// consumer of them.
 ///
 /// These run a real Jolt simulation rather than faking contacts, because the
 /// things most likely to be wrong are exactly the things a fake would paper over:
-/// which way the manifold normal points, and whether the recorded velocity is the
-/// one from *before* the solver absorbed the impact.
+/// which way the manifold normal points, whether the recorded velocity is the one
+/// from *before* the solver absorbed the impact, and whether a body that stops
+/// moving is reported as still touching or as having left.
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -51,63 +53,49 @@ Assisi::ECS::Entity BuildDropScene(World &world, glm::vec3 dropFrom)
     return spawn(dropFrom, /*isStatic=*/ false, {0.5f, 0.5f, 0.5f});
 }
 
-/// Steps physics until the contact log is non-empty, then returns the log for
-/// that step. Returns an empty vector if nothing collided within @p maxSteps.
-std::vector<Assisi::Physics::Contact> StepUntilContact(World &world, int32_t maxSteps = 240)
+/// Steps physics until something reports an Enter, then returns that step's
+/// events. Returns an empty vector if nothing collided within @p maxSteps.
+std::vector<Assisi::Physics::ContactEvent> StepUntilEnter(World &world, int32_t maxSteps = 240)
 {
     for (int32_t i = 0; i < maxSteps; ++i)
     {
         world.physics.Update(kStep);
         world.physics.CaptureState();
-        const std::span<const Assisi::Physics::Contact> contacts = world.physics.Contacts();
-        if (!contacts.empty())
-            return {contacts.begin(), contacts.end()};
+
+        const std::span<const Assisi::Physics::ContactEvent> events = world.physics.ContactEvents();
+        const bool entered = std::any_of(events.begin(), events.end(),
+                                         [](const Assisi::Physics::ContactEvent &e)
+                                         { return e.phase == Assisi::Physics::ContactPhase::Enter; });
+        if (entered)
+            return {events.begin(), events.end()};
     }
     return {};
 }
 
 } // namespace
 
-TEST_CASE("Contact reporting is off by default and records nothing")
-{
-    // The whole point of the opt-in: a world nobody asked for contacts in must
-    // not pay for a log, and must not quietly accumulate one either.
-    WorldManager worlds;
-    World &world = worlds.Create("Quiet");
-    CHECK_FALSE(world.physics.IsContactReporting());
-
-    (void)BuildDropScene(world, {0.f, 3.f, 0.f});
-
-    for (int32_t i = 0; i < 240; ++i)
-    {
-        world.physics.Update(kStep);
-        world.physics.CaptureState();
-        REQUIRE(world.physics.Contacts().empty());
-    }
-}
-
 TEST_CASE("A landing body reports a contact from both sides, before the solver runs")
 {
     WorldManager worlds;
     World &world = worlds.Create("Drop");
-    world.physics.SetContactReporting(true);
-    CHECK(world.physics.IsContactReporting());
 
     const Assisi::ECS::Entity faller = BuildDropScene(world, {0.f, 3.f, 0.f});
 
-    const std::vector<Assisi::Physics::Contact> contacts = StepUntilContact(world);
-    REQUIRE_FALSE(contacts.empty());
+    const std::vector<Assisi::Physics::ContactEvent> events = StepUntilEnter(world);
+    REQUIRE_FALSE(events.empty());
 
     // Both participants are entities here, so the pair produces two records.
-    CHECK(contacts.size() == 2u);
+    CHECK(events.size() == 2u);
 
-    const Assisi::Physics::Contact *mine = nullptr;
-    for (const Assisi::Physics::Contact &contact : contacts)
+    const Assisi::Physics::ContactEvent *mine = nullptr;
+    for (const Assisi::Physics::ContactEvent &event : events)
     {
-        if (contact.entity == faller)
-            mine = &contact;
+        if (event.entity == faller)
+            mine = &event;
     }
     REQUIRE(mine != nullptr);
+    CHECK(mine->phase == Assisi::Physics::ContactPhase::Enter);
+    CHECK_FALSE(mine->sensor);
     CHECK(mine->other != faller);
     CHECK(mine->other != Assisi::ECS::NullEntity);
 
@@ -124,54 +112,87 @@ TEST_CASE("A landing body reports a contact from both sides, before the solver r
     CHECK(mine->velocity.y < -4.f);
 }
 
-TEST_CASE("The contact log describes exactly one step")
+TEST_CASE("A pair enters once and then stays, however long it rests")
 {
-    // A consumer runs once per fixed step and must never see the same impact
-    // twice — which is what clearing at the top of Update() buys, and what a log
-    // that merely appended would get wrong.
+    // The distinction the whole event model exists for. The old contact log
+    // reported the landing step and then went silent, so nothing could ask
+    // "is it still there?". Enter must fire exactly once and Stay must keep
+    // coming — including after Jolt puts the body to sleep, at which point it
+    // stops reporting the contact at all and the pair table has to carry it.
     WorldManager worlds;
-    World &world = worlds.Create("Once");
-    world.physics.SetContactReporting(true);
-    (void)BuildDropScene(world, {0.f, 3.f, 0.f});
+    World &world = worlds.Create("Rests");
+    const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
 
-    REQUIRE_FALSE(StepUntilContact(world).empty());
+    REQUIRE_FALSE(StepUntilEnter(world).empty());
 
-    // The very next step reports nothing: the body is now resting, and a resting
-    // contact persists rather than being added again.
-    world.physics.Update(kStep);
-    CHECK(world.physics.Contacts().empty());
+    int32_t enters = 0;
+    int32_t stays  = 0;
+    int32_t exits  = 0;
+    for (int32_t i = 0; i < 600; ++i) // ten seconds of lying there
+    {
+        world.physics.Update(kStep);
+        world.physics.CaptureState();
+        for (const Assisi::Physics::ContactEvent &event : world.physics.ContactEvents())
+        {
+            if (event.entity != ball)
+                continue;
+            if (event.phase == Assisi::Physics::ContactPhase::Enter)
+                ++enters;
+            else if (event.phase == Assisi::Physics::ContactPhase::Stay)
+                ++stays;
+            else
+                ++exits;
+        }
+    }
+
+    // It went to sleep somewhere in there — which is what makes the Stay count
+    // interesting, since Jolt reports nothing for a sleeping pair.
+    const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
+    REQUIRE(body != nullptr);
+    REQUIRE_FALSE(world.physics.IsBodyActive(*body));
+
+    CHECK(stays == 600);
+    CHECK(enters == 0);
+    CHECK(exits == 0);
 }
 
-TEST_CASE("Turning contact reporting off stops recording and drops the log")
+TEST_CASE("A pair that really separates reports one Exit")
 {
+    // The other half: dormancy must not swallow a genuine departure. Teleporting
+    // the body away wakes it, so the pair is missing with a body awake — an Exit,
+    // not a Stay.
     WorldManager worlds;
-    World &world = worlds.Create("Hush");
-    world.physics.SetContactReporting(true);
-    (void)BuildDropScene(world, {0.f, 3.f, 0.f});
+    World &world = worlds.Create("Leaves");
+    const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
 
-    REQUIRE_FALSE(StepUntilContact(world).empty());
-    CHECK_FALSE(world.physics.Contacts().empty()); // still there until something clears it
+    REQUIRE_FALSE(StepUntilEnter(world).empty());
 
-    world.physics.SetContactReporting(false);
-    CHECK_FALSE(world.physics.IsContactReporting());
-    CHECK(world.physics.Contacts().empty());
-}
+    // Let it settle all the way to sleep first, so the Exit has to survive the
+    // dormant case rather than being handed an already-awake pair.
+    const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
+    REQUIRE(body != nullptr);
+    for (int32_t i = 0; i < 300; ++i)
+    {
+        world.physics.Update(kStep);
+        world.physics.CaptureState();
+    }
+    REQUIRE_FALSE(world.physics.IsBodyActive(*body));
 
-TEST_CASE("ApplySystems resets contact reporting so it cannot leak between levels")
-{
-    // A system that wants contact reporting turns it on for itself, so
-    // re-targeting a world at a list that does not want it must switch it back
-    // off. Otherwise the first bouncy level opened in a session taxes every level
-    // after it with a contact log nothing reads.
-    WorldManager worlds;
-    World &world = worlds.Create("Reused");
+    world.physics.SetBodyTransform(*body, {0.f, 40.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f});
 
-    world.physics.SetContactReporting(true);
-    CHECK(world.physics.IsContactReporting());
+    int32_t exits = 0;
+    for (int32_t i = 0; i < 20; ++i)
+    {
+        world.physics.Update(kStep);
+        world.physics.CaptureState();
+        for (const Assisi::Physics::ContactEvent &event : world.physics.ContactEvents())
+        {
+            if (event.entity == ball && event.phase == Assisi::Physics::ContactPhase::Exit)
+                ++exits;
+        }
+    }
 
-    // Any re-target clears it, including to the empty list.
-    CHECK(worlds.ApplySystems(world, {}, "(test)"));
-    CHECK_FALSE(world.physics.IsContactReporting());
+    CHECK(exits == 1);
 }
 
 TEST_CASE("ApplySystems refuses a name this build does not declare")
@@ -211,6 +232,56 @@ TEST_CASE("ApplySystems leaves the running systems alone when it refuses")
     CHECK(world.systems.Has("Counter"));
 }
 
+namespace
+{
+
+/// The impact speed of the ball's first Enter, and the vertical velocity the
+/// bounce system left it with on that same step. Both zero if it never landed.
+struct BounceOutcome
+{
+    float impactSpeed = 0.f;
+    float launchSpeed = 0.f;
+};
+
+/// Runs the loop OnFixedUpdate uses — systems first, then the step — until the
+/// ball's first Enter has been seen and acted on.
+BounceOutcome RunUntilBounce(WorldManager &worlds, World &world, Assisi::ECS::Entity ball,
+                             int32_t maxSteps = 240)
+{
+    Assisi::Core::EventQueue events;
+    Assisi::Window::ActionMap actions;
+
+    BounceOutcome outcome;
+    for (int32_t i = 0; i < maxSteps && outcome.launchSpeed == 0.f; ++i)
+    {
+        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
+
+        for (const Assisi::Physics::ContactEvent &event : world.physics.ContactEvents())
+        {
+            if (event.entity == ball && event.phase == Assisi::Physics::ContactPhase::Enter &&
+                outcome.impactSpeed == 0.f)
+            {
+                outcome.impactSpeed = -event.velocity.y;
+            }
+        }
+
+        BounceSystem(ctx);
+
+        if (outcome.impactSpeed > 0.f)
+        {
+            const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
+            REQUIRE(body != nullptr);
+            outcome.launchSpeed = world.physics.GetBodyVelocity(*body).first.y;
+        }
+
+        world.physics.Update(kStep);
+        world.physics.CaptureState();
+    }
+    return outcome;
+}
+
+} // namespace
+
 TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
 {
     // The end-to-end behaviour: drop a box on a floor, run the system the way a
@@ -218,46 +289,15 @@ TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
     // up rather than staying put.
     WorldManager worlds;
     World &world = worlds.Create("Bouncy");
-    world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
     (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = 0.5f});
 
-    Assisi::Core::EventQueue events;
-    Assisi::Window::ActionMap actions;
+    const BounceOutcome outcome = RunUntilBounce(worlds, world, ball);
 
-    float impactSpeed = 0.f;
-    float launchSpeed = 0.f;
-
-    for (int32_t i = 0; i < 240 && launchSpeed == 0.f; ++i)
-    {
-        // Systems first, then the step — the order OnFixedUpdate uses, so the
-        // velocity the system writes is the one the next step simulates.
-        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
-
-        const std::span<const Assisi::Physics::Contact> contacts = world.physics.Contacts();
-        for (const Assisi::Physics::Contact &contact : contacts)
-        {
-            if (contact.entity == ball)
-                impactSpeed = -contact.velocity.y;
-        }
-
-        BounceSystem(ctx);
-
-        if (impactSpeed > 0.f)
-        {
-            const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-            REQUIRE(body != nullptr);
-            launchSpeed = world.physics.GetBodyVelocity(*body).first.y;
-        }
-
-        world.physics.Update(kStep);
-        world.physics.CaptureState();
-    }
-
-    REQUIRE(impactSpeed > 4.f);       // it really did arrive at speed
-    CHECK(launchSpeed > 0.f);         // ...and left going the other way
-    CHECK(launchSpeed == doctest::Approx(impactSpeed * 0.5f).epsilon(0.01)); // at half of it
+    REQUIRE(outcome.impactSpeed > 4.f); // it really did arrive at speed
+    CHECK(outcome.launchSpeed > 0.f);   // ...and left going the other way
+    CHECK(outcome.launchSpeed == doctest::Approx(outcome.impactSpeed * 0.5f).epsilon(0.01)); // at half
 }
 
 TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to that")
@@ -269,7 +309,6 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
     {
         WorldManager worlds;
         World &world = worlds.Create("Dead");
-        world.physics.SetContactReporting(true);
 
         const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
         (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = rebound});
@@ -277,17 +316,23 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
         Assisi::Core::EventQueue events;
         Assisi::Window::ActionMap actions;
 
-        bool bounced      = false;
+        bool  bounced      = false;
         float afterContact = 1.f;
 
         for (int32_t i = 0; i < 240 && !bounced; ++i)
         {
             SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
 
-            const bool hadContact = !world.physics.Contacts().empty();
+            const std::span<const Assisi::Physics::ContactEvent> stepEvents = world.physics.ContactEvents();
+            const bool entered = std::any_of(stepEvents.begin(), stepEvents.end(),
+                                             [ball](const Assisi::Physics::ContactEvent &e)
+                                             {
+                                                 return e.entity == ball &&
+                                                        e.phase == Assisi::Physics::ContactPhase::Enter;
+                                             });
             BounceSystem(ctx);
 
-            if (hadContact)
+            if (entered)
             {
                 const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
                 REQUIRE(body != nullptr);
@@ -316,7 +361,6 @@ TEST_CASE("A body already at rest never launches itself, even at rebound > 1")
     // impact here to respond to.
     WorldManager worlds;
     World &world = worlds.Create("Jittery");
-    world.physics.SetContactReporting(true);
 
     // Floor top is at y = 0.25 and the box's half-extent is 0.5, so this is its
     // resting height: it is already touching, with zero velocity.
@@ -358,7 +402,6 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
     // consequence of retuning the constant is written down in a place that runs.
     WorldManager worlds;
     World &world = worlds.Create("Runaway");
-    world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 0.84f, 0.f});
     (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = 1.5f});
@@ -373,10 +416,13 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
     {
         SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
 
-        for (const Assisi::Physics::Contact &contact : world.physics.Contacts())
+        for (const Assisi::Physics::ContactEvent &event : world.physics.ContactEvents())
         {
-            if (contact.entity == ball && firstClosingSpeed == 0.f)
-                firstClosingSpeed = -glm::dot(contact.velocity, contact.normal);
+            if (event.entity == ball && event.phase == Assisi::Physics::ContactPhase::Enter &&
+                firstClosingSpeed == 0.f)
+            {
+                firstClosingSpeed = -glm::dot(event.velocity, event.normal);
+            }
         }
 
         BounceSystem(ctx);
@@ -413,43 +459,15 @@ TEST_CASE("A real impact still bounces at rebound > 1, and gains speed")
     // it came in, which is what rebound above 1 is for.
     WorldManager worlds;
     World &world = worlds.Create("Hot");
-    world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
     (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = 1.5f});
 
-    Assisi::Core::EventQueue events;
-    Assisi::Window::ActionMap actions;
+    const BounceOutcome outcome = RunUntilBounce(worlds, world, ball);
 
-    float impactSpeed = 0.f;
-    float launchSpeed = 0.f;
-
-    for (int32_t i = 0; i < 240 && launchSpeed == 0.f; ++i)
-    {
-        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
-
-        for (const Assisi::Physics::Contact &contact : world.physics.Contacts())
-        {
-            if (contact.entity == ball)
-                impactSpeed = -contact.velocity.y;
-        }
-
-        BounceSystem(ctx);
-
-        if (impactSpeed > 0.f)
-        {
-            const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-            REQUIRE(body != nullptr);
-            launchSpeed = world.physics.GetBodyVelocity(*body).first.y;
-        }
-
-        world.physics.Update(kStep);
-        world.physics.CaptureState();
-    }
-
-    REQUIRE(impactSpeed > 4.f);
-    CHECK(launchSpeed > impactSpeed); // it left faster than it arrived
-    CHECK(launchSpeed == doctest::Approx(impactSpeed * 1.5f).epsilon(0.01));
+    REQUIRE(outcome.impactSpeed > 4.f);
+    CHECK(outcome.launchSpeed > outcome.impactSpeed); // it left faster than it arrived
+    CHECK(outcome.launchSpeed == doctest::Approx(outcome.impactSpeed * 1.5f).epsilon(0.01));
 }
 
 TEST_CASE("A body with no Bounce component is left alone")
@@ -458,7 +476,6 @@ TEST_CASE("A body with no Bounce component is left alone")
     // world collides too, and none of it should be relaunched.
     WorldManager worlds;
     World &world = worlds.Create("Inert");
-    world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
 
@@ -466,12 +483,12 @@ TEST_CASE("A body with no Bounce component is left alone")
     Assisi::Window::ActionMap actions;
 
     float highestAfterLanding = -100.f;
-    bool landed              = false;
+    bool  landed              = false;
 
     for (int32_t i = 0; i < 240; ++i)
     {
         SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
-        if (!world.physics.Contacts().empty())
+        if (!world.physics.ContactEvents().empty())
             landed = true;
         BounceSystem(ctx);
 

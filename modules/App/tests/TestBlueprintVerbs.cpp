@@ -168,7 +168,8 @@ TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components
     constexpr Physics::PhysicsWorld::ColliderShapeDesc kBall{.shape = Physics::ColliderShape::Sphere,
                                                              .radius = 0.25f};
     const Physics::RigidBody probe =
-        world.physics.AddBody({0.f, 3.f, 0.f}, glm::quat(1.f, 0.f, 0.f, 0.f), kBall, Physics::BodyMotion::Dynamic);
+        world.physics.AddBody(Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {0.f, 3.f, 0.f}}, kBall,
+                              Physics::BodyMotion::Dynamic, {});
 
     for (int32_t i = 0; i < 180; ++i)
         world.physics.Update(kStep);

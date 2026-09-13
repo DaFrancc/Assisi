@@ -263,6 +263,30 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     }
     case FieldType::UInt32:
     {
+        // An unsigned field carrying enumerators is a bitmask — a set of them, one
+        // bit per enumerator at its own value — rather than a number anyone would
+        // want to type. AFIELD(bitmask = ...) is what puts them here; an enum field
+        // holding exactly one of them is told apart by its non-zero enumSize.
+        if (!field.enumConstants.empty() && field.enumSize == 0)
+        {
+            uint32_t &mask = *static_cast<uint32_t *>(fp);
+            if (ImGui::TreeNodeEx(field.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                for (const auto &constant : field.enumConstants)
+                {
+                    const uint32_t bit = 1u << static_cast<uint32_t>(constant.value);
+                    bool set = (mask & bit) != 0u;
+                    if (ImGui::Checkbox(constant.name.c_str(), &set))
+                    {
+                        mask   = set ? (mask | bit) : (mask & ~bit);
+                        edited = true;
+                    }
+                }
+                ImGui::TreePop();
+            }
+            break;
+        }
+
         const uint32_t minBound = bounds.hasMin ? static_cast<uint32_t>(bounds.minValue) : 0u;
         const uint32_t maxBound = bounds.hasMax ? static_cast<uint32_t>(bounds.maxValue) : UINT32_MAX;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,

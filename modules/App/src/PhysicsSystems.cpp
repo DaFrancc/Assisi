@@ -16,19 +16,13 @@ namespace Assisi::App
 
 void BounceSystem(SystemContext &ctx)
 {
-    // Its own need, turned on where the need is rather than in whatever file
-    // happened to name this system. Idempotent, so it also survives a world that
-    // switched reporting off.
-    if (!ctx.world.physics.IsContactReporting())
-        ctx.world.physics.SetContactReporting(true);
-
     ECS::Scene &scene = ctx.world.scene;
 
-    // Walk the contact log rather than querying for Bounce entities: contacts
-    // number in the handful even when bouncers number in the thousands, and an
-    // entity that touched nothing this step has nothing to do either way.
-    const std::span<const Physics::Contact> contacts = ctx.world.physics.Contacts();
-    if (contacts.empty())
+    // Walk the events rather than querying for Bounce entities: contacts number in
+    // the handful even when bouncers number in the thousands, and an entity that
+    // touched nothing this step has nothing to do either way.
+    const std::span<const Physics::ContactEvent> events = ctx.world.physics.ContactEvents();
+    if (events.empty())
         return;
 
     // One bounce per entity per step (see the header). Function-local, so nothing
@@ -37,8 +31,15 @@ void BounceSystem(SystemContext &ctx)
     // never in the system itself.
     std::vector<ECS::Entity> bounced;
 
-    for (const Physics::Contact &contact : contacts)
+    for (const Physics::ContactEvent &contact : events)
     {
+        // Only the step a body arrives on. A resting body reports Stay forever,
+        // and reflecting that would launch something that is simply lying there.
+        // A sensor is skipped because it resisted nothing: a body passes through
+        // it, so there is no surface to bounce off.
+        if (contact.phase != Physics::ContactPhase::Enter || contact.sensor)
+            continue;
+
         const Physics::Bounce *bounce = scene.Get<Physics::Bounce>(contact.entity);
         if (bounce == nullptr)
             continue;

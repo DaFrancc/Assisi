@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -31,36 +32,116 @@ namespace Assisi::Physics
 /// @brief Motion type for newly created bodies.
 enum class BodyMotion : std::uint8_t
 {
-    Static,  ///< Immovable; collides but is never moved by the simulation.
-    Dynamic, ///< Fully simulated; affected by gravity and collisions.
+    Static,    ///< Immovable; collides but is never moved by the simulation.
+    Dynamic,   ///< Fully simulated; affected by gravity and collisions.
+    Kinematic, ///< Moved only by what sets its pose; pushes dynamic bodies and is pushed by nothing.
+    Count,
 };
 
-/// @brief One side of a collision that began during the most recent Update().
+/// @brief A position and orientation in world space.
+///
+/// Deliberately not ECS::Transform, which is a *local* pose — one under a parent
+/// is an offset from that parent, the mismatch ParentWorldFn exists to undo. It
+/// also carries a scale and a cached world matrix that mean nothing to a body
+/// whose size comes from its collider.
+struct Pose
+{
+    glm::quat rotation{1.f, 0.f, 0.f, 0.f};
+    glm::vec3 position{0.f};
+};
+
+/// @brief What a participant is, and what it interacts with.
+///
+/// Carried by bodies and by queries alike, because a query is a participant: a
+/// cast decides what it may hit by the same two-way rule a collision does.
+struct CollisionFilter
+{
+    /// One bit per CollisionChannel, at that enumerator's value.
+    std::uint32_t collidesWith = AllChannels;
+
+    CollisionChannel channel = CollisionChannel::World;
+
+    /// @brief The same filter with @p channel removed from its mask.
+    ///
+    /// What a movement query wants: a character sweeping its capsule forward
+    /// reuses its body's own filter minus Trigger, because a sensor reports the
+    /// character but never stops it, and a cast that stopped at one would have
+    /// the character walk into an invisible wall.
+    [[nodiscard]] CollisionFilter Without(CollisionChannel excluded) const
+    {
+        return CollisionFilter{collidesWith & ~(1u << static_cast<std::uint32_t>(excluded)), channel};
+    }
+};
+
+/// @brief Where a cast met the first body in its path.
+///
+/// One shape for both kinds of cast: what a caller does with a hit — place a
+/// cursor, stand a character on it, decide a shot connected — reads the same
+/// four fields whether a ray or a swept volume found it.
+struct QueryHit
+{
+    glm::vec3 position{0.f}; ///< World-space point on the struck surface.
+
+    /// Unit surface normal at @ref position, pointing out of the surface and so
+    /// back towards the caster. Reflecting a direction about it, or comparing it
+    /// against up to decide whether a surface is walkable, both work without the
+    /// caller knowing which cast produced the hit.
+    glm::vec3 normal{0.f};
+
+    /// The entity whose body was struck, or NullEntity when that body has none —
+    /// only AddBodyFromDescriptor knows an entity. The handle is the one the body
+    /// was created with, so check it is still alive before acting on it.
+    ECS::Entity entity{ECS::NullEntity};
+
+    /// Distance from the cast's origin to @ref position along the cast. Zero when
+    /// the cast began already overlapping, which is a hit, not a miss.
+    float distance = 0.f;
+};
+
+/// @brief Where a pair of bodies is in the life of their contact.
+enum class ContactPhase : std::uint8_t
+{
+    Enter, ///< They were not touching last step and are now.
+    Stay,  ///< They were touching last step and still are.
+    Exit,  ///< They were touching last step and are not now.
+    Count,
+};
+
+/// @brief One side of one body pair's contact during the most recent Update().
 ///
 /// Reported per participant rather than per pair: two bodies touching produce
-/// two Contacts, one from each point of view, so a consumer never has to work
-/// out which end of the pair it is looking at. A body whose entity is unknown to
+/// two events, one from each point of view, so a consumer never has to work out
+/// which end of the pair it is looking at. A body whose entity is unknown to
 /// this world (created through the raw AddBody, which takes no entity) is only
 /// ever the @ref other side.
 ///
-/// Only *new* contacts appear here. A body resting on the floor reports once, on
-/// the step it lands, and then nothing — which is what keeps a contact-driven
-/// response from re-firing every step into a body that is simply lying there.
-struct Contact
+/// Exactly one event per pair per participant per step, whatever the pair's
+/// contact geometry did: several manifolds and several collision substeps
+/// collapse into one.
+struct ContactEvent
 {
-    ECS::Entity entity{ECS::NullEntity}; ///< The entity this record speaks for.
-    ECS::Entity other{ECS::NullEntity};  ///< What it hit; NullEntity if that body has no entity.
-
     /// Unit world-space normal pointing away from @ref other's surface — so a
     /// body arriving at a floor sees +Y here, whichever way the pair was ordered.
     glm::vec3 normal{0.f};
 
-    /// @ref entity's linear velocity at the moment the contact was found, which
-    /// is **before the solver ran**. This is the field that makes the log worth
+    /// @ref entity's linear velocity when the contact was observed, which is
+    /// **before the solver ran**. This is the field that makes the record worth
     /// keeping: by the time a system sees it, the step has already absorbed the
     /// impact and the body's live velocity is whatever Jolt left it with. Zero
-    /// for a static body.
+    /// for a static body. On an Exit, and on a Stay for a pair whose bodies are
+    /// both asleep, this is the last value observed rather than a fresh one —
+    /// nothing measured it this step.
     glm::vec3 velocity{0.f};
+
+    ECS::Entity entity{ECS::NullEntity}; ///< The entity this record speaks for.
+    ECS::Entity other{ECS::NullEntity};  ///< What it touched; NullEntity if that body has no entity.
+
+    ContactPhase phase = ContactPhase::Enter;
+
+    /// True when either body is a sensor, which is to say on the Trigger channel.
+    /// A response that pushes back — a bounce, a damage impulse — wants only the
+    /// contacts that actually resisted something, and a sensor resisted nothing.
+    bool sensor = false;
 };
 
 /// @brief Wraps a Jolt PhysicsSystem and exposes a minimal API for the game loop.
@@ -89,11 +170,20 @@ public:
 
     /// @brief Creates a rigid body with the given collider and returns its component.
     ///
-    /// @param position   Centre of the body in world space.
-    /// @param rotation   Initial orientation as a quaternion (normalized internally).
-    /// @param shape      Collider primitive and its dimensions.
-    /// @param motion     Static bodies never move; dynamic bodies fall under gravity.
-    RigidBody AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape, BodyMotion motion);
+    /// A body on the Trigger channel is created as a sensor: detected by whatever
+    /// enters it, blocking nothing. Its motion chooses how faithfully it detects
+    /// rather than whether it moves — Static sees only bodies that are awake,
+    /// while Dynamic and Kinematic both build an activated kinematic sensor that
+    /// never sleeps and so also sees bodies at rest. Dynamic is folded into
+    /// Kinematic because a sensor falling under gravity is never what was meant.
+    ///
+    /// @param pose    Centre and orientation in world space (rotation is normalized internally).
+    /// @param shape   Collider primitive and its dimensions.
+    /// @param motion  Static bodies never move; dynamic bodies fall under gravity;
+    ///                kinematic bodies move only when something sets their pose.
+    /// @param filter  What this body is, and what it interacts with.
+    RigidBody AddBody(const Pose &pose, const ColliderShapeDesc &shape, BodyMotion motion,
+                      CollisionFilter filter);
 
     /// @brief Answers "what world matrix is this entity's Transform relative to?"
     /// — its parent's, or null if it has none.
@@ -144,30 +234,88 @@ public:
     /// @brief Advances the simulation by `deltaTime` seconds.
     void Update(float deltaTime);
 
-    // --- Contact reporting ---------------------------------------------------
+    // --- Contact events ------------------------------------------------------
     //
-    // Off by default, and off costs nothing: with reporting disabled the world
-    // installs no Jolt contact listener at all, so the simulation never makes the
-    // call. It is per world, and a system that needs contacts switches it on for
-    // itself when it runs — so a world whose level named no such system never pays
-    // for it.
+    // Always on. Trigger volumes are authored data, and a switch a level had to
+    // remember to flip would make one silently do nothing.
+    //
+    // Jolt's own contact callbacks cannot be the source of these. Its
+    // "contact removed" callback fires when a body falls *asleep*, and forbids
+    // touching either body because one may already have been destroyed — so a
+    // design that trusted it would report a motionless character as having left
+    // the volume it is standing in. Instead the callbacks only record which pairs
+    // touched, and the phases are derived after the step by comparing that
+    // against the previous step's pairs.
 
-    /// @brief Starts or stops recording new contacts during Update().
-    /// Turning it off also drops whatever is currently logged.
-    void SetContactReporting(bool enable);
-
-    /// @brief Whether this world is recording contacts (see SetContactReporting).
-    [[nodiscard]] bool IsContactReporting() const;
-
-    /// @brief The contacts that began during the most recent Update(), or an
-    /// empty span when reporting is off.
+    /// @brief Every contact event produced by the most recent Update().
     ///
     /// Cleared at the top of every Update(), so the span describes exactly one
-    /// fixed step and a consumer cannot process the same impact twice. Valid
-    /// until the next Update() or Clear(). Entity handles in it are the ones this
-    /// world's bodies were created with, so a consumer should still check the
-    /// entity is alive before acting on it.
-    [[nodiscard]] std::span<const Contact> Contacts() const;
+    /// fixed step and a consumer cannot process the same event twice. Valid until
+    /// the next Update() or Clear().
+    ///
+    /// Ordered by entity, then by what it touched, then by phase — the order Jolt
+    /// discovers contacts in depends on how its jobs were scheduled, and a
+    /// consumer that accumulated in that order would produce a different answer
+    /// from one run to the next.
+    ///
+    /// A pair that stops being reported while *both* its bodies are asleep counts
+    /// as still touching, and keeps producing Stay. A sleeping body has not moved;
+    /// the simulation merely stopped testing it.
+    [[nodiscard]] std::span<const ContactEvent> ContactEvents() const;
+
+    // --- World queries -------------------------------------------------------
+    //
+    // Each takes the filter of the thing doing the asking, so a query is
+    // filtered by the same two-way rule as a collision: it finds a body only if
+    // its own mask includes that body's channel and the body's mask includes
+    // its channel.
+    //
+    // A sweep is given as a displacement rather than a direction and a length,
+    // which is the one spelling that cannot disagree with itself. Distances in
+    // the result are along it.
+    //
+    // None of these may be called from inside a contact callback — Jolt asserts,
+    // because the bodies are already locked.
+
+    /// @brief The first body a ray meets, or nothing if it meets none.
+    ///
+    /// A ray starting inside a body reports that body at distance 0. That is
+    /// what @p ignore is for: a character casting from its own centre passes
+    /// itself and gets the first thing that is not itself.
+    ///
+    /// @param origin  Where the ray starts, in world space.
+    /// @param sweep   Direction and length together; a zero sweep finds nothing.
+    /// @param filter  What is asking, and what it may find.
+    /// @param ignore  An entity to skip, or NullEntity to skip nothing.
+    [[nodiscard]] std::optional<QueryHit> CastRay(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter,
+                                                  ECS::Entity ignore) const;
+
+    /// @brief The first body a swept shape meets, or nothing if it meets none.
+    ///
+    /// The character-controller query: "if this capsule moved by @p sweep, what
+    /// would stop it?" A cast that begins already overlapping something reports
+    /// it at distance 0 rather than missing.
+    ///
+    /// @param shape   Collider primitive and its dimensions to sweep.
+    /// @param start   Where the shape begins, in world space.
+    /// @param sweep   Direction and length together; a zero sweep finds nothing.
+    /// @param filter  What is asking, and what it may find.
+    /// @param ignore  An entity to skip, or NullEntity to skip nothing.
+    [[nodiscard]] std::optional<QueryHit> CastShape(const ColliderShapeDesc &shape, const Pose &start,
+                                                    glm::vec3 sweep, CollisionFilter filter,
+                                                    ECS::Entity ignore) const;
+
+    /// @brief Every entity whose body intersects a shape held still.
+    ///
+    /// Answers the question a sensor cannot: what is inside this volume right
+    /// now, static scenery included. A trigger reports bodies that move, because
+    /// that is what a contact is; walls and floors never generate one, so asking
+    /// once is the only way to hear about them.
+    ///
+    /// Bodies with no entity are left out — a list of NullEntity says nothing.
+    /// Each entity appears once however many of its shapes overlap.
+    [[nodiscard]] std::vector<ECS::Entity> Overlap(const ColliderShapeDesc &shape, const Pose &at,
+                                                   CollisionFilter filter, ECS::Entity ignore) const;
 
     /// @brief Number of collision substeps Jolt runs per Update() call.
     ///
@@ -250,6 +398,10 @@ public:
     [[nodiscard]] bool IsBodyActive(const RigidBody &body) const;
 
     /// @brief Put @p body to sleep without moving it.
+    ///
+    /// A kinematic sensor put to sleep stops detecting anything, since a sleeping
+    /// body generates no contacts. Nothing prevents it; a trigger that has to be
+    /// switched off is better expressed by removing the body.
     void DeactivateBody(const RigidBody &body);
 
     /// @brief Set pose, both velocities, and activation in one call.
@@ -284,6 +436,14 @@ public:
     bool IsBodyCCDEnabled(const RigidBody &body) const;
 
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
+    ///
+    /// Moving a static sensor also wakes whatever lies in the space it left and
+    /// the space it now occupies. Neither set would otherwise be re-tested — a
+    /// sleeping body generates no contacts — so the volume would keep reporting
+    /// what it no longer contains and stay silent about what it now does.
+    ///
+    /// This is a teleport, not a swept move: a small, fast-moving volume can pass
+    /// through a thin body between steps without ever overlapping it on one.
     void SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation);
 
     /// @brief Replaces a body's linear velocity (m/s), waking it.

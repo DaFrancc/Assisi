@@ -24,7 +24,14 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -35,12 +42,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -50,34 +59,116 @@
 namespace
 {
 
-namespace Layers
+// This block sits above `namespace Assisi::Physics`, since Jolt needs the filter
+// implementations before the world that installs them.
+using Assisi::Physics::BodyMotion;
+using Assisi::Physics::CollisionChannel;
+using Assisi::Physics::CollisionFilter;
+
+/* An ObjectLayer carries everything a filter decision needs, packed by hand
+   rather than through Jolt's ObjectLayerPairFilterMask. That class splits the
+   layer evenly into group and mask bits and derives the broad-phase layer from
+   the group alone, which leaves nowhere to record whether a body moves — so
+   static and dynamic bodies would share one broad-phase tree and every static
+   body would be re-tested against every other one.
+
+   Layout, low bits first: the channel's index, the mask of channels it collides
+   with, and the motion type. 22 bits of the 32 the build configures.
+
+   Jolt's ObjectLayer is uint16 unless JPH_OBJECT_LAYER_BITS says otherwise. The
+   root CMakeLists sets it to 32, and Jolt makes that a PUBLIC definition on its
+   own target so this file and Jolt agree; the assert is what catches the day
+   they stop agreeing, because a narrower layer would silently truncate the mask
+   and every body would collide with the wrong things. */
+static_assert(sizeof(JPH::ObjectLayer) == sizeof(std::uint32_t),
+              "Assisi packs 22 bits into a Jolt ObjectLayer; build Jolt with OBJECT_LAYER_BITS=32.");
+
+static constexpr std::uint32_t ChannelBits = 4;
+static constexpr std::uint32_t MaskBits    = 16;
+static constexpr std::uint32_t MotionBits  = 2;
+
+static constexpr std::uint32_t ChannelShift = 0;
+static constexpr std::uint32_t MaskShift    = ChannelShift + ChannelBits;
+static constexpr std::uint32_t MotionShift  = MaskShift + MaskBits;
+
+static constexpr std::uint32_t ChannelMask = (1u << ChannelBits) - 1u;
+static constexpr std::uint32_t MaskMask    = (1u << MaskBits) - 1u;
+static constexpr std::uint32_t MotionMask  = (1u << MotionBits) - 1u;
+
+static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) <= MaskBits,
+              "Every channel needs a bit in the collides-with mask.");
+static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) <= ChannelMask + 1u,
+              "Every channel needs to be nameable by the channel index.");
+static_assert(static_cast<std::uint32_t>(BodyMotion::Count) <= MotionMask + 1u,
+              "Every motion type needs to fit the motion field.");
+
+JPH::ObjectLayer PackLayer(CollisionFilter filter, BodyMotion motion)
 {
-static constexpr JPH::ObjectLayer kStatic = 0;
-static constexpr JPH::ObjectLayer kDynamic = 1;
-} // namespace Layers
+    const std::uint32_t channel = static_cast<std::uint32_t>(filter.channel) & ChannelMask;
+    const std::uint32_t mask    = filter.collidesWith & MaskMask;
+    const std::uint32_t packed  = (channel << ChannelShift) | (mask << MaskShift) |
+                                  ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
+    return static_cast<JPH::ObjectLayer>(packed);
+}
+
+std::uint32_t ChannelOf(JPH::ObjectLayer layer)
+{
+    return (static_cast<std::uint32_t>(layer) >> ChannelShift) & ChannelMask;
+}
+
+/// The channel as a single set bit, ready to test against a collides-with mask.
+std::uint32_t ChannelBitOf(JPH::ObjectLayer layer)
+{
+    return 1u << ChannelOf(layer);
+}
+
+std::uint32_t MaskOf(JPH::ObjectLayer layer)
+{
+    return (static_cast<std::uint32_t>(layer) >> MaskShift) & MaskMask;
+}
+
+BodyMotion MotionOf(JPH::ObjectLayer layer)
+{
+    return static_cast<BodyMotion>((static_cast<std::uint32_t>(layer) >> MotionShift) & MotionMask);
+}
+
+bool IsTriggerLayer(JPH::ObjectLayer layer)
+{
+    return ChannelOf(layer) == static_cast<std::uint32_t>(CollisionChannel::Trigger);
+}
+
+/// The rule both bodies and queries are filtered by: each side's mask must admit
+/// the other's channel. One-sided agreement is not enough, so either participant
+/// can refuse the pair on its own.
+bool ChannelsAgree(std::uint32_t maskA, std::uint32_t channelBitA, std::uint32_t maskB,
+                   std::uint32_t channelBitB)
+{
+    return (maskA & channelBitB) != 0u && (maskB & channelBitA) != 0u;
+}
 
 namespace BPLayers
 {
-static constexpr JPH::BroadPhaseLayer kStatic(0);
-static constexpr JPH::BroadPhaseLayer kDynamic(1);
-static constexpr unsigned int kCount = 2;
+static constexpr JPH::BroadPhaseLayer Static(0);
+static constexpr JPH::BroadPhaseLayer Moving(1);
+static constexpr unsigned int Count = 2;
 } // namespace BPLayers
 
-// Maps object layers → broad-phase layers.
+// Maps object layers → broad-phase layers. Bodies that never move get their own
+// tree, which is the one Jolt does not rebuild as the simulation runs.
 class BPLayerInterface final : public JPH::BroadPhaseLayerInterface
 {
 public:
-    unsigned int GetNumBroadPhaseLayers() const override { return BPLayers::kCount; }
+    unsigned int GetNumBroadPhaseLayers() const override { return BPLayers::Count; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
     {
-        return layer == Layers::kStatic ? BPLayers::kStatic : BPLayers::kDynamic;
+        return MotionOf(layer) == BodyMotion::Static ? BPLayers::Static : BPLayers::Moving;
     }
 
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
     const char *GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override
     {
-        return layer == BPLayers::kStatic ? "Static" : "Dynamic";
+        return layer == BPLayers::Static ? "Static" : "Moving";
     }
 #endif
 };
@@ -88,15 +179,18 @@ class ObjVsBPFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 public:
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bpLayer) const override
     {
-        switch (layer)
-        {
-        case Layers::kStatic:
-            return bpLayer == BPLayers::kDynamic;
-        case Layers::kDynamic:
+        if (bpLayer != BPLayers::Static)
             return true;
-        default:
+
+        // Two bodies that both never move can never begin to touch, so walking
+        // the static tree for one of them only ever confirms that.
+        if (MotionOf(layer) == BodyMotion::Static)
             return false;
-        }
+
+        // A sensor is kinematic, and Jolt generates no kinematic-vs-static
+        // contact unless a body asks for one, which none here does. The walk
+        // would find candidates and the narrow phase would discard every one.
+        return !IsTriggerLayer(layer);
     }
 };
 
@@ -106,16 +200,42 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
 public:
     bool ShouldCollide(JPH::ObjectLayer layerA, JPH::ObjectLayer layerB) const override
     {
-        switch (layerA)
-        {
-        case Layers::kStatic:
-            return layerB == Layers::kDynamic;
-        case Layers::kDynamic:
-            return true;
-        default:
+        if (MotionOf(layerA) == BodyMotion::Static && MotionOf(layerB) == BodyMotion::Static)
             return false;
-        }
+
+        // One sensor inside another says nothing about the world: neither is
+        // solid, so neither entered anything. Reachable because the default
+        // sensor is kinematic, and Jolt does pair a kinematic body with a sensor.
+        if (IsTriggerLayer(layerA) && IsTriggerLayer(layerB))
+            return false;
+
+        return ChannelsAgree(MaskOf(layerA), ChannelBitOf(layerA), MaskOf(layerB), ChannelBitOf(layerB));
     }
+};
+
+/// Applies the two-way channel rule between one participant and each body a
+/// query reaches. A query is filtered exactly as a body is: it finds something
+/// only if it admits that thing's channel and that thing admits its channel.
+///
+/// Unlike ObjLayerFilter this ignores motion entirely. A query is not a body: it
+/// has no motion type, and the reasons two static bodies are never paired — they
+/// cannot begin to touch — say nothing about whether a ray may hit a wall.
+class FilterLayerFilter final : public JPH::ObjectLayerFilter
+{
+public:
+    explicit FilterLayerFilter(CollisionFilter filter)
+        : _mask(filter.collidesWith), _channelBit(1u << static_cast<std::uint32_t>(filter.channel))
+    {
+    }
+
+    bool ShouldCollide(JPH::ObjectLayer layer) const override
+    {
+        return ChannelsAgree(_mask, _channelBit, MaskOf(layer), ChannelBitOf(layer));
+    }
+
+private:
+    std::uint32_t _mask;
+    std::uint32_t _channelBit;
 };
 
 // ---------------------------------------------------------------------------
@@ -344,7 +464,7 @@ struct PhysicsWorld::Impl
     /// in Clear.
     std::unordered_map<JPH::uint32, MotionSnapshot> snapshots;
 
-    // --- Contact reporting (off unless SetContactReporting turns it on) -------
+    // --- Contact events ------------------------------------------------------
 
     /// The entity behind each body, keyed like `snapshots`. Only bodies created
     /// through AddBodyFromDescriptor appear — it is the one entry point that knows
@@ -352,14 +472,67 @@ struct PhysicsWorld::Impl
     /// NullEntity for that side rather than a wrong handle.
     std::unordered_map<JPH::uint32, ECS::Entity> bodyEntities;
 
-    bool contactReporting = false;
+    /// One body pair seen touching during the step Jolt is running.
+    ///
+    /// Deliberately not an event: the callbacks cannot tell Enter from Stay
+    /// without the previous step's pairs, and cannot see Exit at all. They record
+    /// what touched; `pairs` turns that into phases once the step is over.
+    struct TouchRecord
+    {
+        glm::vec3 normal{0.f};    ///< Away from body1's surface, as Jolt reports it.
+        glm::vec3 velocity1{0.f}; ///< Pre-solve, so an impact's speed survives the solver.
+        glm::vec3 velocity2{0.f};
+        JPH::BodyID id1;
+        JPH::BodyID id2;
+        bool sensor = false;
+    };
 
-    /// Written from Jolt's worker jobs during Update(), read from the main thread
-    /// between steps. The mutex only guards the append: contacts are rare relative
-    /// to the collision work that produced them, so this never becomes the
+    /// What is known about a pair that was touching as of some step.
+    ///
+    /// `stamp` is the step it was last seen in; the sweep after each step treats
+    /// anything older as gone. The velocities are the last ones observed, which is
+    /// all an Exit can carry — nothing measured the pair on the step it ended.
+    struct PairState
+    {
+        std::uint64_t stamp = 0;
+        glm::vec3 normal{0.f};
+        glm::vec3 velocity1{0.f};
+        glm::vec3 velocity2{0.f};
+        JPH::BodyID id1;
+        JPH::BodyID id2;
+        bool sensor = false;
+    };
+
+    /// Written from Jolt's worker jobs during Update(), drained on the main thread
+    /// after it. The mutex only guards the append: contacts are rare relative to
+    /// the collision work that produced them, so this never becomes the
     /// bottleneck, and per-thread buffers would cost more to merge than they save.
-    std::mutex contactMutex;
-    std::vector<Contact> contacts;
+    std::mutex touchMutex;
+    std::vector<TouchRecord> touchedThisStep;
+
+    /// Every pair currently touching, keyed by both bodies. Survives across steps
+    /// — it is the memory that makes Enter, Stay and Exit distinguishable.
+    std::unordered_map<std::uint64_t, PairState> pairs;
+
+    /// Exits for pairs whose body was destroyed before the next step could notice.
+    /// Held here because the entity behind a removed body is forgotten with it, so
+    /// the event has to be built while the answer is still knowable.
+    std::vector<ContactEvent> pendingExits;
+
+    std::vector<ContactEvent> events;
+
+    /// Counts Update() calls, so a pair's `stamp` says which step last saw it.
+    std::uint64_t step = 0;
+
+    /// Orders the two ids so a pair has one key whichever way Jolt reports it.
+    static std::uint64_t PairKey(const JPH::BodyID &a, const JPH::BodyID &b)
+    {
+        const std::uint32_t ka = a.GetIndexAndSequenceNumber();
+        const std::uint32_t kb = b.GetIndexAndSequenceNumber();
+        const std::uint32_t lo = ka < kb ? ka : kb;
+        const std::uint32_t hi = ka < kb ? kb : ka;
+        return (static_cast<std::uint64_t>(hi) << 32) | static_cast<std::uint64_t>(lo);
+    }
 
     ECS::Entity EntityFor(const JPH::BodyID &id) const
     {
@@ -367,13 +540,35 @@ struct PhysicsWorld::Impl
         return it == bodyEntities.end() ? ECS::NullEntity : it->second;
     }
 
-    /// Records both sides of a contact. Called from Jolt's narrow phase — i.e.
+    /// Records that a pair touched. Called from Jolt's narrow phase — i.e.
     /// *before* the solver runs, which is the whole reason the velocities are
     /// captured here rather than read back afterwards.
-    void RecordContact(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold);
+    void RecordTouch(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold);
 
-    /// Installed as the PhysicsSystem's contact listener only while reporting is
-    /// on, so a world that does not want contacts never even pays the virtual call.
+    /// Turns the step's touches into events, and ages out the pairs that ended.
+    void ResolveContactEvents();
+
+    /// Wakes every body overlapping @p bounds that @p filter would interact with.
+    ///
+    /// A sleeping body reports no contacts, so a static sensor cannot discover one
+    /// that settled before the sensor arrived — there is no step on which the pair
+    /// is ever tested. Waking the bodies is what creates that step. Costs one
+    /// broad-phase query and a brief loss of rest for whatever was inside.
+    void WakeInside(const JPH::AABox &bounds, CollisionFilter filter);
+
+    /// The same, for a body already in the simulation: wakes what its own bounds
+    /// enclose, under its own filter.
+    void WakeInside(const JPH::BodyID &id);
+
+    /// The filter a body was created with, read back out of its packed layer.
+    CollisionFilter FilterOf(const JPH::BodyID &id) const;
+
+    /// Appends to @p out one event per side of a pair that has an entity.
+    void EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out);
+
+    /// Installed for the world's whole life. A trigger volume is authored data,
+    /// and a switch that had to be flipped to make one work is a switch somebody
+    /// forgets, leaving a volume that silently does nothing.
     class ContactCollector final : public JPH::ContactListener
     {
 public:
@@ -383,13 +578,25 @@ public:
                             JPH::ContactSettings &settings) override
         {
             (void)settings; // we observe contacts, we don't retune them
-            _owner.RecordContact(body1, body2, manifold);
+            _owner.RecordTouch(body1, body2, manifold);
         }
 
-        // OnContactPersisted is deliberately not overridden. A body resting on a
-        // surface persists its contact every step; reporting those would make a
-        // contact-driven response (a bounce) re-fire forever into something that
-        // is simply lying still.
+        // Persisted contacts are recorded exactly like new ones. Which of the two
+        // Jolt called says only whether it saw the pair last step, and the pair
+        // table already knows that — and knows it in the cases Jolt gets wrong,
+        // where a body woke and Jolt reports a contact it never stopped having.
+        void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2,
+                                const JPH::ContactManifold &manifold, JPH::ContactSettings &settings) override
+        {
+            (void)settings;
+            _owner.RecordTouch(body1, body2, manifold);
+        }
+
+        // OnContactRemoved is deliberately not overridden. Jolt calls it when a
+        // body falls asleep, which is not the pair ending, and forbids reading
+        // either body because one may already be destroyed. The post-step sweep
+        // decides what ended instead, and treats a pair whose bodies are both
+        // asleep as still touching.
 
 private:
         Impl &_owner;
@@ -398,19 +605,13 @@ private:
     ContactCollector collector{*this};
 };
 
-void PhysicsWorld::Impl::RecordContact(const JPH::Body &body1, const JPH::Body &body2,
-                                       const JPH::ContactManifold &manifold)
+void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &body2,
+                                     const JPH::ContactManifold &manifold)
 {
-    const ECS::Entity e1 = EntityFor(body1.GetID());
-    const ECS::Entity e2 = EntityFor(body2.GetID());
-    if (e1 == ECS::NullEntity && e2 == ECS::NullEntity)
-        return; // nothing on either side a system could act on
-
     // Jolt's manifold normal is the direction body2 must move to separate from
-    // body1, so it already points away from body1's surface. Each side gets the
-    // one that points away from the *other*, which is what a reflection wants.
+    // body1, so it already points away from body1's surface. Which side gets which
+    // sign is decided in EmitPair, where the participants are known.
     const JPH::Vec3 n = manifold.mWorldSpaceNormal;
-    const glm::vec3 awayFromBody1{n.GetX(), n.GetY(), n.GetZ()};
 
     // Body::GetLinearVelocity asserts on a static body (no motion state to read).
     const auto linearVelocity = [](const JPH::Body &body)
@@ -421,11 +622,129 @@ void PhysicsWorld::Impl::RecordContact(const JPH::Body &body1, const JPH::Body &
                                     return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
                                 };
 
-    const std::lock_guard<std::mutex> lock(contactMutex);
+    const TouchRecord record{glm::vec3{n.GetX(), n.GetY(), n.GetZ()},
+                             linearVelocity(body1),
+                             linearVelocity(body2),
+                             body1.GetID(),
+                             body2.GetID(),
+                             body1.IsSensor() || body2.IsSensor()};
+
+    const std::lock_guard<std::mutex> lock(touchMutex);
+    touchedThisStep.push_back(record);
+}
+
+CollisionFilter PhysicsWorld::Impl::FilterOf(const JPH::BodyID &id) const
+{
+    const JPH::ObjectLayer layer = physicsSystem.GetBodyInterface().GetObjectLayer(id);
+    return CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))};
+}
+
+void PhysicsWorld::Impl::WakeInside(const JPH::AABox &bounds, CollisionFilter filter)
+{
+    const FilterLayerFilter layerFilter{filter};
+    physicsSystem.GetBodyInterface().ActivateBodiesInAABox(bounds, {}, layerFilter);
+}
+
+void PhysicsWorld::Impl::WakeInside(const JPH::BodyID &id)
+{
+    JPH::BodyLockRead lock(physicsSystem.GetBodyLockInterface(), id);
+    if (!lock.Succeeded())
+        return;
+    const JPH::AABox bounds = lock.GetBody().GetWorldSpaceBounds();
+    const JPH::ObjectLayer layer = lock.GetBody().GetObjectLayer();
+    lock.ReleaseLock();
+
+    // The lock is released first: ActivateBodiesInAABox takes its own locks, and
+    // holding one while it does would be a deadlock waiting for the right pair of
+    // bodies.
+    WakeInside(bounds, CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))});
+}
+
+void PhysicsWorld::Impl::EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out)
+{
+    const ECS::Entity e1 = EntityFor(state.id1);
+    const ECS::Entity e2 = EntityFor(state.id2);
+
+    // Each side is given the normal pointing away from the *other*, which is what
+    // a reflection wants and what spares a consumer working out the pair's order.
     if (e1 != ECS::NullEntity)
-        contacts.push_back(Contact{e1, e2, -awayFromBody1, linearVelocity(body1)});
+        out.push_back(ContactEvent{-state.normal, state.velocity1, e1, e2, phase, state.sensor});
     if (e2 != ECS::NullEntity)
-        contacts.push_back(Contact{e2, e1, awayFromBody1, linearVelocity(body2)});
+        out.push_back(ContactEvent{state.normal, state.velocity2, e2, e1, phase, state.sensor});
+}
+
+void PhysicsWorld::Impl::ResolveContactEvents()
+{
+    // No Jolt worker is inside a callback here, so the buffer is ours alone.
+    for (const TouchRecord &touch : touchedThisStep)
+    {
+        const std::uint64_t key = PairKey(touch.id1, touch.id2);
+        const auto [it, inserted] = pairs.try_emplace(key);
+        PairState &state = it->second;
+
+        // Several manifolds, and several collision substeps, report the same pair
+        // within one step. The first sets the phase; the rest only refresh what is
+        // known about it, so a pair yields one event however often it was seen.
+        const bool firstThisStep = state.stamp != step;
+
+        state.normal    = touch.normal;
+        state.velocity1 = touch.velocity1;
+        state.velocity2 = touch.velocity2;
+        state.id1       = touch.id1;
+        state.id2       = touch.id2;
+        state.sensor    = touch.sensor;
+        state.stamp     = step;
+
+        if (firstThisStep)
+            EmitPair(state, inserted ? ContactPhase::Enter : ContactPhase::Stay, events);
+    }
+    touchedThisStep.clear();
+
+    // Anything not seen this step either ended or went quiet. A body that fell
+    // asleep has not moved, and Jolt simply stopped testing it, so a pair whose
+    // bodies are all asleep is still touching and keeps saying so.
+    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    for (auto it = pairs.begin(); it != pairs.end();)
+    {
+        PairState &state = it->second;
+        if (state.stamp == step)
+        {
+            ++it;
+            continue;
+        }
+
+        const bool eitherAwake = (bodies.IsAdded(state.id1) && bodies.IsActive(state.id1)) ||
+                                 (bodies.IsAdded(state.id2) && bodies.IsActive(state.id2));
+        if (eitherAwake)
+        {
+            EmitPair(state, ContactPhase::Exit, events);
+            it = pairs.erase(it);
+        }
+        else
+        {
+            EmitPair(state, ContactPhase::Stay, events);
+            state.stamp = step;
+            ++it;
+        }
+    }
+
+    // Jolt discovers contacts in whatever order its jobs happened to run, so two
+    // runs of the same simulation can produce the same events in different orders.
+    // A consumer that accumulates — summing damage, picking a ground contact —
+    // would then disagree with itself run to run.
+    std::sort(events.begin(), events.end(),
+              [](const ContactEvent &a, const ContactEvent &b)
+              {
+                  if (a.entity.index != b.entity.index)
+                      return a.entity.index < b.entity.index;
+                  if (a.entity.generation != b.entity.generation)
+                      return a.entity.generation < b.entity.generation;
+                  if (a.other.index != b.other.index)
+                      return a.other.index < b.other.index;
+                  if (a.other.generation != b.other.generation)
+                      return a.other.generation < b.other.generation;
+                  return a.phase < b.phase;
+              });
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +825,12 @@ PhysicsWorld::PhysicsWorld()
     /* Gravity: 9.81 m/s² downward (−Y). */
     _impl->physicsSystem.SetGravity(JPH::Vec3(0.f, -9.81f, 0.f));
 
+    // Installed for the world's whole life rather than switched on by whoever
+    // wants contacts. Trigger volumes are authored in a level, and a switch that
+    // had to be flipped somewhere else to make one work is a switch that gets
+    // forgotten, leaving a volume that silently does nothing.
+    _impl->physicsSystem.SetContactListener(&_impl->collector);
+
     Assisi::Core::Log::Info("PhysicsWorld: initialized (Jolt).");
 }
 
@@ -517,23 +842,40 @@ PhysicsWorld::~PhysicsWorld()
     _impl.reset();
 }
 
-RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape,
-                                BodyMotion motion)
+RigidBody PhysicsWorld::AddBody(const Pose &pose, const ColliderShapeDesc &shape, BodyMotion motion,
+                                CollisionFilter filter)
 {
-    const JPH::EMotionType joltMotion =
-        motion == BodyMotion::Static ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic;
+    const bool sensor = filter.channel == CollisionChannel::Trigger;
 
-    const JPH::ObjectLayer layer = motion == BodyMotion::Static ? Layers::kStatic : Layers::kDynamic;
+    // A sensor that fell under gravity would leave the volume it was authored as,
+    // so Dynamic collapses to Kinematic here. Static stays static: that is the
+    // cheap sensor, which notices only bodies that are awake.
+    const BodyMotion effective =
+        sensor && motion == BodyMotion::Dynamic ? BodyMotion::Kinematic : motion;
+
+    JPH::EMotionType joltMotion = JPH::EMotionType::Dynamic;
+    if (effective == BodyMotion::Static)
+        joltMotion = JPH::EMotionType::Static;
+    else if (effective == BodyMotion::Kinematic)
+        joltMotion = JPH::EMotionType::Kinematic;
+
+    const JPH::ObjectLayer layer = PackLayer(filter, effective);
 
     JPH::BodyCreationSettings settings(
-        MakeShape(shape), JPH::RVec3(position.x, position.y, position.z),
-        JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), joltMotion, layer);
+        MakeShape(shape), JPH::RVec3(pose.position.x, pose.position.y, pose.position.z),
+        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized(),
+        joltMotion, layer);
 
     // Always allocate motion properties so the motion type can be changed at runtime
     // (e.g. making a Static body Dynamic via SetBodyMotionType).
     settings.mAllowDynamicOrKinematic = true;
+    settings.mIsSensor                = sensor;
 
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    // A kinematic sensor is activated and then never sleeps on its own, which is
+    // what lets it find bodies that are already at rest — including ones it is
+    // later moved onto.
     const JPH::BodyID bodyId = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
     if (bodyId.IsInvalid())
     {
@@ -544,13 +886,19 @@ RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const Co
     }
 
     _impl->allBodyIds.push_back(bodyId);
-    if (motion == BodyMotion::Dynamic)
+    if (effective == BodyMotion::Dynamic)
         _impl->dynamicBodyIds.push_back(bodyId);
 
     // Seed both snapshots with the spawn pose so the first interpolated frame
     // (before any step has run) resolves to exactly where the body was placed.
     _impl->snapshots[bodyId.GetIndexAndSequenceNumber()] =
-        Impl::MotionSnapshot{position, rotation, position, rotation};
+        Impl::MotionSnapshot{pose.position, pose.rotation, pose.position, pose.rotation};
+
+    // A static sensor is told about bodies that touch it, and a sleeping body
+    // touches nothing. Waking whatever it now encloses is what lets it report the
+    // things that were already sitting there when it appeared.
+    if (sensor && effective == BodyMotion::Static)
+        _impl->WakeInside(bodyId);
 
     return RigidBody{bodyId};
 }
@@ -581,7 +929,9 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
         }
     }
 
-    const RigidBody body = AddBody(position, rotation, shape, motion);
+    const RigidBody body =
+        AddBody(Pose{rotation, position}, shape, motion,
+                CollisionFilter{descriptor.collidesWith, descriptor.channel});
     if (descriptor.enableCCD)
         SetBodyCCD(body, true);
     (void)scene.Add<RigidBody>(entity, body);
@@ -616,9 +966,15 @@ void PhysicsWorld::Clear()
     _impl->dynamicBodyIds.clear();
     _impl->snapshots.clear();
     _impl->bodyEntities.clear();
-    // Logged contacts name bodies that no longer exist — and, after a level load,
-    // entity handles that mean something entirely different.
-    _impl->contacts.clear();
+
+    // Every pair and event names bodies that no longer exist — and, after a level
+    // load, entity handles that mean something entirely different. No Exit is
+    // emitted for what was touching: nothing survives that could act on one, and a
+    // world being emptied is not a world where things left each other.
+    _impl->pairs.clear();
+    _impl->touchedThisStep.clear();
+    _impl->pendingExits.clear();
+    _impl->events.clear();
 }
 
 void PhysicsWorld::RemoveBody(const RigidBody &body)
@@ -626,6 +982,26 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
     const JPH::BodyID id = body.bodyId;
     if (id.IsInvalid())
         return;
+
+    // Everything this body was touching has stopped touching it, and the next
+    // step cannot say so — the body will be gone and the entity behind it
+    // forgotten. Build those Exits now, while both are still knowable, and let the
+    // next Update() deliver them.
+    const std::uint32_t goingKey = id.GetIndexAndSequenceNumber();
+    for (auto it = _impl->pairs.begin(); it != _impl->pairs.end();)
+    {
+        const Impl::PairState &state = it->second;
+        if (state.id1.GetIndexAndSequenceNumber() == goingKey ||
+            state.id2.GetIndexAndSequenceNumber() == goingKey)
+        {
+            _impl->EmitPair(state, ContactPhase::Exit, _impl->pendingExits);
+            it = _impl->pairs.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     if (bodies.IsAdded(id))
@@ -641,24 +1017,24 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
     std::erase_if(_impl->dynamicBodyIds, matches);
     _impl->snapshots.erase(key);
 
-    // Drop any logged contact naming the entity whose body just went away, on
-    // either side — acting on one would look up a RigidBody component pointing at
-    // a destroyed Jolt body.
-    const ECS::Entity gone = _impl->EntityFor(id);
+    // Last, because the Exits queued above were built from it: the entity behind
+    // this body stops being knowable here.
     _impl->bodyEntities.erase(key);
-    if (gone != ECS::NullEntity)
-    {
-        std::erase_if(_impl->contacts, [gone](const Contact &contact)
-                      { return contact.entity == gone || contact.other == gone; });
-    }
 }
 
 void PhysicsWorld::Update(float deltaTime)
 {
-    // The log describes the step about to run, not the one before it — clearing
-    // here is what guarantees a consumer sees each impact exactly once. Safe
-    // without the mutex: no Jolt worker is inside a callback at this point.
-    _impl->contacts.clear();
+    // The events describe the step about to run, not the one before it — clearing
+    // here is what guarantees a consumer sees each one exactly once. Safe without
+    // the mutex: no Jolt worker is inside a callback at this point.
+    _impl->events.clear();
+
+    // Exits recorded when a body was destroyed. They belong to this step: the pair
+    // ended when the body went away, and there was no step in between.
+    _impl->events.swap(_impl->pendingExits);
+    _impl->pendingExits.clear();
+
+    ++_impl->step;
 
     /* This world's own scratch allocator, and the shared thread pool. Both are
        Update() arguments; the pool is shared (one set of workers), the allocator
@@ -666,32 +1042,186 @@ void PhysicsWorld::Update(float deltaTime)
        JoltRuntime). */
     _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc,
                                 &_impl->jolt.JobSystem());
+
+    _impl->ResolveContactEvents();
 }
 
-void PhysicsWorld::SetContactReporting(bool enable)
+std::span<const ContactEvent> PhysicsWorld::ContactEvents() const
 {
-    if (_impl->contactReporting == enable)
-        return;
-
-    _impl->contactReporting = enable;
-
-    // Unhooking the listener rather than early-returning inside it is what makes
-    // "off" genuinely free: Jolt skips the call entirely instead of making a
-    // virtual call per contact to reach a branch that does nothing.
-    _impl->physicsSystem.SetContactListener(enable ? &_impl->collector : nullptr);
-
-    if (!enable)
-        _impl->contacts.clear();
+    return {_impl->events.data(), _impl->events.size()};
 }
 
-bool PhysicsWorld::IsContactReporting() const
+// ---------------------------------------------------------------------------
+// World queries
+// ---------------------------------------------------------------------------
+
+namespace
 {
-    return _impl->contactReporting;
+
+/// Hides one entity's bodies from a query.
+///
+/// What makes a self-cast usable: a character sweeping its own capsule forward
+/// starts inside itself, and every convex shape reports a hit at distance 0 for
+/// a cast that begins inside it. Filtering by entity rather than by body id lets
+/// a caller name the thing it knows about.
+/// Takes the body→entity map directly rather than the world: PhysicsWorld::Impl
+/// is private, and nothing here needs more of it than this one lookup.
+class IgnoreEntityFilter final : public JPH::BodyFilter
+{
+public:
+    IgnoreEntityFilter(const std::unordered_map<JPH::uint32, ECS::Entity> &entities, ECS::Entity ignore)
+        : _entities(entities), _ignore(ignore)
+    {
+    }
+
+    bool ShouldCollideLocked(const JPH::Body &body) const override
+    {
+        if (_ignore == ECS::NullEntity)
+            return true;
+        const auto it = _entities.find(body.GetID().GetIndexAndSequenceNumber());
+        return it == _entities.end() || it->second != _ignore;
+    }
+
+private:
+    const std::unordered_map<JPH::uint32, ECS::Entity> &_entities;
+    ECS::Entity _ignore;
+};
+
+/// A sweep shorter than this is treated as no sweep at all.
+///
+/// Jolt needs a direction, and normalizing a zero-length vector yields NaNs that
+/// propagate into every hit fraction. Squared, so the check costs no square root.
+constexpr float kMinSweepLengthSq = 1e-12f;
+
+} // namespace
+
+std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter,
+                                              ECS::Entity ignore) const
+{
+    const float sweepLengthSq = glm::dot(sweep, sweep);
+    if (sweepLengthSq < kMinSweepLengthSq)
+        return std::nullopt;
+
+    const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z),
+                            JPH::Vec3(sweep.x, sweep.y, sweep.z)};
+
+    JPH::RayCastSettings settings;
+    // A ray that starts inside a body reports that body at fraction 0. Spelled
+    // out rather than left to Jolt's default, because the single-hit entry point
+    // has no settings at all and each shape decides for itself there — so the
+    // behaviour would differ between a box and a mesh for no stated reason.
+    settings.mTreatConvexAsSolid = true;
+    settings.SetBackFaceMode(JPH::EBackFaceMode::IgnoreBackFaces);
+
+    JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
+    const FilterLayerFilter layerFilter{filter};
+    const IgnoreEntityFilter bodyFilter{_impl->bodyEntities, ignore};
+
+    // The broad-phase filter accepts everything: a query carries no motion type,
+    // so it has no business skipping the tree of things that do not move — which
+    // is most of what a ray is aimed at.
+    _impl->physicsSystem.GetNarrowPhaseQuery().CastRay(ray, settings, collector, {}, layerFilter,
+                                                       bodyFilter);
+    if (!collector.HadHit())
+        return std::nullopt;
+
+    const float     sweepLength = std::sqrt(sweepLengthSq);
+    const glm::vec3 position    = origin + sweep * collector.mHit.mFraction;
+
+    QueryHit hit;
+    hit.position = position;
+    hit.distance = sweepLength * collector.mHit.mFraction;
+    hit.entity   = _impl->EntityFor(collector.mHit.mBodyID);
+
+    // The normal has to come off the body's surface — a ray result carries only
+    // which sub-shape was struck, not its orientation.
+    JPH::BodyLockRead lock(_impl->physicsSystem.GetBodyLockInterface(), collector.mHit.mBodyID);
+    if (lock.Succeeded())
+    {
+        const JPH::Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(
+            collector.mHit.mSubShapeID2, JPH::RVec3(position.x, position.y, position.z));
+        hit.normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ());
+    }
+    return hit;
 }
 
-std::span<const Contact> PhysicsWorld::Contacts() const
+std::optional<QueryHit> PhysicsWorld::CastShape(const ColliderShapeDesc &shape, const Pose &start,
+                                                glm::vec3 sweep, CollisionFilter filter,
+                                                ECS::Entity ignore) const
 {
-    return {_impl->contacts.data(), _impl->contacts.size()};
+    const float sweepLengthSq = glm::dot(sweep, sweep);
+    if (sweepLengthSq < kMinSweepLengthSq)
+        return std::nullopt;
+
+    const JPH::Quat rotation =
+        JPH::Quat(start.rotation.x, start.rotation.y, start.rotation.z, start.rotation.w).Normalized();
+    const JPH::RMat44 transform =
+        JPH::RMat44::sRotationTranslation(rotation, JPH::RVec3(start.position.x, start.position.y,
+                                                               start.position.z));
+
+    // Named, not a temporary in the call below: RShapeCast keeps a bare pointer to
+    // the shape, so a ShapeRefC that died at the end of that expression would
+    // leave the cast pointing at freed memory.
+    const JPH::ShapeRefC   swept = MakeShape(shape);
+    const JPH::RShapeCast  cast  = JPH::RShapeCast::sFromWorldTransform(
+        swept, JPH::Vec3::sReplicate(1.f), transform, JPH::Vec3(sweep.x, sweep.y, sweep.z));
+
+    const JPH::ShapeCastSettings settings;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    const FilterLayerFilter layerFilter{filter};
+    const IgnoreEntityFilter bodyFilter{_impl->bodyEntities, ignore};
+
+    // Zero base offset, so the contact points come back in world space. Jolt is
+    // built here at single precision, where the offset buys no accuracy.
+    _impl->physicsSystem.GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), collector,
+                                                         {}, layerFilter, bodyFilter);
+    if (!collector.HadHit())
+        return std::nullopt;
+
+    const JPH::Vec3 contact = collector.mHit.mContactPointOn2;
+    const JPH::Vec3 axis    = collector.mHit.mPenetrationAxis.NormalizedOr(JPH::Vec3::sZero());
+
+    QueryHit hit;
+    hit.position = glm::vec3(contact.GetX(), contact.GetY(), contact.GetZ());
+    // The penetration axis moves the hit body out of the sweep, so its opposite
+    // points out of the struck surface — the same sense a ray's normal has.
+    hit.normal   = -glm::vec3(axis.GetX(), axis.GetY(), axis.GetZ());
+    hit.distance = std::sqrt(sweepLengthSq) * collector.mHit.mFraction;
+    hit.entity   = _impl->EntityFor(collector.mHit.mBodyID2);
+    return hit;
+}
+
+std::vector<ECS::Entity> PhysicsWorld::Overlap(const ColliderShapeDesc &shape, const Pose &at,
+                                               CollisionFilter filter, ECS::Entity ignore) const
+{
+    const JPH::Quat rotation =
+        JPH::Quat(at.rotation.x, at.rotation.y, at.rotation.z, at.rotation.w).Normalized();
+    const JPH::RMat44 transform = JPH::RMat44::sRotationTranslation(
+        rotation, JPH::RVec3(at.position.x, at.position.y, at.position.z));
+
+    const JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    const FilterLayerFilter layerFilter{filter};
+    const IgnoreEntityFilter bodyFilter{_impl->bodyEntities, ignore};
+
+    _impl->physicsSystem.GetNarrowPhaseQuery().CollideShape(
+        MakeShape(shape), JPH::Vec3::sReplicate(1.f), transform, settings, JPH::RVec3::sZero(), collector,
+        {}, layerFilter, bodyFilter);
+
+    // One entry per entity, not per contact: a shape can meet another in several
+    // places, and a caller asking what is inside a volume wants the things, not
+    // the number of ways it touched them.
+    std::vector<ECS::Entity> found;
+    found.reserve(collector.mHits.size());
+    for (const JPH::CollideShapeResult &result : collector.mHits)
+    {
+        const ECS::Entity entity = _impl->EntityFor(result.mBodyID2);
+        if (entity == ECS::NullEntity)
+            continue;
+        if (std::find(found.begin(), found.end(), entity) == found.end())
+            found.push_back(entity);
+    }
+    return found;
 }
 
 void PhysicsWorld::SetCollisionSteps(int32_t steps)
@@ -754,8 +1284,12 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
     for (auto [entity, transform, rb] :
          scene.QueryMut<Assisi::ECS::Transform, RigidBody>())
     {
+        // Only a body the solver moves has a pose worth writing back. A static one
+        // never moves, and a kinematic one is moved by whatever drives it — for
+        // both, the Transform is the input, and writing to it would overwrite the
+        // author or the driver with a snapshot CaptureState never refreshes.
         const JPH::BodyID bodyId = rb.Get().bodyId;
-        if (!bodies.IsAdded(bodyId) || bodies.GetMotionType(bodyId) == JPH::EMotionType::Static)
+        if (!bodies.IsAdded(bodyId) || bodies.GetMotionType(bodyId) != JPH::EMotionType::Dynamic)
         {
             continue;
         }
@@ -951,8 +1485,24 @@ bool PhysicsWorld::IsBodyCCDEnabled(const RigidBody &body) const
 void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
 
     const bool isStatic = bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static;
+
+    // A static sensor only hears about bodies that are awake, so the space it is
+    // leaving has to be woken as well as the space it is arriving in: whatever it
+    // was containing must be re-tested to notice the pair ended, and whatever it
+    // lands on must be re-tested to notice the pair began. Captured before the
+    // move, used after it.
+    const bool wakesAround = isStatic && IsTriggerLayer(bodies.GetObjectLayer(body.bodyId));
+    JPH::AABox touched;
+    if (wakesAround)
+    {
+        JPH::BodyLockRead lock(_impl->physicsSystem.GetBodyLockInterface(), body.bodyId);
+        if (lock.Succeeded())
+            touched = lock.GetBody().GetWorldSpaceBounds();
+    }
 
     // Normalize before handing the quaternion to Jolt: a hand-authored or imported
     // rotation is often a hair off unit length (e.g. a level's [0.707, 0.707, 0, 0]
@@ -976,6 +1526,24 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
     if (it != _impl->snapshots.end())
     {
         it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
+    }
+
+    if (wakesAround)
+    {
+        JPH::ObjectLayer layer = 0;
+        {
+            JPH::BodyLockRead lock(_impl->physicsSystem.GetBodyLockInterface(), body.bodyId);
+            if (!lock.Succeeded())
+                return;
+            touched.Encapsulate(lock.GetBody().GetWorldSpaceBounds());
+            layer = lock.GetBody().GetObjectLayer();
+        }
+
+        // Outside the lock: waking takes its own body locks, and everything read
+        // above came from the locked body rather than through an interface that
+        // would have taken the same one again.
+        _impl->WakeInside(touched,
+                          CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))});
     }
 }
 
@@ -1023,24 +1591,42 @@ void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
 void PhysicsWorld::SetBodyMotionType(const RigidBody &body, BodyMotion motion)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
 
-    if (motion == BodyMotion::Static)
+    const CollisionFilter filter = _impl->FilterOf(body.bodyId);
+
+    // Same rule AddBody applies: a sensor is never dynamic, because one falling
+    // under gravity would leave the volume it was authored as.
+    const BodyMotion effective = filter.channel == CollisionChannel::Trigger &&
+                                 motion == BodyMotion::Dynamic
+                                     ? BodyMotion::Kinematic
+                                     : motion;
+
+    auto &ids = _impl->dynamicBodyIds;
+    if (effective == BodyMotion::Static)
     {
         // Jolt asserts that a body is inactive before switching it to Static.
         bodies.DeactivateBody(body.bodyId);
         bodies.SetMotionType(body.bodyId, JPH::EMotionType::Static, JPH::EActivation::DontActivate);
-
-        auto &ids = _impl->dynamicBodyIds;
+        ids.erase(std::remove(ids.begin(), ids.end(), body.bodyId), ids.end());
+    }
+    else if (effective == BodyMotion::Kinematic)
+    {
+        bodies.SetMotionType(body.bodyId, JPH::EMotionType::Kinematic, JPH::EActivation::Activate);
         ids.erase(std::remove(ids.begin(), ids.end(), body.bodyId), ids.end());
     }
     else
     {
         bodies.SetMotionType(body.bodyId, JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
-
-        auto &ids = _impl->dynamicBodyIds;
         if (std::find(ids.begin(), ids.end(), body.bodyId) == ids.end())
             ids.push_back(body.bodyId);
     }
+
+    // The layer records the motion type, and the broad-phase tree a body lives in
+    // is read from it. Left stale, a body made dynamic would keep saying it never
+    // moves and would never be tested against the things it now falls onto.
+    bodies.SetObjectLayer(body.bodyId, PackLayer(filter, effective));
 }
 
 void PhysicsWorld::SetGravity(glm::vec3 gravity)

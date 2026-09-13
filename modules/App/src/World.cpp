@@ -96,13 +96,6 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // from empty.
     world.systems.Clear();
 
-    // Same reasoning, for the other per-world switch a system can throw: a system
-    // that wants contact reporting turns it on for itself, so re-targeting a world
-    // to a list that does not want it must find it off. Otherwise the first bouncy
-    // level opened in a session would leave every level after it paying for a
-    // contact log nothing reads.
-    world.physics.SetContactReporting(false);
-
     // An empty list is the normal case, not a warning: the clear above is the
     // whole job.
     SystemCatalog::Instance().ApplyResolved(world, resolved);

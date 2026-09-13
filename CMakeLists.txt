@@ -500,6 +500,12 @@ set(TARGET_HELLO_WORLD                OFF CACHE BOOL "" FORCE)
 set(TARGET_PERFORMANCE_TEST           OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES                    OFF CACHE BOOL "" FORCE)
 set(TARGET_VIEWER                     OFF CACHE BOOL "" FORCE)
+# Jolt splits an ObjectLayer between a collision channel and the mask of channels
+# it collides with, so the default 16 bits would cap the engine at 8 channels.
+# Jolt turns this into a PUBLIC compile definition on its own target, which is
+# what keeps ObjectLayer one width here and inside Jolt — the two disagreeing
+# would corrupt every layer silently, so PhysicsWorld.cpp also static_asserts it.
+set(OBJECT_LAYER_BITS                 32  CACHE STRING "" FORCE)
 FetchContent_Declare(JoltPhysics
     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
     GIT_TAG        v5.2.0
