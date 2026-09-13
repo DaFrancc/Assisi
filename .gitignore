@@ -63,6 +63,11 @@ CLAUDE.md
 # Art
 logo/
 
+# Screenshots kept while working on something — before/after comparisons, a bug
+# caught in the act. They are about one session, and the tracker is where any of
+# them that still mean something get attached.
+pics/
+
 # Model assets — heavy binary art (glTF .bin + textures), kept local only.
 assets/models/
 # Captures, of every kind. Machine-specific measurements of one run on one
