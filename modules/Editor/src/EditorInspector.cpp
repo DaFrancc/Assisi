@@ -13,6 +13,7 @@
 /// close on exactly the frame it mattered.
 
 #include <Assisi/Editor/EditorApp.hpp>
+#include "ImGuiQueries.hpp"
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetId.hpp>
@@ -2263,37 +2264,11 @@ void EditorApp::DrawInspector()
     ImGui::TextUnformatted("Add Component");
     ImGui::SetNextItemWidth(-1.f);
 
-    // Keyboard navigation of the suggestion list. A single-line InputText swallows
-    // these keys, so the only way to see them is its callbacks: Tab arrives as
-    // Completion, the arrows as History, any text change as Edit. The callback
-    // records intent only; the highlight moves below, once this frame's match
-    // count is known.
-    struct SuggestionNav
-    {
-        int32_t move  = 0;     // -1 = up, +1 = down (Tab or arrows)
-        bool reset = false;    // text edited -> snap back to the first row
-    };
-    SuggestionNav nav;
-    const auto navCallback = [](ImGuiInputTextCallbackData *data) -> int
-                             {
-                                 auto *n = static_cast<SuggestionNav *>(data->UserData);
-                                 switch (data->EventFlag)
-                                 {
-                                 case ImGuiInputTextFlags_CallbackCompletion: n->move = +1; break; // Tab
-                                 case ImGuiInputTextFlags_CallbackHistory:
-                                     n->move = data->EventKey == ImGuiKey_UpArrow ? -1 : +1; // Up / Down
-                                     break;
-                                 case ImGuiInputTextFlags_CallbackEdit: n->reset = true; break; // typed or deleted
-                                 default: break;
-                                 }
-                                 return 0;
-                             };
-
+    ImGuiSuggestionNav nav;
     const bool entered =
         ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
-                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
-                         ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackEdit,
-                         navCallback, &nav);
+                         ImGuiInputTextFlags_EnterReturnsTrue | kImGuiSuggestionNavFlags,
+                         ImGuiSuggestionNavCallback, &nav);
 
     const auto toLower = [](std::string text)
                          {
@@ -2344,22 +2319,13 @@ void EditorApp::DrawInspector()
         constexpr std::size_t kMaxSuggestions = 8;
         const std::size_t shown           = std::min(matches.size(), kMaxSuggestions);
 
-        // Resolve this frame's navigation into the highlight index: an edit snaps
-        // it to the top, Tab/arrows step it with wrap-around across the shown rows.
-        if (nav.reset)
-            _addComponentSelected = 0;
+        _addComponentSelected = ImGuiAdvanceSuggestion(_addComponentSelected, nav, shown);
         if (shown == 0)
         {
-            _addComponentSelected = 0;
             ImGui::TextDisabled("(no matching component)");
         }
         else
         {
-            if (nav.move != 0)
-                _addComponentSelected =
-                    (_addComponentSelected + nav.move + static_cast<int32_t>(shown)) % static_cast<int32_t>(shown);
-            _addComponentSelected = std::clamp(_addComponentSelected, 0, static_cast<int32_t>(shown) - 1);
-
             // Enter adds the highlighted row; clicking a row adds it directly.
             if (entered)
             {
