@@ -163,4 +163,40 @@ bool LevelSystemsAreDeclared(std::string_view virtualPath)
     return ok;
 }
 
+std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(const Runtime::InstanceTable &instances)
+{
+    std::map<std::string, int32_t, std::less<>> counts;
+
+    // Distinct sources first: the definition cache is keyed by path, so this is
+    // about not counting one blueprint once per copy of it in the level.
+    std::vector<std::string_view> sources;
+    for (const auto &[id, row] : instances.All())
+    {
+        (void)id;
+        if (!row->authored)
+        {
+            continue;
+        }
+        if (std::find(sources.begin(), sources.end(), row->source) != sources.end())
+        {
+            continue;
+        }
+        sources.push_back(row->source);
+    }
+
+    for (const std::string_view source : sources)
+    {
+        const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(source);
+        if (!definition)
+        {
+            continue; // Unreadable, and whatever placed it has already said so.
+        }
+        for (const std::string &name : (*definition)->systems)
+        {
+            ++counts[name];
+        }
+    }
+    return counts;
+}
+
 } // namespace Assisi::App

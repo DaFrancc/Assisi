@@ -25,9 +25,11 @@
 ///     on the system itself, so a level cannot accidentally reorder anything.
 
 #include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -41,8 +43,10 @@ struct World;
 /// @brief One system, as its declaration described it.
 struct SystemDefinition
 {
-    /// What a file says to get this system. Defaults to the function name with a
-    /// trailing "System" stripped, so `BounceSystem` is `Bounce` in a level.
+    /// What a file says to get this system. Declared explicitly on every ASYSTEM
+    /// and never derived from the function: it is part of the content format, and
+    /// a name that followed a C++ identifier would break every level naming it
+    /// the moment somebody renamed the function.
     std::string name;
 
     /// Ignored when @ref isRender — a render system runs through RunRender, which
@@ -148,6 +152,24 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
 /// there is no global list to walk, and a caller holding a `World` is exactly who
 /// knows the world is still alive.
 void DrainSystemInstalls(World &world);
+
+/// @brief Every system the blueprints placed in @p instances require, and how
+/// many distinct sources ask for each.
+///
+/// A blueprint declares the systems its content needs so that behaviour travels
+/// with it — a level that places a car does not also have to know the car needs
+/// `Drive`. This is the other half of that: what a world must install on top of
+/// the names its own file carries.
+///
+/// Counted by distinct source, not per copy: a level holding ten of one car
+/// reports `Drive` once. The count is what an editor uses to say a system is
+/// still needed by something after the level's own claim on it is dropped.
+///
+/// A source that will not load is skipped — whatever placed it has already said
+/// so, and refusing every system in the level over one bad instance would be a
+/// worse answer than running the rest.
+[[nodiscard]] std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(
+    const Runtime::InstanceTable &instances);
 
 /// @brief True when every system the level at @p virtualPath names is declared
 /// by this build. Logs each offender.

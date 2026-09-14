@@ -133,7 +133,7 @@ class SystemInfo:
     """
     function:        str    # unqualified function name
     namespaces:      list   # enclosing namespaces at the declaration
-    name:            str    # the name a file uses; defaults to function minus a trailing "System"
+    name:            str    # the name a file uses; declared explicitly, never derived
     phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
     after:           list   # system names this must run after
     before:          list   # system names this must run before
@@ -708,13 +708,18 @@ def find_systems(text: str, path: Path) -> list:
                 f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
                 f"being drawn and nothing else, so the flag would say nothing.")
 
-        # Default: the function name with a trailing "System" stripped, because
-        # `BounceSystem` in code is `Bounce` in a file and repeating the suffix in
-        # every level would be noise.
+        # Mandatory, with no default derived from the function name. The name is
+        # what a level file says, so it is part of the content format: deriving it
+        # means renaming a C++ function silently renames something levels refer to
+        # by string, and every file naming the old one fails to load with nothing
+        # pointing at the rename. Spelling it out makes that a deliberate edit in
+        # a place a reader can see.
         if not name:
-            name = match.group('fn')
-            if name.endswith('System') and len(name) > len('System'):
-                name = name[: -len('System')]
+            raise ValueError(
+                f"{where} does not declare a name. Every system needs one: "
+                f"ASYSTEM({phase}, name = \"Something\"). It is what a level file "
+                f"names, so it cannot be derived from the function — renaming the "
+                f"function would silently break every level that asks for it.")
 
         systems.append(SystemInfo(function=match.group('fn'),
                                   namespaces=_namespaces_at(text, match.start()),

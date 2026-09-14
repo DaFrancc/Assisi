@@ -9,6 +9,7 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -125,6 +126,139 @@ void EditorApp::SetupCamera()
     // Projection is left at the member initialiser in EditorApp.hpp: 60 deg FOV,
     // 0.1..200 clip, active.
     RefreshCameraMatrix();
+}
+
+void EditorApp::HandlePlayMouseCapture()
+{
+    // ImGui keeps receiving mouse positions while the cursor is captured — its
+    // GLFW backend reverted to feeding them deliberately, pointing users at this
+    // flag — and under a disabled cursor those are unbounded virtual coordinates.
+    // Left alone, a session that holds the mouse hovers and clicks panels nobody
+    // can see, which is what a captured cursor is supposed to prevent.
+    if (ImGui::GetCurrentContext() != nullptr)
+    {
+        ImGuiIO &io = ImGui::GetIO();
+        if (GetInput().IsMouseCaptured())
+        {
+            io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        }
+        else
+        {
+            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+        }
+    }
+
+    // Only a live session owns the cursor. While editing it is the author's, and
+    // nothing here should take it.
+    if (_playState == PlayState::Editing)
+    {
+        return;
+    }
+
+    Assisi::Window::InputContext &input = GetInput();
+
+    // F8 lends the cursor to the editor and gives it back — it does not decide
+    // whether the *game* wants it. What the game had is remembered and restored,
+    // so a session that had deliberately let go of the cursor (a menu is open)
+    // still has it free afterwards. Toggling capture directly would hand that
+    // player a captured cursor in the middle of their menu.
+    if (input.IsKeyPressed(Assisi::Window::Key::F8) && !ImGuiWantsTextInput())
+    {
+        if (_playCursorLent)
+        {
+            input.SetMouseCaptured(_captureBeforeLend);
+            _playCursorLent = false;
+        }
+        else
+        {
+            _captureBeforeLend = input.IsMouseCaptured();
+            input.SetMouseCaptured(false);
+            _playCursorLent = true;
+        }
+        return;
+    }
+
+    // Clicking back into the game ends the loan, the way clicking into a game
+    // window does everywhere. Only while it *is* a loan: a game holding its own
+    // cursor for a menu must keep it, or every click on that menu would swallow
+    // the pointer. And not when the click was meant for a panel — that is somebody
+    // pressing a button.
+    if (_playCursorLent && !ImGuiWantsMouse() && _actions.IsActionPressed("Select", input))
+    {
+        input.SetMouseCaptured(_captureBeforeLend);
+        _playCursorLent = false;
+    }
+}
+
+void EditorApp::ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
+{
+    // The one answer to "where is the viewport looking from". Everything that
+    // projects or unprojects has to agree with what was drawn — a pick ray or a
+    // gizmo built from a different camera lands where the cursor is not.
+    if (PlayViewCamera(pose, camera))
+    {
+        return;
+    }
+    pose   = _cameraTransform;
+    camera = _camera;
+}
+
+bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
+{
+    // Only while a play session is live. Editing looks through the editor's own
+    // camera whatever the scene says, or placing a camera would take the viewport
+    // away from the author mid-edit.
+    //
+    // Paused counts as live: pausing to look at what the player can see is the
+    // point of pausing, and snapping back to the editor camera would undo it.
+    if (_playState == PlayState::Editing || _scene == nullptr)
+    {
+        return false;
+    }
+
+    bool found = false;
+    for (auto [entity, sceneCamera] : _scene->Query<Assisi::Runtime::Camera>())
+    {
+        if (!sceneCamera.isActive)
+        {
+            continue;
+        }
+        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
+        if (transform == nullptr)
+        {
+            continue;
+        }
+
+        // Two active cameras is a state nothing else expects, and the one that
+        // wins is whichever the query reached first — which is to say, arbitrary.
+        // Said once per frame rather than silently picking: the symptom otherwise
+        // is a viewport looking through a camera the author did not mean, which
+        // reads as the camera they *did* mean being broken.
+        if (found)
+        {
+            Assisi::Core::Log::Warn("Play view: more than one Camera is marked active; looking through "
+                                    "the first one found. Clear isActive on the others.");
+            break;
+        }
+        found = true;
+
+        // The whole Transform, world matrix included — Runtime::ViewMatrix derives
+        // the view from `worldMatrix` and reads no other field, so a pose carrying
+        // only position and rotation renders from the origin looking down -Z
+        // however far the camera actually is. The editor's own camera avoids that
+        // by calling RefreshCameraMatrix before its view is taken.
+        //
+        // The world matrix rather than the local pose for the usual reason too: a
+        // player's camera is parented to the character, so its Transform is an
+        // offset from it.
+        pose        = *transform;
+        camera      = sceneCamera;
+        return true;
+    }
+
+    // No active camera in the scene: the editor's own view is the fallback, which
+    // is what a level that has not composed a camera yet should get.
+    return false;
 }
 
 void EditorApp::AdoptLevelCamera()
@@ -851,6 +985,29 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 
     // The propagation bookmark comes from the world, not the renderer: one renderer
     // serves several worlds once more than one is resident.
+    //
+    // Before the camera is chosen, not only inside Render(): a scene camera is
+    // picked by its *world* matrix, and a camera parented to a character that just
+    // moved would otherwise be placed from the matrix the last frame computed —
+    // permanently one frame behind whatever it is attached to.
+    //
+    // The bookmark is stored back, which Render()'s own pass never did — it takes
+    // the tick by value, so the world's copy never advanced and every frame
+    // recomputed every matrix. With this, that pass becomes the cheap no-op it was
+    // always meant to be.
+    _world->propagationTick = Assisi::Runtime::PropagateTransforms(*_scene, _world->propagationTick);
+
+    // A play session looks through the scene's active camera when it has one, so
+    // the viewport shows what the game shows. The editor's camera stays where the
+    // author left it and is what Stop returns to.
+    Assisi::Runtime::Transform playPose;
+    Assisi::Runtime::Camera    playCamera;
+    if (PlayViewCamera(playPose, playCamera))
+    {
+        _sceneRenderer.Render(frame, *_scene, playPose, playCamera, _world->propagationTick);
+        return;
+    }
+
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
 }
 
@@ -860,6 +1017,16 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     {
         return;
     }
+    // Through the same camera the scene was drawn with, or an overlay would be
+    // projected from somewhere the viewport is not looking from.
+    Assisi::Runtime::Transform playPose;
+    Assisi::Runtime::Camera    playCamera;
+    if (PlayViewCamera(playPose, playCamera))
+    {
+        _sceneRenderer.RenderOverlays(frame, *_scene, playPose, playCamera);
+        return;
+    }
+
     _sceneRenderer.RenderOverlays(frame, *_scene, _cameraTransform, _camera);
 }
 
@@ -949,8 +1116,15 @@ void EditorApp::OnFixedUpdate(float dt)
 void EditorApp::OnUpdate(float dt)
 {
     auto &input = GetInput();
-    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsKeyboard())
-        RequestClose();
+
+    // What a player presses to get the cursor back, which is what stops a session.
+    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsTextInput() &&
+        _playState != PlayState::Editing)
+    {
+        StopPlay();
+    }
+
+    HandlePlayMouseCapture();
 
     if (!_scene)
         return;

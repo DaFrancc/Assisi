@@ -74,11 +74,11 @@ private:
     std::vector<Entry> _entries;
 };
 
-ASYSTEM(Update) inline void CounterSystem(SystemContext &ctx);
+ASYSTEM(Update, name = "Counter") inline void CounterSystem(SystemContext &ctx);
 
 /// Ordered after Counter, so a test can assert the graph was honoured rather
 /// than that both merely ran.
-ASYSTEM(Update, after = Counter) inline void FollowerSystem(SystemContext &ctx);
+ASYSTEM(Update, name = "Follower", after = Counter) inline void FollowerSystem(SystemContext &ctx);
 
 /// One InputContext, N resident worlds — this is the flag that keeps a system
 /// from applying the same keypresses in every one.
@@ -87,7 +87,7 @@ ASYSTEM(Update, name = "ActiveOnly", activeWorldOnly) inline void ActiveOnlySyst
 /// Turns contact reporting on for the world it runs in, which is what "the
 /// system's own needs travel with the system" means in practice: a level that
 /// names it gets the reporting too, without knowing it had to ask.
-ASYSTEM(FixedUpdate) inline void ContactsSystem(SystemContext &ctx);
+ASYSTEM(FixedUpdate, name = "Contacts") inline void ContactsSystem(SystemContext &ctx);
 
 inline void CounterSystem(SystemContext &ctx)
 {

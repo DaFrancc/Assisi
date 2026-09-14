@@ -18,9 +18,15 @@ inline bool ImGuiWantsMouse()
     return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse;
 }
 
-inline bool ImGuiWantsKeyboard()
+/// @brief Whether a text field has focus, and so owns the keys being typed.
+///
+/// What a shortcut must stand aside for. Deliberately **not**
+/// `WantCaptureKeyboard`, which answers "would ImGui like the keyboard" — with
+/// ImGuiConfigFlags_NavEnableKeyboard on, keyboard nav makes that true almost
+/// always, and every shortcut behind it never fires at all.
+inline bool ImGuiWantsTextInput()
 {
-    return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureKeyboard;
+    return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantTextInput;
 }
 
 /// Ctrl or Shift held — the "add to the selection" modifier. One query for both

@@ -108,6 +108,18 @@ void EditorApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 
 void EditorApp::UpdateCamera(float dt)
 {
+    // The keys and the mouse belong to the session while one is running, and the
+    // two controllers read the same ones — WASD and mouse movement would fly the
+    // editor camera and walk the player at once, and the pose the author left
+    // would be gone when they stopped.
+    //
+    // Only while the session actually holds the cursor: F8 lends it back, and an
+    // author who has asked for the mouse wants the viewport controls with it.
+    if (_playState != PlayState::Editing && GetInput().IsMouseCaptured())
+    {
+        return;
+    }
+
     auto &input          = GetInput();
     const bool imguiWantsMouse = ImGuiWantsMouse();
 
@@ -304,13 +316,21 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     PickRay ray;
 
     RefreshCameraMatrix();
-    const glm::mat4 view   = Assisi::Runtime::ViewMatrix(_cameraTransform);
+
+    // Whichever camera the viewport is actually drawn from. While a play session
+    // looks through a scene camera, a ray built from the editor's own would select
+    // whatever sits under the cursor *in a view nobody is looking at*.
+    Assisi::Runtime::Transform viewPose;
+    Assisi::Runtime::Camera    viewCamera;
+    ViewCamera(viewPose, viewCamera);
+
+    const glm::mat4 view   = Assisi::Runtime::ViewMatrix(viewPose);
     const auto fbSize = GetWindow().GetFramebufferSize();
     const float w      = static_cast<float>(fbSize.Width);
     const float h      = static_cast<float>(fbSize.Height);
     if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
         return ray;
-    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(_camera, w / h);
+    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(viewCamera, w / h);
 
     const float ndcX    = (2.f * mousePos.x / w) - 1.f;
     const float ndcY    = 1.f - (2.f * mousePos.y / h);
@@ -319,7 +339,7 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     viewDir.w           = 0.f;
 
     ray.direction = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    ray.origin    = _cameraTransform.position;
+    ray.origin    = viewPose.position;
     // The camera's world basis, read out of the view matrix's rows. The billboards
     // are built from the same two axes, so a picked icon quad is exactly the drawn
     // one.

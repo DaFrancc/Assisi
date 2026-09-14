@@ -109,32 +109,10 @@ struct SystemRow
 /// `BlueprintDefinition::systems` is already the whole nested closure, so a file
 /// that instances another contributes that one's systems too without this having
 /// to recurse.
-std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(const Runtime::InstanceTable &instances)
-{
-    std::map<std::string, int32_t, std::less<>> counts;
-
-    // Distinct sources first: the definition cache is keyed by path, so this is
-    // about not counting one blueprint once per copy of it in the level.
-    std::vector<std::string_view> sources;
-    for (const auto &[id, row] : instances.All())
-    {
-        if (!row->authored)
-            continue;
-        if (std::find(sources.begin(), sources.end(), row->source) != sources.end())
-            continue;
-        sources.push_back(row->source);
-    }
-
-    for (const std::string_view source : sources)
-    {
-        const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(source);
-        if (!definition)
-            continue; // Unreadable, and whatever placed it has already said so.
-        for (const std::string &name : (*definition)->systems)
-            ++counts[name];
-    }
-    return counts;
-}
+// What the blueprints in this level require. Shared with WorldManager::ApplySystems,
+// which installs exactly this set on top of the level's own names — the panel and
+// the installer have to agree, or a row reads "required" while nothing runs it.
+using Assisi::App::BlueprintSystemCounts;
 
 /// @brief Whether the edited file's own list names @p name.
 bool Requires(const std::vector<std::string> &required, std::string_view name)

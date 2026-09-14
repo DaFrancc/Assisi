@@ -503,6 +503,17 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     // and descriptors, and need the same resolve + physics build a level load does.
     RebuildInstanceTransients(placed->members);
 
+    // The systems the blueprint names, queued for the next safe point — the same
+    // thing App::SpawnBlueprint does, and for the same reason: the behaviour a
+    // piece of content needs travels with it. Without this the Systems panel
+    // reports them as inherited, from the instance table, while nothing has
+    // installed them — a required system that visibly does nothing.
+    if (const Assisi::Runtime::BlueprintResult definition =
+            Assisi::Runtime::GetBlueprintDefinition(source))
+    {
+        Assisi::App::QueueSystemInstall(*_world, (*definition)->systems, source);
+    }
+
     // One transaction for the record and every member, so undo takes the whole copy
     // back rather than leaving a record with no entities or entities with no record.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())

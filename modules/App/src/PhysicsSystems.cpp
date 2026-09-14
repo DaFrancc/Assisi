@@ -5,8 +5,12 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
+
+#include <cmath>
 
 #include <glm/geometric.hpp>
 
@@ -151,6 +155,73 @@ void CharacterStateSystem(SystemContext &ctx)
     }
 }
 
+void CharacterLookSystem(SystemContext &ctx)
+{
+    // Looks only while the cursor is held, and never takes it: whoever owns the
+    // session owns the cursor, because only it knows when the player has asked for
+    // the mouse back. Without that split, releasing would last exactly one step
+    // before this grabbed it again.
+    if (ctx.input == nullptr || !ctx.input->IsMouseCaptured())
+    {
+        return;
+    }
+
+    const glm::vec2 delta = ctx.input->MouseDelta();
+    if (delta.x == 0.f && delta.y == 0.f)
+    {
+        return;
+    }
+
+    ECS::Scene &scene = ctx.world.scene;
+
+    for (auto [entity, character] : scene.QueryMut<Physics::Character>())
+    {
+        (void)character;
+
+        // Yaw on the character, about world up rather than its own axis: composing
+        // onto the existing rotation would let pitch and roll leak in and the
+        // character would end up tipped over after enough looking around.
+        ECS::Transform *transform = scene.GetMut<ECS::Transform>(entity);
+        if (transform == nullptr)
+        {
+            continue;
+        }
+
+        const float yawDegrees = -delta.x * kLookDegreesPerPixel;
+        transform->rotation =
+            glm::normalize(glm::angleAxis(glm::radians(yawDegrees), glm::vec3(0.f, 1.f, 0.f)) *
+                           transform->rotation);
+
+        // Pitch on the camera parented to this character, so the body turns and
+        // the head tilts — a pitched capsule would walk into the floor.
+        for (auto [child, camera, parent] : scene.Query<Runtime::Camera, Runtime::Parent>())
+        {
+            (void)camera;
+            if (parent.parent != entity)
+            {
+                continue;
+            }
+
+            ECS::Transform *childTransform = scene.GetMut<ECS::Transform>(child);
+            if (childTransform == nullptr)
+            {
+                continue;
+            }
+
+            // Rebuilt from an accumulated angle rather than multiplied in, so the
+            // clamp is a clamp: composing a delta each step and then limiting the
+            // result lets it creep past the limit and stick there.
+            const glm::vec3 forward = childTransform->rotation * glm::vec3(0.f, 0.f, -1.f);
+            const float currentPitch = glm::degrees(std::asin(glm::clamp(forward.y, -1.f, 1.f)));
+            const float pitch =
+                glm::clamp(currentPitch - delta.y * kLookDegreesPerPixel, -kMaxPitchDegrees, kMaxPitchDegrees);
+
+            childTransform->rotation =
+                glm::normalize(glm::angleAxis(glm::radians(pitch), glm::vec3(1.f, 0.f, 0.f)));
+        }
+    }
+}
+
 void CharacterInputSystem(SystemContext &ctx)
 {
     // Null on a headless host, which has no devices to poll. The system is
@@ -164,8 +235,9 @@ void CharacterInputSystem(SystemContext &ctx)
     const Window::InputContext &input   = *ctx.input;
     const Window::ActionMap    &actions = *ctx.actions;
 
-    // World axes, because there is no camera to be relative to yet: forward is
-    // −Z. Possession is what replaces this whole system.
+    // Built in the character's own frame — forward is −Z — and rotated into the
+    // world per character below, so walking follows where each one is looking
+    // rather than a fixed compass direction.
     glm::vec3 move{0.f};
     if (actions.IsActionDown(kActionMoveForward, input))
     {
@@ -199,9 +271,22 @@ void CharacterInputSystem(SystemContext &ctx)
 
     for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
     {
-        (void)entity;
+        // Into the world, through the character's own facing. The vertical part is
+        // dropped: looking down must not walk a character into the floor, and the
+        // controller ignores it anyway.
+        glm::vec3 worldMove = move;
+        if (const ECS::Transform *transform = ctx.world.scene.Get<ECS::Transform>(entity))
+        {
+            worldMove   = transform->rotation * move;
+            worldMove.y = 0.f;
+            if (glm::dot(worldMove, worldMove) > 0.f)
+            {
+                worldMove = glm::normalize(worldMove);
+            }
+        }
+
         Physics::Character &intent = character.GetMut();
-        intent.move   = move;
+        intent.move   = worldMove;
         intent.stance = stance;
 
         // OR rather than assign: CharacterMoveSystem clears the request once it
