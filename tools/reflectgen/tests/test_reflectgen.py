@@ -1699,7 +1699,7 @@ class SystemTest(unittest.TestCase):
 
     SOURCE = (
         "namespace Game {\n"
-        "ASYSTEM(FixedUpdate) void BounceSystem(SystemContext &ctx);\n"
+        "ASYSTEM(FixedUpdate, name = \"Bounce\") void BounceSystem(SystemContext &ctx);\n"
         "ASYSTEM(Update, name = \"Spin\", after = Bounce, activeWorldOnly)\n"
         "void SpinDemoSystem(SystemContext &ctx);\n"
         "}\n")
@@ -1710,13 +1710,35 @@ class SystemTest(unittest.TestCase):
     def test_grammar_reaches_the_definition(self):
         found = {s.name: s for s in self._systems(self.SOURCE)}
         self.assertEqual(set(found), {"Bounce", "Spin"})
-        # The default name drops a trailing "System": BounceSystem in code is
-        # Bounce in a file.
         self.assertEqual(found["Bounce"].phase, "FixedUpdate")
         self.assertFalse(found["Bounce"].active_world_only)
         self.assertEqual(found["Spin"].after, ["Bounce"])
         self.assertTrue(found["Spin"].active_world_only)
         self.assertEqual(found["Spin"].fqn, "::Game::SpinDemoSystem")
+
+    def test_a_system_without_a_name_is_refused(self):
+        # The name is what a level file says, so deriving it from the function
+        # would make a C++ rename silently rename content — every level asking
+        # for the old name failing to load, with nothing pointing at the cause.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("name", str(caught.exception))
+
+    def test_every_game_phase_is_accepted(self):
+        # The phase list is a literal tuple, and a phase missing from it is
+        # rejected at build time with no hint that the enum has one more — so the
+        # two are pinned together here rather than discovered by a level failing
+        # to name a system.
+        for phase in ("PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update", "PostUpdate"):
+            found = self._systems(
+                "ASYSTEM(%s, name = \"Tick\") void TickSystem(SystemContext &ctx);\n" % phase)
+            self.assertEqual(found[0].phase, phase)
+
+    def test_an_unknown_phase_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._systems(
+                "ASYSTEM(DuringPhysics, name = \"Tick\") void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("DuringPhysics", str(caught.exception))
 
     def test_the_phase_decides_the_context_type(self):
         # The check the manual Register/RegisterRender split leaves to the caller.
@@ -1739,7 +1761,8 @@ class SystemTest(unittest.TestCase):
     def test_duplicate_names_are_a_build_error_naming_both(self):
         with tempfile.TemporaryDirectory() as d:
             first = Path(d) / "A.hpp"
-            first.write_text("ASYSTEM(Update) void BounceSystem(SystemContext &ctx);\n", encoding="utf-8")
+            first.write_text("ASYSTEM(Update, name = \"Bounce\") void BounceSystem(SystemContext &ctx);\n",
+                             encoding="utf-8")
             second = Path(d) / "B.hpp"
             second.write_text("namespace Other {\n"
                               "ASYSTEM(Update, name = \"Bounce\") void OtherSystem(SystemContext &ctx);\n"
@@ -1755,7 +1778,7 @@ class SystemTest(unittest.TestCase):
     def test_an_after_naming_nothing_is_a_build_error(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "A.hpp"
-            path.write_text("ASYSTEM(Update, after = Ghost) void TickSystem(SystemContext &ctx);\n",
+            path.write_text("ASYSTEM(Update, name = \"Tick\", after = Ghost) void TickSystem(SystemContext &ctx);\n",
                             encoding="utf-8")
             with self.assertRaises(ValueError) as caught:
                 reflectgen.check_systems([path])
@@ -1764,8 +1787,8 @@ class SystemTest(unittest.TestCase):
     def test_an_ordering_cycle_is_a_build_error(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "A.hpp"
-            path.write_text("ASYSTEM(Update, after = B) void ASystem(SystemContext &ctx);\n"
-                            "ASYSTEM(Update, after = A) void BSystem(SystemContext &ctx);\n",
+            path.write_text("ASYSTEM(Update, name = \"A\", after = B) void ASystem(SystemContext &ctx);\n"
+                            "ASYSTEM(Update, name = \"B\", after = A) void BSystem(SystemContext &ctx);\n",
                             encoding="utf-8")
             with self.assertRaises(ValueError) as caught:
                 reflectgen.check_systems([path])

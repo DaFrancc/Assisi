@@ -44,6 +44,13 @@ constexpr float kEpsilon = 1e-3f;
 /// can express, so a hit this close is on the line as far as clicking goes.
 constexpr float kSubPixel = 0.01f;
 
+/// "On the line", in pixels, for a segment clipped at the eye plane. Clipping
+/// puts that endpoint millions of pixels off screen, where consecutive floats are
+/// about a pixel apart, so a distance measured along such a segment carries slop
+/// no tightening of the arithmetic removes. Half a pixel is still well under
+/// anything a cursor can express.
+constexpr float kClippedSubPixel = 0.5f;
+
 /// A camera at the origin looking down -Z, 90 degrees across.
 ///
 /// The field of view is the whole point of the number: tan(45 degrees) is one, so
@@ -165,7 +172,7 @@ TEST_CASE("ScreenDistanceToSegment: a segment through the eye plane keeps only i
     float pixels   = 0.f;
     float distance = 0.f;
     REQUIRE(ScreenDistanceToSegment(ray, glm::vec2(kCenter, kCenter * 0.5f), behind, front, pixels, distance));
-    CHECK(pixels < kSubPixel);
+    CHECK(pixels < kClippedSubPixel);
 
     // ...and nowhere below it. Unclipped, `behind` divides by a negative w and
     // lands *below* centre at 0.7 of the viewport height — putting a clickable

@@ -281,17 +281,25 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
 // Public API
 // ---------------------------------------------------------------------------
 
+// Both tables are indexed by SystemPhase, so they have to be in its order and as
+// long as it is — the asserts are what turn adding an enumerator and forgetting a
+// name into a build error rather than a phase that profiles as another one.
+namespace
+{
+constexpr const char *kPhaseNames[] = {"PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update",
+                                       "PostUpdate"};
+static_assert(std::size(kPhaseNames) == static_cast<std::size_t>(SystemPhase::Count),
+              "Every SystemPhase needs a name, in the enum's order.");
+} // namespace
+
 std::string_view SystemRegistry::PhaseName(std::size_t gamePhaseIndex)
 {
-    static constexpr std::string_view kNames[] = {"PreUpdate", "FixedUpdate", "Update",
-                                                  "PostUpdate"};
-    return kNames[gamePhaseIndex];
+    return kPhaseNames[gamePhaseIndex];
 }
 
 const char *SystemRegistry::PhaseProfileName(std::size_t gamePhaseIndex)
 {
-    static constexpr const char *kNames[] = {"PreUpdate", "FixedUpdate", "Update", "PostUpdate"};
-    return kNames[gamePhaseIndex];
+    return kPhaseNames[gamePhaseIndex];
 }
 
 SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase phase,

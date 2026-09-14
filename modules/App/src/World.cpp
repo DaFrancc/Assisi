@@ -74,12 +74,33 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // what a save round-trips, and a failed install must not rewrite the file.
     // **Before** the resolve guard below for exactly that reason: it records what
     // the file asked for, which stays true no matter what could be installed.
+    //
+    // Only the level's own names are recorded. What the blueprints in it need is
+    // theirs to declare, and writing their names into this file would make the
+    // level claim systems it never asked for — and keep claiming them after the
+    // instance was deleted.
     world.systemNames.assign(names.begin(), names.end());
+
+    // Install the union of what the level names and what the blueprints placed in
+    // it need. A blueprint's behaviour travels with it, which is the whole point
+    // of a blueprint declaring systems — and this call clears the registry, so an
+    // instance's systems would otherwise be dropped by the next load and never
+    // reinstated. Only App::SpawnBlueprint queued them, so a level *loaded* with
+    // instances in it, or one placed in the editor, ran none of their behaviour.
+    std::vector<std::string> required(names.begin(), names.end());
+    for (const auto &[name, count] : BlueprintSystemCounts(world.instances))
+    {
+        (void)count;
+        if (std::find(required.begin(), required.end(), name) == required.end())
+        {
+            required.push_back(name);
+        }
+    }
 
     // Resolve before destroying anything: a refused list leaves the world running
     // exactly what it was, rather than nothing at all.
     std::vector<const SystemDefinition *> resolved;
-    if (!SystemCatalog::Instance().Resolve(names, resolved, context))
+    if (!SystemCatalog::Instance().Resolve(required, resolved, context))
         return false;
 
     // The queue belongs to the content being replaced, so it goes with it. A
@@ -551,16 +572,21 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
     dst.propagationTick = Runtime::PropagateTransforms(dst.scene, dst.propagationTick);
     const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(dst.scene);
 
-    // Rebuild transients in the DESTINATION world. RigidBody and the MeshRenderer
-    // pointers are transient (never serialized), so the arrived entities have the
-    // durable RigidBodyDescriptor/mesh ids but no live body or resolved GPU
-    // pointers yet.
+    // Rebuild transients in the DESTINATION world. The physics handles and the
+    // MeshRenderer pointers are transient (never serialized), so the arrived
+    // entities have the durable descriptors and mesh ids but no live object or
+    // resolved GPU pointers yet.
+    //
+    // Either kind of descriptor: the player is the entity most likely to travel,
+    // and a character that arrived without its controller would be exactly the
+    // thing this call exists to carry across.
     for (const ECS::Entity e : arrived)
     {
-        const Runtime::Transform *transform = dst.scene.Get<Runtime::Transform>(e);
-        const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
-        if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
-            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc, parentWorld);
+        if (dst.scene.Get<Physics::RigidBody>(e) == nullptr &&
+            dst.scene.Get<Physics::Character>(e) == nullptr)
+        {
+            (void)dst.physics.RebuildEntityPhysics(dst.scene, e, parentWorld);
+        }
     }
 
     // The other transient, through the shared path: dst is one of this manager's

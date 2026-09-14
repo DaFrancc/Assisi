@@ -106,9 +106,16 @@ void EditorApp::DrawInstanceGizmo()
     ImGuizmo::SetDrawlist(ImGui::GetBackgroundDrawList());
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x, viewport->Size.y);
 
+    // The camera the viewport is drawn from, which is a scene camera while a play
+    // session is running — a gizmo projected from the editor's own would be drawn
+    // and dragged somewhere the cursor is not.
+    Rt::Transform viewPose;
+    Rt::Camera    viewCamera;
+    ViewCamera(viewPose, viewCamera);
+
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view   = Rt::ViewMatrix(_cameraTransform);
-    const glm::mat4 proj   = Rt::ProjectionMatrix(_camera, aspect);
+    const glm::mat4 view   = Rt::ViewMatrix(viewPose);
+    const glm::mat4 proj   = Rt::ProjectionMatrix(viewCamera, aspect);
 
     const Rt::Transform placementBefore = row->transform;
     glm::mat4 world           = TransformMatrix(placementBefore);
@@ -337,9 +344,13 @@ bool EditorApp::DrawTransformGizmoHandles()
     // The same view/projection the scene renders with. Do not add a Y-flip: NVRHI
     // already flips the viewport, so what is on screen matches ImGuizmo's
     // convention as-is.
+    Rt::Transform viewPose;
+    Rt::Camera    viewCamera;
+    ViewCamera(viewPose, viewCamera);
+
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view   = Rt::ViewMatrix(_cameraTransform);
-    const glm::mat4 proj   = Rt::ProjectionMatrix(_camera, aspect);
+    const glm::mat4 view   = Rt::ViewMatrix(viewPose);
+    const glm::mat4 proj   = Rt::ProjectionMatrix(viewCamera, aspect);
 
     // The frame the result is converted back through. Identity for a root, where
     // world and local are the same matrix.

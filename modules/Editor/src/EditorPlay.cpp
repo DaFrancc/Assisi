@@ -144,6 +144,12 @@ void EditorApp::StartPlay(NetIntent intent)
                                  : PrePlayState{};
 
     SetPlayState(PlayState::Playing);
+
+    // The session takes the cursor as it starts, the way launching a game does.
+    // F8 hands it back without ending the session; Escape ends the session, which
+    // hands it back too.
+    GetInput().SetMouseCaptured(true);
+
     _netIntent   = intent;
     _joinPhase   = JoinPhase::None;
 #if defined(ASSISI_NETWORKING)
@@ -232,6 +238,10 @@ void EditorApp::ResumePlay()
     // but they were never part of the editing history, so they stop being undoable.
     _pausedHistory.reset();
     SetPlayState(PlayState::Playing);
+
+    // Back to the session, the way starting one takes it.
+    GetInput().SetMouseCaptured(true);
+    _playCursorLent = false;
 }
 
 void EditorApp::PausePlay()
@@ -260,6 +270,12 @@ void EditorApp::PausePlay()
         _pausedHistory.emplace(edited->scene, MakeEditRebindHook(), &edited->instances);
         InstallHistoryHooks(*_pausedHistory);
     }
+    // A pause exists to be edited in, so the cursor comes back — and comes back
+    // visible. Held, it would be a pointer the author can click panels with and
+    // cannot see.
+    GetInput().SetMouseCaptured(false);
+    _playCursorLent = false;
+
     SetPlayState(PlayState::Paused);
 }
 
@@ -269,6 +285,13 @@ void EditorApp::StopPlay()
     {
         return;
     }
+
+    // Whatever the session captured, it gives back here. A game system holds the
+    // cursor for as long as it runs and has no "session ended" of its own to
+    // release on — and a cursor still captured by a session that no longer exists
+    // is an editor nothing can click.
+    GetInput().SetMouseCaptured(false);
+    _playCursorLent = false;
 
     // The session ends with play, both roles and whatever the reason. FIRST, so a
     // client's mirrors are dropped before the restore rebuilds the editing scene
@@ -660,17 +683,13 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
             txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
-    // Tear down each entity's Jolt body, then queue the entity for destruction.
-    // RigidBody is transient — never captured; undo rebuilds it from
-    // RigidBodyDescriptor through the rebind hook. Destroy is deferred, so the slots
-    // free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
+    // Tear down each entity's simulated object, then queue the entity for
+    // destruction. The handles are transient — never captured; undo rebuilds them
+    // from the descriptor through the rebind hook. Destroy is deferred, so the
+    // slots free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
     for (const Assisi::ECS::Entity e : doomed)
     {
-        if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
-        {
-            _physics->RemoveBody(*rbc);
-            _scene->Remove<Assisi::Physics::RigidBody>(e);
-        }
+        _physics->RemoveEntityPhysics(*_scene, e);
         _scene->Destroy(e);
     }
 
@@ -740,9 +759,9 @@ void EditorApp::DrawGameControlWindow()
     // F5 run/resume, F6 pause, F7 stop — handled here so the keys live with the
     // window that owns them (the pattern F11 follows in DrawOptionsWindow). Each
     // transition no-ops unless the current state allows it, so a keypress in the
-    // wrong state does nothing. Gated on ImGuiWantsKeyboard so they do not fire
+    // wrong state does nothing. Gated on ImGuiWantsTextInput so they do not fire
     // while a text field has focus.
-    if (!ImGuiWantsKeyboard())
+    if (!ImGuiWantsTextInput())
     {
         Assisi::Window::InputContext &input = GetInput();
         if (input.IsKeyPressed(Assisi::Window::Key::F5))

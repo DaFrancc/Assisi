@@ -36,7 +36,7 @@ struct SystemContext;
 ///
 /// Entities with a zero `axis` or a non-positive `periodSeconds` are left alone
 /// — that is how a mover is parked without removing the component.
-ASYSTEM(FixedUpdate) void OscillateSystem(SystemContext &ctx);
+ASYSTEM(FixedUpdate, name = "Oscillate") void OscillateSystem(SystemContext &ctx);
 
 /// @brief Advances the scene's clock, daily and annual.
 ///
@@ -58,6 +58,6 @@ ASYSTEM(FixedUpdate) void OscillateSystem(SystemContext &ctx);
 /// Each clock is held by its own pause flag, so a frozen season under a running
 /// day — the noon shadow swinging through the year — is a view rather than an
 /// error.
-ASYSTEM(FixedUpdate) void TimeOfDaySystem(SystemContext &ctx);
+ASYSTEM(FixedUpdate, name = "TimeOfDay") void TimeOfDaySystem(SystemContext &ctx);
 
 } // namespace Assisi::App

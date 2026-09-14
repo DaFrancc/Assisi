@@ -503,6 +503,17 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     // and descriptors, and need the same resolve + physics build a level load does.
     RebuildInstanceTransients(placed->members);
 
+    // The systems the blueprint names, queued for the next safe point — the same
+    // thing App::SpawnBlueprint does, and for the same reason: the behaviour a
+    // piece of content needs travels with it. Without this the Systems panel
+    // reports them as inherited, from the instance table, while nothing has
+    // installed them — a required system that visibly does nothing.
+    if (const Assisi::Runtime::BlueprintResult definition =
+            Assisi::Runtime::GetBlueprintDefinition(source))
+    {
+        Assisi::App::QueueSystemInstall(*_world, (*definition)->systems, source);
+    }
+
     // One transaction for the record and every member, so undo takes the whole copy
     // back rather than leaving a record with no entities or entities with no record.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
@@ -588,11 +599,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 
     for (const Assisi::ECS::Entity entity : subtree)
     {
-        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
-        {
-            _physics->RemoveBody(*body);
-            _scene->Remove<Assisi::Physics::RigidBody>(entity);
-        }
+        _physics->RemoveEntityPhysics(*_scene, entity);
         _scene->Destroy(entity);
     }
     // Now, not at end of frame: the placement below creates entities, and a deferred
@@ -674,12 +681,12 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World &world,
     {
         if (member == Assisi::ECS::NullEntity)
             continue;
-        const auto *transform  = world.scene.Get<Assisi::Runtime::Transform>(member);
-        const auto *descriptor = world.scene.Get<Assisi::Physics::RigidBodyDescriptor>(member);
-        if (transform != nullptr && descriptor != nullptr &&
-            world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr)
+        // Whichever kind of physics the member's descriptor asks for; a member
+        // with neither simply gets none.
+        if (world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr &&
+            world.scene.Get<Assisi::Physics::Character>(member) == nullptr)
         {
-            world.physics.AddBodyFromDescriptor(world.scene, member, *transform, *descriptor, parentWorld);
+            (void)world.physics.RebuildEntityPhysics(world.scene, member, parentWorld);
         }
     }
 }

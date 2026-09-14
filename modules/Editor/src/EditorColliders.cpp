@@ -137,6 +137,35 @@ void EditorApp::SubmitColliderWireframes()
         }
     }
 
+    // Characters, on the same lines and in the same colours. Their capsule stands
+    // on the entity's Transform rather than being centred on it, so the wireframe
+    // is lifted by its own half-height — drawn where the author placed the feet,
+    // which is the whole reason a character is authored that way.
+    for (auto [entity, tc, desc] :
+         _scene->Query<Assisi::ECS::Transform, Assisi::Physics::CharacterDescriptor>())
+    {
+        _colliderEntities.push_back(entity);
+
+        const bool selected = IsSelected(entity);
+        const bool active   = selected && entity == _selectedEntity;
+
+        const glm::vec4 lineColor = active     ? kActiveSelectedColor
+                                    : selected ? kSelectedColor
+                                               : kUnselectedColor;
+
+        const glm::mat4 feet = ColliderBodyModel(*_scene, entity, tc);
+        const glm::mat4 bodyModel =
+            glm::translate(feet, glm::vec3(0.f, desc.halfHeight + desc.radius, 0.f));
+
+        std::vector<Assisi::Render::LineVertex> &lineOut =
+            selected ? _colliderLinesOnTop : _colliderLinesDepthTested;
+
+        // Only the standing shape. A crouch is a runtime state with no authored
+        // pose to draw it at, and two capsules at once would read as two
+        // characters.
+        AddCapsuleWireframe(lineOut, bodyModel, lineColor, desc.radius, desc.halfHeight);
+    }
+
     _sceneRenderer.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);
     _sceneRenderer.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/ true);
     _sceneRenderer.SetIconSuppressedEntities(_colliderEntities);

@@ -258,6 +258,45 @@ private:
     /// wants their fly camera where they left it.
     void AdoptLevelCamera();
 
+    /// @brief The camera a live play session should be viewed through, if the
+    /// scene has one marked active.
+    ///
+    /// The editor's own camera is for editing and for a level that has not
+    /// composed a camera yet; while playing, the viewport should show what the
+    /// game shows. Reads the camera's *world* pose, since a player's camera is
+    /// parented to the character it is attached to.
+    ///
+    /// @return false while editing, or when no active camera is in the scene — in
+    ///         which case @p pose and @p camera are untouched and the editor's own
+    ///         view is the fallback.
+    [[nodiscard]] bool PlayViewCamera(Assisi::Runtime::Transform &pose,
+                                      Assisi::Runtime::Camera &camera) const;
+
+    /// @brief Lends the cursor to the editor mid-session and gives it back: F8
+    /// toggles, and clicking the game — but not a panel — ends the loan.
+    ///
+    /// The editor holds this rather than the game systems, because only the host
+    /// knows when the player has asked for the mouse back. A system that captured
+    /// every step would undo a release a step after it happened.
+    void HandlePlayMouseCapture();
+
+    /// True while the editor has borrowed the cursor from a live session (F8).
+    /// Distinct from "the cursor is free": a game may have released it itself for
+    /// a menu, and that is not the editor's to take back.
+    bool _playCursorLent = false;
+
+    /// What the session had when the loan began, restored when it ends — so a
+    /// game that was not holding the cursor does not acquire one.
+    bool _captureBeforeLend = false;
+
+    /// @brief Where the viewport is looking from, whichever camera that is.
+    ///
+    /// PlayViewCamera's answer when it has one, the editor's own otherwise. Use
+    /// this for anything that projects or unprojects — a pick ray, a gizmo — so it
+    /// agrees with what was drawn. Reading `_cameraTransform` directly is correct
+    /// only for moving the editor camera itself.
+    void ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const;
+
     /// @brief Puts the editor camera at @p eye, looking at @p target.
     void AimCamera(const glm::vec3 &eye, const glm::vec3 &target);
 

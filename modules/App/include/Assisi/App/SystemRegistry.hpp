@@ -116,12 +116,31 @@ struct RenderContext
 };
 
 /// @brief Execution phase that determines when a system runs and which context it receives.
+/// @brief Execution phase that determines when a system runs and which context it receives.
+///
+/// A fixed tick is three parts, not one: ask for what should happen, simulate it,
+/// then react to what actually did. @ref FixedUpdate and @ref PostFixedUpdate are
+/// the first and third, with the physics step between them — which is why
+/// ordering a system `after` another cannot substitute for choosing the right
+/// phase. `after`/`before` arrange systems *within* a phase; only the phase
+/// decides which side of the step a system lands on.
 enum class SystemPhase : std::uint8_t
 {
     PreUpdate   = 0, ///< After input is polled; before physics and game logic.
-    FixedUpdate = 1, ///< Fixed timestep; may run multiple times per render frame.
-    Update      = 2, ///< Once per render frame; main game logic.
-    PostUpdate  = 3, ///< After game logic; transform propagation and cleanup.
+    FixedUpdate = 1, ///< Fixed timestep, before the physics step; may run several times per frame.
+
+    /// Fixed timestep, immediately **after** the physics step, once per step.
+    ///
+    /// Where anything that reacts to what the simulation just did belongs: a
+    /// contact response, a character's post-step footing, a network snapshot of
+    /// the tick. The distinction from @ref PostUpdate is per-tick versus
+    /// per-frame — a frame that runs three fixed steps runs this three times and
+    /// PostUpdate once, so a system that must see every tick cannot use the
+    /// latter.
+    PostFixedUpdate = 2,
+
+    Update     = 3, ///< Once per render frame; main game logic.
+    PostUpdate = 4, ///< After game logic; transform propagation and cleanup.
     Count
 };
 

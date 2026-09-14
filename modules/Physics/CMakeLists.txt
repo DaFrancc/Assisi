@@ -6,7 +6,13 @@ target_sources(Assisi-Physics
     "include/Assisi/Physics/PhysicsComponents.hpp"
     "include/Assisi/Physics/PhysicsWorld.hpp"
   PRIVATE
+    "src/PhysicsInternal.hpp"
+    "src/JoltRuntime.cpp"
     "src/PhysicsWorld.cpp"
+    "src/PhysicsContacts.cpp"
+    "src/PhysicsQueries.cpp"
+    "src/PhysicsCharacters.cpp"
+    "src/PhysicsWriteback.cpp"
 )
 
 target_include_directories(Assisi-Physics

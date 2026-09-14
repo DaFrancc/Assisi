@@ -183,9 +183,14 @@
 ///
 /// Phase is mandatory and positional; everything after it is a flag or a
 /// `key = value`, which is the AMSG grammar, so there is one thing to learn
-/// rather than two. Recognised: `name` (defaults to the function name with a
-/// trailing "System" stripped), `after`, `before`, and the `activeWorldOnly`
-/// flag. `after`/`before` may be repeated.
+/// rather than two. Recognised: `name`, `after`, `before`, and the
+/// `activeWorldOnly` flag. `after`/`before` may be repeated.
+///
+/// **`name` is mandatory**, and is deliberately not derived from the function.
+/// It is what a level file says, which makes it part of the content format:
+/// derived, renaming a C++ function would silently rename something levels refer
+/// to by string, and every file naming the old one would fail to load with
+/// nothing pointing at the rename.
 ///
 /// **Render implies `RenderContext &`**, every other phase `SystemContext &`,
 /// and reflectgen enforces it — a correctness check the manual
