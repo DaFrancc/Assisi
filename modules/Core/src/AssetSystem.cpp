@@ -40,10 +40,6 @@ using VoidResult = std::expected<void, AssetError>;
 /* Read-only asset root, cached after Initialize()/SetRoot(). */
 static fs::path gAssetRoot;
 
-/* Durable mirror destination for newly minted sidecars; empty = mirroring off
-   (the default, and the right setting for a shipped build). See
-   AssetSystem::SetAuthoringRoot. */
-static fs::path gAuthoringRoot;
 static bool gInitialized = false;
 
 /* Writable user-data root, cached on first use (lazy; see EnsureUserRoot). */
@@ -266,39 +262,6 @@ const fs::path &AssetSystem::GetRoot() noexcept
     return gAssetRoot;
 }
 
-void AssetSystem::SetAuthoringRoot(const fs::path &root) noexcept
-{
-    if (root.empty())
-    {
-        gAuthoringRoot.clear();
-        return;
-    }
-
-    std::error_code ec;
-    gAuthoringRoot = fs::weakly_canonical(root, ec);
-    if (ec)
-    {
-        /* Mirroring off rather than pointed somewhere unresolved — but said out
-           loud, because a silently disabled authoring mirror looks exactly like a
-           working one until somebody goes looking for the sidecars. */
-        Log::Warn("AssetSystem: cannot use '{}' as the authoring root ({}); mirroring is off.",
-                  root.string(), ec.message());
-        gAuthoringRoot.clear();
-        return;
-    }
-
-    if (gAuthoringRoot == gAssetRoot)
-    {
-        /* Same tree — mirroring would be a self-copy. */
-        gAuthoringRoot.clear();
-    }
-}
-
-const fs::path &AssetSystem::GetAuthoringRoot() noexcept
-{
-    return gAuthoringRoot;
-}
-
 PathResult AssetSystem::ResolveUnder(const fs::path &root, std::string_view vpath) noexcept
 {
     const PathResult relative = NormalizeVirtualPath(vpath);
@@ -519,9 +482,17 @@ PathResult AssetSystem::DiscoverRoot() noexcept
        Lambda type is unnameable, so this is the one place auto stays.
        A directory it cannot stat is simply not a match — the walk carries on
        upward rather than abandoning discovery over one unreadable parent. */
+    /* How far up to look before giving up. A developer build runs the executable
+       from inside the build tree and the tree it must find is the repository's
+       own, so the walk has to span that depth: a test binary sits six directories
+       below the root (out/build/<preset>/modules/<module>/tests) and so needs
+       seven probes. The margin above that costs a handful of stats on paths that
+       do not exist. */
+    constexpr int32_t kMaxWalkUpDepth = 10;
+
     auto walkUp = [](fs::path dir) -> std::optional<fs::path>
                   {
-                      for (int32_t i = 0; i < 10; ++i)
+                      for (int32_t i = 0; i < kMaxWalkUpDepth; ++i)
                       {
                           std::error_code ec;
                           const fs::path candidate = dir / "assets";

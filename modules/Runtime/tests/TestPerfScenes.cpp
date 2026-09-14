@@ -35,13 +35,11 @@
 using namespace Assisi;
 using Assisi::Runtime::SceneSerializer;
 
-// These read the committed levels straight out of the source tree, which a
-// Release build deliberately does not have (the staged copy beside the binary is
-// its durable one). So the gate compiles out there rather than failing the
-// build, and says so rather than vanishing silently — a suite that quietly drops
-// cases in one configuration is how a gate stops being one.
-#ifdef ASSISI_SOURCE_ASSET_ROOT
-
+// These read the committed levels straight out of the asset tree, by the path
+// the build compiled in rather than through AssetSystem: its root is global, and
+// the blueprint and serializer cases in this same binary repoint it at temporary
+// directories, so reading the real tree through it would depend on the order
+// doctest happens to run these in.
 namespace
 {
 
@@ -308,12 +306,3 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
     CHECK(checked == 29);
 }
 
-#else // !ASSISI_SOURCE_ASSET_ROOT
-
-TEST_CASE("The perf scene gate needs the source asset tree" * doctest::skip())
-{
-    MESSAGE("Built without ASSISI_SOURCE_ASSET_ROOT (a Release configuration), so the committed "
-            "levels are not reachable and the contract gate did not run. Run it in debug or dev.");
-}
-
-#endif // ASSISI_SOURCE_ASSET_ROOT

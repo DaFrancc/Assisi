@@ -70,6 +70,16 @@ pics/
 
 # Model assets — heavy binary art (glTF .bin + textures), kept local only.
 assets/models/
+
+# Compiled shaders, which the build writes beside the GLSL they come from. The
+# asset tree is the only one, so build outputs land in it rather than in a staged
+# copy; they are reproducible from the source beside them and belong to no clone
+# but this one. The .aast is the id the asset database mints for each on first
+# load — an id for a derived file, regenerated with it. The .tmp is a compiled
+# shader mid-rename, present only while a build is running.
+assets/**/*.spv
+assets/**/*.spv.aast
+assets/**/*.spv.*.tmp
 # Captures, of every kind. Machine-specific measurements of one run on one
 # machine: large, stale the moment anything changes, and worthless to anyone
 # who did not take them. Quote a number in the tracker instead of committing

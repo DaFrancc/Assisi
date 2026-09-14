@@ -65,7 +65,6 @@ struct AssetRoot
     }
     ~AssetRoot()
     {
-        AssetSystem::SetAuthoringRoot({}); // never leak the mirror into another case
         std::error_code ec;
         fs::remove_all(path, ec);
     }
@@ -223,27 +222,6 @@ TEST_CASE("SaveMaterial refuses a path that escapes the asset root")
     CHECK_FALSE(fs::exists(root.path.parent_path() / "outside.amat"));
 }
 
-TEST_CASE("SaveMaterial mirrors the body into the authoring root")
-{
-    const AssetRoot root("assisi_matauthor_mirror");
-    const fs::path authoring = fs::temp_directory_path() / "assisi_matauthor_mirror_src";
-    std::error_code ec;
-    fs::remove_all(authoring, ec);
-    fs::create_directories(authoring);
-    AssetSystem::SetAuthoringRoot(authoring);
-
-    MaterialData m;
-    m.RoughnessFactor = 0.42f;
-    REQUIRE(SaveMaterial("materials/brass.amat", m).has_value());
-
-    // Both copies, byte for byte. Without the mirror the authored material lives
-    // only in the staged tree a clean build wipes.
-    REQUIRE(fs::exists(authoring / "materials" / "brass.amat"));
-    CHECK(ReadFile(authoring / "materials" / "brass.amat") == ReadFile(root.path / "materials" / "brass.amat"));
-
-    fs::remove_all(authoring, ec);
-}
-
 TEST_CASE("RenameMaterial carries the GUID sidecar with the material")
 {
     const AssetRoot root("assisi_matauthor_rename");
@@ -280,54 +258,19 @@ TEST_CASE("RenameMaterial refuses to overwrite an existing material")
     CHECK(ReadFile(root.path / "b.amat") == "B");
 }
 
-TEST_CASE("RenameMaterial moves the authoring-root copy too")
-{
-    const AssetRoot root("assisi_matauthor_rename_mirror");
-    const fs::path authoring = fs::temp_directory_path() / "assisi_matauthor_rename_mirror_src";
-    std::error_code ec;
-    fs::remove_all(authoring, ec);
-    fs::create_directories(authoring);
-    AssetSystem::SetAuthoringRoot(authoring);
-
-    WriteFile(root.path / "old.amat", "BODY");
-    WriteFile(root.path / "old.amat.aast", "SIDECAR");
-    WriteFile(authoring / "old.amat", "BODY");
-    WriteFile(authoring / "old.amat.aast", "SIDECAR");
-
-    REQUIRE(Assisi::Geometry::RenameMaterial("old.amat", "new.amat").has_value());
-
-    // Left behind in the durable tree, the old name comes back on the next build
-    // and the rename silently undoes itself.
-    CHECK(fs::exists(authoring / "new.amat"));
-    CHECK(fs::exists(authoring / "new.amat.aast"));
-    CHECK_FALSE(fs::exists(authoring / "old.amat"));
-    CHECK_FALSE(fs::exists(authoring / "old.amat.aast"));
-
-    fs::remove_all(authoring, ec);
-}
-
-TEST_CASE("DeleteMaterialFile removes the material, its sidecar, and the authoring copy")
+TEST_CASE("DeleteMaterialFile removes the material and its sidecar")
 {
     const AssetRoot root("assisi_matauthor_delete");
-    const fs::path authoring = fs::temp_directory_path() / "assisi_matauthor_delete_src";
-    std::error_code ec;
-    fs::remove_all(authoring, ec);
-    fs::create_directories(authoring);
-    AssetSystem::SetAuthoringRoot(authoring);
 
     WriteFile(root.path / "doomed.amat", "BODY");
     WriteFile(root.path / "doomed.amat.aast", "SIDECAR");
-    WriteFile(authoring / "doomed.amat", "BODY");
-    WriteFile(authoring / "doomed.amat.aast", "SIDECAR");
 
     CHECK(Assisi::Geometry::DeleteMaterialFile("doomed.amat"));
 
+    // The sidecar goes with the body: a stranded id describes a file that no
+    // longer exists, and the next reconcile hands it to whatever takes the name.
     CHECK_FALSE(fs::exists(root.path / "doomed.amat"));
     CHECK_FALSE(fs::exists(root.path / "doomed.amat.aast"));
-    CHECK_FALSE(fs::exists(authoring / "doomed.amat"));
-    CHECK_FALSE(fs::exists(authoring / "doomed.amat.aast"));
-
-    fs::remove_all(authoring, ec);
 }
 
 TEST_CASE("UniqueMaterialPath walks past the names already taken")
