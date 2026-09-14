@@ -44,6 +44,8 @@
             "MoveRight":    [{"key": "D"}, {"key": "Right"}],
             "MoveUp":       [{"key": "Space"}],
             "MoveDown":     [{"key": "LeftControl"}],
+            "Jump":         [{"key": "Space"}],
+            "Crouch":       [{"key": "LeftControl"}],
             "Sprint":       [{"key": "LeftShift"}],
             "LookMode":     [{"button": "Right"}],
             "Select":       [{"button": "Left"}]

@@ -927,27 +927,16 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
 {
     if (anyFieldEdited)
     {
-        const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
-        const auto *rbc  = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
-        const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
-        if (tc && rbc)
-            _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
-        if (rbc && desc)
+        // Both dispatch on whichever kind of physics the entity has, so this knows
+        // nothing about rigid bodies versus characters — which is the point, since
+        // every branch it used to carry had to be written twice the day the second
+        // kind existed.
+        if (const auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity))
         {
-            _physics->ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
-                    .shape       = desc->shape,
-                    .halfExtents = desc->halfExtents,
-                    .radius      = desc->radius,
-                    .halfHeight  = desc->halfHeight});
-            _physics->SetBodyCCD(*rbc, desc->enableCCD);
-
-            // The channel and its mask live on the body's collision layer, which
-            // nothing else here writes. Left out, an edit changes the descriptor
-            // and not the simulation, and only shows up once something rebuilds
-            // the body from the descriptor — a play session later.
-            _physics->SetBodyCollisionFilter(
-                *rbc, Assisi::Physics::CollisionFilter{desc->collidesWith, desc->channel});
+            _physics->SetEntityTransform(*_scene, _selectedEntity, tc->position, tc->rotation);
         }
+
+        _physics->ReconfigureEntityPhysics(*_scene, _selectedEntity);
     }
 
     // IsAnyItemActive() is global: it fires for a drag in *any* window, so the AA
@@ -984,11 +973,15 @@ void EditorApp::RequestPhysicsFreeze()
         !_world->scene.IsAlive(_selectedEntity))
         return;
 
-    const auto *rbc = _world->scene.Get<Assisi::Physics::RigidBody>(_selectedEntity);
-    if (rbc == nullptr)
-        return; // nothing to hold; a body added mid-gesture is picked up next frame
+    // Nothing to hold if the entity has no physics; one added mid-gesture is
+    // picked up next frame.
+    if (_world->scene.Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr &&
+        _world->scene.Get<Assisi::Physics::Character>(_selectedEntity) == nullptr)
+    {
+        return;
+    }
 
-    _world->physics.SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
+    _world->physics.SetEntityPhysicsFrozen(_world->scene, _selectedEntity, true);
     _frozenBodyEntity = _selectedEntity;
     _frozenBodyWorld  = _world->name;
 }
@@ -1013,22 +1006,29 @@ void EditorApp::ThawEditedBody()
     if (world == nullptr || !world->scene.IsAlive(entity))
         return; // world or entity is gone; its body went with it
 
-    const auto *rbc = world->scene.Get<Assisi::Physics::RigidBody>(entity);
-    if (rbc == nullptr)
+    const auto *rbc       = world->scene.Get<Assisi::Physics::RigidBody>(entity);
+    const auto *character = world->scene.Get<Assisi::Physics::Character>(entity);
+    if (rbc == nullptr && character == nullptr)
+    {
         return; // collider removed during the drag
+    }
 
     // Back to whatever the descriptor authored, never unconditionally Dynamic: the
     // freeze must be invisible, including for bodies that were Static all along.
-    const auto *desc     = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
-    const bool isStatic = desc && desc->isStatic;
-    world->physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
-                                                    : Assisi::Physics::BodyMotion::Dynamic);
+    world->physics.SetEntityPhysicsFrozen(world->scene, entity, false);
+
+    // Land it on wherever the drag left the Transform, so it resumes from the pose
+    // the author sees rather than the pre-drag one. A static body is skipped
+    // because its Transform *is* where it already is, and re-placing a trigger
+    // volume would wake everything around it for nothing.
+    const auto *desc    = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
+    const bool isStatic = rbc != nullptr && desc != nullptr && desc->isStatic;
     if (!isStatic)
     {
-        // Land it on wherever the drag left the Transform, so it resumes from the
-        // pose the author sees rather than the pre-drag one.
         if (const auto *tc = world->scene.Get<Assisi::Runtime::Transform>(entity))
-            world->physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+        {
+            world->physics.SetEntityTransform(world->scene, entity, tc->position, tc->rotation);
+        }
     }
 }
 
@@ -1087,15 +1087,18 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     {
         ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
     }
-    else if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta))
+    else if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) ||
+             IsComponent<Assisi::Physics::CharacterDescriptor>(meta))
     {
-        const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
-        const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
-        if (tc != nullptr && desc != nullptr &&
-            _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr)
+        // Rebuild rather than add: the entity may already have the other kind of
+        // physics, and building both would have a character collide with its own
+        // inner body. The rebuild refuses that pair and says so.
+        if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity,
+                                            Assisi::App::ParentWorldResolver(*_scene)))
         {
-            _physics->AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc,
-                                            Assisi::App::ParentWorldResolver(*_scene));
+            Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics — it already has a "
+                                    "collider of the other kind, or no Transform.",
+                                    meta.name);
         }
     }
 
@@ -1117,23 +1120,21 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
                               _selectedEntity);
 
     // Tear down runtime state living outside the reflected fields, before the pool
-    // entry disappears. A RigidBodyDescriptor owns a Jolt body through the
-    // transient RigidBody handle, so both go.
+    // entry disappears. Either descriptor owns a simulated object through its
+    // transient handle, so both go.
     //
-    // Transform is in this branch too: a body's pose is driven from it, so
-    // removing the Transform while the descriptor stays would leave a live Jolt
-    // body simulating with nothing to sync it — an orphan only a level reload
-    // clears. The descriptor itself survives either way.
+    // Transform is in this branch too: the pose is driven from it, so removing the
+    // Transform while the descriptor stays would leave a live object simulating
+    // with nothing to sync it — an orphan only a level reload clears. The
+    // descriptor itself survives either way.
     //
     // MeshRenderer needs nothing: its transient pointers are non-owning, the
     // AssetCache owns the GPU resources.
-    if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) || IsComponent<Assisi::Runtime::Transform>(meta))
+    if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) ||
+        IsComponent<Assisi::Physics::CharacterDescriptor>(meta) ||
+        IsComponent<Assisi::Runtime::Transform>(meta))
     {
-        if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
-        {
-            _physics->RemoveBody(*rbc);
-        }
-        _scene->Remove<Assisi::Physics::RigidBody>(_selectedEntity);
+        _physics->RemoveEntityPhysics(*_scene, _selectedEntity);
     }
 
     _scene->RemoveById(_selectedEntity, meta.id);

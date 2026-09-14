@@ -1718,6 +1718,21 @@ class SystemTest(unittest.TestCase):
         self.assertTrue(found["Spin"].active_world_only)
         self.assertEqual(found["Spin"].fqn, "::Game::SpinDemoSystem")
 
+    def test_every_game_phase_is_accepted(self):
+        # The phase list is a literal tuple, and a phase missing from it is
+        # rejected at build time with no hint that the enum has one more — so the
+        # two are pinned together here rather than discovered by a level failing
+        # to name a system.
+        for phase in ("PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update", "PostUpdate"):
+            found = self._systems(
+                "ASYSTEM(%s) void TickSystem(SystemContext &ctx);\n" % phase)
+            self.assertEqual(found[0].phase, phase)
+
+    def test_an_unknown_phase_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(DuringPhysics) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("DuringPhysics", str(caught.exception))
+
     def test_the_phase_decides_the_context_type(self):
         # The check the manual Register/RegisterRender split leaves to the caller.
         with self.assertRaises(ValueError) as caught:

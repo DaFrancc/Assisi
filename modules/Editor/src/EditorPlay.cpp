@@ -660,17 +660,13 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
             txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
-    // Tear down each entity's Jolt body, then queue the entity for destruction.
-    // RigidBody is transient — never captured; undo rebuilds it from
-    // RigidBodyDescriptor through the rebind hook. Destroy is deferred, so the slots
-    // free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
+    // Tear down each entity's simulated object, then queue the entity for
+    // destruction. The handles are transient — never captured; undo rebuilds them
+    // from the descriptor through the rebind hook. Destroy is deferred, so the
+    // slots free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
     for (const Assisi::ECS::Entity e : doomed)
     {
-        if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
-        {
-            _physics->RemoveBody(*rbc);
-            _scene->Remove<Assisi::Physics::RigidBody>(e);
-        }
+        _physics->RemoveEntityPhysics(*_scene, e);
         _scene->Destroy(e);
     }
 

@@ -127,6 +127,36 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
     CHECK(seenAlive == 1u);
 }
 
+TEST_CASE("SystemRegistry: every phase is a separate list, and PostFixedUpdate is its own")
+{
+    // PostFixedUpdate exists because ordering cannot cross the physics step:
+    // `after`/`before` arrange systems within one phase, and the step runs
+    // between FixedUpdate and this one. A registry that folded the two together
+    // would run a post-step system before the step and nothing would say so.
+    WorldManager worlds;
+    World &world = worlds.Create("Test");
+    Assisi::Core::EventQueue events;
+    SystemRegistry systems;
+
+    std::vector<std::string> order;
+    const auto record = [&order](std::string name)
+    {
+        return [&order, name = std::move(name)](SystemContext &) { order.push_back(name); };
+    };
+
+    systems.Register(SystemPhase::FixedUpdate, "BeforeStep", record("BeforeStep"));
+    systems.Register(SystemPhase::PostFixedUpdate, "AfterStep", record("AfterStep"));
+
+    // Running one phase runs only that phase's systems, whatever the other holds.
+    systems.Run(SystemPhase::FixedUpdate, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
+    REQUIRE(order.size() == 1u);
+    CHECK(order[0] == "BeforeStep");
+
+    systems.Run(SystemPhase::PostFixedUpdate, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
+    REQUIRE(order.size() == 2u);
+    CHECK(order[1] == "AfterStep");
+}
+
 TEST_CASE("SystemRegistry: ActiveWorldOnly systems run only in the active world")
 {
     // One InputContext, N resident worlds: a controller system must not apply the

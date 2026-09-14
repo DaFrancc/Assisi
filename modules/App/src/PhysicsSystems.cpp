@@ -5,6 +5,8 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Window/ActionMap.hpp>
+#include <Assisi/Window/InputContext.hpp>
 
 #include <glm/geometric.hpp>
 
@@ -86,6 +88,126 @@ void BounceSystem(SystemContext &ctx)
         const glm::vec3 reflected = contact.velocity - 2.f * closingSpeed * contact.normal;
         const float rebound   = glm::max(bounce->rebound, 0.f);
         ctx.world.physics.SetBodyLinearVelocity(*body, reflected * rebound);
+    }
+}
+
+void CharacterMoveSystem(SystemContext &ctx)
+{
+    ECS::Scene &scene = ctx.world.scene;
+
+    for (auto [entity, character, descriptor] :
+         scene.QueryMut<Physics::Character, Physics::CharacterDescriptor>())
+    {
+        (void)entity;
+
+        const Physics::Character           &intent   = character.Get();
+        const Physics::CharacterDescriptor &authored = descriptor.Get();
+
+        const glm::vec3 move = intent.move;
+        const bool      jump = intent.jump;
+
+        // Asked every step rather than on the edge of a keypress: standing up
+        // under something low fails, and retrying is what lets a character stand
+        // by itself once it has walked clear.
+        (void)ctx.world.physics.SetCharacterStance(intent, intent.stance);
+
+        // The crouch scale applies to the stance the character actually reached,
+        // not the one it asked for — read back live, because a character blocked
+        // under a ledge would otherwise walk at full speed while crouched.
+        const Physics::Stance stance = ctx.world.physics.GetCharacterState(intent).stance;
+        const float           speed  = stance == Physics::Stance::Crouching
+                                           ? authored.walkSpeed * authored.crouchSpeedScale
+                                           : authored.walkSpeed;
+
+        ctx.world.physics.MoveCharacter(intent, move * speed, jump);
+
+        // A request, consumed: one press is one jump however many steps pass
+        // before it can fire.
+        character.GetMut().jump = false;
+    }
+}
+
+void CharacterStateSystem(SystemContext &ctx)
+{
+    for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
+    {
+        (void)entity;
+
+        const Physics::CharacterState state = ctx.world.physics.GetCharacterState(character.Get());
+
+        // Skip the write when nothing moved, rather than stamp a change tick for
+        // a state identical to the one already there. Character is transient and
+        // untracked, so the tick costs nothing today — but a standing crowd of
+        // characters would otherwise write every field every step for no reason.
+        if (character.Get().state.velocity == state.velocity &&
+            character.Get().state.ground == state.ground &&
+            character.Get().state.stance == state.stance &&
+            character.Get().state.groundEntity == state.groundEntity)
+        {
+            continue;
+        }
+
+        character.GetMut().state = state;
+    }
+}
+
+void CharacterInputSystem(SystemContext &ctx)
+{
+    // Null on a headless host, which has no devices to poll. The system is
+    // activeWorldOnly and so is gated out of one anyway; this is what makes it
+    // inert rather than a crash if a level names it somewhere unexpected.
+    if (ctx.input == nullptr || ctx.actions == nullptr)
+    {
+        return;
+    }
+
+    const Window::InputContext &input   = *ctx.input;
+    const Window::ActionMap    &actions = *ctx.actions;
+
+    // World axes, because there is no camera to be relative to yet: forward is
+    // −Z. Possession is what replaces this whole system.
+    glm::vec3 move{0.f};
+    if (actions.IsActionDown(kActionMoveForward, input))
+    {
+        move.z -= 1.f;
+    }
+    if (actions.IsActionDown(kActionMoveBackward, input))
+    {
+        move.z += 1.f;
+    }
+    if (actions.IsActionDown(kActionMoveLeft, input))
+    {
+        move.x -= 1.f;
+    }
+    if (actions.IsActionDown(kActionMoveRight, input))
+    {
+        move.x += 1.f;
+    }
+
+    // Normalized, or holding two keys would walk faster diagonally than straight.
+    // Guarded because normalizing a zero vector is a division by zero that poisons
+    // every downstream number with NaN.
+    if (glm::dot(move, move) > 0.f)
+    {
+        move = glm::normalize(move);
+    }
+
+    const bool jump = actions.IsActionPressed(kActionJump, input);
+    const Physics::Stance stance =
+        actions.IsActionDown(kActionCrouch, input) ? Physics::Stance::Crouching
+                                                   : Physics::Stance::Standing;
+
+    for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
+    {
+        (void)entity;
+        Physics::Character &intent = character.GetMut();
+        intent.move   = move;
+        intent.stance = stance;
+
+        // OR rather than assign: CharacterMoveSystem clears the request once it
+        // has been consumed, and a press landing on a step this system happens to
+        // run twice for must not be wiped before that.
+        intent.jump = intent.jump || jump;
     }
 }
 

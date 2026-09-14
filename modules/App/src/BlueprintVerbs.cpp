@@ -46,10 +46,14 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
 
     for (const ECS::Entity member : members)
     {
-        const ECS::Transform *transform  = world.scene.Get<ECS::Transform>(member);
-        const Physics::RigidBodyDescriptor *descriptor = world.scene.Get<Physics::RigidBodyDescriptor>(member);
-        if (transform != nullptr && descriptor != nullptr && world.scene.Get<Physics::RigidBody>(member) == nullptr)
-            world.physics.AddBodyFromDescriptor(world.scene, member, *transform, *descriptor, parentWorld);
+        // Whichever kind of physics the member's descriptor asks for. A blueprint
+        // holding a character — a player, an NPC — would otherwise spawn with the
+        // descriptor and no controller, and stand there for the rest of the level.
+        if (world.scene.Get<Physics::RigidBody>(member) == nullptr &&
+            world.scene.Get<Physics::Character>(member) == nullptr)
+        {
+            (void)world.physics.RebuildEntityPhysics(world.scene, member, parentWorld);
+        }
     }
 
     return *id;

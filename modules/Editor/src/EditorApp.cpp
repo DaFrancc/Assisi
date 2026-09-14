@@ -919,6 +919,14 @@ void EditorApp::OnFixedUpdate(float dt)
                     ASSISI_PROFILE_SCOPE("physics-capture");
                     world.physics.CaptureState();
                 }
+
+                // The other half of the tick: what reacts to the step that just
+                // ran. Inside this loop rather than with the per-frame phases, so
+                // a frame that runs several steps runs this for every one of
+                // them rather than only the last.
+                world.systems.Run(Assisi::App::SystemPhase::PostFixedUpdate,
+                                  {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
+                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds});
             });
     }
 
@@ -1369,39 +1377,36 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
     static const Core::Reflect::ComponentId kTransform = Core::Reflect::ComponentIdOf<Runtime::Transform>();
     static const Core::Reflect::ComponentId kRigidBodyDesc =
         Core::Reflect::ComponentIdOf<Physics::RigidBodyDescriptor>();
+    static const Core::Reflect::ComponentId kCharacterDesc =
+        Core::Reflect::ComponentIdOf<Physics::CharacterDescriptor>();
     static const Core::Reflect::ComponentId kMeshRenderer = Core::Reflect::ComponentIdOf<Runtime::MeshRenderer>();
 
     if (id == kTransform)
     {
-        // A restored or edited Transform drags any physics body to the new pose.
-        // Add already re-stamped the change tick, so PropagateTransforms reruns.
+        // A restored or edited Transform drags whatever physics the entity has to
+        // the new pose. Add already re-stamped the change tick, so
+        // PropagateTransforms reruns.
         if (present)
         {
-            const auto *rbc = _scene->Get<Physics::RigidBody>(entity);
-            const auto *tc  = _scene->Get<Runtime::Transform>(entity);
-            if (rbc && tc)
-                _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
+            if (const auto *tc = _scene->Get<Runtime::Transform>(entity))
+            {
+                _physics->SetEntityTransform(*_scene, entity, tc->position, tc->rotation);
+            }
         }
     }
-    else if (id == kRigidBodyDesc)
+    else if (id == kRigidBodyDesc || id == kCharacterDesc)
     {
+        // Descriptor came back: rebuild from it, mirroring the component-add path.
+        // Gone: tear down the simulated object and its transient handle, which is
+        // ACOMP(transient) and so never in the payload either way.
         if (present)
         {
-            // Descriptor came back: rebuild the Jolt body from it, mirroring the
-            // component-add path, unless a body somehow already exists.
-            const auto *tc   = _scene->Get<Runtime::Transform>(entity);
-            const auto *desc = _scene->Get<Physics::RigidBodyDescriptor>(entity);
-            if (tc && desc && _scene->Get<Physics::RigidBody>(entity) == nullptr)
-                _physics->AddBodyFromDescriptor(*_scene, entity, *tc, *desc,
-                                                Assisi::App::ParentWorldResolver(*_scene));
+            (void)_physics->RebuildEntityPhysics(*_scene, entity,
+                                                 Assisi::App::ParentWorldResolver(*_scene));
         }
         else
         {
-            // Descriptor removed: tear down its Jolt body and the transient handle.
-            // RigidBody is ACOMP(transient), so it is never in the payload.
-            if (const auto *rbc = _scene->Get<Physics::RigidBody>(entity))
-                _physics->RemoveBody(*rbc);
-            _scene->Remove<Physics::RigidBody>(entity);
+            _physics->RemoveEntityPhysics(*_scene, entity);
         }
     }
     else if (id == kMeshRenderer)

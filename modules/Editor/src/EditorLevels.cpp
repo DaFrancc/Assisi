@@ -588,11 +588,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 
     for (const Assisi::ECS::Entity entity : subtree)
     {
-        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
-        {
-            _physics->RemoveBody(*body);
-            _scene->Remove<Assisi::Physics::RigidBody>(entity);
-        }
+        _physics->RemoveEntityPhysics(*_scene, entity);
         _scene->Destroy(entity);
     }
     // Now, not at end of frame: the placement below creates entities, and a deferred
@@ -674,12 +670,12 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World &world,
     {
         if (member == Assisi::ECS::NullEntity)
             continue;
-        const auto *transform  = world.scene.Get<Assisi::Runtime::Transform>(member);
-        const auto *descriptor = world.scene.Get<Assisi::Physics::RigidBodyDescriptor>(member);
-        if (transform != nullptr && descriptor != nullptr &&
-            world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr)
+        // Whichever kind of physics the member's descriptor asks for; a member
+        // with neither simply gets none.
+        if (world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr &&
+            world.scene.Get<Assisi::Physics::Character>(member) == nullptr)
         {
-            world.physics.AddBodyFromDescriptor(world.scene, member, *transform, *descriptor, parentWorld);
+            (void)world.physics.RebuildEntityPhysics(world.scene, member, parentWorld);
         }
     }
 }

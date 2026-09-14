@@ -585,11 +585,7 @@ void EditorApp::ApplyPendingReexpand()
         for (const Assisi::ECS::Entity member :
              Assisi::Runtime::MembersOf(world.scene, pending.instanceId))
         {
-            if (const auto *body = world.scene.Get<Assisi::Physics::RigidBody>(member))
-            {
-                world.physics.RemoveBody(*body);
-                world.scene.Remove<Assisi::Physics::RigidBody>(member);
-            }
+            world.physics.RemoveEntityPhysics(world.scene, member);
         }
 
         const auto result = Assisi::Runtime::SceneSerializer::ReexpandInstance(

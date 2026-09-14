@@ -551,16 +551,21 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
     dst.propagationTick = Runtime::PropagateTransforms(dst.scene, dst.propagationTick);
     const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(dst.scene);
 
-    // Rebuild transients in the DESTINATION world. RigidBody and the MeshRenderer
-    // pointers are transient (never serialized), so the arrived entities have the
-    // durable RigidBodyDescriptor/mesh ids but no live body or resolved GPU
-    // pointers yet.
+    // Rebuild transients in the DESTINATION world. The physics handles and the
+    // MeshRenderer pointers are transient (never serialized), so the arrived
+    // entities have the durable descriptors and mesh ids but no live object or
+    // resolved GPU pointers yet.
+    //
+    // Either kind of descriptor: the player is the entity most likely to travel,
+    // and a character that arrived without its controller would be exactly the
+    // thing this call exists to carry across.
     for (const ECS::Entity e : arrived)
     {
-        const Runtime::Transform *transform = dst.scene.Get<Runtime::Transform>(e);
-        const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
-        if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
-            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc, parentWorld);
+        if (dst.scene.Get<Physics::RigidBody>(e) == nullptr &&
+            dst.scene.Get<Physics::Character>(e) == nullptr)
+        {
+            (void)dst.physics.RebuildEntityPhysics(dst.scene, e, parentWorld);
+        }
     }
 
     // The other transient, through the shared path: dst is one of this manager's
