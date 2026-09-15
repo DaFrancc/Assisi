@@ -7,7 +7,6 @@
 
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 
-#include <bit>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -752,22 +751,6 @@ FieldType LeafElementType(const FieldMeta &field)
     return spec->elementType;
 }
 
-/// Exact decimal-free spelling of a float bound: the bounds are quantization
-/// parameters, so two builds differing in the last mantissa bit must produce
-/// different hashes. A formatted decimal could round them together.
-std::string BoundText(bool present, float value, const std::string &named)
-{
-    if (!present)
-        return "-";
-    // A bound naming a sibling travels as that name. Two builds that cap the same
-    // field against different siblings accept different values from each other,
-    // and a build that turned a literal into a reference would otherwise hash the
-    // same as one that still holds the old constant.
-    if (!named.empty())
-        return '@' + named;
-    return ToHex64(std::bit_cast<std::uint32_t>(value));
-}
-
 /// One line per wire field: its codec index, name, type, and every parameter
 /// that changes what the bits *mean* rather than merely how many there are.
 ///
@@ -790,16 +773,14 @@ void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
         text += ' ';
         AppendContainerTypeName(text, field.type, field.container);
 
-        // Quantization parameters travel in the hash, not just the layout: two
-        // builds that quantize the same Vec3 over different ranges corrupt each
-        // other *silently*, which is the one failure mode a handshake exists to
-        // prevent. Today the parameters are the AFIELD min/max bounds and the
-        // enum width; when per-field quantization bit counts land in FieldMeta
-        // they must be appended here too.
-        text += " min=";
-        text += BoundText(field.hasMin, field.minValue, field.minField);
-        text += " max=";
-        text += BoundText(field.hasMax, field.maxValue, field.maxField);
+        // Only what changes the meaning of the bits belongs here. The AFIELD
+        // min/max bounds deliberately do not: they clamp what an inspector will
+        // accept and nothing encodes, decodes or validates against them, so two
+        // builds that disagree about a bound still exchange identical bytes.
+        // Quantization is the case that would change that — a field encoded over
+        // a declared range means different values to two builds that declare
+        // different ranges — so when per-field quantization parameters land in
+        // FieldMeta they belong here, whatever they are derived from.
 
         // The leaf, so a `vector<Enum>` carries its enumerators exactly as a bare
         // Enum field does — the values are wire semantics wherever they sit.
@@ -989,40 +970,6 @@ bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader, cons
         }
     }
     return !reader.Failed();
-}
-
-bool FieldsWithinBounds(std::span<const FieldMeta> fields, const void *object, std::string *outField)
-{
-    for (const FieldMeta &field : fields)
-    {
-        if (!field.hasMin && !field.hasMax)
-            continue;
-
-        // Bounds are only ever attached to numeric fields — reflectgen refuses
-        // them elsewhere — so anything else here is a field that simply has no
-        // range to be outside of.
-        double value = 0.0;
-        if (!ReadNumericField(field, object, value))
-            continue;
-
-        // Resolved against the object, because a bound may name a sibling field
-        // rather than a constant — a spot light's inner angle against its outer.
-        // Both are checked here for the same reason either is: a sender is not
-        // trusted to have respected the editor's clamp.
-        const FieldBounds bounds = ResolveFieldBounds(field, fields, object);
-
-        // NaN fails both comparisons, which is the answer we want: a value that
-        // is not ordered against the bounds is not within them.
-        const bool belowMin = bounds.hasMin && !(value >= bounds.minValue);
-        const bool aboveMax = bounds.hasMax && !(value <= bounds.maxValue);
-        if (belowMin || aboveMax)
-        {
-            if (outField != nullptr)
-                *outField = field.name;
-            return false;
-        }
-    }
-    return true;
 }
 
 bool SkipMessageBody(BitReader &reader)

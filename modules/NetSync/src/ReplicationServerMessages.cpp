@@ -219,27 +219,18 @@ struct IntentGate
     ConnectionDiagnostics *diagnostics = nullptr;
 };
 
-/// Steps 6 and 7 of the dispatch order, on the decoded value.
+/// Step 6 of the dispatch order, on the decoded value.
 ///
-/// One site rather than one per handler: hand-written validation spread across
-/// receive sites is the shape most documented RPC exploits come out of.
+/// Only ownership is checked here. What a field's value *means* — whether a
+/// number is plausible, whether a combination makes sense — is the handler's
+/// question, answered where the value is visible and where the response can be
+/// something other than silence. The gate answers the one question a handler
+/// cannot: whether this sender is entitled to act through this entity at all.
 bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message, void *userData)
 {
     IntentGate &gate = *static_cast<IntentGate *>(userData);
 
-    // Step 6 — range. Reject, never clamp: unlike input, where a stick can
-    // legitimately saturate, an out-of-range intent field means a lying client
-    // or disagreeing builds, and clamping would accept the attack silently.
-    std::string offending;
-    if (!Core::Reflect::FieldsWithinBounds(meta.fields, message, &offending))
-    {
-        ++gate.diagnostics->intentsOutOfRange;
-        Core::Log::Warn("NetSync: dropping '{}' from client {} — field '{}' is outside its declared range.",
-                        meta.name, gate.sender.value, offending);
-        return false;
-    }
-
-    // Step 7 — control. Only fields the author marked as the intent's *subject*:
+    // Step 6 — control. Only fields the author marked as the intent's *subject*:
     // checking every entity reference would forbid a client from ever naming an
     // entity it does not own, which is most of them.
     for (const Core::Reflect::FieldMeta &field : meta.fields)
@@ -323,7 +314,7 @@ void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &re
         return;
     }
 
-    // Steps 5 through 8.
+    // Steps 5 through 7.
     DispatchIntent(connection.clientId, connection.diagnostics, *meta, reader);
 }
 
@@ -338,17 +329,17 @@ void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &d
     // handler, or the control check, can do anything with them.
     const Core::Reflect::CodecContext codec = DecodeContext();
 
-    const std::uint64_t before = diagnostics.intentsOutOfRange + diagnostics.intentsNotYours;
+    const std::uint64_t before = diagnostics.intentsNotYours;
 
-    // Step 5 (decode), 6 and 7 (the gate), 8 (the handler) all happen inside,
-    // because the gate needs the decoded value and the handler needs it after.
+    // Step 5 (decode), 6 (the gate), 7 (the handler) all happen inside, because
+    // the gate needs the decoded value and the handler needs it after.
     if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec, &ValidateIntent, &gate))
     {
         ++diagnostics.intentsUnhandled;
         return;
     }
 
-    if (diagnostics.intentsOutOfRange + diagnostics.intentsNotYours == before)
+    if (diagnostics.intentsNotYours == before)
         ++diagnostics.intentsAccepted;
 }
 

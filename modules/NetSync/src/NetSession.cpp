@@ -343,8 +343,8 @@ SessionStats NetSession::Stats() const
                 stats.relevancyEnters += diagnostics->relevancyEnters;
                 stats.relevancyExits += diagnostics->relevancyExits;
                 stats.intentsAccepted += diagnostics->intentsAccepted;
-                stats.intentsRejected += diagnostics->intentsWrongWay + diagnostics->intentsOutOfRange +
-                                         diagnostics->intentsNotYours + diagnostics->intentsMalformed;
+                stats.intentsRejected += diagnostics->intentsWrongWay + diagnostics->intentsNotYours +
+                                         diagnostics->intentsMalformed;
                 stats.intentsRateLimited += diagnostics->intentsRateLimited;
                 stats.intentsStale += diagnostics->intentsStale;
                 stats.intentsUnhandled += diagnostics->intentsUnhandled;
@@ -375,8 +375,7 @@ SessionStats NetSession::Stats() const
         // they would otherwise be the one traffic nobody could see.
         const ConnectionDiagnostics &host = _server->HostDiagnostics();
         stats.intentsAccepted += host.intentsAccepted;
-        stats.intentsRejected += host.intentsWrongWay + host.intentsOutOfRange + host.intentsNotYours +
-                                 host.intentsMalformed;
+        stats.intentsRejected += host.intentsWrongWay + host.intentsNotYours + host.intentsMalformed;
         stats.intentsUnhandled += host.intentsUnhandled;
     }
     else if (_client)
