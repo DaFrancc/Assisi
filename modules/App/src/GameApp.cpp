@@ -102,19 +102,14 @@ void GameApp::SetupRenderer()
     // material-texture table the mesh pipeline binds.
     _assetCache.Initialize(device, &Jobs());
 
-    // enableEditorVisuals stays false and has no way to become true. The overlay
-    // passes cost three pipelines and load assets/editor/**, and a game has
-    // neither a selection to outline nor those files to load.
     if (!_sceneRenderer.Initialize({.device = device,
                                     .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .overlayFramebufferInfo = GetOverlayFramebufferInfo(),
                                     .width = fbSize.Width,
                                     .height = fbSize.Height,
                                     .camera = _fallbackCamera,
                                     .bindlessLayout = _assetCache.BindlessLayout(),
                                     .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer(),
-                                    .enableEditorVisuals = false}))
+                                    .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         Core::Log::Error("Game: the scene render path failed to build; there is nothing to draw with.");
         RequestClose();
@@ -318,7 +313,7 @@ void GameApp::OnResize(int32_t width, int32_t height)
 
 void GameApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo, GetOverlayFramebufferInfo()))
+    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
     {
         Core::Log::Error("Game: failed to rebuild the mesh pass pipeline after a render-target change.");
     }

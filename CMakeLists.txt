@@ -265,12 +265,17 @@ target_compile_definitions(Assisi-Options INTERFACE
   ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
 )
 
-# ---- Shipping marker. Release is the ship preset; Debug and RelWithDebInfo are
-# the debug and dev ones. NDEBUG cannot stand in for this — dev defines it too,
-# and dev wants developer defaults. Currently read only by Logger.cpp, to pick
-# the default minimum log level, so it is not on any header's ABI.
+# ---- Release marker. NDEBUG cannot stand in for it — dev defines that too, and
+# dev wants developer defaults. Read only by Logger.cpp, to pick the default
+# minimum log level, so it is not on any header's ABI.
+#
+# Named for the configuration because that is all it can describe. It is true of
+# everything built in a Release tree, the editor included, so it cannot say
+# whether a given binary is the shipping one — that is a per-target property and
+# the two executables come out of the same build directory. Anything that must
+# change what a build *contains* belongs to a preset that builds only the game.
 target_compile_definitions(Assisi-Options INTERFACE
-  $<$<CONFIG:Release>:ASSISI_SHIPPING_BUILD>
+  $<$<CONFIG:Release>:ASSISI_RELEASE_BUILD>
 )
 
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
@@ -943,11 +948,15 @@ unset(CMAKE_POLICY_DEFAULT_CMP0175)
 # --- Assisi-Deps: aggregate third-party deps into one interface target
 add_library(Assisi-Deps INTERFACE)
 add_library(Assisi::Deps ALIAS Assisi-Deps)
+# Dear ImGui is deliberately absent. It is linked by the modules that actually
+# draw with it — Assisi-Debug for the backends, Assisi-Editor for the panels —
+# so that a target which does not draw UI cannot acquire it by depending on the
+# common bundle. The Game executable is the reason: it must contain no editor,
+# and an aggregate that quietly carried ImGui put it in every link in the tree.
 target_link_libraries(Assisi-Deps INTERFACE
     glfw
     glm::glm
     stb::stb
-    imgui::imgui
 )
 
 # ------------------------------------------------------------

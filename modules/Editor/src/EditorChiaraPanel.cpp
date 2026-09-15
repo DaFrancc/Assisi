@@ -1,76 +1,33 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
-/// @file ChiaraPanel.cpp
-/// @brief The capture control panel.
+/// @file EditorChiaraPanel.cpp
+/// @brief The capture control panel — recording toggle, ring coverage, dump
+///        buttons.
 ///
-/// Lives in App rather than Editor so a game gets it too — a shipped build made
-/// with `-c` is exactly the one you want to capture from, and it has no editor.
-/// The whole thing compiles to nothing without the capture system; the header's
-/// declaration stays unconditional so call sites need no `#ifdef`.
+/// Editor chrome. Capture itself is driven from App, so a headless run or an
+/// automated measurement can take one with nothing on screen; this is only the
+/// hand-driven face of it, and a game has no use for it.
+///
+/// The whole thing compiles to nothing without the capture system; the
+/// declaration stays unconditional so the call site needs no `#ifdef`.
 
-#include <Assisi/App/Application.hpp>
+#include <Assisi/Editor/EditorChiaraPanel.hpp>
 
 #if defined(ASSISI_CHIARA_ENABLED)
 
-#    include <Assisi/Chiara/Serializer.hpp>
-#    include <Assisi/Core/AssetSystem.hpp>
-#    include <Assisi/Core/Logger.hpp>
-#    include <Assisi/Render/RenderSystem.hpp>
-#    include <Assisi/Render/Vulkan/VulkanContext.hpp>
-
-#    include <imgui.h>
-
-#    include <atomic>
-#    include <chrono>
 #    include <cstdio>
-#    include <ctime>
-#    include <filesystem>
-#    include <memory>
 #    include <span>
 #    include <string>
 
-namespace Assisi::App
+#    include <imgui.h>
+
+#    include <Assisi/Chiara/Chiara.hpp>
+#    include <Assisi/Render/RenderSystem.hpp>
+#    include <Assisi/Render/Vulkan/VulkanContext.hpp>
+
+namespace Assisi::Editor
 {
 namespace
 {
-
-/// State shared between the UI and the background serialize job. Held by
-/// shared_ptr so a dump that outlives the panel (or the window) still has
-/// somewhere valid to write its result.
-struct DumpState
-{
-    std::atomic<bool>       running{false};
-    std::mutex resultMutex;
-    Chiara::SerializeResult lastResult;
-    std::string lastPath;
-};
-
-std::shared_ptr<DumpState> &SharedDumpState()
-{
-    static auto state = std::make_shared<DumpState>();
-    return state;
-}
-
-/// @brief `captures/<prefix>-YYYYMMDD-HHMMSS.json` under the user root — the
-/// same place options.json lives, because a capture is per-user writable state
-/// and not asset content.
-[[nodiscard]] std::filesystem::path NextCapturePath(const char *prefix = "chiara")
-{
-    const std::filesystem::path directory = Core::AssetSystem::GetUserRoot() / "captures";
-    std::error_code ec;
-    std::filesystem::create_directories(directory, ec);
-
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-#    if defined(_WIN32)
-    localtime_s(&local, &now);
-#    else
-    localtime_r(&now, &local);
-#    endif
-
-    char stamp[32] = {};
-    std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &local);
-    return directory / (std::string(prefix) + "-" + stamp + ".json");
-}
 
 [[nodiscard]] std::string FormatBytes(std::uint64_t bytes)
 {
@@ -88,66 +45,9 @@ std::shared_ptr<DumpState> &SharedDumpState()
 
 } // namespace
 
-void Application::DumpChiaraCapture(double lastSeconds)
+void DrawChiaraPanel(App::Application &app)
 {
-    const std::shared_ptr<DumpState> state = SharedDumpState();
-
-    // One at a time: two concurrent dumps would each pause and resume recording
-    // underneath the other, and the second resume would re-open capture while the
-    // first was still reading rings.
-    bool expected = false;
-    if (!state->running.compare_exchange_strong(expected, true))
-    {
-        return;
-    }
-
-    const std::filesystem::path path = NextCapturePath();
-
-    // On a worker: serializing holds the rings for as long as it takes to walk
-    // them, and a frame should never wait on that.
-    _jobs.Run(Core::Pool::Worker,
-              [state, path, lastSeconds]
-        {
-            Chiara::SerializeResult result = Chiara::SerializeCapture(path, lastSeconds);
-            {
-                const std::lock_guard<std::mutex> lock(state->resultMutex);
-                state->lastResult = std::move(result);
-                state->lastPath   = path.string();
-            }
-            state->running.store(false, std::memory_order_release);
-        });
-}
-
-void Application::StartChiaraSession()
-{
-    const std::filesystem::path path = NextCapturePath("chiara-session");
-    if (!Chiara::BeginSession(path))
-    {
-        Core::Log::Warn("Chiara: could not start a session at {}", path.string());
-    }
-}
-
-void Application::StopChiaraSession()
-{
-    // Read the path first: the stats are empty once the session is closed.
-    const std::string path   = Chiara::GetSessionStats().path;
-    const Chiara::SerializeResult result = Chiara::EndSession();
-    if (!result.success)
-    {
-        return;
-    }
-
-    const std::shared_ptr<DumpState>  state = SharedDumpState();
-    const std::lock_guard<std::mutex> lock(state->resultMutex);
-    state->lastResult = result;
-    state->lastPath   = path;
-}
-
-void Application::DrawChiaraPanel()
-{
-    const std::shared_ptr<DumpState> state   = SharedDumpState();
-    const bool dumping = state->running.load(std::memory_order_acquire);
-
+    const App::Application::ChiaraDumpReport dump = app.LastChiaraDump();
     const Chiara::CaptureStats stats = Chiara::GetCaptureStats();
 
     ImGui::TextUnformatted("Chiara — performance capture");
@@ -156,7 +56,7 @@ void Application::DrawChiaraPanel()
     // Disabled while a dump is in flight: the toggle and the serialize job flip
     // the same recording flag, and letting both drive it means a dump can finish
     // by switching capture back on after the user just switched it off.
-    ImGui::BeginDisabled(dumping);
+    ImGui::BeginDisabled(dump.running);
     bool recording = Chiara::IsRecording();
     if (ImGui::Checkbox("Recording", &recording))
     {
@@ -222,25 +122,25 @@ void Application::DrawChiaraPanel()
     // Snapshot dumps: reach back into the ring for what already happened. Bounded
     // by the ring, which is the point — you press these *after* seeing a spike.
     ImGui::TextDisabled("Snapshot — the recent past, from memory");
-    ImGui::BeginDisabled(dumping || session.active);
+    ImGui::BeginDisabled(dump.running || session.active);
     if (ImGui::Button("Dump 5 s"))
     {
-        DumpChiaraCapture(5.0);
+        app.DumpChiaraCapture(5.0);
     }
     ImGui::SameLine();
     if (ImGui::Button("Dump 20 s"))
     {
-        DumpChiaraCapture(20.0);
+        app.DumpChiaraCapture(20.0);
     }
     ImGui::SameLine();
     if (ImGui::Button("Dump 60 s"))
     {
-        DumpChiaraCapture(60.0);
+        app.DumpChiaraCapture(60.0);
     }
     ImGui::SameLine();
     if (ImGui::Button("Dump all"))
     {
-        DumpChiaraCapture(0.0);
+        app.DumpChiaraCapture(0.0);
     }
     ImGui::EndDisabled();
 
@@ -256,19 +156,19 @@ void Application::DrawChiaraPanel()
     // free space rather than by the ring. Use it when you know in advance what
     // you want to capture and it is longer than the buffer holds.
     ImGui::TextDisabled("Session — record forwards, straight to disk");
-    ImGui::BeginDisabled(dumping);
+    ImGui::BeginDisabled(dump.running);
     if (!session.active)
     {
         if (ImGui::Button("Start session"))
         {
-            StartChiaraSession();
+            app.StartChiaraSession();
         }
     }
     else
     {
         if (ImGui::Button("Stop session"))
         {
-            StopChiaraSession();
+            app.StopChiaraSession();
         }
     }
     ImGui::EndDisabled();
@@ -293,57 +193,45 @@ void Application::DrawChiaraPanel()
         ImGui::TextDisabled("The file is readable even if the process dies mid-session.");
     }
 
-    if (dumping)
+    if (dump.running)
     {
         // Not a spinner widget: ImGui has none, and a rotating character is
         // enough to say "still going" without pretending to know progress.
         static constexpr char kSpin[] = {'|', '/', '-', '\\'};
-        const std::size_t tick    = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % sizeof(kSpin);
+        const std::size_t tick = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % sizeof(kSpin);
         ImGui::Text("Writing %c", kSpin[tick]);
     }
-    else
+    else if (!dump.path.empty())
     {
-        const std::lock_guard<std::mutex> lock(state->resultMutex);
-        if (!state->lastPath.empty())
+        if (dump.success)
         {
-            if (state->lastResult.success)
+            ImGui::TextWrapped("Wrote %s (%s, %.1f s, %llu events)", dump.path.c_str(),
+                               FormatBytes(dump.bytesWritten).c_str(), dump.windowSeconds,
+                               static_cast<unsigned long long>(dump.eventsWritten));
+            if (dump.orphanedArgs > 0)
             {
-                ImGui::TextWrapped("Wrote %s (%s, %.1f s, %llu events)", state->lastPath.c_str(),
-                                   FormatBytes(state->lastResult.bytesWritten).c_str(),
-                                   state->lastResult.windowSeconds,
-                                   static_cast<unsigned long long>(state->lastResult.eventsWritten));
-                if (state->lastResult.orphanedArgs > 0)
-                {
-                    ImGui::TextDisabled("%llu args had no enclosing scope and were dropped",
-                                        static_cast<unsigned long long>(state->lastResult.orphanedArgs));
-                }
-            }
-            else
-            {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Dump failed: %s",
-                                   state->lastResult.error.c_str());
+                ImGui::TextDisabled("%llu args had no enclosing scope and were dropped",
+                                    static_cast<unsigned long long>(dump.orphanedArgs));
             }
         }
         else
         {
-            ImGui::TextDisabled("Drop a capture into ui.perfetto.dev to read it.");
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Dump failed: %s", dump.error.c_str());
         }
+    }
+    else
+    {
+        ImGui::TextDisabled("Drop a capture into ui.perfetto.dev to read it.");
     }
 }
 
-} // namespace Assisi::App
+} // namespace Assisi::Editor
 
 #else // !ASSISI_CHIARA_ENABLED
 
-namespace Assisi::App
+namespace Assisi::Editor
 {
-
-// Inline-equivalent stubs so a default build links without the caller knowing.
-void Application::DrawChiaraPanel() {}
-void Application::DumpChiaraCapture(double) {}
-void Application::StartChiaraSession() {}
-void Application::StopChiaraSession() {}
-
-} // namespace Assisi::App
+void DrawChiaraPanel(App::Application &) {}
+} // namespace Assisi::Editor
 
 #endif // ASSISI_CHIARA_ENABLED

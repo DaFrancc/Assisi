@@ -29,8 +29,8 @@ static void WriteToStderr(std::string_view line) noexcept
 
 LogLevel DefaultMinLevel() noexcept
 {
-#ifdef ASSISI_SHIPPING_BUILD
-    // A shipped log is for diagnosing a player's problem. Info up is the
+#ifdef ASSISI_RELEASE_BUILD
+    // A Release log is for diagnosing someone else's problem. Info up is the
     // narrative — what loaded, what failed; Trace and Debug are instrumentation
     // aimed at whoever was editing the code that emitted them.
     return LogLevel::Info;

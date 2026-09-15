@@ -16,8 +16,11 @@
 
 namespace Assisi::Render
 {
-
 class MeshBuffer;
+}
+
+namespace Assisi::Editor
+{
 
 /// @brief Draws a selection/collider outline — a coloured border around one or
 /// more meshes, drawn over the scene via screen-space edge detection.
@@ -41,7 +44,7 @@ public:
     /// @brief One silhouette to stamp into the mask: a mesh at a world transform.
     struct OutlineItem
     {
-        const MeshBuffer *mesh;
+        const Render::MeshBuffer *mesh;
         glm::mat4 model;
         /// Which LOD of @ref mesh to trace, clamped to the chain. The level the
         /// mesh pass drew, so the border sits on the silhouette that is on
@@ -76,13 +79,13 @@ public:
     /// @brief Outline one @p item in @p color, on top of the scene.
     /// @p viewProjection is the camera's projection*view. No-op if not initialised
     /// or the mesh has no GPU buffers.
-    void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const OutlineItem &item,
+    void Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const OutlineItem &item,
               const glm::vec3 &color);
 
     /// @brief Outline a batch of meshes as one merged border of @p color. Their
     /// silhouettes union into a single mask, so overlapping meshes share one
     /// outline. No-op if the batch is empty.
-    void DrawOutlines(const RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const OutlineItem> items,
+    void DrawOutlines(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const OutlineItem> items,
                       const glm::vec3 &color);
 
     /// @brief Outline a meshless entity's icon — the selection highlight for an
@@ -91,7 +94,7 @@ public:
     /// drawn icon; @p iconTexture is sampled so the outline traces the icon's
     /// artwork. Painted in @p color, always on top. No-op if not initialised or
     /// @p iconTexture is null.
-    void DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
+    void DrawBillboard(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                        const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize,
                        nvrhi::ITexture *iconTexture, const glm::vec3 &color);
 
@@ -101,14 +104,14 @@ private:
     /// the edge pass's binding set for a new viewport size. No-op when already that
     /// size.
     [[nodiscard]] bool EnsureMask(uint32_t width, uint32_t height);
-    void RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection, const MeshBuffer &mesh,
+    void RecordSilhouette(const Render::RenderFrame &frame, const glm::mat4 &modelViewProjection, const Render::MeshBuffer &mesh,
                           uint32_t lodLevel);
-    void RecordBillboardMaskPass(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
+    void RecordBillboardMaskPass(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                                  const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize);
     /// @brief (Re)build the billboard mask's binding set for @p iconTexture, reusing
     /// it while the texture is unchanged. Returns false if there is no texture.
     [[nodiscard]] bool EnsureBillboardBindingSet(nvrhi::ITexture *iconTexture);
-    void RecordEdgePass(const RenderFrame &frame, const glm::vec3 &color);
+    void RecordEdgePass(const Render::RenderFrame &frame, const glm::vec3 &color);
 
     nvrhi::IDevice *_device = nullptr;
 
@@ -148,4 +151,4 @@ private:
     uint32_t _maskHeight = 0;
 };
 
-} // namespace Assisi::Render
+} // namespace Assisi::Editor

@@ -105,6 +105,108 @@ if (ASSISI_BUILD_TESTS)
   set_tests_properties(GameBoots PROPERTIES TIMEOUT 60)
 endif()
 
+# The same exclusion as the symbol scans below, asserted against the link graph
+# instead of the built binary — so it holds on the presets a scan cannot read: a
+# Release link strips the symbol table away, and MSVC has no nm. It also fails
+# at configure time, before anything is compiled.
+include("${CMAKE_SOURCE_DIR}/cmake/AssisiLinkGuard.cmake")
+assisi_assert_link_excludes(Assisi-Game
+    Assisi-Editor
+    Assisi::Editor
+    Assisi-Debug
+    Assisi::Debug
+    Assisi-ImGui
+    imgui::imgui
+    implot::implot
+    imguizmo::imguizmo
+)
+
+# --- What the Game binary is not allowed to contain.
+#
+# The editor is kept out by not linking it, and these are what prove the link
+# stayed that way. A runtime flag would be checkable by reading the code; a link
+# is only checkable by looking at what came out, because the way this regresses
+# is somebody adding an include that drags a library back in, which changes no
+# behaviour anyone would notice until a player unpacks a level editor.
+#
+# The scanner lives in scripts/ and is exercised by its own test below: the
+# failure that matters is a scan which cannot run reporting success, and that
+# case cannot be reached from here because it needs an nm that does not work.
+if (ASSISI_BUILD_TESTS)
+  set(_symbol_scanner "${CMAKE_SOURCE_DIR}/scripts/check-symbols.py")
+
+  # Must equal SKIP_EXIT_CODE in check-symbols.py. A scan that could not run is
+  # neither a pass nor a failure, and calling it either would be a lie — the
+  # stripped Release binary has no symbol table at all.
+  set(_symbol_scan_skip_code 77)
+
+  # CMake knows the toolchain's nm; the bare name is the fallback for generators
+  # that do not set it.
+  set(_symbol_scan_nm "nm")
+  if (CMAKE_NM)
+    set(_symbol_scan_nm "${CMAKE_NM}")
+  endif()
+
+  # Namespaces and libraries rather than individual functions: what is excluded
+  # is the whole of each, so a member added later is caught without this list
+  # being touched. The overlay passes and the capture panel are inside
+  # Assisi::Editor after moving there, so they need no entry of their own.
+  set(_editor_symbols
+    --forbid "Assisi::Editor::"
+    --forbid "Assisi::Debug::"
+    --forbid "ImGui::"
+    --forbid "ImGui_Impl"
+    --forbid "ImPlot"
+    --forbid "ImGuizmo"
+  )
+
+  add_test(NAME GameLinksNoEditor
+    COMMAND Python3::Interpreter "${_symbol_scanner}"
+            --binary "$<TARGET_FILE:Assisi-Game>"
+            --nm "${_symbol_scan_nm}"
+            ${_editor_symbols}
+  )
+  set_tests_properties(GameLinksNoEditor PROPERTIES
+    SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+  # The positive control. GameEditor contains every one of those symbols by
+  # design, so this scan must fail — and if it ever passes, the scanner has gone
+  # blind (a demangler that stopped demangling, an nm whose output format moved)
+  # and GameLinksNoEditor above is passing for the wrong reason.
+  add_test(NAME GameEditorCarriesEditor
+    COMMAND Python3::Interpreter "${_symbol_scanner}"
+            --binary "$<TARGET_FILE:Assisi-GameEditor>"
+            --nm "${_symbol_scan_nm}"
+            ${_editor_symbols}
+  )
+  set_tests_properties(GameEditorCarriesEditor PROPERTIES
+    WILL_FAIL TRUE
+    SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+  # The game still builds its GUID->path index by scanning sidecars at startup,
+  # so it links the mutable database and the loose-file provider and cannot yet
+  # do without them. WILL_FAIL records that as a known state rather than a
+  # forgotten one: when a baked pak index replaces the scan, this test starts
+  # passing, WILL_FAIL turns that into a failure, and whoever landed the index
+  # removes the property. The alternative is a comment nothing checks.
+  add_test(NAME GameLinksNoAssetDatabase
+    COMMAND Python3::Interpreter "${_symbol_scanner}"
+            --binary "$<TARGET_FILE:Assisi-Game>"
+            --nm "${_symbol_scan_nm}"
+            --forbid "Assisi::Core::AssetDatabase"
+            --forbid "Assisi::Core::LooseFileProvider"
+  )
+  set_tests_properties(GameLinksNoAssetDatabase PROPERTIES
+    WILL_FAIL TRUE
+    SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+  # Registered beside the scans it underwrites rather than in a directory of its
+  # own: the scanner exists for them, and a matcher that silently stopped
+  # matching would make all three pass.
+  add_test(NAME check-symbols
+    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_symbols.py")
+endif()
+
 # The source asset tree is the only one. Nothing is staged beside the executable,
 # so a directory named "assets" there can only be a leftover from a build that
 # predates that — and AssetSystem::DiscoverRoot walks upward from the executable,

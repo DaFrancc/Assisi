@@ -67,38 +67,10 @@ constexpr const char *kSkyPixelShader = "shaders/sky.frag.spv";
 // through the sky shaders above.
 constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
 
-// Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
-// a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
-// the orange border. Editor-only, so they live under editor/shaders/ — except the
-// edge pass's vertex stage, which reuses the shared fullscreen-triangle shader.
-constexpr const char *kOutlineMaskVertexShader = "editor/shaders/outline_mask.vert.spv";
-constexpr const char *kOutlineMaskPixelShader = "editor/shaders/outline_mask.frag.spv";
-constexpr const char *kOutlineEdgeVertexShader = "shaders/fullscreen.vert.spv";
-constexpr const char *kOutlineEdgePixelShader = "editor/shaders/outline_edge.frag.spv";
-
-// Generic overlay-line renderer (see Render::LinePass). Editor-only in practice
-// (collider wireframes), so the shaders live under editor/shaders/.
-constexpr const char *kLineVertexShader = "editor/shaders/line.vert.spv";
-constexpr const char *kLinePixelShader = "editor/shaders/line.frag.spv";
-
-// Editor entity-icon billboard (see Render::IconPass), editor-only. The icon image
-// is authored content dropped at this virtual path; until it exists the pass shows
-// a magenta placeholder.
-constexpr const char *kIconVertexShader = "editor/shaders/icon_billboard.vert.spv";
-constexpr const char *kIconPixelShader = "editor/shaders/icon_billboard.frag.spv";
-constexpr const char *kEntityIconTexture = "editor/entity_icon.png";
-
 // The moon's albedo, stamped on its disk. An engine constant rather than a field
 // on the Moon component: authoring a second moon's texture is a feature nobody
 // has asked for, and a path in a level file is a path that can rot there.
 constexpr const char *kMoonTexture = "textures/moon.jpg";
-// Outline mask for a selected icon: samples the icon so the border traces its
-// artwork. Reuses the icon billboard vertex stage (kIconVertexShader).
-constexpr const char *kIconMaskPixelShader = "editor/shaders/icon_mask.frag.spv";
-
-// Entity icons past this distance from the camera are not drawn — a simple
-// render/don't LOD so a large scene isn't peppered with distant icons.
-constexpr float kMaxIconDistance = 100.f;
 
 float AspectRatio(int32_t width, int32_t height)
 {
@@ -109,7 +81,6 @@ float AspectRatio(int32_t width, int32_t height)
 bool SceneRenderer::Initialize(const InitParams &params)
 {
     _device = params.device;
-    _editorVisuals = params.enableEditorVisuals;
 
     const glm::mat4 projection = ProjectionMatrix(params.camera, AspectRatio(params.width, params.height));
 
@@ -223,35 +194,6 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
     }
 
-    // Editor overlay passes (selection outline, entity icons, overlay lines).
-    // Opt-in: a game never builds these pipelines or touches assets/editor/**;
-    // the editor asks for them. Failures inside the opted-in path stay
-    // non-fatal — each overlay warns and is dropped, never the renderer.
-    //
-    // They target the overlay framebuffer, not the scene's: overlay colours are
-    // display values and are drawn after the tone map.
-    if (_editorVisuals)
-    {
-        if (!_outlinePass.Initialize(_device, params.overlayFramebufferInfo, static_cast<uint32_t>(params.width),
-                                     static_cast<uint32_t>(params.height), kOutlineMaskVertexShader,
-                                     kOutlineMaskPixelShader, kOutlineEdgeVertexShader, kOutlineEdgePixelShader,
-                                     kIconVertexShader, kIconMaskPixelShader))
-        {
-            Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
-        }
-
-        if (!_iconPass.Initialize(_device, params.overlayFramebufferInfo, kIconVertexShader, kIconPixelShader,
-                                  kEntityIconTexture))
-        {
-            Core::Log::Warn("SceneRenderer: entity icons unavailable (icon pass failed to initialise).");
-        }
-
-        if (!_linePass.Initialize(_device, params.overlayFramebufferInfo, kLineVertexShader, kLinePixelShader))
-        {
-            Core::Log::Warn("SceneRenderer: overlay lines unavailable (line pass failed to initialise).");
-        }
-    }
-
     return true;
 }
 
@@ -276,29 +218,14 @@ void SceneRenderer::Resize(int32_t width, int32_t height, const Camera &camera)
     RebuildClusterGrid(width, height, camera, ProjectionMatrix(camera, AspectRatio(width, height)));
 }
 
-bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo,
-                                           const nvrhi::FramebufferInfo &overlayFramebufferInfo)
+bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
     if (!_meshPass.IsValid())
     {
         return true; // nothing built yet — nothing to rebuild
     }
-    // Rebuild the overlay pipelines against the new format too; a failure there
-    // only drops the overlay, so it doesn't fail the render-target change.
-    if (!_outlinePass.RebuildPipeline(overlayFramebufferInfo))
-    {
-        Core::Log::Warn("SceneRenderer: selection outline pipeline rebuild failed; highlight disabled.");
-    }
-    if (!_iconPass.RebuildPipeline(overlayFramebufferInfo))
-    {
-        Core::Log::Warn("SceneRenderer: entity-icon pipeline rebuild failed; icons disabled.");
-    }
-    if (!_linePass.RebuildPipeline(overlayFramebufferInfo))
-    {
-        Core::Log::Warn("SceneRenderer: overlay-line pipeline rebuild failed; collider wireframes disabled.");
-    }
-    // The sky targets the scene format, not the overlay one — it holds radiance
-    // and is drawn before the tone map, like the geometry it sits behind.
+    // The sky targets the scene format: it holds radiance and is drawn before the
+    // tone map, like the geometry it sits behind.
     if (!_skyPass.RebuildPipeline(framebufferInfo))
     {
         Core::Log::Warn("SceneRenderer: sky pipeline rebuild failed; sky disabled.");
@@ -1098,278 +1025,6 @@ uint32_t SceneRenderer::DrawnLodLevel(ECS::Entity entity, const Render::MeshBuff
     // released, a preview is that same measurement.
     return _lodSelector.Preview(entity, mesh.Lods(),
                                 Geometry::TransformedBoundingSphere(mesh.LocalBounds(), worldMatrix));
-}
-
-void SceneRenderer::RenderOverlays(const Render::RenderFrame &frame, ECS::Scene &scene,
-                                   const Transform &cameraTransform, const Camera &camera)
-{
-    if (!_meshPass.IsValid())
-    {
-        return;
-    }
-
-    // Recomputed rather than carried over from Render(): both are two matrix
-    // builds from state neither of them changes, and a cached pair is one more
-    // thing that can go stale between the two calls.
-    const glm::mat4 projection =
-        ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
-    const glm::mat4 view = ViewMatrix(cameraTransform);
-    const glm::mat4 viewProjection = projection * view;
-
-    {
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "editor-icons");
-        DrawEditorIcons(frame, viewProjection, view, cameraTransform.position, scene);
-    }
-
-    // Submitted silhouette outlines (the selected object's collider + mesh). Each
-    // group is its own edge-detect pass, so a collider and the mesh it wraps outline
-    // independently rather than merging into one border. Drawn on top of the scene.
-    {
-        // One scope for both outline sources (submitted groups + the highlight):
-        // same pass, same per-group cost, so a split would name the caller rather
-        // than the cost.
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "outlines");
-        if (_outlinePass.IsValid())
-        {
-            for (const OutlineGroup &group : _outlineGroups)
-            {
-                _outlinePass.DrawOutlines(frame, viewProjection, group.items, group.color);
-            }
-        }
-        _outlineGroups.clear();
-
-        DrawHighlightOutline(frame, viewProjection, view, scene);
-    }
-
-    // Overlay lines (collider wireframes) sit on top of everything else: the
-    // depth-tested batch first (occluded by the scene), then the on-top batch
-    // (x-ray). Both are cleared afterwards so the caller re-submits each frame.
-    {
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "overlay-lines");
-        if (_linePass.IsValid())
-        {
-            _linePass.Draw(frame, viewProjection, _overlayLinesDepthTested, /*onTop=*/ false);
-            _linePass.Draw(frame, viewProjection, _overlayLinesOnTop, /*onTop=*/ true);
-        }
-        _overlayLinesDepthTested.clear();
-        _overlayLinesOnTop.clear();
-    }
-    _iconSuppressed.clear();
-}
-
-void SceneRenderer::SubmitOverlayLines(std::span<const Render::LineVertex> vertices, bool onTop)
-{
-    if (!_editorVisuals)
-    {
-        return; // overlay passes were never built (InitParams::enableEditorVisuals off)
-    }
-    std::vector<Render::LineVertex> &sink = onTop ? _overlayLinesOnTop : _overlayLinesDepthTested;
-    sink.insert(sink.end(), vertices.begin(), vertices.end());
-}
-
-void SceneRenderer::SetIconSuppressedEntities(std::span<const ECS::Entity> entities)
-{
-    if (!_editorVisuals)
-    {
-        return;
-    }
-    _iconSuppressed.assign(entities.begin(), entities.end());
-}
-
-void SceneRenderer::SubmitEditorIcons(std::span<const glm::vec3> positions)
-{
-    if (!_editorVisuals)
-    {
-        return; // the icon pass was never built (InitParams::enableEditorVisuals off)
-    }
-    _submittedIcons.insert(_submittedIcons.end(), positions.begin(), positions.end());
-}
-
-void SceneRenderer::SubmitIconOutline(const glm::vec3 &position)
-{
-    if (!_editorVisuals)
-    {
-        return;
-    }
-    _submittedIconOutlines.push_back(position);
-}
-
-void SceneRenderer::SubmitOutlineGroup(std::span<const Render::OutlinePass::OutlineItem> items, const glm::vec3 &color)
-{
-    if (!_editorVisuals || items.empty())
-    {
-        return;
-    }
-    OutlineGroup group;
-    group.items.assign(items.begin(), items.end());
-    group.color = color;
-    _outlineGroups.push_back(std::move(group));
-}
-
-void SceneRenderer::SubmitOutline(const Render::MeshBuffer *mesh, const glm::mat4 &model, const glm::vec3 &color)
-{
-    if (mesh == nullptr)
-    {
-        return;
-    }
-    const Render::OutlinePass::OutlineItem item{mesh, model};
-    SubmitOutlineGroup(std::span<const Render::OutlinePass::OutlineItem>(&item, 1), color);
-}
-
-void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
-                                    const glm::mat4 &view, const glm::vec3 &cameraPosition, ECS::Scene &scene)
-{
-    if (!_iconPass.IsValid())
-    {
-        return;
-    }
-
-    // Camera world-space basis is the first two rows of the view matrix (the view
-    // rotation is the transpose of the camera's world rotation).
-    const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
-    const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
-
-    constexpr float maxDistanceSq = kMaxIconDistance * kMaxIconDistance;
-    _iconPositions.clear();
-
-    // One icon per placement-only entity (has a Transform, no mesh to draw), unless
-    // it is beyond the LOD distance from the camera — editor decoration, shown only
-    // when editor icons are enabled.
-    if (_editorIconsVisible)
-    {
-        for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
-        {
-            if (IsIconSuppressed(entity))
-            {
-                continue;
-            }
-            const glm::vec3 position(transform.worldMatrix[3]);
-            const glm::vec3 offset = position - cameraPosition;
-            if (glm::dot(offset, offset) <= maxDistanceSq)
-            {
-                _iconPositions.push_back(position);
-            }
-        }
-    }
-
-    // A MeshRenderer whose mesh is still streaming in (meshBuffer == null) shows the
-    // same billboard as a placeholder until the mesh pops in — regardless of the
-    // editor-icon toggle, since this reflects real load state, not editor chrome.
-    // Not distance-culled: a loading entity should never be invisibly absent.
-    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
-    {
-        if (meshRenderer.meshBuffer == nullptr && !IsIconSuppressed(entity))
-        {
-            _iconPositions.emplace_back(transform.worldMatrix[3]);
-        }
-    }
-
-    // Billboards the caller placed by hand, for things that are not entities — a
-    // blueprint instance's root, which has no Transform for the queries above to
-    // find. Editor chrome, so gated on the same toggle, but not distance-culled:
-    // there are a handful of them and losing the only mark an instance has is worse
-    // than drawing one far away.
-    if (_editorIconsVisible)
-    {
-        _iconPositions.insert(_iconPositions.end(), _submittedIcons.begin(), _submittedIcons.end());
-    }
-    _submittedIcons.clear();
-
-    if (_iconPositions.empty())
-    {
-        return;
-    }
-    _iconPass.Draw(frame, viewProjection, cameraRight, cameraUp, _iconPositions);
-}
-
-bool SceneRenderer::IsIconSuppressed(ECS::Entity entity) const
-{
-    return std::find(_iconSuppressed.begin(), _iconSuppressed.end(), entity) != _iconSuppressed.end();
-}
-
-void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
-                                         const glm::mat4 &view, ECS::Scene &scene)
-{
-    if (!_outlinePass.IsValid())
-    {
-        // Dropped rather than kept: submissions are per-frame and nothing downstream
-        // will ever read these, so holding them grows the vector for the life of the
-        // renderer on every frame a selected instance is on screen.
-        _submittedIconOutlines.clear();
-        return;
-    }
-    for (const ECS::Entity entity : _highlightedEntities)
-    {
-        DrawHighlightOutlineFor(entity, frame, viewProjection, view, scene);
-    }
-
-    // The same treatment for a submitted billboard that belongs to no entity, so a
-    // selected instance reads exactly like a selected entity rather than being the
-    // one selection in the editor with no visible border.
-    if (!_submittedIconOutlines.empty() && _editorIconsVisible)
-    {
-        const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
-        const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
-        for (const glm::vec3 &center : _submittedIconOutlines)
-        {
-            // Always the active colour: a submitted outline is only ever asked for by
-            // a selection of exactly one thing (an instance), and that thing is what
-            // the inspector is showing.
-            _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,
-                                       0.5f * Render::kEntityIconWorldSize, _iconPass.IconTexture(),
-                                       kActiveSelectionOutline);
-        }
-    }
-    _submittedIconOutlines.clear();
-}
-
-void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
-                                            const glm::mat4 &viewProjection, const glm::mat4 &view, ECS::Scene &scene)
-{
-    if (entity == ECS::NullEntity || !scene.IsAlive(entity))
-    {
-        return;
-    }
-
-    const Transform *transform = scene.Get<Transform>(entity);
-    if (transform == nullptr)
-    {
-        return; // no placement — nothing to outline
-    }
-    const MeshRenderer *renderer = scene.Get<MeshRenderer>(entity);
-
-    // A placement-only entity shows a billboard only in editor mode; a MeshRenderer
-    // whose mesh is still loading shows one always (see DrawEditorIcons). Outline
-    // whichever is actually on screen so selection tracks it. A suppressed entity
-    // (e.g. a meshless collider, marked by its wireframe instead) has no billboard,
-    // so there is nothing to outline — its selection reads from the wireframe colour.
-    const bool placementIcon = renderer == nullptr && _editorIconsVisible && !IsIconSuppressed(entity);
-    const bool loadingMesh = renderer != nullptr && renderer->meshBuffer == nullptr && !IsIconSuppressed(entity);
-
-    // The one the inspector is talking about reads redder than the rest. With one
-    // thing selected it is that thing, so an ordinary click gets the active colour.
-    const glm::vec3 color = entity == _activeHighlight ? kActiveSelectionOutline : kSelectionOutline;
-
-    if (renderer != nullptr && renderer->meshBuffer != nullptr)
-    {
-        // The level the mesh pass drew this entity at, not a second opinion: a
-        // border traced around a finer silhouette than the one on screen reads
-        // as a halo.
-        _outlinePass.Draw(
-            frame, viewProjection,
-            Render::OutlinePass::OutlineItem{renderer->meshBuffer, transform->worldMatrix,
-                                             DrawnLodLevel(entity, *renderer->meshBuffer, transform->worldMatrix)},
-            color);
-    }
-    else if (placementIcon || loadingMesh)
-    {
-        // Outline the billboard quad so its selection matches a mesh's.
-        const glm::vec3 center(transform->worldMatrix[3]);
-        const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
-        const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
-        _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,
-                                   0.5f * Render::kEntityIconWorldSize, _iconPass.IconTexture(), color);
-    }
 }
 
 } // namespace Assisi::Runtime

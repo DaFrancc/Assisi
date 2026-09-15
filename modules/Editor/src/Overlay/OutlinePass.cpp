@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/Render/OutlinePass.hpp>
+#include <Assisi/Editor/Overlay/OutlinePass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
@@ -11,8 +11,10 @@
 #include <cstdint>
 #include <iterator>
 
-namespace Assisi::Render
+namespace Assisi::Editor
 {
+
+using Render::LoadSpirvShader;
 
 namespace
 {
@@ -253,8 +255,8 @@ bool OutlinePass::EnsureMask(uint32_t width, uint32_t height)
     return true;
 }
 
-void OutlinePass::RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection,
-                                   const MeshBuffer &mesh, uint32_t lodLevel)
+void OutlinePass::RecordSilhouette(const Render::RenderFrame &frame, const glm::mat4 &modelViewProjection,
+                                   const Render::MeshBuffer &mesh, uint32_t lodLevel)
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
 
@@ -297,7 +299,7 @@ void OutlinePass::RecordSilhouette(const RenderFrame &frame, const glm::mat4 &mo
     }
 }
 
-void OutlinePass::RecordBillboardMaskPass(const RenderFrame &frame, const glm::mat4 &viewProjection,
+void OutlinePass::RecordBillboardMaskPass(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
                                           const glm::vec3 &center, const glm::vec3 &cameraRight,
                                           const glm::vec3 &cameraUp, float halfSize)
 {
@@ -326,7 +328,7 @@ void OutlinePass::RecordBillboardMaskPass(const RenderFrame &frame, const glm::m
     commandList->draw(drawArgs);
 }
 
-void OutlinePass::RecordEdgePass(const RenderFrame &frame, const glm::vec3 &color)
+void OutlinePass::RecordEdgePass(const Render::RenderFrame &frame, const glm::vec3 &color)
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
 
@@ -349,7 +351,7 @@ void OutlinePass::RecordEdgePass(const RenderFrame &frame, const glm::vec3 &colo
     commandList->draw(drawArgs);
 }
 
-void OutlinePass::DrawOutlines(const RenderFrame &frame, const glm::mat4 &viewProjection,
+void OutlinePass::DrawOutlines(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
                                std::span<const OutlineItem> items, const glm::vec3 &color)
 {
     if (!IsValid() || items.empty())
@@ -376,7 +378,7 @@ void OutlinePass::DrawOutlines(const RenderFrame &frame, const glm::mat4 &viewPr
     RecordEdgePass(frame, color);
 }
 
-void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const OutlineItem &item,
+void OutlinePass::Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const OutlineItem &item,
                        const glm::vec3 &color)
 {
     DrawOutlines(frame, viewProjection, std::span<const OutlineItem>(&item, 1), color);
@@ -402,7 +404,7 @@ bool OutlinePass::EnsureBillboardBindingSet(nvrhi::ITexture *iconTexture)
     return _billboardMaskBindingSet != nullptr;
 }
 
-void OutlinePass::DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
+void OutlinePass::DrawBillboard(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                                 const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize,
                                 nvrhi::ITexture *iconTexture, const glm::vec3 &color)
 {
@@ -419,4 +421,4 @@ void OutlinePass::DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewP
     RecordEdgePass(frame, color);
 }
 
-} // namespace Assisi::Render
+} // namespace Assisi::Editor

@@ -58,7 +58,7 @@ public:
     static void BeginFrame(Render::RenderFrame &frame);
 
     /// @brief Renders the accumulated draw data into `frame`. Call after all
-    /// ImGui:: calls for this frame (including the app's OnRender/OnImGui).
+    /// ImGui:: calls for this frame (including the app's OnRenderUi).
     static void EndFrame(Render::RenderFrame &frame);
 
     /// @brief Registers an NVRHI texture with the ImGui Vulkan backend and returns

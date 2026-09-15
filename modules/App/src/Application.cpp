@@ -20,7 +20,6 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Core/Platform.hpp>
-#include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/FrameCapture.hpp>
@@ -252,9 +251,10 @@ bool Application::InitializePresentation()
     }
 
     // Subscribe through WindowContext (the sole owner of GLFW callbacks) rather
-    // than registering GLFW callbacks directly. WindowContext installed its
-    // callbacks in its constructor, so ImGui (initialized below with
-    // install_callbacks=true) chains to them instead of clobbering them.
+    // than registering GLFW callbacks directly. WindowContext installs its own
+    // in its constructor, so anything that installs GLFW callbacks after this
+    // point must chain to them rather than replace them — a UI toolkit's backend
+    // is the usual case, and the two both receiving input is the whole point.
     _window->OnFramebufferSize([this](int32_t width, int32_t height) { HandleFramebufferResize(width, height); });
     _window->OnWindowRefresh([this]() { RenderFrame(); });
 
@@ -263,9 +263,6 @@ bool Application::InitializePresentation()
         Core::Log::Fatal("Failed to initialize render system.");
         return false;
     }
-
-    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext(),
-                               /*persistLayout=*/ !_restrictedViewer);
 
     _input = std::make_unique<Window::InputContext>(*_window);
 
@@ -313,7 +310,7 @@ Window::InputContext &Application::GetInput() const
 
 Application::~Application()
 {
-    // DebugUI/render teardown only ran meaningful bring-up if the presentation
+    // Render teardown only ran meaningful bring-up if the presentation
     // half was brought up — which a headless process skips entirely, while still
     // reporting a successful Initialize(). Tear the GPU stack down in order and
     // — crucially — here, before main() returns: the device lives in
@@ -323,7 +320,6 @@ Application::~Application()
     // this only orders the releases: our own resources first, then the device last.
     if (_presentationInitialized)
     {
-        Debug::DebugUI::Shutdown();
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -964,24 +960,12 @@ void Application::RenderFrame()
     }
 
     {
-        // Split three ways because the three costs move for unrelated reasons:
-        // `imgui-begin` is the backend's per-frame setup plus the texture sweep,
-        // `imgui-panels` is the app's own panel code (the part a game controls),
-        // and `imgui-render` is building + recording the draw data, which scales
-        // with how much got drawn rather than with how much code ran.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "imgui");
-        {
-            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-begin");
-            Debug::DebugUI::BeginFrame(*frame);
-        }
-        {
-            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-panels");
-            OnImGui();
-        }
-        {
-            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-render");
-            Debug::DebugUI::EndFrame(*frame);
-        }
+        // One scope, because what happens inside belongs to whoever overrode
+        // this: bringing a UI toolkit up, drawing into it and submitting it are
+        // that layer's business, and an application that draws no UI spends
+        // nothing here.
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "ui");
+        OnRenderUi(*frame);
     }
 
     {

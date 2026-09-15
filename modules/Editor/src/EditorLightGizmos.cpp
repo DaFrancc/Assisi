@@ -27,7 +27,7 @@
 #include <Assisi/Runtime/TimeOfDay.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/LinePass.hpp>
+#include <Assisi/Editor/Overlay/LinePass.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
@@ -41,7 +41,7 @@ namespace Assisi::Editor
 {
 namespace
 {
-using Assisi::Render::LineVertex;
+using Assisi::Editor::LineVertex;
 namespace Rt = Assisi::Runtime;
 
 // The unselected colour is the light's own, dimmed: a warm light draws warm and
@@ -53,8 +53,8 @@ constexpr float kUnselectedAlpha = 0.35f;
 // Selected lights borrow the same two constants the mesh silhouette and the
 // collider wireframes use, so "selected" and "this is the one the inspector is
 // talking about" are said in one vocabulary across every overlay.
-constexpr glm::vec4 kSelectedColor{Rt::kSelectionOutline, 1.0f};
-constexpr glm::vec4 kActiveSelectedColor{Rt::kActiveSelectionOutline, 1.0f};
+constexpr glm::vec4 kSelectedColor{Assisi::Editor::kSelectionOutline, 1.0f};
+constexpr glm::vec4 kActiveSelectedColor{Assisi::Editor::kActiveSelectionOutline, 1.0f};
 
 /// @brief How long a directional light's arrow is drawn, in world units.
 ///
@@ -196,8 +196,8 @@ void EditorApp::SubmitLightGizmos()
         AddDirectionalLightOutline(*style.batch, style.color, EntityPosition(*_scene, entity), travels);
     }
 
-    _sceneRenderer.SubmitOverlayLines(_lightLinesDepthTested, /*onTop=*/ false);
-    _sceneRenderer.SubmitOverlayLines(_lightLinesOnTop, /*onTop=*/ true);
+    _overlays.SubmitOverlayLines(_lightLinesDepthTested, /*onTop=*/ false);
+    _overlays.SubmitOverlayLines(_lightLinesOnTop, /*onTop=*/ true);
 }
 
 Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)

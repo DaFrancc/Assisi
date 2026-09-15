@@ -13,7 +13,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 
-namespace Assisi::Render
+namespace Assisi::Editor
 {
 
 /// @brief One endpoint of a line segment: a world-space position and an RGBA
@@ -56,8 +56,8 @@ public:
     /// vertex buffer grows if @p vertices exceeds its capacity. No-op if not
     /// initialised or @p vertices is empty (or has an odd count — the last stray
     /// vertex is dropped).
-    void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const LineVertex> vertices,
-              bool onTop);
+    void Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+              std::span<const LineVertex> vertices, bool onTop);
 
 private:
     [[nodiscard]] bool BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
@@ -86,4 +86,4 @@ private:
     uint32_t _vertexCapacities[2] = {0, 0};            // in vertices
 };
 
-} // namespace Assisi::Render
+} // namespace Assisi::Editor

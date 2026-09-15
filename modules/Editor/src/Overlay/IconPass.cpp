@@ -1,12 +1,14 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/Render/IconPass.hpp>
+#include <Assisi/Editor/Overlay/IconPass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
-namespace Assisi::Render
+namespace Assisi::Editor
 {
+
+using Render::LoadSpirvShader;
 
 namespace
 {
@@ -36,10 +38,10 @@ bool IconPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 
     // Load the supplied icon. If the art isn't present yet, fall back to a solid
     // magenta placeholder so the feature is visibly wired up rather than absent.
-    if (!_icon.LoadFromAssets(device, iconAssetPath, ColorSpace::Srgb).has_value())
+    if (!_icon.LoadFromAssets(device, iconAssetPath, Render::ColorSpace::Srgb).has_value())
     {
         Core::Log::Warn("IconPass: could not load icon '{}'; using a magenta placeholder.", iconAssetPath);
-        _icon.UploadSolidColor(device, 255, 0, 255, 255, ColorSpace::Srgb, "IconPass::Placeholder");
+        _icon.UploadSolidColor(device, 255, 0, 255, 255, Render::ColorSpace::Srgb, "IconPass::Placeholder");
     }
     if (!_icon.IsValid())
     {
@@ -112,7 +114,7 @@ bool IconPass::RebuildPipeline(const nvrhi::FramebufferInfo &sceneFramebufferInf
     return BuildPipeline(sceneFramebufferInfo);
 }
 
-void IconPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraRight,
+void IconPass::Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraRight,
                     const glm::vec3 &cameraUp, std::span<const glm::vec3> positions)
 {
     if (!IsValid() || positions.empty())
@@ -147,4 +149,4 @@ void IconPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, c
     }
 }
 
-} // namespace Assisi::Render
+} // namespace Assisi::Editor
