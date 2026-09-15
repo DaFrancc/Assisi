@@ -32,6 +32,7 @@ target_sources(Assisi-App
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
     "src/SceneCamera.cpp"
+    "src/StartupScene.cpp"
     "src/PerfCapture.cpp"
     "src/MotionSystems.cpp"
     "src/PhysicsSystems.cpp"

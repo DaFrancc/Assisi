@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file AppConfig.hpp
-/// @brief What the game ships with: window, clear colour, physics rate, and the
-///        diagnostics retention counts.
+/// @brief What the game ships with: window, clear colour, physics rate, the
+///        scene it boots into, and the diagnostics retention counts.
 ///
 /// Everything here is fixed at build time and is not the player's to change.
 /// What the player changes lives in OptionsConfig, under the writable user root
@@ -24,8 +24,8 @@ namespace Assisi::App
 /// @brief The game config document, as it sits on disk.
 ///
 /// Ordered widest field first so the struct carries no interior padding; the
-/// inline string, alone in being two-byte aligned, goes after the scalars
-/// rather than between them.
+/// inline strings, alone in being two-byte aligned, go after the scalars rather
+/// than between them.
 AASSET()
 struct AppConfig
 {
@@ -68,6 +68,20 @@ struct AppConfig
     /// truncates on assignment without telling anyone. The wider capacity puts
     /// the cut out of reach instead of leaving a silent one halfway through.
     AFIELD() Assisi::Core::TrivialString<64> title{"Assisi Game"};
+
+    /// @brief The scene the game opens at boot — a virtual path or an asset GUID.
+    ///
+    /// Empty by default, and empty is refused out loud rather than defaulted to
+    /// some level: a game that boots content nobody named is a game whose
+    /// configuration is not being read. The game takes no level argument, so this
+    /// is the whole of what decides what a player sees.
+    ///
+    /// Sixty-four bytes for the same reason the title has them — a path under
+    /// levels/ with a descriptive name runs long, and an inline string truncates
+    /// on assignment in silence. A cut one does not resolve, so it surfaces as
+    /// the startup refusal naming the truncated text rather than as a game that
+    /// opens the wrong scene.
+    AFIELD() Assisi::Core::TrivialString<64> startupScene{};
 
     /// @brief Parse @p text as a game config document.
     ///

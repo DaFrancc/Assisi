@@ -89,16 +89,14 @@ void ServerApp::OnStart()
         {
             Log::Error("Server: refusing '{}' — it names a system this build does not declare.",
                        _options.level);
-            _startupFailed = true;
-            RequestClose();
+            RefuseStart();
             return;
         }
 
         if (!Assisi::App::LoadLevelSim(_world, _options.level))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
-            _startupFailed = true;
-            RequestClose();
+            RefuseStart();
             return;
         }
         Log::Info("Server: loaded '{}'.", _options.level);
@@ -118,8 +116,7 @@ void ServerApp::OnStart()
     Log::Error("Server: this build was configured with ASSISI_ENABLE_NETWORKING=OFF, so --host and "
                "--connect do nothing. Reconfigure with networking on, or use --server for headless "
                "simulation.");
-    _startupFailed = true;
-    RequestClose();
+    RefuseStart();
     return;
 #else
     NetSync::ReplicationConfig config;
@@ -151,8 +148,7 @@ void ServerApp::OnStart()
         // a server that cannot bind is watching for exactly this.
         if (!_session->Host(_options.port, std::move(level)))
         {
-            _startupFailed = true;
-            RequestClose();
+            RefuseStart();
             return;
         }
 
@@ -175,8 +171,7 @@ void ServerApp::OnStart()
     // before a NetId has anywhere to land.
     else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/ true))
     {
-        _startupFailed = true;
-        RequestClose();
+        RefuseStart();
     }
 #endif // ASSISI_NETWORKING
 }
@@ -195,8 +190,7 @@ void ServerApp::BuildJoinedWorld()
                       {
                           Log::Error("Client: join failed — {}", reason);
                           _session->AbortJoin(std::move(reason));
-                          _startupFailed = true;
-                          RequestClose();
+                          RefuseStart();
                       };
 
     // Every question a join has to answer before touching the scene, asked in the

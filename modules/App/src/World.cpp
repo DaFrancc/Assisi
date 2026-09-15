@@ -221,22 +221,20 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     incoming.state  = WorldState::Loading;
 
     Runtime::LevelHeader header;
-    bool loaded = false;
+    Runtime::LevelResult loaded;
     if (_services.cache != nullptr && _services.database != nullptr && _services.renderer != nullptr)
     {
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
         loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.database, *_services.renderer},
-                                {.reset = AssetCacheReset::Keep, .header = &header})
-                 .has_value();
+                                {.reset = AssetCacheReset::Keep, .header = &header});
     }
     else
     {
         // No render services (a headless server): the scene and its bodies are
         // all that matter.
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
-                                                        {.header = &header, .instances = &incoming.instances})
-                 .has_value();
+                                                        {.header = &header, .instances = &incoming.instances});
         if (loaded)
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
@@ -245,7 +243,12 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     {
         // A failed travel must never strand the game between worlds: drop the
         // half-built one and leave everything else exactly as it was.
-        Core::Log::Error("Travel to '{}' failed; staying in '{}'.", levelPath,
+        //
+        // Which refusal it was, not just that there was one: absent, malformed,
+        // and a version this build does not read are three different repairs and
+        // read identically without it.
+        Core::Log::Error("Travel to '{}' failed ({}); staying in '{}'.", levelPath,
+                         Runtime::Describe(loaded.error()),
                          outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
         EraseWorld(incoming);
         return nullptr;

@@ -121,7 +121,22 @@ public:
 
     void Run();
 
+    /// @brief True when the app closed because it could not start, rather than
+    /// because it finished.
+    ///
+    /// OnStart is void, so a refusal there cannot return a code; main() maps this
+    /// to EXIT_FAILURE instead. systemd, Docker and CI all read a 0 exit as a
+    /// clean shutdown and either ignore it or restart-loop in silence.
+    [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
+
 protected:
+    /// @brief Refuse the launch: close the app and make main() report failure.
+    ///
+    /// For OnStart to call once it has logged what is wrong. Every app that can
+    /// refuse to start shares this rather than keeping its own flag, so a new one
+    /// cannot exit 0 on a start it never made.
+    void RefuseStart();
+
     virtual void OnStart()               = 0;
     virtual void OnFixedUpdate(float dt) = 0;
     virtual void OnUpdate(float dt)      = 0;
@@ -333,6 +348,11 @@ private:
     /// the windowed loop is cleaner asking one flag than dereferencing a pointer
     /// that may not exist.
     bool _closeRequested = false;
+
+    /// Set by RefuseStart(). Distinct from _closeRequested, which a clean quit
+    /// also sets: what separates a game a player closed from one that never
+    /// opened is this flag alone.
+    bool _startupFailed = false;
 
     /// Null unless this process is a capture run — see SetPerfCapture. Held by
     /// pointer so a normal run carries no sample buffers at all, which is the

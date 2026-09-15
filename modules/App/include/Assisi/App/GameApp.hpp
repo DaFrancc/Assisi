@@ -10,6 +10,12 @@
 /// from the moment it starts, which is the single largest difference and the
 /// one that cannot be expressed as an editor with features disabled.
 ///
+/// It boots the scene the shipped config names, and takes no level argument to
+/// override it with: the one in AppConfig::startupScene is what a player gets.
+/// A scene that is unnamed, unknown or unreadable refuses the launch by name —
+/// there is no empty world to fall back to, because a game that opens a black
+/// window has failed in a way nobody can act on.
+///
 /// It lives in App rather than beside a project's own sources because every
 /// line of it is engine work — asset resolvers, the scene renderer, the fixed
 /// step, the streaming pumps. What a game supplies is systems and content, and
@@ -60,7 +66,8 @@ protected:
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
 
-    /// @brief The world the game plays in. Never null after OnStart.
+    /// @brief The world the game plays in. Null only after a refused start, which
+    /// closes the app before a frame runs.
     ///
     /// Exposed so a derived game can reach its scene without the manager. Travel
     /// replaces which world holds the role, so hold the reference for a frame,
@@ -73,7 +80,10 @@ protected:
 private:
     /// Brings up the asset cache and the scene renderer. Windowed runs only —
     /// there is no device in a headless process and nothing to draw with it.
-    void SetupRenderer();
+    ///
+    /// False when there is nothing to draw with, which refuses the launch rather
+    /// than running a game whose window stays empty.
+    [[nodiscard]] bool SetupRenderer();
 
     /// Steps every world that is Active and simulating: its FixedUpdate systems,
     /// its physics, then its PostFixedUpdate systems. Worlds step sequentially,

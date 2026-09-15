@@ -363,7 +363,12 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
     CHECK(worlds.Edited() == &authored);
 
     // --- a travel that fails -------------------------------------------------
+    // The log has to say which of the refusals this was. "Travel failed" alone
+    // reads the same whether the file is absent, malformed, or a version this
+    // build does not read, and those are three different repairs.
+    const Assisi::Tests::LogCapture log;
     CHECK(worlds.LoadLevel("levels/DoesNotExist.alvl") == nullptr);
+    CHECK(log.Mentions(Assisi::Runtime::Describe(Assisi::Runtime::LevelError::FileUnreadable)));
     CHECK(worlds.Active() == inA2); // still playing exactly where we were
     CHECK(worlds.Count() == 2u);    // no half-created world left behind
 

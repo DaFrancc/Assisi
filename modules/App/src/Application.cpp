@@ -337,6 +337,12 @@ void Application::RequestClose()
     }
 }
 
+void Application::RefuseStart()
+{
+    _startupFailed = true;
+    RequestClose();
+}
+
 bool Application::ShouldClose() const
 {
     return _closeRequested || (_window && _window->ShouldClose());
