@@ -78,7 +78,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(
             [c.name for c in self.components],
             ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio",
-             "SampleReplicated"],
+             "SampleReplicated", "SampleContainers"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
 
@@ -1800,6 +1800,112 @@ class SystemTest(unittest.TestCase):
             path.write_text(self.SOURCE, encoding="utf-8")
             lines = reflectgen.check_systems([path])
             self.assertIn("2 system(s)", lines[0])
+
+
+class ContainerFieldTest(unittest.TestCase):
+    """Reflected std::vector / std::map fields: what generates, and what is refused.
+
+    The refusals matter as much as the generation. reflectgen is default-deny, so
+    a container shape it cannot round-trip has to fail the build naming the
+    declaration — a silently dropped field loses its data on every save.
+    """
+
+    _PRELUDE = ("namespace N {\n"
+                "AENUM()\nenum class Colour : std::uint8_t { Red = 0, Green = 7 };\n")
+
+    def _generate(self, field_decl: str) -> str:
+        components = _parse_source(
+            self._PRELUDE + "ACOMP()\nstruct C { " + field_decl + " };\n}\n")
+        return reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def _assert_refused(self, field_decl: str, expected_text: str):
+        components = _parse_source(
+            self._PRELUDE + "ACOMP()\nstruct C { " + field_decl + " };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn(expected_text, str(caught.exception))
+
+    def test_vector_field_is_a_vector_with_a_spec(self):
+        cpp = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Vector", cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::numbers)>()",
+                      cpp)
+
+    def test_map_field_is_a_map_with_a_spec(self):
+        cpp = self._generate("AFIELD() std::map<int32_t, float> weights;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Map", cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::weights)>()",
+                      cpp)
+
+    def test_container_json_goes_through_the_container_templates(self):
+        cpp = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertIn("Assisi::Core::Reflect::ContainerToJson(c.numbers)", cpp)
+        self.assertIn('Assisi::Core::Reflect::ReadContainer(j, _comp, "numbers", comp.numbers)', cpp)
+
+    def test_container_includes_are_pulled_in(self):
+        cpp = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertIn("#include <Assisi/Core/Reflect/ContainerJson.hpp>", cpp)
+        self.assertIn("#include <Assisi/Core/Reflect/ContainerOps.hpp>", cpp)
+
+    def test_an_enum_element_carries_its_enumerators(self):
+        # The metadata describes the leaf, so a vector<Colour> reads the same as a
+        # bare Colour — which is what puts the enumerator values in the protocol
+        # text wherever the enum sits.
+        cpp = self._generate("AFIELD() std::vector<Colour> colours;")
+        self.assertIn('.enumConstants = { { "Red", 0 }, { "Green", 7 } }', cpp)
+        self.assertIn(".enumSize = 1", cpp)
+
+    def test_one_nesting_level_generates(self):
+        cpp = self._generate(
+            "AFIELD() std::map<Assisi::Core::ShortString, std::vector<Colour>> bindings;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Map", cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::bindings)>()",
+                      cpp)
+        # The leaf enum is reached through the nesting, not just at the top level.
+        self.assertIn('.enumConstants = { { "Red", 0 }, { "Green", 7 } }', cpp)
+
+    def test_a_map_suppresses_the_offsetof_diagnostic(self):
+        # A struct holding a map is not standard-layout, so offsetof on it is
+        # conditionally-supported and GCC warns. Scoped to files that need it.
+        with_map = self._generate("AFIELD() std::map<int32_t, float> weights;")
+        self.assertIn('#pragma GCC diagnostic ignored "-Winvalid-offsetof"', with_map)
+
+        # std::vector *is* standard-layout, so a file with only vectors must not
+        # lose the warning.
+        vectors_only = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertNotIn("-Winvalid-offsetof", vectors_only)
+
+    def test_two_nesting_levels_are_refused(self):
+        self._assert_refused(
+            "AFIELD() std::vector<std::vector<std::vector<int32_t>>> deep;",
+            "nests 3 containers deep")
+
+    def test_a_float_key_is_refused(self):
+        # A JSON object's keys are text, and a float has no exact text spelling to
+        # round-trip through.
+        self._assert_refused("AFIELD() std::map<float, int32_t> byFloat;",
+                             "which cannot key a reflected map")
+
+    def test_an_enum_key_is_refused(self):
+        # The one enum-metadata slot on a FieldMeta describes the element.
+        self._assert_refused("AFIELD() std::map<Colour, int32_t> byColour;",
+                             "which cannot key a reflected map")
+
+    def test_a_std_string_element_is_refused_with_the_alternative_named(self):
+        self._assert_refused("AFIELD() std::vector<std::string> names;",
+                             "use Core::ShortString")
+
+    def test_an_unsupported_element_type_is_refused(self):
+        self._assert_refused("AFIELD() std::vector<glm::vec3> points;",
+                             "holds elements of type 'glm::vec3'")
+
+    def test_the_asset_vectors_keep_their_own_field_types(self):
+        # AssetPathVector and AssetIdVector predate the generic containers and
+        # have their own enumerators. Re-routing them would move the wire format
+        # for no gain, so the generic path must not claim them.
+        cpp = self._generate("AFIELD() std::vector<Assisi::Core::AssetId> overrides;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::AssetIdVector", cpp)
+        self.assertNotIn("ContainerSpecFor<decltype(T::overrides)>", cpp)
 
 
 class IncludePathTest(unittest.TestCase):

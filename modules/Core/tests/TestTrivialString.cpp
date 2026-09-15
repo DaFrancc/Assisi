@@ -102,3 +102,45 @@ TEST_CASE("TrivialString: stays trivially copyable at any capacity")
     static_assert(std::is_trivially_copyable_v<TrivialString<8>>);
     static_assert(std::is_trivially_copyable_v<TrivialString<300>>);
 }
+
+TEST_CASE("TrivialString: orders lexicographically over the live view")
+{
+    const TrivialString<16> apple{std::string_view{"apple"}};
+    const TrivialString<16> banana{std::string_view{"banana"}};
+
+    CHECK(apple < banana);
+    CHECK(banana > apple);
+    CHECK(apple <= banana);
+    CHECK_FALSE(banana <= apple);
+
+    // A prefix sorts before the longer string that extends it, as std::string_view
+    // orders: the shorter runs out first.
+    const TrivialString<16> app{std::string_view{"app"}};
+    CHECK(app < apple);
+
+    // Equal contents are neither less nor greater, so <=> agrees with ==.
+    const TrivialString<16> apple2{std::string_view{"apple"}};
+    CHECK(apple == apple2);
+    CHECK_FALSE(apple < apple2);
+    CHECK_FALSE(apple2 < apple);
+}
+
+TEST_CASE("TrivialString: order ignores the tail left by a longer previous value")
+{
+    // Sorting must read only the first Size() bytes. Both of these hold "ab", but
+    // one has the remains of a longer assignment sitting past the length — if the
+    // comparison walked the buffer instead of the view, the two would order
+    // inconsistently and a sorted map keyed by these would come out differently
+    // depending on what each key held before.
+    TrivialString<16> dirty{std::string_view{"abzzzzzzzz"}};
+    CHECK(dirty.Assign("ab"));
+    const TrivialString<16> clean{std::string_view{"ab"}};
+
+    CHECK(dirty == clean);
+    CHECK_FALSE(dirty < clean);
+    CHECK_FALSE(clean < dirty);
+
+    const TrivialString<16> ac{std::string_view{"ac"}};
+    CHECK(dirty < ac);
+    CHECK(clean < ac);
+}

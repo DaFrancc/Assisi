@@ -12,6 +12,7 @@ target_sources(Assisi-Core
     "src/Assert.cpp"
     "src/BinaryCodec.cpp"
     "src/BitStream.cpp"
+    "src/ContainerOps.cpp"
     "src/ContentHash.cpp"
     "src/ComponentMask.cpp"
     "src/Diagnostics.cpp"

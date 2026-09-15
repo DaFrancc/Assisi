@@ -13,6 +13,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+from reflect_types import TYPES
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Data model
 # ──────────────────────────────────────────────────────────────────────────────
@@ -55,11 +57,41 @@ class RadioInfo:
 
 
 @dataclass
+class ContainerInfo:
+    """A reflected container's decomposed shape.
+
+    `element` is a nested ContainerInfo when the element is itself a container,
+    and a type spelling otherwise — so the chain ends where the nesting does, the
+    same way the C++ ContainerSpec's does.
+    """
+    kind:    str                 # 'Vector' | 'Map'
+    key:     str  = ''           # key spelling; '' for a vector
+    element: object = ''         # str spelling, or a nested ContainerInfo
+
+    @property
+    def depth(self) -> int:
+        """Container levels, counting this one."""
+        inner = self.element
+        return 1 + (inner.depth if isinstance(inner, ContainerInfo) else 0)
+
+    @property
+    def leaf(self) -> str:
+        """The innermost element spelling — where the enum sits, if there is one."""
+        inner = self.element
+        return inner.leaf if isinstance(inner, ContainerInfo) else inner
+
+
+@dataclass
 class FieldInfo:
     name:      str
     cpp_type:  str
     args:      AnnotArgs
     enum_info: Optional[EnumInfo]  = None  # set when cpp_type names an AENUM enum
+    # Set when cpp_type spells a reflected container; None for every scalar.
+    container: Optional[ContainerInfo] = None
+    # The AENUM of a container's *leaf* element, resolved the same way enum_info
+    # is. A container field's enum metadata describes what it ultimately holds.
+    leaf_enum: Optional[EnumInfo] = None
     # The AENUM whose enumerators are the bits of this integer field, named by
     # AFIELD(bitmask = EnumName). Distinct from enum_info: the field stores a set
     # of enumerators, not one of them, so its C++ type is an integer and the enum
@@ -562,18 +594,170 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
             cur = by_name[cur.radio.source]  # existence validated above
 
 
-# Field declaration: optional cv/storage-class keywords, type with optional
-# namespace/template args, optional ptr/ref, name, optional default, semicolon.
-# - Type modifiers (const, unsigned, etc.) can precede the base type token.
-# - The pointer/ref marker may be flush against the variable name (int*foo),
-#   so \s* (not \s+) separates type from name.
-_FIELD_RE  = re.compile(
-    r'((?:(?:const|unsigned|signed|long|short|volatile)\s+)*'  # cv/modifier keywords
-    r'[\w:]+(?:\s*<[^>]*>)?'                                   # base type + optional template
-    r'(?:\s*[*&])?)'                                           # optional ptr/ref
-    r'\s*(\w+)'                                                # variable name (zero or more spaces after type)
-    r'\s*(?:[={][^;]*)?\s*;'                                   # optional default + semicolon
+# The head of a field declaration: optional cv/storage-class keywords, then the
+# base type token. The template arguments (if any) are scanned separately —
+# see _match_field_decl.
+_FIELD_HEAD_RE = re.compile(
+    r'(?:(?:const|unsigned|signed|long|short|volatile)\s+)*'  # cv/modifier keywords
+    r'[\w:]+'                                                # base type
 )
+
+# The tail: optional ptr/ref, the variable name, an optional default, semicolon.
+# The pointer/ref marker may be flush against the name (int*foo), so \s* rather
+# than \s+ separates the two.
+_FIELD_TAIL_RE = re.compile(
+    r'(\s*[*&])?'          # optional ptr/ref, kept with the type
+    r'\s*(\w+)'            # variable name
+    r'\s*(?:[={][^;]*)?\s*;'  # optional default + semicolon
+)
+
+
+def _scan_template_args(text: str, start: int) -> int:
+    """End index (exclusive) of the `<...>` beginning at @p start, or -1.
+
+    A depth counter rather than a pattern, because a reflected container may hold
+    another one: `map<ShortString, vector<InputSource>>` closes two levels on its
+    final token, and matching to the first `>` would cut the type in half. An
+    unterminated `<` returns -1, which surfaces as "not a recognisable field
+    declaration" rather than running to the end of the struct.
+    """
+    depth = 0
+    i     = start
+    while i < len(text):
+        char = text[i]
+        if char == '<':
+            depth += 1
+        elif char == '>':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        elif char == ';' or char == '{':
+            break  # a declaration cannot span these; the '<' was something else
+        i += 1
+    return -1
+
+
+def _match_field_decl(text: str):
+    """Splits `Type name;` into (type, name), or None if it is not one.
+
+    Replaces a single regex because the type may carry balanced template
+    arguments to arbitrary depth — which the generator then refuses above its
+    nesting limit, but must be able to *read* in order to say so.
+    """
+    head = _FIELD_HEAD_RE.match(text)
+    if not head:
+        return None
+
+    end = head.end()
+
+    # Template arguments, if the next non-space character opens them.
+    probe = end
+    while probe < len(text) and text[probe].isspace():
+        probe += 1
+    if probe < len(text) and text[probe] == '<':
+        end = _scan_template_args(text, probe)
+        if end < 0:
+            return None
+
+    tail = _FIELD_TAIL_RE.match(text, end)
+    if not tail:
+        return None
+
+    raw_type = text[:end] + (tail.group(1) or '')
+    return raw_type.strip(), tail.group(2).strip()
+
+
+# Deepest nesting a reflected field may declare — one container inside another,
+# and no further. Must agree with kMaxContainerDepth in Reflect/ContainerOps.hpp;
+# a disagreement surfaces as a compile error from the static_assert there, never
+# as a silently mis-generated field.
+MAX_CONTAINER_DEPTH = 2
+
+# The container templates reflectgen decomposes, and how many template arguments
+# carry meaning. A map's remaining arguments — hash, comparator, allocator — are
+# accepted and ignored: they change how the container stores entries, and the
+# encoding sorts by key regardless of that.
+_CONTAINER_KINDS = {
+    'std::vector':        'Vector',
+    'std::map':           'Map',
+    'std::unordered_map': 'Map',
+}
+
+
+def _split_template_args(text: str) -> list:
+    """Splits `A, B<C, D>, E` on its TOP-LEVEL commas only."""
+    args: list = []
+    depth = 0
+    start = 0
+    for i, char in enumerate(text):
+        if char == '<':
+            depth += 1
+        elif char == '>':
+            depth -= 1
+        elif char == ',' and depth == 0:
+            args.append(text[start:i].strip())
+            start = i + 1
+    args.append(text[start:].strip())
+    return args
+
+
+def split_container(cpp_type: str) -> Optional[ContainerInfo]:
+    """Decomposes a container spelling, recursively. None if it is not one.
+
+    Whitespace inside the arguments is normalised, so `std::vector< float >` and
+    `std::vector<float>` decompose identically — unlike the flat TYPES lookup,
+    where the two are different keys.
+    """
+    open_bracket = cpp_type.find('<')
+    if open_bracket < 0 or not cpp_type.rstrip().endswith('>'):
+        return None
+
+    kind = _CONTAINER_KINDS.get(cpp_type[:open_bracket].strip())
+    if kind is None:
+        return None
+
+    inner = cpp_type.rstrip()[open_bracket + 1:-1]
+    args  = _split_template_args(inner)
+
+    def normalise(spelling: str) -> str:
+        return ' '.join(spelling.split())
+
+    if kind == 'Vector':
+        if len(args) < 1:
+            return None
+        element = normalise(args[0])
+        return ContainerInfo(kind='Vector', key='', element=split_container(element) or element)
+
+    if len(args) < 2:
+        return None
+    key     = normalise(args[0])
+    element = normalise(args[1])
+    return ContainerInfo(kind='Map', key=key, element=split_container(element) or element)
+
+
+def _iter_field_decls(body: str):
+    """Yields every `Type name;` in @p body as its type spelling.
+
+    The scanning counterpart of _match_field_decl, for callers that sweep a whole
+    struct rather than reading the one declaration after an AFIELD. Candidate
+    starts come from the head pattern; each is confirmed by the full match, so a
+    template argument is never mistaken for a declaration of its own.
+    """
+    position = 0
+    while position < len(body):
+        head = _FIELD_HEAD_RE.search(body, position)
+        if not head:
+            return
+
+        declaration = _match_field_decl(body[head.start():])
+        if declaration:
+            yield declaration[0]
+            # Past this declaration's semicolon, so its template arguments are not
+            # rescanned as declarations themselves.
+            semicolon = body.find(';', head.start())
+            position  = len(body) if semicolon < 0 else semicolon + 1
+        else:
+            position = head.end()
 
 
 def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[str, str, AnnotArgs]:
@@ -820,8 +1004,8 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
             break
         args = parse_annot_args(m.group(1))
         rest = body[m.end():]
-        fm = _FIELD_RE.match(rest.lstrip())
-        if not fm:
+        declaration = _match_field_decl(rest.lstrip())
+        if not declaration:
             # A malformed AFIELD would otherwise silently drop the field — and its
             # data on every save. Fail the build loudly instead of moving on.
             snippet = ' '.join(rest.lstrip()[:60].split())
@@ -829,8 +1013,7 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
                 f"{source_header}: AFIELD is not followed by a recognisable field "
                 f"declaration (got: '{snippet}...'). A reflected field must be a plain "
                 f"'Type name;' declaration immediately after the AFIELD(...) macro.")
-        raw_type = fm.group(1).strip()
-        name     = fm.group(2).strip()
+        raw_type, name = declaration
         cpp_type = raw_type.replace('const ', '').replace('*', '').replace('&', '').strip()
         fields.append(FieldInfo(name=name, cpp_type=cpp_type, args=args))
         i = m.end()
@@ -888,17 +1071,17 @@ def find_view_spellings(text: str) -> dict:
     for m in _TYPEDEF_RE.finditer(text):
         aliases.append((m.group(2), ' '.join(m.group(1).split())))
 
-    # Member declarations only. _FIELD_RE's shape ends at a ';' with no parameter
-    # list between, so a method that *returns* a view is not a struct that
-    # *stores* one — the distinction the ban is about. A view declared as a local
-    # inside an inline method body is over-read as storage, which is the
+    # Member declarations only. A field declaration ends at a ';' with no
+    # parameter list between, so a method that *returns* a view is not a struct
+    # that *stores* one — the distinction the ban is about. A view declared as a
+    # local inside an inline method body is over-read as storage, which is the
     # default-deny side to err on.
     records: list = []
     for m in _RECORD_RE.finditer(text):
         body, _ = _extract_brace_body(text, m.end() - 1)
         if body is None:
             continue
-        records.append((m.group(1), [f.group(1).strip() for f in _FIELD_RE.finditer(body)]))
+        records.append((m.group(1), [spelling.strip() for spelling in _iter_field_decls(body)]))
 
     # To a fixpoint: an alias of an alias, or a struct holding a struct holding a
     # view, is as stored as the direct spelling, and neither declaration order
@@ -1105,6 +1288,20 @@ def parse_header_full(path: Path) -> tuple[list, list, list]:
     for msg in messages:
         for f in msg.fields:
             f.enum_info = enums.get(f.cpp_type)
+
+    # Container fields, and the enum their leaf element names if it names one. A
+    # spelling already in TYPES keeps its own enumerator, so the AssetPath and
+    # AssetId vectors are untouched by this and their wire format does not move.
+    for owner in (*components, *messages):
+        for f in owner.fields:
+            # A transient field serializes nowhere, so it needs no descriptor —
+            # and it is the one place a container of something unreflectable is
+            # legal, like the resolved material pointers a MeshRenderer caches.
+            if f.args.has('transient') or f.cpp_type in TYPES:
+                continue
+            f.container = split_container(f.cpp_type)
+            if f.container is not None:
+                f.leaf_enum = enums.get(f.container.leaf)
 
     for owner in (*components, *messages):
         for f in owner.fields:

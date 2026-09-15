@@ -12,6 +12,8 @@
 //   REFLECTGEN_UPDATE_GOLDEN=1 python tools/reflectgen/tests/test_reflectgen.py
 
 #include <cstdint>
+#include <map>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -131,6 +133,21 @@ struct SampleReplicated
 {
     AFIELD() float shared = 0.0f;
     AFIELD(norep) int32_t serverOnly = 0;
+};
+
+// Reflected containers: a flat vector, a vector of an AENUM enum (whose
+// enumerators become the field's metadata), both map flavours, and the one
+// permitted nesting level. The map fields are also what makes this struct
+// non-standard-layout, so the generated file carries the offsetof pragma.
+ACOMP()
+struct SampleContainers
+{
+    AFIELD() std::vector<int32_t> numbers;
+    AFIELD() std::vector<SampleMode> modes;
+    AFIELD() std::vector<Assisi::Core::ShortString> labels;
+    AFIELD() std::map<int32_t, float> weights;
+    AFIELD() std::unordered_map<Assisi::Core::ShortString, int32_t> counts;
+    AFIELD() std::unordered_map<Assisi::Core::ShortString, std::vector<SampleMode>> bindings;
 };
 
 } // namespace Assisi::Runtime

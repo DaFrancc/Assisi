@@ -22,6 +22,7 @@
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
 #if defined(ASSISI_NETWORKING)
@@ -441,6 +442,15 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         }
         break;
     }
+    // Shown, not editable. Editing one in place needs a list widget with per-row
+    // identity, add and remove, and a nested list for a nested element — and
+    // nothing authors a container by hand yet. A field that simply vanished from
+    // the inspector would read as a bug, so it reads as what it holds.
+    case FieldType::Vector:
+    case FieldType::Map:
+        ImGui::LabelText(field.name.c_str(), "%s",
+                         Assisi::Core::Reflect::DescribeContainer(field, fp).c_str());
+        break;
     default:
         // Either a type only an owning component can draw (the caller handles
         // those before delegating here) or one nothing draws yet.
