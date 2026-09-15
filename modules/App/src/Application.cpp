@@ -75,7 +75,7 @@ struct TimerResolutionScope
 
 // ---------------------------------------------------------------------------
 
-// Ceiling applied before game.json is available. High enough that it can never
+// Ceiling applied before the game config is available. High enough that it can never
 // trim below a configured keepLogs/keepDumps, low enough to bound a directory
 // on a build that never reaches InitializeCore.
 constexpr uint32_t kRetentionBackstop = 50;
@@ -107,7 +107,7 @@ Application::Application()
 
     // Backstop retention, deliberately *before* this run's log exists — the one
     // file that must never be deleted cannot be, because there is nothing to
-    // delete yet. game.json has not been read (it needs the asset system), so
+    // delete yet. The config has not been read (it needs the asset system), so
     // this cannot use keepLogs; the cap is fixed and generous precisely so it
     // can never cut below anyone's configured value. InitializeCore prunes to
     // the real counts once they are known.
@@ -160,7 +160,7 @@ bool Application::InitializeCore()
         return false;
     }
 
-    _config  = AppConfig::LoadFromJson();
+    _config  = AppConfig::Load();
     _options = OptionsConfig::LoadFromJson();
     if (!_captureOptionsPath.empty())
     {
@@ -185,8 +185,8 @@ bool Application::InitializeCore()
         _options.fpsLimit  = -1;
     }
 
-    // Retention runs here rather than in the constructor because it is game.json
-    // that says how many to keep. The counts are totals including this run.
+    // Retention runs here rather than in the constructor because it is the game
+    // config that says how many to keep. The counts are totals including this run.
     //
     // Both calls name this run's own artifact as protected. Relying on it
     // sorting newest is not enough: LaunchStamp() is local time, so a DST
@@ -212,18 +212,35 @@ bool Application::InitializeCore()
 
 bool Application::InitializePresentation()
 {
-    // A capture's requested resolution wins over game.json — the ledger needs
-    // both 1440p and 1080p from the same committed config.
+    // The player's chosen size over the shipped default, and the capture's over
+    // both. Order matters in one direction only: a capture must render exactly
+    // what it was asked for, so whatever the options say, it is overwritten
+    // below rather than consulted.
+    if (_options.width)
+    {
+        _config.width = *_options.width;
+    }
+    if (_options.height)
+    {
+        _config.height = *_options.height;
+    }
+
+    // A capture's requested resolution wins over both — the ledger needs both
+    // 1440p and 1080p from the same committed config.
     if (_captureWidth > 0 && _captureHeight > 0)
     {
         _config.width  = _captureWidth;
         _config.height = _captureHeight;
     }
 
+    // GLFW wants a null-terminated string and an inline one carries no
+    // terminator, so the window holds the only copy that has one.
+    const std::string title(_config.title.View());
+
     Window::WindowConfiguration winCfg;
     winCfg.Width  = _config.width;
     winCfg.Height = _config.height;
-    winCfg.Title  = _config.title.c_str();
+    winCfg.Title  = title.c_str();
     // Undecorated for a capture, so the framebuffer is exactly the size asked
     // for: 1440p on a 1440p display does not fit once a title bar is added, and
     // a report labelled 1440p that rendered 2560x1400 is quoting a workload
@@ -342,7 +359,7 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     // vsync reconcile above both see one answer.
     // Neither the pacing nor the resolution is applied here, and for the same
     // reason: Initialize() replaces _options from options.json and _config from
-    // game.json, both of which run after this. Setting them now looks right and
+    // the game config, both of which run after this. Setting them now looks right and
     // is silently undone — which is exactly what happened, and is why every
     // early capture ran vsync-locked to the display and reported frame times
     // taken while the GPU sat idle between presents. They are applied after

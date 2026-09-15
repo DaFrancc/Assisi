@@ -1429,7 +1429,7 @@ void EditorApp::DrawReplicationPolicy()
         const bool gameVeto = IsComponentGameVetoed(*meta);
         bool sends    = SelectedEntitySends(*meta);
 
-        // A component game.json forbids gets a dead switch with a reason, not a
+        // A component the network config forbids gets a dead switch with a reason, not a
         // live one that silently does nothing.
         ImGui::BeginDisabled(gameVeto);
         if (ImGui::Checkbox(meta->name.c_str(), &sends))
@@ -1439,7 +1439,7 @@ void EditorApp::DrawReplicationPolicy()
         if (gameVeto)
         {
             ImGui::SameLine();
-            ImGui::TextDisabled("(filtered by game.json)");
+            ImGui::TextDisabled("(filtered by the network config)");
         }
     }
 
@@ -2180,7 +2180,8 @@ void EditorApp::DrawInspector()
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
                 if (gameVeto)
-                    ImGui::SetTooltip("Never sent — game.json's neverReplicate list forbids this component type.");
+                    ImGui::SetTooltip(
+                        "Never sent — the network config's neverReplicate list forbids this component type.");
                 else if (!editable)
                     ImGui::SetTooltip(sends ? "Sent to clients." : "Withheld — stays on this machine.");
                 else if (sends)

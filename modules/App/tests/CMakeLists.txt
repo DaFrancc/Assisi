@@ -23,6 +23,7 @@ add_executable(Assisi-App-Tests
   TestPerfCapture.cpp
   TestChildProcess.cpp
   TestInstanceViews.cpp
+  TestAppConfig.cpp
   TestLevelSystemsPrecheck.cpp
   TestOptionsConfig.cpp
   TestSystemRegistry.cpp
@@ -80,6 +81,12 @@ target_sources(Assisi-App-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Physics-Generated>
   $<TARGET_OBJECTS:Assisi-App-TestSystems-Generated>
+  # AppConfig and InputBindings are AASSETs, and OptionsConfig reaches the
+  # latter through the registry. Without these objects every config reads as an
+  # unregistered type and the tests would assert against a loader that cannot
+  # see what it loads.
+  $<TARGET_OBJECTS:Assisi-App-Generated>
+  $<TARGET_OBJECTS:Assisi-Window-Generated>
   # Replicated is an ACOMP in NetSync; without its registrations the loader has
   # no ComponentId for it and a blueprint declaring one silently gets an entity
   # that never replicates.

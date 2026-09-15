@@ -8,8 +8,10 @@
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 #include <Assisi/Render/SsaoSettings.hpp>
+#include <Assisi/Window/InputBindings.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -25,8 +27,27 @@ enum class FrameSyncMode : std::uint8_t
 };
 
 /// @brief User preferences loaded from and saved to options.json under the user root.
+///
+/// The one writable settings file. Everything here is the player's, holds only
+/// what they changed, and is safe to delete — doing so restores what the build
+/// ships. Two kinds of value live here and resolve slightly differently: most
+/// override a default that is a field initialiser below, while the window size
+/// and the action bindings override a default that ships as a file under
+/// `assets/config/`. Both are the player's, which is why they are together.
 struct OptionsConfig
 {
+    /// @brief The window size the player chose, or nullopt to keep the shipped
+    /// one. A size is stored only once it differs from what shipped, so a patch
+    /// that changes the default reaches everyone who never picked a size.
+    std::optional<int32_t> width;
+    std::optional<int32_t> height;
+
+    /// @brief The actions the player rebound, and only those.
+    ///
+    /// Applied over the shipped bindings per action, so an action absent here
+    /// keeps what shipped. Empty on a fresh install.
+    Window::InputBindings bindings;
+
     Render::AaMode aaMode      = Render::AaMode::None;
     int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
 

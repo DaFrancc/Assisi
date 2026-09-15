@@ -164,7 +164,7 @@ TEST_CASE("PruneOldFiles with keep = 0 still keeps the current run")
     dir.Touch(current);
 
     // 0 means "keep no history", not "delete the log being written", matching
-    // what game.json documents.
+    // what AppConfig::keepLogs documents.
     PruneOldFiles(dir.path, "assisi-", ".log", 0, current);
 
     CHECK(dir.Names() == std::vector<std::string>{current});

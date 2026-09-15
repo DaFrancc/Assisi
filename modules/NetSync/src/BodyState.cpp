@@ -2,18 +2,10 @@
 
 #include <Assisi/NetSync/BodyState.hpp>
 
-#include <Assisi/Core/AssetSystem.hpp>
-#include <Assisi/Core/Logger.hpp>
-
-#include <nlohmann/json.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <exception>
-#include <expected>
-#include <string>
 
 namespace Assisi::NetSync
 {
@@ -93,109 +85,6 @@ void SetQuantization(const BodyQuantization &quantization) { gQuantization = qua
 const ViewSmoothing &Smoothing() { return gSmoothing; }
 
 void SetSmoothing(const ViewSmoothing &smoothing) { gSmoothing = smoothing; }
-
-void LoadQuantizationFromConfig(std::string_view configPath)
-{
-    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(configPath);
-    if (!text)
-        return; // no config is not a problem; the defaults are a complete answer
-
-    BodyQuantization loaded = gQuantization;
-    try
-    {
-        const nlohmann::json json = nlohmann::json::parse(*text);
-        if (!json.contains("networking"))
-            return;
-
-        const nlohmann::json &block = json.at("networking");
-        loaded.positionExtent       = block.value("positionExtent", loaded.positionExtent);
-        loaded.positionBits         = block.value("positionBits", loaded.positionBits);
-        loaded.linearVelocityMax    = block.value("linearVelocityMax", loaded.linearVelocityMax);
-        loaded.linearVelocityBits   = block.value("linearVelocityBits", loaded.linearVelocityBits);
-        loaded.angularVelocityMax   = block.value("angularVelocityMax", loaded.angularVelocityMax);
-        loaded.angularVelocityBits  = block.value("angularVelocityBits", loaded.angularVelocityBits);
-    }
-    catch (const std::exception &error)
-    {
-        Core::Log::Warn("NetSync: cannot read the 'networking' block of '{}' ({}) — keeping the defaults.",
-                        configPath, error.what());
-        return;
-    }
-
-    // A typo that produced a zero bit count or an inverted range would encode
-    // garbage on one machine and refuse to pair with every other build, without
-    // saying which key did it. Refuse the *config* instead.
-    const bool sane = loaded.positionExtent > 0.f && loaded.linearVelocityMax > 0.f &&
-                      loaded.angularVelocityMax > 0.f && loaded.positionBits >= 1 && loaded.positionBits <= 32 &&
-                      loaded.linearVelocityBits >= 1 && loaded.linearVelocityBits <= 32 &&
-                      loaded.angularVelocityBits >= 1 && loaded.angularVelocityBits <= 32;
-    if (!sane)
-    {
-        Core::Log::Warn("NetSync: the 'networking' block of '{}' is out of range (extents must be positive, bit "
-                        "counts 1..32) — keeping the defaults.",
-                        configPath);
-        return;
-    }
-
-    gQuantization = loaded;
-    Core::Log::Info("NetSync: body quantization — position ±{:g} m at {} bits, linear ±{:g} m/s at {} bits, "
-                    "angular ±{:g} rad/s at {} bits.",
-                    static_cast<double>(loaded.positionExtent), loaded.positionBits,
-                    static_cast<double>(loaded.linearVelocityMax), loaded.linearVelocityBits,
-                    static_cast<double>(loaded.angularVelocityMax), loaded.angularVelocityBits);
-}
-
-void LoadSmoothingFromConfig(std::string_view configPath)
-{
-    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(configPath);
-    if (!text)
-        return;
-
-    ViewSmoothing loaded = gSmoothing;
-    try
-    {
-        const nlohmann::json json = nlohmann::json::parse(*text);
-        if (!json.contains("smoothing"))
-            return;
-
-        const nlohmann::json &block     = json.at("smoothing");
-        loaded.positionCorrectionTime   = block.value("positionCorrectionTime", loaded.positionCorrectionTime);
-        loaded.positionCorrectionTimeFast =
-            block.value("positionCorrectionTimeFast", loaded.positionCorrectionTimeFast);
-        loaded.smallErrorDistance    = block.value("smallErrorDistance", loaded.smallErrorDistance);
-        loaded.largeErrorDistance    = block.value("largeErrorDistance", loaded.largeErrorDistance);
-        loaded.rotationCorrectionTime = block.value("rotationCorrectionTime", loaded.rotationCorrectionTime);
-        loaded.snapBelowDistance     = block.value("snapBelowDistance", loaded.snapBelowDistance);
-        loaded.hardSnapDistance      = block.value("hardSnapDistance", loaded.hardSnapDistance);
-    }
-    catch (const std::exception &error)
-    {
-        Core::Log::Warn("NetSync: cannot read the 'smoothing' block of '{}' ({}) — keeping the defaults.",
-                        configPath, error.what());
-        return;
-    }
-
-    // A zero or negative convergence time would divide by zero in the decay; a
-    // large-error distance under the small one inverts the blend. Refuse the
-    // config rather than render something nobody can explain.
-    if (loaded.positionCorrectionTime <= 0.f || loaded.positionCorrectionTimeFast <= 0.f ||
-        loaded.rotationCorrectionTime <= 0.f || loaded.largeErrorDistance <= loaded.smallErrorDistance)
-    {
-        Core::Log::Warn("NetSync: the 'smoothing' block of '{}' is out of range (times must be positive, "
-                        "largeErrorDistance must exceed smallErrorDistance) — keeping the defaults.",
-                        configPath);
-        return;
-    }
-
-    gSmoothing = loaded;
-    Core::Log::Info("NetSync: correction smoothing — converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
-                    "below {:g} m and beyond {:g} m.",
-                    static_cast<double>(loaded.positionCorrectionTime),
-                    static_cast<double>(loaded.positionCorrectionTimeFast),
-                    static_cast<double>(loaded.rotationCorrectionTime),
-                    static_cast<double>(loaded.snapBelowDistance),
-                    static_cast<double>(loaded.hardSnapDistance));
-}
 
 void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
 {

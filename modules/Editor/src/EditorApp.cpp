@@ -27,8 +27,10 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
+#    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Window/InputBindings.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <imgui.h>
@@ -301,34 +303,19 @@ void EditorApp::AdoptLevelCamera()
 
 void EditorApp::OnStart()
 {
-    // Action bindings from game.json. A missing or malformed file warns and leaves
-    // the defaults.
+    // The shipped bindings, then whatever the player rebound over the top. Both
+    // go through Apply, which replaces per action — so an action the player
+    // never touched keeps what shipped.
+    if (const auto shipped = Assisi::Window::LoadInputBindings())
     {
-        const auto pathResult = Assisi::Core::AssetSystem::Resolve("game.json");
-        if (pathResult)
-        {
-            if (std::ifstream file(pathResult.value()); file.is_open())
-            {
-                try
-                {
-                    const auto json = nlohmann::json::parse(file);
-                    if (json.contains("input") && json.at("input").contains("actions"))
-                        _actions.LoadFromJson(json.at("input").at("actions"));
-                }
-                catch (const nlohmann::json::exception &e)
-                {
-                    Assisi::Core::Log::Warn("Failed to parse input bindings from game.json: {}", e.what());
-                }
-            }
-        }
+        _actions.Apply(*shipped);
     }
+    _actions.Apply(GetOptions().bindings);
 
     // Before any session can exist: quantization is inside the handshake hash, so
-    // it has to be settled before the first hello is written. Smoothing is purely
-    // local, but reads the same file.
+    // it has to be settled before the first hello is written.
 #if defined(ASSISI_NETWORKING)
-    Assisi::NetSync::LoadQuantizationFromConfig();
-    Assisi::NetSync::LoadSmoothingFromConfig();
+    Assisi::NetSync::LoadNetworkConfig();
 #endif
 
     // What the manager needs to turn a level file into a running world on travel.
@@ -1852,11 +1839,12 @@ void EditorApp::OnImGui()
     }
 
     // Show unsaved changes in the OS window title, re-setting it only when the
-    // dirty state flips rather than every frame. The base title is the game's own,
-    // from game.json, not an editor hardcode.
+    // dirty state flips rather than every frame. The base title is the game's
+    // own, from its config, not an editor hardcode.
     if (const bool dirty = IsSceneDirty(); dirty != _titleDirtyShown)
     {
-        GetWindow().SetTitle(dirty ? GetConfig().title + " *" : GetConfig().title);
+        const std::string title(GetConfig().title.View());
+        GetWindow().SetTitle(dirty ? title + " *" : title);
         _titleDirtyShown = dirty;
     }
 

@@ -163,6 +163,36 @@ class CodegenTest(unittest.TestCase):
         self.assertIn('ReadString(j, _comp, "name", _s)', cpp)     # deserialize, type-checked
         self.assertIn("comp.name.Assign(_s)", cpp)                 # ...then assigned
 
+    def test_an_inline_string_reflects_under_its_bare_spelling(self):
+        # Core::ShortString and Core::EntityName are aliases for TrivialString at
+        # two capacities. A field whose value is neither a short label nor an
+        # entity's name says so by declaring the capacity, and must reflect the
+        # same as the alias would -- otherwise the alias is load-bearing and
+        # every such field has to borrow a name that misdescribes it.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::TrivialString<32> label;\n"
+            "  AFIELD() Assisi::Core::TrivialString<64> title;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"label", .type = Assisi::Core::Reflect::FieldType::String', cpp)
+        self.assertIn('"title", .type = Assisi::Core::Reflect::FieldType::EntityName', cpp)
+        self.assertIn("comp.title.Assign(_s)", cpp)
+
+    def test_an_inline_string_of_another_capacity_is_refused_by_name(self):
+        # Only 32 and 64 have a FieldType, because the binary codec reads into
+        # the buffer by capacity. A near miss looks like it should work, so the
+        # refusal names the two that do rather than saying "no codegen".
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::TrivialString<128> title;\n"
+            "};\n}\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn("TrivialString<64>", str(caught.exception))
+
     def test_colour_is_its_own_field_type_over_the_vector_codec(self):
         # A colour must carry a distinct FieldType (that is what gets an editor to
         # offer a picker) while emitting the *same* JSON as its vector, so a field

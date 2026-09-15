@@ -64,8 +64,8 @@ public:
     /// A flag on Application rather than a separate headless class: the simulation
     /// hooks, the SystemRegistry, and a listen server embedding a server inside a
     /// client process all want the two modes to be the *same* object with one of
-    /// its halves not brought up. `game.json` may also set it; Initialize() takes
-    /// either.
+    /// its halves not brought up. `AppConfig::headless` may also set it;
+    /// Initialize() takes either.
     void SetHeadless(bool headless) { _headless = headless; }
 
     /// @brief Whether this process runs without presentation. Valid before
@@ -248,9 +248,11 @@ protected:
     /// picked up by Run() on the next iteration with no extra call.
     OptionsConfig &GetOptions() { return _options; }
 
-    /// @brief The engine config loaded at Initialize() (game.json): window
-    /// title/size, physics rate. Read-only — it reflects bring-up, and editing
-    /// it after the fact would change nothing.
+    /// @brief The engine config loaded at Initialize(): window title/size,
+    /// physics rate. The size here is what the window was actually created at,
+    /// so it already carries the player's choice and a capture's override.
+    /// Read-only — it reflects bring-up, and editing it after the fact would
+    /// change nothing.
     const AppConfig &GetConfig() const { return _config; }
 
     /// @brief Rebuilds the post-process render targets from the current
@@ -334,7 +336,7 @@ private:
 
     /// Resolution a capture asked to render at, 0 when it did not ask. Applied
     /// in InitializePresentation rather than at SetPerfCapture, because
-    /// Initialize() reloads _config from game.json in between.
+    /// Initialize() reloads _config from the game config in between.
     int32_t _captureWidth  = 0;
     int32_t _captureHeight = 0;
 

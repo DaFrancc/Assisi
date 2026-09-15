@@ -411,7 +411,8 @@ Window creates the operating-system window and reads input from it. It manages G
 (`GlfwLibrary` is shared, so GLFW is initialised once and shut down when the last user of it goes away),
 and exposes `WindowContext` for the window itself and `InputContext` for polling the keyboard and mouse.
 `ActionMap` sits on top of that: it maps a name like `"Jump"` to a key or mouse button, loaded from
-`game.json`, so game code asks about actions rather than hardcoding keys.
+`assets/config/input.json` and then overlaid with whatever the player rebound, so game code asks about
+actions rather than hardcoding keys.
 
 ## Geometry
 Geometry owns mesh and material *data* with no GPU involved, which is what lets importers and
@@ -512,8 +513,8 @@ to agree before a given component is put on the wire:
 
 1. **The component type must be allowed to travel.** Only types declared `ACOMP(replicable)` are ever
    eligible.
-2. **The game can veto a type outright.** `networking.neverReplicate` in `game.json` blocks a component
-   for that game, even one an engine module marked replicable.
+2. **The game can veto a type outright.** `neverReplicate` in `assets/config/network.json` blocks a
+   component for that game, even one an engine module marked replicable.
 3. **The entity has to opt in.** Only entities carrying the `Replicated` component are sent at all.
 4. **That entity can drop individual components.** `Replicated::excluded` is a per-entity list of
    opt-outs, so one crate can send its transform but keep, say, its audio state to itself.
@@ -552,10 +553,18 @@ every level being stuck with one global set. `Application` also owns the `Core::
 (`Jobs().Run()` / `RunOnMain()`); its main-thread queue is drained at a fixed point each frame, which is
 where background asset loads hand their results back.
 
-Configuration comes in two halves. `AppConfig`, read from `assets/game.json`, is what the game ships
-with: window setup, clear colour, physics rate. `OptionsConfig`, saved to `options.json`, is what the
-player changes: anti-aliasing mode, MSAA sample count, VSync and FPS limit, all editable in-app through
-the **F11** options window.
+Configuration is split by lifetime, into files under `assets/config/`. `AppConfig`, read from
+`config/game.json`, is what the game ships with: window title and size, clear colour, physics rate,
+log retention. `NetworkConfig` (`config/network.json`) is owned by NetSync and holds the quantization
+both peers must agree on, the correction smoothing, and the replication policy. `InputBindings`
+(`config/input.json`) is owned by Window and holds the default action bindings. Each file is a
+reflected asset type, parsed exactly once by the module that declares its schema.
+
+`OptionsConfig`, saved to `options.json` under the writable user root, is what the player changes:
+anti-aliasing mode, MSAA sample count, VSync and FPS limit — all editable in-app through the **F11**
+options window — plus the window size and any rebound actions, which override the shipped defaults
+above. It stores only what differs from the default, so a setting nobody touched follows the defaults
+as they change.
 
 ## Editor
 The Editor is the level editor, built **as a library** instead of as an executable, so a game and its

@@ -649,7 +649,7 @@ void EditorApp::DrawNetworkWindow()
                 const bool vetoed = std::find(_netVetoedComponentNames.begin(), _netVetoedComponentNames.end(),
                                               meta->name) != _netVetoedComponentNames.end();
                 if (vetoed)
-                    ImGui::TextDisabled("%s — vetoed by game.json", meta->name.c_str());
+                    ImGui::TextDisabled("%s — vetoed by the network config", meta->name.c_str());
                 else
                     ImGui::BulletText("%s", meta->name.c_str());
             }

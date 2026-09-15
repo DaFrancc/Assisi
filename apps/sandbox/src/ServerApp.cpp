@@ -12,6 +12,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
+#    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 
 #include <chrono>
@@ -70,8 +71,7 @@ void ServerApp::OnStart()
 #if defined(ASSISI_NETWORKING)
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
-    NetSync::LoadQuantizationFromConfig();
-    NetSync::LoadSmoothingFromConfig();
+    NetSync::LoadNetworkConfig();
 #endif
 
     if (!_options.level.empty())

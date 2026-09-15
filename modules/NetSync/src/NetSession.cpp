@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/NetSync/NetworkConfig.hpp>
 
 #include <format>
 #include <utility>
@@ -14,20 +15,20 @@ namespace Assisi::NetSync
 NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, ReplicationConfig config)
     : _scene(scene), _physics(physics), _config(std::move(config))
 {
-    // The game's never-replicate list, read here rather than inside the server:
+    // The game's never-replicate list, taken here rather than inside the server:
     // the server takes its whole configuration as a value, so a test can set the
     // list without a filesystem, and the layer that owns the session is the one
-    // that knows where the game config lives.
+    // that knows where the game's policy comes from.
     //
     // Only when the caller has not already supplied one — an explicitly
     // configured session (every test, and any embedder with its own policy
-    // source) must not have game.json silently override it.
+    // source) must not have the loaded network config silently override it.
     if (_config.neverReplicate.empty())
-        _config.neverReplicate = LoadNeverReplicateFromConfig();
+        _config.neverReplicate = NeverReplicate();
 
     // Same terms, same reason: only when the caller has left it at the default.
     if (_config.relevancy.provider == RelevancyConfig::Provider::All)
-        _config.relevancy = LoadRelevancyFromConfig();
+        _config.relevancy = Relevancy();
 }
 
 NetSession::~NetSession() { Disconnect(); }

@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-Core)
 target_sources(Assisi-Core
   PRIVATE
     "src/AssetDatabase.cpp"
+    "src/AssetDocument.cpp"
     "src/AssetId.cpp"
     "src/AssetIdJson.cpp"
     "src/AssetSidecar.cpp"
@@ -47,6 +48,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/StringHash.hpp"
     "include/Assisi/Core/TrivialString.hpp"
     "include/Assisi/Core/Reflect/Annotations.hpp"
+    "include/Assisi/Core/Reflect/AssetDocument.hpp"
     "include/Assisi/Core/Reflect/BinaryCodec.hpp"
     "include/Assisi/Core/Reflect/FieldMeta.hpp"
     "include/Assisi/Core/Reflect/ComponentMeta.hpp"

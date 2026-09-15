@@ -25,7 +25,7 @@
 /// editing one of its own headers.
 ///
 ///   G1  capability   component type   ACOMP(replicable)              opt-in
-///   G2  game policy  game             game.json networking.neverReplicate
+///   G2  game policy  game             the network config's neverReplicate
 ///   G3  entity gate  entity instance  the NetSync::Replicated marker opt-in
 ///   G4  instance     entity instance  Replicated::excluded (a mask)  opt-out
 ///   G5  field gate   field            AFIELD(norep)                  opt-out

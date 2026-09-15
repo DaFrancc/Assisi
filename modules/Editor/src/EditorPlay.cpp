@@ -14,6 +14,7 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
+#    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
@@ -194,7 +195,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
     // is fixed for the life of a session, and the inspector redraws constantly.
-    _netVetoedComponentNames = Assisi::NetSync::LoadNeverReplicateFromConfig();
+    _netVetoedComponentNames = Assisi::NetSync::NeverReplicate();
 
     const auto port = static_cast<std::uint16_t>(_netPort);
 

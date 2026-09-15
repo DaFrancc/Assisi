@@ -152,25 +152,6 @@ void SetSmoothing(const ViewSmoothing &smoothing);
 /// no longer describe either of them.
 void SetQuantization(const BodyQuantization &quantization);
 
-/// @brief Apply the `networking` block of a game config, if it has one.
-///
-/// Absent keys keep their defaults and a malformed block warns and changes
-/// nothing — a config typo should not be able to make this build refuse to pair
-/// with every other one without saying why. Call once at startup.
-///
-/// Per-game rather than per-level, deliberately: a level-header form would be
-/// more precise (a small arena wants finer position quantization than an open
-/// world) and is more machinery, so it waits until a level actually needs it.
-void LoadQuantizationFromConfig(std::string_view configPath = "game.json");
-
-/// @brief Apply the `smoothing` block of a game config, if it has one. Same
-/// absent-keys-keep-defaults, malformed-block-warns contract as above.
-///
-/// Separate from the quantization loader because the two are separate kinds of
-/// thing: quantization is protocol and both ends must agree on it, smoothing is
-/// presentation and nobody else can tell.
-void LoadSmoothingFromConfig(std::string_view configPath = "game.json");
-
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
