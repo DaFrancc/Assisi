@@ -88,6 +88,15 @@ public:
 
     bool operator==(const TrivialString &other) const { return View() == other.View(); }
 
+    /// @brief Lexicographic order over View(), agreeing with operator== and never
+    /// reading the unused tail bytes.
+    ///
+    /// A map keyed by one of these is serialized in sorted key order, so the
+    /// encoding is the same on every run whatever order the keys were inserted in.
+    /// Without an order the codec would have to fall back on the container's own
+    /// iteration, which for an unordered_map follows memory layout.
+    auto operator<=>(const TrivialString &other) const { return View() <=> other.View(); }
+
 private:
     std::array<char, Capacity> _data{};
     std::uint16_t _length = 0;

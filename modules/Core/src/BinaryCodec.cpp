@@ -19,6 +19,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
 
@@ -171,6 +172,182 @@ std::uint64_t ApplyRemap(const std::function<std::uint64_t(std::uint64_t)> &hook
     return hook ? hook(value) : value;
 }
 
+/// Smallest number of bits a value of @p type can occupy on the wire.
+///
+/// Feeds ReadElementCount's "could this count possibly fit?" test, so it must
+/// never overstate: a value that encodes smaller than this would make a valid
+/// stream look hostile. A bool is one bit; everything else is length-prefixed or
+/// byte-aligned and cannot be shorter than a byte. A nested container's own
+/// count prefix is at least a byte, and its contents are checked again when the
+/// recursion reaches them.
+std::size_t MinWireBits(FieldType type)
+{
+    /// One bit: the only field type that encodes narrower than a byte.
+    static constexpr std::size_t kBoolBits = 1;
+    /// A byte: the floor for a length prefix, a varint, or any payload.
+    static constexpr std::size_t kByteBits = 8;
+
+    return type == FieldType::Bool ? kBoolBits : kByteBits;
+}
+
+/// The FieldMeta one element (or key) of a container is decoded through.
+///
+/// Carries the element's own container shape, so a nested element re-enters the
+/// same arm and the recursion ends where the spec chain does. Bounds are
+/// deliberately dropped: `hasMin`/`hasMax` describe the field, and quantizing an
+/// element against the container's bound would silently change its values.
+FieldMeta ElementMeta(const FieldMeta &field, const ContainerSpec &spec, bool key)
+{
+    FieldMeta element;
+    element.name      = field.name;
+    element.type      = key ? spec.keyType : spec.elementType;
+    element.container = key ? nullptr : spec.element;
+
+    // The enum metadata on a container field describes its leaf element, and a
+    // key is never an enum — so it travels down the value side only.
+    if (!key)
+    {
+        element.enumConstants = field.enumConstants;
+        element.enumSize      = field.enumSize;
+        element.enumSigned    = field.enumSigned;
+    }
+    return element;
+}
+
+bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &writer, const CodecContext *context);
+bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, const CodecContext *context);
+
+/// Carries one container traversal into the visitor, which is a plain function
+/// pointer and cannot capture.
+struct WriteElementContext
+{
+    const FieldMeta *keyMeta;
+    const FieldMeta *elementMeta;
+    BitWriter *writer;
+    const CodecContext *codec;
+    bool ok;
+};
+
+void WriteOneElement(void *context, const std::byte *key, const std::byte *value)
+{
+    auto &state = *static_cast<WriteElementContext *>(context);
+
+    // A visit cannot be stopped part-way, so a failure latches and the remaining
+    // elements are skipped rather than half-written.
+    if (!state.ok)
+    {
+        return;
+    }
+    if (key != nullptr && !WriteField(*state.keyMeta, key, *state.writer, state.codec))
+    {
+        state.ok = false;
+        return;
+    }
+    if (!WriteField(*state.elementMeta, value, *state.writer, state.codec))
+    {
+        state.ok = false;
+    }
+}
+
+/// Writes a container's entry count and then each entry. A map writes key then
+/// value per entry, in the sorted order its ops impose.
+bool WriteContainer(const FieldMeta &field, const std::byte *address, BitWriter &writer,
+                    const CodecContext *context)
+{
+    const ContainerSpec *spec = field.container;
+    if (spec == nullptr || spec->ops == nullptr)
+    {
+        return false; // a container FieldType with no shape is a reflection bug
+    }
+
+    writer.WriteVarUInt64(spec->ops->size(address));
+
+    const FieldMeta keyMeta     = ElementMeta(field, *spec, true);
+    const FieldMeta elementMeta = ElementMeta(field, *spec, false);
+
+    WriteElementContext state{.keyMeta     = &keyMeta,
+                              .elementMeta = &elementMeta,
+                              .writer      = &writer,
+                              .codec       = context,
+                              .ok          = true};
+    spec->ops->visit(address, &state, &WriteOneElement);
+    return state.ok;
+}
+
+/// Carries a map key's decode into the insert callback, which is likewise a
+/// plain function pointer.
+struct ReadKeyContext
+{
+    const FieldMeta *keyMeta;
+    BitReader *reader;
+    const CodecContext *codec;
+};
+
+bool ReadOneKey(void *context, std::byte *key)
+{
+    auto &state = *static_cast<ReadKeyContext *>(context);
+    return ReadField(*state.keyMeta, key, *state.reader, state.codec);
+}
+
+/// Reads a container back. The count is checked against the bits actually
+/// remaining before anything is allocated, at every level, so a hostile count
+/// nested inside a valid one is refused on its own terms.
+bool ReadContainerField(const FieldMeta &field, std::byte *address, BitReader &reader,
+                        const CodecContext *context)
+{
+    const ContainerSpec *spec = field.container;
+    if (spec == nullptr || spec->ops == nullptr)
+    {
+        return false;
+    }
+
+    const FieldMeta keyMeta     = ElementMeta(field, *spec, true);
+    const FieldMeta elementMeta = ElementMeta(field, *spec, false);
+
+    const bool isMap = field.type == FieldType::Map;
+    const std::size_t minBits =
+        MinWireBits(spec->elementType) + (isMap ? MinWireBits(spec->keyType) : 0);
+
+    std::size_t count = 0;
+    if (!ReadElementCount(reader, minBits, count))
+    {
+        return true; // the reader carries the failure
+    }
+
+    spec->ops->clear(address);
+
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        std::byte *value = nullptr;
+        if (isMap)
+        {
+            ReadKeyContext keyState{.keyMeta = &keyMeta, .reader = &reader, .codec = context};
+            value = spec->ops->insert(address, &keyState, &ReadOneKey);
+            if (value == nullptr)
+            {
+                // Either the key would not decode, or the stream repeated one.
+                // Both mean the bytes disagree with themselves.
+                reader.Invalidate();
+                return true;
+            }
+        }
+        else
+        {
+            value = spec->ops->pushDefault(address);
+        }
+
+        if (!ReadField(elementMeta, value, reader, context))
+        {
+            return false;
+        }
+        if (reader.Failed())
+        {
+            return true;
+        }
+    }
+    return true;
+}
+
 /// @return false only for a field the codec cannot encode at all (Unknown, or an
 /// enum with a nonsensical width) — a reflection bug, reported by the caller.
 bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &writer, const CodecContext *context)
@@ -315,7 +492,10 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
             writer.WriteBytes(std::as_bytes(std::span{id.bytes}));
         return true;
     }
-    case FieldType::Unknown:
+    case FieldType::Vector:
+    case FieldType::Map:
+        return WriteContainer(field, address, writer, context);
+    default:
         break;
     }
     return false;
@@ -469,7 +649,10 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
             reader.ReadBytes(std::as_writable_bytes(std::span{id.bytes}));
         return true;
     }
-    case FieldType::Unknown:
+    case FieldType::Vector:
+    case FieldType::Map:
+        return ReadContainerField(field, address, reader, context);
+    default:
         break;
     }
     return false;
@@ -519,9 +702,54 @@ const char *FieldTypeName(FieldType type)
     // Distinct from "str": same bytes on the wire, different buffer capacity, so
     // a build that swapped one for the other would truncate rather than fail.
     case FieldType::EntityName: return "ename";
-    case FieldType::Unknown: break;
+    // Bare, because a container's real spelling carries its key and element and
+    // is built by AppendContainerTypeName. Reaching these means a container field
+    // arrived without a shape, which is a reflection bug.
+    case FieldType::Vector: return "vector";
+    case FieldType::Map: return "map";
+    default: break;
     }
     return "unknown";
+}
+
+/// Spells a container for the layout text: `vector<i32>`, `map<str,vector<i32>>`.
+///
+/// Recursive over the spec chain, so a nested element reads as what it is. No
+/// spaces, and no primitive name contains `<` or `,`, so the result parses back
+/// by eye and two different shapes can never produce the same text — which is
+/// what stops `vector<i32>` and `vector<f32>` hashing alike.
+void AppendContainerTypeName(std::string &text, FieldType type, const ContainerSpec *spec)
+{
+    text += FieldTypeName(type);
+    if (spec == nullptr)
+    {
+        return;
+    }
+
+    text += '<';
+    if (type == FieldType::Map)
+    {
+        text += FieldTypeName(spec->keyType);
+        text += ',';
+    }
+    AppendContainerTypeName(text, spec->elementType, spec->element);
+    text += '>';
+}
+
+/// The leaf element of a container chain — the enum, when there is one, whatever
+/// depth it sits at.
+FieldType LeafElementType(const FieldMeta &field)
+{
+    const ContainerSpec *spec = field.container;
+    if (spec == nullptr)
+    {
+        return field.type;
+    }
+    while (spec->element != nullptr)
+    {
+        spec = spec->element;
+    }
+    return spec->elementType;
 }
 
 /// Exact decimal-free spelling of a float bound: the bounds are quantization
@@ -560,7 +788,7 @@ void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
         text += ' ';
         text += field.name;
         text += ' ';
-        text += FieldTypeName(field.type);
+        AppendContainerTypeName(text, field.type, field.container);
 
         // Quantization parameters travel in the hash, not just the layout: two
         // builds that quantize the same Vec3 over different ranges corrupt each
@@ -573,7 +801,9 @@ void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
         text += " max=";
         text += BoundText(field.hasMax, field.maxValue, field.maxField);
 
-        if (field.type == FieldType::Enum)
+        // The leaf, so a `vector<Enum>` carries its enumerators exactly as a bare
+        // Enum field does — the values are wire semantics wherever they sit.
+        if (LeafElementType(field) == FieldType::Enum)
         {
             text += " esize=";
             text += std::to_string(field.enumSize);

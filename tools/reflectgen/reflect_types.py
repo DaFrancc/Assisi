@@ -305,4 +305,8 @@ UNSUPPORTED_TYPES: dict[str, str] = {
     'short':              'use int16_t — short has an implementation-defined width',
     'unsigned short':     'use uint16_t — unsigned short has an implementation-defined width',
     'char':               'use int8_t/uint8_t for a number, or Core::ShortString for text',
+    # std::string allocates, so it cannot sit in a component the ECS moves and
+    # copies, and it has no capacity for the binary codec to read back into. The
+    # engine's reflected strings are the fixed-capacity inline ones.
+    'std::string':        'use Core::ShortString (32 bytes) or Core::EntityName (64)',
 }

@@ -65,7 +65,24 @@ enum class FieldType : std::uint8_t
     UInt8,
     Int16,
     UInt16,
+    /// A `std::vector` of primitives, or of one container of them. The element
+    /// type — and, for a nested element, its own container shape — lives on the
+    /// FieldMeta's `container` descriptor rather than in this enumerator, so a new
+    /// element type costs no value here.
+    Vector,
+    /// A `std::map` or `std::unordered_map`. Key and element types live on
+    /// `container` for the same reason. Encoding sorts by key whatever order the
+    /// container itself iterates in.
+    Map,
+    /// Number of field types, for a table indexed by FieldType.
+    ///
+    /// Safe to move, unlike every enumerator above it: nothing serializes this and
+    /// the protocol names types through FieldTypeName's strings rather than these
+    /// values, so appending a type shifts only this.
+    Count,
 };
+
+struct ContainerSpec;
 
 /// @brief One enumerator of a reflected `enum class` (FieldType::Enum).
 ///
@@ -97,6 +114,19 @@ struct FieldMeta
     std::string name{};
     FieldType type      = FieldType::Unknown;
     std::size_t offset    = 0;
+
+    /// @brief Shape of a `Vector` or `Map` field: its key and element types, the
+    /// operations that reach its storage, and the same again for a nested element.
+    /// Null for every other field type.
+    ///
+    /// Points at a static-storage descriptor built from the field's C++ type, so
+    /// copying a FieldMeta copies a pointer to something that outlives it.
+    ///
+    /// `enumSize` / `enumSigned` / `enumConstants` below describe the *leaf*
+    /// element when it is an enum, at whatever depth it sits. One slot is enough
+    /// because a key is never an enum.
+    const ContainerSpec *container = nullptr;
+
     bool transient = false;        ///< If true, excluded from serialization.
 
     /// @brief AFIELD(norep): saved to disk, never sent over the network.
