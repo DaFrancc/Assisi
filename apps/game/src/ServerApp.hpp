@@ -2,7 +2,7 @@
 #pragma once
 
 /// @file ServerApp.hpp
-/// @brief The headless modes of the sandbox: `--server` hosts a world, and
+/// @brief The headless modes: `--server` hosts a world, and
 /// `--connect` joins one.
 ///
 /// Deliberately *not* the editor running with its window switched off. A
@@ -34,7 +34,7 @@
 #include <string>
 #include <vector>
 
-namespace Sandbox
+namespace Game
 {
 
 /// @brief What a headless process is doing.
@@ -126,4 +126,4 @@ private:
     std::uint64_t _lastReportTick    = 0;
 };
 
-} // namespace Sandbox
+} // namespace Game

@@ -5,7 +5,9 @@
 #include "EditorOptionsPanel.hpp"
 #include "ImGuiQueries.hpp"
 
+#include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
@@ -218,49 +220,20 @@ bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime
         return false;
     }
 
-    bool found = false;
-    for (auto [entity, sceneCamera] : _scene->Query<Assisi::Runtime::Camera>())
+    // Which camera the scene nominates is the same question the game asks, and
+    // App::ActiveSceneCamera is the one answer to it. What is editor-specific is
+    // the gate above: *whether* to ask at all.
+    const std::optional<Assisi::App::SceneView> view = Assisi::App::ActiveSceneCamera(*_scene);
+    if (!view)
     {
-        if (!sceneCamera.isActive)
-        {
-            continue;
-        }
-        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
-        if (transform == nullptr)
-        {
-            continue;
-        }
-
-        // Two active cameras is a state nothing else expects, and the one that
-        // wins is whichever the query reached first — which is to say, arbitrary.
-        // Said once per frame rather than silently picking: the symptom otherwise
-        // is a viewport looking through a camera the author did not mean, which
-        // reads as the camera they *did* mean being broken.
-        if (found)
-        {
-            Assisi::Core::Log::Warn("Play view: more than one Camera is marked active; looking through "
-                                    "the first one found. Clear isActive on the others.");
-            break;
-        }
-        found = true;
-
-        // The whole Transform, world matrix included — Runtime::ViewMatrix derives
-        // the view from `worldMatrix` and reads no other field, so a pose carrying
-        // only position and rotation renders from the origin looking down -Z
-        // however far the camera actually is. The editor's own camera avoids that
-        // by calling RefreshCameraMatrix before its view is taken.
-        //
-        // The world matrix rather than the local pose for the usual reason too: a
-        // player's camera is parented to the character, so its Transform is an
-        // offset from it.
-        pose        = *transform;
-        camera      = sceneCamera;
-        return true;
+        // No active camera in the scene: the editor's own view is the fallback,
+        // which is what a level that has not composed a camera yet should get.
+        return false;
     }
 
-    // No active camera in the scene: the editor's own view is the fallback, which
-    // is what a level that has not composed a camera yet should get.
-    return false;
+    pose   = view->pose;
+    camera = view->camera;
+    return true;
 }
 
 void EditorApp::AdoptLevelCamera()
@@ -270,31 +243,25 @@ void EditorApp::AdoptLevelCamera()
         return;
     }
 
-    for (auto [entity, camera] : _scene->Query<Assisi::Runtime::Camera>())
+    const std::optional<Assisi::App::SceneView> view = Assisi::App::ActiveSceneCamera(*_scene);
+    if (!view)
     {
-        if (!camera.isActive)
-        {
-            continue;
-        }
-        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
-        if (transform == nullptr)
-        {
-            continue;
-        }
-
-        _cameraTransform.position = transform->position;
-        _cameraTransform.rotation = transform->rotation;
-        _camera                   = camera;
-        // The editor's own camera is never the level's, so it must not be left
-        // marked active — two active cameras is a state nothing else expects.
-        _camera.isActive = false;
-        SyncYawPitchFromRotation();
-        RefreshCameraMatrix();
+        Assisi::Core::Log::Warn("Capture: the level has no active Camera; using the editor's default view. "
+                                "The numbers will be of whatever sits near the origin.");
         return;
     }
 
-    Assisi::Core::Log::Warn("Capture: the level has no active Camera; using the editor's default view. "
-                            "The numbers will be of whatever sits near the origin.");
+    // The local pose, not the whole Transform: this drives the editor's own
+    // camera, whose world matrix RefreshCameraMatrix rebuilds from yaw and pitch
+    // below. Copying the level camera's matrix in would be overwritten anyway.
+    _cameraTransform.position = view->pose.position;
+    _cameraTransform.rotation = view->pose.rotation;
+    _camera                   = view->camera;
+    // The editor's own camera is never the level's, so it must not be left
+    // marked active — two active cameras is a state nothing else expects.
+    _camera.isActive = false;
+    SyncYawPitchFromRotation();
+    RefreshCameraMatrix();
 }
 
 // ---------------------------------------------------------------------------
@@ -303,14 +270,10 @@ void EditorApp::AdoptLevelCamera()
 
 void EditorApp::OnStart()
 {
-    // The shipped bindings, then whatever the player rebound over the top. Both
-    // go through Apply, which replaces per action — so an action the player
-    // never touched keeps what shipped.
-    if (const auto shipped = Assisi::Window::LoadInputBindings())
-    {
-        _actions.Apply(*shipped);
-    }
-    _actions.Apply(GetOptions().bindings);
+    // The shipped bindings, then whatever the player rebound over the top — the
+    // same two layers in the same order the game applies, stated once in App so
+    // the two cannot drift.
+    Assisi::App::LoadActionMap(_actions, GetOptions().bindings);
 
     // Before any session can exist: quantization is inside the handshake hash, so
     // it has to be settled before the first hello is written.

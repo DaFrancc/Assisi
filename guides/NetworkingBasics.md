@@ -60,7 +60,7 @@ option changes a compile definition every target sees.
 
 ## What you lose with it off
 
-The engine, the editor and the sandbox all still build and run. What disappears
+The engine, the editor and the game all still build and run. What disappears
 is everything that needs a socket:
 
 - **`Assisi::Net` and `Assisi::NetSync`** are not built at all.
@@ -70,14 +70,14 @@ is everything that needs a socket:
 - **The inspector's replication block** — the NetId readout, the Relevance
   dropdown, the per-component "sends" checklist, and the wire glyph on component
   headers. There is no `Replicated` component in this build for them to be about.
-- **The sandbox's `--host` and `--connect`.** `--server` is *not* networking —
+- **The editor's `--host` and `--connect`.** `--server` is *not* networking —
   it is headless simulation — and keeps working.
 
 Asking for a networked role anyway is refused out loud rather than quietly
 downgraded:
 
 ```
-$ ./Assisi-Sandbox --host 27015
+$ ./Assisi-GameEditor --host 27015
 [ERROR] Server: this build was configured with ASSISI_ENABLE_NETWORKING=OFF, so
         --host and --connect do nothing. Reconfigure with networking on, or use
         --server for headless simulation.
@@ -147,7 +147,7 @@ Two traps worth knowing:
 
 No preset and no CI job builds with networking off, so this configuration can
 break without anyone noticing until they try it. If you change the editor or the
-sandbox in a way that touches NetSync, build it both ways before you push:
+game in a way that touches NetSync, build it both ways before you push:
 
 ```bash
 cmake --build out/build/gcc-nonet

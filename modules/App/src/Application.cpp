@@ -204,9 +204,6 @@ bool Application::InitializeCore()
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
     Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
 
-    // Either source turns it on; a --server flag must not be undone by a config
-    // file that says nothing about headless mode.
-    _headless = _headless || _config.headless;
     return true;
 }
 
@@ -632,7 +629,7 @@ void Application::Run()
 
         // Run work marshalled back to the main thread (Jobs().RunOnMain) at this
         // safe point — before OnUpdate's systems run and before any render command
-        // list is open. This is where deferred level loads land (see SandboxApp);
+        // list is open. This is where deferred level loads land (see GameApp);
         // background async results (streaming) publish here too. The budget (0 =
         // unbounded by default) lets an app spread a burst of streaming asset
         // publishes across frames — see SetMainThreadTaskBudget.
@@ -1031,8 +1028,9 @@ void Application::ConfigurePostProcess()
     // Only fires for an actual sample-count change (F11 toggling into/out of
     // MSAA) — resizing alone never changes FramebufferInfo. When called during
     // Initialize() (before OnStart()), the derived OnRenderTargetsChanged runs
-    // but no-ops because the derived render resources aren't built yet (e.g.
-    // SandboxApp guards on MeshPass::IsValid()).
+    // but no-ops because the derived render resources aren't built yet
+    // (Runtime::SceneRenderer::OnRenderTargetsChanged returns true untouched
+    // until its own Initialize has run).
     if (!(before == after))
     {
         OnRenderTargetsChanged(after);

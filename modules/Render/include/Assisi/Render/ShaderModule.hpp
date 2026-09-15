@@ -15,7 +15,7 @@ namespace Assisi::Render
 /// @param path Virtual asset path to the compiled SPIR-V, resolved through
 /// `Core::AssetSystem` (e.g. "shaders/mesh.vert.spv"). The build compiles
 /// GLSL and places the `.spv` under the asset root's `shaders/` directory (see
-/// `apps/sandbox/CMakeLists.txt`), so shaders resolve exactly like every other
+/// `apps/game/CMakeLists.txt`), so shaders resolve exactly like every other
 /// asset — no CWD dependency.
 ///
 /// @return nullptr if the file couldn't be read or shader creation failed

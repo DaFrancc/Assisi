@@ -1,24 +1,27 @@
-add_executable(Assisi-Sandbox)
-Assisi_apply_defaults(Assisi-Sandbox)
+# The project's own code, shared by both executables: the game's systems, the
+# headless server, and the argument parsers. A static library rather than a set
+# of sources listed twice, so the two binaries cannot drift in what they contain.
+#
+# The reflection registrations deliberately do NOT live here — see the INTERFACE
+# library below for why an archive is the wrong place for them.
+add_library(Assisi-GameLib STATIC)
+Assisi_apply_defaults(Assisi-GameLib)
 
-# A thin consumer of the editor library: main.cpp builds an EditorConfig and
-# runs Assisi::Editor::EditorApp. The exe target still owns what must be
-# per-binary: reflection linking (below) and asset staging.
-target_sources(Assisi-Sandbox
+target_sources(Assisi-GameLib
   PRIVATE
     "src/DemoSystems.cpp"
     "src/DemoSystems.hpp"
-    "src/main.cpp"
+    "src/LaunchArgs.cpp"
+    "src/LaunchArgs.hpp"
     "src/ServerApp.cpp"
     "src/ServerApp.hpp"
 )
 
-target_link_libraries(Assisi-Sandbox
-  PRIVATE
-    Assisi::Editor
-    # ServerApp derives from Application directly and never touches the editor;
-    # named explicitly rather than leaned on through Assisi::Editor's transitive
-    # link, so the dependency survives the editor being dropped from a build.
+target_include_directories(Assisi-GameLib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+target_link_libraries(Assisi-GameLib
+  PUBLIC
+    # ServerApp derives from Application directly and never touches the editor.
     Assisi::App
     Assisi::Physics
 )
@@ -27,13 +30,53 @@ target_link_libraries(Assisi-Sandbox
 # separate thing from replication — so the file stays in the build and guards the
 # Host/Client halves internally.
 if (ASSISI_ENABLE_NETWORKING)
-  target_link_libraries(Assisi-Sandbox PRIVATE Assisi::NetSync)
+  target_link_libraries(Assisi-GameLib PUBLIC Assisi::NetSync)
 endif()
 
-# A refused start has to reach the exit code (round-7 B18). Driven as a real
-# process because that is the whole claim — `StartupFailed()` returning true is
-# not the property anyone depends on, `$?` being non-zero is, and only main()
-# joins the two.
+# The game's own ASYSTEM declarations. Scanning them is what puts them in the
+# catalog: a level names a system, and the declaration in a reflected header is
+# the registration — there is no registerGameSystems to call.
+#
+# Reflected on an INTERFACE lib rather than on Assisi-GameLib, and the generated
+# objects are added to each executable rather than to the archive. Both halves
+# matter: assisi_reflect links its generated OBJECT library into its target, and
+# a static library would let the linker drop those objects as unreferenced —
+# which silently discards every registration in them.
+add_library(Assisi-Game-Systems INTERFACE)
+target_include_directories(Assisi-Game-Systems INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(Assisi-Game-Systems INTERFACE Assisi::App)
+assisi_reflect(
+  TARGET Assisi-Game-Systems
+  HEADERS
+    src/DemoSystems.hpp
+)
+
+# --- The two executables.
+#
+# Game links no editor and has no way to reach one; GameEditor is the same game
+# with Assisi::Editor on top. The editor is a library rather than its own
+# executable because reflection registers per final binary — a separate editor
+# process could not inspect the components this project's code declares.
+add_executable(Assisi-Game)
+Assisi_apply_defaults(Assisi-Game)
+target_sources(Assisi-Game PRIVATE "src/GameMain.cpp")
+target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
+
+add_executable(Assisi-GameEditor)
+Assisi_apply_defaults(Assisi-GameEditor)
+target_sources(Assisi-GameEditor PRIVATE "src/EditorMain.cpp")
+target_link_libraries(Assisi-GameEditor PRIVATE Assisi-GameLib Assisi-Game-Systems Assisi::Editor)
+
+# Per-binary, for the reason stated above the INTERFACE library: an executable
+# cannot be linked into, so its registrations arrive as objects.
+foreach(_exe Assisi-Game Assisi-GameEditor)
+  target_sources("${_exe}" PRIVATE $<TARGET_OBJECTS:Assisi-Game-Systems-Generated>)
+  assisi_link_reflections("${_exe}")
+endforeach()
+
+# A refused start has to reach the exit code. Driven as a real process because
+# that is the whole claim — `StartupFailed()` returning true is not the property
+# anyone depends on, `$?` being non-zero is, and only main() joins the two.
 #
 # `--connect` at a name the transport will not resolve is the cheapest of the
 # five refusal paths to reach: NetTransport::Connect takes IP literals only, so
@@ -41,32 +84,26 @@ endif()
 # stand up, no port to bind, no timeout to wait out, and nothing about it varies
 # with the machine. WILL_FAIL asserts the non-zero exit.
 if (ASSISI_BUILD_TESTS AND ASSISI_ENABLE_NETWORKING)
-  add_test(NAME SandboxRefusedStart
-    COMMAND Assisi-Sandbox --connect not-an-ip:27015 --ticks 1
-    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Sandbox>"
+  add_test(NAME GameEditorRefusedStart
+    COMMAND Assisi-GameEditor --connect not-an-ip:27015 --ticks 1
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-GameEditor>"
   )
-  set_tests_properties(SandboxRefusedStart PROPERTIES WILL_FAIL TRUE)
+  set_tests_properties(GameEditorRefusedStart PROPERTIES WILL_FAIL TRUE)
 endif()
 
-# The game's own ASYSTEM declarations. Scanning them is what puts them in the
-# catalog: a level names a system, and the declaration in a reflected header is
-# the registration — there is no registerGameSystems to call.
-#
-# Reflected on an INTERFACE lib rather than on the executable, because
-# assisi_reflect links the generated OBJECT library into its target and an
-# executable cannot be linked into. Same shape the NetSync tests use.
-add_library(Assisi-Sandbox-Systems INTERFACE)
-target_include_directories(Assisi-Sandbox-Systems INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(Assisi-Sandbox-Systems INTERFACE Assisi::App)
-assisi_reflect(
-  TARGET Assisi-Sandbox-Systems
-  HEADERS
-    src/DemoSystems.hpp
-)
-target_link_libraries(Assisi-Sandbox PRIVATE Assisi-Sandbox-Systems)
-target_sources(Assisi-Sandbox PRIVATE $<TARGET_OBJECTS:Assisi-Sandbox-Systems-Generated>)
-
-assisi_link_reflections(Assisi-Sandbox)
+# The Game target boots, steps, and exits on its own. Headless because a build
+# machine has no display, and tick-limited because a windowed run ends when
+# somebody closes the window. What it proves is that the no-editor link is a real
+# program: it resolves, brings the world up, and returns 0.
+if (ASSISI_BUILD_TESTS)
+  add_test(NAME GameBoots
+    COMMAND Assisi-Game --headless --ticks 1
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+  )
+  # A game that never reaches its tick limit would otherwise hang the suite
+  # rather than fail it.
+  set_tests_properties(GameBoots PROPERTIES TIMEOUT 60)
+endif()
 
 # The source asset tree is the only one. Nothing is staged beside the executable,
 # so a directory named "assets" there can only be a leftover from a build that
@@ -77,17 +114,21 @@ file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/assets")
 
 # --- Vulkan shaders: compile GLSL -> SPIR-V at build time.
 #
+# One target for both executables. The compiled .spv lands in the shared source
+# asset tree, so two targets each owning a copy of these commands would be two
+# rules writing one file — which ninja rejects outright when it notices, and
+# which races when it does not.
+#
 # The copy into place is its own OUTPUT-tracked custom command per shader,
-# depending on that shader's compiled .spv — NOT a POST_BUILD hook on
-# Assisi-Sandbox. A POST_BUILD hook only re-runs when the executable itself
-# relinks, which a shader-only edit never triggers (no C++ source changed),
-# so ninja would silently skip copying the freshly compiled SPIR-V next to
-# the exe and the app would keep running a stale shader.
+# depending on that shader's compiled .spv — NOT a POST_BUILD hook. A POST_BUILD
+# hook only re-runs when the executable itself relinks, which a shader-only edit
+# never triggers (no C++ source changed), so ninja would silently skip copying
+# the freshly compiled SPIR-V and the app would keep running a stale shader.
 #
 # Auto-discovered — a new .vert/.frag/.comp under assets/shaders/ just needs the
 # file created, no CMakeLists.txt edit. A .glsl file is a piece another shader
 # #includes, never compiled on its own.
-file(GLOB_RECURSE _sandbox_vk_shader_sources
+file(GLOB_RECURSE _vk_shader_sources
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES false
     "${CMAKE_SOURCE_DIR}/assets/*.vert"
@@ -95,7 +136,7 @@ file(GLOB_RECURSE _sandbox_vk_shader_sources
     "${CMAKE_SOURCE_DIR}/assets/*.comp"
 )
 
-set(_sandbox_shader_outputs "")
+set(_shader_outputs "")
 
 # Names this build directory, so concurrent builds of two presets write to
 # different temporaries on their way into the shared asset tree.
@@ -115,7 +156,7 @@ get_filename_component(_assisi_build_id "${CMAKE_BINARY_DIR}" NAME)
 # live under assets/editor/ and still resolve by their virtual path.
 # Intermediate names in the binary dir flatten the slashes to stay unique and
 # path-safe.
-function(assisi_sandbox_compile_shader _shader_in _spv_rel)
+function(assisi_compile_shader _shader_in _spv_rel)
     set(_defines "")
     foreach(_define ${ARGN})
         list(APPEND _defines "-D${_define}")
@@ -161,14 +202,14 @@ function(assisi_sandbox_compile_shader _shader_in _spv_rel)
         COMMENT "Staging ${_spv_rel}"
         VERBATIM
     )
-    set(_outputs ${_sandbox_shader_outputs})
+    set(_outputs ${_shader_outputs})
     list(APPEND _outputs "${_shader_final}")
-    set(_sandbox_shader_outputs "${_outputs}" PARENT_SCOPE)
+    set(_shader_outputs "${_outputs}" PARENT_SCOPE)
 endfunction()
 
-foreach(_shader_in ${_sandbox_vk_shader_sources})
+foreach(_shader_in ${_vk_shader_sources})
     file(RELATIVE_PATH _shader_rel "${CMAKE_SOURCE_DIR}/assets" "${_shader_in}")
-    assisi_sandbox_compile_shader("${_shader_in}" "${_shader_rel}.spv")
+    assisi_compile_shader("${_shader_in}" "${_shader_rel}.spv")
 endforeach()
 
 # Shader variants: the same source compiled again with a define, landing beside
@@ -176,13 +217,13 @@ endforeach()
 # with and without its alpha-test discard, because a shader that can discard
 # costs its whole pipeline early depth rejection — so the opaque geometry draws
 # through the build that cannot.
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.masked.spv"
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.masked.spv"
     ASSISI_ALPHA_MASK)
 
 # The shadow depth stage the same way round: the base build reads position only
 # and has no fragment stage, and this one carries the UV and material row that
 # shadow_depth.frag alpha-tests against.
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/shadow_depth.vert"
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/shadow_depth.vert"
     "shaders/shadow_depth.vert.masked.spv" ASSISI_ALPHA_MASK)
 
 # The depth prepass screen-space occlusion reads, and the lit pass that draws
@@ -190,17 +231,18 @@ assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/shadow_depth.v
 # prepass, so a frame with occlusion off draws through exactly the stage it
 # always did; these three declare their position invariant so the lit pass's
 # depth matches the prepass's to the bit.
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
     "shaders/mesh.vert.depth.spv" ASSISI_DEPTH_ONLY)
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
     "shaders/mesh.vert.depth.masked.spv" ASSISI_DEPTH_ONLY ASSISI_ALPHA_MASK)
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
     "shaders/mesh.vert.invariant.spv" ASSISI_INVARIANT_POSITION)
 
 # The scene-distance step every screen-space feature reads, for a multisampled
 # depth buffer.
-assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/scene_distance.frag"
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/scene_distance.frag"
     "shaders/scene_distance.frag.msaa.spv" ASSISI_MSAA_DEPTH)
 
-add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_outputs})
-add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)
+add_custom_target(Assisi-VkShaders ALL DEPENDS ${_shader_outputs})
+add_dependencies(Assisi-Game Assisi-VkShaders)
+add_dependencies(Assisi-GameEditor Assisi-VkShaders)

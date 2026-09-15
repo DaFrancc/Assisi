@@ -11,7 +11,7 @@
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
 
-namespace Sandbox
+namespace Game
 {
 
 void SpinDemoSystem(Assisi::App::SystemContext &ctx)
@@ -74,4 +74,4 @@ void BouncerSpawnSystem(Assisi::App::SystemContext &ctx)
     }
 }
 
-} // namespace Sandbox
+} // namespace Game

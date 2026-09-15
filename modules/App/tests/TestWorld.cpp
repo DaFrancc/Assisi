@@ -767,6 +767,25 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     CHECK(Runs(world, "Follower") == 1);
 }
 
+TEST_CASE("A render system's after/before survives the install")
+{
+    Assisi::App::Test::RunOrder::Instance().Reset();
+
+    WorldManager worlds;
+    World &world = worlds.Create("RenderOrdered");
+
+    // Named the wrong way round, as the Update pair above is: DrawLate declares
+    // `after = DrawEarly`, so the list cannot reorder them. Render systems install
+    // through RegisterRender rather than Register, which is a second path the
+    // constraint has to survive.
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"DrawLate", "DrawEarly"}, "(test)"));
+
+    world.systems.RunRender(RenderContext{world.scene, 0.016f, glm::mat4(1.f), glm::mat4(1.f)});
+
+    CHECK(Assisi::App::Test::RunOrder::Instance().Names() ==
+          std::vector<std::string>{"DrawEarly", "DrawLate"});
+}
+
 TEST_CASE("Re-applying a list replaces the previous systems rather than stacking them")
 {
     Assisi::Core::EventQueue events;
