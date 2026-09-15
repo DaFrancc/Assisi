@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-namespace Sandbox
+namespace Game
 {
 namespace
 {
@@ -393,4 +393,4 @@ void ServerApp::OnShutdown()
 #endif
 }
 
-} // namespace Sandbox
+} // namespace Game

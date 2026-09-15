@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Launch the sandbox under a sanitizer build with diagnostics captured to a log
+# Launch the editor under a sanitizer build with diagnostics captured to a log
 # file rather than scrolling past in the terminal — a report survives even if
 # the window dies.
 #
-# Usage:  ./scripts/run-sanitized.sh [sandbox args...]
+# Usage:  ./scripts/run-sanitized.sh [editor args...]
 #         ASSISI_SAN_PRESET=gcc-tsan ./scripts/run-sanitized.sh
 #
 # Build the preset first (e.g. `make gcc-asan`). Logs land in
@@ -12,7 +12,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PRESET="${ASSISI_SAN_PRESET:-gcc-asan}"
-EXE="$ROOT/out/build/$PRESET/apps/sandbox/Assisi-Sandbox"
+EXE="$ROOT/out/build/$PRESET/apps/game/Assisi-GameEditor"
 LOGDIR="$ROOT/out/sanitizer-logs"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="$LOGDIR/run-$STAMP"

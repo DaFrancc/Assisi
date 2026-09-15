@@ -7,6 +7,5 @@
   "height": 720,
   "keepLogs": 5,
   "keepDumps": 5,
-  "title": "Assisi Sandbox",
-  "headless": false
+  "title": "Assisi Sandbox"
 }

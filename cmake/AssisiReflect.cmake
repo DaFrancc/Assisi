@@ -19,7 +19,7 @@
 #
 # In the CMakeLists.txt of every final executable that needs reflection:
 #
-#   assisi_link_reflections(Assisi-Sandbox)
+#   assisi_link_reflections(Assisi-Game)
 #
 # This adds $<TARGET_OBJECTS:...> for every OBJECT library produced by
 # assisi_reflect() so the registration code is always included in the link.

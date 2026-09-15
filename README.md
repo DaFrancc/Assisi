@@ -325,7 +325,7 @@ separately.
 and GPU debug markers rather than changing optimization, so `gcc-ship-chiara` is a full shipping build
 that can also record a capture. That combination is the one to profile with.
 
-On Linux, `scripts/run-sanitized.sh` launches the sandbox under a sanitizer build and captures the
+On Linux, `scripts/run-sanitized.sh` launches the editor under a sanitizer build and captures the
 report to a log file, so a diagnostic survives even if the window dies.
 
 </details>
@@ -367,10 +367,12 @@ cmake --build --preset msvc-debug
 ```
 
 ```bash
-# Run the sandbox — the reference app. It is a thin consumer of the Editor
-# library (a few hundred lines: argument parsing plus two demo systems); the
-# editor itself lives in modules/Editor.
-./out/build/msvc-debug/apps/sandbox/Assisi-Sandbox.exe
+# Run the editor. It is a thin consumer of the Editor library (argument parsing
+# on top of the shared GameLib); the editor itself lives in modules/Editor.
+./out/build/msvc-debug/apps/game/Assisi-GameEditor.exe
+
+# The same project with no editor in the link — what a player would run.
+./out/build/msvc-debug/apps/game/Assisi-Game.exe
 ```
 
 ## 5. Run the Tests (optional)
@@ -574,9 +576,10 @@ it without any work), transform gizmo, asset browser, collider wireframes, play/
 level loading and saving. `EditHistory` is undo/redo (Ctrl-Z): every edit site records into it, and the
 history survives entering and leaving play mode. Play can start as a host or as a client, and
 **Host + N play-in-editor clients** launch as child processes from a single button, so testing a
-networked session does not mean starting binaries by hand. `apps/sandbox` is a few hundred lines on top
-of all this. The editor's overlays are opt-in at the renderer level (`enableEditorVisuals`), so a shipped
-game never creates those pipelines or loads editor assets.
+networked session does not mean starting binaries by hand. `apps/game` is a few hundred lines on top
+of all this, built twice: `Assisi-GameEditor` links the editor, and `Assisi-Game` does not. The editor's
+overlays are opt-in at the renderer level (`enableEditorVisuals`), so a shipped game never creates those
+pipelines or loads editor assets.
 
 ## Chiara
 Chiara is the performance and memory analyzer — a frame profiler that is always on whenever it is
@@ -584,7 +587,7 @@ compiled in. `ASSISI_PROFILE_SCOPE` and `ASSISI_PROFILE_COUNTER` record named sc
 lock-free ring buffer per thread, which is exported as Chrome Trace JSON and opens in
 [Perfetto](https://ui.perfetto.dev). A scope costs about 18 ns; in a build without
 `ASSISI_ENABLE_CHIARA` the macros compile to nothing at all, so instrumentation can stay in the code
-permanently rather than rotting. Press **F9** in the sandbox for the capture panel — snapshot the recent
+permanently rather than rotting. Press **F9** in the editor for the capture panel — snapshot the recent
 past out of the ring, or stream a longer session straight to disk.
 
 Chiara has no dependencies of its own, which is what lets `Core` (and therefore everything else) sit

@@ -64,8 +64,11 @@ public:
     /// A flag on Application rather than a separate headless class: the simulation
     /// hooks, the SystemRegistry, and a listen server embedding a server inside a
     /// client process all want the two modes to be the *same* object with one of
-    /// its halves not brought up. `AppConfig::headless` may also set it;
-    /// Initialize() takes either.
+    /// its halves not brought up.
+    ///
+    /// The caller decides, and nothing else does. A shipped config cannot ask for
+    /// it: a game whose config file could suppress its own window has a way to
+    /// start that a player can neither see nor undo.
     void SetHeadless(bool headless) { _headless = headless; }
 
     /// @brief Whether this process runs without presentation. Valid before

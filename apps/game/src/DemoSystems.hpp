@@ -2,7 +2,7 @@
 #pragma once
 
 /// @file DemoSystems.hpp
-/// @brief The sandbox's game logic, declared where a level can name it.
+/// @brief The game's own logic, declared where a level can name it.
 ///
 /// A minimum of real game logic, so per-world system binding is observable in
 /// the editor rather than only in the headless tests: Play should visibly do
@@ -19,7 +19,7 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 
-namespace Sandbox
+namespace Game
 {
 
 /// Spins every non-physics entity about Y. Physics-driven entities are excluded
@@ -46,4 +46,4 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx);
 ASYSTEM(Update, name = "BouncerSpawn", after = SpinDemo, activeWorldOnly)
 void BouncerSpawnSystem(Assisi::App::SystemContext &ctx);
 
-} // namespace Sandbox
+} // namespace Game

@@ -69,12 +69,6 @@ struct AppConfig
     /// the cut out of reach instead of leaving a silent one halfway through.
     AFIELD() Assisi::Core::TrivialString<64> title{"Assisi Game"};
 
-    /// @brief Run with no window, renderer, input, or debug UI — the dedicated
-    /// server mode. A command-line flag can also set it; the two OR together, so
-    /// a config that omits the key never turns a `--server` invocation back into
-    /// a windowed one.
-    AFIELD() bool headless = false;
-
     /// @brief Parse @p text as a game config document.
     ///
     /// Anything the document does not mention keeps its default, and a document

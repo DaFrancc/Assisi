@@ -189,7 +189,7 @@ endif()
 # tree needs no guard — networking code lives in its own translation units, which
 # the option simply leaves out of the build (see App's BlueprintReplication.cpp).
 # The macro is for the two places that cannot do that: EditorApp holds a
-# NetSession by value-owning pointer in a *public header*, and Sandbox's
+# NetSession by value-owning pointer in a *public header*, and GameLib's
 # ServerApp has a headless mode that exists with or without sockets.
 #
 # On Assisi-Options rather than a single target, because it has to agree
@@ -1004,9 +1004,9 @@ add_subdirectory(modules/Editor)
 # CMake 4.x scans each binary subdir for CMakePresets.json immediately after
 # creating it, before the subdirectory's CMakeLists.txt is processed. Pre-create
 # empty stubs so the scan succeeds. Must be done before add_subdirectory.
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
-file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
-add_subdirectory(apps/sandbox)
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/game")
+file(WRITE "${CMAKE_BINARY_DIR}/apps/game/CMakePresets.json" "{\"version\":10}")
+add_subdirectory(apps/game)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).

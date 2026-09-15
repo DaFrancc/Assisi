@@ -21,7 +21,7 @@ TEST_CASE("AppConfig: a document applies only the fields it names")
     CHECK(cfg.height == AppConfig{}.height);
     CHECK(cfg.physicsHz == doctest::Approx(AppConfig{}.physicsHz));
     CHECK(cfg.keepLogs == AppConfig{}.keepLogs);
-    CHECK(cfg.headless == AppConfig{}.headless);
+    CHECK(cfg.keepDumps == AppConfig{}.keepDumps);
 }
 
 TEST_CASE("AppConfig: a physics rate at or below zero is refused")
