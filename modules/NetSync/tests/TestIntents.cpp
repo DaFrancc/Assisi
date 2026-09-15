@@ -141,26 +141,23 @@ TEST_CASE("an unreliable intent takes the same door as a reliable one")
     CHECK(harness.Diagnostics().intentsAccepted == 1);
 }
 
-TEST_CASE("an out-of-range field is rejected, not clamped")
+TEST_CASE("a field outside its editor bound still reaches the handler")
 {
-    // The contrast with the input path is the point. Input clamps because a
-    // stick can legitimately saturate; an intent field outside its declared
-    // range means the client is lying or the two builds disagree, and clamping
-    // would convert a detectable attack into a silently accepted one.
+    // AFIELD(min/max) is an authoring clamp and nothing more: it constrains what
+    // can be typed into an inspector. The server does not police it. What an
+    // implausible value means, and what to do about it, is the handler's
+    // decision, taken where the value is visible — an engine that dropped the
+    // message first would take that decision away and leave a counter in its
+    // place.
     Harness harness;
     harness.Step(4);
 
     harness.Send(TestPing{ /*x=*/ 5000.f, /*y=*/ 0.f});
 
-    CHECK(HandlerLog::Instance().pingCalls == 0);
-    CHECK(harness.Diagnostics().intentsOutOfRange == 1);
-    CHECK(harness.Diagnostics().intentsAccepted == 0);
-    // Not clamped to the bound and delivered — the handler never ran at all.
-    CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(0.f));
-
-    // The connection survives: a rejected intent is a refusal, not a fault.
-    harness.Send(TestPing{ /*x=*/ 1.f, /*y=*/ 1.f});
     CHECK(HandlerLog::Instance().pingCalls == 1);
+    CHECK(harness.Diagnostics().intentsAccepted == 1);
+    // Delivered as sent: neither dropped nor clamped to the bound.
+    CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(5000.f));
 }
 
 TEST_CASE("an intent about an entity the sender does not control is dropped and counted")
@@ -341,20 +338,6 @@ TEST_CASE("the host's own intent goes through the same door")
     // read the same way for the host as for anyone else.
     CHECK(HandlerLog::Instance().lastSender == HostClientId);
     CHECK(harness.server.HostDiagnostics().intentsAccepted == 1);
-}
-
-TEST_CASE("the host is not exempt from validation")
-{
-    // Trusted is not the same as correct. A host whose own build sends an
-    // out-of-range value has a bug, and hiding it because the sender happens to
-    // be local is how it survives to ship.
-    Harness harness;
-    harness.Step(4);
-
-    harness.server.SubmitLocalIntent(TestPing{ /*x=*/ 9999.f, /*y=*/ 0.f});
-
-    CHECK(HandlerLog::Instance().pingCalls == 0);
-    CHECK(harness.server.HostDiagnostics().intentsOutOfRange == 1);
 }
 
 TEST_CASE("the host's control checks are its own, not everyone's")

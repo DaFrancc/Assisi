@@ -664,15 +664,6 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
         // simply exchange different component sets.
         CHECK(hashWith([](ComponentMeta &m) { m.replicable = false; }) != base);
     }
-    SUBCASE("a changed quantization bound — the silent-corruption case")
-    {
-        CHECK(hashWith(
-                  [](ComponentMeta &m)
-        {
-            m.fields[AllTypesField::FloatValue].hasMax   = true;
-            m.fields[AllTypesField::FloatValue].maxValue = 10.f;
-        }) != base);
-    }
     SUBCASE("a renumbered enumerator") {
         CHECK(hashWith([](ComponentMeta &m) {
             m.fields[AllTypesField::ModeValue].enumConstants[1].value = 8;
@@ -708,6 +699,15 @@ TEST_CASE("BinaryCodec: the protocol hash ignores things the wire does not carry
     std::array<ComponentMeta, 1> withNorep{MakeAllTypesMeta()};
     withNorep[0].fields.push_back(Field("serverOnly", FieldType::Int32, 0, false, true));
     CHECK(ProtocolHash(withNorep) == base);
+
+    // An AFIELD bound clamps what an inspector will accept; nothing encodes,
+    // decodes or validates against it. Two builds that disagree about a bound
+    // still exchange identical bytes, so tightening one while a server is up is
+    // not a protocol change.
+    std::array<ComponentMeta, 1> rebounded{MakeAllTypesMeta()};
+    rebounded[0].fields[AllTypesField::FloatValue].hasMax   = true;
+    rebounded[0].fields[AllTypesField::FloatValue].maxValue = 10.f;
+    CHECK(ProtocolHash(rebounded) == base);
 }
 
 TEST_CASE("BinaryCodec: a norep field occupies no mask bit and never leaves the sender")

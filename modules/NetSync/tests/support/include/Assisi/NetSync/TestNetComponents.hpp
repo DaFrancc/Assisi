@@ -67,9 +67,9 @@ struct TestPlaceMarker
 /// @brief Client → server, freshest wins. The spammy case, where a resent stale
 /// message is worse than a lost one.
 ///
-/// The bounded fields are the reject-don't-clamp case: an out-of-range value
-/// here means the client is lying or the two builds disagree, and clamping it
-/// would turn a detectable attack into a silently accepted one.
+/// The bounded fields are here to show that a bound is an authoring clamp and
+/// nothing else: a value outside it arrives at the handler exactly as sent,
+/// because deciding what an implausible number means belongs to the handler.
 AMSG(intent, unreliable)
 struct TestPing
 {
