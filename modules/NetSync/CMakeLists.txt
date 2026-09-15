@@ -12,6 +12,7 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/NetProtocol.hpp"
     "include/Assisi/NetSync/InstanceRecord.hpp"
     "include/Assisi/NetSync/NetSession.hpp"
+    "include/Assisi/NetSync/NetworkConfig.hpp"
     "include/Assisi/NetSync/ReplicationClient.hpp"
     "include/Assisi/NetSync/ReplicationConfig.hpp"
     "include/Assisi/NetSync/ReplicationProviders.hpp"
@@ -24,9 +25,9 @@ target_sources(Assisi-NetSync
     "src/NetClock.cpp"
     "src/NetProtocol.cpp"
     "src/NetSession.cpp"
+    "src/NetworkConfig.cpp"
     "src/ReplicationClient.cpp"
     "src/ReplicationClientMotion.cpp"
-    "src/ReplicationConfig.cpp"
     "src/ReplicationInternal.hpp"
     "src/ReplicationServer.cpp"
     "src/ReplicationServerMessages.cpp"
@@ -58,6 +59,7 @@ assisi_reflect(
   TARGET Assisi-NetSync
   HEADERS
     include/Assisi/NetSync/NetComponents.hpp
+    include/Assisi/NetSync/NetworkConfig.hpp
 )
 
 add_library(Assisi::NetSync ALIAS Assisi-NetSync)

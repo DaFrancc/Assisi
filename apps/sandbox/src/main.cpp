@@ -70,7 +70,7 @@ constexpr const char *kUsage =
     "  --capture-warmup <n>    frames to discard first (default 120), covering\n"
     "                          pipeline compilation and first-use uploads\n"
     "  --capture-size <WxH>    resolution to render at, e.g. 2560x1440 or\n"
-    "                          1920x1080. Defaults to game.json's window size\n"
+    "                          1920x1080. Defaults to the configured window size\n"
     "  --capture-out <path>    write the JSON report here as well as the log\n"
     "  --capture-image <path>  write a PNG of the frame after the last measured\n"
     "                          one, without the debug UI. Alone, it measures one\n"

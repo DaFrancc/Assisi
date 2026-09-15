@@ -111,10 +111,15 @@ inline constexpr std::size_t kEntityNameMax = 64;
 
 /// @brief The name of an entity: heap-free, fixed-capacity, inline.
 ///
-/// reflectgen keys on the spelled type name `Assisi::Core::EntityName`, so a
-/// field must be declared with the alias — a bare `TrivialString<64>` is a type
-/// the generator does not know. Serializes as a plain string; the editor draws
-/// it as a text box (FieldType::EntityName).
+/// A spelling, not a distinct type: reflectgen accepts this and a bare
+/// `TrivialString<64>` alike, and they decode identically. Use this one where
+/// the value is an entity's name and the bare form for any other text wanting
+/// the wider capacity, so the declaration says which it means. Serializes as a
+/// plain string; the editor draws it as a text box.
+///
+/// Thirty-two and sixty-four are the only reflectable capacities — the binary
+/// codec reads into the buffer by capacity and has a field type for each. A
+/// field declaring any other capacity fails the build by name.
 using EntityName = TrivialString<kEntityNameMax>;
 
 } // namespace Assisi::Core

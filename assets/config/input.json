@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "type": "InputBindings",
+  "actions": {
+    "Crouch":       ["LeftControl"],
+    "Jump":         ["Space"],
+    "LookMode":     ["RightMouse"],
+    "MoveBackward": ["S", "DownArrow"],
+    "MoveDown":     ["LeftControl"],
+    "MoveForward":  ["W", "UpArrow"],
+    "MoveLeft":     ["A", "LeftArrow"],
+    "MoveRight":    ["D", "RightArrow"],
+    "MoveUp":       ["Space"],
+    "Select":       ["LeftMouse"],
+    "Sprint":       ["LeftShift"]
+  }
+}

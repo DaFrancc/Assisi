@@ -67,6 +67,7 @@ endif()
 assisi_reflect(
   TARGET Assisi-App
   HEADERS
+    include/Assisi/App/AppConfig.hpp
     include/Assisi/App/PhysicsSystems.hpp
     include/Assisi/App/MotionSystems.hpp
 )

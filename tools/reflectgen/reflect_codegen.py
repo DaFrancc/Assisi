@@ -1192,6 +1192,27 @@ def _check_container(f, owner: str, header_name: str) -> None:
             f"Core::EntityName, an AENUM enum, or one container of those.")
 
 
+# The inline-string capacities TYPES has a FieldType for. The binary codec reads
+# into the buffer by capacity, so each one it supports is a distinct field type
+# rather than a parameter; these are those.
+_REFLECTABLE_STRING_CAPACITIES = (32, 64)
+
+
+def _inline_string_reason(spelling: str) -> Optional[str]:
+    """Why this TrivialString capacity has no codegen, or None if it is not one.
+
+    A near miss reads as though it should work — the template is the same one the
+    supported capacities instantiate — so the refusal names the two that do
+    instead of leaving the generic "no codegen for this type".
+    """
+    bare = spelling.removeprefix('Assisi::').removeprefix('Core::')
+    if not bare.startswith('TrivialString'):
+        return None
+    supported = ' or '.join(f'TrivialString<{n}>' for n in _REFLECTABLE_STRING_CAPACITIES)
+    return (f'only {supported} have a field type — the binary codec reads into the '
+            f'buffer by capacity, so each supported width is its own type')
+
+
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
     """Default-deny: fail generation if any non-transient AFIELD has a type
     reflectgen cannot (de)serialize (i.e. absent from TYPES).
@@ -1211,7 +1232,9 @@ def _check_unsupported(components: list[ComponentInfo], header_name: str) -> Non
                 _check_container(f, comp.name, header_name)
                 continue
             if _field_tc(f) is None:
-                reason = UNSUPPORTED_TYPES.get(f.cpp_type, 'no codegen for this type')
+                reason = (UNSUPPORTED_TYPES.get(f.cpp_type)
+                          or _inline_string_reason(f.cpp_type)
+                          or 'no codegen for this type')
                 raise ValueError(
                     f"{header_name}: field '{comp.name}::{f.name}' has type "
                     f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "

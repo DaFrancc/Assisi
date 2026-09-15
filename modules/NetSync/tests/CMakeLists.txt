@@ -24,6 +24,7 @@ add_executable(Assisi-NetSync-Tests
   TestNetSession.cpp
   TestBlueprintReplication.cpp
   TestBodyReplication.cpp
+  TestNetworkConfig.cpp
   TestComponentMaskCodec.cpp
   TestControl.cpp
   TestDistanceRelevancy.cpp
