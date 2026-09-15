@@ -2,6 +2,7 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/Core/AssetIgnore.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -20,6 +21,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace Assisi::Editor
 {
@@ -248,6 +250,44 @@ void DrawLoadingFrame(const ImVec2 &origin, float size)
         DrawTtfLoadingFrame(origin, size);
 }
 
+/// @brief Whether anything under @p dir survives the ignore rules — i.e. some
+/// rule re-includes a file inside an otherwise-excluded directory. @p vdir is
+/// that directory's virtual path, which the rules are stated against.
+///
+/// Walked only for a directory already known to be ignored, so the cost is
+/// bounded by the part of the tree the pipeline skips anyway.
+bool HoldsUnignoredFile(const std::filesystem::path &dir, const std::string &vdir,
+                        const Assisi::Core::AssetIgnoreList &ignore)
+{
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator it(dir, std::filesystem::directory_options::skip_permission_denied,
+                                                     ec);
+    const std::filesystem::recursive_directory_iterator end;
+    if (ec)
+    {
+        return false;
+    }
+
+    for (; it != end; it.increment(ec))
+    {
+        std::error_code entryEc;
+        if (!it->is_regular_file(entryEc) || entryEc)
+        {
+            continue;
+        }
+        const std::string relative = std::filesystem::relative(it->path(), dir, entryEc).generic_string();
+        if (entryEc || relative.empty())
+        {
+            continue;
+        }
+        if (!ignore.IsFileIgnored(vdir + "/" + relative))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// @brief Paints a small amber "!" badge over the top-right corner of a @p size
 /// tile at @p origin, marking an asset whose source changed since import and
 /// could not be auto-reconciled.
@@ -403,18 +443,45 @@ void EditorApp::RescanAssetBrowser()
         _assetBrowserReadError = true;
         return;
     }
+    // The same rules the reconcile pass indexed with, borrowed rather than
+    // reloaded: a file the database refused to mint must not be offered here as
+    // something to assign.
+    const Assisi::Core::AssetIgnoreList &ignore = _assetDatabase.Ignore();
+
     for (const std::filesystem::directory_entry &entry : dirIt)
     {
         std::error_code entryEc;
-        const std::string name = entry.path().filename().string();
+        const std::string name  = entry.path().filename().string();
+        const std::string vpath = _assetBrowserDir.empty() ? name : _assetBrowserDir + "/" + name;
+
         if (entry.is_directory(entryEc))
-            _assetBrowserDirs.push_back(name);
-        else if (IsThumbnailableImage(entry.path()))
+        {
+            // An ignored directory may still hold a file a later rule took back,
+            // and hiding the directory would put that file out of reach.
+            if (!ignore.IsDirectoryIgnored(vpath) || HoldsUnignoredFile(entry.path(), vpath, ignore))
+            {
+                _assetBrowserDirs.push_back(name);
+            }
+            continue;
+        }
+
+        if (ignore.IsFileIgnored(vpath))
+        {
+            continue;
+        }
+
+        if (IsThumbnailableImage(entry.path()))
+        {
             _assetBrowserImages.push_back(name);
+        }
         else if (IsMeshFile(entry.path()))
+        {
             _assetBrowserMeshes.push_back(name);
+        }
         else if (IsMaterialFile(entry.path()))
+        {
             _assetBrowserMaterials.push_back(name);
+        }
     }
     std::sort(_assetBrowserDirs.begin(), _assetBrowserDirs.end());
     std::sort(_assetBrowserImages.begin(), _assetBrowserImages.end());

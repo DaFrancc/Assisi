@@ -118,6 +118,10 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
         return std::unexpected(AssetError::NotInitialized);
     }
 
+    // Reloaded every scan, so editing a `.assisiignore` and hitting reimport is
+    // enough to change what counts as content.
+    _ignore = AssetIgnoreList::Load(root);
+
     std::size_t registered = 0;
 
     // Kept separate from `ec`, which the loop body reuses and clears: a walk
@@ -154,6 +158,13 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
         if (ec || virtualPath.empty())
         {
             ec.clear();
+            continue;
+        }
+
+        // Not content: skipped before the mint, so an ignored file never gets a
+        // sidecar written beside it and never becomes addressable by id.
+        if (_ignore.IsFileIgnored(virtualPath))
+        {
             continue;
         }
 
@@ -292,6 +303,11 @@ std::optional<AssetId> AssetDatabase::IdFor(std::string_view virtualPath) const
 std::size_t AssetDatabase::Count() const noexcept
 {
     return _idToPath.size();
+}
+
+const AssetIgnoreList &AssetDatabase::Ignore() const noexcept
+{
+    return _ignore;
 }
 
 std::vector<std::pair<AssetId, std::string>> AssetDatabase::Assets() const
