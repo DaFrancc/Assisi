@@ -10,7 +10,6 @@ namespace Assisi::Editor
 {
 namespace
 {
-using Render::LineVertex;
 } // namespace
 
 void AddSegment(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color, const glm::vec3 &a,

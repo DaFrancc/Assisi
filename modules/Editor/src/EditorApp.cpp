@@ -17,6 +17,9 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Editor/EditorChiaraPanel.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
@@ -807,23 +810,38 @@ void EditorApp::SetupScene()
     // The engine's default scene-render path: lighting plus the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo, so it is already correct if options.json saved an MSAA mode.
-    // The editor opts into the overlay passes (selection outline, entity icons,
-    // collider wireframes); a game build leaves them off and never loads
-    // assets/editor/**.
     if (!_sceneRenderer.Initialize({.device = device,
                                     .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .overlayFramebufferInfo = GetOverlayFramebufferInfo(),
                                     .width = fbSize.Width,
                                     .height = fbSize.Height,
                                     .camera = _camera,
                                     .bindlessLayout = _assetCache.BindlessLayout(),
                                     .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer(),
-                                    .enableEditorVisuals = _editorConfig.enableEditorVisuals}))
+                                    .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         RequestClose();
         return;
     }
+
+    // The overlay marks — selection outlines, entity icons, collider wireframes.
+    // They target the display-encoded overlay framebuffer rather than the scene's,
+    // because their colours are already what they should look like on screen and
+    // are drawn after the tone map. A viewer build turns them off and then builds
+    // no pipelines and loads nothing under assets/editor/**.
+    if (_editorConfig.enableEditorVisuals)
+    {
+        _overlaysBuilt = _overlays.Initialize(device, GetOverlayFramebufferInfo(),
+                                              static_cast<uint32_t>(fbSize.Width),
+                                              static_cast<uint32_t>(fbSize.Height));
+    }
+
+    // The debug UI, and with it Dear ImGui. Brought up here rather than by
+    // Application because the editor is what draws a UI: an application that
+    // overrides no UI hook links no toolkit at all.
+    Assisi::Debug::DebugUI::Initialize(GetWindow(), *Assisi::Render::RenderSystem::GetVulkanContext(),
+                                       /*persistLayout=*/ !IsRestrictedViewer());
+    _debugUiBrought = true;
+
     _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
     // The saved shadow knobs, applied once here; the options panel pushes every
     // later edit. Nothing is allocated until a level with a sun in it loads.
@@ -852,11 +870,16 @@ void EditorApp::OnResize(int32_t width, int32_t height)
 
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    // The overlay target's sample count moves with the scene's, so the same
-    // notification covers both.
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo, GetOverlayFramebufferInfo()))
+    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
+    }
+    // The overlay target's sample count moves with the scene's, so the same
+    // notification covers both. A failed overlay rebuild costs the marks, not the
+    // scene, so it warns rather than failing the change.
+    if (_overlaysBuilt && !_overlays.OnRenderTargetsChanged(GetOverlayFramebufferInfo()))
+    {
+        Assisi::Core::Log::Warn("Overlay pipelines failed to rebuild; selection marks are disabled.");
     }
 }
 
@@ -902,15 +925,19 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // without touching how the scene renders. Whether the overlay *passes* exist at
     // all is a separate Initialize-time decision: EditorConfig::enableEditorVisuals.
     if (_showEditorOverlays)
-        _sceneRenderer.SetHighlightedEntities(_selection);
+    {
+        _overlays.SetHighlightedEntities(_selection);
+    }
     else
-        _sceneRenderer.SetHighlightedEntity(Assisi::ECS::NullEntity);
+    {
+        _overlays.SetHighlightedEntity(Assisi::ECS::NullEntity);
+    }
     // Which of the highlighted entities is the one being edited. Must come after
     // the list above: SetHighlightedEntity(Null) clears this as part of clearing
     // the selection.
-    _sceneRenderer.SetActiveHighlight(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
+    _overlays.SetActiveHighlight(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
     // Entity icons show while authoring/paused, but not during live play.
-    _sceneRenderer.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
+    _overlays.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
     if (_showEditorOverlays)
     {
         // Build half of the collider wireframes, queued before Render() consumes
@@ -963,7 +990,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
 {
-    if (!_sceneRenderer.IsValid() || !_scene)
+    if (!_overlaysBuilt || !_sceneRenderer.IsValid() || !_scene)
     {
         return;
     }
@@ -973,11 +1000,11 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     Assisi::Runtime::Camera    playCamera;
     if (PlayViewCamera(playPose, playCamera))
     {
-        _sceneRenderer.RenderOverlays(frame, *_scene, playPose, playCamera);
+        _overlays.Render(frame, *_scene, playPose, playCamera, _sceneRenderer);
         return;
     }
 
-    _sceneRenderer.RenderOverlays(frame, *_scene, _cameraTransform, _camera);
+    _overlays.Render(frame, *_scene, _cameraTransform, _camera, _sceneRenderer);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
@@ -1355,6 +1382,16 @@ void EditorApp::OnShutdown()
     ShutdownNetSession();
     ShutdownPieClients();
 #endif
+
+    // Before ~Application, which releases the device: the UI backend holds Vulkan
+    // objects of its own, and freeing them through a destroyed device is a crash.
+    // OnShutdown runs after the loop exits and before that teardown, which is the
+    // window this needs.
+    if (_debugUiBrought)
+    {
+        Assisi::Debug::DebugUI::Shutdown();
+        _debugUiBrought = false;
+    }
 }
 
 bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
@@ -1633,7 +1670,7 @@ void EditorApp::DrawChiaraWindow()
     {
         // App-level, so a game gets the same panel; the editor only decides where
         // it lives and what opens it.
-        DrawChiaraPanel();
+        DrawChiaraPanel(*this);
     }
     ImGui::End();
 }
@@ -1697,7 +1734,33 @@ void EditorApp::DrawHistoryWindow()
     ImGui::End();
 }
 
-void EditorApp::OnImGui()
+void EditorApp::OnRenderUi(Assisi::Render::RenderFrame &frame)
+{
+    if (!_debugUiBrought)
+    {
+        return; // headless: no window, no swapchain, nothing to draw a panel into
+    }
+
+    // Split three ways because the three costs move for unrelated reasons:
+    // `ui-begin` is the backend's per-frame setup plus the texture sweep,
+    // `ui-panels` is the editor's own panel code, and `ui-render` is building and
+    // recording the draw data, which scales with how much got drawn rather than
+    // with how much code ran.
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-begin");
+        Assisi::Debug::DebugUI::BeginFrame(frame);
+    }
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-panels");
+        DrawPanels();
+    }
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-render");
+        Assisi::Debug::DebugUI::EndFrame(frame);
+    }
+}
+
+void EditorApp::DrawPanels()
 {
     // Per-frame "an edit widget is being held" accumulator, raised by the gizmo and
     // the inspector below and read by the end-of-frame capture sweep.

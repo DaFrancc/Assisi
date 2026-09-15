@@ -24,7 +24,7 @@ target_sources(Assisi-App
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
     "src/ChildProcess.cpp"
-    "src/ChiaraPanel.cpp"
+    "src/ChiaraCapture.cpp"
     "src/ContentSet.cpp"
     "src/CrashReport.cpp"
     "src/GameApp.cpp"
@@ -45,12 +45,16 @@ target_include_directories(Assisi-App
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+# Assisi::Debug is deliberately absent, and so is any UI toolkit. Application
+# drives the frame but draws no UI of its own: OnRenderUi hands the last slot in
+# the frame to whoever overrode it, and that subclass links what it draws with.
+# An application that overrides nothing therefore contains no UI code at all,
+# which is what lets the Game executable ship without the editor's.
 target_link_libraries(Assisi-App
   PUBLIC
     Assisi::Core
     Assisi::Window
     Assisi::Render
-    Assisi::Debug
     Assisi::ECS
     Assisi::Runtime
     Assisi::Physics

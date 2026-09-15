@@ -331,12 +331,12 @@ void EditorApp::SubmitInstanceIcons()
         (void)id;
         positions.push_back(row->transform.position);
     }
-    _sceneRenderer.SubmitEditorIcons(positions);
+    _overlays.SubmitEditorIcons(positions);
 
     if (_selectedInstance.IsValid())
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance))
-            _sceneRenderer.SubmitIconOutline(row->transform.position);
+            _overlays.SubmitIconOutline(row->transform.position);
     }
 }
 

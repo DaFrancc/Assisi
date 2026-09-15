@@ -14,7 +14,7 @@
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
 
-namespace Assisi::Render
+namespace Assisi::Editor
 {
 
 /// @brief World-space edge length of an entity-icon billboard. Exposed so editor
@@ -57,7 +57,7 @@ public:
     /// camera's projection*view; @p cameraRight / @p cameraUp are the camera's
     /// world-space basis (so the quads face it). No-op if not initialised or the
     /// list is empty.
-    void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraRight,
+    void Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraRight,
               const glm::vec3 &cameraUp, std::span<const glm::vec3> positions);
 
 private:
@@ -72,7 +72,7 @@ private:
     nvrhi::BindingSetHandle _bindingSet;       // the icon texture + sampler
     nvrhi::GraphicsPipelineHandle _pipeline;
 
-    Texture _icon;
+    Render::Texture _icon;
 };
 
-} // namespace Assisi::Render
+} // namespace Assisi::Editor

@@ -8,7 +8,7 @@
 /// an EditorApp with an EditorConfig carrying the game's hooks and calls
 /// Initialize()/Run(). The implementation is split across translation units by
 /// concern (all private to the library):
-///   - EditorApp.cpp           lifecycle/setup, diagnostics, OnImGui dispatch,
+///   - EditorApp.cpp           lifecycle/setup, diagnostics, DrawPanels dispatch,
 ///                             undo/redo plumbing, stale-asset prompt
 ///   - EditorAssetBrowser.cpp  asset browser + thumbnails
 ///   - EditorBlueprintMode.cpp blueprint editing mode + re-expansion on save
@@ -30,6 +30,7 @@
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Editor/Overlay/OverlayRenderer.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
@@ -237,12 +238,20 @@ public:
     /// the same switch as the overlay passes themselves, so a viewer build with
     /// them off pays for neither.
     [[nodiscard]] bool UsesOverlayStage() const override { return _editorConfig.enableEditorVisuals; }
-    void OnImGui() override;
+    /// The editor owns its UI layer entirely: this opens the ImGui frame, draws
+    /// every panel into it, and submits it. Application drives no UI toolkit of
+    /// its own, which is what keeps one out of a game's link.
+    void OnRenderUi(Assisi::Render::RenderFrame &frame) override;
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
     void OnShutdown() override;
+
+    /// @brief Every panel of the editor's chrome, drawn inside the ImGui frame
+    /// OnRenderUi opened. Split out so the frame's lifetime and its contents are
+    /// not the same function.
+    void DrawPanels();
 
 private:
     // --- Setup ---
@@ -506,7 +515,7 @@ private:
 #endif // ASSISI_NETWORKING
 
     // --- Diagnostics ---
-    /// @brief Runs at the end of OnImGui: warns, with full ImGui internal state,
+    /// @brief Runs at the end of DrawPanels: warns, with full ImGui internal state,
     /// when a widget holds ActiveId for seconds with no mouse button down and no
     /// text edit — the "UI stops responding until a new window opens" wedge.
     void LogImGuiWedgeDiagnostics();
@@ -776,7 +785,7 @@ private:
     /// left behind on an entity nothing is editing any more.
     ///
     /// The matching release is NOT here: it happens once per frame at the end of
-    /// OnImGui, on the first frame nothing calls this. See ThawEditedBody.
+    /// DrawPanels, on the first frame nothing calls this. See ThawEditedBody.
     void RequestPhysicsFreeze();
 
     /// @brief Returns the body frozen by RequestPhysicsFreeze to its authored
@@ -1097,7 +1106,7 @@ private:
     /// record and every pose that actually moved, unless an edit site held it this
     /// frame. No-op if nothing moved — a click without a drag is not an edit.
     ///
-    /// Called once from OnImGui after every panel has drawn, and from nowhere else.
+    /// Called once from DrawPanels after every panel has drawn, and from nowhere else.
     /// **Neither edit site may close the gesture on its own**: the gizmo draws first
     /// and cannot see that the Inspector is mid-scrub, so closing there cuts a dragged
     /// field into one transaction per frame.
@@ -1365,7 +1374,7 @@ private:
     void OpenStaleResolution(const std::string &vpath);
     /// @brief Draws the modal that shows a stale mesh's material conflicts and the
     /// author's choices (regenerate from source / keep mine / later). Called from
-    /// OnImGui once per frame.
+    /// DrawPanels once per frame.
     void DrawStaleResolutionModal();
     /// @brief Applies the author's choice to the current _staleResolveTarget:
     /// @p regenerate true overwrites the materials from source, false keeps them
@@ -1626,7 +1635,7 @@ private:
     // and restored on release (RequestPhysicsFreeze / ThawEditedBody).
     //
     // Shaped like _captureEditingActive: the request is a per-frame flag raised by
-    // the edit site, but the *release* is decided at the end of OnImGui, where it
+    // the edit site, but the *release* is decided at the end of DrawPanels, where it
     // runs whether or not the Inspector drew. Keying it off the panel's own edge
     // skips the release whenever the Inspector early-returns on an empty selection,
     // stranding the body Static while its descriptor still says dynamic.
@@ -1642,20 +1651,20 @@ private:
     // and on-top (selected) line batches, and the collider entities whose editor
     // billboards are suppressed. Members so drawing colliders doesn't allocate
     // every frame.
-    std::vector<Assisi::Render::LineVertex> _colliderLinesDepthTested;
-    std::vector<Assisi::Render::LineVertex> _colliderLinesOnTop;
+    std::vector<LineVertex> _colliderLinesDepthTested;
+    std::vector<LineVertex> _colliderLinesOnTop;
 
     // The same split for the light gizmos, and separate batches rather than
     // shared ones because a light's reach and a body's collider are unrelated
     // overlays that happen to be drawn the same way — sharing would make either
     // one's absence depend on the other's ordering.
-    std::vector<Assisi::Render::LineVertex> _lightLinesDepthTested;
-    std::vector<Assisi::Render::LineVertex> _lightLinesOnTop;
+    std::vector<LineVertex> _lightLinesDepthTested;
+    std::vector<LineVertex> _lightLinesOnTop;
 
     // One light's outline at a time, rebuilt and cleared per light while a click
     // is resolved. A member only to keep its storage between clicks; nothing here
     // survives the call that fills it.
-    std::vector<Assisi::Render::LineVertex> _lightPickOutline;
+    std::vector<LineVertex> _lightPickOutline;
 
     std::vector<Assisi::ECS::Entity>        _colliderEntities;
 
@@ -1703,7 +1712,7 @@ private:
     // has to come back untouched, and EditHistory binds a Scene by reference.
     std::optional<Assisi::Editor::EditHistory> _blueprintHistory;
     // Accumulated across a frame's ImGui panels: true if an edit widget (inspector
-    // drag/type, or the gizmo) is still being manipulated. The end-of-OnImGui sweep
+    // drag/type, or the gizmo) is still being manipulated. The end-of-DrawPanels sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
     bool _captureEditingActive = false;
     // The main history's state token at the last successful SaveLevel (0 = base /
@@ -1780,6 +1789,16 @@ private:
     Assisi::ECS::Entity _pendingDeleteEntity = Assisi::ECS::NullEntity;
 
     // --- Overlays and debug panels ---
+    /// The marks drawn over the scene: selection outlines, entity icons, collider
+    /// wireframes. Built only when EditorConfig::enableEditorVisuals asked for
+    /// them, so `_overlaysBuilt` is what every submission checks.
+    OverlayRenderer _overlays;
+    bool _overlaysBuilt = false;
+
+    /// Whether DebugUI::Initialize ran, so shutdown tears down exactly what was
+    /// brought up. A headless editor brings up no presentation and so no UI.
+    bool _debugUiBrought = false;
+
     /// The F11 options overlay. Held by pointer so its telemetry buffers and the
     /// GpuTelemetry header stay out of this one.
     std::unique_ptr<EditorOptionsPanel> _options;

@@ -40,8 +40,9 @@ namespace Assisi::App
 ///     into the swapchain afterwards, transparently to this override.
 ///
 /// Optional overrides (no-ops by default):
-///   - OnImGui()                 — called after OnRender(), inside the same
-///     ImGui frame DebugUI opens; build ImGui:: windows here
+///   - OnRenderUi(Render::RenderFrame&) — called after OnRender(), last in the
+///     frame; draw whatever UI layer you own here, opening and closing it
+///     yourself
 ///   - OnResize(int32_t, int32_t) — called when the framebuffer is resized
 ///   - OnRenderTargetsChanged(const nvrhi::FramebufferInfo&) — called whenever
 ///     the FramebufferInfo that OnRender()'s `frame` is compatible with changes
@@ -136,7 +137,13 @@ protected:
     /// The seam costs a target and a copy, so it exists only where it is used.
     /// Read during Initialize(), so it must answer from constructor-set state.
     [[nodiscard]] virtual bool UsesOverlayStage() const { return false; }
-    virtual void OnImGui() {}
+    /// @brief Called last in the frame, after the overlays, to draw a UI layer.
+    ///
+    /// Whoever overrides this owns the layer entirely — opening it, drawing into
+    /// it, and submitting it. That is why no UI toolkit is brought up or driven
+    /// here: an application that draws no UI does not link one, which is what
+    /// keeps a shipped game free of the editor's.
+    virtual void OnRenderUi(Render::RenderFrame & /*frame*/) {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
@@ -317,10 +324,10 @@ private:
 
     bool _headless = false;
     bool _restrictedViewer = false;
-    /// Tracks the presentation half specifically: teardown of DebugUI /
-    /// PostProcess / RenderSystem must be gated on *that* having been brought
-    /// up, not on Initialize() having succeeded — headless satisfies the latter
-    /// without any of the former existing.
+    /// Tracks the presentation half specifically: teardown of PostProcess and
+    /// RenderSystem must be gated on *that* having been brought up, not on
+    /// Initialize() having succeeded — headless satisfies the latter without any
+    /// of the former existing.
     bool _presentationInitialized = false;
     /// Set by RequestClose(). The headless loop has no window to ask, and even
     /// the windowed loop is cleaner asking one flag than dereferencing a pointer
@@ -392,11 +399,32 @@ private:
     void PumpChiaraCounters();
 
 public:
-    /// @brief Draws the capture control panel — recording toggle, ring coverage,
-    /// and the dump buttons. Call it from OnImGui inside a window of your own;
-    /// it draws contents, not a window, so a game can put it wherever it likes.
-    /// Draws nothing in a build without the capture system.
-    void DrawChiaraPanel();
+    /// @brief What the last capture written to disk did, and whether one is
+    /// being written right now.
+    ///
+    /// Flat rather than the serializer's own result type, so reading a capture's
+    /// outcome does not oblige a caller to compile against the serializer. Empty
+    /// in a build without the capture system.
+    struct ChiaraDumpReport
+    {
+        /// Where the last completed dump landed. Empty until one has.
+        std::string path;
+        /// Why it failed. Empty when it succeeded, and when none has run.
+        std::string error;
+        double windowSeconds = 0.0;
+        std::uint64_t bytesWritten  = 0;
+        std::uint64_t eventsWritten = 0;
+        /// Args written with no enclosing scope to attach them to; they are
+        /// dropped, and a count that is not zero means the trace is incomplete.
+        std::uint64_t orphanedArgs  = 0;
+        bool success = false;
+        /// A dump is in flight. Asking for another until it finishes does
+        /// nothing, so a caller offering the choice should not offer it now.
+        bool running = false;
+    };
+
+    /// @brief The outcome of the last dump, read consistently.
+    [[nodiscard]] ChiaraDumpReport LastChiaraDump() const;
 
     /// @brief Writes the last @p lastSeconds of capture to a timestamped file
     /// under the user root (0 = everything the rings hold).

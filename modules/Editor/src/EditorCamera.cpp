@@ -6,7 +6,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
-#include <Assisi/Render/IconPass.hpp>
+#include <Assisi/Editor/Overlay/IconPass.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -370,7 +370,7 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     if (!ray.valid)
         return {};
 
-    const float iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const float iconHalf = 0.5f * Assisi::Editor::kEntityIconWorldSize;
     Assisi::ECS::InstanceId result;
 
     // The same quad the renderer draws for an instance root — see
@@ -401,7 +401,7 @@ Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos, float &tOut)
     if (!_scene)
         return Assisi::ECS::NullEntity;
 
-    const float iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const float iconHalf = 0.5f * Assisi::Editor::kEntityIconWorldSize;
     return PickEntityInScene(*_scene, BuildPickRay(mousePos), iconHalf, &MeshPickBounds, tOut);
 }
 

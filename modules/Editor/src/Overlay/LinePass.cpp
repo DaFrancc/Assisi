@@ -1,14 +1,16 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/Render/LinePass.hpp>
+#include <Assisi/Editor/Overlay/LinePass.hpp>
 
 #include <cstddef>
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
-namespace Assisi::Render
+namespace Assisi::Editor
 {
+
+using Render::LoadSpirvShader;
 
 namespace
 {
@@ -149,7 +151,7 @@ bool LinePass::EnsureVertexCapacity(int32_t slot, uint32_t vertexCount)
     return true;
 }
 
-void LinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const LineVertex> vertices,
+void LinePass::Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const LineVertex> vertices,
                     bool onTop)
 {
     // Drop a trailing unpaired vertex: a LineList needs whole segments.
@@ -185,4 +187,4 @@ void LinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, s
     frame.commandList->draw(drawArgs);
 }
 
-} // namespace Assisi::Render
+} // namespace Assisi::Editor

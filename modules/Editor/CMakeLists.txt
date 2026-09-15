@@ -12,7 +12,12 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/ColliderPose.hpp"
     "include/Assisi/Editor/EditHistory.hpp"
     "include/Assisi/Editor/EditorApp.hpp"
+    "include/Assisi/Editor/EditorChiaraPanel.hpp"
     "include/Assisi/Editor/InspectorFieldChrome.hpp"
+    "include/Assisi/Editor/Overlay/IconPass.hpp"
+    "include/Assisi/Editor/Overlay/LinePass.hpp"
+    "include/Assisi/Editor/Overlay/OutlinePass.hpp"
+    "include/Assisi/Editor/Overlay/OverlayRenderer.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
     "include/Assisi/Editor/SystemSearch.hpp"
     "include/Assisi/Editor/WireShapes.hpp"
@@ -23,6 +28,7 @@ target_sources(Assisi-Editor
     "src/EditorAssetBrowser.cpp"
     "src/EditorBlueprintMode.cpp"
     "src/EditorCamera.cpp"
+    "src/EditorChiaraPanel.cpp"
     "src/EditorColliders.cpp"
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"
@@ -37,6 +43,14 @@ target_sources(Assisi-Editor
     "src/GizmoDrag.cpp"
     "src/InspectorFieldChrome.cpp"
     "src/InstanceGesture.cpp"
+    # The overlay draw passes. They live here rather than in Render because a
+    # game draws none of them: a selection outline, an entity icon and a
+    # wireframe all mark something for whoever is editing, and Render holding
+    # them meant every executable linked them.
+    "src/Overlay/IconPass.cpp"
+    "src/Overlay/LinePass.cpp"
+    "src/Overlay/OutlinePass.cpp"
+    "src/Overlay/OverlayRenderer.cpp"
     "src/PrePlayState.cpp"
     "src/ScenePick.cpp"
     "src/SystemSearch.cpp"
@@ -52,11 +66,14 @@ target_include_directories(Assisi-Editor
 target_link_libraries(Assisi-Editor
   PUBLIC
     # EditorApp derives from App::Application (its header needs App), and App
-    # publicly brings the rest of what the panels touch: Debug (imgui/implot),
-    # Render, Physics, Window, ECS, Core. Runtime is also a direct dependency
-    # of EditHistory, kept explicit.
+    # publicly brings Render, Physics, Window, ECS and Core. Runtime is also a
+    # direct dependency of EditHistory, kept explicit.
     Assisi::App
     Assisi::Runtime
+    # The UI toolkit and its platform/renderer backends. Linked here rather than
+    # inherited from App, which deliberately links no UI at all: this is the
+    # module that draws one, and it is the boundary a game does not cross.
+    Assisi::Debug
     nlohmann_json::nlohmann_json
   PRIVATE
     # The transform gizmo (EditorGizmo.cpp) only; not part of the public API.
