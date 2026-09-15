@@ -340,6 +340,52 @@ TEST_CASE("Rebuild survives a sidecar with a wrapping (negative) manifest slot")
     CHECK_FALSE(db.HasManifest(*AssetId::Parse("11111111-2222-4333-8444-555555555555")));
 }
 
+TEST_CASE("Rebuild mints no sidecar for an ignored file, nor for the ignore list itself")
+{
+    const fs::path root = MakeTree();
+    WriteFile(root / "models" / "source.zip", "PK");
+    WriteFile(root / ".assisiignore", "*.zip\n");
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    const std::expected<std::size_t, AssetError> count = db.Rebuild();
+    REQUIRE(count.has_value());
+
+    // Only the two payload files from MakeTree: the archive and the list itself
+    // are both out.
+    CHECK(*count == 2);
+    CHECK_FALSE(db.IdFor("models/source.zip").has_value());
+    CHECK_FALSE(db.IdFor(".assisiignore").has_value());
+
+    // Ignoring is not deleting: the files stay, but nothing was written beside
+    // them, so neither has become addressable content.
+    CHECK(fs::exists(root / "models" / "source.zip"));
+    CHECK_FALSE(fs::exists(root / "models" / "source.zip.aast"));
+    CHECK_FALSE(fs::exists(root / ".assisiignore.aast"));
+}
+
+TEST_CASE("Rebuild honours a negation that re-includes one file inside an ignored directory")
+{
+    const fs::path root = MakeTree();
+    WriteFile(root / "editor" / "entity_icon.png", "PNG-BYTES");
+    WriteFile(root / "editor" / "loading" / "Spinner.webp", "WEBP-BYTES");
+    WriteFile(root / ".assisiignore", "/editor/\n"
+                                      "!/editor/loading/Spinner.webp\n");
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    const std::expected<std::size_t, AssetError> count = db.Rebuild();
+    REQUIRE(count.has_value());
+
+    // The two payloads from MakeTree, plus the one file the negation takes back.
+    // The walk must not prune the excluded directory, or it would never reach it.
+    CHECK(*count == 3);
+    CHECK(db.IdFor("editor/loading/Spinner.webp").has_value());
+    CHECK(fs::exists(root / "editor" / "loading" / "Spinner.webp.aast"));
+    CHECK_FALSE(db.IdFor("editor/entity_icon.png").has_value());
+    CHECK_FALSE(fs::exists(root / "editor" / "entity_icon.png.aast"));
+}
+
 TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
 {
     const fs::path root = MakeTree();
