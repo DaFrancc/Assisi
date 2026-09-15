@@ -371,35 +371,6 @@
     },
     {
       "components": {
-        "Camera": {
-          "farZ": 200.0,
-          "fovDegrees": 60.0,
-          "isActive": true,
-          "nearZ": 0.1
-        },
-        "Transform": {
-          "position": [
-            0.0,
-            3.0,
-            8.0
-          ],
-          "rotation": [
-            0.984,
-            -0.179,
-            0.0,
-            0.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "name": "Entity_10"
-    },
-    {
-      "components": {
         "Bounce": {
           "rebound": 0.8
         },
@@ -443,7 +414,7 @@
           ]
         }
       },
-      "name": "Entity_11"
+      "name": "Entity_10"
     }
   ],
   "systems": [
