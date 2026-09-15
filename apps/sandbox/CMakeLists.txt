@@ -68,41 +68,12 @@ target_sources(Assisi-Sandbox PRIVATE $<TARGET_OBJECTS:Assisi-Sandbox-Systems-Ge
 
 assisi_link_reflections(Assisi-Sandbox)
 
-# Glob all asset files so the copy re-runs whenever any file changes.
-# CONFIGURE_DEPENDS also triggers a re-configure when files are added or removed.
-file(GLOB_RECURSE _assisi_assets
-    CONFIGURE_DEPENDS
-    LIST_DIRECTORIES false
-    "${CMAKE_SOURCE_DIR}/assets/*"
-)
-
-set(_assets_stamp "${CMAKE_CURRENT_BINARY_DIR}/assets.stamp")
-
-add_custom_command(
-    OUTPUT "${_assets_stamp}"
-    # copy_directory only adds and overwrites, so prune first: a deleted or
-    # renamed source asset would otherwise linger in the staged tree forever and
-    # still resolve through AssetSystem. Compiled .spv files are exempt (they are
-    # build outputs with no source counterpart) — see the script for why this is
-    # a targeted prune rather than a wipe-and-recopy.
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC_DIR=${CMAKE_SOURCE_DIR}/assets
-        -DDST_DIR=$<TARGET_FILE_DIR:Assisi-Sandbox>/assets
-        -P "${CMAKE_SOURCE_DIR}/cmake/AssisiPruneStagedAssets.cmake"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets"
-    COMMAND ${CMAKE_COMMAND} -E touch "${_assets_stamp}"
-    DEPENDS ${_assisi_assets} "${CMAKE_SOURCE_DIR}/cmake/AssisiPruneStagedAssets.cmake"
-    COMMENT "Staging assets to the build directory (pruning stale files first)"
-    VERBATIM
-)
-
-add_custom_target(Assisi-CopyAssets ALL
-    DEPENDS "${_assets_stamp}"
-)
-
-add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
+# The source asset tree is the only one. Nothing is staged beside the executable,
+# so a directory named "assets" there can only be a leftover from a build that
+# predates that — and AssetSystem::DiscoverRoot walks upward from the executable,
+# so a leftover is found first and shadows the real tree. Removing it at configure
+# time is what stops such a build from silently reading assets nobody is editing.
+file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/assets")
 
 # --- Vulkan shaders: compile GLSL -> SPIR-V at build time.
 #
@@ -113,9 +84,9 @@ add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 # so ninja would silently skip copying the freshly compiled SPIR-V next to
 # the exe and the app would keep running a stale shader.
 #
-# Auto-discovered, like the assets glob above — a new .vert/.frag/.comp under
-# assets/shaders/ just needs the file created, no CMakeLists.txt edit. A .glsl
-# file is a piece another shader #includes, never compiled on its own.
+# Auto-discovered — a new .vert/.frag/.comp under assets/shaders/ just needs the
+# file created, no CMakeLists.txt edit. A .glsl file is a piece another shader
+# #includes, never compiled on its own.
 file(GLOB_RECURSE _sandbox_vk_shader_sources
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES false
@@ -124,9 +95,14 @@ file(GLOB_RECURSE _sandbox_vk_shader_sources
     "${CMAKE_SOURCE_DIR}/assets/*.comp"
 )
 
-set(_sandbox_shader_copies "")
+set(_sandbox_shader_outputs "")
 
-# Compiles one GLSL source to SPIR-V and stages it under the app's asset root.
+# Names this build directory, so concurrent builds of two presets write to
+# different temporaries on their way into the shared asset tree.
+get_filename_component(_assisi_build_id "${CMAKE_BINARY_DIR}" NAME)
+
+# Compiles one GLSL source to SPIR-V, landing it beside its source in the asset
+# tree.
 #
 # _shader_in   absolute path to the .vert/.frag/.comp
 # _spv_rel     where the .spv lands, relative to assets/ — normally
@@ -135,10 +111,10 @@ set(_sandbox_shader_copies "")
 # ARGN         preprocessor defines for this build of the shader
 #
 # A shader keeps its path relative to assets/ (e.g. shaders/mesh.vert or
-# editor/shaders/outline_edge.frag) through compilation and into the copied
-# asset root, so editor-only shaders live under assets/editor/ and still
-# resolve by their virtual path. Intermediate names in the binary dir flatten
-# the slashes to stay unique and path-safe.
+# editor/shaders/outline_edge.frag) through compilation, so editor-only shaders
+# live under assets/editor/ and still resolve by their virtual path.
+# Intermediate names in the binary dir flatten the slashes to stay unique and
+# path-safe.
 function(assisi_sandbox_compile_shader _shader_in _spv_rel)
     set(_defines "")
     foreach(_define ${ARGN})
@@ -162,25 +138,32 @@ function(assisi_sandbox_compile_shader _shader_in _spv_rel)
         VERBATIM
     )
 
-    # OUTPUT must be a literal path (no generator expressions) for ninja's
-    # dependency scanner, so track completion via a stamp file in the binary
-    # dir; the actual copy destination can still use TARGET_FILE_DIR since
-    # that's fine inside COMMAND.
-    # Compiled .spv lands beside its GLSL source under the copied asset root, so it
-    # resolves through Core::AssetSystem exactly like every other asset.
-    set(_shader_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.copied")
+    # Compiled .spv lands beside its GLSL source in the asset tree, so it resolves
+    # through Core::AssetSystem exactly like every other asset. The compile above
+    # writes the binary dir instead of landing here directly because glslang's
+    # depfile names its -o path as the target, and ninja rejects a depfile whose
+    # target is not the command's own OUTPUT.
+    #
+    # Every preset shares this destination, so the write goes to a temporary
+    # named for this build directory and is then renamed into place: rename is
+    # atomic within a filesystem, and the temporary sits in the destination
+    # directory to guarantee it is the same one. Two presets building the same
+    # shader at once therefore cannot leave a half-written .spv for the app to
+    # load.
+    set(_shader_final "${CMAKE_SOURCE_DIR}/assets/${_spv_rel}")
+    set(_shader_tmp "${_shader_final}.${_assisi_build_id}.tmp")
     add_custom_command(
-        OUTPUT "${_shader_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_spv_rel_dir}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_shader_out}" "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_spv_rel}"
-        COMMAND ${CMAKE_COMMAND} -E touch "${_shader_stamp}"
+        OUTPUT "${_shader_final}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/assets/${_spv_rel_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_shader_out}" "${_shader_tmp}"
+        COMMAND ${CMAKE_COMMAND} -E rename "${_shader_tmp}" "${_shader_final}"
         DEPENDS "${_shader_out}"
-        COMMENT "Copying ${_spv_rel} into the Assisi-Sandbox asset root"
+        COMMENT "Staging ${_spv_rel}"
         VERBATIM
     )
-    set(_copies ${_sandbox_shader_copies})
-    list(APPEND _copies "${_shader_stamp}")
-    set(_sandbox_shader_copies "${_copies}" PARENT_SCOPE)
+    set(_outputs ${_sandbox_shader_outputs})
+    list(APPEND _outputs "${_shader_final}")
+    set(_sandbox_shader_outputs "${_outputs}" PARENT_SCOPE)
 endfunction()
 
 foreach(_shader_in ${_sandbox_vk_shader_sources})
@@ -219,5 +202,5 @@ assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
 assisi_sandbox_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/scene_distance.frag"
     "shaders/scene_distance.frag.msaa.spv" ASSISI_MSAA_DEPTH)
 
-add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
+add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_outputs})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

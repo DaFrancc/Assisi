@@ -51,22 +51,6 @@ bool WriteWholeFile(const fs::path &path, std::string_view text)
     return stream.good();
 }
 
-/// @brief The authoring-root twin of an already-resolved asset path, or an empty
-///        path when no authoring root is configured.
-///
-/// Derived from the resolved path rather than by normalizing the virtual path
-/// again: Resolve has already rejected anything escaping the read root, so the
-/// twin cannot land outside the mirror either.
-fs::path AuthoringTwin(const fs::path &absolute)
-{
-    const fs::path &authoringRoot = Core::AssetSystem::GetAuthoringRoot();
-    if (authoringRoot.empty())
-    {
-        return {};
-    }
-    return authoringRoot / absolute.lexically_relative(Core::AssetSystem::GetRoot());
-}
-
 /// @brief The `.aast` path for a payload file ("model.gltf" -> "model.gltf.aast").
 fs::path SidecarPathOf(const fs::path &payload)
 {
@@ -290,19 +274,6 @@ std::expected<void, MaterialWriteError> SaveMaterial(std::string_view virtualPat
         Core::Log::Warn("SaveMaterial: failed to write '{}'.", absolute->generic_string());
         return std::unexpected(MaterialWriteError::WriteFailed);
     }
-
-    // Mirror into the durable tree so the edit survives the next clean build.
-    // A failure here loses no work — the material is saved and usable this run —
-    // so it warns rather than failing the save.
-    if (const fs::path mirror = AuthoringTwin(*absolute); !mirror.empty())
-    {
-        fs::create_directories(mirror.parent_path(), ec);
-        if (!WriteWholeFile(mirror, *text))
-        {
-            Core::Log::Warn("SaveMaterial: saved '{}' but could not mirror it to the authoring root at '{}'.",
-                            virtualPath, mirror.generic_string());
-        }
-    }
     return {};
 }
 
@@ -348,21 +319,6 @@ std::expected<void, MaterialWriteError> RenameMaterial(std::string_view oldVirtu
         }
     }
 
-    // The durable tree, best-effort: failing here costs the rename on the next
-    // build, not this session's work, so it warns rather than rolling back.
-    const fs::path mirrorFrom = AuthoringTwin(*from);
-    const fs::path mirrorTo   = AuthoringTwin(*to);
-    if (!mirrorFrom.empty() && fs::exists(mirrorFrom, ec))
-    {
-        fs::create_directories(mirrorTo.parent_path(), ec);
-        fs::rename(mirrorFrom, mirrorTo, ec);
-        fs::rename(SidecarPathOf(mirrorFrom), SidecarPathOf(mirrorTo), ec);
-        if (ec)
-        {
-            Core::Log::Warn("RenameMaterial: renamed '{}' but could not move the authoring-root copy.",
-                            oldVirtualPath);
-        }
-    }
     return {};
 }
 
@@ -377,14 +333,6 @@ bool DeleteMaterialFile(std::string_view virtualPath)
     std::error_code ec;
     const bool removed = fs::remove(*absolute, ec);
     fs::remove(SidecarPathOf(*absolute), ec);
-
-    // The durable copy too, or the next build stages the material back and the
-    // deletion silently undoes itself.
-    if (const fs::path mirror = AuthoringTwin(*absolute); !mirror.empty())
-    {
-        fs::remove(mirror, ec);
-        fs::remove(SidecarPathOf(mirror), ec);
-    }
     return removed;
 }
 

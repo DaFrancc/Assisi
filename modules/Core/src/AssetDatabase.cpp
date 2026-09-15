@@ -55,52 +55,6 @@ bool WriteWholeFile(const fs::path &path, std::string_view text)
     return stream.good();
 }
 
-/// @brief Also write a freshly minted sidecar into the authoring root, when one
-/// is configured (dev builds; see AssetSystem::SetAuthoringRoot).
-///
-/// A dev build reads from a staged copy of the assets next to the executable,
-/// because generated files (compiled .spv) exist only there. That copy is wiped
-/// by a clean build, so a GUID minted into it alone is regenerated differently
-/// next time and every by-GUID reference to that asset silently stops resolving.
-/// Mirroring the sidecar into the source tree makes the id durable and
-/// committable. The staged copy is still written (above) so the id is consistent
-/// for the rest of this run, and the next build's asset copy carries the source
-/// sidecar back over it.
-void MirrorSidecarToAuthoringRoot(std::string_view virtualPath, std::string_view content)
-{
-    const fs::path &authoringRoot = AssetSystem::GetAuthoringRoot();
-    if (authoringRoot.empty())
-    {
-        return; // shipped build, or the staged copy IS the durable tree
-    }
-
-    std::error_code ec;
-
-    // Only mirror when the ASSET itself lives in the durable tree. Build outputs
-    // staged into the read root (compiled .spv) have no source counterpart, so a
-    // sidecar for one would be an orphan describing a file no clone has — and it
-    // would show up as an untracked source-tree change after every editor run.
-    // Their ids are regenerated with the artifact, which is correct for a
-    // derived file.
-    if (!fs::exists(authoringRoot / virtualPath, ec))
-    {
-        return;
-    }
-
-    const fs::path target = authoringRoot / fs::path(virtualPath).concat(kSidecarExtension);
-    if (fs::exists(target, ec))
-    {
-        return; // the durable tree already has an id for this asset; never clobber it
-    }
-
-    fs::create_directories(target.parent_path(), ec);
-    if (!WriteWholeFile(target, content))
-    {
-        Log::Warn("AssetDatabase: minted a sidecar for '{}' but could not mirror it to the authoring root at "
-                  "'{}'; the id will not survive a clean build.",
-                  virtualPath, target.generic_string());
-    }
-}
 } // namespace
 
 AssetId MintAssetId()
@@ -264,7 +218,6 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
                 Log::Warn("AssetDatabase: failed to write sidecar '{}', skipping.", sidecarPath.generic_string());
                 continue;
             }
-            MirrorSidecarToAuthoringRoot(virtualPath, content);
         }
 
         // Register, guarding against two files claiming the same id — which is
@@ -292,7 +245,6 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
                           previous.ToString(), slot->second, virtualPath);
                 continue;
             }
-            MirrorSidecarToAuthoringRoot(virtualPath, content);
             Log::Warn("AssetDatabase: id {} was already claimed by '{}'; re-minted '{}' as {} (duplicated asset?).",
                       previous.ToString(), slot->second, virtualPath, reminted.ToString());
 

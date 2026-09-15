@@ -256,12 +256,13 @@ if (ASSISI_ENABLE_FAST_MATH)
   endif()
 endif()
 
-# ---- Dev-only: the source asset tree, so a running editor can mirror newly
-# minted asset-id sidecars back out of the disposable staged copy it reads from
-# (see AssetSystem::SetAuthoringRoot). Deliberately absent in Release: a shipped
-# build has no source tree, and its staged assets are the durable copy.
+# ---- Where the asset tree is, for tests that read committed levels directly.
+# They cannot go through AssetSystem: its root is global and the blueprint and
+# serializer cases repoint it at temporary directories, so a test reading the
+# real tree through it would depend on the order doctest happens to run in.
+# Every configuration gets this — the asset tree is the same one for all of them.
 target_compile_definitions(Assisi-Options INTERFACE
-  $<$<NOT:$<CONFIG:Release>>:ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets">
+  ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
 )
 
 # ---- Shipping marker. Release is the ship preset; Debug and RelWithDebInfo are
