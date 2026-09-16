@@ -31,8 +31,10 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -482,7 +484,8 @@ void Application::Run()
     if (!_initialized)
     {
         Core::Log::Error("Application::Run() called without a successful Initialize(); aborting.");
-        return;
+        std::fflush(nullptr);
+        std::_Exit(EXIT_FAILURE);
     }
 
 #ifdef _WIN32
@@ -794,6 +797,17 @@ void Application::Run()
     }
 
     OnShutdown();
+
+    // The process ends here instead of unwinding. Workers may be mid-way through a
+    // texture encode that takes seconds, and waiting for it makes a closed window
+    // hang; tearing down around it instead has workers call into objects already
+    // destroyed. Nothing left needs a destructor to reach disk: log sinks flush
+    // every line and a capture report is written during the frame loop, so only
+    // the stdio buffers remain.
+    std::cout.flush();
+    std::cerr.flush();
+    std::fflush(nullptr);
+    std::_Exit(_startupFailed ? EXIT_FAILURE : EXIT_SUCCESS);
 }
 
 namespace

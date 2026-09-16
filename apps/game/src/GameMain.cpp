@@ -139,8 +139,4 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     app.Run();
-
-    // A game that refused to start is not a game that finished. Only main() can
-    // say so to whatever launched it, and a launcher reads the exit code.
-    return app.StartupFailed() ? EXIT_FAILURE : EXIT_SUCCESS;
 }

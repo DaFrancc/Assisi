@@ -119,18 +119,20 @@ public:
     /// bare bool is enough for main() to decide to bail.
     [[nodiscard]] bool Initialize();
 
-    void Run();
+    /// @brief Runs until the app closes, then ends the process without running
+    /// destructors.
+    ///
+    /// The exit code is EXIT_FAILURE when StartupFailed, EXIT_SUCCESS otherwise.
+    /// systemd, Docker and CI all read a 0 exit as a clean shutdown and either
+    /// ignore it or restart-loop in silence.
+    [[noreturn]] void Run();
 
     /// @brief True when the app closed because it could not start, rather than
     /// because it finished.
-    ///
-    /// OnStart is void, so a refusal there cannot return a code; main() maps this
-    /// to EXIT_FAILURE instead. systemd, Docker and CI all read a 0 exit as a
-    /// clean shutdown and either ignore it or restart-loop in silence.
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
 protected:
-    /// @brief Refuse the launch: close the app and make main() report failure.
+    /// @brief Refuse the launch: close the app and make Run exit with failure.
     ///
     /// For OnStart to call once it has logged what is wrong. Every app that can
     /// refuse to start shares this rather than keeping its own flag, so a new one

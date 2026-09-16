@@ -431,9 +431,6 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
         serverApp.Run();
-        // A server that refused to start must say so in its exit code, or a
-        // supervisor reads the clean shutdown as a normal one.
-        return serverApp.StartupFailed() ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     args.capture.levelPath = args.startupLevel;
@@ -448,5 +445,4 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     app.Run();
-    return EXIT_SUCCESS;
 }
