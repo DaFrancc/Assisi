@@ -47,6 +47,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
@@ -350,7 +351,8 @@ private:
     ///
     /// Takes the channel's index rather than its colour space and fallback, so the
     /// two cannot be passed from different rows of the channel table.
-    uint32_t ResolveChannel(const Core::AssetId &channelId, std::size_t channelIndex, bool *outPresent = nullptr);
+    uint32_t ResolveChannel(const Core::AssetId &channelId, Geometry::MaterialChannel channel,
+                            bool *outPresent = nullptr);
 
     /// @brief Ensures @p texture has a slot in the bindless descriptor table,
     /// assigning and writing one on first call. Returns the slot. The table's

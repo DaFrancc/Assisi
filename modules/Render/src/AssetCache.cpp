@@ -15,6 +15,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
+#include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Image/Compress.hpp>
@@ -83,46 +84,26 @@ const Core::AssetPath kFlatNormalTexture{std::string_view{"prim://flat-normal"}}
 // can never change. Slots past this saturate onto slot 0 with a one-time warning.
 constexpr uint32_t kBindlessCapacity = 16384u;
 
-// Which PBR texture channel a row of the table below describes, in
-// MaterialTextures order. Every index into that table comes from here rather
-// than from a literal.
-enum MaterialChannel : std::size_t
-{
-    BaseColor,
-    Normal,
-    MetallicRoughness,
-    Occlusion,
-    Emissive,
-    Count,
-};
-
-// What one channel needs: the colour space it decodes in, the compressed format
-// it is stored as, and the `prim://` default that stands in for an empty or
-// failed channel. `isNormal` flags the one whose presence drives the shader's
+// The channel enum and the format each channel wants both live in
+// Geometry::MaterialChannels, because the cooker compresses the same textures
+// offline and the two must reach the same answer. What stays here is what only
+// a renderer has: the `prim://` texture that stands in for an empty or failed
+// channel, and the flag marking the one whose presence drives the shader's
 // normal-mapping bit.
-//
-// The format belongs to the channel rather than to the file, because what a map
-// is for decides how it fails under compression. Colour goes to BC7, which holds
-// a gradient without banding. A normal goes to BC5, which spends all its bits on
-// two channels and lets the shader rebuild the third — encoding one as colour
-// smears the very detail it exists to carry. Metallic-roughness and occlusion
-// stay BC7 rather than splitting into single-channel formats: glTF packs
-// roughness and metallic into one texture's G and B, and occlusion is usually
-// that same file's R.
+using Geometry::MaterialChannel;
+
 struct ChannelDesc
 {
     const Core::AssetPath *fallback;
-    Image::ColorSpace space;
-    Image::PixelFormat format;
     bool isNormal;
 };
 
-const std::array<ChannelDesc, MaterialChannel::Count> kChannels = {{
-    {&kWhiteTexture, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, false},        // baseColor
-    {&kFlatNormalTexture, Image::ColorSpace::Linear, Image::PixelFormat::Bc5, true},  // normal
-    {&kWhiteLinearTexture, Image::ColorSpace::Linear, Image::PixelFormat::Bc7, false}, // metallic-roughness
-    {&kWhiteLinearTexture, Image::ColorSpace::Linear, Image::PixelFormat::Bc7, false}, // occlusion
-    {&kWhiteTexture, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, false},         // emissive
+const std::array<ChannelDesc, static_cast<std::size_t>(MaterialChannel::Count)> kChannels = {{
+    {&kWhiteTexture, false},       // baseColor
+    {&kFlatNormalTexture, true},   // normal
+    {&kWhiteLinearTexture, false}, // metallic-roughness
+    {&kWhiteLinearTexture, false}, // occlusion
+    {&kWhiteTexture, false},       // emissive
 }};
 
 // Minimum staging chunk for the shared upload command list. A texture burst (a
@@ -133,14 +114,13 @@ constexpr uint64_t kUploadChunkSize = 16ull << 20; // 16 MB
 
 Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
 {
-    switch (channel)
-    {
-    case MaterialChannel::BaseColor: return data.BaseColorTexture;
-    case MaterialChannel::Normal: return data.NormalTexture;
-    case MaterialChannel::MetallicRoughness: return data.MetallicRoughnessTexture;
-    case MaterialChannel::Occlusion: return data.OcclusionTexture;
-    default: return data.EmissiveTexture;
-    }
+    return Geometry::ChannelTexture(data, static_cast<MaterialChannel>(channel));
+}
+
+// The shared table, reached by the dense index kChannels is walked with.
+Geometry::MaterialChannelFormat ChannelFormat(std::size_t channel)
+{
+    return Geometry::FormatFor(static_cast<MaterialChannel>(channel));
 }
 } // namespace
 
@@ -502,14 +482,16 @@ uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
     return slot;
 }
 
-uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, std::size_t channelIndex, bool *outPresent)
+uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, Geometry::MaterialChannel channel,
+                                    bool *outPresent)
 {
-    const ChannelDesc &channel = kChannels[channelIndex];
+    const ChannelDesc &desc                       = kChannels[static_cast<std::size_t>(channel)];
+    const Geometry::MaterialChannelFormat wanted   = Geometry::FormatFor(channel);
 
     const Core::AssetPath path = PathForId(channelId);
     if (!path.Empty())
     {
-        if (const Texture *texture = ResolveTexture(path, channel.space, EffectiveFormat(channel.format)))
+        if (const Texture *texture = ResolveTexture(path, wanted.space, EffectiveFormat(wanted.format)))
         {
             if (outPresent != nullptr)
                 *outPresent = true;
@@ -521,7 +503,7 @@ uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, std::size_t 
         *outPresent = false;
     // The primitive dictates its own colour space and is never compressed; what is
     // passed here is a harmless hint.
-    const Texture *fallback = ResolveTexture(*channel.fallback, channel.space, Image::PixelFormat::Rgba8);
+    const Texture *fallback = ResolveTexture(*desc.fallback, wanted.space, Image::PixelFormat::Rgba8);
     return fallback != nullptr ? fallback->BindlessIndex() : 0u;
 }
 
@@ -855,7 +837,7 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
         if (channelPaths[ch].Empty())
             continue;
         std::expected<Image::DecodedImage, Core::AssetError> img =
-            Image::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
+            Image::DecodeImage(channelPaths[ch].View(), ChannelFormat(ch).space);
         if (!img)
         {
             // The path travels with the failure, not only with the success: it is
@@ -869,7 +851,7 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
         // Compressing here rather than at publish keeps the encode on the worker
         // alongside the decode, so the main thread still only submits. The fast
         // tier, because a load is something somebody is waiting on.
-        const Image::PixelFormat format = cache.EffectiveFormat(kChannels[ch].format);
+        const Image::PixelFormat format = cache.EffectiveFormat(ChannelFormat(ch).format);
         if (Image::IsBlockCompressed(format))
         {
             std::expected<Image::DecodedImage, Core::AssetError> compressed =
@@ -1002,7 +984,7 @@ void AssetCache::PublishMaterial(PendingPublish publish)
             // a texture we release, kept alive by the list until the submit retires)
             // and is freed. The format has to be the one the worker actually encoded,
             // or the publish would look up a key nothing was stored under.
-            const TextureKey key{rc.path, kChannels[ch].space, EffectiveFormat(kChannels[ch].format)};
+            const TextureKey key{rc.path, ChannelFormat(ch).space, EffectiveFormat(ChannelFormat(ch).format)};
             if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
             {
                 *slots[ch] = it->second.BindlessIndex();
@@ -1024,7 +1006,7 @@ void AssetCache::PublishMaterial(PendingPublish publish)
             Core::Log::Warn("AssetCache: failed to load texture '{}' — drawing the error pattern.", rc.path.View());
             ++_failedTextures;
 
-            const TextureKey key{rc.path, kChannels[ch].space, Image::PixelFormat::Rgba8};
+            const TextureKey key{rc.path, ChannelFormat(ch).space, Image::PixelFormat::Rgba8};
             Texture &texture = _textures[key];
             if (!texture.IsValid())
             {
@@ -1035,7 +1017,7 @@ void AssetCache::PublishMaterial(PendingPublish publish)
         else
         {
             const Texture *fallback =
-                ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space, Image::PixelFormat::Rgba8);
+                ResolveTexture(*kChannels[ch].fallback, ChannelFormat(ch).space, Image::PixelFormat::Rgba8);
             *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
         }
     }
