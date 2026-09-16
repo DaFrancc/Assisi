@@ -17,11 +17,16 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
 #include <Assisi/Cook/CookTree.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Image/Compress.hpp>
 
 using Assisi::Cook::Claim;
 using Assisi::Cook::CookReport;
@@ -338,4 +343,63 @@ TEST_CASE("Every cooked blob is named by its asset's GUID")
     {
         CHECK(std::filesystem::exists(out.Path() / (entry.guid + ".cooked")));
     }
+}
+
+TEST_CASE("A cooker's kind is the kind its blobs say they are")
+{
+    // A provider lists assets by the kind their cooker reports, without cooking
+    // them. A cooker that reports one kind and writes another would list a mesh
+    // as a scene and fail the load that trusted the list.
+    const ScratchDir out("kinds");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report =
+        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    REQUIRE_MESSAGE(report.has_value(), Explain(report));
+    REQUIRE_FALSE(report->entries.empty());
+
+    const std::vector<std::unique_ptr<Assisi::Cook::Cooker>> cookers = MakeCookers();
+    for (const Assisi::Cook::ManifestEntry &entry : report->entries)
+    {
+        CAPTURE(entry.vpath);
+
+        std::ifstream in(out.Path() / (entry.guid + ".cooked"), std::ios::binary);
+        const std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        Assisi::Core::BitReader reader(std::as_bytes(std::span{chars}));
+        const std::expected<Assisi::Core::CookedKind, Assisi::Core::CookedBlobError> written =
+            Assisi::Core::ReadCookedHeader(reader);
+        REQUIRE(written.has_value());
+
+        const Assisi::Cook::Cooker *owner = nullptr;
+        for (const std::unique_ptr<Assisi::Cook::Cooker> &cooker : cookers)
+        {
+            if (cooker->Claims(entry.vpath) != Claim::None)
+            {
+                owner = cooker.get();
+                break;
+            }
+        }
+        REQUIRE(owner != nullptr);
+        CHECK(owner->Kind() == *written);
+    }
+}
+
+TEST_CASE("Changing the texture tier re-cooks the textures and nothing else")
+{
+    // The tier changes a texture's bytes without touching its source file. Left
+    // out of the cache key, a tree cooked at the fast tier would be skipped as
+    // current when the shipping cook asks for the best one.
+    const ScratchDir out("texture-tier");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> best =
+        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path(), Assisi::Image::CompressQuality::Best);
+    REQUIRE_MESSAGE(best.has_value(), Explain(best));
+
+    const std::expected<CookReport, Assisi::Cook::CookError> fast =
+        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path(), Assisi::Image::CompressQuality::Fast);
+    REQUIRE_MESSAGE(fast.has_value(), Explain(fast));
+
+    // The fixture holds exactly one texture.
+    constexpr std::size_t kFixtureTextures = 1;
+    CHECK(fast->cooked == kFixtureTextures);
+    CHECK(fast->skipped == best->cooked - kFixtureTextures);
 }

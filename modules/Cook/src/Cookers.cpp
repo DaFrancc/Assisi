@@ -67,6 +67,7 @@ class ReflectedCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "reflected"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Reflected; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -156,6 +157,7 @@ class SceneCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "scene"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Scene; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -201,6 +203,7 @@ class MeshCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -360,6 +363,12 @@ class TextureCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "texture"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Texture; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &context) const override
+    {
+        return static_cast<std::uint64_t>(context.textureQuality);
+    }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -401,10 +410,8 @@ public:
             return std::unexpected(Failure(vpath, "could not be decoded"));
         }
 
-        // Best rather than Fast: this encode happens once, offline, and the
-        // runtime tier exists only because a load is something somebody waits on.
         const std::expected<Image::DecodedImage, Core::AssetError> compressed =
-            Image::Compress(*decoded, wanted.format, Image::CompressQuality::Best);
+            Image::Compress(*decoded, wanted.format, context.textureQuality);
         if (!compressed)
         {
             return std::unexpected(Failure(vpath, "could not be block compressed"));
@@ -440,6 +447,7 @@ class ShaderCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "shader"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Shader; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -523,6 +531,7 @@ class VerbatimCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "verbatim"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Verbatim; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {

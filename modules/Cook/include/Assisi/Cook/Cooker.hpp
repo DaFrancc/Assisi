@@ -29,6 +29,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Geometry/MaterialChannels.hpp>
+#include <Assisi/Image/Compress.hpp>
 
 namespace Assisi::Core
 {
@@ -67,10 +68,9 @@ struct CookError
 
 /// @brief Everything a cook of one asset needs that is not the asset.
 ///
-/// A struct rather than four parameters because every cooker takes all of it and
-/// two of the four are only used by two cookers — passing them positionally
-/// through the ones that ignore them is how a later argument ends up in the
-/// wrong slot.
+/// A struct rather than parameters because every cooker takes all of it and each
+/// member is used by only one or two cookers — passing them positionally through
+/// the ones that ignore them is how a later argument ends up in the wrong slot.
 struct CookContext
 {
     /// Resolves ids to paths and paths to ids, and answers what a mesh's sidecar
@@ -81,6 +81,10 @@ struct CookContext
     /// `.amat` before any texture is cooked. A texture's format follows from its
     /// role, and a file alone does not say what its role is.
     const TextureRoles *roles = nullptr;
+
+    /// How hard texture compression searches. Best for anything that ships; Fast
+    /// for a cook somebody is waiting on, whose output must never be packaged.
+    Image::CompressQuality textureQuality = Image::CompressQuality::Best;
 };
 
 /// @brief One asset type's cooker.
@@ -94,6 +98,20 @@ public:
 
     /// @brief Whether @p vpath is this cooker's, and whether it produces bytes.
     [[nodiscard]] virtual Claim Claims(std::string_view vpath) const = 0;
+
+    /// @brief The kind every blob this cooker writes carries in its header.
+    ///
+    /// Answered without cooking, so an asset can be listed by kind from its path
+    /// alone.
+    [[nodiscard]] virtual Core::CookedKind Kind() const = 0;
+
+    /// @brief What besides the source changes this cooker's output, folded into
+    ///        the cache key.
+    ///
+    /// Zero for a cooker whose bytes depend on the source alone. Without it, a
+    /// setting that changes the output but touches no file would leave a blob
+    /// cooked under the old setting marked current.
+    [[nodiscard]] virtual std::uint64_t KeyVariant(const CookContext & /*context*/) const { return 0; }
 
     /// @brief Other files the cooked bytes depend on, as virtual paths.
     ///
