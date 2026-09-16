@@ -26,8 +26,8 @@
 /// happened to have on the day it was cooked — and a later fix to the blueprint
 /// would stop reaching it, which is the whole property the format exists for.
 ///
-/// Nothing loads one of these into a live scene yet. This is the writer and a
-/// parser; the loader belongs with the provider that will serve the bytes.
+/// A cooked scene loads by turning back into its document (CookedSceneToDocument)
+/// and going through the one loader levels have.
 
 #include <cstddef>
 #include <cstdint>
@@ -98,8 +98,8 @@ inline constexpr std::uint8_t kScenePayloadVersion = 1;
 
 /// @brief The id of the blueprint a level names by path, or nil when there is none.
 ///
-/// The cook passes its database lookup. A cooked instance names its blueprint by
-/// id, because a shipped game has no path to look a blueprint up by.
+/// The cook passes its database lookup, so a level naming a blueprint that does
+/// not exist fails the cook instead of shipping an instance nothing can expand.
 using BlueprintIdOf = std::function<Core::AssetId(std::string_view source)>;
 
 /// @brief One blueprint instance the level places.
@@ -109,8 +109,10 @@ struct CookedInstance
 
     std::string name;
 
-    /// The blueprint this instances, by id.
-    Core::AssetId source;
+    /// The blueprint's virtual path. A path rather than an id because a path is a
+    /// blueprint's identity everywhere a live instance is asked what it is — a
+    /// spawn names one, a typed view checks one, replication sends one.
+    std::string source;
 
     /// Member paths this instance does not have.
     std::vector<std::string> removed;
@@ -164,5 +166,22 @@ SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *ins
 ///         read — every one of them would otherwise decode into whichever
 ///         component now holds its id.
 [[nodiscard]] std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::byte> bytes);
+
+/// @brief The level document @p cooked was cooked from: the same JSON
+///        SceneSerializer::Save writes for that scene.
+///
+/// This is how a cooked level loads. The blueprint rules — the override merge,
+/// reference qualification, removals — are written once, against the document,
+/// and a cooked level that re-implemented them would be a second opinion about
+/// what a level means. What cooking removes is the text parse; the blocks decode
+/// through the codec.
+///
+/// Override references were qualified with their instance's name when cooked;
+/// they come back in the form an author writes them, a plain name for a member
+/// of the instance and a leading `/` for an entity of the level.
+///
+/// @return the document, or MalformedBlob if a block does not decode against
+///         this build's components.
+[[nodiscard]] std::expected<nlohmann::json, LevelError> CookedSceneToDocument(const CookedScene &cooked);
 
 } // namespace Assisi::Runtime

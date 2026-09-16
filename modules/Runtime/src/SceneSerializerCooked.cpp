@@ -314,16 +314,15 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
     body.WriteVarUInt32(static_cast<std::uint32_t>(placed.size()));
     for (const LevelInstance &entry : placed)
     {
-        const Core::AssetId source = idOf ? idOf(entry.source) : Core::AssetId{};
-        if (source.IsNil())
+        if (!idOf || idOf(entry.source).IsNil())
         {
-            Core::Log::Error("CookedScene: instance '{}' names '{}', which has no asset id to cook it under.",
+            Core::Log::Error("CookedScene: instance '{}' names '{}', which is not an asset in this tree.",
                              entry.name, entry.source);
             return std::unexpected(LevelError::BlueprintUnusable);
         }
 
         body.WriteString(entry.name);
-        Core::WriteAssetId(body, source);
+        body.WriteString(entry.source);
         WriteTransform(body, entry.transform);
         WriteStringList(body, entry.removed);
 
@@ -612,7 +611,7 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
     {
         CookedInstance instance;
         instance.name   = reader.ReadString();
-        instance.source = Core::ReadAssetId(reader);
+        instance.source = reader.ReadString();
         if (reader.Failed())
         {
             return std::unexpected(LevelError::MalformedBlob);
@@ -650,6 +649,232 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
     }
 
     return scene;
+}
+
+// ---------------------------------------------------------------------------
+// Back to the document.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+/// The inverse of the qualification SaveCookedScene applies to an override's
+/// references: a member of the instance comes back unprefixed, and anything else
+/// — an entity of the level — with the leading `/` that says so.
+///
+/// An unnamed instance has no prefix to tell the two apart, so a name the level
+/// declares as one of its own entities is taken to be one. A file with both would
+/// already have been refused, because the two would claim one name.
+std::string UnqualifyOverrideReference(const std::string &name, std::string_view prefix,
+                                       const std::unordered_set<std::string> &levelEntities)
+{
+    if (!prefix.empty() && name.starts_with(prefix))
+    {
+        return name.substr(prefix.size());
+    }
+    if (!prefix.empty() || levelEntities.contains(name))
+    {
+        return "/" + name;
+    }
+    return name;
+}
+
+/// Rewrites every EntityRef string in one component's claim through
+/// UnqualifyOverrideReference. A null reference stays null.
+void UnqualifyClaim(const Core::Reflect::ComponentMeta &meta, nlohmann::json &claim, std::string_view prefix,
+                    const std::unordered_set<std::string> &levelEntities)
+{
+    for (const Core::Reflect::FieldMeta &field : meta.fields)
+    {
+        if (field.type != Core::Reflect::FieldType::EntityRef)
+        {
+            continue;
+        }
+        const auto it = claim.find(field.name);
+        if (it != claim.end() && it->is_string())
+        {
+            *it = UnqualifyOverrideReference(it->get<std::string>(), prefix, levelEntities);
+        }
+    }
+}
+
+/// Keeps only the fields @p applied names, so a claim written as a patch comes
+/// back as the patch the author wrote rather than the whole component.
+void KeepAppliedFields(const Core::Reflect::ComponentMeta &meta, Core::Reflect::FieldMask applied,
+                       nlohmann::json &claim)
+{
+    std::size_t codecIndex = 0;
+    for (const Core::Reflect::FieldMeta &field : meta.fields)
+    {
+        if (!Core::Reflect::IsWireField(field))
+        {
+            claim.erase(field.name);
+            continue;
+        }
+        if ((applied & Core::Reflect::FieldMaskBit(codecIndex)) == 0)
+        {
+            claim.erase(field.name);
+        }
+        ++codecIndex;
+    }
+}
+
+/// Decodes one block onto @p entity of @p scratch and serializes it, removing the
+/// component again so the entity can take another block of the same type.
+std::expected<nlohmann::json, LevelError> BlockToJson(ECS::Scene &scratch, ECS::Entity entity,
+                                                      std::span<const std::byte> block,
+                                                      const Core::Reflect::CodecContext &codec,
+                                                      Core::Reflect::FieldMask *applied)
+{
+    Core::BitReader reader{block};
+    const Core::Reflect::ComponentId id = Core::Reflect::ReadComponentId(reader);
+    const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(id);
+    if (reader.Failed() || meta == nullptr)
+    {
+        return std::unexpected(LevelError::MalformedBlob);
+    }
+
+    void *component = meta->construct(&scratch, entity.index, entity.generation);
+    if (component == nullptr || !Core::Reflect::ReadComponent(*meta, component, reader, applied, &codec))
+    {
+        scratch.RemoveById(entity, meta->id);
+        return std::unexpected(LevelError::MalformedBlob);
+    }
+    nlohmann::json value = meta->serialize(component);
+    scratch.RemoveById(entity, meta->id);
+    return value;
+}
+
+} // namespace
+
+std::expected<nlohmann::json, LevelError> CookedSceneToDocument(const CookedScene &cooked)
+{
+    if (s_rawContextScene != nullptr)
+    {
+        Core::Log::Error("CookedScene: converting while a raw-entity context is active on this thread.");
+        return std::unexpected(LevelError::ContextBusy);
+    }
+
+    const auto &registry = Core::Reflect::ComponentRegistry::Instance();
+    const auto nameCount = static_cast<std::uint32_t>(cooked.names.size());
+
+    // A scratch scene whose entity indices are name-table indices, the same trick
+    // the writer uses: a reference decodes to the entity at its name index, and
+    // serializes back to that name. One more entity than names holds overrides,
+    // so an override's own component can never be mistaken for a named entity's.
+    ECS::Scene scratch;
+    ECS::Entity overrideHolder;
+    for (std::uint32_t i = 0; i <= nameCount; ++i)
+    {
+        overrideHolder = scratch.Create();
+    }
+
+    SerializationContext context;
+    for (std::uint32_t i = 0; i < nameCount; ++i)
+    {
+        context.entityToName.emplace(EntityKey(i, 0), cooked.names[i]);
+    }
+    const ScopedContext scoped(std::move(context));
+
+    Core::Reflect::CodecContext codec;
+    codec.entityFromWire = [nameCount](std::uint64_t wire) -> std::uint64_t
+                           {
+                               const auto index = static_cast<std::uint32_t>(wire & 0xFFFFFFFFull);
+                               if (wire == kNullNameIndex || index >= nameCount)
+                               {
+                                   return PackEntity(ECS::NullEntity);
+                               }
+                               return PackEntity(ECS::Entity{index, 0});
+                           };
+
+    nlohmann::json document;
+    document["version"] = 2;
+    if (!cooked.systems.empty())
+    {
+        document["systems"] = cooked.systems;
+    }
+    document["entities"] = nlohmann::json::array();
+
+    std::unordered_set<std::string> levelEntities;
+    levelEntities.reserve(cooked.entities.size());
+    for (const CookedEntity &entity : cooked.entities)
+    {
+        const std::string &name = cooked.names[entity.nameIndex];
+        levelEntities.insert(name);
+
+        nlohmann::json written{{"name", name}};
+        const ECS::Entity holder{entity.nameIndex, 0};
+        for (const CookedComponent &component : entity.components)
+        {
+            std::expected<nlohmann::json, LevelError> value =
+                BlockToJson(scratch, holder, component.block, codec, nullptr);
+            if (!value)
+            {
+                Core::Log::Error("CookedScene: entity '{}' holds a component block that does not decode.", name);
+                return std::unexpected(value.error());
+            }
+            const Core::Reflect::ComponentMeta *meta = registry.ById(component.id);
+            written["components"][meta->name] = std::move(*value);
+        }
+        document["entities"].push_back(std::move(written));
+    }
+
+    if (!cooked.instances.empty())
+    {
+        document["instances"] = nlohmann::json::array();
+    }
+    for (const CookedInstance &instance : cooked.instances)
+    {
+        nlohmann::json written{{"name", instance.name},
+            {"source", instance.source},
+            {"transform", TransformToJson(instance.transform)}};
+
+        const std::string prefix = instance.name.empty() ? std::string{} : instance.name + "/";
+        nlohmann::json overrides = nlohmann::json::object();
+        for (const CookedOverride &claim : instance.overrides)
+        {
+            const std::string &memberPath    = cooked.names[claim.memberNameIndex];
+            const std::string &componentName = cooked.componentNames[claim.componentNameIndex];
+            if (claim.absent)
+            {
+                overrides[memberPath][componentName] = nullptr;
+                continue;
+            }
+
+            const Core::Reflect::ComponentMeta *meta = registry.Find(componentName);
+            if (meta == nullptr)
+            {
+                Core::Log::Error("CookedScene: instance '{}' overrides '{}', which this build does not have.",
+                                 instance.name, componentName);
+                return std::unexpected(LevelError::MalformedComponent);
+            }
+
+            Core::Reflect::FieldMask applied = 0;
+            std::expected<nlohmann::json, LevelError> value =
+                BlockToJson(scratch, overrideHolder, claim.block, codec, &applied);
+            if (!value)
+            {
+                Core::Log::Error("CookedScene: instance '{}' holds an override of '{}' that does not decode.",
+                                 instance.name, componentName);
+                return std::unexpected(value.error());
+            }
+            KeepAppliedFields(*meta, applied, *value);
+            UnqualifyClaim(*meta, *value, prefix, levelEntities);
+            overrides[memberPath][componentName] = std::move(*value);
+        }
+
+        if (!overrides.empty())
+        {
+            written["overrides"] = std::move(overrides);
+        }
+        if (!instance.removed.empty())
+        {
+            written["removed"] = instance.removed;
+        }
+        document["instances"].push_back(std::move(written));
+    }
+
+    return document;
 }
 
 } // namespace Assisi::Runtime

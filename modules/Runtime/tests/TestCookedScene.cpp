@@ -397,8 +397,9 @@ TEST_CASE("An instance survives with its placement, its overrides and its remova
 
     const Runtime::CookedInstance &instance = cooked->instances.front();
     CHECK(instance.name == "car_3");
-    // By id, not by path: a shipped game has no path to look a blueprint up by.
-    CHECK(instance.source == kCarId);
+    // The path, which is a blueprint's identity everywhere a live instance is
+    // asked what it is.
+    CHECK(instance.source == "car.abp");
     CHECK(instance.transform.position.x == doctest::Approx(1.f));
     CHECK(instance.transform.position.z == doctest::Approx(3.f));
     REQUIRE(instance.removed.size() == 1);
@@ -537,6 +538,55 @@ TEST_CASE("A scene blob of a version this build does not read is refused")
     const auto cooked = DecodeCookedScene(newer);
     REQUIRE_FALSE(cooked.has_value());
     CHECK(cooked.error() == LevelError::UnsupportedVersion);
+}
+
+TEST_CASE("A cooked scene converts back to the document it was cooked from")
+{
+    // The loader is the JSON one, so a cooked level is only as good as the
+    // document it turns back into. The fixture carries every reference direction
+    // the cook qualifies: a level entity naming a member, an override naming a
+    // level entity with a leading slash, an override that reparents a member, a
+    // removed member, and a systems list.
+    const std::filesystem::path root = FreshRoot("to-document");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"systems", nlohmann::json::array({"Spin"})},
+           {"entities", nlohmann::json::array(
+                {{{"name", "ground"}},
+                 {{"name", "marker"}, {"components", {{"Parent", {{"parent", "car_3/body"}}}}}}})},
+           {"instances",
+            nlohmann::json::array(
+                {{{"name", "car_3"},
+                  {"source", "car.abp"},
+                  {"transform", {{"position", {1.f, 2.f, 3.f}}}},
+                  {"overrides",
+                   {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}},
+                    {"wheel_fl", {{"Parent", {{"parent", "/ground"}}}}}}}},
+                 {{"name", "car_4"}, {"source", "car.abp"}, {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
+    const nlohmann::json saved = Runtime::SceneSerializer::Save(scene, header, &table);
+
+    const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
+    REQUIRE(bytes.has_value());
+    const auto cooked = DecodeCookedScene(*bytes);
+    REQUIRE(cooked.has_value());
+
+    const std::expected<nlohmann::json, LevelError> document = Runtime::CookedSceneToDocument(*cooked);
+    REQUIRE(document.has_value());
+    CHECK_MESSAGE(*document == saved, "cooked:\n" << document->dump(2) << "\nsaved:\n" << saved.dump(2));
+
+    // And it loads into the same world the source did.
+    ECS::Scene reloaded;
+    Runtime::InstanceTable reloadedTable;
+    Runtime::LevelHeader reloadedHeader;
+    REQUIRE(Runtime::SceneSerializer::Load(reloaded, *document,
+                                           {.header = &reloadedHeader, .instances = &reloadedTable}));
+    CHECK(Runtime::SceneSerializer::Save(reloaded, reloadedHeader, &reloadedTable) == saved);
 }
 
 TEST_CASE("A member entity is described by its instance, not written as an entity")
