@@ -489,7 +489,7 @@ public:
 
     [[nodiscard]] Core::AssetId DerivedId(std::string_view vpath) const override
     {
-        return HasExtension(vpath, ".spv") ? DerivedAssetId(vpath) : Core::AssetId{};
+        return HasExtension(vpath, ".spv") ? Core::DerivedAssetId(vpath) : Core::AssetId{};
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
@@ -551,39 +551,6 @@ public:
 };
 
 } // namespace
-
-Core::AssetId DerivedAssetId(std::string_view vpath)
-{
-    // Two salts rather than one hash twice: FNV over the same bytes gives the
-    // same 64 bits, so the two halves would be identical.
-    constexpr std::uint64_t kHighSalt = 0x9E3779B97F4A7C15ULL;
-    constexpr std::uint64_t kLowSalt  = 0xC2B2AE3D27D4EB4FULL;
-
-    // Bound to a plain name first: a qualified one on the right of a `*` reads
-    // to the formatter as a pointer declaration, and it rewrites the space to
-    // match.
-    constexpr std::uint64_t prime = Core::kFnvPrime;
-
-    const std::uint64_t base = Core::ContentHash64(std::as_bytes(std::span{vpath}));
-    const std::uint64_t high = base ^ kHighSalt;
-    const std::uint64_t low  = (base * prime) ^ kLowSalt;
-
-    Core::AssetId id{};
-    for (std::size_t i = 0; i < 8; ++i)
-    {
-        id.bytes[i]     = static_cast<std::uint8_t>(high >> (8 * (7 - i)));
-        id.bytes[8 + i] = static_cast<std::uint8_t>(low >> (8 * (7 - i)));
-    }
-
-    // Version nibble 0xD and variant bits 0b111. RFC 4122 defines neither, so
-    // this can never collide with a minted v4 however the hash falls.
-    id.bytes[6] = static_cast<std::uint8_t>((id.bytes[6] & 0x0F) | 0xD0);
-    id.bytes[8] = static_cast<std::uint8_t>((id.bytes[8] & 0x1F) | 0xE0);
-
-    // The reserved built-in range is the first fifteen bytes zero. Byte 6 is
-    // non-zero by the line above, so an id from here is never in it.
-    return id;
-}
 
 bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material)
 {

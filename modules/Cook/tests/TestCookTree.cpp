@@ -216,29 +216,6 @@ TEST_CASE("The manifest names every asset that produced bytes")
     }
 }
 
-TEST_CASE("A derived id is the same on every machine and collides with nothing")
-{
-    using Assisi::Cook::DerivedAssetId;
-
-    // Same path, same id — which is the whole point: a .spv's sidecar is
-    // gitignored, so there is no committed GUID for two machines to agree on.
-    CHECK(DerivedAssetId("shaders/mesh.vert.spv") == DerivedAssetId("shaders/mesh.vert.spv"));
-    CHECK(DerivedAssetId("shaders/mesh.vert.spv") != DerivedAssetId("shaders/mesh.frag.spv"));
-
-    for (const std::string_view path : {"shaders/mesh.vert.spv", "editor/shaders/line.frag.spv", "a", ""})
-    {
-        const Assisi::Core::AssetId id = DerivedAssetId(path);
-        // Never nil and never in the built-in range, so it cannot be mistaken
-        // for "no asset" or for a prim:// primitive.
-        CHECK_FALSE(id.IsNil());
-        CHECK_FALSE(id.IsReserved());
-        // Version nibble 0xD, which RFC 4122 does not define — so a minted v4,
-        // whose nibble is 4, can never equal one of these.
-        CHECK((id.bytes[6] & 0xF0) == 0xD0);
-        CHECK((id.bytes[8] & 0xE0) == 0xE0);
-    }
-}
-
 TEST_CASE("A shader with no sidecar still cooks, under its derived id")
 {
     // The clean-clone case. .gitignore excludes both the .spv and its .aast, so
@@ -257,7 +234,7 @@ TEST_CASE("A shader with no sidecar still cooks, under its derived id")
     const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
     REQUIRE_MESSAGE(report.has_value(), Explain(report));
 
-    const Assisi::Core::AssetId expected = Assisi::Cook::DerivedAssetId("shaders/fullscreen.vert.spv");
+    const Assisi::Core::AssetId expected = Assisi::Core::DerivedAssetId("shaders/fullscreen.vert.spv");
     bool found = false;
     for (const Assisi::Cook::ManifestEntry &entry : report->entries)
     {

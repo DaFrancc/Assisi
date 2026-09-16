@@ -101,6 +101,35 @@ TEST_CASE("AssetId::Parse accepts dashless and uppercase, rejects malformed")
     CHECK_FALSE(AssetId::Parse(std::string(33, 'a')).has_value()); // too long
 }
 
+TEST_CASE("A derived id is the same on every machine and collides with nothing")
+{
+    // RFC 4122 positions and the values a derived id stamps there: version
+    // nibble 0xD, which the standard does not define, and variant 0b111.
+    constexpr std::size_t kVersionByte   = 6;
+    constexpr std::uint8_t kVersionMask  = 0xF0;
+    constexpr std::uint8_t kVersionValue = 0xD0;
+    constexpr std::size_t kVariantByte   = 8;
+    constexpr std::uint8_t kVariantMask  = 0xE0;
+    constexpr std::uint8_t kVariantValue = 0xE0;
+
+    // Same path, same id — which is the whole point: a .spv's sidecar is
+    // gitignored, so there is no committed GUID for two machines to agree on.
+    CHECK(DerivedAssetId("shaders/mesh.vert.spv") == DerivedAssetId("shaders/mesh.vert.spv"));
+    CHECK(DerivedAssetId("shaders/mesh.vert.spv") != DerivedAssetId("shaders/mesh.frag.spv"));
+
+    for (const std::string_view path : {"shaders/mesh.vert.spv", "editor/shaders/line.frag.spv", "a", ""})
+    {
+        const AssetId id = DerivedAssetId(path);
+        // Never nil and never in the built-in range, so it cannot be mistaken
+        // for "no asset" or for a prim:// primitive.
+        CHECK_FALSE(id.IsNil());
+        CHECK_FALSE(id.IsReserved());
+        // A minted v4, whose version nibble is 4, can never equal one of these.
+        CHECK((id.bytes[kVersionByte] & kVersionMask) == kVersionValue);
+        CHECK((id.bytes[kVariantByte] & kVariantMask) == kVariantValue);
+    }
+}
+
 TEST_CASE("MintAssetId yields unique, non-reserved, version-4 ids")
 {
     std::unordered_set<AssetId> seen;

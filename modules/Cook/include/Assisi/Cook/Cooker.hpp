@@ -174,17 +174,6 @@ private:
     std::unordered_map<Core::AssetId, Binding> _bindings;
 };
 
-/// @brief An id derived from @p vpath alone, for an asset whose sidecar does not
-///        ship.
-///
-/// Two hashes of the path under different salts fill the sixteen bytes. The
-/// version and variant nibbles are then set to values RFC 4122 does not use, so
-/// one of these can never equal a minted v4 — and the leading bytes are never
-/// all zero, so it cannot land in the reserved built-in range either. Both are
-/// structural rather than improbable, which is the same guarantee MintAssetId
-/// gives from the other direction.
-[[nodiscard]] Core::AssetId DerivedAssetId(std::string_view vpath);
-
 /// @brief Every cooker, in the order the tree walk tries them.
 ///
 /// Order matters only where two cookers could claim one path, which is why the
