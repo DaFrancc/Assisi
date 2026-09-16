@@ -43,6 +43,9 @@ enum class LevelError : std::uint8_t
     ContextBusy,         ///< A serialization context is already active on this thread (a caller bug).
     InstanceNotLive,     ///< Re-expansion was asked for an instance id no longer in the table.
     NameAlreadyLive,     ///< Placing would put two instances of one name in a world.
+    MalformedBlob,       ///< A cooked scene whose framing is wrong, or that ran out of bytes mid-read.
+    ProtocolMismatch,    ///< A cooked scene written against a component table this build no longer has.
+    CodecRefused,        ///< A component the codec will not carry losslessly to disk, so cooking refuses it.
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.

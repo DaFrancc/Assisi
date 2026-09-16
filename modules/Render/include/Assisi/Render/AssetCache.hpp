@@ -47,6 +47,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
@@ -75,10 +76,11 @@ public:
 
     /// @brief Whether material channels are compressed on load.
     ///
-    /// Compression belongs offline, in the cook — but until cooked textures exist
-    /// this is what produces a block-compressed texture at all, so the upload and
-    /// sampling path has a caller outside its own tests. Turn it off to load at
-    /// source fidelity and four times the memory.
+    /// The cook owns compression: it encodes each channel once, offline, at a
+    /// quality tier no load could afford. This is what compresses a texture read
+    /// straight from the source tree instead — which is every build today, since
+    /// nothing serves cooked bytes yet. Turn it off to load at source fidelity
+    /// and four times the memory.
     ///
     /// Has no effect on a device that cannot sample BC (see
     /// VulkanContext::SupportsTextureCompressionBc); those always load uncompressed.
@@ -350,7 +352,8 @@ private:
     ///
     /// Takes the channel's index rather than its colour space and fallback, so the
     /// two cannot be passed from different rows of the channel table.
-    uint32_t ResolveChannel(const Core::AssetId &channelId, std::size_t channelIndex, bool *outPresent = nullptr);
+    uint32_t ResolveChannel(const Core::AssetId &channelId, Geometry::MaterialChannel channel,
+                            bool *outPresent = nullptr);
 
     /// @brief Ensures @p texture has a slot in the bindless descriptor table,
     /// assigning and writing one on first call. Returns the slot. The table's

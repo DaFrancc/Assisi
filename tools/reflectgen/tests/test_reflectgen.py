@@ -769,6 +769,23 @@ class AssetTypeTest(unittest.TestCase):
         self.assertNotIn("a.cache", cpp)
         self.assertNotIn("c.cache", cpp)
 
+    def test_aasset_emits_construct_and_destroy_hooks(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._MAT), "Assisi/Geometry/MaterialData.hpp")
+        # A caller that knows the type only by the name in a document's envelope
+        # cannot name it to the compiler, so the pair is the only way to own one.
+        self.assertIn("return new (std::nothrow) T{}", cpp)
+        self.assertIn("delete static_cast<T*>(instance_ptr)", cpp)
+        # std::nothrow is a declaration, not a builtin.
+        self.assertIn("#include <new>", cpp)
+
+    def test_component_only_header_emits_no_asset_construct(self):
+        src = "namespace N {\nACOMP()\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        # A component is constructed onto an entity by the scene; the heap pair
+        # belongs to asset types alone and must not follow ComponentRegistry in.
+        self.assertNotIn("std::nothrow", cpp)
+        self.assertNotIn("#include <new>", cpp)
+
     def test_aasset_entity_ref_field_is_rejected(self):
         src = (
             "#include <Assisi/ECS/Entity.hpp>\n"

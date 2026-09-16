@@ -16,6 +16,7 @@ add_executable(Assisi-Core-Tests
   TestAssetPath.cpp
   TestAssetSystem.cpp
   TestBiMap.cpp
+  TestAssetCodec.cpp
   TestBinaryCodec.cpp
   TestComponentMask.cpp
   TestBitStream.cpp
@@ -23,6 +24,7 @@ add_executable(Assisi-Core-Tests
   TestContainerCodec.cpp
   TestContainerJson.cpp
   TestContentHash.cpp
+  TestCookedBlob.cpp
   TestDiagnostics.cpp
   TestEventQueue.cpp
   TestFieldBounds.cpp

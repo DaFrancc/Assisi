@@ -6,12 +6,15 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/MeshData.hpp"
     "include/Assisi/Geometry/Bounds.hpp"
     "include/Assisi/Geometry/MaterialData.hpp"
+    "include/Assisi/Geometry/MaterialChannels.hpp"
     "include/Assisi/Geometry/DefaultMeshes.hpp"
     "include/Assisi/Geometry/MeshImporter.hpp"
+    "include/Assisi/Geometry/MeshValidate.hpp"
     "include/Assisi/Geometry/MaterialFile.hpp"
     "include/Assisi/Geometry/AssetImport.hpp"
   PRIVATE
     "src/MeshImporter.cpp"
+    "src/MeshValidate.cpp"
     "src/MaterialFile.cpp"
     "src/AssetImport.cpp"
 )
@@ -27,6 +30,9 @@ target_link_libraries(Assisi-Geometry
     Assisi::Core
     # Math: glm, used by MeshData's vertex layout.
     Assisi::Math
+    # Image: PixelFormat and ColorSpace, which MaterialChannels names — a
+    # channel's on-GPU format is a property of what the channel is for.
+    Assisi::Image
   PRIVATE
     # fastgltf is an implementation detail of the glTF backend; it must not leak
     # to Geometry's consumers, so it is linked PRIVATE.

@@ -1024,13 +1024,17 @@ endif()
 add_subdirectory(modules/Chiara)
 add_subdirectory(modules/Core)
 add_subdirectory(modules/Math)
-# Geometry sits above Core+Math and below Render: CPU-side mesh data and the
-# mesh-file importer (glTF via fastgltf), with no GPU dependency.
-add_subdirectory(modules/Geometry)
-# Image sits beside Geometry for the same reason: pixels in, pixels out, with no
-# device anywhere. Decode, mip generation and block compression all run on a
-# worker thread or in an offline tool, neither of which may link the renderer.
+# Image sits just above Core: pixels in, pixels out, with no device anywhere.
+# Decode, mip generation and block compression all run on a worker thread or in
+# an offline tool, neither of which may link the renderer.
+#
+# Ahead of Geometry because Geometry names Assisi::Image — a material channel's
+# pixel format is a property of what the channel is for, so it belongs beside
+# MaterialData rather than in the renderer that happens to upload it.
 add_subdirectory(modules/Image)
+# Geometry sits above Core+Math+Image and below Render: CPU-side mesh data and
+# the mesh-file importer (glTF via fastgltf), with no GPU dependency.
+add_subdirectory(modules/Geometry)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
 # Net sits low, beside Core: a transport with no ECS/Render dependency, so
@@ -1047,6 +1051,10 @@ if (ASSISI_ENABLE_NETWORKING)
   add_subdirectory(modules/NetSync)
 endif()
 add_subdirectory(modules/Runtime)
+# Cook sits above Runtime because cooking a level means loading it through the
+# same SceneSerializer the engine does — a second reader for the format would be
+# a second opinion about what a level is.
+add_subdirectory(modules/Cook)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
@@ -1058,6 +1066,9 @@ add_subdirectory(modules/Editor)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/game")
 file(WRITE "${CMAKE_BINARY_DIR}/apps/game/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/game)
+# After apps/game: the cooker links that target's reflection objects, since a
+# level may name a component this project declares rather than the engine.
+add_subdirectory(apps/cook)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).

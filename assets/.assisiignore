@@ -14,7 +14,8 @@
 *.blend1
 *.zip
 
-# Editor-only content, which a standalone game has no use for -- except the
-# loading spinner, which DebugUI draws in any build.
+# Editor-only content. DebugUI draws the spinner and loads the fonts from here
+# without checking for an editor, but DebugUI is inside Assisi::Debug, which only
+# Assisi::Editor links and which the Game target is forbidden to -- so nothing in
+# a standalone build can read any of it.
 /editor/
-!/editor/loading/Spinner.webp

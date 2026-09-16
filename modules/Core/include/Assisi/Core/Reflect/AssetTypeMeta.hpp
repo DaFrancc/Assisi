@@ -47,6 +47,20 @@ struct AssetTypeMeta
     ///         applied — the caller owns that instance and should drop it.
     ///         Absent keys are not failures.
     std::function<bool(const nlohmann::json &j, void *instance_ptr)> deserialize;
+
+    /// @brief Default-construct an instance on the heap, or null if the
+    ///        allocation failed.
+    ///
+    /// For a caller that knows the type only by the name in a document's
+    /// envelope and so cannot name it to the compiler — the cooker above all,
+    /// which reads a `.amat` and a config file through the same code. Every
+    /// instance from here is freed through `destroy` below; the pair is the only
+    /// way to own one, since the type is erased by the time a caller holds it.
+    std::function<void *()> construct;
+
+    /// @brief Free an instance `construct` returned. Null is accepted and does
+    ///        nothing, so a failed construct needs no guard at the call site.
+    std::function<void (void *instance_ptr)> destroy;
 };
 
 } // namespace Assisi::Core::Reflect
