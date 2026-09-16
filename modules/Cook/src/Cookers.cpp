@@ -6,6 +6,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/CookedPayload.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
@@ -131,9 +132,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Reflected);
-        writer.WriteString(typeName);
-        const bool encoded = Core::Reflect::WriteAsset(*meta, instance, writer);
+        const bool encoded = Core::WriteReflectedBlob(writer, *meta, instance);
         meta->destroy(instance);
 
         if (!encoded)
@@ -453,9 +452,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Shader);
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(spirv->size()));
-        writer.WriteBytes(*spirv);
+        Core::WriteShaderBlob(writer, *spirv);
 
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
@@ -493,9 +490,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Verbatim);
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(source->size()));
-        writer.WriteBytes(*source);
+        Core::WriteVerbatimBlob(writer, *source);
 
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};

@@ -25,6 +25,7 @@ add_executable(Assisi-Core-Tests
   TestContainerJson.cpp
   TestContentHash.cpp
   TestCookedBlob.cpp
+  TestCookedPayload.cpp
   TestDiagnostics.cpp
   TestEventQueue.cpp
   TestFieldBounds.cpp
