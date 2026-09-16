@@ -1116,6 +1116,7 @@ add_subdirectory(apps/game)
 # After apps/game: the cooker links that target's reflection objects, since a
 # level may name a component this project declares rather than the engine.
 add_subdirectory(apps/cook)
+add_subdirectory(apps/pack)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).
