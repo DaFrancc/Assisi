@@ -18,6 +18,8 @@ target_sources(Assisi-Core
     "src/ContentHash.cpp"
     "src/CookedBlob.cpp"
     "src/CookedPayload.cpp"
+    "src/PakCodec.cpp"
+    "src/PakFormat.cpp"
     "src/ComponentMask.cpp"
     "src/Diagnostics.cpp"
     "src/FieldMeta.cpp"
@@ -44,6 +46,8 @@ target_sources(Assisi-Core
     "include/Assisi/Core/ContentHash.hpp"
     "include/Assisi/Core/CookedBlob.hpp"
     "include/Assisi/Core/CookedPayload.hpp"
+    "include/Assisi/Core/PakCodec.hpp"
+    "include/Assisi/Core/PakFormat.hpp"
     "include/Assisi/Core/Diagnostics.hpp"
     "include/Assisi/Core/Errors.hpp"
     "include/Assisi/Core/JobSystem.hpp"
@@ -79,6 +83,11 @@ target_link_libraries(Assisi-Core
     # the capture. PUBLIC so every module above Core can use the macros without
     # linking it again. Inert (and header-only no-ops) unless built with -c.
     Assisi::Chiara
+  PRIVATE
+    # The pak codecs. Private: a pak's slices are decompressed inside Core, and
+    # nothing above it sees either library's headers.
+    lz4::lz4
+    zstd::zstd
 )
 
 add_library(Assisi::Core ALIAS Assisi-Core)

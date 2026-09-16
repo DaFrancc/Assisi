@@ -30,6 +30,8 @@ add_executable(Assisi-Core-Tests
   TestEventQueue.cpp
   TestFieldBounds.cpp
   TestJobSystem.cpp
+  TestPakCodec.cpp
+  TestPakFormat.cpp
   TestLogger.cpp
   TestTrivialString.cpp
 )
