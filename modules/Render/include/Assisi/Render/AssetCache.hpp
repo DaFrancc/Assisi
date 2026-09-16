@@ -76,10 +76,11 @@ public:
 
     /// @brief Whether material channels are compressed on load.
     ///
-    /// Compression belongs offline, in the cook — but until cooked textures exist
-    /// this is what produces a block-compressed texture at all, so the upload and
-    /// sampling path has a caller outside its own tests. Turn it off to load at
-    /// source fidelity and four times the memory.
+    /// The cook owns compression: it encodes each channel once, offline, at a
+    /// quality tier no load could afford. This is what compresses a texture read
+    /// straight from the source tree instead — which is every build today, since
+    /// nothing serves cooked bytes yet. Turn it off to load at source fidelity
+    /// and four times the memory.
     ///
     /// Has no effect on a device that cannot sample BC (see
     /// VulkanContext::SupportsTextureCompressionBc); those always load uncompressed.

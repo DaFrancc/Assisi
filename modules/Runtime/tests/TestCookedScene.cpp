@@ -16,11 +16,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -133,6 +137,39 @@ void RebuildFrom(const CookedScene &cooked, ECS::Scene &scene)
         // rather than as a component.
         (void)scene.Add<Name>(e, Name{Core::EntityName{cooked.names[cooked.entities[i].nameIndex].c_str()}});
     }
+}
+
+/// An asset root holding nothing but what a test wrote into it.
+std::filesystem::path FreshRoot(const std::string &name)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_cooked_" + name);
+    std::error_code code;
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root);
+    REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
+    // The definition cache outlives a root change, so a file from a previous
+    // case would otherwise answer for this one's.
+    Runtime::ClearBlueprintCache();
+    return root;
+}
+
+void Write(const std::filesystem::path &root, const std::string &name, const nlohmann::json &document)
+{
+    std::ofstream out(root / name, std::ios::binary);
+    out << document.dump(2);
+    REQUIRE(out.good());
+}
+
+/// car.abp: a body carrying a Camera, and a wheel parented to it. Camera stands
+/// in for "a component with more than one field", which is what an override that
+/// stays a patch is actually about.
+nlohmann::json CarFile()
+{
+    return {{"version", 2},
+            {"entities", nlohmann::json::array(
+                 {{{"name", "body"},
+                   {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
+                  {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 } // namespace
@@ -316,6 +353,164 @@ TEST_CASE("A truncated blob is refused rather than half-read")
         const auto cooked = DecodeCookedScene(cut);
         CHECK_FALSE(cooked.has_value());
     }
+}
+
+TEST_CASE("An instance survives with its placement, its overrides and its removals")
+{
+    const std::filesystem::path root = FreshRoot("instance");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances",
+            nlohmann::json::array(
+                {{{"name", "car_3"},
+                  {"source", "car.abp"},
+                  {"transform", {{"position", {1.f, 2.f, 3.f}}}},
+                  {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}},
+                  {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
+                                                   {.header = &header, .instances = &table}));
+
+    const auto bytes = SaveCookedScene(scene, header, &table);
+    REQUIRE(bytes.has_value());
+
+    const auto cooked = DecodeCookedScene(*bytes);
+    REQUIRE(cooked.has_value());
+    REQUIRE(cooked->instances.size() == 1);
+
+    const Runtime::CookedInstance &instance = cooked->instances.front();
+    CHECK(instance.name == "car_3");
+    CHECK(instance.source == "car.abp");
+    CHECK(instance.transform.position.x == doctest::Approx(1.f));
+    CHECK(instance.transform.position.z == doctest::Approx(3.f));
+    REQUIRE(instance.removed.size() == 1);
+    CHECK(instance.removed.front() == "wheel_fl");
+    REQUIRE(instance.overrides.size() == 1);
+}
+
+TEST_CASE("An override is a masked block naming only the field the author set")
+{
+    // The property the whole format rests on. A block carrying full state would
+    // freeze isActive at whatever the blueprint held on the day it was cooked,
+    // and a later edit to car.abp would stop reaching this instance — which is
+    // "fix it once, fixed everywhere" quietly ceasing to be true.
+    const std::filesystem::path root = FreshRoot("mask");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                 {"source", "car.abp"},
+                                                 {"overrides",
+                                                  {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
+                                                   {.header = &header, .instances = &table}));
+
+    const auto bytes = SaveCookedScene(scene, header, &table);
+    REQUIRE(bytes.has_value());
+    const auto cooked = DecodeCookedScene(*bytes);
+    REQUIRE(cooked.has_value());
+    REQUIRE(cooked->instances.size() == 1);
+    REQUIRE(cooked->instances.front().overrides.size() == 1);
+
+    const Runtime::CookedOverride &claim = cooked->instances.front().overrides.front();
+    CHECK_FALSE(claim.absent);
+    CHECK(cooked->names.at(claim.memberNameIndex) == "body");
+    CHECK(cooked->componentNames.at(claim.componentNameIndex) == "Camera");
+
+    // Decode the block and read the mask back: exactly one bit, and it is the
+    // one standing for the field the level named.
+    const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().Find("Camera");
+    REQUIRE(meta != nullptr);
+
+    Core::BitReader reader{claim.block};
+    (void)Core::Reflect::ReadComponentId(reader);
+
+    Runtime::Camera camera;
+    Core::Reflect::FieldMask applied = 0;
+    REQUIRE(Core::Reflect::ReadComponent(*meta, &camera, reader, &applied, nullptr));
+    CHECK(std::popcount(applied) == 1);
+    CHECK(camera.fovDegrees == doctest::Approx(90.f));
+
+    // And the mask bit is fovDegrees', not whichever field happens to be first.
+    std::size_t codecIndex = 0;
+    std::size_t fovIndex   = 0;
+    for (const Core::Reflect::FieldMeta &field : meta->fields)
+    {
+        if (!Core::Reflect::IsWireField(field))
+        {
+            continue;
+        }
+        if (field.name == "fovDegrees")
+        {
+            fovIndex = codecIndex;
+        }
+        ++codecIndex;
+    }
+    CHECK(applied == Core::Reflect::FieldMaskBit(fovIndex));
+}
+
+TEST_CASE("An override naming a field the component does not have is refused")
+{
+    // An override that silently did nothing reads to its author as a fix that
+    // did not take, which is worse than a cook that stops and says so.
+    const std::filesystem::path root = FreshRoot("badfield");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                 {"source", "car.abp"},
+                                                 {"overrides",
+                                                  {{"body", {{"Camera", {{"noSuchField", 1.f}}}}}}}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
+                                                   {.header = &header, .instances = &table}));
+
+    const auto bytes = SaveCookedScene(scene, header, &table);
+    REQUIRE_FALSE(bytes.has_value());
+    CHECK(bytes.error() == LevelError::MalformedComponent);
+}
+
+TEST_CASE("A member entity is described by its instance, not written as an entity")
+{
+    // The same rule Save follows. Writing members as entities too would bake a
+    // copy of the blueprint into the level and undo the whole point of one.
+    const std::filesystem::path root = FreshRoot("members");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "ground"}}})},
+           {"instances",
+            nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
+                                                   {.header = &header, .instances = &table}));
+
+    const auto bytes = SaveCookedScene(scene, header, &table);
+    REQUIRE(bytes.has_value());
+    const auto cooked = DecodeCookedScene(*bytes);
+    REQUIRE(cooked.has_value());
+
+    // One entity: the level's own. The car's body and wheel are the instance's.
+    REQUIRE(cooked->entities.size() == 1);
+    CHECK(cooked->names.at(cooked->entities.front().nameIndex) == "ground");
+    CHECK(cooked->instances.size() == 1);
 }
 
 TEST_CASE("An empty scene cooks and comes back empty")

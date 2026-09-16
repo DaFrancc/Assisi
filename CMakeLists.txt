@@ -1051,6 +1051,10 @@ if (ASSISI_ENABLE_NETWORKING)
   add_subdirectory(modules/NetSync)
 endif()
 add_subdirectory(modules/Runtime)
+# Cook sits above Runtime because cooking a level means loading it through the
+# same SceneSerializer the engine does — a second reader for the format would be
+# a second opinion about what a level is.
+add_subdirectory(modules/Cook)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
@@ -1062,6 +1066,9 @@ add_subdirectory(modules/Editor)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/game")
 file(WRITE "${CMAKE_BINARY_DIR}/apps/game/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/game)
+# After apps/game: the cooker links that target's reflection objects, since a
+# level may name a component this project declares rather than the engine.
+add_subdirectory(apps/cook)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).
