@@ -229,22 +229,4 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
     }
 }
 
-std::expected<nlohmann::json, LevelError> SceneSerializer::ReadTextDocument(std::string_view vpath)
-{
-    const auto text = Core::AssetSystem::ReadText(vpath);
-    if (!text)
-    {
-        Core::Log::Error("SceneSerializer: cannot read asset '{}'", vpath);
-        return std::unexpected(LevelError::FileUnreadable);
-    }
-
-    nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
-    if (doc.is_discarded())
-    {
-        Core::Log::Error("SceneSerializer: '{}' is not readable JSON", vpath);
-        return std::unexpected(LevelError::MalformedJson);
-    }
-    return doc;
-}
-
 } // namespace Assisi::Runtime

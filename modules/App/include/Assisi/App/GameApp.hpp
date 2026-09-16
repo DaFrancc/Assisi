@@ -26,9 +26,9 @@
 /// any override, since each one does the engine half of its own job.
 
 #include <Assisi/App/Application.hpp>
-#include <Assisi/App/SourceAssets.hpp>
+#include <Assisi/App/CookedAssets.hpp>
 #include <Assisi/App/World.hpp>
-#include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Core/PakProvider.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -36,13 +36,22 @@
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 
 namespace Assisi::App
 {
 
+/// @brief The name of the content package a game reads, beside its executable.
+inline constexpr const char *kDefaultPakName = "assets.pak";
+
 /// @brief What a game is launched with, as the command line resolved it.
 struct GameLaunch
 {
+    /// The content package to read. Empty reads kDefaultPakName beside the
+    /// executable, which is the only one a shipped build can name.
+    std::filesystem::path pak;
+
     /// Stop after this many fixed ticks; 0 runs until the player quits.
     ///
     /// A test hook before it is anything else: a windowed run ends when someone
@@ -58,6 +67,11 @@ public:
     ~GameApp() override;
 
 protected:
+    /// Opens the content package and installs the readers over it: the asset
+    /// source, the level document reader and the config reader. A package that
+    /// is missing or unreadable refuses the launch and names its path.
+    [[nodiscard]] bool MountContent() override;
+
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
@@ -101,12 +115,12 @@ private:
     /// pipeline binds. Declared before the renderer, which holds its layout.
     Render::AssetCache _assetCache;
 
-    /// The GUID→path index every asset reference resolves through.
-    Core::AssetDatabase _assetDatabase;
+    /// The content package, open from MountContent until the process ends.
+    std::optional<Core::PakProvider> _pak;
 
-    /// What the renderer loads through, over the database above. Installed from
-    /// the constructor: the post-process shaders load inside Initialize.
-    SourceAssetSource _assetSource{_assetDatabase};
+    /// What the renderer loads through, over the package above. Installed by
+    /// MountContent, before the post-process shaders load.
+    std::optional<CookedAssetSource> _assetSource;
 
     Runtime::SceneRenderer _sceneRenderer;
 

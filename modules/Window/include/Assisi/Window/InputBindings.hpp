@@ -15,6 +15,7 @@
 /// flat list and nothing has to say which kind of device it meant.
 /// ActionMap::BindingFromName owns that namespace.
 
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/ShortString.hpp>
@@ -38,12 +39,13 @@ struct InputBindings
     AFIELD() std::map<Assisi::Core::ShortString, std::vector<Assisi::Core::ShortString>> actions;
 };
 
-/// @brief The bindings a build ships, read from the asset root.
+/// @brief The bindings a build ships, read through the installed config reader.
 ///
 /// These are defaults. What the player changed lives in the writable user root
 /// and is applied over the top — see ActionMap::Apply, which is where the two
-/// layers meet.
-[[nodiscard]] std::expected<InputBindings, Core::Reflect::AssetDocumentError>
+/// layers meet. A build with no bindings file has no bindings, which is an empty
+/// result rather than an error.
+[[nodiscard]] std::expected<InputBindings, Core::ConfigError>
 LoadInputBindings(std::string_view assetPath = "config/input.json");
 
 } // namespace Assisi::Window

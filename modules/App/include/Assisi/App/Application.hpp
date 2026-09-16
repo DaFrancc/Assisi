@@ -139,6 +139,14 @@ protected:
     /// cannot exit 0 on a start it never made.
     void RefuseStart();
 
+    /// @brief Make the shipped content readable, before the first config is read.
+    ///
+    /// The default opens the source asset root, which is what an app reading the
+    /// files an author edits wants; it installs no readers, which that app's main()
+    /// does. An app reading packaged content overrides this to open the package
+    /// and install the readers over it. False, logged, refuses the launch.
+    [[nodiscard]] virtual bool MountContent();
+
     virtual void OnStart()               = 0;
     virtual void OnFixedUpdate(float dt) = 0;
     virtual void OnUpdate(float dt)      = 0;

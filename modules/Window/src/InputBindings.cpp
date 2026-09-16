@@ -2,7 +2,7 @@
 
 #include <Assisi/Window/InputBindings.hpp>
 
-#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <expected>
@@ -11,25 +11,19 @@
 namespace Assisi::Window
 {
 
-std::expected<InputBindings, Core::Reflect::AssetDocumentError> LoadInputBindings(std::string_view assetPath)
+std::expected<InputBindings, Core::ConfigError> LoadInputBindings(std::string_view assetPath)
 {
-    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(assetPath);
-    if (!text)
-    {
-        // Not an error worth a log line here: a build with no bindings file has
-        // no bindings, which the caller can see from the empty result and
-        // report in the terms its own layer uses.
-        return InputBindings{};
-    }
-
     InputBindings bindings;
-    const std::expected<void, Core::Reflect::AssetDocumentError> applied =
-        Core::Reflect::ApplyAssetDocument(*text, bindings);
-    if (!applied)
+    const std::expected<void, Core::ConfigError> read = Core::ReadConfig(assetPath, bindings);
+    if (!read)
     {
+        if (read.error() == Core::ConfigError::Missing)
+        {
+            return InputBindings{};
+        }
         Core::Log::Warn("Window: cannot read input bindings from '{}' ({}) — no actions are bound.", assetPath,
-                        Core::Reflect::ToString(applied.error()));
-        return std::unexpected(applied.error());
+                        Core::ToString(read.error()));
+        return std::unexpected(read.error());
     }
 
     return bindings;

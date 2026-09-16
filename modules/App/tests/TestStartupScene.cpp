@@ -17,9 +17,11 @@
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 using Assisi::App::ResolveStartupScene;
 using Assisi::App::StartupSceneError;
@@ -55,6 +57,15 @@ void WriteSidecar(const std::filesystem::path &root, std::string_view name, std:
     out << R"({ "guid": ")" << guid << R"(", "type": "AssetSidecar", "version": 1 })";
 }
 
+/// The editor's answers: ids through the database, paths through the asset root.
+std::expected<std::string, StartupSceneError> Resolve(std::string_view named,
+                                                      const Assisi::Core::AssetDatabase &database)
+{
+    return ResolveStartupScene(
+        named, [&database](const Assisi::Core::AssetId &id) { return database.PathFor(id); },
+        [](std::string_view vpath) { return Assisi::Core::AssetSystem::Exists(vpath); });
+}
+
 } // namespace
 
 TEST_CASE("A config that names no startup scene is refused by name")
@@ -62,7 +73,7 @@ TEST_CASE("A config that names no startup scene is refused by name")
     const std::filesystem::path root = MountTestRoot();
     const Assisi::Core::AssetDatabase database;
 
-    const auto resolved = ResolveStartupScene("", database);
+    const auto resolved = Resolve("", database);
     REQUIRE_FALSE(resolved.has_value());
     CHECK(resolved.error() == StartupSceneError::Unnamed);
 
@@ -74,7 +85,7 @@ TEST_CASE("A virtual path with no file behind it is Missing, not Unnamed")
     const std::filesystem::path root = MountTestRoot();
     const Assisi::Core::AssetDatabase database;
 
-    const auto resolved = ResolveStartupScene("levels/Absent.alvl", database);
+    const auto resolved = Resolve("levels/Absent.alvl", database);
     REQUIRE_FALSE(resolved.has_value());
     CHECK(resolved.error() == StartupSceneError::Missing);
 
@@ -87,7 +98,7 @@ TEST_CASE("A virtual path that exists comes back unchanged")
     WriteLevel(root, "Present.alvl");
     const Assisi::Core::AssetDatabase database;
 
-    const auto resolved = ResolveStartupScene("levels/Present.alvl", database);
+    const auto resolved = Resolve("levels/Present.alvl", database);
     REQUIRE(resolved.has_value());
     CHECK(*resolved == "levels/Present.alvl");
 
@@ -102,7 +113,7 @@ TEST_CASE("A GUID the index does not hold is refused as a GUID")
     const std::filesystem::path root = MountTestRoot();
     const Assisi::Core::AssetDatabase database;
 
-    const auto resolved = ResolveStartupScene("3ad52602-8a8f-4b69-8d56-41cd795cb819", database);
+    const auto resolved = Resolve("3ad52602-8a8f-4b69-8d56-41cd795cb819", database);
     REQUIRE_FALSE(resolved.has_value());
     CHECK(resolved.error() == StartupSceneError::UnknownGuid);
 
@@ -118,7 +129,7 @@ TEST_CASE("A GUID the index holds resolves to the file carrying it")
     Assisi::Core::AssetDatabase database;
     REQUIRE(database.Rebuild(Assisi::Core::RebuildMode::ReadOnly).has_value());
 
-    const auto resolved = ResolveStartupScene("11111111-2222-4333-8444-555555555555", database);
+    const auto resolved = Resolve("11111111-2222-4333-8444-555555555555", database);
     REQUIRE(resolved.has_value());
     CHECK(*resolved == "levels/Identified.alvl");
 

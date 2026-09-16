@@ -11,10 +11,12 @@
 /// field is a config nobody filled in, an unknown GUID is a scene that moved out
 /// from under its id, and an unresolvable path is a scene that was never staged.
 
-#include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Core/AssetId.hpp>
 
 #include <cstdint>
 #include <expected>
+#include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -32,15 +34,21 @@ enum class StartupSceneError : std::uint8_t
 /// @brief One line saying what is wrong, for the log that refuses the launch.
 [[nodiscard]] std::string_view Describe(StartupSceneError error);
 
+/// @brief The virtual path of the asset with an id, where the install knows it.
+using ScenePathForId = std::function<std::optional<std::string>(const Core::AssetId &id)>;
+
+/// @brief Whether the install holds something at a virtual path.
+using SceneExists = std::function<bool(std::string_view vpath)>;
+
 /// @brief Resolve @p named — a virtual path or an asset GUID — to the virtual
 /// path of the level to boot.
 ///
 /// A GUID is tried first and never falls through to the path branch: text that
-/// parses as an id and is not in @p database is reported as a missing id, not as
-/// a missing file, because the two are repaired in different places. Anything
-/// that is not an id is a virtual path, and comes back unchanged when the asset
-/// system can read it.
-[[nodiscard]] std::expected<std::string, StartupSceneError> ResolveStartupScene(
-    std::string_view named, const Core::AssetDatabase &database);
+/// parses as an id and @p pathFor does not know is reported as a missing id, not
+/// as a missing file, because the two are repaired in different places. Anything
+/// that is not an id is a virtual path, and comes back unchanged when @p exists
+/// finds it.
+[[nodiscard]] std::expected<std::string, StartupSceneError>
+ResolveStartupScene(std::string_view named, const ScenePathForId &pathFor, const SceneExists &exists);
 
 } // namespace Assisi::App

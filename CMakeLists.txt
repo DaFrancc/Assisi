@@ -64,6 +64,17 @@ option(ASSISI_ENABLE_NETWORKING "Build the networking modules (fetches GameNetwo
 # to fetch and build it (a future Geometry Assimp backend would then link it).
 option(ASSISI_ENABLE_ASSIMP "Build the Assimp multi-format mesh-import backend" OFF)
 
+# Whether the game accepts --pak and ASSISI_PAK to read a content package other
+# than the one beside its executable. A development convenience, and off in
+# Release: a shipped game that read any package a player named would run content
+# that was never shipped. A signed package is what would make it safe to allow.
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(_assisi_pak_overrides_default OFF)
+else()
+  set(_assisi_pak_overrides_default ON)
+endif()
+option(ASSISI_PAK_OVERRIDES "Let the game read a content package named on its command line" ${_assisi_pak_overrides_default})
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------

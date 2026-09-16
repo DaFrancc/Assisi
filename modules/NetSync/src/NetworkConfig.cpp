@@ -2,7 +2,7 @@
 
 #include <Assisi/NetSync/NetworkConfig.hpp>
 
-#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <expected>
@@ -142,19 +142,16 @@ void ApplyNetworkConfig(const NetworkConfig &config)
 
 void LoadNetworkConfig(std::string_view assetPath)
 {
-    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(assetPath);
-    if (!text)
-    {
-        return; // no config is not a problem; the defaults are a complete answer
-    }
-
     NetworkConfig config;
-    const std::expected<void, Core::Reflect::AssetDocumentError> applied =
-        Core::Reflect::ApplyAssetDocument(*text, config);
-    if (!applied)
+    const std::expected<void, Core::ConfigError> read = Core::ReadConfig(assetPath, config);
+    if (!read)
     {
-        Core::Log::Warn("NetSync: cannot read '{}' ({}) — keeping the defaults.", assetPath,
-                        Core::Reflect::ToString(applied.error()));
+        // No config is not a problem; the defaults are a complete answer.
+        if (read.error() != Core::ConfigError::Missing)
+        {
+            Core::Log::Warn("NetSync: cannot read '{}' ({}) — keeping the defaults.", assetPath,
+                            Core::ToString(read.error()));
+        }
         return;
     }
 

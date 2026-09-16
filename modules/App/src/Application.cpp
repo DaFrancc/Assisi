@@ -153,11 +153,20 @@ bool Application::Initialize()
     return true;
 }
 
-bool Application::InitializeCore()
+bool Application::MountContent()
 {
     if (auto result = Core::AssetSystem::Initialize(); !result)
     {
         Core::Log::Fatal("Failed to initialize asset system.");
+        return false;
+    }
+    return true;
+}
+
+bool Application::InitializeCore()
+{
+    if (!MountContent())
+    {
         return false;
     }
 

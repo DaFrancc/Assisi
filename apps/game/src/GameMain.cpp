@@ -15,7 +15,6 @@
 
 #include <Assisi/App/GameApp.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -33,7 +32,16 @@ constexpr const char *kUsage =
     "                          player quits, the default)\n"
     "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
     "                          error, fatal\n"
+#ifdef ASSISI_PAK_OVERRIDES
+    "  --pak <path>            read content from this package instead of the\n"
+    "                          one beside the executable (also ASSISI_PAK)\n"
+#endif
     "  -h, --help              show this help and exit\n";
+
+#ifdef ASSISI_PAK_OVERRIDES
+/// The environment variable naming a package to read, below --pak.
+constexpr const char *kPakEnvironment = "ASSISI_PAK";
+#endif
 
 /// What argv resolved to, plus whether main should stop before starting.
 struct GameArgs
@@ -48,6 +56,15 @@ struct GameArgs
 /// clean early exit rather than an error.
 bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
 {
+#ifdef ASSISI_PAK_OVERRIDES
+    // Development only: a shipped build reads the package beside it and nothing
+    // else, so a player cannot point the game at content that was never shipped.
+    if (const char *pak = std::getenv(kPakEnvironment); pak != nullptr && *pak != '\0')
+    {
+        out.launch.pak = pak;
+    }
+#endif
+
     for (int32_t i = 1; i < argc; ++i)
     {
         const std::string_view arg = argv[i];
@@ -79,6 +96,17 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
             }
             out.launch.tickLimit = static_cast<std::uint64_t>(ticks);
         }
+#ifdef ASSISI_PAK_OVERRIDES
+        else if (arg == "--pak")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--pak requires a path\n\n%s", kUsage);
+                return false;
+            }
+            out.launch.pak = argv[++i];
+        }
+#endif
         else if (arg == "--verbosity")
         {
             if (i + 1 >= argc)
@@ -118,10 +146,8 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
 
 int main(int argc, char **argv)
 {
-    // Levels and blueprints are read from the source tree until the game reads
-    // its pak.
-    (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
-
+    // No readers are installed here: everything a game reads comes from its
+    // content package, and GameApp installs the readers over it once it is open.
     GameArgs args;
     if (!ParseArgs(static_cast<int32_t>(argc), argv, args))
     {

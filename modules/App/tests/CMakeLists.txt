@@ -22,6 +22,7 @@ add_executable(Assisi-App-Tests
   TestOscillate.cpp
   TestPerfCapture.cpp
   TestChildProcess.cpp
+  TestConfigReader.cpp
   TestCookedAssets.cpp
   TestInstanceViews.cpp
   TestAppConfig.cpp
