@@ -25,7 +25,6 @@
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/ContentSet.hpp>
-#include <Assisi/App/SourceAssets.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -52,6 +51,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
+#include <Assisi/Editor/SourceAssets.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
@@ -1538,7 +1538,7 @@ private:
     // database above. Declared after it, which it holds by reference, and
     // installed for the renderer from the constructor, since the post-process
     // shaders load inside Initialize.
-    Assisi::App::SourceAssetSource _assetSource{_assetDatabase};
+    Assisi::Editor::SourceAssetSource _assetSource{_assetDatabase};
 
     // Mesh assets (by virtual path) the last reconcile left stale: their glTF
     // source changed in a way the conservative classifier couldn't auto-resolve.

@@ -13,7 +13,7 @@ target_include_directories(Assisi-Image-Tests SYSTEM PRIVATE
 
 target_link_libraries(Assisi-Image-Tests
   PRIVATE
-    Assisi::Image
+    Assisi::ImageImport
     Assisi::TestSupport
 )
 

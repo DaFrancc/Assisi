@@ -289,6 +289,12 @@ assisi_assert_link_excludes(Assisi-Game
     imguizmo::imguizmo
     Assisi-Cook
     Assisi::Cook
+    Assisi-GeometryImport
+    Assisi::GeometryImport
+    Assisi-ImageImport
+    Assisi::ImageImport
+    fastgltf::fastgltf
+    bc7enc::bc7enc
 )
 
 # --- What the Game binary is not allowed to contain.
@@ -365,7 +371,8 @@ if (ASSISI_BUILD_TESTS)
     --forbid "Assisi::Core::LooseFileProvider"
     --forbid "Assisi::Core::ReadTextConfig"
     --forbid "Assisi::Runtime::SceneSerializer::ReadTextDocument"
-    --forbid "Assisi::App::SourceAssetSource"
+    --forbid "Assisi::Editor::SourceAssetSource"
+    --forbid "fastgltf::"
     --forbid "Assisi::Geometry::ImportMesh"
     --forbid "Assisi::Image::DecodeImage"
     --forbid "Assisi::Image::Compress("

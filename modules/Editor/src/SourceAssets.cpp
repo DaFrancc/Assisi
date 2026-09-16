@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/App/SourceAssets.hpp>
+#include <Assisi/Editor/SourceAssets.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -12,7 +12,7 @@
 #include <optional>
 #include <string>
 
-namespace Assisi::App
+namespace Assisi::Editor
 {
 
 SourceAssetSource::SourceAssetSource(const Core::AssetDatabase &database) noexcept : _database(&database)
@@ -127,4 +127,4 @@ std::string SourceAssetSource::Describe(const Core::AssetId &id) const
     return _database->PathFor(id).value_or(id.ToString());
 }
 
-} // namespace Assisi::App
+} // namespace Assisi::Editor

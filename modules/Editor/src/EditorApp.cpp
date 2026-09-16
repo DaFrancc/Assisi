@@ -20,6 +20,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Editor/EditorChiaraPanel.hpp>
+#include <Assisi/Editor/TextureFile.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
@@ -890,7 +891,7 @@ void EditorApp::SetupScene()
     _thumbnailCache.Initialize(device, &Jobs());
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Linear for the same reason as the thumbnails: ImGui, not the mesh shader.
-            _helloTexture.LoadFromAssets(device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
+            Assisi::Editor::LoadTextureFile(_helloTexture, device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
         !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/hello.png for the ImGui image test.");

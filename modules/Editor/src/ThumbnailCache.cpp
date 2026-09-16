@@ -2,6 +2,7 @@
 
 #include <Assisi/Editor/ThumbnailCache.hpp>
 
+#include <Assisi/Editor/TextureFile.hpp>
 #include <Assisi/Image/Decode.hpp>
 
 #include <expected>
@@ -42,7 +43,7 @@ const Render::Texture *ThumbnailCache::Resolve(const Core::AssetPath &path)
     if (_jobs == nullptr)
     {
         Render::Texture &texture = _thumbnails[path];
-        if (!texture.LoadFromAssets(_device, path.View(), Image::ColorSpace::Linear))
+        if (!LoadTextureFile(texture, _device, path.View(), Image::ColorSpace::Linear))
         {
             return nullptr; // keep the invalid entry so a broken file isn't retried
         }

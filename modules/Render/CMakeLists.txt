@@ -77,7 +77,6 @@ target_sources(Assisi-Render
     "src/SkyProbe.cpp"
     "src/SsaoPass.cpp"
     "src/Texture.cpp"
-    "src/TextureFromAssets.cpp"
     "src/VulkanContext.cpp"
 )
 

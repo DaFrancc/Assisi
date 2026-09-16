@@ -24,9 +24,9 @@ target_link_libraries(Assisi-Cook
     Assisi::Core
     # Geometry: MaterialChannels (a texture's format follows from its channel),
     # the mesh importer, and the mesh validator.
-    Assisi::Geometry
+    Assisi::GeometryImport
     # Image: decode, mip generation and block compression.
-    Assisi::Image
+    Assisi::ImageImport
     # Runtime: the level loader, because cooking a level means loading it the
     # way the engine does rather than writing a second reader for the format.
     Assisi::Runtime

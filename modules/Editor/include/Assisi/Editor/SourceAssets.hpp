@@ -17,7 +17,7 @@ namespace Assisi::Core
 class AssetDatabase;
 }
 
-namespace Assisi::App
+namespace Assisi::Editor
 {
 
 class SourceAssetSource final : public Render::AssetSource
@@ -48,4 +48,4 @@ private:
     const Core::AssetDatabase *_database;
 };
 
-} // namespace Assisi::App
+} // namespace Assisi::Editor
