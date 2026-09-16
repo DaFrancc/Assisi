@@ -806,6 +806,9 @@ void EditorApp::SetupScene()
     // Before the scene renderer: the asset cache owns the bindless material-texture
     // table the mesh pipeline binds, and its layout/table are threaded through below.
     _assetCache.Initialize(device, &Jobs());
+    // Creating a block-compressed texture on a device that did not enable the
+    // feature is invalid, so the cache is told before it loads anything.
+    _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
 
     // Unit collider silhouettes, in a persistent arena that is never reset, so they
     // survive level loads. The editor scales these per collider to outline the
@@ -861,10 +864,10 @@ void EditorApp::SetupScene()
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
-    _thumbnailCache.Initialize(device, &Jobs(), Assisi::Render::ColorSpace::Linear);
+    _thumbnailCache.Initialize(device, &Jobs(), Assisi::Image::ColorSpace::Linear);
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Linear for the same reason as the thumbnails: ImGui, not the mesh shader.
-            _helloTexture.LoadFromAssets(device, "textures/hello.png", Assisi::Render::ColorSpace::Linear);
+            _helloTexture.LoadFromAssets(device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
         !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/hello.png for the ImGui image test.");

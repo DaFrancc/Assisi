@@ -89,6 +89,9 @@ target_link_libraries(Assisi-Render
     Assisi::Math
     # Geometry owns MeshData (exposed in MeshBuffer's API) and the mesh importer.
     Assisi::Geometry
+    # Image owns DecodedImage and the layout arithmetic, both of which Texture's
+    # API exposes; the codecs behind them stay private to that module.
+    Assisi::Image
     Assisi::Window
     Assisi::Deps
     # nvrhi_vk (Vulkan backend) references symbols defined in nvrhi (common),
@@ -100,9 +103,6 @@ target_link_libraries(Assisi-Render
     # GpuTelemetry dlopen()s NVML at runtime; dl is needed on Linux (no-op alias
     # on platforms that fold it into libc).
     ${CMAKE_DL_LIBS}
-    # WebP decode (Texture::DecodeAnimatedWebp). webpdemux pulls in the base
-    # `webp` decoder it depends on, so listing it alone is enough.
-    webpdemux
 )
 
 # PUBLIC for the same reason Chiara's gate is: GpuMarker.hpp is header-only, so

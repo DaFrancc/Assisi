@@ -70,7 +70,24 @@ public:
     /// thread — see ResolveMesh/ResolveMaterial). @p textureColorSpace is the
     /// default colour space for ResolveTexture calls that don't specify one — Srgb
     /// for scene albedo, Linear for textures shown straight through ImGui.
-    void Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace = ColorSpace::Srgb);
+    void Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs,
+                    Image::ColorSpace textureColorSpace = Image::ColorSpace::Srgb);
+
+    /// @brief Whether material channels are compressed on load.
+    ///
+    /// Compression belongs offline, in the cook — but until cooked textures exist
+    /// this is what produces a block-compressed texture at all, so the upload and
+    /// sampling path has a caller outside its own tests. Turn it off to load at
+    /// source fidelity and four times the memory.
+    ///
+    /// Has no effect on a device that cannot sample BC (see
+    /// VulkanContext::SupportsTextureCompressionBc); those always load uncompressed.
+    void SetCompressTextures(bool compress) { _compressTextures = compress; }
+    [[nodiscard]] bool GetCompressTextures() const { return _compressTextures; }
+
+    /// @brief Tell the cache the device cannot sample block-compressed textures,
+    ///        so every channel stays uncompressed whatever the knob says.
+    void SetTextureCompressionSupported(bool supported) { _textureCompressionSupported = supported; }
 
     /// @brief Id↔path translators supplied by the editor (from the AssetDatabase).
     using IdToPathFn = std::function<Core::AssetPath (const Core::AssetId &)>;
@@ -100,17 +117,22 @@ public:
     /// in the cache's default colour space (see Initialize).
     const Texture *ResolveTexture(const Core::AssetPath &path)
     {
-        return ResolveTexture(path, _textureColorSpace);
+        // Uncompressed: this overload serves callers that browse files rather than
+        // bind a material channel, so there is no channel to take a format from.
+        return ResolveTexture(path, _textureColorSpace, Image::PixelFormat::Rgba8);
     }
 
-    /// @brief Resolves a texture path in an explicit colour space. The cache is
-    /// keyed on (path, colour space), so the same file can be resident as both an
-    /// sRGB colour map and a linear data map without one clobbering the other.
+    /// @brief Resolves a texture path in an explicit colour space and format. The
+    /// cache is keyed on all three, so the same file can be resident as an sRGB
+    /// colour map and as a linear data map, and as BC5 for one channel and BC7 for
+    /// another, without any of them clobbering the others.
     /// An empty path returns null; a non-empty path that fails to load also
     /// returns null (after a one-time warning). `prim://` texture primitives
     /// (white / white-linear / flat-normal) resolve here too, in their own fixed
-    /// colour space. A successful pointer stays valid until Clear().
-    const Texture *ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace);
+    /// colour space and always uncompressed. A successful pointer stays valid
+    /// until Clear().
+    const Texture *ResolveTexture(const Core::AssetPath &path, Image::ColorSpace colorSpace,
+                                  Image::PixelFormat format);
 
     /// @brief Resolves a texture path to an editor thumbnail, decoded on a worker
     /// thread. Unlike ResolveTexture (synchronous, and bindless-registered for the
@@ -295,16 +317,40 @@ private:
     /// @brief Path-keyed `.amat` resolve. Backs ResolveMaterial after translation.
     const Material *ResolveMaterialPath(const Core::AssetPath &path);
 
+    /// @brief Decode @p path, compress it to @p format if that is wanted here, and
+    ///        upload it into @p texture.
+    ///
+    /// The synchronous load. @p format is what the channel asked for; the answer to
+    /// whether it is honoured is EffectiveFormat's.
+    std::expected<void, Core::AssetError> LoadTexture(Texture &texture, const Core::AssetPath &path,
+                                                      Image::ColorSpace colorSpace, Image::PixelFormat format);
+
+    /// @brief Log the running total of failed textures, once, whenever it moves.
+    ///
+    /// Called as the publish queue drains, so a load that loses several textures
+    /// reports one number instead of a warning per texture in a log that already
+    /// runs to hundreds of lines.
+    void ReportTextureFailures();
+
+    /// @brief The format a channel asking for @p wanted actually gets.
+    ///
+    /// Rgba8 whenever compression is switched off or the device cannot sample it,
+    /// so there is one place that decision is made and the cache key, the decode
+    /// and the upload cannot disagree about it.
+    [[nodiscard]] Image::PixelFormat EffectiveFormat(Image::PixelFormat wanted) const;
+
     /// @brief Returns the cached buffer for a registered primitive path, uploading
     /// it on first use, or null if @p path names no known primitive.
     const MeshBuffer *ResolvePrimitive(const Core::AssetPath &path);
 
-    /// @brief Resolves channel id @p channelId (or, if nil/failed, @p
-    /// fallbackPrimitive) for one material channel, returning the texture's slot
+    /// @brief Resolves channel @p channelIndex's id @p channelId (or, if
+    /// nil/failed, that channel's `prim://` default) returning the texture's slot
     /// in the bindless descriptor table. Sets @p *outPresent to whether the real
     /// (non-fallback) texture was used.
-    uint32_t ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
-                            const Core::AssetPath &fallbackPrimitive, bool *outPresent = nullptr);
+    ///
+    /// Takes the channel's index rather than its colour space and fallback, so the
+    /// two cannot be passed from different rows of the channel table.
+    uint32_t ResolveChannel(const Core::AssetId &channelId, std::size_t channelIndex, bool *outPresent = nullptr);
 
     /// @brief Ensures @p texture has a slot in the bindless descriptor table,
     /// assigning and writing one on first call. Returns the slot. The table's
@@ -337,18 +383,27 @@ private:
     /// load already in flight cannot publish over it.
     void MarkMaterialAuthored(const Core::AssetPath &path);
 
-    // A texture cache key: the same file may be resident once per colour space.
+    // A texture cache key: the same file may be resident once per way it is read.
+    //
+    // The format is part of it, not just the colour space. A normal map and a
+    // metallic-roughness map are both linear but want different formats, so a key
+    // without the format would hand whichever resolved first to both channels.
     struct TextureKey
     {
         Core::AssetPath path;
-        ColorSpace space;
-        bool operator==(const TextureKey &other) const { return space == other.space && path == other.path; }
+        Image::ColorSpace space;
+        Image::PixelFormat format;
+        bool operator==(const TextureKey &other) const
+        {
+            return space == other.space && format == other.format && path == other.path;
+        }
     };
     struct TextureKeyHash
     {
         std::size_t operator()(const TextureKey &key) const
         {
-            return std::hash<Core::AssetPath>{}(key.path) ^ (static_cast<std::size_t>(key.space) * 0x9e3779b9u);
+            return std::hash<Core::AssetPath>{}(key.path) ^ (static_cast<std::size_t>(key.space) * 0x9e3779b9u)
+                   ^ (static_cast<std::size_t>(key.format) * 0x85ebca6bu);
         }
     };
 
@@ -356,11 +411,24 @@ private:
     struct SolidColor
     {
         unsigned char r, g, b, a;
-        ColorSpace space;
+        Image::ColorSpace space;
     };
 
     nvrhi::IDevice *_device = nullptr;
-    ColorSpace _textureColorSpace = ColorSpace::Srgb;
+    Image::ColorSpace _textureColorSpace = Image::ColorSpace::Srgb;
+
+    // Whether a material channel is compressed on the way in. See
+    // SetCompressTextures; the second flag is the device's answer, which overrides
+    // the first because creating a BC texture without the feature is invalid.
+    bool _compressTextures          = true;
+    bool _textureCompressionSupported = true;
+
+    // Textures that could not be read, decoded or compressed, and so are drawn as
+    // the error pattern. Counted here rather than only warned about, so a load
+    // that loses several reports one number; the upload half of the same story is
+    // Texture::UploadFailureCount.
+    std::uint32_t _failedTextures          = 0;
+    std::uint32_t _reportedTextureFailures = 0;
 
     // Editor-installed id↔path translators (see SetAssetResolvers). Empty until an
     // editor wires them; reserved built-ins resolve without them.
@@ -483,6 +551,12 @@ private:
     {
         nvrhi::TextureHandle texture;
         Core::AssetPath path;
+
+        /// The channel named a texture and it could not be decoded or compressed.
+        /// Distinct from a null `texture` with an empty `path`, which is the
+        /// ordinary case of a material that binds nothing to this channel: that
+        /// one takes the neutral default, this one takes the error pattern.
+        bool failed = false;
     };
     /// @brief A material load's result: parsed data, every channel's GPU texture
     /// (created + recorded on the worker), and the single closed command list that

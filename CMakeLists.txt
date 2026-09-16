@@ -456,6 +456,44 @@ FetchContent_Declare(libwebp
 )
 FetchContent_MakeAvailable(libwebp)
 
+# --- bc7enc (BC7 block encoder + decoder, used by Assisi::Image)
+#
+# stb_dxt.h (already in the stb checkout) covers BC1, BC3, BC4 and BC5; BC7 is the
+# one colour format it has no encoder for, and it is the one base-colour maps need.
+#
+# SOURCE_SUBDIR names a directory that does not exist, so MakeAvailable populates
+# the source without add_subdirectory'ing it. The upstream CMakeLists builds a
+# command-line tool against OpenMP rather than a library, and adding it would drag
+# both into every configure. The two files below are the whole encoder/decoder and
+# depend on nothing else in that repository.
+#
+# The repository publishes no tags, so the pin is a commit.
+FetchContent_Declare(bc7enc
+    GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+    GIT_TAG        b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 # bc7enc_rdo has no tagged releases; pinned to a specific commit
+    SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
+)
+FetchContent_MakeAvailable(bc7enc)
+
+# bc7enc.cpp is the BC7 encoder and bc7decomp.cpp its decoder. rgbcx.cpp carries
+# the BC1-BC5 unpackers, which is how a BC4 or BC5 block is read back — stb_dxt
+# encodes those two but cannot decode them.
+add_library(bc7enc STATIC
+    "${bc7enc_SOURCE_DIR}/bc7enc.cpp"
+    "${bc7enc_SOURCE_DIR}/bc7decomp.cpp"
+    "${bc7enc_SOURCE_DIR}/rgbcx.cpp"
+)
+target_include_directories(bc7enc SYSTEM PUBLIC "${bc7enc_SOURCE_DIR}")
+# Deliberately not Assisi_apply_defaults: this is vendored third-party source and
+# does not compile clean under our warning set. Ours stay on everywhere else.
+set_target_properties(bc7enc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(bc7enc PRIVATE /w)
+else()
+    target_compile_options(bc7enc PRIVATE -w)
+endif()
+add_library(bc7enc::bc7enc ALIAS bc7enc)
+
 # --- Assimp (deferred catch-all import backend; off by default, see ASSISI_ENABLE_ASSIMP)
 if (ASSISI_ENABLE_ASSIMP)
     # Vendor zlib+minizip rather than picking up a system minizip. On distros that
@@ -989,6 +1027,10 @@ add_subdirectory(modules/Math)
 # Geometry sits above Core+Math and below Render: CPU-side mesh data and the
 # mesh-file importer (glTF via fastgltf), with no GPU dependency.
 add_subdirectory(modules/Geometry)
+# Image sits beside Geometry for the same reason: pixels in, pixels out, with no
+# device anywhere. Decode, mip generation and block compression all run on a
+# worker thread or in an offline tool, neither of which may link the renderer.
+add_subdirectory(modules/Image)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
 # Net sits low, beside Core: a transport with no ECS/Render dependency, so

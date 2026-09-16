@@ -41,7 +41,7 @@ bool SkyPass::Initialize(const InitParams &params)
     // a real texture from the first frame, and building one variant of the
     // pipeline for "has a moon" would double something to skip a branch the GPU
     // already skips uniformly.
-    _moon.UploadSolidColor(_device, 255, 255, 255, 255, ColorSpace::Srgb, "SkyPass::MoonPlaceholder");
+    _moon.UploadSolidColor(_device, 255, 255, 255, 255, Image::ColorSpace::Srgb, "SkyPass::MoonPlaceholder");
     if (!_moon.IsValid())
     {
         Core::Log::Error("SkyPass: failed to create the moon placeholder texture.");
@@ -110,7 +110,7 @@ void SkyPass::LoadMoonTexture()
     }
 
     Texture loaded;
-    if (!loaded.LoadFromAssets(_device, _moonTexturePath, ColorSpace::Srgb).has_value() || !loaded.IsValid())
+    if (!loaded.LoadFromAssets(_device, _moonTexturePath, Image::ColorSpace::Srgb).has_value() || !loaded.IsValid())
     {
         Core::Log::Warn("SkyPass: could not load the moon texture '{}'; the moon is drawn as a flat disk.",
                         _moonTexturePath);
