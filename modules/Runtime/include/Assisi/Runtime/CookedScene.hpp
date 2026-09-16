@@ -95,7 +95,7 @@ struct CookedOverride
 /// @brief Version of a scene blob's own layout, separate from the envelope's.
 ///
 /// Part of the scene cooker's cache key, so bumping it re-cooks every level.
-inline constexpr std::uint8_t kScenePayloadVersion = 1;
+inline constexpr std::uint8_t kScenePayloadVersion = 2;
 
 /// @brief The id of the blueprint a level names by path, or nil when there is none.
 ///
