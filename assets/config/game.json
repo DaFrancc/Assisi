@@ -8,5 +8,6 @@
   "keepLogs": 5,
   "keepDumps": 5,
   "title": "Assisi Sandbox",
-  "startupScene": "levels/Materials.alvl"
+  "startupScene": "levels/Test.alvl",
+  "simulateFrom": "Begin"
 }

@@ -258,6 +258,12 @@ private:
     void SetupCamera();
     void SetupScene();
 
+    /// @brief The context the one-shot phases (Begin, Loaded) run under.
+    ///
+    /// Everything a per-frame phase gets, matching the game. dt and the tick are
+    /// zero: a one-shot runs outside any frame.
+    [[nodiscard]] Assisi::App::SystemContext WorldStartContext(Assisi::App::World &world);
+
     /// @brief Move the editor camera onto the loaded level's active Camera
     /// entity, and adopt its projection. No-op when the level has none, which
     /// leaves the editor's default pose.

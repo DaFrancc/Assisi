@@ -48,7 +48,7 @@
         "Camera": {
           "farZ": 200.0,
           "fovDegrees": 60.0,
-          "isActive": false,
+          "isActive": true,
           "nearZ": 0.10000000149011612
         },
         "Parent": {
@@ -75,6 +75,12 @@
       },
       "name": "Camera"
     }
+  ],
+  "systems": [
+    "CharacterMove",
+    "CharacterLook",
+    "CharacterState",
+    "CharacterInput"
   ],
   "version": 2
 }

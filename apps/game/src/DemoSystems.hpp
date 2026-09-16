@@ -29,7 +29,7 @@ ASYSTEM(Update, name = "SpinDemo") void SpinDemoSystem(Assisi::App::SystemContex
 /// Reports the space bar. `activeWorldOnly`, so with two worlds simulating only
 /// the active one reacts — the "one InputContext, N worlds" rule made visible.
 /// Also the demo of SystemContext's nullable input.
-ASYSTEM(Update, name = "InputDemo", after = SpinDemo, activeWorldOnly)
+ASYSTEM(Update, name = "InputDemo", activeWorldOnly)
 void InputDemoSystem(Assisi::App::SystemContext &ctx);
 
 /// Drops a Bouncer on F3. Its own system rather than a branch inside InputDemo,
@@ -45,5 +45,34 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx);
 /// authority.
 ASYSTEM(Update, name = "BouncerSpawn", after = SpinDemo, activeWorldOnly)
 void BouncerSpawnSystem(Assisi::App::SystemContext &ctx);
+
+/// Takes the cursor when the level is up, so a first-person level is playable
+/// the moment it finishes loading.
+///
+/// A level names this to say "I am played with the mouse". The alternative was
+/// the game capturing the cursor unconditionally, which is wrong for a level
+/// that is a menu — and nothing in the engine can tell those apart.
+///
+/// `Loaded` rather than `Begin`: taking the cursor is the last thing before a
+/// player has control, and holding it while the level is still streaming means
+/// grabbing the pointer during the pause.
+///
+/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
+/// no window, so this is inert there even when a level names it.
+ASYSTEM(Loaded, name = "CaptureCursor", activeWorldOnly)
+void CaptureCursorSystem(Assisi::App::SystemContext &ctx);
+
+/// Escape hands the cursor back; a click in the window takes it again.
+///
+/// The running half of CaptureCursor, and a level that names one wants both.
+/// Which key is listened for depends on which state the cursor is in, so the two
+/// can never fight: while it is held, only Escape is read, and while it is free,
+/// only the click. Escape does not quit — that is what closing the window is
+/// for, and quitting is the one response a player cannot undo.
+///
+/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
+/// no window, so this is inert there even when a level names it.
+ASYSTEM(Update, name = "CursorToggle", activeWorldOnly)
+void CursorToggleSystem(Assisi::App::SystemContext &ctx);
 
 } // namespace Game

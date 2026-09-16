@@ -289,7 +289,15 @@ void EditorApp::OnStart()
     _worlds.SetServices({.cache    = &_assetCache,
                          .database = &_assetDatabase,
                          .renderer = &_sceneRenderer,
-                         .jobs     = &Jobs()});
+                         .jobs     = &Jobs(),
+                         .events   = &GetEvents(),
+                         .input    = &GetInput(),
+                         .actions  = &_actions});
+
+    // Editor travel is the game's path, so it honours the game's policy: a level
+    // that waits for its assets in the shipped game waits here too, or testing a
+    // travel in the editor would not be testing what ships.
+    _worlds.SetSimulateFrom(GetConfig().simulateFrom);
 
     // Warn about Render systems the game declared. Systems come from each level's
     // own list, resolved through SystemCatalog, which every ASYSTEM declaration in
@@ -1252,6 +1260,11 @@ void EditorApp::OnUpdate(float dt)
                 return;
             Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
                                                 world.streamingPending);
+
+            // Reads the flag the pass above just wrote. Only a world that has
+            // begun settles, so the authored world sitting in Editing is skipped
+            // by SettleWorld itself rather than by a condition here.
+            Assisi::App::SettleWorld(WorldStartContext(world), world.streamingPending);
         });
 
     // Resolve assets for entities that arrived over the wire. A mirror carries
@@ -1325,6 +1338,20 @@ void EditorApp::OnUpdate(float dt)
     }
 }
 
+Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &world)
+{
+    // Everything a per-frame phase gets, matching the game. dt and the tick are
+    // zero: a one-shot runs outside any frame.
+    return {.world         = world,
+            .dt            = 0.f,
+            .simTick       = 0,
+            .input         = &GetInput(),
+            .actions       = &_actions,
+            .events        = GetEvents(),
+            .isActiveWorld = &world == _worlds.Active(),
+            .worlds        = &_worlds};
+}
+
 void EditorApp::InstallQueuedSystems()
 {
     // Every resident world, not just the active one: a blueprint can be spawned
@@ -1334,7 +1361,8 @@ void EditorApp::InstallQueuedSystems()
     // Loading worlds included, harmlessly: their scene belongs to a worker until
     // promotion, but the system registry is main-thread only, and promotion runs
     // ApplySystems, which clears the queue anyway.
-    _worlds.ForEach([](Assisi::App::World &world) { Assisi::App::DrainSystemInstalls(world); });
+    _worlds.ForEach([this](Assisi::App::World &world)
+                    { Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 void EditorApp::FlushDeferred()

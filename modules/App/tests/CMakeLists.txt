@@ -30,6 +30,7 @@ add_executable(Assisi-App-Tests
   TestStartupScene.cpp
   TestSystemRegistry.cpp
   TestWorld.cpp
+  TestWorldStart.cpp
 )
 
 # Added with if() rather than a $<BOOL:...> generator expression on purpose.

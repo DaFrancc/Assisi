@@ -137,16 +137,20 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen],
 
 
 def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
-    """The codegen for a field. An AENUM enum synthesizes one that (de)serializes
-    through its underlying integer (int64 on the wire, cast back to the enum);
-    every other type comes from the TYPES table. Returns None for an unsupported
-    type — the signal _check_unsupported turns into a hard error."""
+    """The codegen for a field. An AENUM enum synthesizes one that writes its
+    underlying integer and reads either that or an enumerator name; every other
+    type comes from the TYPES table. Returns None for an unsupported type — the
+    signal _check_unsupported turns into a hard error."""
     if f.enum_info is not None:
+        # Doubled braces: this text goes through .format() with the field name and
+        # accessor, which would otherwise read each pair as a placeholder.
+        names = ', '.join(f'{{{{ "{n}", {v} }}}}' for n, v in f.enum_info.constants)
         return TypeCodegen(
             'Enum',
             'static_cast<std::int64_t>({a})',
-            '{{ std::int64_t _n = static_cast<std::int64_t>({a}); '
-            'if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "{f}", _n)) return false; '
+            '{{ static constexpr Assisi::Core::Reflect::EnumName _names[] = {{' + names + '}}; '
+            'std::int64_t _n = static_cast<std::int64_t>({a}); '
+            'if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "{f}", _names, _n)) return false; '
             '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
     if f.container is not None:
         # One expression either way, whatever the element type or the depth: the

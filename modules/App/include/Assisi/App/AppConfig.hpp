@@ -21,6 +21,26 @@
 namespace Assisi::App
 {
 
+/// @brief When a world starts simulating once its content is committed.
+///
+/// Both one-shot phases run either way; this decides only whether the clock
+/// starts at the first or waits for the second.
+AENUM()
+enum class SimulateFrom : std::uint8_t
+{
+    /// Simulate as soon as the world works as data, while its meshes and
+    /// materials are still streaming in behind placeholders. What a game with no
+    /// loading screen wants: the level is playable the moment it is coherent.
+    Begin,
+
+    /// Hold the simulation still until every asset has settled. What a game with
+    /// a loading screen wants — the screen comes down and the world is already
+    /// whole, with nothing popping in behind it.
+    Loaded,
+
+    Count
+};
+
 /// @brief The game config document, as it sits on disk.
 ///
 /// Ordered widest field first so the struct carries no interior padding; the
@@ -60,6 +80,17 @@ struct AppConfig
     /// practice: pruning runs at startup, before this run's report exists, so a
     /// run that crashes leaves keepDumps + 1 behind until the next launch.
     AFIELD() uint32_t keepDumps = 5;
+
+    /// @brief Whether the game starts simulating before its assets have settled.
+    ///
+    /// Begin by default: a game that says nothing about loading gets a world that
+    /// runs as soon as it is coherent, which is what it had before this existed.
+    /// A game that draws a loading screen sets Loaded, so the simulation is still
+    /// behind the screen and nothing pops in once it lifts.
+    ///
+    /// Only the clock waits. Both one-shot phases run either way, so the logic
+    /// that takes the screen down belongs in a Loaded system whichever this says.
+    AFIELD() SimulateFrom simulateFrom = SimulateFrom::Begin;
 
     /// @brief The OS window title.
     ///

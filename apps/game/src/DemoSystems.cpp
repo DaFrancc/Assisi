@@ -74,4 +74,39 @@ void BouncerSpawnSystem(Assisi::App::SystemContext &ctx)
     }
 }
 
+void CaptureCursorSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.input == nullptr) // headless host: no window to capture into
+    {
+        return;
+    }
+
+    ctx.input->SetMouseCaptured(true);
+    Assisi::Core::Log::Info("CaptureCursor: '{}' takes the mouse.", ctx.world.levelPath);
+}
+
+void CursorToggleSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.input == nullptr) // headless host: no window, no cursor to move
+    {
+        return;
+    }
+
+    // One state, one key. Reading both every frame would let a click that
+    // recaptured the cursor be seen again as a click in the captured state.
+    if (ctx.input->IsMouseCaptured())
+    {
+        if (ctx.input->IsKeyPressed(Assisi::Window::Key::Escape))
+        {
+            ctx.input->SetMouseCaptured(false);
+        }
+        return;
+    }
+
+    if (ctx.input->IsMouseButtonPressed(Assisi::Window::MouseButton::Left))
+    {
+        ctx.input->SetMouseCaptured(true);
+    }
+}
+
 } // namespace Game

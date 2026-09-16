@@ -891,7 +891,10 @@ class EnumTest(unittest.TestCase):
         self.assertIn("FieldType::Enum", cpp)
         self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("static_cast<std::int64_t>(c.shape)", cpp)
-        self.assertIn('ReadInt64(j, _comp, "shape", _n)', cpp)
+        # The name table travels with the read, so a file may spell the value
+        # either way; the write stays the integer.
+        self.assertIn('ReadEnum(j, _comp, "shape", _names, _n)', cpp)
+        self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("comp.shape = static_cast<N::Shape>(_n)", cpp)
         self.assertIn("#include <cstdint>", cpp)
 
@@ -1759,7 +1762,8 @@ class SystemTest(unittest.TestCase):
         # rejected at build time with no hint that the enum has one more — so the
         # two are pinned together here rather than discovered by a level failing
         # to name a system.
-        for phase in ("PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update", "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update",
+                      "PostUpdate"):
             found = self._systems(
                 "ASYSTEM(%s, name = \"Tick\") void TickSystem(SystemContext &ctx);\n" % phase)
             self.assertEqual(found[0].phase, phase)

@@ -71,7 +71,14 @@ void GameApp::OnStart()
     _worlds.SetServices({.cache    = &_assetCache,
                          .database = &_assetDatabase,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
-                         .jobs     = &Jobs()});
+                         .jobs     = &Jobs(),
+                         .events   = &GetEvents(),
+                         .input    = HasPresentation() ? &GetInput() : nullptr,
+                         .actions  = &_actions});
+
+    // What the shipped config asked for, before the first world starts — the
+    // policy has to be installed ahead of the load it governs, not after it.
+    _worlds.SetSimulateFrom(GetConfig().simulateFrom);
 
     // Before the level load and not after it: the load publishes meshes and
     // materials into the asset cache, which the renderer owns the bindless table
@@ -153,6 +160,20 @@ bool GameApp::SetupRenderer()
     return true;
 }
 
+SystemContext GameApp::WorldStartContext(World &world)
+{
+    // Everything a per-frame phase gets, except dt and the tick: a one-shot runs
+    // outside any frame, so there is no elapsed time and no tick it belongs to.
+    return {.world         = world,
+            .dt            = 0.f,
+            .simTick       = 0,
+            .input         = HasPresentation() ? &GetInput() : nullptr,
+            .actions       = &_actions,
+            .events        = GetEvents(),
+            .isActiveWorld = &world == _worlds.Active(),
+            .worlds        = &_worlds};
+}
+
 void GameApp::StepWorlds(float dt)
 {
     _worlds.ForEach(
@@ -212,17 +233,6 @@ void GameApp::OnUpdate(float dt)
         return;
     }
 
-    if (HasPresentation())
-    {
-        // Escape quits. In the editor the same key ends a play session and hands
-        // the cursor back; here there is no session to return to, and a player
-        // pressing it means the game.
-        if (GetInput().IsKeyPressed(Window::Key::Escape))
-        {
-            RequestClose();
-        }
-    }
-
     // --- The frame's safe point ---------------------------------------------
     // Travel frees GPU assets that draws already recorded still reference, and the
     // system that asked for it runs inside the walk over the worlds. So game code
@@ -257,6 +267,26 @@ void GameApp::OnUpdate(float dt)
                     return;
                 }
                 UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase, world.streamingPending);
+
+                // Immediately after the upgrade, so the flag being read is the one
+                // that pass just wrote. A world whose assets have all settled runs
+                // its Loaded systems here and starts simulating if the config told
+                // it to wait for them.
+                SettleWorld(WorldStartContext(world), world.streamingPending);
+            });
+    }
+    else
+    {
+        // Headless: nothing streams, so a world settles the moment it has begun
+        // and the two one-shot phases land back to back. A dedicated server that
+        // waited for assets it never loads would never start.
+        _worlds.ForEach(
+            [this](World &world)
+            {
+                if (world.state != WorldState::Loading)
+                {
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
+                }
             });
     }
 
@@ -371,7 +401,7 @@ void GameApp::InstallQueuedSystems()
     // Every resident world: a blueprint can be spawned into a background one, and
     // a queue nobody drains leaves an entity holding its components and running
     // none of the code.
-    _worlds.ForEach([](World &world) { DrainSystemInstalls(world); });
+    _worlds.ForEach([this](World &world) { DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 } // namespace Assisi::App

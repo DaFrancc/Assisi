@@ -303,7 +303,8 @@ _ASYSTEM_RE = re.compile(
     r'\)\s*;'
 )
 
-_ASYSTEM_PHASES = ('PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update', 'PostUpdate', 'Render')
+_ASYSTEM_PHASES = ('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
+                   'PostUpdate', 'Render')
 _ASYSTEM_FLAGS  = {'activeWorldOnly'}
 _ASYSTEM_KEYS   = {'name', 'after', 'before'}
 
