@@ -55,6 +55,12 @@ std::string_view Describe(LevelError error)
         return "no such instance is live";
     case LevelError::NameAlreadyLive:
         return "an instance of that name is already live in this world";
+    case LevelError::MalformedBlob:
+        return "the cooked bytes are not a scene, or end part-way through one";
+    case LevelError::ProtocolMismatch:
+        return "the cooked scene was written against a different component table";
+    case LevelError::CodecRefused:
+        return "a component holds a field the codec would not carry to disk";
     }
     return "the file cannot be used";
 }

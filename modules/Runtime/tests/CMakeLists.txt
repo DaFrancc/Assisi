@@ -6,6 +6,7 @@ add_executable(Assisi-Runtime-Tests
   TestBlueprintOverrides.cpp
   TestBlueprintPreparedForm.cpp
   TestBlueprintReexpand.cpp
+  TestCookedScene.cpp
   TestDrawItem.cpp
   TestIndirectResolve.cpp
   TestMaterialConstants.cpp

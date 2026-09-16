@@ -5,6 +5,7 @@ target_sources(Assisi-Runtime
   PUBLIC
     "include/Assisi/Runtime/AssetResolve.hpp"
     "include/Assisi/Runtime/Blueprint.hpp"
+    "include/Assisi/Runtime/CookedScene.hpp"
     "include/Assisi/Runtime/Camera.hpp"
     "include/Assisi/Runtime/Components.hpp"
     "include/Assisi/Runtime/Hierarchy.hpp"
@@ -31,6 +32,7 @@ target_sources(Assisi-Runtime
     "src/Renderer.cpp"
     "src/SceneRenderer.cpp"
     "src/SceneSerializerBlueprint.cpp"
+    "src/SceneSerializerCooked.cpp"
     "src/SceneSerializerContext.hpp"
     "src/SceneSerializerFiles.cpp"
     "src/SceneSerializerInstances.cpp"
