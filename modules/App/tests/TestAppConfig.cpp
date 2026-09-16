@@ -49,6 +49,41 @@ TEST_CASE("AppConfig: the simulate-from policy is read, and defaults to Begin")
     CHECK(cfg.simulateFrom == SimulateFrom::Loaded);
 }
 
+TEST_CASE("AppConfig: an enum reads by name as well as by number")
+{
+    // A config is hand-edited, and "Loaded" says what 1 does not.
+    CHECK(AppConfig::FromJsonText(
+              R"({ "version": 1, "type": "AppConfig", "simulateFrom": "Loaded" })")
+              .simulateFrom == SimulateFrom::Loaded);
+
+    // The integer form still reads, or every file written before this stopped
+    // loading.
+    CHECK(AppConfig::FromJsonText(R"({ "version": 1, "type": "AppConfig", "simulateFrom": 1 })")
+              .simulateFrom == SimulateFrom::Loaded);
+}
+
+TEST_CASE("AppConfig: a name the enum does not define is refused, not defaulted")
+{
+    // A misspelt enumerator is a file that means something other than what it
+    // says. Refusing costs the document, which is what every other unreadable
+    // field here costs.
+    const AppConfig cfg = AppConfig::FromJsonText(
+        R"({ "version": 1, "type": "AppConfig", "width": 1920, "simulateFrom": "Lodaed" })");
+
+    CHECK(cfg.width == AppConfig{}.width);
+    CHECK(cfg.simulateFrom == SimulateFrom::Begin);
+}
+
+TEST_CASE("AppConfig: Count is not a value a field may hold")
+{
+    // The trailing enumerator counts the others; the generated name table omits
+    // it, so it is refused like any other name the enum does not define.
+    const AppConfig cfg = AppConfig::FromJsonText(
+        R"({ "version": 1, "type": "AppConfig", "width": 1920, "simulateFrom": "Count" })");
+
+    CHECK(cfg.width == AppConfig{}.width);
+}
+
 TEST_CASE("AppConfig: a physics rate at or below zero is refused")
 {
     // Zero disables fixed update outright (the step becomes infinite) and a

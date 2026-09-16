@@ -124,7 +124,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "i64", comp.i64)) return false;
             if (!Assisi::Core::Reflect::ReadUInt64(j, _comp, "u64", comp.u64)) return false;
             if (!Assisi::Core::Reflect::ReadBool(j, _comp, "flag", comp.flag)) return false;
-            { std::int64_t _n = static_cast<std::int64_t>(comp.shape); if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "shape", _n)) return false; comp.shape = static_cast<Assisi::Runtime::SampleShape>(_n); }
+            { static constexpr Assisi::Core::Reflect::EnumName _names[] = {{ "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 }}; std::int64_t _n = static_cast<std::int64_t>(comp.shape); if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "shape", _names, _n)) return false; comp.shape = static_cast<Assisi::Runtime::SampleShape>(_n); }
             { float _v[2] = { comp.v2.x, comp.v2.y }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "v2", 2, _v)) return false; comp.v2 = { _v[0], _v[1] }; }
             { float _v[3] = { comp.v3.x, comp.v3.y, comp.v3.z }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "v3", 3, _v)) return false; comp.v3 = { _v[0], _v[1], _v[2] }; }
             { float _v[4] = { comp.v4.x, comp.v4.y, comp.v4.z, comp.v4.w }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "v4", 4, _v)) return false; comp.v4 = { _v[0], _v[1], _v[2], _v[3] }; }
@@ -349,9 +349,9 @@ static const bool _reflectgen_SampleRadio = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             Assisi::ECS::Entity e{entity_index, entity_gen};
             T comp{};
-            { std::int64_t _n = static_cast<std::int64_t>(comp.mode); if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "mode", _n)) return false; comp.mode = static_cast<Assisi::Runtime::SampleMode>(_n); }
+            { static constexpr Assisi::Core::Reflect::EnumName _names[] = {{ "Off", 0 }, { "Low", 1 }, { "High", 2 }}; std::int64_t _n = static_cast<std::int64_t>(comp.mode); if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "mode", _names, _n)) return false; comp.mode = static_cast<Assisi::Runtime::SampleMode>(_n); }
             if (!Assisi::Core::Reflect::ReadFloat(j, _comp, "intensity", comp.intensity)) return false;
-            { std::int64_t _n = static_cast<std::int64_t>(comp.sub); if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "sub", _n)) return false; comp.sub = static_cast<Assisi::Runtime::SampleSub>(_n); }
+            { static constexpr Assisi::Core::Reflect::EnumName _names[] = {{ "A", 0 }, { "B", 1 }}; std::int64_t _n = static_cast<std::int64_t>(comp.sub); if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "sub", _names, _n)) return false; comp.sub = static_cast<Assisi::Runtime::SampleSub>(_n); }
             if (!Assisi::Core::Reflect::ReadInt32(j, _comp, "level", comp.level)) return false;
             (void)scene.Add(e, comp);
             return true;

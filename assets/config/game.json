@@ -9,5 +9,5 @@
   "keepDumps": 5,
   "title": "Assisi Sandbox",
   "startupScene": "levels/Test.alvl",
-  "simulateFrom": 0
+  "simulateFrom": "Begin"
 }

@@ -891,7 +891,10 @@ class EnumTest(unittest.TestCase):
         self.assertIn("FieldType::Enum", cpp)
         self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("static_cast<std::int64_t>(c.shape)", cpp)
-        self.assertIn('ReadInt64(j, _comp, "shape", _n)', cpp)
+        # The name table travels with the read, so a file may spell the value
+        # either way; the write stays the integer.
+        self.assertIn('ReadEnum(j, _comp, "shape", _names, _n)', cpp)
+        self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("comp.shape = static_cast<N::Shape>(_n)", cpp)
         self.assertIn("#include <cstdint>", cpp)
 
