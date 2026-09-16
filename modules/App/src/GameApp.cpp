@@ -72,7 +72,9 @@ void GameApp::OnStart()
                          .database = &_assetDatabase,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
                          .jobs     = &Jobs(),
-                         .events   = &GetEvents()});
+                         .events   = &GetEvents(),
+                         .input    = HasPresentation() ? &GetInput() : nullptr,
+                         .actions  = &_actions});
 
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
@@ -160,14 +162,13 @@ bool GameApp::SetupRenderer()
 
 SystemContext GameApp::WorldStartContext(World &world)
 {
-    // Null input, no dt, no tick — the one-shot phases run outside any frame, and
-    // passing what this host happens to have would let a Begin system behave one
-    // way here and another under the editor, which has an input context to give.
+    // Everything a per-frame phase gets, except dt and the tick: a one-shot runs
+    // outside any frame, so there is no elapsed time and no tick it belongs to.
     return {.world         = world,
             .dt            = 0.f,
             .simTick       = 0,
-            .input         = nullptr,
-            .actions       = nullptr,
+            .input         = HasPresentation() ? &GetInput() : nullptr,
+            .actions       = &_actions,
             .events        = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
             .worlds        = &_worlds};
@@ -230,17 +231,6 @@ void GameApp::OnUpdate(float dt)
     if (_world == nullptr)
     {
         return;
-    }
-
-    if (HasPresentation())
-    {
-        // Escape quits. In the editor the same key ends a play session and hands
-        // the cursor back; here there is no session to return to, and a player
-        // pressing it means the game.
-        if (GetInput().IsKeyPressed(Window::Key::Escape))
-        {
-            RequestClose();
-        }
     }
 
     // --- The frame's safe point ---------------------------------------------

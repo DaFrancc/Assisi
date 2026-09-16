@@ -290,7 +290,9 @@ void EditorApp::OnStart()
                          .database = &_assetDatabase,
                          .renderer = &_sceneRenderer,
                          .jobs     = &Jobs(),
-                         .events   = &GetEvents()});
+                         .events   = &GetEvents(),
+                         .input    = &GetInput(),
+                         .actions  = &_actions});
 
     // Editor travel is the game's path, so it honours the game's policy: a level
     // that waits for its assets in the shipped game waits here too, or testing a
@@ -1338,15 +1340,13 @@ void EditorApp::OnUpdate(float dt)
 
 Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &world)
 {
-    // Null input and a zero clock, matching the game exactly. This host has an
-    // InputContext it could pass, and deliberately does not: a one-shot system
-    // that read input under the editor and null in the shipped game would differ
-    // in a way its own source could not explain.
+    // Everything a per-frame phase gets, matching the game. dt and the tick are
+    // zero: a one-shot runs outside any frame.
     return {.world         = world,
             .dt            = 0.f,
             .simTick       = 0,
-            .input         = nullptr,
-            .actions       = nullptr,
+            .input         = &GetInput(),
+            .actions       = &_actions,
             .events        = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
             .worlds        = &_worlds};

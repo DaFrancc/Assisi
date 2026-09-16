@@ -135,10 +135,12 @@ enum class SystemPhase : std::uint8_t
     /// next drain without the caller filtering by name.
     ///
     /// GPU assets may still be streaming here, so a mesh may be a placeholder;
-    /// wait for @ref Loaded if that matters. A Begin system reads no input, no
-    /// `dt` and no `simTick` — it runs before any frame exists, and every host
-    /// passes null and zero for those deliberately, so one cannot behave
-    /// differently in the game and in the editor.
+    /// wait for @ref Loaded if that matters.
+    ///
+    /// The context is a per-frame phase's, with two exceptions: `dt` and
+    /// `simTick` are zero, because a one-shot runs outside any frame and belongs
+    /// to no tick. Input is whatever the host has — real in the game and the
+    /// editor, null on a dedicated server, exactly as every other phase sees it.
     Begin = 0,
 
     /// Once, when every asset the world references has settled — resident, or

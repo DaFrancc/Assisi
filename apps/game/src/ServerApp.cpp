@@ -376,8 +376,8 @@ void ServerApp::InstallQueuedSystems()
 
 Assisi::App::SystemContext ServerApp::WorldStartContext()
 {
-    // No window, so no input to pass and none expected — the same null context
-    // the windowed hosts build deliberately. See SystemPhase::Begin.
+    // No window, so no input and no action map, as this host passes to every
+    // other phase. dt and the tick are zero: a one-shot runs outside any frame.
     return {.world         = _world,
             .dt            = 0.f,
             .simTick       = 0,

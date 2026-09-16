@@ -326,20 +326,16 @@ public:
         /// to a synchronous load (still correct, just hitches).
         Core::JobSystem *jobs = nullptr;
 
-        /// What a starting world's Begin systems publish into. The only piece of
-        /// host state here that is not about loading, and it is here because a
-        /// Begin system is a system and a system needs a queue.
+        /// What a starting world's one-shot systems are given, so Begin and
+        /// Loaded reach the same things every per-frame phase reaches.
         ///
-        /// Input and the action map are deliberately NOT here: a Begin system
-        /// runs before any frame exists, so there is no input to read, and every
-        /// host passes null for both. That is a rule of the phase rather than an
-        /// omission — it is what stops one behaving differently under the editor,
-        /// which does have an input context to hand.
-        ///
-        /// Null in a host with no events (a test); a world then begins with no
-        /// queue and a Begin system that publishes has nowhere to publish, which
-        /// is why BeginWorld refuses rather than starting half a world.
+        /// Null in a host that has none: a dedicated server has no window and so
+        /// no input, exactly as it passes null to every other phase. A world
+        /// whose manager has no event queue does not begin at all — BeginWorld
+        /// needs one to build a context, and half a world is worse than none.
         Core::EventQueue *events = nullptr;
+        Window::InputContext *input = nullptr;
+        Window::ActionMap *actions = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
 
