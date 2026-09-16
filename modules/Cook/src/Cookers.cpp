@@ -15,6 +15,7 @@
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Geometry/MeshValidate.hpp>
 #include <Assisi/Image/Compress.hpp>
+#include <Assisi/Image/CookedTexture.hpp>
 #include <Assisi/Image/Decode.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -301,8 +302,6 @@ public:
 
 // ── Textures ──────────────────────────────────────────────────────────────────
 
-constexpr std::uint8_t kTexturePayloadVersion = 1;
-
 /// Images, cooked to the block-compressed mips a device uploads directly.
 ///
 /// The format is not a property of the file: the same pixels are a colour map in
@@ -322,7 +321,7 @@ public:
         // The tier fits in its low byte, so the version above it cannot collide
         // with a tier.
         constexpr std::uint32_t kTierBits = 8;
-        return (static_cast<std::uint64_t>(kTexturePayloadVersion) << kTierBits) |
+        return (static_cast<std::uint64_t>(Image::kTexturePayloadVersion) << kTierBits) |
                static_cast<std::uint64_t>(context.textureQuality);
     }
 
@@ -378,19 +377,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Texture);
-        writer.WriteUInt8(kTexturePayloadVersion);
-        writer.WriteUInt32(compressed->width);
-        writer.WriteUInt32(compressed->height);
-        writer.WriteUInt8(static_cast<std::uint8_t>(compressed->format));
-        writer.WriteUInt8(static_cast<std::uint8_t>(compressed->colorSpace));
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(compressed->mips.size()));
-        for (const std::vector<unsigned char> &mip : compressed->mips)
-        {
-            writer.WriteVarUInt32(static_cast<std::uint32_t>(mip.size()));
-            writer.WriteBytes(std::as_bytes(std::span{mip}));
-        }
-
+        Image::WriteCookedTexture(writer, *compressed);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
     }

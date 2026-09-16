@@ -6,7 +6,9 @@ target_sources(Assisi-Image
     "include/Assisi/Image/Image.hpp"
     "include/Assisi/Image/Decode.hpp"
     "include/Assisi/Image/Compress.hpp"
+    "include/Assisi/Image/CookedTexture.hpp"
   PRIVATE
+    "src/CookedTexture.cpp"
     "src/Image.cpp"
     "src/Decode.cpp"
     "src/Compress.cpp"

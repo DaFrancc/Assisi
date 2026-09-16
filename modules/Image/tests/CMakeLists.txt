@@ -2,6 +2,7 @@ add_executable(Assisi-Image-Tests
   main.cpp
   TestImageLayout.cpp
   TestCompress.cpp
+  TestCookedTexture.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Image-Tests)
