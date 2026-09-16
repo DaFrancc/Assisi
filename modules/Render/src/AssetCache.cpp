@@ -17,6 +17,8 @@
 #include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
+#include <Assisi/Image/Compress.hpp>
+#include <Assisi/Image/Decode.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 
 namespace Assisi::Render
@@ -81,24 +83,46 @@ const Core::AssetPath kFlatNormalTexture{std::string_view{"prim://flat-normal"}}
 // can never change. Slots past this saturate onto slot 0 with a one-time warning.
 constexpr uint32_t kBindlessCapacity = 16384u;
 
-// The five PBR texture channels, in MaterialTextures order (base, normal,
-// metallic-roughness, occlusion, emissive). Each pairs the colour space the
-// channel decodes in with the `prim://` default that stands in for an empty or
-// failed channel; `isNormal` flags the one whose presence drives the shader's
+// Which PBR texture channel a row of the table below describes, in
+// MaterialTextures order. Every index into that table comes from here rather
+// than from a literal.
+enum MaterialChannel : std::size_t
+{
+    BaseColor,
+    Normal,
+    MetallicRoughness,
+    Occlusion,
+    Emissive,
+    Count,
+};
+
+// What one channel needs: the colour space it decodes in, the compressed format
+// it is stored as, and the `prim://` default that stands in for an empty or
+// failed channel. `isNormal` flags the one whose presence drives the shader's
 // normal-mapping bit.
+//
+// The format belongs to the channel rather than to the file, because what a map
+// is for decides how it fails under compression. Colour goes to BC7, which holds
+// a gradient without banding. A normal goes to BC5, which spends all its bits on
+// two channels and lets the shader rebuild the third — encoding one as colour
+// smears the very detail it exists to carry. Metallic-roughness and occlusion
+// stay BC7 rather than splitting into single-channel formats: glTF packs
+// roughness and metallic into one texture's G and B, and occlusion is usually
+// that same file's R.
 struct ChannelDesc
 {
-    ColorSpace space;
     const Core::AssetPath *fallback;
+    Image::ColorSpace space;
+    Image::PixelFormat format;
     bool isNormal;
 };
 
-const std::array<ChannelDesc, 5> kChannels = {{
-    {ColorSpace::Srgb, &kWhiteTexture, false},        // baseColor
-    {ColorSpace::Linear, &kFlatNormalTexture, true},  // normal
-    {ColorSpace::Linear, &kWhiteLinearTexture, false}, // metallic-roughness
-    {ColorSpace::Linear, &kWhiteLinearTexture, false}, // occlusion
-    {ColorSpace::Srgb, &kWhiteTexture, false},         // emissive
+const std::array<ChannelDesc, MaterialChannel::Count> kChannels = {{
+    {&kWhiteTexture, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, false},        // baseColor
+    {&kFlatNormalTexture, Image::ColorSpace::Linear, Image::PixelFormat::Bc5, true},  // normal
+    {&kWhiteLinearTexture, Image::ColorSpace::Linear, Image::PixelFormat::Bc7, false}, // metallic-roughness
+    {&kWhiteLinearTexture, Image::ColorSpace::Linear, Image::PixelFormat::Bc7, false}, // occlusion
+    {&kWhiteTexture, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, false},         // emissive
 }};
 
 // Minimum staging chunk for the shared upload command list. A texture burst (a
@@ -111,16 +135,16 @@ Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
 {
     switch (channel)
     {
-    case 0: return data.BaseColorTexture;
-    case 1: return data.NormalTexture;
-    case 2: return data.MetallicRoughnessTexture;
-    case 3: return data.OcclusionTexture;
+    case MaterialChannel::BaseColor: return data.BaseColorTexture;
+    case MaterialChannel::Normal: return data.NormalTexture;
+    case MaterialChannel::MetallicRoughness: return data.MetallicRoughnessTexture;
+    case MaterialChannel::Occlusion: return data.OcclusionTexture;
     default: return data.EmissiveTexture;
     }
 }
 } // namespace
 
-void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace)
+void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Image::ColorSpace textureColorSpace)
 {
     _device = device;
     _jobs = jobs;
@@ -167,9 +191,9 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Color
     // for metallic-roughness/occlusion (sampling 1.0 leaves the per-material
     // factor untouched — glTF "no texture" semantics); flat normal (128,128,255)
     // linear decodes to +Z, i.e. no perturbation.
-    _texturePrimitives.emplace(kWhiteTexture, SolidColor{255, 255, 255, 255, ColorSpace::Srgb});
-    _texturePrimitives.emplace(kWhiteLinearTexture, SolidColor{255, 255, 255, 255, ColorSpace::Linear});
-    _texturePrimitives.emplace(kFlatNormalTexture, SolidColor{128, 128, 255, 255, ColorSpace::Linear});
+    _texturePrimitives.emplace(kWhiteTexture, SolidColor{255, 255, 255, 255, Image::ColorSpace::Srgb});
+    _texturePrimitives.emplace(kWhiteLinearTexture, SolidColor{255, 255, 255, 255, Image::ColorSpace::Linear});
+    _texturePrimitives.emplace(kFlatNormalTexture, SolidColor{128, 128, 255, 255, Image::ColorSpace::Linear});
 
     BuildFallbackMaterial();
 }
@@ -252,18 +276,59 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
     return nullptr; // loading — placeholder for now
 }
 
-const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace)
+Image::PixelFormat AssetCache::EffectiveFormat(Image::PixelFormat wanted) const
+{
+    if (!_compressTextures || !_textureCompressionSupported)
+    {
+        return Image::PixelFormat::Rgba8;
+    }
+    return wanted;
+}
+
+std::expected<void, Core::AssetError> AssetCache::LoadTexture(Texture &texture, const Core::AssetPath &path,
+                                                              Image::ColorSpace colorSpace, Image::PixelFormat format)
+{
+    std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeImage(path.View(), colorSpace);
+    if (!decoded)
+    {
+        return std::unexpected(decoded.error());
+    }
+
+    if (Image::IsBlockCompressed(format))
+    {
+        // A synchronous load is one somebody is waiting on, so it takes the fast
+        // tier. The slow one belongs to an encode that happens once, offline.
+        std::expected<Image::DecodedImage, Core::AssetError> compressed =
+            Image::Compress(*decoded, format, Image::CompressQuality::Fast);
+        if (!compressed)
+        {
+            return std::unexpected(compressed.error());
+        }
+        decoded = std::move(compressed);
+    }
+
+    texture.UploadDecoded(_device, *decoded, std::string(path.View()).c_str());
+    if (!texture.IsValid())
+    {
+        return std::unexpected(Core::AssetError::FileReadFailed);
+    }
+    return {};
+}
+
+const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, Image::ColorSpace colorSpace,
+                                          Image::PixelFormat format)
 {
     if (path.Empty())
         return nullptr;
 
     // A `prim://` texture primitive: its own fixed colour space wins over the
-    // caller's, so the same primitive is only ever resident once.
+    // caller's, so the same primitive is only ever resident once. Always
+    // uncompressed — one texel does not fill a block.
     if (std::unordered_map<Core::AssetPath, SolidColor>::iterator prim = _texturePrimitives.find(path);
         prim != _texturePrimitives.end())
     {
         const SolidColor &color = prim->second;
-        TextureKey key{path, color.space};
+        TextureKey key{path, color.space, Image::PixelFormat::Rgba8};
         if (std::unordered_map<TextureKey, Texture, TextureKeyHash>::iterator it = _textures.find(key);
             it != _textures.end())
             return it->second.IsValid() ? &it->second : nullptr;
@@ -274,23 +339,43 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpac
         return &texture;
     }
 
-    TextureKey key{path, colorSpace};
+    TextureKey key{path, colorSpace, format};
     if (std::unordered_map<TextureKey, Texture, TextureKeyHash>::iterator it = _textures.find(key);
         it != _textures.end())
         return it->second.IsValid() ? &it->second : nullptr;
 
     Texture &texture = _textures[key];
-    if (std::expected<void, Core::AssetError> loaded = texture.LoadFromAssets(_device, path.View(), colorSpace);
-        !loaded)
+    if (std::expected<void, Core::AssetError> loaded = LoadTexture(texture, path, colorSpace, format); !loaded)
     {
-        Core::Log::Warn("AssetCache: failed to load texture '{}' — the channel falls back to its default.",
-                        path.View());
-        // Keep the invalid entry so the failed load isn't retried every frame;
-        // returning null lets the material substitute its channel default.
-        return nullptr;
+        Core::Log::Warn("AssetCache: failed to load texture '{}' — drawing the error pattern.", path.View());
+        ++_failedTextures;
+        // The checkerboard rather than the channel's neutral default: a white
+        // stand-in is what a great many correct materials look like, so the
+        // failure would reach a build with nobody having seen it. The entry stays
+        // resident either way, so a broken file is not retried every frame.
+        texture.UploadErrorPattern(_device, std::string(path.View()).c_str());
+        if (!texture.IsValid())
+        {
+            return nullptr;
+        }
+        RegisterBindlessTexture(texture);
+        return &texture;
     }
     RegisterBindlessTexture(texture);
     return &texture;
+}
+
+void AssetCache::ReportTextureFailures()
+{
+    const std::uint32_t total = _failedTextures + Texture::UploadFailureCount();
+    if (total == _reportedTextureFailures)
+    {
+        return;
+    }
+    _reportedTextureFailures = total;
+    // One line once the queue is empty, rather than a warning per texture buried
+    // in a load that logs hundreds of them.
+    Core::Log::Error("AssetCache: {} texture(s) failed and are drawn as the error pattern.", total);
 }
 
 const Texture *AssetCache::ResolveThumbnail(const Core::AssetPath &path)
@@ -315,7 +400,7 @@ const Texture *AssetCache::ResolveThumbnail(const Core::AssetPath &path)
     {
         Texture &texture = _thumbnails[path];
         if (std::expected<void, Core::AssetError> loaded =
-                texture.LoadFromAssets(_device, path.View(), ColorSpace::Linear);
+                texture.LoadFromAssets(_device, path.View(), Image::ColorSpace::Linear);
             !loaded)
             return nullptr; // keep the invalid entry so a broken file isn't retried
         return &texture;
@@ -328,7 +413,7 @@ const Texture *AssetCache::ResolveThumbnail(const Core::AssetPath &path)
 
     _jobs
     ->Run(Core::Pool::Worker,
-          [vpath, epoch, thumbEpoch]() -> std::expected<DecodedImage, Core::AssetError> {
+          [vpath, epoch, thumbEpoch]() -> std::expected<Image::DecodedImage, Core::AssetError> {
             // Skip the decode if a directory change already superseded this
             // thumbnail (the main-thread publish drops it regardless; this just
             // avoids the wasted work when browsing folders quickly). The error
@@ -336,9 +421,9 @@ const Texture *AssetCache::ResolveThumbnail(const Core::AssetPath &path)
             // mismatch before it looks at the result.
             if (thumbEpoch->load(std::memory_order_relaxed) != epoch)
                 return std::unexpected(Core::AssetError::FileReadFailed);
-            return Texture::DecodeImage(vpath, ColorSpace::Linear);
+            return Image::DecodeImage(vpath, Image::ColorSpace::Linear);
         })
-    .Then(Core::Pool::Main, [this, path, epoch](std::expected<DecodedImage, Core::AssetError> decoded) {
+    .Then(Core::Pool::Main, [this, path, epoch](std::expected<Image::DecodedImage, Core::AssetError> decoded) {
             if (epoch != _thumbnailEpoch.load(std::memory_order_relaxed))
                 return; // superseded (see the mesh path's twin): return before erasing so a stale
                         // completion can't drop a live epoch's loading marker and re-kick a load.
@@ -417,13 +502,14 @@ uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
     return slot;
 }
 
-uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
-                                    const Core::AssetPath &fallbackPrimitive, bool *outPresent)
+uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, std::size_t channelIndex, bool *outPresent)
 {
+    const ChannelDesc &channel = kChannels[channelIndex];
+
     const Core::AssetPath path = PathForId(channelId);
     if (!path.Empty())
     {
-        if (const Texture *texture = ResolveTexture(path, space))
+        if (const Texture *texture = ResolveTexture(path, channel.space, EffectiveFormat(channel.format)))
         {
             if (outPresent != nullptr)
                 *outPresent = true;
@@ -433,20 +519,21 @@ uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, ColorSpace s
 
     if (outPresent != nullptr)
         *outPresent = false;
-    // The primitive dictates its own colour space; `space` here is a harmless hint.
-    const Texture *fallback = ResolveTexture(fallbackPrimitive, space);
+    // The primitive dictates its own colour space and is never compressed; what is
+    // passed here is a harmless hint.
+    const Texture *fallback = ResolveTexture(*channel.fallback, channel.space, Image::PixelFormat::Rgba8);
     return fallback != nullptr ? fallback->BindlessIndex() : 0u;
 }
 
 void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData &data, uint32_t id)
 {
     MaterialTextures textures;
-    textures.baseColor = ResolveChannel(data.BaseColorTexture, ColorSpace::Srgb, kWhiteTexture);
+    textures.baseColor         = ResolveChannel(data.BaseColorTexture, MaterialChannel::BaseColor);
     textures.normal =
-        ResolveChannel(data.NormalTexture, ColorSpace::Linear, kFlatNormalTexture, &textures.hasNormalTexture);
-    textures.metallicRoughness = ResolveChannel(data.MetallicRoughnessTexture, ColorSpace::Linear, kWhiteLinearTexture);
-    textures.occlusion = ResolveChannel(data.OcclusionTexture, ColorSpace::Linear, kWhiteLinearTexture);
-    textures.emissive = ResolveChannel(data.EmissiveTexture, ColorSpace::Srgb, kWhiteTexture);
+        ResolveChannel(data.NormalTexture, MaterialChannel::Normal, &textures.hasNormalTexture);
+    textures.metallicRoughness = ResolveChannel(data.MetallicRoughnessTexture, MaterialChannel::MetallicRoughness);
+    textures.occlusion         = ResolveChannel(data.OcclusionTexture, MaterialChannel::Occlusion);
+    textures.emissive          = ResolveChannel(data.EmissiveTexture, MaterialChannel::Emissive);
 
     material.Create(_device, id, data, textures);
     WriteMaterialToTable(material);
@@ -767,10 +854,34 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
     {
         if (channelPaths[ch].Empty())
             continue;
-        std::expected<DecodedImage, Core::AssetError> img =
-            Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
+        std::expected<Image::DecodedImage, Core::AssetError> img =
+            Image::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
         if (!img)
+        {
+            // The path travels with the failure, not only with the success: it is
+            // what names the file in the warning and what keys the error texture,
+            // and without it every failed channel collapses onto one empty key.
+            bundle.channels[ch].path   = channelPaths[ch];
+            bundle.channels[ch].failed = true;
             continue;
+        }
+
+        // Compressing here rather than at publish keeps the encode on the worker
+        // alongside the decode, so the main thread still only submits. The fast
+        // tier, because a load is something somebody is waiting on.
+        const Image::PixelFormat format = cache.EffectiveFormat(kChannels[ch].format);
+        if (Image::IsBlockCompressed(format))
+        {
+            std::expected<Image::DecodedImage, Core::AssetError> compressed =
+                Image::Compress(*img, format, Image::CompressQuality::Fast);
+            if (!compressed)
+            {
+                bundle.channels[ch].path   = channelPaths[ch];
+                bundle.channels[ch].failed = true;
+                continue;
+            }
+            img = std::move(compressed);
+        }
 
         if (!list)
         {
@@ -885,11 +996,13 @@ void AssetCache::PublishMaterial(PendingPublish publish)
         RecordedChannel &rc = publish.material.channels[ch];
         if (rc.texture)
         {
-            // Dedup by (path, space): a texture shared across materials resolves to
-            // one resident copy. A duplicate's worker texture is simply not adopted —
-            // its recorded upload still executes (harmless: it targets a texture we
-            // release, kept alive by the list until the submit retires) and is freed.
-            const TextureKey key{rc.path, kChannels[ch].space};
+            // Dedup by (path, space, format): a texture shared across materials
+            // resolves to one resident copy. A duplicate's worker texture is simply
+            // not adopted — its recorded upload still executes (harmless: it targets
+            // a texture we release, kept alive by the list until the submit retires)
+            // and is freed. The format has to be the one the worker actually encoded,
+            // or the publish would look up a key nothing was stored under.
+            const TextureKey key{rc.path, kChannels[ch].space, EffectiveFormat(kChannels[ch].format)};
             if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
             {
                 *slots[ch] = it->second.BindlessIndex();
@@ -903,9 +1016,26 @@ void AssetCache::PublishMaterial(PendingPublish publish)
             if (kChannels[ch].isNormal)
                 textures.hasNormalTexture = true;
         }
+        else if (rc.failed)
+        {
+            // The material named a texture and it could not be produced. The
+            // neutral default would render as a perfectly ordinary white surface,
+            // so this takes the checkerboard instead.
+            Core::Log::Warn("AssetCache: failed to load texture '{}' — drawing the error pattern.", rc.path.View());
+            ++_failedTextures;
+
+            const TextureKey key{rc.path, kChannels[ch].space, Image::PixelFormat::Rgba8};
+            Texture &texture = _textures[key];
+            if (!texture.IsValid())
+            {
+                texture.UploadErrorPattern(_device, std::string(rc.path.View()).c_str(), BeginUpload());
+            }
+            *slots[ch] = texture.IsValid() ? RegisterBindlessTexture(texture) : 0u;
+        }
         else
         {
-            const Texture *fallback = ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space);
+            const Texture *fallback =
+                ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space, Image::PixelFormat::Rgba8);
             *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
         }
     }
@@ -1072,7 +1202,12 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     RecycleRetiredStaging();
 
     if (_pendingPublishes.empty())
+    {
+        // The queue is empty, so every texture this load was going to produce has
+        // either landed or failed — the one moment a total means anything.
+        ReportTextureFailures();
         return;
+    }
 
     using Clock = std::chrono::steady_clock;
     const auto elapsedMsSince = [](Clock::time_point t)

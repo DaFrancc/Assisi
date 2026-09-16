@@ -97,9 +97,19 @@ Surface SampleMaterial()
                                            : normalize(abs(N.y) < 0.99 ? cross(N, vec3(0.0, 1.0, 0.0))
                                                                        : cross(N, vec3(1.0, 0.0, 0.0)));
         vec3 B = cross(N, T) * vTangentSign;
-        vec3 sampledNormal = sampleMaterialTex(mat.texIndices.y, vTexCoord).xyz * 2.0 - 1.0;
-        sampledNormal.xy *= mat.emissiveFactorNormalScale.w;
-        s.normal = normalize(mat3(T, B, N) * sampledNormal);
+
+        // Only X and Y are read, and Z is rebuilt from them. A BC5-compressed
+        // normal map stores two channels and leaves the third meaningless, so
+        // sampling Z would read whatever the format happens to put there. An
+        // uncompressed map gives the same answer through this path, because a
+        // tangent-space normal is a unit vector whose Z is always positive —
+        // which makes it one rule rather than one per texture format.
+        vec2 sampledXY = sampleMaterialTex(mat.texIndices.y, vTexCoord).xy * 2.0 - 1.0;
+        sampledXY *= mat.emissiveFactorNormalScale.w;
+        // Clamped because scaling XY can push their length past one, and a
+        // negative radicand would make Z NaN and blacken the surface.
+        float sampledZ = sqrt(clamp(1.0 - dot(sampledXY, sampledXY), 0.0, 1.0));
+        s.normal = normalize(mat3(T, B, N) * vec3(sampledXY, sampledZ));
     }
     else
     {

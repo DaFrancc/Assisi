@@ -138,6 +138,9 @@ bool GameApp::SetupRenderer()
     // Before the scene renderer: the asset cache owns the bindless
     // material-texture table the mesh pipeline binds.
     _assetCache.Initialize(device, &Jobs());
+    // Creating a block-compressed texture on a device that did not enable the
+    // feature is invalid, so the cache is told before it loads anything.
+    _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
 
     if (!_sceneRenderer.Initialize({.device = device,
                                     .framebufferInfo = GetSceneFramebufferInfo(),

@@ -38,10 +38,10 @@ bool IconPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 
     // Load the supplied icon. If the art isn't present yet, fall back to a solid
     // magenta placeholder so the feature is visibly wired up rather than absent.
-    if (!_icon.LoadFromAssets(device, iconAssetPath, Render::ColorSpace::Srgb).has_value())
+    if (!_icon.LoadFromAssets(device, iconAssetPath, Image::ColorSpace::Srgb).has_value())
     {
         Core::Log::Warn("IconPass: could not load icon '{}'; using a magenta placeholder.", iconAssetPath);
-        _icon.UploadSolidColor(device, 255, 0, 255, 255, Render::ColorSpace::Srgb, "IconPass::Placeholder");
+        _icon.UploadSolidColor(device, 255, 0, 255, 255, Image::ColorSpace::Srgb, "IconPass::Placeholder");
     }
     if (!_icon.IsValid())
     {

@@ -333,7 +333,8 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
     return best;
 }
 
-VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQueueFamily, bool enableAnisotropy)
+VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQueueFamily, bool enableAnisotropy,
+                             bool enableTextureCompressionBc)
 {
     const float queuePriority = 1.0f;
 
@@ -391,6 +392,12 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     coreFeatures.depthBiasClamp = VK_TRUE;
     // The cascades' per-fragment pancaking. DeviceMeetsRequirements verified it.
     coreFeatures.depthClamp = VK_TRUE;
+    // Block-compressed textures. Requested only when the device advertises it, for
+    // the same reason anisotropy is: asking for a feature the device lacks fails
+    // vkCreateDevice outright. Unlike the features above it is not a requirement —
+    // a device without it renders from uncompressed textures instead, so this is a
+    // capability the asset path reads back rather than a reason to reject hardware.
+    coreFeatures.textureCompressionBC = enableTextureCompressionBc ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -521,8 +528,19 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     context->_maxAnisotropy =
         anisotropySupported ? std::min(kDesiredMaxAnisotropy, chosenProps.limits.maxSamplerAnisotropy) : 1.0f;
 
-    context->_device =
-        CreateLogicalDevice(context->_physicalDevice, context->_graphicsQueueFamily, anisotropySupported);
+    // Block-compressed textures. Optional rather than required: a device without
+    // it still renders, from uncompressed textures at four times the memory. It is
+    // reported because that difference is otherwise invisible until something runs
+    // out of video memory on hardware nobody tested.
+    context->_textureCompressionBc = supportedFeatures.textureCompressionBC == VK_TRUE;
+    if (!context->_textureCompressionBc)
+    {
+        Core::Log::Warn("VulkanContext: device does not support BC texture compression; "
+                        "textures stay uncompressed and cost four times the memory.");
+    }
+
+    context->_device = CreateLogicalDevice(context->_physicalDevice, context->_graphicsQueueFamily,
+                                           anisotropySupported, context->_textureCompressionBc);
     if (context->_device == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateDevice failed.");

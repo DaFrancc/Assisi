@@ -143,6 +143,14 @@ public:
     /// didn't enable is a validation error.
     [[nodiscard]] float GetMaxAnisotropy() const { return _maxAnisotropy; }
 
+    /// @brief Whether this device can sample block-compressed (BC) textures.
+    ///
+    /// Not a requirement — a device without it renders from uncompressed textures
+    /// at four times the memory — so the asset path reads this to decide whether
+    /// to compress at all. Creating a BC texture on a device that did not enable
+    /// the feature is a validation error, so nothing may assume it.
+    [[nodiscard]] bool SupportsTextureCompressionBc() const { return _textureCompressionBc; }
+
     /// @brief Color/depth formats and sample count of the swapchain framebuffers,
     /// for constructing pipelines compatible with them ahead of the first frame.
     [[nodiscard]] nvrhi::FramebufferInfo GetFramebufferInfo() const
@@ -222,6 +230,7 @@ private:
     // Touched only on the render thread (BeginFrame/EndFrame), so a plain bool.
     bool _swapchainStale = false;
     float _maxAnisotropy = 1.0f; // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
+    bool _textureCompressionBc = false; // see SupportsTextureCompressionBc()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
     VkExtent2D _swapchainExtent{};

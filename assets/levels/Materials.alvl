@@ -59,7 +59,7 @@
           "materialOverrides": [],
           "mesh": {
             "guid": "f8cbc6e4-d21e-4ea9-a59b-1c8914b87553",
-            "path": "models/DamagedHelmet/DamagedHelmet.gltf"
+            "path": "models/DamagedHelmet/DamagedHelmet.glb"
           }
         },
         "Transform": {
