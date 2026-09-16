@@ -21,6 +21,7 @@
 #include <expected>
 #include <string_view>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/BitStream.hpp>
 
 namespace Assisi::Core
@@ -76,5 +77,12 @@ void WriteCookedHeader(BitWriter &writer, CookedKind kind);
 /// has to reason about: on an error the reader has been advanced and must not be
 /// used, which is why the kind comes back by value and not through an out param.
 [[nodiscard]] std::expected<CookedKind, CookedBlobError> ReadCookedHeader(BitReader &reader);
+
+/// @brief Write an asset id as its sixteen raw bytes, in string order.
+void WriteAssetId(BitWriter &writer, const AssetId &id);
+
+/// @brief Read an asset id written by WriteAssetId. On a short read the reader
+///        reports Failed() and the id is partial, so check the reader first.
+[[nodiscard]] AssetId ReadAssetId(BitReader &reader);
 
 } // namespace Assisi::Core

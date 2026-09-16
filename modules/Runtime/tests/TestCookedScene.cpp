@@ -160,6 +160,15 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
     REQUIRE(out.good());
 }
 
+/// The id car.abp cooks under. Any non-nil value: the cook only has to carry it.
+const Core::AssetId kCarId = Core::DerivedAssetId("car.abp");
+
+/// Resolves car.abp and nothing else, standing in for the database a cook has.
+Core::AssetId CarIdOf(std::string_view source)
+{
+    return source == "car.abp" ? kCarId : Core::AssetId{};
+}
+
 /// car.abp: a body carrying a Camera, and a wheel parented to it. Camera stands
 /// in for "a component with more than one field", which is what an override that
 /// stays a patch is actually about.
@@ -179,13 +188,14 @@ TEST_CASE("A cooked scene is a Scene blob this build's protocol matches")
     ECS::Scene scene;
     FillScene(scene);
 
-    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
 
     Core::BitReader reader{*bytes};
     const auto kind = Core::ReadCookedHeader(reader);
     REQUIRE(kind.has_value());
     CHECK(*kind == Core::CookedKind::Scene);
+    CHECK(reader.ReadUInt8() == Runtime::kScenePayloadVersion);
     CHECK(reader.ReadBits64(64) == Core::Reflect::ProtocolHash());
 }
 
@@ -194,7 +204,7 @@ TEST_CASE("Every entity, component and value survives the cooked round trip")
     ECS::Scene source;
     FillScene(source);
 
-    const auto bytes = SaveCookedScene(source, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(source, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
 
     const auto cooked = DecodeCookedScene(*bytes);
@@ -217,7 +227,7 @@ TEST_CASE("A reference survives the cooked round trip as a reference")
     ECS::Scene source;
     FillScene(source);
 
-    const auto bytes = SaveCookedScene(source, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(source, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
     const auto cooked = DecodeCookedScene(*bytes);
     REQUIRE(cooked.has_value());
@@ -256,7 +266,7 @@ TEST_CASE("The systems list survives")
     LevelHeader header;
     header.systems = {"Bounce", "Spin"};
 
-    const auto bytes = SaveCookedScene(scene, header, nullptr);
+    const auto bytes = SaveCookedScene(scene, header, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
 
     const auto cooked = DecodeCookedScene(*bytes);
@@ -269,7 +279,7 @@ TEST_CASE("Every name the file spells is in the table exactly once")
     ECS::Scene scene;
     FillScene(scene);
 
-    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
     const auto cooked = DecodeCookedScene(*bytes);
     REQUIRE(cooked.has_value());
@@ -298,8 +308,8 @@ TEST_CASE("Cooking the same scene twice produces identical bytes")
     ECS::Scene scene;
     FillScene(scene);
 
-    const auto first = SaveCookedScene(scene, LevelHeader{}, nullptr);
-    const auto second = SaveCookedScene(scene, LevelHeader{}, nullptr);
+    const auto first = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
+    const auto second = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
     CHECK(*first == *second);
@@ -309,6 +319,7 @@ TEST_CASE("A blob of another kind is refused")
 {
     Core::BitWriter writer;
     Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
+    writer.WriteUInt8(Runtime::kScenePayloadVersion);
     writer.WriteUInt64(Core::Reflect::ProtocolHash());
 
     const std::span<const std::byte> bytes = writer.Data();
@@ -324,12 +335,13 @@ TEST_CASE("A blob written against another component table is refused whole")
     // rest and every block after it would decode into its neighbour.
     ECS::Scene scene;
     FillScene(scene);
-    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
 
     std::vector<std::byte> tampered = *bytes;
     Core::BitWriter header;
     Core::WriteCookedHeader(header, Core::CookedKind::Scene);
+    header.WriteUInt8(Runtime::kScenePayloadVersion);
     const std::size_t hashOffset = header.Data().size();
     // Flip one bit of the stored protocol hash.
     tampered[hashOffset] ^= std::byte{0x01};
@@ -343,7 +355,7 @@ TEST_CASE("A truncated blob is refused rather than half-read")
 {
     ECS::Scene scene;
     FillScene(scene);
-    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
 
     for (const std::size_t fraction : {2u, 4u, 8u})
@@ -376,7 +388,7 @@ TEST_CASE("An instance survives with its placement, its overrides and its remova
     REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
                                                    {.header = &header, .instances = &table}));
 
-    const auto bytes = SaveCookedScene(scene, header, &table);
+    const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE(bytes.has_value());
 
     const auto cooked = DecodeCookedScene(*bytes);
@@ -385,7 +397,8 @@ TEST_CASE("An instance survives with its placement, its overrides and its remova
 
     const Runtime::CookedInstance &instance = cooked->instances.front();
     CHECK(instance.name == "car_3");
-    CHECK(instance.source == "car.abp");
+    // By id, not by path: a shipped game has no path to look a blueprint up by.
+    CHECK(instance.source == kCarId);
     CHECK(instance.transform.position.x == doctest::Approx(1.f));
     CHECK(instance.transform.position.z == doctest::Approx(3.f));
     REQUIRE(instance.removed.size() == 1);
@@ -415,7 +428,7 @@ TEST_CASE("An override is a masked block naming only the field the author set")
     REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
                                                    {.header = &header, .instances = &table}));
 
-    const auto bytes = SaveCookedScene(scene, header, &table);
+    const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE(bytes.has_value());
     const auto cooked = DecodeCookedScene(*bytes);
     REQUIRE(cooked.has_value());
@@ -479,9 +492,51 @@ TEST_CASE("An override naming a field the component does not have is refused")
     REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
                                                    {.header = &header, .instances = &table}));
 
-    const auto bytes = SaveCookedScene(scene, header, &table);
+    const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error() == LevelError::MalformedComponent);
+}
+
+TEST_CASE("An instance whose blueprint has no id fails the cook")
+{
+    // A cooked instance names its blueprint by id. Written with a nil id instead,
+    // the level would ship and the instance would fail to load on a player's
+    // machine rather than on the build machine.
+    const std::filesystem::path root = FreshRoot("unknown-blueprint");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
+                                                   {.header = &header, .instances = &table}));
+
+    const auto knowsNothing = [](std::string_view) { return Core::AssetId{}; };
+    const auto bytes = SaveCookedScene(scene, header, &table, knowsNothing);
+    REQUIRE_FALSE(bytes.has_value());
+    CHECK(bytes.error() == LevelError::BlueprintUnusable);
+}
+
+TEST_CASE("A scene blob of a version this build does not read is refused")
+{
+    // The blob outlives the build that wrote it. A reader that took a newer
+    // layout on trust would read one field's bytes as the next's.
+    ECS::Scene scene;
+    const auto bytes = SaveCookedScene(scene, LevelHeader{}, nullptr, CarIdOf);
+    REQUIRE(bytes.has_value());
+
+    std::vector<std::byte> newer = *bytes;
+    Core::BitWriter header;
+    Core::WriteCookedHeader(header, Core::CookedKind::Scene);
+    newer[header.Data().size()] = std::byte{Runtime::kScenePayloadVersion + 1};
+
+    const auto cooked = DecodeCookedScene(newer);
+    REQUIRE_FALSE(cooked.has_value());
+    CHECK(cooked.error() == LevelError::UnsupportedVersion);
 }
 
 TEST_CASE("A member entity is described by its instance, not written as an entity")
@@ -502,7 +557,7 @@ TEST_CASE("A member entity is described by its instance, not written as an entit
     REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
                                                    {.header = &header, .instances = &table}));
 
-    const auto bytes = SaveCookedScene(scene, header, &table);
+    const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE(bytes.has_value());
     const auto cooked = DecodeCookedScene(*bytes);
     REQUIRE(cooked.has_value());
@@ -517,7 +572,7 @@ TEST_CASE("An empty scene cooks and comes back empty")
 {
     ECS::Scene empty;
 
-    const auto bytes = SaveCookedScene(empty, LevelHeader{}, nullptr);
+    const auto bytes = SaveCookedScene(empty, LevelHeader{}, nullptr, CarIdOf);
     REQUIRE(bytes.has_value());
 
     const auto cooked = DecodeCookedScene(*bytes);

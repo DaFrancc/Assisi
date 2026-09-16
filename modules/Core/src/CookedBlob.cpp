@@ -91,4 +91,22 @@ std::expected<CookedKind, CookedBlobError> ReadCookedHeader(BitReader &reader)
     return static_cast<CookedKind>(kind);
 }
 
+void WriteAssetId(BitWriter &writer, const AssetId &id)
+{
+    for (const std::uint8_t byte : id.bytes)
+    {
+        writer.WriteUInt8(byte);
+    }
+}
+
+AssetId ReadAssetId(BitReader &reader)
+{
+    AssetId id;
+    for (std::uint8_t &byte : id.bytes)
+    {
+        byte = reader.ReadUInt8();
+    }
+    return id;
+}
+
 } // namespace Assisi::Core

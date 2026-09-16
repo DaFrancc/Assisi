@@ -32,10 +32,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -88,13 +91,26 @@ struct CookedOverride
     bool absent = false;
 };
 
+/// @brief Version of a scene blob's own layout, separate from the envelope's.
+///
+/// Part of the scene cooker's cache key, so bumping it re-cooks every level.
+inline constexpr std::uint8_t kScenePayloadVersion = 1;
+
+/// @brief The id of the blueprint a level names by path, or nil when there is none.
+///
+/// The cook passes its database lookup. A cooked instance names its blueprint by
+/// id, because a shipped game has no path to look a blueprint up by.
+using BlueprintIdOf = std::function<Core::AssetId(std::string_view source)>;
+
 /// @brief One blueprint instance the level places.
 struct CookedInstance
 {
     ECS::Transform transform;
 
     std::string name;
-    std::string source;
+
+    /// The blueprint this instances, by id.
+    Core::AssetId source;
 
     /// Member paths this instance does not have.
     std::vector<std::string> removed;
@@ -127,12 +143,15 @@ struct CookedScene
 /// described by its instance entry rather than written as an entity — so a
 /// cooked level and a saved one describe the same world.
 ///
+/// @p idOf turns each instance's blueprint path into the id the blob stores.
+///
 /// @return the bytes, or why the scene could not be encoded. A component whose
 ///         fields the codec would drop (see the `norep` rule) is refused rather
 ///         than written short: a cooked level missing a field is a level that
-///         loads and is quietly wrong.
+///         loads and is quietly wrong. An instance whose blueprint @p idOf cannot
+///         name is BlueprintUnusable, for the same reason.
 [[nodiscard]] std::expected<std::vector<std::byte>, LevelError>
-SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *instances);
+SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *instances, const BlueprintIdOf &idOf);
 
 /// @brief Parse a cooked blob back into its parts.
 ///

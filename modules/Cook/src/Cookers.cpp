@@ -159,6 +159,8 @@ public:
     [[nodiscard]] std::string_view Name() const override { return "scene"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Scene; }
 
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Runtime::kScenePayloadVersion; }
+
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
         static constexpr std::array kExtensions{std::string_view{".alvl"}, std::string_view{".abp"}};
@@ -166,8 +168,18 @@ public:
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    Cook(std::string_view vpath, Core::AssetId, const CookContext &context) const override
     {
+        if (context.database == nullptr)
+        {
+            return std::unexpected(Failure(vpath, "was cooked with no asset database"));
+        }
+        const Core::AssetDatabase &database = *context.database;
+        const Runtime::BlueprintIdOf idOf = [&database](std::string_view source)
+                                            {
+                                                return database.IdFor(source).value_or(Core::AssetId{});
+                                            };
+
         ECS::Scene scene;
         Runtime::InstanceTable instances;
         Runtime::LevelHeader header;
@@ -183,7 +195,7 @@ public:
         }
 
         const std::expected<std::vector<std::byte>, Runtime::LevelError> cooked =
-            Runtime::SaveCookedScene(scene, header, &instances);
+            Runtime::SaveCookedScene(scene, header, &instances, idOf);
         if (!cooked)
         {
             return std::unexpected(Failure(vpath, std::string{Runtime::Describe(cooked.error())}));
@@ -204,6 +216,8 @@ class MeshCooker final : public Cooker
 public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return kMeshPayloadVersion; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -323,7 +337,7 @@ public:
         writer.WriteVarUInt32(slotCount);
         for (std::uint32_t slot = 0; slot < slotCount; ++slot)
         {
-            WriteAssetId(writer, database.SlotMaterial(id, slot));
+            Core::WriteAssetId(writer, database.SlotMaterial(id, slot));
         }
 
         const std::span<const std::byte> bytes = writer.Data();
@@ -336,14 +350,6 @@ private:
         writer.WriteFloat(value.x);
         writer.WriteFloat(value.y);
         writer.WriteFloat(value.z);
-    }
-
-    static void WriteAssetId(Core::BitWriter &writer, const Core::AssetId &id)
-    {
-        for (const std::uint8_t byte : id.bytes)
-        {
-            writer.WriteUInt8(byte);
-        }
     }
 };
 
@@ -367,7 +373,11 @@ public:
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &context) const override
     {
-        return static_cast<std::uint64_t>(context.textureQuality);
+        // The tier fits in its low byte, so the version above it cannot collide
+        // with a tier.
+        constexpr std::uint32_t kTierBits = 8;
+        return (static_cast<std::uint64_t>(kTexturePayloadVersion) << kTierBits) |
+               static_cast<std::uint64_t>(context.textureQuality);
     }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override

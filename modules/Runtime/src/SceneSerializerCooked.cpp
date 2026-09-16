@@ -170,7 +170,7 @@ std::expected<Core::Reflect::FieldMask, LevelError> MaskForClaim(const Core::Ref
 } // namespace
 
 std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &scene, const LevelHeader &header,
-                                                                  InstanceTable *instances)
+                                                                  InstanceTable *instances, const BlueprintIdOf &idOf)
 {
     if (s_rawContextScene != nullptr)
     {
@@ -314,8 +314,16 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
     body.WriteVarUInt32(static_cast<std::uint32_t>(placed.size()));
     for (const LevelInstance &entry : placed)
     {
+        const Core::AssetId source = idOf ? idOf(entry.source) : Core::AssetId{};
+        if (source.IsNil())
+        {
+            Core::Log::Error("CookedScene: instance '{}' names '{}', which has no asset id to cook it under.",
+                             entry.name, entry.source);
+            return std::unexpected(LevelError::BlueprintUnusable);
+        }
+
         body.WriteString(entry.name);
-        body.WriteString(entry.source);
+        Core::WriteAssetId(body, source);
         WriteTransform(body, entry.transform);
         WriteStringList(body, entry.removed);
 
@@ -425,6 +433,7 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
     // puts them ahead of it on the wire, which is what a reader needs.
     Core::BitWriter out;
     Core::WriteCookedHeader(out, Core::CookedKind::Scene);
+    out.WriteUInt8(kScenePayloadVersion);
     out.WriteUInt64(Core::Reflect::ProtocolHash());
     WriteStringList(out, names.Names());
     WriteStringList(out, componentNames.Names());
@@ -514,6 +523,17 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
         return std::unexpected(LevelError::MalformedBlob);
     }
 
+    const std::uint8_t version = reader.ReadUInt8();
+    if (reader.Failed())
+    {
+        return std::unexpected(LevelError::MalformedBlob);
+    }
+    if (version != kScenePayloadVersion)
+    {
+        Core::Log::Error("CookedScene: layout version {}, but this build reads {}.", version, kScenePayloadVersion);
+        return std::unexpected(LevelError::UnsupportedVersion);
+    }
+
     CookedScene scene;
     scene.protocolHash = reader.ReadBits64(64);
     if (reader.Failed())
@@ -592,7 +612,7 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
     {
         CookedInstance instance;
         instance.name   = reader.ReadString();
-        instance.source = reader.ReadString();
+        instance.source = Core::ReadAssetId(reader);
         if (reader.Failed())
         {
             return std::unexpected(LevelError::MalformedBlob);
