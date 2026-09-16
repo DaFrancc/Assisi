@@ -412,6 +412,24 @@ TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
     CHECK(missing.error() == AssetError::UnknownAssetId);
 }
 
+TEST_CASE("LooseFileProvider resolves a virtual path to the id the database holds")
+{
+    const fs::path root = MakeTree();
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+    const LooseFileProvider provider(db);
+
+    const std::expected<AssetId, AssetError> crate = provider.Resolve("textures/crate.png");
+    REQUIRE(crate.has_value());
+    CHECK(*crate == *db.IdFor("textures/crate.png"));
+
+    const std::expected<AssetId, AssetError> absent = provider.Resolve("textures/absent.png");
+    REQUIRE_FALSE(absent.has_value());
+    CHECK(absent.error() == AssetError::UnknownAssetId);
+}
+
 TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
 {
     const fs::path root = MakeTree();

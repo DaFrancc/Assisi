@@ -4,22 +4,19 @@
 /// @file AssetProvider.hpp
 /// @brief The GUID→bytes seam: one interface, two backends.
 ///
-/// Resolving an `AssetId` to raw bytes is not one operation. In the editor,
-/// assets are loose files with `.aast` sidecars resolved through a live,
-/// mutable database (LooseFileProvider). In a shipped build, assets are packed
-/// into archives and the sidecars do not exist — the bytes come from a slice of
-/// an archive addressed by a baked index (PakProvider, a later stage). The
-/// storage and the lookup differ; what is identical is everything *above* the
-/// bytes — parsing `.amat` JSON, uploading a mesh, resolving texture channels.
+/// The editor reads loose files, resolved through the mutable database built from
+/// `.aast` sidecars (LooseFileProvider). A shipped game reads slices of a pak,
+/// addressed by the index baked into it (PakProvider), and has neither sidecars
+/// nor loose files. The storage and the lookup differ; the question asked is the
+/// same.
 ///
-/// So the seam is this interface. Deserializers and the render `AssetCache` are
-/// written against it and never learn which backend served them.
-///
-/// This interface ships in every build. Its editor backend (LooseFileProvider)
-/// does not.
+/// What the bytes *are* differs too: source files from one, cooked blobs from the
+/// other. Decoding them is the layer above, which each executable installs to
+/// match the provider it built.
 
 #include <cstddef>
 #include <expected>
+#include <string_view>
 #include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
@@ -29,6 +26,9 @@ namespace Assisi::Core
 {
 
 /// @brief Abstract source of asset bytes, addressed by stable id.
+///
+/// Both calls may run on worker threads concurrently, so an implementation holds
+/// no per-call state.
 class AssetProvider
 {
 public:
@@ -39,10 +39,17 @@ public:
     /// @param id The asset to open. Reserved built-in ids (the `prim://`
     ///        primitives) are handled by the resolver above this layer, not by a
     ///        provider — opening one returns AssetError::UnknownAssetId.
-    /// @return The bytes, or an AssetError (UnknownAssetId if the id is not
-    ///         known to this provider; FileOpenFailed / FileReadFailed on I/O
-    ///         trouble).
+    /// @return The bytes, or an AssetError: UnknownAssetId if this provider does
+    ///         not serve the id, FileOpenFailed / FileReadFailed on I/O trouble,
+    ///         and UnsupportedEncoding / CorruptArchive for a slice the pak cannot
+    ///         decode. Never a fall-through to another source.
     [[nodiscard]] virtual std::expected<std::vector<std::byte>, AssetError> Open(AssetId id) const = 0;
+
+    /// @brief The id of the asset at @p vpath.
+    ///
+    /// For callers that address an asset by path — a config file, a shader, a
+    /// level named in a config. UnknownAssetId when this provider has no such path.
+    [[nodiscard]] virtual std::expected<AssetId, AssetError> Resolve(std::string_view vpath) const = 0;
 };
 
 } // namespace Assisi::Core
