@@ -14,8 +14,22 @@ PRESETS        := $(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(c)-$(k)))
 CHIARA_PRESETS := $(addsuffix -chiara,$(PRESETS))
 BUILDS         := $(PRESETS) $(CHIARA_PRESETS)
 
-# The same builds with the Game executable added on top.
-GAME_BUILDS := $(addsuffix -game,$(BUILDS))
+# Steps a build can be followed by, and every combination of them in the order
+# they have to run: the game's code, then a cook of assets/, then a pak of that
+# cook. Each is its own target on every build: gcc-debug-cook, gcc-debug-game-cook-pack.
+STEPS    := game cook pack
+SUFFIXES := game cook pack game-cook game-pack cook-pack game-cook-pack
+STEP_BUILDS := $(foreach s,$(SUFFIXES),$(addsuffix -$(s),$(BUILDS)))
+
+# Per config: the texture compression tier a cook uses, and the codec a pak is
+# compressed with. A debug cook takes the fast tier because somebody is waiting
+# on it, so a debug pak is never a packaging input.
+TIER_debug  := fast
+TIER_dev    := best
+TIER_ship   := best
+CODEC_debug := none
+CODEC_dev   := lz4
+CODEC_ship  := zstd
 
 # Occasional-use presets that configure and build in one step.
 SANITIZED := msvc-asan gcc-asan gcc-tsan clang-asan clang-tsan gcc-tsan-chiara
@@ -34,20 +48,40 @@ SPACE := $(EMPTY) $(EMPTY)
 # $(call presets-of,<compiler>,<list>): that compiler's presets from <list>.
 presets-of = $(filter $(1)-%,$(2))
 
+# $(call config-of,<build>): debug, dev or ship.
+config-of = $(word 2,$(subst -, ,$(1)))
+
+# $(call build-dir,<build>): where that preset builds.
+build-dir = $(CURDIR)/out/build/$(1)
+
+# $(call step-letters,<suffix>): game-cook-pack -> gkp.
+step-letters = $(subst game,g,$(subst cook,k,$(subst pack,p,$(subst -,,$(1)))))
+
+# $(call run-steps,<build>,<suffix>): each step of <suffix> in order, as a
+# separate make, stopping at the first failure. Separate makes so a parallel
+# make cannot start the pack before the cook it reads has finished.
+run-steps = $(MAKE) $(1)-$(firstword $(subst -, ,$(2)))$(patsubst %, && $(MAKE) $(1)-%,$(wordlist 2,$(words $(subst -, ,$(2))),$(subst -, ,$(2))))
+
 # $(call build-each,<presets>): build them in order, stopping at the first
 # failure. One `&&` chain rather than a shell loop, because the msvc targets
 # run under cmd as well as sh.
 build-each = cmake --build --preset $(firstword $(1))$(patsubst %, && cmake --build --preset %,$(wordlist 2,$(words $(1)),$(1)))
 
-# Short aliases for one compiler/config pair: gd, gdg, gd-c, gdg-c.
+# Short aliases for one compiler/config pair: gd and gd-c.
 define ALIASES
-ALIAS_NAMES += $(LETTER_$(1))$(LETTER_$(2)) $(LETTER_$(1))$(LETTER_$(2))g $(LETTER_$(1))$(LETTER_$(2))-c $(LETTER_$(1))$(LETTER_$(2))g-c
+ALIAS_NAMES += $(LETTER_$(1))$(LETTER_$(2)) $(LETTER_$(1))$(LETTER_$(2))-c
 $(LETTER_$(1))$(LETTER_$(2)): $(1)-$(2)
-$(LETTER_$(1))$(LETTER_$(2))g: $(1)-$(2)-game
 $(LETTER_$(1))$(LETTER_$(2))-c: $(1)-$(2)-chiara
-$(LETTER_$(1))$(LETTER_$(2))g-c: $(1)-$(2)-chiara-game
 endef
 $(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(eval $(call ALIASES,$(c),$(k)))))
+
+# The same pair with a step suffix: gdg, gdkp, gdgkp-c.
+define STEP_ALIASES
+ALIAS_NAMES += $(LETTER_$(1))$(LETTER_$(2))$(call step-letters,$(3)) $(LETTER_$(1))$(LETTER_$(2))$(call step-letters,$(3))-c
+$(LETTER_$(1))$(LETTER_$(2))$(call step-letters,$(3)): $(1)-$(2)-$(3)
+$(LETTER_$(1))$(LETTER_$(2))$(call step-letters,$(3))-c: $(1)-$(2)-chiara-$(3)
+endef
+$(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(foreach s,$(SUFFIXES),$(eval $(call STEP_ALIASES,$(c),$(k),$(s))))))
 
 # What `clean-<compiler>` removes: its presets, its sanitizer builds, and its
 # Chiara builds.
@@ -59,7 +93,7 @@ $(foreach c,$(COMPILERS),$(eval $(call COMPILER_CLEAN,$(c))))
 .PHONY: help format format-check clean clean-deps \
         $(COMPILERS) $(addsuffix -chiara,$(COMPILERS)) \
         $(addprefix configure-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS))) \
-        $(BUILDS) $(GAME_BUILDS) $(ALIAS_NAMES) \
+        $(BUILDS) $(STEP_BUILDS) $(ALIAS_NAMES) \
         $(SANITIZED) $(addprefix test-,$(SANITIZED)) \
         $(addprefix clean-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS)) $(PRESETS) $(filter-out %-chiara,$(SANITIZED)))
 
@@ -67,9 +101,13 @@ help:
 	@echo "Builds (editor, tests and shaders; no Game):"
 	@echo "  <compiler>-<config>             e.g. gcc-debug      alias gd"
 	@echo "  <compiler>-<config>-chiara      with capture        alias gd-c"
-	@echo "Builds with the Game executable added:"
-	@echo "  <compiler>-<config>-game                            alias gdg"
-	@echo "  <compiler>-<config>-chiara-game                     alias gdg-c"
+	@echo "Steps after a build, in this order (any subset):"
+	@echo "  <build>-game       the Game executable              alias gdg"
+	@echo "  <build>-cook       cook assets/ into <build>/cooked alias gdk"
+	@echo "  <build>-pack       pak the last cook beside Game    alias gdp"
+	@echo "  <build>-game-cook-pack, <build>-cook-pack, ...      alias gdgkp, gdkp, ..."
+	@echo "  <build> is <compiler>-<config> or <compiler>-<config>-chiara (alias suffix -c: gdgkp-c)"
+	@echo "  cook tier / pak codec: debug fast/none, dev best/lz4, ship best/zstd"
 	@echo "Whole compiler (configure, then every config):"
 	@echo "  <compiler>  <compiler>-chiara  configure-<compiler>  configure-<compiler>-chiara"
 	@echo "Sanitizers (configure + build; test- also runs ctest):"
@@ -79,7 +117,7 @@ help:
 	@echo "Formatting:"
 	@echo "  format  format-check"
 	@echo "Compilers: $(COMPILERS)    configs: $(CONFIGS)"
-	@echo "Letters: m=msvc g=gcc c=clang, d=debug v=dev s=ship, g suffix=game, -c=Chiara"
+	@echo "Letters: m=msvc g=gcc c=clang, d=debug v=dev s=ship, then g=game k=cook p=pack, -c=Chiara"
 
 # Source formatting (.uncrustify.cfg). The reflectgen fixtures are excluded:
 # the golden is compared byte-for-byte against generator output and the fixture
@@ -120,8 +158,28 @@ $(PRESETS):
 	cmake --build --preset $@
 
 # One preset, then the Game executable in the same build tree.
-$(GAME_BUILDS): %-game: %
+$(addsuffix -game,$(BUILDS)): %-game: %
 	cmake --build --preset $* --target Assisi-Game
+
+# Cooks assets/ into the build tree. Only what the cook needs is built — the
+# tool and the compiled shaders it packs — not the editor. Incremental: an
+# unchanged asset costs a hash, not an encode.
+$(addsuffix -cook,$(BUILDS)): %-cook:
+	cmake --build --preset $* --target Assisi-Cook-Tool Assisi-VkShaders
+	"$(call build-dir,$*)/apps/cook/assisi-cook" --source "$(CURDIR)/assets" --out "$(call build-dir,$*)/cooked" --texture-tier $(TIER_$(call config-of,$*))
+
+# Packs the build tree's last cook into assets.pak beside the Game executable,
+# which is where the game looks for it with no override.
+$(addsuffix -pack,$(BUILDS)): %-pack:
+	cmake --build --preset $* --target Assisi-Pack-Tool
+	"$(call build-dir,$*)/apps/pack/assisi-pack" --cooked "$(call build-dir,$*)/cooked" --out "$(call build-dir,$*)/apps/game/assets.pak" --compress $(CODEC_$(call config-of,$*))
+
+# Every combination of steps, run in order.
+define STEP_COMBO
+$(addsuffix -$(1),$(BUILDS)): %-$(1):
+	$$(call run-steps,$$*,$(1))
+endef
+$(foreach s,$(filter-out $(STEPS),$(SUFFIXES)),$(eval $(call STEP_COMBO,$(s))))
 
 # Sanitizer builds (occasional-use: configure + build in one step; the
 # configure is a cached no-op after the first run). test-* builds then runs
