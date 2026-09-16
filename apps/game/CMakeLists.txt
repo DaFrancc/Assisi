@@ -57,7 +57,12 @@ assisi_reflect(
 # with Assisi::Editor on top. The editor is a library rather than its own
 # executable because reflection registers per final binary — a separate editor
 # process could not inspect the components this project's code declares.
-add_executable(Assisi-Game)
+#
+# Game is out of the default build: editor iteration is the common case, and a
+# second full link of every reflected type is time spent on a binary nobody is
+# running. Ask for it by name (`--target Assisi-Game`, or a Makefile `-game`
+# target).
+add_executable(Assisi-Game EXCLUDE_FROM_ALL)
 Assisi_apply_defaults(Assisi-Game)
 target_sources(Assisi-Game PRIVATE "src/GameMain.cpp")
 target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
@@ -96,13 +101,28 @@ endif()
 # somebody closes the window. What it proves is that the no-editor link is a real
 # program: it resolves, brings the world up, and returns 0.
 if (ASSISI_BUILD_TESTS)
+  # Builds Game before anything that runs or scans it. Game is out of the default
+  # build, so without this a tree built for the editor would test whatever Game
+  # binary an earlier build left behind — passing or failing on code that is no
+  # longer the source. A no-op when Game is current. Every test that needs it
+  # carries the `game` label, so `ctest -LE game` leaves Game out entirely.
+  add_test(NAME GameBuilt
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target Assisi-Game
+  )
+  set_tests_properties(GameBuilt PROPERTIES
+    FIXTURES_SETUP GameBinary
+    LABELS game)
+
   add_test(NAME GameBoots
     COMMAND Assisi-Game --headless --ticks 1
     WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
   )
   # A game that never reaches its tick limit would otherwise hang the suite
   # rather than fail it.
-  set_tests_properties(GameBoots PROPERTIES TIMEOUT 60)
+  set_tests_properties(GameBoots PROPERTIES
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
+    TIMEOUT 60)
 endif()
 
 # --- The configured startup scene decides whether the game starts at all.
@@ -152,6 +172,8 @@ if (ASSISI_BUILD_TESTS)
   )
   set_tests_properties(GameBootsFromThinRoot PROPERTIES
     ENVIRONMENT "ASSISI_ASSET_ROOT=${_thin_root}"
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
     TIMEOUT 60)
 
   # The claim of the issue: a startup scene that is not there stops the game and
@@ -164,6 +186,8 @@ if (ASSISI_BUILD_TESTS)
   )
   set_tests_properties(GameRefusesMissingStartupScene PROPERTIES
     ENVIRONMENT "ASSISI_ASSET_ROOT=${_refused_root}"
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
     WILL_FAIL TRUE
     TIMEOUT 60)
 endif()
@@ -230,6 +254,8 @@ if (ASSISI_BUILD_TESTS)
             ${_editor_symbols}
   )
   set_tests_properties(GameLinksNoEditor PROPERTIES
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
     SKIP_RETURN_CODE ${_symbol_scan_skip_code})
 
   # The positive control. GameEditor contains every one of those symbols by
@@ -260,6 +286,8 @@ if (ASSISI_BUILD_TESTS)
             --forbid "Assisi::Core::LooseFileProvider"
   )
   set_tests_properties(GameLinksNoAssetDatabase PROPERTIES
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
     WILL_FAIL TRUE
     SKIP_RETURN_CODE ${_symbol_scan_skip_code})
 

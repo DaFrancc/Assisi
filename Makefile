@@ -1,20 +1,85 @@
-.PHONY: configure-msvc configure-gcc configure-clang msvc gcc clang \
-        msvc-debug msvc-dev msvc-ship gcc-debug gcc-dev gcc-ship clang-debug clang-dev clang-ship \
-        msvc-asan gcc-asan gcc-tsan clang-asan clang-tsan \
-        test-gcc-asan test-gcc-tsan test-clang-asan test-clang-tsan test-msvc-asan \
-        md mv ms gd gv gs cd cv cs \
-        configure-msvc-chiara configure-gcc-chiara configure-clang-chiara \
-        msvc-chiara gcc-chiara clang-chiara \
-        msvc-debug-chiara msvc-dev-chiara msvc-ship-chiara \
-        gcc-debug-chiara gcc-dev-chiara gcc-ship-chiara \
-        clang-debug-chiara clang-dev-chiara clang-ship-chiara \
-        gcc-tsan-chiara test-gcc-tsan-chiara \
-        md-c mv-c ms-c gd-c gv-c gs-c cd-c cv-c cs-c \
-        clean-msvc-debug clean-msvc-dev clean-msvc-ship clean-msvc-asan clean-msvc-chiara clean-msvc \
-        clean-gcc-debug clean-gcc-dev clean-gcc-ship clean-gcc-asan clean-gcc-tsan clean-gcc-chiara clean-gcc \
-        clean-clang-debug clean-clang-dev clean-clang-ship clean-clang-asan clean-clang-tsan clean-clang-chiara \
-        clean-clang clean clean-deps \
-        format format-check
+# Build targets are generated from the axes below rather than written out one
+# per combination, so a new compiler, config or variant is a line in a list.
+# `make help` prints every family and its short aliases.
+
+# Set explicitly because the generated alias rules below come before any
+# hand-written target, and the first rule in a file is otherwise the default.
+.DEFAULT_GOAL := help
+
+COMPILERS := msvc gcc clang
+CONFIGS   := debug dev ship
+
+# gcc-debug, gcc-dev, ... and each one's Chiara twin. Each is a CMake preset.
+PRESETS        := $(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(c)-$(k)))
+CHIARA_PRESETS := $(addsuffix -chiara,$(PRESETS))
+BUILDS         := $(PRESETS) $(CHIARA_PRESETS)
+
+# The same builds with the Game executable added on top.
+GAME_BUILDS := $(addsuffix -game,$(BUILDS))
+
+# Occasional-use presets that configure and build in one step.
+SANITIZED := msvc-asan gcc-asan gcc-tsan clang-asan clang-tsan gcc-tsan-chiara
+
+# One letter per compiler and per config, for the short aliases (gd, gvg-c, ...).
+LETTER_msvc  := m
+LETTER_gcc   := g
+LETTER_clang := c
+LETTER_debug := d
+LETTER_dev   := v
+LETTER_ship  := s
+
+EMPTY :=
+SPACE := $(EMPTY) $(EMPTY)
+
+# $(call presets-of,<compiler>,<list>): that compiler's presets from <list>.
+presets-of = $(filter $(1)-%,$(2))
+
+# $(call build-each,<presets>): build them in order, stopping at the first
+# failure. One `&&` chain rather than a shell loop, because the msvc targets
+# run under cmd as well as sh.
+build-each = cmake --build --preset $(firstword $(1))$(patsubst %, && cmake --build --preset %,$(wordlist 2,$(words $(1)),$(1)))
+
+# Short aliases for one compiler/config pair: gd, gdg, gd-c, gdg-c.
+define ALIASES
+ALIAS_NAMES += $(LETTER_$(1))$(LETTER_$(2)) $(LETTER_$(1))$(LETTER_$(2))g $(LETTER_$(1))$(LETTER_$(2))-c $(LETTER_$(1))$(LETTER_$(2))g-c
+$(LETTER_$(1))$(LETTER_$(2)): $(1)-$(2)
+$(LETTER_$(1))$(LETTER_$(2))g: $(1)-$(2)-game
+$(LETTER_$(1))$(LETTER_$(2))-c: $(1)-$(2)-chiara
+$(LETTER_$(1))$(LETTER_$(2))g-c: $(1)-$(2)-chiara-game
+endef
+$(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(eval $(call ALIASES,$(c),$(k)))))
+
+# What `clean-<compiler>` removes: its presets, its sanitizer builds, and its
+# Chiara builds.
+define COMPILER_CLEAN
+clean-$(1): $(addprefix clean-,$(call presets-of,$(1),$(PRESETS) $(filter-out %-chiara,$(SANITIZED)))) clean-$(1)-chiara
+endef
+$(foreach c,$(COMPILERS),$(eval $(call COMPILER_CLEAN,$(c))))
+
+.PHONY: help format format-check clean clean-deps \
+        $(COMPILERS) $(addsuffix -chiara,$(COMPILERS)) \
+        $(addprefix configure-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS))) \
+        $(BUILDS) $(GAME_BUILDS) $(ALIAS_NAMES) \
+        $(SANITIZED) $(addprefix test-,$(SANITIZED)) \
+        $(addprefix clean-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS)) $(PRESETS) $(filter-out %-chiara,$(SANITIZED)))
+
+help:
+	@echo "Builds (editor, tests and shaders; no Game):"
+	@echo "  <compiler>-<config>             e.g. gcc-debug      alias gd"
+	@echo "  <compiler>-<config>-chiara      with capture        alias gd-c"
+	@echo "Builds with the Game executable added:"
+	@echo "  <compiler>-<config>-game                            alias gdg"
+	@echo "  <compiler>-<config>-chiara-game                     alias gdg-c"
+	@echo "Whole compiler (configure, then every config):"
+	@echo "  <compiler>  <compiler>-chiara  configure-<compiler>  configure-<compiler>-chiara"
+	@echo "Sanitizers (configure + build; test- also runs ctest):"
+	@echo "  $(SANITIZED)"
+	@echo "Clean:"
+	@echo "  clean-<preset>  clean-<compiler>  clean-<compiler>-chiara  clean  clean-deps"
+	@echo "Formatting:"
+	@echo "  format  format-check"
+	@echo "Compilers: $(COMPILERS)    configs: $(CONFIGS)"
+	@echo "Letters: m=msvc g=gcc c=clang, d=debug v=dev s=ship, g suffix=game, -c=Chiara"
 
 # Source formatting (.uncrustify.cfg). The reflectgen fixtures are excluded:
 # the golden is compared byte-for-byte against generator output and the fixture
@@ -42,96 +107,35 @@ format-check:
 # a `make clean-deps` to take effect.
 CONFIGURE_SCRIPT = "$(CURDIR)/cmake/AssisiConfigureCached.cmake"
 
-configure-msvc:
-	cmake -DPRESETS="msvc-debug;msvc-dev;msvc-ship" -P $(CONFIGURE_SCRIPT)
+$(addprefix configure-,$(COMPILERS)): configure-%:
+	cmake -DPRESETS="$(subst $(SPACE),;,$(call presets-of,$*,$(PRESETS)))" -P $(CONFIGURE_SCRIPT)
 
-configure-gcc:
-	cmake -DPRESETS="gcc-debug;gcc-dev;gcc-ship" -P $(CONFIGURE_SCRIPT)
+# Full setup + build of every config for one compiler.
+$(COMPILERS): %: configure-%
+	$(call build-each,$(call presets-of,$*,$(PRESETS)))
 
-configure-clang:
-	cmake -DPRESETS="clang-debug;clang-dev;clang-ship" -P $(CONFIGURE_SCRIPT)
+# One preset. The Game executable is out of the default build, so this is the
+# editor, the tests and the shaders.
+$(PRESETS):
+	cmake --build --preset $@
 
-# Full setup + build (cmake configure -> cmake build)
-msvc: configure-msvc
-	cmake --build --preset msvc-debug
-	cmake --build --preset msvc-dev
-	cmake --build --preset msvc-ship
-
-gcc: configure-gcc
-	cmake --build --preset gcc-debug
-	cmake --build --preset gcc-dev
-	cmake --build --preset gcc-ship
-
-clang: configure-clang
-	cmake --build --preset clang-debug
-	cmake --build --preset clang-dev
-	cmake --build --preset clang-ship
-
-# Individual build targets
-msvc-debug:
-	cmake --build --preset msvc-debug
-
-msvc-dev:
-	cmake --build --preset msvc-dev
-
-msvc-ship:
-	cmake --build --preset msvc-ship
-
-gcc-debug:
-	cmake --build --preset gcc-debug
-
-gcc-dev:
-	cmake --build --preset gcc-dev
-
-gcc-ship:
-	cmake --build --preset gcc-ship
-
-clang-debug:
-	cmake --build --preset clang-debug
-
-clang-dev:
-	cmake --build --preset clang-dev
-
-clang-ship:
-	cmake --build --preset clang-ship
+# One preset, then the Game executable in the same build tree.
+$(GAME_BUILDS): %-game: %
+	cmake --build --preset $* --target Assisi-Game
 
 # Sanitizer builds (occasional-use: configure + build in one step; the
 # configure is a cached no-op after the first run). test-* builds then runs
 # the whole suite under the sanitizer.
-msvc-asan:
-	cmake -DPRESETS="msvc-asan" -P $(CONFIGURE_SCRIPT)
-	cmake --build --preset msvc-asan
+#
+# gcc-tsan-chiara exists because Chiara's own race tests need tsan *and* the
+# capture compiled in; gcc-tsan inherits gcc-debug, where Chiara is off, so it
+# cannot cover them.
+$(SANITIZED):
+	cmake -DPRESETS="$@" -P $(CONFIGURE_SCRIPT)
+	cmake --build --preset $@
 
-gcc-asan:
-	cmake -DPRESETS="gcc-asan" -P $(CONFIGURE_SCRIPT)
-	cmake --build --preset gcc-asan
-
-gcc-tsan:
-	cmake -DPRESETS="gcc-tsan" -P $(CONFIGURE_SCRIPT)
-	cmake --build --preset gcc-tsan
-
-clang-asan:
-	cmake -DPRESETS="clang-asan" -P $(CONFIGURE_SCRIPT)
-	cmake --build --preset clang-asan
-
-clang-tsan:
-	cmake -DPRESETS="clang-tsan" -P $(CONFIGURE_SCRIPT)
-	cmake --build --preset clang-tsan
-
-test-msvc-asan: msvc-asan
-	ctest --preset msvc-asan
-
-test-gcc-asan: gcc-asan
-	ctest --preset gcc-asan
-
-test-gcc-tsan: gcc-tsan
-	ctest --preset gcc-tsan
-
-test-clang-asan: clang-asan
-	ctest --preset clang-asan
-
-test-clang-tsan: clang-tsan
-	ctest --preset clang-tsan
+$(addprefix test-,$(SANITIZED)): test-%: %
+	ctest --preset $*
 
 # Chiara builds: the same configs with the capture system compiled in.
 # Off by default everywhere, so these are the only way to get it. Split into
@@ -145,154 +149,24 @@ test-clang-tsan: clang-tsan
 #
 # `make gs-c` is the one to reach for: an optimized build with capture. Profiling
 # a debug build mostly measures the debug build.
-configure-msvc-chiara:
-	cmake -DPRESETS="msvc-debug-chiara;msvc-dev-chiara;msvc-ship-chiara" -P $(CONFIGURE_SCRIPT)
+$(addprefix configure-,$(addsuffix -chiara,$(COMPILERS))): configure-%-chiara:
+	cmake -DPRESETS="$(subst $(SPACE),;,$(call presets-of,$*,$(CHIARA_PRESETS)))" -P $(CONFIGURE_SCRIPT)
 
-configure-gcc-chiara:
-	cmake -DPRESETS="gcc-debug-chiara;gcc-dev-chiara;gcc-ship-chiara" -P $(CONFIGURE_SCRIPT)
+$(addsuffix -chiara,$(COMPILERS)): %-chiara: configure-%-chiara
+	$(call build-each,$(call presets-of,$*,$(CHIARA_PRESETS)))
 
-configure-clang-chiara:
-	cmake -DPRESETS="clang-debug-chiara;clang-dev-chiara;clang-ship-chiara" -P $(CONFIGURE_SCRIPT)
-
-msvc-chiara: configure-msvc-chiara
-	cmake --build --preset msvc-debug-chiara
-	cmake --build --preset msvc-dev-chiara
-	cmake --build --preset msvc-ship-chiara
-
-gcc-chiara: configure-gcc-chiara
-	cmake --build --preset gcc-debug-chiara
-	cmake --build --preset gcc-dev-chiara
-	cmake --build --preset gcc-ship-chiara
-
-clang-chiara: configure-clang-chiara
-	cmake --build --preset clang-debug-chiara
-	cmake --build --preset clang-dev-chiara
-	cmake --build --preset clang-ship-chiara
-
-msvc-debug-chiara:
-	cmake --build --preset msvc-debug-chiara
-
-msvc-dev-chiara:
-	cmake --build --preset msvc-dev-chiara
-
-msvc-ship-chiara:
-	cmake --build --preset msvc-ship-chiara
-
-gcc-debug-chiara:
-	cmake --build --preset gcc-debug-chiara
-
-gcc-dev-chiara:
-	cmake --build --preset gcc-dev-chiara
-
-gcc-ship-chiara:
-	cmake --build --preset gcc-ship-chiara
-
-clang-debug-chiara:
-	cmake --build --preset clang-debug-chiara
-
-clang-dev-chiara:
-	cmake --build --preset clang-dev-chiara
-
-clang-ship-chiara:
-	cmake --build --preset clang-ship-chiara
-
-# Chiara's own race tests need tsan *and* the capture compiled in; gcc-tsan
-# inherits gcc-debug, where Chiara is off, so it cannot cover them.
-gcc-tsan-chiara:
-	cmake -DPRESETS="gcc-tsan-chiara" -P $(CONFIGURE_SCRIPT)
-	cmake --build --preset gcc-tsan-chiara
-
-test-gcc-tsan-chiara: gcc-tsan-chiara
-	ctest --preset gcc-tsan-chiara
-
-# Aliases (d=debug, v=dev, s=ship; -c=with Chiara)
-md: msvc-debug
-mv: msvc-dev
-ms: msvc-ship
-gd: gcc-debug
-gv: gcc-dev
-gs: gcc-ship
-cd: clang-debug
-cv: clang-dev
-cs: clang-ship
-
-md-c: msvc-debug-chiara
-mv-c: msvc-dev-chiara
-ms-c: msvc-ship-chiara
-gd-c: gcc-debug-chiara
-gv-c: gcc-dev-chiara
-gs-c: gcc-ship-chiara
-cd-c: clang-debug-chiara
-cv-c: clang-dev-chiara
-cs-c: clang-ship-chiara
+$(CHIARA_PRESETS):
+	cmake --build --preset $@
 
 # Clean build outputs — removes the entire build directory.
 # After cleaning, re-run the relevant configure-* target before building.
-clean-msvc-debug:
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-debug"
+$(addprefix clean-,$(PRESETS) $(filter-out %-chiara,$(SANITIZED))): clean-%:
+	cmake -E rm -rf "$(CURDIR)/out/build/$*"
 
-clean-msvc-dev:
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-dev"
+$(addprefix clean-,$(addsuffix -chiara,$(COMPILERS))): clean-%-chiara:
+	cmake -E rm -rf $(foreach d,$(call presets-of,$*,$(CHIARA_PRESETS) $(filter %-chiara,$(SANITIZED))),"$(CURDIR)/out/build/$(d)")
 
-clean-msvc-ship:
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-ship"
-
-clean-msvc-asan:
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-asan"
-
-clean-msvc-chiara:
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-debug-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-dev-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/msvc-ship-chiara"
-
-clean-msvc: clean-msvc-debug clean-msvc-dev clean-msvc-ship clean-msvc-asan clean-msvc-chiara
-
-clean-gcc-debug:
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-debug"
-
-clean-gcc-dev:
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-dev"
-
-clean-gcc-ship:
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-ship"
-
-clean-gcc-asan:
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-asan"
-
-clean-gcc-tsan:
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-tsan"
-
-clean-gcc-chiara:
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-debug-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-dev-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-ship-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/gcc-tsan-chiara"
-
-clean-gcc: clean-gcc-debug clean-gcc-dev clean-gcc-ship clean-gcc-asan clean-gcc-tsan clean-gcc-chiara
-
-clean-clang-debug:
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-debug"
-
-clean-clang-dev:
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-dev"
-
-clean-clang-ship:
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-ship"
-
-clean-clang-asan:
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-asan"
-
-clean-clang-tsan:
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-tsan"
-
-clean-clang-chiara:
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-debug-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-dev-chiara"
-	cmake -E rm -rf "$(CURDIR)/out/build/clang-ship-chiara"
-
-clean-clang: clean-clang-debug clean-clang-dev clean-clang-ship clean-clang-asan clean-clang-tsan clean-clang-chiara
-
-clean: clean-msvc clean-gcc clean-clang
+clean: $(addprefix clean-,$(COMPILERS))
 
 # The shared dependency sources, which `clean` deliberately leaves alone — they
 # are the expensive part to rebuild and nothing a compiler flag can invalidate.
