@@ -14,16 +14,23 @@
 
 #include <ostream>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <fstream>
+#include <span>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
+#include <Assisi/Core/AssetProvider.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/CookedPayload.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -162,6 +169,49 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 
 /// The id car.abp cooks under. Any non-nil value: the cook only has to carry it.
 const Core::AssetId kCarId = Core::DerivedAssetId("car.abp");
+
+/// Cooked blobs by path, held in memory: a pak without the file.
+class MemoryProvider final : public Core::AssetProvider
+{
+public:
+    void Add(std::string_view vpath, std::vector<std::byte> bytes)
+    {
+        _blobs[Core::DerivedAssetId(vpath)] = std::move(bytes);
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, Core::AssetError> Open(Core::AssetId id) const override
+    {
+        const auto found = _blobs.find(id);
+        if (found == _blobs.end())
+        {
+            return std::unexpected(Core::AssetError::UnknownAssetId);
+        }
+        return found->second;
+    }
+
+    [[nodiscard]] std::expected<Core::AssetId, Core::AssetError> Resolve(std::string_view vpath) const override
+    {
+        const Core::AssetId id = Core::DerivedAssetId(vpath);
+        if (!_blobs.contains(id))
+        {
+            return std::unexpected(Core::AssetError::UnknownAssetId);
+        }
+        return id;
+    }
+
+private:
+    std::unordered_map<Core::AssetId, std::vector<std::byte>> _blobs;
+};
+
+/// A cooked blob that is not a scene.
+std::vector<std::byte> VerbatimBlob()
+{
+    constexpr std::array kContents{std::byte{1}, std::byte{2}, std::byte{3}};
+    Core::BitWriter writer;
+    Core::WriteVerbatimBlob(writer, kContents);
+    const std::span<const std::byte> bytes = writer.Data();
+    return {bytes.begin(), bytes.end()};
+}
 
 /// Resolves car.abp and nothing else, standing in for the database a cook has.
 Core::AssetId CarIdOf(std::string_view source)
@@ -587,6 +637,40 @@ TEST_CASE("A cooked scene converts back to the document it was cooked from")
     REQUIRE(Runtime::SceneSerializer::Load(reloaded, *document,
                                            {.header = &reloadedHeader, .instances = &reloadedTable}));
     CHECK(Runtime::SceneSerializer::Save(reloaded, reloadedHeader, &reloadedTable) == saved);
+}
+
+TEST_CASE("A cooked document reads from a provider by its path")
+{
+    const std::filesystem::path root = FreshRoot("cooked-reader");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "ground"}}})},
+           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
+    const nlohmann::json saved = Runtime::SceneSerializer::Save(scene, header, &table);
+
+    const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
+    REQUIRE(bytes.has_value());
+
+    MemoryProvider provider;
+    provider.Add("main.alvl", *bytes);
+    provider.Add("fonts/body.ttf", VerbatimBlob());
+
+    const std::expected<nlohmann::json, LevelError> document = Runtime::ReadCookedDocument(provider, "main.alvl");
+    REQUIRE(document.has_value());
+    CHECK(*document == saved);
+
+    const std::expected<nlohmann::json, LevelError> missing = Runtime::ReadCookedDocument(provider, "other.alvl");
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error() == LevelError::FileUnreadable);
+
+    // A blob of another kind is not a scene, whatever path it was packed under.
+    CHECK_FALSE(Runtime::ReadCookedDocument(provider, "fonts/body.ttf").has_value());
 }
 
 TEST_CASE("A level load with no document reader installed fails rather than reading text")

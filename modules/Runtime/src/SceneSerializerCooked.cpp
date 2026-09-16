@@ -877,4 +877,29 @@ std::expected<nlohmann::json, LevelError> CookedSceneToDocument(const CookedScen
     return document;
 }
 
+std::expected<nlohmann::json, LevelError> ReadCookedDocument(const Core::AssetProvider &provider,
+                                                             std::string_view vpath)
+{
+    const std::expected<Core::AssetId, Core::AssetError> id = provider.Resolve(vpath);
+    if (!id)
+    {
+        Core::Log::Error("SceneSerializer: no cooked document at '{}'", vpath);
+        return std::unexpected(LevelError::FileUnreadable);
+    }
+    const std::expected<std::vector<std::byte>, Core::AssetError> bytes = provider.Open(*id);
+    if (!bytes)
+    {
+        Core::Log::Error("SceneSerializer: cannot read cooked document '{}'", vpath);
+        return std::unexpected(LevelError::FileUnreadable);
+    }
+    const std::expected<CookedScene, LevelError> cooked = DecodeCookedScene(*bytes);
+    if (!cooked)
+    {
+        Core::Log::Error("SceneSerializer: '{}' is not a cooked scene this build reads: {}", vpath,
+                         Describe(cooked.error()));
+        return std::unexpected(cooked.error());
+    }
+    return CookedSceneToDocument(*cooked);
+}
+
 } // namespace Assisi::Runtime

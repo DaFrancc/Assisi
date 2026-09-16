@@ -39,6 +39,7 @@
 #include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/AssetProvider.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -183,5 +184,13 @@ SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *ins
 /// @return the document, or MalformedBlob if a block does not decode against
 ///         this build's components.
 [[nodiscard]] std::expected<nlohmann::json, LevelError> CookedSceneToDocument(const CookedScene &cooked);
+
+/// @brief The level or blueprint document at @p vpath, read from the cooked blob
+///        @p provider holds for it: the reader a game reading a pak installs.
+///
+/// @return the document, FileUnreadable if @p provider has no such path or cannot
+///         read it, or why the blob is not a scene this build loads.
+[[nodiscard]] std::expected<nlohmann::json, LevelError> ReadCookedDocument(const Core::AssetProvider &provider,
+                                                                           std::string_view vpath);
 
 } // namespace Assisi::Runtime
