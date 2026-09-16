@@ -29,8 +29,8 @@ The following compilers have been tested:
 
 Every third-party C++ library the engine uses is fetched and built by CMake on first configure — none
 of them is a package you install. What your package manager *does* have to provide is the toolchain
-above plus a short list of system development packages: OpenSSL, and the Wayland/X11 headers GLFW
-builds its two backends against.
+above plus a short list of system development packages: the static C++ runtime the game links in, and
+the Wayland/X11 headers GLFW builds its two backends against.
 
 <details>
 <summary><b>Windows</b></summary>
@@ -49,7 +49,6 @@ set up.
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja python \
-                        openssl \
                         wayland libxkbcommon \
                         libxcursor libxi libxinerama libxrandr \
                         vulkan-icd-loader
@@ -87,7 +86,7 @@ sudo pacman -S clang
 
 ```bash
 sudo dnf install gcc-c++ make git cmake ninja-build python3 pkgconf-pkg-config \
-                 openssl-devel \
+                 libstdc++-static \
                  wayland-devel libxkbcommon-devel \
                  libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
                  vulkan-loader
@@ -146,7 +145,6 @@ old at both ends: the engine is C++23 and asks for CMake 3.28+, while bookworm s
 
 ```bash
 sudo apt install build-essential git cmake ninja-build python3 pkg-config \
-                 libssl-dev \
                  libwayland-dev libwayland-bin libxkbcommon-dev \
                  libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
                  libvulkan1
@@ -183,7 +181,7 @@ sudo apt install clang
 <details>
 <summary><b>Other distributions</b></summary>
 
-Install the equivalents of those four package groups — they are the whole list, and the next dropdown
+Install the equivalents of those package groups — they are the whole list, and the next dropdown
 says what each one is for.
 
 </details>
@@ -193,7 +191,7 @@ says what each one is for.
 
 | System packages | Why they are needed |
 |---|---|
-| OpenSSL headers | GameNetworkingSockets' crypto backend on Linux. This is a deliberate, documented exception to the tree's self-contained rule. Not needed at all with `ASSISI_ENABLE_NETWORKING=OFF`. |
+| Static C++ runtime (`libstdc++.a`) | The game links the C++ runtime into itself, so a player needs no `libstdc++` of their own. Fedora packages it separately as `libstdc++-static`; Arch's `gcc` and Debian's `build-essential` already include it. Without it a Release configure stops and names the package, and other builds link the runtime shared. |
 | Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
 | Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
 | Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
@@ -225,12 +223,15 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 | [doctest](https://github.com/doctest/doctest) | Unit-test framework |
 | [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | UDP transport for the networking modules — reliability, fragmentation, connection state |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
+| [libsodium](https://github.com/jedisct1/libsodium) | GameNetworkingSockets' encryption on Linux (Windows uses the OS's own) |
+| [LZ4](https://github.com/lz4/lz4) | Fast pak compression |
+| [Zstandard](https://github.com/facebook/zstd) | Smaller pak compression |
 | [Assimp](https://github.com/assimp/assimp) | Multi-format mesh import — **off by default** |
 
 [Assimp](https://github.com/assimp/assimp) is the deferred catch-all import backend (FBX/OBJ/DAE/…) and
 stays off (`ASSISI_ENABLE_ASSIMP`) so its heavy build doesn't tax every configure; fastgltf covers the
 runtime glTF path today. Networking is on by default but can be turned off with
-`ASSISI_ENABLE_NETWORKING=OFF`, which drops GameNetworkingSockets and protobuf — a noticeable chunk of
+`ASSISI_ENABLE_NETWORKING=OFF`, which drops GameNetworkingSockets, protobuf and libsodium — a noticeable chunk of
 first-configure time if you are not building a multiplayer game. Rendering is **Vulkan**: a
 Vulkan-capable GPU and driver are required at runtime, but no Vulkan SDK is needed to build (the engine
 loads Vulkan dynamically).
