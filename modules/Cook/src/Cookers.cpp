@@ -10,6 +10,7 @@
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Geometry/CookedMesh.hpp>
 #include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Geometry/MeshValidate.hpp>
@@ -206,9 +207,6 @@ public:
 
 // ── Meshes ────────────────────────────────────────────────────────────────────
 
-/// Version of the mesh payload's own framing, separate from the blob envelope's.
-constexpr std::uint8_t kMeshPayloadVersion = 1;
-
 /// `.gltf` / `.glb`, cooked to the arrays the GPU path already wants so no
 /// import runs at load.
 class MeshCooker final : public Cooker
@@ -217,7 +215,10 @@ public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
 
-    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return kMeshPayloadVersion; }
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        return Geometry::kMeshPayloadVersion;
+    }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -281,75 +282,20 @@ public:
             return std::unexpected(Failure(vpath, std::string{Geometry::ToString(valid.error())}));
         }
 
-        Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
-        writer.WriteUInt8(kMeshPayloadVersion);
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->Vertices.size()));
-        for (const Geometry::Vertex &vertex : mesh->Vertices)
-        {
-            WriteVec3(writer, vertex.Position);
-            WriteVec3(writer, vertex.Normal);
-            writer.WriteFloat(vertex.TextureCoordinates.x);
-            writer.WriteFloat(vertex.TextureCoordinates.y);
-            writer.WriteFloat(vertex.Tangent.x);
-            writer.WriteFloat(vertex.Tangent.y);
-            writer.WriteFloat(vertex.Tangent.z);
-            writer.WriteFloat(vertex.Tangent.w);
-        }
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->Indices.size()));
-        for (const std::uint32_t index : mesh->Indices)
-        {
-            writer.WriteVarUInt32(index);
-        }
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->SubMeshes.size()));
-        for (const Geometry::SubMesh &submesh : mesh->SubMeshes)
-        {
-            writer.WriteVarUInt32(submesh.IndexOffset);
-            writer.WriteVarUInt32(submesh.IndexCount);
-            writer.WriteVarUInt32(submesh.MaterialSlot);
-            WriteVec3(writer, submesh.LocalBounds.center);
-            writer.WriteFloat(submesh.LocalBounds.radius);
-            WriteVec3(writer, submesh.LocalAabb.min);
-            WriteVec3(writer, submesh.LocalAabb.max);
-        }
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->Lods.size()));
-        for (const Geometry::LodRange &lod : mesh->Lods)
-        {
-            writer.WriteVarUInt32(lod.FirstSubMesh);
-            writer.WriteVarUInt32(lod.SubMeshCount);
-            writer.WriteFloat(lod.ScreenSizeThreshold);
-        }
-
-        WriteVec3(writer, mesh->LocalBounds.center);
-        writer.WriteFloat(mesh->LocalBounds.radius);
-        WriteVec3(writer, mesh->LocalAabb.min);
-        WriteVec3(writer, mesh->LocalAabb.max);
-
         // The slot table, from the sidecar manifest rather than from the import.
         // That is what the renderer reads at runtime: the import's own
         // MaterialData is the default a `.amat` was exploded from, and the
         // sidecar is where the binding actually lives afterwards.
-        const auto slotCount = static_cast<std::uint32_t>(mesh->Materials.size());
-        writer.WriteVarUInt32(slotCount);
-        for (std::uint32_t slot = 0; slot < slotCount; ++slot)
+        std::vector<Core::AssetId> slotMaterials(mesh->Materials.size());
+        for (std::size_t slot = 0; slot < slotMaterials.size(); ++slot)
         {
-            Core::WriteAssetId(writer, database.SlotMaterial(id, slot));
+            slotMaterials[slot] = database.SlotMaterial(id, static_cast<std::uint32_t>(slot));
         }
 
+        Core::BitWriter writer;
+        Geometry::WriteCookedMesh(writer, *mesh, slotMaterials);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
-    }
-
-private:
-    static void WriteVec3(Core::BitWriter &writer, const glm::vec3 &value)
-    {
-        writer.WriteFloat(value.x);
-        writer.WriteFloat(value.y);
-        writer.WriteFloat(value.z);
     }
 };
 

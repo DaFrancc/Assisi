@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Geometry)
 
 target_sources(Assisi-Geometry
   PUBLIC
+    "include/Assisi/Geometry/CookedMesh.hpp"
     "include/Assisi/Geometry/MeshData.hpp"
     "include/Assisi/Geometry/Bounds.hpp"
     "include/Assisi/Geometry/MaterialData.hpp"
@@ -13,6 +14,7 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/MaterialFile.hpp"
     "include/Assisi/Geometry/AssetImport.hpp"
   PRIVATE
+    "src/CookedMesh.cpp"
     "src/MeshImporter.cpp"
     "src/MeshValidate.cpp"
     "src/MaterialFile.cpp"
