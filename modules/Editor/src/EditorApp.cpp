@@ -14,6 +14,7 @@
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Chiara/Profile.hpp>
+#include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -60,6 +61,9 @@ namespace Assisi::Editor
 EditorApp::EditorApp(EditorConfig config)
     : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
 {
+    // Before Initialize, which loads the post-process shaders through it.
+    (void)Assisi::Render::SetAssetSource(&_assetSource);
+
     // Application reads these during Initialize(), which runs before OnStart, so
     // they cannot wait for a hook — hence the constructor body.
     SetRestrictedViewer(_editorConfig.restrictedViewer);
@@ -69,7 +73,15 @@ EditorApp::EditorApp(EditorConfig config)
     }
 }
 
-EditorApp::~EditorApp() = default;
+EditorApp::~EditorApp()
+{
+    // The source is a member, so it goes with this object; nothing may reach it
+    // through the installed pointer after that.
+    if (Assisi::Render::GetAssetSource() == &_assetSource)
+    {
+        (void)Assisi::Render::SetAssetSource(nullptr);
+    }
+}
 
 // The panel cannot reach Application's timing history — it is protected, and
 // only a derived class may read it. So this hands the frame over, and applies
@@ -287,7 +299,6 @@ void EditorApp::OnStart()
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
     _worlds.SetServices({.cache    = &_assetCache,
-                         .database = &_assetDatabase,
                          .renderer = &_sceneRenderer,
                          .jobs     = &Jobs(),
                          .events   = &GetEvents(),
@@ -454,10 +465,11 @@ void EditorApp::ReimportAssets()
     Assisi::Core::Log::Info("Asset reimport: {} assets indexed ({}).", *result,
                             IsRestrictedViewer() ? "read-only scan" : "GUID sidecars reconciled");
 
-    // Wire the rebuilt database into serialization's path hint and the asset
-    // cache's id↔path translation. The resolvers hold the database by reference,
-    // so re-running reimport needs no reinstall; doing it anyway is harmless.
-    Assisi::App::InstallAssetResolvers(_assetCache, _assetDatabase);
+    // Saved GUID references carry a readable last-known path, taken from the
+    // database. The resolver holds it by reference, so a re-scan needs no
+    // reinstall; doing it anyway is harmless.
+    Assisi::Core::SetAssetIdHintResolver([this](const Assisi::Core::AssetId &id)
+                                         { return _assetDatabase.PathFor(id).value_or(std::string{}); });
 
     // Bring glTF materials up to date: explode new meshes, reconcile already
     // exploded ones against their current source. Any write means new or updated
@@ -470,6 +482,17 @@ void EditorApp::ReimportAssets()
     {
         if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
             Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material reconcile.", *rescan);
+    }
+
+    // A reconcile may have rebound what a mesh's slots draw with, and a mesh
+    // already resident holds the binding it loaded with.
+    for (const auto &[id, path] : _assetDatabase.Assets())
+    {
+        std::vector<Assisi::Core::AssetId> slots = _assetDatabase.SlotMaterials(id);
+        if (!slots.empty())
+        {
+            _assetCache.SetSlotMaterials(id, std::move(slots));
+        }
     }
 
     // Queue a resolution prompt for every stale mesh the open scene actually draws:
@@ -687,7 +710,7 @@ void EditorApp::ApplyStaleResolution(bool regenerate)
             }
             if (_scene != nullptr)
             {
-                Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+                Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache);
             }
             _assetBrowserDirty = true;
         }
@@ -864,7 +887,7 @@ void EditorApp::SetupScene()
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
-    _thumbnailCache.Initialize(device, &Jobs(), Assisi::Image::ColorSpace::Linear);
+    _thumbnailCache.Initialize(device, &Jobs());
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Linear for the same reason as the thumbnails: ImGui, not the mesh shader.
             _helloTexture.LoadFromAssets(device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
@@ -1261,8 +1284,7 @@ void EditorApp::OnUpdate(float dt)
         {
             if (world.state == Assisi::App::WorldState::Loading)
                 return;
-            Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
-                                                world.streamingPending);
+            Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, world.streamingPending);
 
             // Reads the flag the pass above just wrote. Only a world that has
             // begun settles, so the authored world sitting in Editing is skipped
@@ -1288,7 +1310,7 @@ void EditorApp::OnUpdate(float dt)
             revision != _netStructureRevision)
         {
             _netStructureRevision = revision;
-            Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+            Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache);
         }
     }
 #endif

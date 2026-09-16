@@ -416,7 +416,7 @@ void EditorApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
     Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc == nullptr)
         return;
-    Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache, _assetDatabase);
+    Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache);
 }
 
 void EditorApp::RescanAssetBrowser()
@@ -424,7 +424,7 @@ void EditorApp::RescanAssetBrowser()
     // Drop the previous directory's thumbnails, so browsing many folders does not
     // grow VRAM without bound. ClearThumbnails waits for the GPU to idle before
     // freeing, which is what makes releasing the ImGui binding here safe.
-    _thumbnailCache.ClearThumbnails(
+    _thumbnailCache.Clear(
         [](nvrhi::ITexture *texture) { Assisi::Debug::DebugUI::ReleaseTexture(texture); });
 
     _assetBrowserDirs.clear();
@@ -609,14 +609,14 @@ void EditorApp::DrawAssetBrowser()
             // decode on a worker — ResolveThumbnail returns null until one lands.
             const bool visible = ImGui::IsRectVisible(ImVec2(thumb, thumb));
             const Assisi::Render::Texture *tex =
-                visible ? _thumbnailCache.ResolveThumbnail(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
+                visible ? _thumbnailCache.Resolve(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
             if (tex != nullptr && tex->IsValid())
             {
                 const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(tex->NativeTexture());
                 clicked = ImGui::ImageButton("thumb", id, ImVec2(thumb, thumb));
             }
             else if (visible &&
-                     _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
+                     _thumbnailCache.IsLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
                      LoadingSpinnerAvailable())
             {
                 // Still decoding: a blank tile under the spinner, so it reads as

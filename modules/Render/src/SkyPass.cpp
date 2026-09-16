@@ -3,6 +3,7 @@
 #include <Assisi/Render/SkyPass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Render/AssetSource.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
@@ -109,8 +110,21 @@ void SkyPass::LoadMoonTexture()
         return;
     }
 
+    // Uncompressed is what is asked for; a source holding the texture already
+    // block-compressed hands back that instead, and the upload takes either.
+    const AssetSource *source = GetAssetSource();
+    const std::expected<Core::AssetId, AssetLoadError> id =
+        source != nullptr ? source->Resolve(_moonTexturePath) : std::unexpected(AssetLoadError::UnknownAsset);
+    std::expected<Image::DecodedImage, AssetLoadError> image =
+        id ? source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Rgba8)
+           : std::unexpected(id.error());
+
     Texture loaded;
-    if (!loaded.LoadFromAssets(_device, _moonTexturePath, Image::ColorSpace::Srgb).has_value() || !loaded.IsValid())
+    if (image)
+    {
+        loaded.UploadDecoded(_device, *image, _moonTexturePath.c_str());
+    }
+    if (!image || !loaded.IsValid())
     {
         Core::Log::Warn("SkyPass: could not load the moon texture '{}'; the moon is drawn as a flat disk.",
                         _moonTexturePath);

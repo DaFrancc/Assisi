@@ -25,6 +25,7 @@
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/SourceAssets.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -55,6 +56,7 @@
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
+#include <Assisi/Editor/ThumbnailCache.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -1529,9 +1531,14 @@ private:
 
     // --- Asset database and staleness ---
     // Editor-only GUID identity index, populated by ReimportAssets() scanning the
-    // asset root and generating `.aast` sidecars. Built but not yet the resolution
-    // key — references still resolve by path.
+    // asset root and generating `.aast` sidecars.
     Assisi::Core::AssetDatabase _assetDatabase;
+
+    // What the renderer loads through: the source tree, found by way of the
+    // database above. Declared after it, which it holds by reference, and
+    // installed for the renderer from the constructor, since the post-process
+    // shaders load inside Initialize.
+    Assisi::App::SourceAssetSource _assetSource{_assetDatabase};
 
     // Mesh assets (by virtual path) the last reconcile left stale: their glTF
     // source changed in a way the conservative classifier couldn't auto-resolve.
@@ -1953,7 +1960,7 @@ private:
 
     // Textures loaded to thumbnail the browser's image entries. Separate from
     // _assetCache so a level load (which Clears that) doesn't drop thumbnails.
-    Assisi::Render::AssetCache _thumbnailCache;
+    ThumbnailCache _thumbnailCache;
 
     // --- Material editor ---
     // Edits one `.amat` at a time, reflection-driven off MaterialData's field

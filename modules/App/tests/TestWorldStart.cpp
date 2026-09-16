@@ -58,7 +58,7 @@ void WriteLevel(const std::filesystem::path &root, const char *name, const std::
 /// queue a starting world needs, which is what the hosts install.
 void InstallServices(WorldManager &worlds, Assisi::Core::EventQueue &events)
 {
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = nullptr,
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = nullptr,
                         .events = &events});
 }
 

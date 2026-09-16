@@ -2,23 +2,20 @@
 
 #include <Assisi/Render/ShaderModule.hpp>
 
-#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
-
-#include <cstdint>
+#include <Assisi/Render/AssetSource.hpp>
 
 namespace Assisi::Render
 {
 
 nvrhi::ShaderHandle LoadSpirvShader(nvrhi::IDevice *device, const std::string &path, nvrhi::ShaderType stage)
 {
-    // Compiled .spv lives under the asset root (assets/shaders/), so it resolves
-    // through AssetSystem like every other asset — no CWD dependency.
-    const std::expected<std::vector<std::byte>, Core::AssetError> spirv = Core::AssetSystem::ReadBinary(path);
+    const AssetSource *source = GetAssetSource();
+    const std::expected<std::vector<std::byte>, AssetLoadError> spirv =
+        source != nullptr ? source->LoadShader(path) : std::unexpected(AssetLoadError::UnknownAsset);
     if (!spirv)
     {
-        Core::Log::Error("ShaderModule: failed to load shader '{}' (asset error {}).", path,
-                         static_cast<int32_t>(spirv.error()));
+        Core::Log::Error("ShaderModule: failed to load shader '{}' ({}).", path, ToString(spirv.error()));
         return nullptr;
     }
 

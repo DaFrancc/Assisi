@@ -142,7 +142,7 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     // it — re-uploading them to look at one would be the expensive way round.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(world, source, {_assetCache, _assetDatabase, _sceneRenderer},
+        Assisi::App::LoadLevel(world, source, {_assetCache, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
     if (!loaded)
     {

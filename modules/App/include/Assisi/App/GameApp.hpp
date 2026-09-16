@@ -26,6 +26,7 @@
 /// any override, since each one does the engine half of its own job.
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/SourceAssets.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Render/AssetCache.hpp>
@@ -102,6 +103,10 @@ private:
 
     /// The GUID→path index every asset reference resolves through.
     Core::AssetDatabase _assetDatabase;
+
+    /// What the renderer loads through, over the database above. Installed from
+    /// the constructor: the post-process shaders load inside Initialize.
+    SourceAssetSource _assetSource{_assetDatabase};
 
     Runtime::SceneRenderer _sceneRenderer;
 

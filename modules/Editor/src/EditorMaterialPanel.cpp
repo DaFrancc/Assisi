@@ -359,7 +359,7 @@ bool EditorApp::RenameOpenMaterial(std::string_view stem)
     ReimportAssets();
     if (_scene != nullptr)
     {
-        Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+        Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache);
     }
     Assisi::Core::Log::Info("Material editor: renamed to '{}'.", target);
     return true;

@@ -33,9 +33,18 @@ constexpr std::uint64_t kAssetPublishBudgetBytes = 128ull << 20;
 
 GameApp::GameApp(GameLaunch launch) : _launch(launch)
 {
+    (void)Render::SetAssetSource(&_assetSource);
 }
 
-GameApp::~GameApp() = default;
+GameApp::~GameApp()
+{
+    // The source is a member, so it goes with this object; nothing may reach it
+    // through the installed pointer after that.
+    if (Render::GetAssetSource() == &_assetSource)
+    {
+        (void)Render::SetAssetSource(nullptr);
+    }
+}
 
 void GameApp::OnStart()
 {
@@ -63,13 +72,11 @@ void GameApp::OnStart()
         // a player can be told about.
         Core::Log::Warn("Game: the asset root is unavailable; nothing will resolve.");
     }
-    InstallAssetResolvers(_assetCache, _assetDatabase);
 
     // What a travel needs to turn a level file into a running world. Captured by
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
     _worlds.SetServices({.cache    = &_assetCache,
-                         .database = &_assetDatabase,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
                          .jobs     = &Jobs(),
                          .events   = &GetEvents(),
@@ -269,7 +276,7 @@ void GameApp::OnUpdate(float dt)
                 {
                     return;
                 }
-                UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase, world.streamingPending);
+                UpgradeStreamingAssets(world.scene, _assetCache, world.streamingPending);
 
                 // Immediately after the upgrade, so the flag being read is the one
                 // that pass just wrote. A world whose assets have all settled runs

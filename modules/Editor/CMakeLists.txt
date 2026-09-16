@@ -20,11 +20,13 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/Overlay/OverlayRenderer.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
     "include/Assisi/Editor/SystemSearch.hpp"
+    "include/Assisi/Editor/ThumbnailCache.hpp"
     "include/Assisi/Editor/WireShapes.hpp"
   PRIVATE
     "src/ColliderPose.cpp"
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
+    "src/ThumbnailCache.cpp"
     "src/EditorAssetBrowser.cpp"
     "src/EditorBlueprintMode.cpp"
     "src/EditorCamera.cpp"

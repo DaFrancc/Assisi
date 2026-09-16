@@ -7,15 +7,14 @@
 namespace Assisi::Runtime
 {
 
-void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache,
-                               const Core::AssetDatabase &database)
+void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache)
 {
     meshRenderer.meshBuffer = cache.ResolveMesh(meshRenderer.mesh);
 
     // One resolved Material per mesh slot: the override when that slot has a
-    // non-nil entry, otherwise the import manifest's default read from the
-    // database. A primitive mesh has no slot table, so `materials` stays empty
-    // and the draw path uses the cache's fallback.
+    // non-nil entry, otherwise the default the mesh loaded with. A primitive mesh
+    // has no slot table, so `materials` stays empty and the draw path uses the
+    // cache's fallback.
     const std::size_t slotCount =
         meshRenderer.meshBuffer != nullptr ? meshRenderer.meshBuffer->Materials().size() : 0;
     meshRenderer.materials.clear();
@@ -26,17 +25,17 @@ void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &c
             slot < meshRenderer.materialOverrides.size() && !meshRenderer.materialOverrides[slot].IsNil();
         const Core::AssetId materialId = hasOverride
                                              ? meshRenderer.materialOverrides[slot]
-                                             : database.SlotMaterial(meshRenderer.mesh, static_cast<uint32_t>(slot));
+                                             : cache.SlotMaterial(meshRenderer.mesh, static_cast<uint32_t>(slot));
         // ResolveMaterial(nil) yields the fallback, so a slot with no recorded
         // material still renders.
         meshRenderer.materials.push_back(cache.ResolveMaterial(materialId));
     }
 }
 
-void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database)
+void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
 {
     for (auto [entity, meshRenderer] : scene.Query<MeshRenderer>())
-        ResolveMeshRendererAssets(meshRenderer, cache, database);
+        ResolveMeshRendererAssets(meshRenderer, cache);
 }
 
 void ClearSceneAssetBindings(ECS::Scene &scene)

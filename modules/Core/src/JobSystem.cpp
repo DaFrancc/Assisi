@@ -31,6 +31,11 @@ JobSystem::JobSystem(uint32_t workerCount)
 
 JobSystem::~JobSystem()
 {
+    Shutdown();
+}
+
+void JobSystem::Shutdown()
+{
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _stopping.store(true, std::memory_order_relaxed);
@@ -42,6 +47,17 @@ JobSystem::~JobSystem()
         {
             worker.join();
         }
+    }
+
+    // After the join, so a continuation a worker queued on its way out is dropped
+    // too. Nothing will drain these, and destroying them now releases what they
+    // captured while the owner can still free it — GPU resources above all, whose
+    // device goes before this object would.
+    std::vector<std::function<void()>> dropped;
+    {
+        std::lock_guard<std::mutex> lock(_mainMutex);
+        dropped.swap(_mainQueue);
+        _mainQueueDepth.store(0, std::memory_order_relaxed);
     }
 }
 
