@@ -758,12 +758,16 @@ FieldType LeafElementType(const FieldMeta &field)
 /// FieldMeta walk, the same wire-field filter — and a description that drifted
 /// between the two would let a field type change be a protocol change on one
 /// side of the wire and not the other.
-void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
+/// Whether a field belongs in the layout text, which differs between the wire
+/// and a cooked asset — see IsAssetField.
+using FieldFilter = bool (*)(const FieldMeta &);
+
+void AppendFields(std::string &text, const std::vector<FieldMeta> &fields, FieldFilter keep)
 {
     std::size_t codecIndex = 0;
     for (const FieldMeta &field : fields)
     {
-        if (!IsWireField(field))
+        if (!keep(field))
             continue;
 
         text += "  ";
@@ -1043,6 +1047,86 @@ bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader
     return true;
 }
 
+std::string AssetLayoutDescription(const AssetTypeMeta &meta)
+{
+    std::string text;
+    text.reserve(meta.fields.size() * 64u);
+
+    text += "assisi-asset codec=";
+    text += std::to_string(kCodecVersion);
+    text += ' ';
+    text += meta.name;
+    text += '\n';
+
+    AppendFields(text, meta.fields, IsAssetField);
+    return text;
+}
+
+std::uint64_t AssetLayoutHash(const AssetTypeMeta &meta)
+{
+    const std::string text = AssetLayoutDescription(meta);
+    return ContentHash64(std::as_bytes(std::span{text}));
+}
+
+bool WriteAsset(const AssetTypeMeta &meta, const void *instance, BitWriter &writer)
+{
+    writer.WriteUInt64(AssetLayoutHash(meta));
+
+    for (const FieldMeta &field : meta.fields)
+    {
+        if (!IsAssetField(field))
+            continue;
+
+        if (!WriteField(field, FieldAddress(instance, field.offset), writer, nullptr))
+        {
+            // Refused rather than skipped, as WriteComponent does: a field left
+            // out shifts everything after it, so the reader would decode the
+            // rest of the document into the wrong fields.
+            ASSISI_ASSERT(false, "WriteAsset: unencodable field type (FieldType::Unknown, or an enum with a "
+                          "width that is not 1/2/4/8 bytes)");
+            Log::Error("BinaryCodec: cannot encode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
+                       FieldTypeName(field.type), field.enumSize);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ReadAsset(const AssetTypeMeta &meta, void *instance, BitReader &reader)
+{
+    const std::uint64_t storedLayout = reader.ReadBits64(64);
+    if (reader.Failed())
+        return false;
+
+    if (const std::uint64_t layout = AssetLayoutHash(meta); storedLayout != layout)
+    {
+        // Every field after this point would be read at the wrong index, so the
+        // values would be wrong rather than absent — the one failure nothing
+        // downstream could notice.
+        Log::Error("BinaryCodec: '{}' was encoded against layout {:016x}, but this build's is {:016x}", meta.name,
+                   storedLayout, layout);
+        return false;
+    }
+
+    for (const FieldMeta &field : meta.fields)
+    {
+        if (!IsAssetField(field))
+            continue;
+
+        if (!ReadField(field, FieldAddress(instance, field.offset), reader, nullptr))
+        {
+            Log::Error("BinaryCodec: cannot decode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
+                       FieldTypeName(field.type), field.enumSize);
+            return false;
+        }
+        // As in ReadComponent: bail on the first overrun rather than letting
+        // every later field fail its own check.
+        if (reader.Failed())
+            return false;
+    }
+    return true;
+}
+
 std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
 {
     std::string text;
@@ -1073,7 +1157,7 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
         // Only wire fields, and their codec index — so making a field transient
         // or norep shifts every later index and changes the hash, which is
         // correct: it changes the mask width and the payload order.
-        AppendWireFields(text, meta.fields);
+        AppendFields(text, meta.fields, IsWireField);
     }
     return text;
 }
@@ -1105,7 +1189,7 @@ std::string MessageLayoutDescription(std::span<const MessageMeta> messages)
             text += " independent";
         text += '\n';
 
-        AppendWireFields(text, meta.fields);
+        AppendFields(text, meta.fields, IsWireField);
     }
     return text;
 }

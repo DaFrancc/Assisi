@@ -689,6 +689,17 @@ static const bool {var_name} = []() -> bool
         {{
 {deserialize}
         }},
+        []() -> void*
+        {{
+            // nothrow, because a null return is the failure the caller already
+            // checks for, and a bad_alloc escaping generated code has nowhere
+            // to go.
+            return new (std::nothrow) T{{}};
+        }},
+        [](void* instance_ptr)
+        {{
+            delete static_cast<T*>(instance_ptr);
+        }},
     }});
     return true;
 }}();
@@ -871,6 +882,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
             includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
+        # An asset type's construct hook allocates with std::nothrow.
+        includes.append('#include <new>')
     if messages:
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
     if handlers:

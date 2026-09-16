@@ -51,6 +51,7 @@
 #include <string>
 
 #include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/Reflect/AssetTypeMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/MessageMeta.hpp>
@@ -233,6 +234,64 @@ bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader,
 /// positioned at the next message. Fails the reader if the length runs past the
 /// buffer — a hostile length must not be able to rewind or overrun.
 bool SkipMessageBody(BitReader &reader);
+
+// ── Assets ────────────────────────────────────────────────────────────────────
+// A reflected asset type (AASSET) is a document, not a delta and not an event,
+// and the two differences from a component follow from that.
+//
+// There is no field mask. A component block carries a subset because the
+// receiver already holds the rest; a cooked asset is the whole value, and a mask
+// over fields that are always all present is a width of wasted bits and a second
+// way to write the same file — which would cost the byte-identical output the
+// cook depends on.
+//
+// The field filter is `transient` alone. `IsWireField` also drops `norep`, which
+// means "to disk but never to the network" — exactly backwards here, where the
+// destination *is* disk. Nothing can currently declare one (reflectgen rejects
+// AFIELD(norep) outside a replicable component, and an asset type cannot be
+// replicable), so this is the filter that stays correct if that ever changes.
+
+/// @brief Whether @p field is encoded into a cooked asset block.
+[[nodiscard]] constexpr bool IsAssetField(const FieldMeta &field)
+{
+    return !field.transient;
+}
+
+/// @brief The canonical layout text for one asset type: its name, then every
+/// encoded field's index, name, type and quantization.
+///
+/// Readable for the same reason ProtocolLayoutDescription is — when a build
+/// refuses a blob, diffing two of these names the field that moved.
+[[nodiscard]] std::string AssetLayoutDescription(const AssetTypeMeta &meta);
+
+/// @brief FNV-1a 64 of AssetLayoutDescription — what a cooked block leads with.
+///
+/// A cooked asset outlives the build that wrote it, so the reader cannot assume
+/// the writer's field table. Decoding a blob whose layout has since changed
+/// would apply each field's bits to whatever field now occupies that index,
+/// which is silent corruption of values a player never sees go wrong. The hash
+/// turns that into a refusal.
+[[nodiscard]] std::uint64_t AssetLayoutHash(const AssetTypeMeta &meta);
+
+/// @brief Writes a complete asset block: layout hash, then every encoded field
+/// in declaration order.
+///
+/// @return false if a field's type cannot be encoded. Loud and refusing, as
+///         WriteComponent is, and for the same reason: a blob the reader will
+///         misparse is worse than no blob.
+bool WriteAsset(const AssetTypeMeta &meta, const void *instance, BitWriter &writer);
+
+/// @brief Reads an asset block into @p instance, which must be an instance of
+/// @p meta's type — from AssetTypeMeta::construct when the caller knows the type
+/// only by name.
+///
+/// Unlike ReadComponent this is not a patch: every encoded field is on the wire
+/// and every one is written, so the caller starts from a default-constructed
+/// value and gets the document's own.
+///
+/// @return false if the reader failed, a field could not be decoded, or the
+///         leading layout hash is not this build's for @p meta.
+bool ReadAsset(const AssetTypeMeta &meta, void *instance, BitReader &reader);
 
 // ── Protocol identity ─────────────────────────────────────────────────────────
 // Two builds must agree on the component table and every field's wire encoding
