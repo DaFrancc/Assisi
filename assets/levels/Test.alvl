@@ -498,7 +498,8 @@
     "Bounce",
     "CaptureCursor",
     "CursorToggle",
-    "InputDemo"
+    "InputDemo",
+    "MaterialsTravel"
   ],
   "version": 2
 }

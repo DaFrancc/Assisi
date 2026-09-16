@@ -75,4 +75,12 @@ void CaptureCursorSystem(Assisi::App::SystemContext &ctx);
 ASYSTEM(Update, name = "CursorToggle", activeWorldOnly)
 void CursorToggleSystem(Assisi::App::SystemContext &ctx);
 
+/// M travels to the Materials level: a level change a player can trigger, which
+/// in a shipped game means a second level read from the package.
+///
+/// `activeWorldOnly`, and it null-checks input and the manager regardless: a
+/// headless host has no devices, and a host with no manager cannot travel.
+ASYSTEM(Update, name = "MaterialsTravel", activeWorldOnly)
+void MaterialsTravelSystem(Assisi::App::SystemContext &ctx);
+
 } // namespace Game
