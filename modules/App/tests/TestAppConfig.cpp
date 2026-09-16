@@ -24,6 +24,19 @@ TEST_CASE("AppConfig: a document applies only the fields it names")
     CHECK(cfg.keepDumps == AppConfig{}.keepDumps);
 }
 
+TEST_CASE("AppConfig: the startup scene is what the document says, or nothing")
+{
+    // The game takes no level argument, so this field is the whole of what tells
+    // it what to open. A default of "some level" would be a game that boots
+    // something nobody asked it to; empty is refused at startup by name.
+    CHECK(AppConfig{}.startupScene.View().empty());
+
+    const AppConfig cfg = AppConfig::FromJsonText(
+        R"({ "version": 1, "type": "AppConfig", "startupScene": "levels/Materials.alvl" })");
+
+    CHECK(cfg.startupScene.View() == "levels/Materials.alvl");
+}
+
 TEST_CASE("AppConfig: a physics rate at or below zero is refused")
 {
     // Zero disables fixed update outright (the step becomes infinite) and a

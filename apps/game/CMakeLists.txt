@@ -105,6 +105,69 @@ if (ASSISI_BUILD_TESTS)
   set_tests_properties(GameBoots PROPERTIES TIMEOUT 60)
 endif()
 
+# --- The configured startup scene decides whether the game starts at all.
+#
+# Two asset roots staged here, each holding a config and nothing else of
+# consequence, pointed at through ASSISI_ASSET_ROOT. Purpose-built rather than
+# the repository's own tree: the claim is about what the config names, and a root
+# that holds every level would let a refusal pass by finding something else to
+# open.
+#
+# Neither is named "assets", which is the one name DiscoverRoot would find on its
+# own by walking up from the executable — a staged root that shadowed the real
+# tree would change what every other test here reads.
+if (ASSISI_BUILD_TESTS)
+  set(_thin_root "${CMAKE_CURRENT_BINARY_DIR}/thin-root")
+  set(_refused_root "${CMAKE_CURRENT_BINARY_DIR}/refused-root")
+
+  # PerfBlank is a camera and nothing else: no meshes, no materials, no
+  # blueprints, and an empty system list. A level with content would need that
+  # content staged beside it, and a failure to stage it would look exactly like
+  # the failure this test is looking for.
+  file(COPY "${CMAKE_SOURCE_DIR}/assets/levels/PerfBlank.alvl"
+            "${CMAKE_SOURCE_DIR}/assets/levels/PerfBlank.alvl.aast"
+       DESTINATION "${_thin_root}/levels")
+  file(WRITE "${_thin_root}/config/game.json"
+    "{\n"
+    "  \"version\": 1,\n"
+    "  \"type\": \"AppConfig\",\n"
+    "  \"startupScene\": \"levels/PerfBlank.alvl\"\n"
+    "}\n")
+
+  # The same config naming a level that is not there. The only difference between
+  # the two roots, so a difference in outcome can only come from the scene.
+  file(WRITE "${_refused_root}/config/game.json"
+    "{\n"
+    "  \"version\": 1,\n"
+    "  \"type\": \"AppConfig\",\n"
+    "  \"startupScene\": \"levels/Absent.alvl\"\n"
+    "}\n")
+
+  # The positive control, and it has to be read as one: without it a refusal
+  # test passes whenever the game fails for any reason at all — an asset root it
+  # cannot read, a config it cannot parse — and proves nothing about the scene.
+  add_test(NAME GameBootsFromThinRoot
+    COMMAND Assisi-Game --headless --ticks 1
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+  )
+  set_tests_properties(GameBootsFromThinRoot PROPERTIES
+    ENVIRONMENT "ASSISI_ASSET_ROOT=${_thin_root}"
+    TIMEOUT 60)
+
+  # The claim of the issue: a startup scene that is not there stops the game and
+  # reaches the exit code. Driven as a real process because that is the whole
+  # property — a refusal that logs and exits 0 is indistinguishable to anything
+  # that launches this from a game the player quit.
+  add_test(NAME GameRefusesMissingStartupScene
+    COMMAND Assisi-Game --headless --ticks 1
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+  )
+  set_tests_properties(GameRefusesMissingStartupScene PROPERTIES
+    ENVIRONMENT "ASSISI_ASSET_ROOT=${_refused_root}"
+    WILL_FAIL TRUE
+    TIMEOUT 60)
+endif()
+
 # The same exclusion as the symbol scans below, asserted against the link graph
 # instead of the built binary — so it holds on the presets a scan cannot read: a
 # Release link strips the symbol table away, and MSVC has no nm. It also fails

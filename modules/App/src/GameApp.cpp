@@ -4,6 +4,7 @@
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/SceneCamera.hpp>
+#include <Assisi/App/StartupScene.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -13,7 +14,9 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Window/Key.hpp>
 
+#include <expected>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace Assisi::App
@@ -70,30 +73,57 @@ void GameApp::OnStart()
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
                          .jobs     = &Jobs()});
 
-    // One world, active and simulating from the first tick. The editor starts
-    // its world stopped because an author is composing it; nobody is composing
-    // this one, and a game that waited for a Play button would never start.
-    _world = &_worlds.Create("Main");
-    _worlds.SetActive(*_world);
-    _world->state    = WorldState::Active;
-    _world->simulate = true;
-
-    // An empty list installs nothing, which is what a world built in memory
-    // holds. A level loaded later applies whatever systems it names.
-    (void)_worlds.ApplySystems(*_world, {}, "(startup)");
-
-    if (HasPresentation())
+    // Before the level load and not after it: the load publishes meshes and
+    // materials into the asset cache, which the renderer owns the bindless table
+    // for. Nothing to draw with means nothing to load into.
+    if (HasPresentation() && !SetupRenderer())
     {
-        SetupRenderer();
+        RefuseStart();
+        return;
+    }
+
+    // The shipped config is the only thing that says what to open — a game takes
+    // no level argument. Each way it can fail names itself, because "the game
+    // would not start" sends a player looking in the wrong place.
+    const std::expected<std::string, StartupSceneError> scene =
+        ResolveStartupScene(GetConfig().startupScene.View(), _assetDatabase);
+    if (!scene)
+    {
+        Core::Log::Error("Game: cannot start — startup scene '{}': {}.", GetConfig().startupScene.View(),
+                         Describe(scene.error()));
+        RefuseStart();
+        return;
+    }
+
+    // Asked before the load rather than discovered during it: a level naming
+    // behaviour this build does not carry runs as scenery, which looks like a
+    // game that started and plays like one that did not.
+    if (!LevelSystemsAreDeclared(*scene))
+    {
+        Core::Log::Error("Game: cannot start — '{}' names a system this build does not declare.", *scene);
+        RefuseStart();
+        return;
+    }
+
+    // Straight into the configured level, with no empty world in between. The
+    // editor starts its world stopped because an author is composing it; nobody
+    // is composing this one, and a game that waited for a Play button would
+    // never start — LoadLevel leaves what it opens active and simulating.
+    _world = _worlds.LoadLevel(*scene);
+    if (_world == nullptr)
+    {
+        Core::Log::Error("Game: cannot start — '{}' would not load.", *scene);
+        RefuseStart();
     }
 }
 
-void GameApp::SetupRenderer()
+bool GameApp::SetupRenderer()
 {
     Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
     if (vulkanContext == nullptr)
     {
-        return;
+        Core::Log::Error("Game: there is no Vulkan context to render through.");
+        return false;
     }
     nvrhi::IDevice *device = vulkanContext->GetDevice();
     const auto fbSize = GetWindow().GetFramebufferSize();
@@ -112,8 +142,7 @@ void GameApp::SetupRenderer()
                                     .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         Core::Log::Error("Game: the scene render path failed to build; there is nothing to draw with.");
-        RequestClose();
-        return;
+        return false;
     }
 
     // The player's saved knobs. Nothing is allocated until content needs it — no
@@ -121,6 +150,7 @@ void GameApp::SetupRenderer()
     _sceneRenderer.SetShadowSettings(GetOptions().shadows);
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
     _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    return true;
 }
 
 void GameApp::StepWorlds(float dt)

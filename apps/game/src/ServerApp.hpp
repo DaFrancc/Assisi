@@ -67,14 +67,6 @@ public:
     explicit ServerApp(ServerOptions options);
     ~ServerApp() override;
 
-    /// @brief True when the server closed because it could not start, rather
-    /// than because it finished.
-    ///
-    /// OnStart is void, so a refusal there cannot return a code; main() maps
-    /// this to EXIT_FAILURE instead. systemd, Docker and CI all read a 0 exit
-    /// as a clean shutdown and either ignore it or restart-loop in silence.
-    [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
-
 protected:
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
@@ -84,8 +76,6 @@ protected:
     void InstallQueuedSystems() override;
 
 private:
-    bool _startupFailed = false;
-
     void ReportStatus();
 
     /// Client only: build the world the host's handshake names — resolve the

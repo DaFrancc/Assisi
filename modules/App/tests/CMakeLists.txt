@@ -27,6 +27,7 @@ add_executable(Assisi-App-Tests
   TestLevelSystemsPrecheck.cpp
   TestOptionsConfig.cpp
   TestSceneCamera.cpp
+  TestStartupScene.cpp
   TestSystemRegistry.cpp
   TestWorld.cpp
 )
