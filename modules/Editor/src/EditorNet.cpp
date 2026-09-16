@@ -176,7 +176,7 @@ void EditorApp::BuildJoinedWorld()
     Assisi::Runtime::LevelHeader header;
     const auto reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
                                                              : Assisi::App::AssetCacheReset::ClearFirst;
-    const Assisi::App::LevelServices services{_assetCache, _assetDatabase, _sceneRenderer};
+    const Assisi::App::LevelServices services{_assetCache, _sceneRenderer};
     const Assisi::App::LevelLoadOptions options{.reset = reset, .header = &header};
     const Assisi::Runtime::LevelResult loaded =
         level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath

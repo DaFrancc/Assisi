@@ -259,11 +259,11 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
 
     Runtime::LevelHeader header;
     Runtime::LevelResult loaded;
-    if (_services.cache != nullptr && _services.database != nullptr && _services.renderer != nullptr)
+    if (_services.cache != nullptr && _services.renderer != nullptr)
     {
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
-        loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.database, *_services.renderer},
+        loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.renderer},
                                 {.reset = AssetCacheReset::Keep, .header = &header});
     }
     else
@@ -423,7 +423,7 @@ void WorldManager::PumpPendingLoad()
     }
 
     // No render services (headless): there are no GPU assets to stream.
-    if (_services.cache == nullptr || _services.database == nullptr)
+    if (_services.cache == nullptr)
     {
         _pending->assetProgress = 1.f;
         _pending->ready         = true;
@@ -437,14 +437,14 @@ void WorldManager::PumpPendingLoad()
     // rendered yet, so streaming placeholders are invisible.
     if (!_pending->resolveStarted)
     {
-        Runtime::ResolveSceneAssets(world.scene, *_services.cache, *_services.database);
+        Runtime::ResolveSceneAssets(world.scene, *_services.cache);
         _pending->resolveStarted        = true;
         _pending->resolveInitialPending = _services.cache->PendingLoadCount();
         world.streamingPending          = true;
     }
     else
     {
-        App::UpgradeStreamingAssets(world.scene, *_services.cache, *_services.database,
+        App::UpgradeStreamingAssets(world.scene, *_services.cache,
                                     world.streamingPending);
     }
 
@@ -524,9 +524,9 @@ World *WorldManager::PromotePendingLoad()
     // Assets were resolved by PumpPendingLoad while the world was still hidden, so
     // a ready promotion has no pop-in. Only a forced early promote (before the pump
     // ever resolved) needs the fallback resolve here.
-    if (!resolved && _services.cache != nullptr && _services.database != nullptr)
+    if (!resolved && _services.cache != nullptr)
     {
-        Runtime::ResolveSceneAssets(incoming->scene, *_services.cache, *_services.database);
+        Runtime::ResolveSceneAssets(incoming->scene, *_services.cache);
         incoming->streamingPending = true;
     }
 
@@ -642,7 +642,7 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
 
 bool WorldManager::SweepAssetCache()
 {
-    if (_services.cache == nullptr || _services.database == nullptr || _services.renderer == nullptr)
+    if (_services.cache == nullptr || _services.renderer == nullptr)
         return false;
 
     // The sweep condition, stated as the code sees it: exactly one world that is
@@ -680,7 +680,7 @@ bool WorldManager::SweepAssetCache()
 
     // Re-resolve re-imports from disk asynchronously — the survivor will show
     // placeholders for a moment, exactly as on a normal level load.
-    Runtime::ResolveSceneAssets(live->scene, *_services.cache, *_services.database);
+    Runtime::ResolveSceneAssets(live->scene, *_services.cache);
     live->streamingPending = true;
 
     Core::Log::Info("AssetCache swept after travel (survivor '{}'{}).", live->name,
@@ -726,13 +726,13 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
         return;
 
     const WorldManager::Services &services = world.manager->GetServices();
-    if (services.cache == nullptr || services.database == nullptr)
+    if (services.cache == nullptr)
         return;
 
     for (const ECS::Entity entity : entities)
     {
         if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(entity))
-            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache, *services.database);
+            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache);
     }
 }
 

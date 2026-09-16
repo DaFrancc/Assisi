@@ -115,6 +115,17 @@ struct BuiltinAssetEntry
 ///        today. Nil is not included (it is not a resolvable asset).
 [[nodiscard]] std::span<const BuiltinAssetEntry> BuiltinAssets() noexcept;
 
+/// @brief An id derived from @p vpath alone, for an asset whose sidecar does not
+///        ship and for looking an asset up by path where no database exists.
+///
+/// Two hashes of the path under different salts fill the sixteen bytes. The
+/// version and variant nibbles are then set to values RFC 4122 does not use, so
+/// one of these can never equal a minted v4 — and the leading bytes are never
+/// all zero, so it cannot land in the reserved built-in range either. Both are
+/// structural rather than improbable, which is the same guarantee MintAssetId
+/// gives from the other direction.
+[[nodiscard]] AssetId DerivedAssetId(std::string_view vpath) noexcept;
+
 } // namespace Assisi::Core
 
 template <> struct std::hash<Assisi::Core::AssetId>

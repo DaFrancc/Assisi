@@ -341,4 +341,10 @@ AssetId AssetDatabase::SlotMaterial(AssetId meshId, std::uint32_t slot) const
     return found->second[slot];
 }
 
+std::vector<AssetId> AssetDatabase::SlotMaterials(AssetId meshId) const
+{
+    const auto found = _manifests.find(meshId);
+    return found == _manifests.end() ? std::vector<AssetId>{} : found->second;
+}
+
 } // namespace Assisi::Core

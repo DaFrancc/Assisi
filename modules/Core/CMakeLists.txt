@@ -14,9 +14,16 @@ target_sources(Assisi-Core
     "src/Assert.cpp"
     "src/BinaryCodec.cpp"
     "src/BitStream.cpp"
+    "src/ConfigReader.cpp"
+    "src/ConfigReaderText.cpp"
     "src/ContainerOps.cpp"
     "src/ContentHash.cpp"
     "src/CookedBlob.cpp"
+    "src/CookedPayload.cpp"
+    "src/PakCodec.cpp"
+    "src/PakFormat.cpp"
+    "src/PakProvider.cpp"
+    "src/RandomAccessFile.cpp"
     "src/ComponentMask.cpp"
     "src/Diagnostics.cpp"
     "src/FieldMeta.cpp"
@@ -40,8 +47,14 @@ target_sources(Assisi-Core
     "include/Assisi/Core/AssetSystem.hpp"
     "include/Assisi/Core/BiMap.hpp"
     "include/Assisi/Core/BitStream.hpp"
+    "include/Assisi/Core/ConfigReader.hpp"
     "include/Assisi/Core/ContentHash.hpp"
     "include/Assisi/Core/CookedBlob.hpp"
+    "include/Assisi/Core/CookedPayload.hpp"
+    "include/Assisi/Core/PakCodec.hpp"
+    "include/Assisi/Core/PakFormat.hpp"
+    "include/Assisi/Core/PakProvider.hpp"
+    "include/Assisi/Core/RandomAccessFile.hpp"
     "include/Assisi/Core/Diagnostics.hpp"
     "include/Assisi/Core/Errors.hpp"
     "include/Assisi/Core/JobSystem.hpp"
@@ -77,6 +90,11 @@ target_link_libraries(Assisi-Core
     # the capture. PUBLIC so every module above Core can use the macros without
     # linking it again. Inert (and header-only no-ops) unless built with -c.
     Assisi::Chiara
+  PRIVATE
+    # The pak codecs. Private: a pak's slices are decompressed inside Core, and
+    # nothing above it sees either library's headers.
+    lz4::lz4
+    zstd::zstd
 )
 
 add_library(Assisi::Core ALIAS Assisi-Core)

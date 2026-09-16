@@ -320,7 +320,6 @@ public:
     struct Services
     {
         Render::AssetCache *cache    = nullptr;
-        const Core::AssetDatabase *database = nullptr;
         Runtime::SceneRenderer *renderer = nullptr;
         /// The scheduler async travel loads on. Null → BeginLoadLevel falls back
         /// to a synchronous load (still correct, just hitches).
@@ -586,8 +585,8 @@ private:
 /// migration, a blueprint instance arriving over the wire — have to be resolved
 /// as they are created, or they draw nothing at all.
 ///
-/// **A no-op when the world has no manager, or its manager has no cache and
-/// database.** That is the headless case and it is correct rather than merely
+/// **A no-op when the world has no manager, or its manager has no cache.** That
+/// is the headless case and it is correct rather than merely
 /// tolerated: a dedicated server holds the same entities and has no GPU to
 /// resolve them onto.
 void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);

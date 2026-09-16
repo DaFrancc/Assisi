@@ -19,7 +19,9 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/PerfCapture.hpp>
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -375,6 +377,11 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
 
 int main(int argc, char **argv)
 {
+    // The editor works on the source tree, so levels, blueprints and configs are
+    // read as the JSON an author saves. Installed before anything could load one.
+    (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
+    (void)Assisi::Core::SetConfigReader(&Assisi::Core::ReadTextConfig);
+
     EditorArgs args;
     args.capture.frames = 0; // 0 means "not a capture run"; --capture sets it
 
@@ -426,9 +433,6 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
         serverApp.Run();
-        // A server that refused to start must say so in its exit code, or a
-        // supervisor reads the clean shutdown as a normal one.
-        return serverApp.StartupFailed() ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     args.capture.levelPath = args.startupLevel;
@@ -443,5 +447,4 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     app.Run();
-    return EXIT_SUCCESS;
 }

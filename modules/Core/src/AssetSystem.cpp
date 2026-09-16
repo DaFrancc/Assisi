@@ -19,6 +19,36 @@ namespace Assisi::Core
 {
 namespace fs = std::filesystem;
 
+std::string_view ToString(AssetError error) noexcept
+{
+    switch (error)
+    {
+    case AssetError::NotInitialized:
+        return "the asset system is not initialized";
+    case AssetError::RootNotFound:
+        return "no asset root was found";
+    case AssetError::InvalidRoot:
+        return "the asset root is not a directory";
+    case AssetError::InvalidVirtualPath:
+        return "the path is empty, absolute, or climbs out with '..'";
+    case AssetError::RootEscape:
+        return "the path leaves the asset root";
+    case AssetError::FileOpenFailed:
+        return "the file does not exist or could not be opened";
+    case AssetError::FileReadFailed:
+        return "the file could not be read";
+    case AssetError::FileWriteFailed:
+        return "the file could not be written";
+    case AssetError::UnknownAssetId:
+        return "no asset has that id";
+    case AssetError::UnsupportedEncoding:
+        return "the data is stored in a form this build cannot read";
+    case AssetError::CorruptArchive:
+        return "the package is corrupt";
+    }
+    return "unknown";
+}
+
 /// Every `std::filesystem` call in this file goes through the `std::error_code`
 /// overload rather than the throwing one. They are the same functions — the ec
 /// form is `noexcept` and reports by value — and choosing it is what makes the

@@ -668,7 +668,7 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World &world,
         if (member == Assisi::ECS::NullEntity)
             continue;
         if (auto *mesh = world.scene.Get<Assisi::Runtime::MeshRenderer>(member))
-            Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache, _assetDatabase);
+            Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache);
     }
 
     // Propagate before building bodies, for the same reason App::BuildSceneBodies
@@ -1141,7 +1141,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // never call it from OnImGui. See the Load button in DrawLevelsWindow.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(*_world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
+        Assisi::App::LoadLevel(*_world, virtualPath, {_assetCache, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::ClearFirst, .header = &header});
     if (!loaded)
     {

@@ -20,11 +20,17 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/Overlay/OverlayRenderer.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
     "include/Assisi/Editor/SystemSearch.hpp"
+    "include/Assisi/Editor/SourceAssets.hpp"
+    "include/Assisi/Editor/TextureFile.hpp"
+    "include/Assisi/Editor/ThumbnailCache.hpp"
     "include/Assisi/Editor/WireShapes.hpp"
   PRIVATE
     "src/ColliderPose.cpp"
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
+    "src/SourceAssets.cpp"
+    "src/TextureFile.cpp"
+    "src/ThumbnailCache.cpp"
     "src/EditorAssetBrowser.cpp"
     "src/EditorBlueprintMode.cpp"
     "src/EditorCamera.cpp"
@@ -75,6 +81,10 @@ target_link_libraries(Assisi-Editor
     # module that draws one, and it is the boundary a game does not cross.
     Assisi::Debug
     nlohmann_json::nlohmann_json
+    # The source importers and image codecs: the editor reads the files an
+    # author edits, which a game never links.
+    Assisi::GeometryImport
+    Assisi::ImageImport
   PRIVATE
     # The transform gizmo (EditorGizmo.cpp) only; not part of the public API.
     imguizmo::imguizmo

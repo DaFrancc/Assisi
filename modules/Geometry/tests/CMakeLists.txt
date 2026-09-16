@@ -1,6 +1,7 @@
 add_executable(Assisi-Geometry-Tests
   main.cpp
   TestBounds.cpp
+  TestCookedMesh.cpp
   TestMeshBounds.cpp
   TestDefaultMeshes.cpp
   TestMeshImporter.cpp
@@ -21,7 +22,7 @@ target_include_directories(Assisi-Geometry-Tests SYSTEM PRIVATE
 
 target_link_libraries(Assisi-Geometry-Tests
   PRIVATE
-    Assisi::Geometry
+    Assisi::GeometryImport
 )
 
 # LogCapture.hpp, for the import tests whose subject is a warning. Reached in the

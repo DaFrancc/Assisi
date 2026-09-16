@@ -11,11 +11,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include <Assisi/Cook/CookTree.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Image/Compress.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 namespace
 {
@@ -26,15 +29,34 @@ constexpr int kExitUsage  = 2;
 
 void PrintUsage()
 {
-    std::fputs("usage: assisi-cook --source <asset-root> --out <cooked-root>\n", stderr);
+    std::fputs("usage: assisi-cook --source <asset-root> --out <cooked-root> [--texture-tier fast|best]\n", stderr);
+}
+
+/// The texture tier a flag value names. Best is the default, because a cooked
+/// tree is a packaging candidate unless whoever cooked it said otherwise.
+std::optional<Assisi::Image::CompressQuality> ParseTextureTier(std::string_view value)
+{
+    if (value == "fast")
+    {
+        return Assisi::Image::CompressQuality::Fast;
+    }
+    if (value == "best")
+    {
+        return Assisi::Image::CompressQuality::Best;
+    }
+    return std::nullopt;
 }
 
 } // namespace
 
 int main(int argc, char **argv)
 {
+    // A level cooks by being loaded, and the cook reads the source tree.
+    (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
+
     std::filesystem::path sourceRoot;
     std::filesystem::path cookedRoot;
+    Assisi::Image::CompressQuality textureQuality = Assisi::Image::CompressQuality::Best;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -48,6 +70,16 @@ int main(int argc, char **argv)
         else if (argument == "--out" && hasValue)
         {
             cookedRoot = argv[++i];
+        }
+        else if (argument == "--texture-tier" && hasValue)
+        {
+            const std::optional<Assisi::Image::CompressQuality> tier = ParseTextureTier(argv[++i]);
+            if (!tier)
+            {
+                PrintUsage();
+                return kExitUsage;
+            }
+            textureQuality = *tier;
         }
         else
         {
@@ -63,7 +95,7 @@ int main(int argc, char **argv)
     }
 
     const std::expected<Assisi::Cook::CookReport, Assisi::Cook::CookError> report =
-        Assisi::Cook::CookTree(sourceRoot, cookedRoot);
+        Assisi::Cook::CookTree(sourceRoot, cookedRoot, textureQuality);
     if (!report)
     {
         // The path first, because that is what a person needs to open. Printed to

@@ -26,16 +26,20 @@
 /// happened to have on the day it was cooked — and a later fix to the blueprint
 /// would stop reaching it, which is the whole property the format exists for.
 ///
-/// Nothing loads one of these into a live scene yet. This is the writer and a
-/// parser; the loader belongs with the provider that will serve the bytes.
+/// A cooked scene loads by turning back into its document (CookedSceneToDocument)
+/// and going through the one loader levels have.
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/AssetProvider.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -88,12 +92,27 @@ struct CookedOverride
     bool absent = false;
 };
 
+/// @brief Version of a scene blob's own layout, separate from the envelope's.
+///
+/// Part of the scene cooker's cache key, so bumping it re-cooks every level.
+inline constexpr std::uint8_t kScenePayloadVersion = 2;
+
+/// @brief The id of the blueprint a level names by path, or nil when there is none.
+///
+/// The cook passes its database lookup, so a level naming a blueprint that does
+/// not exist fails the cook instead of shipping an instance nothing can expand.
+using BlueprintIdOf = std::function<Core::AssetId(std::string_view source)>;
+
 /// @brief One blueprint instance the level places.
 struct CookedInstance
 {
     ECS::Transform transform;
 
     std::string name;
+
+    /// The blueprint's virtual path. A path rather than an id because a path is a
+    /// blueprint's identity everywhere a live instance is asked what it is — a
+    /// spawn names one, a typed view checks one, replication sends one.
     std::string source;
 
     /// Member paths this instance does not have.
@@ -127,12 +146,15 @@ struct CookedScene
 /// described by its instance entry rather than written as an entity — so a
 /// cooked level and a saved one describe the same world.
 ///
+/// @p idOf turns each instance's blueprint path into the id the blob stores.
+///
 /// @return the bytes, or why the scene could not be encoded. A component whose
 ///         fields the codec would drop (see the `norep` rule) is refused rather
 ///         than written short: a cooked level missing a field is a level that
-///         loads and is quietly wrong.
+///         loads and is quietly wrong. An instance whose blueprint @p idOf cannot
+///         name is BlueprintUnusable, for the same reason.
 [[nodiscard]] std::expected<std::vector<std::byte>, LevelError>
-SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *instances);
+SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *instances, const BlueprintIdOf &idOf);
 
 /// @brief Parse a cooked blob back into its parts.
 ///
@@ -145,5 +167,30 @@ SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *ins
 ///         read — every one of them would otherwise decode into whichever
 ///         component now holds its id.
 [[nodiscard]] std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::byte> bytes);
+
+/// @brief The level document @p cooked was cooked from: the same JSON
+///        SceneSerializer::Save writes for that scene.
+///
+/// This is how a cooked level loads. The blueprint rules — the override merge,
+/// reference qualification, removals — are written once, against the document,
+/// and a cooked level that re-implemented them would be a second opinion about
+/// what a level means. What cooking removes is the text parse; the blocks decode
+/// through the codec.
+///
+/// Override references were qualified with their instance's name when cooked;
+/// they come back in the form an author writes them, a plain name for a member
+/// of the instance and a leading `/` for an entity of the level.
+///
+/// @return the document, or MalformedBlob if a block does not decode against
+///         this build's components.
+[[nodiscard]] std::expected<nlohmann::json, LevelError> CookedSceneToDocument(const CookedScene &cooked);
+
+/// @brief The level or blueprint document at @p vpath, read from the cooked blob
+///        @p provider holds for it: the reader a game reading a pak installs.
+///
+/// @return the document, FileUnreadable if @p provider has no such path or cannot
+///         read it, or why the blob is not a scene this build loads.
+[[nodiscard]] std::expected<nlohmann::json, LevelError> ReadCookedDocument(const Core::AssetProvider &provider,
+                                                                           std::string_view vpath);
 
 } // namespace Assisi::Runtime

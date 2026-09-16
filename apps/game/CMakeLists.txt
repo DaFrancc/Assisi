@@ -57,10 +57,18 @@ assisi_reflect(
 # with Assisi::Editor on top. The editor is a library rather than its own
 # executable because reflection registers per final binary — a separate editor
 # process could not inspect the components this project's code declares.
-add_executable(Assisi-Game)
+#
+# Game is out of the default build: editor iteration is the common case, and a
+# second full link of every reflected type is time spent on a binary nobody is
+# running. Ask for it by name (`--target Assisi-Game`, or a Makefile `-game`
+# target).
+add_executable(Assisi-Game EXCLUDE_FROM_ALL)
 Assisi_apply_defaults(Assisi-Game)
 target_sources(Assisi-Game PRIVATE "src/GameMain.cpp")
 target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
+if (ASSISI_PAK_OVERRIDES)
+  target_compile_definitions(Assisi-Game PRIVATE ASSISI_PAK_OVERRIDES)
+endif()
 
 add_executable(Assisi-GameEditor)
 Assisi_apply_defaults(Assisi-GameEditor)
@@ -96,26 +104,35 @@ endif()
 # somebody closes the window. What it proves is that the no-editor link is a real
 # program: it resolves, brings the world up, and returns 0.
 if (ASSISI_BUILD_TESTS)
-  add_test(NAME GameBoots
-    COMMAND Assisi-Game --headless --ticks 1
-    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+  # Builds Game before anything that runs or scans it. Game is out of the default
+  # build, so without this a tree built for the editor would test whatever Game
+  # binary an earlier build left behind — passing or failing on code that is no
+  # longer the source. A no-op when Game is current. Every test that needs it
+  # carries the `game` label, so `ctest -LE game` leaves Game out entirely.
+  #
+  # The cook and pack tools come with it: every game test reads a package they
+  # made, and the pack tool is out of the default build too.
+  add_test(NAME GameBuilt
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}"
+            --target Assisi-Game Assisi-Cook-Tool Assisi-Pack-Tool
   )
-  # A game that never reaches its tick limit would otherwise hang the suite
-  # rather than fail it.
-  set_tests_properties(GameBoots PROPERTIES TIMEOUT 60)
+  set_tests_properties(GameBuilt PROPERTIES
+    FIXTURES_SETUP GameBinary
+    LABELS game)
 endif()
 
-# --- The configured startup scene decides whether the game starts at all.
+# --- The game reads a package, and the configured startup scene decides whether
+#     it starts at all.
 #
-# Two asset roots staged here, each holding a config and nothing else of
-# consequence, pointed at through ASSISI_ASSET_ROOT. Purpose-built rather than
-# the repository's own tree: the claim is about what the config names, and a root
-# that holds every level would let a refusal pass by finding something else to
-# open.
+# Two asset roots written here, each holding a config and nothing else of
+# consequence, cooked and packed by the same tools a release uses. Purpose-built
+# rather than the repository's own tree: the claim is about what the config
+# names, and a package that holds every level would let a refusal pass by finding
+# something else to open.
 #
 # Neither is named "assets", which is the one name DiscoverRoot would find on its
-# own by walking up from the executable — a staged root that shadowed the real
-# tree would change what every other test here reads.
+# own by walking up from the editor — a root that shadowed the real tree would
+# change what the editor tests read.
 if (ASSISI_BUILD_TESTS)
   set(_thin_root "${CMAKE_CURRENT_BINARY_DIR}/thin-root")
   set(_refused_root "${CMAKE_CURRENT_BINARY_DIR}/refused-root")
@@ -127,45 +144,133 @@ if (ASSISI_BUILD_TESTS)
   file(COPY "${CMAKE_SOURCE_DIR}/assets/levels/PerfBlank.alvl"
             "${CMAKE_SOURCE_DIR}/assets/levels/PerfBlank.alvl.aast"
        DESTINATION "${_thin_root}/levels")
-  file(WRITE "${_thin_root}/config/game.json"
-    "{\n"
-    "  \"version\": 1,\n"
-    "  \"type\": \"AppConfig\",\n"
-    "  \"startupScene\": \"levels/PerfBlank.alvl\"\n"
-    "}\n")
 
-  # The same config naming a level that is not there. The only difference between
-  # the two roots, so a difference in outcome can only come from the scene.
-  file(WRITE "${_refused_root}/config/game.json"
-    "{\n"
-    "  \"version\": 1,\n"
-    "  \"type\": \"AppConfig\",\n"
-    "  \"startupScene\": \"levels/Absent.alvl\"\n"
-    "}\n")
+  # The same config in both roots but for the scene it names, so a difference in
+  # outcome can only come from the scene. The sidecar gives the config an id to
+  # be cooked under.
+  foreach(_root_scene "${_thin_root}|levels/PerfBlank.alvl" "${_refused_root}|levels/Absent.alvl")
+    string(REPLACE "|" ";" _root_scene "${_root_scene}")
+    list(GET _root_scene 0 _root)
+    list(GET _root_scene 1 _scene)
+    file(WRITE "${_root}/config/game.json"
+      "{\n"
+      "  \"version\": 1,\n"
+      "  \"type\": \"AppConfig\",\n"
+      "  \"startupScene\": \"${_scene}\"\n"
+      "}\n")
+    file(WRITE "${_root}/config/game.json.aast"
+      "{\n"
+      "  \"guid\": \"7d3c1f0e-2b4a-4c8d-9e6f-1a2b3c4d5e6f\",\n"
+      "  \"type\": \"AssetSidecar\",\n"
+      "  \"version\": 1\n"
+      "}\n")
+  endforeach()
 
-  # The positive control, and it has to be read as one: without it a refusal
-  # test passes whenever the game fails for any reason at all — an asset root it
-  # cannot read, a config it cannot parse — and proves nothing about the scene.
-  add_test(NAME GameBootsFromThinRoot
-    COMMAND Assisi-Game --headless --ticks 1
-    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+  # Cooked and packed as tests rather than at configure time, because the tools
+  # that do it are built by GameBuilt. lz4, so every boot below also decompresses.
+  foreach(_name thin refused)
+    add_test(NAME Game-${_name}-Cooked
+      COMMAND Assisi-Cook-Tool --source "${CMAKE_CURRENT_BINARY_DIR}/${_name}-root"
+                               --out "${CMAKE_CURRENT_BINARY_DIR}/${_name}-cooked" --texture-tier fast
+    )
+    set_tests_properties(Game-${_name}-Cooked PROPERTIES
+      FIXTURES_REQUIRED GameBinary
+      FIXTURES_SETUP ${_name}Cooked
+      LABELS game)
+
+    add_test(NAME Game-${_name}-Packed
+      COMMAND Assisi-Pack-Tool --cooked "${CMAKE_CURRENT_BINARY_DIR}/${_name}-cooked"
+                               --out "${CMAKE_CURRENT_BINARY_DIR}/${_name}.pak" --compress lz4
+    )
+    set_tests_properties(Game-${_name}-Packed PROPERTIES
+      FIXTURES_REQUIRED "GameBinary;${_name}Cooked"
+      FIXTURES_SETUP ${_name}Pak
+      LABELS game)
+  endforeach()
+
+  # A copy of the game with the thin package beside it under the default name,
+  # and one with no package at all. Copies, so these read the path a shipped build
+  # reads without the developer's own package beside the real executable getting
+  # in the way — and they work whether or not overrides are compiled in.
+  set(_staged "${CMAKE_CURRENT_BINARY_DIR}/staged")
+  set(_unstaged "${CMAKE_CURRENT_BINARY_DIR}/unstaged")
+  set(_stage_script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageGame.cmake")
+  add_test(NAME Game-Staged
+    COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_staged}"
+            "-DPAK=${CMAKE_CURRENT_BINARY_DIR}/thin.pak" -P "${_stage_script}"
   )
-  set_tests_properties(GameBootsFromThinRoot PROPERTIES
-    ENVIRONMENT "ASSISI_ASSET_ROOT=${_thin_root}"
+  set_tests_properties(Game-Staged PROPERTIES
+    FIXTURES_REQUIRED "GameBinary;thinPak"
+    FIXTURES_SETUP StagedGame
+    LABELS game)
+  add_test(NAME Game-Unstaged
+    COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_unstaged}" -P "${_stage_script}"
+  )
+  set_tests_properties(Game-Unstaged PROPERTIES
+    FIXTURES_REQUIRED GameBinary
+    FIXTURES_SETUP UnstagedGame
+    LABELS game)
+
+  # The Game target boots, steps, and exits on its own from the package beside it.
+  # Headless because a build machine has no display, and tick-limited because a
+  # windowed run ends when somebody closes the window. What it proves is that the
+  # no-editor link is a real program that reads what a release ships: it resolves,
+  # brings the world up, and returns 0. It is also the positive control for every
+  # refusal below — without it a refusal passes whenever the game fails for any
+  # reason at all.
+  add_test(NAME GameBoots
+    COMMAND "${_staged}/$<TARGET_FILE_NAME:Assisi-Game>" --headless --ticks 1
+    WORKING_DIRECTORY "${_staged}"
+  )
+  # A game that never reaches its tick limit would otherwise hang the suite
+  # rather than fail it. ASSISI_PAK cleared, so a developer's own setting cannot
+  # stand in for the default path.
+  set_tests_properties(GameBoots PROPERTIES
+    ENVIRONMENT "ASSISI_PAK="
+    FIXTURES_REQUIRED StagedGame
+    LABELS game
     TIMEOUT 60)
 
-  # The claim of the issue: a startup scene that is not there stops the game and
-  # reaches the exit code. Driven as a real process because that is the whole
-  # property — a refusal that logs and exits 0 is indistinguishable to anything
-  # that launches this from a game the player quit.
-  add_test(NAME GameRefusesMissingStartupScene
-    COMMAND Assisi-Game --headless --ticks 1
-    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+  # No package beside the game: it refuses rather than opening an empty world or
+  # reading loose files, and the exit code says so.
+  add_test(NAME GameRefusesMissingPak
+    COMMAND "${_unstaged}/$<TARGET_FILE_NAME:Assisi-Game>" --headless --ticks 1
+    WORKING_DIRECTORY "${_unstaged}"
   )
-  set_tests_properties(GameRefusesMissingStartupScene PROPERTIES
-    ENVIRONMENT "ASSISI_ASSET_ROOT=${_refused_root}"
+  set_tests_properties(GameRefusesMissingPak PROPERTIES
+    ENVIRONMENT "ASSISI_PAK="
+    FIXTURES_REQUIRED UnstagedGame
+    LABELS game
     WILL_FAIL TRUE
     TIMEOUT 60)
+
+  if (ASSISI_PAK_OVERRIDES)
+    # The same boot through --pak, which is how a developer runs a package that is
+    # not beside the executable.
+    add_test(NAME GameBootsFromNamedPak
+      COMMAND Assisi-Game --headless --ticks 1 --pak "${CMAKE_CURRENT_BINARY_DIR}/thin.pak"
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+    )
+    set_tests_properties(GameBootsFromNamedPak PROPERTIES
+      FIXTURES_REQUIRED "GameBinary;thinPak"
+      LABELS game
+      TIMEOUT 60)
+
+    # The claim a startup scene carries: one that is not in the package stops the
+    # game and reaches the exit code. Driven as a real process because that is the
+    # whole property — a refusal that logs and exits 0 is indistinguishable to
+    # anything that launches this from a game the player quit.
+    add_test(NAME GameRefusesMissingStartupScene
+      COMMAND Assisi-Game --headless --ticks 1
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Game>"
+    )
+    set_tests_properties(GameRefusesMissingStartupScene PROPERTIES
+      ENVIRONMENT "ASSISI_PAK=${CMAKE_CURRENT_BINARY_DIR}/refused.pak"
+      FIXTURES_REQUIRED "GameBinary;refusedPak"
+      LABELS game
+      WILL_FAIL TRUE
+      TIMEOUT 60)
+  endif()
 endif()
 
 # The same exclusion as the symbol scans below, asserted against the link graph
@@ -182,6 +287,14 @@ assisi_assert_link_excludes(Assisi-Game
     imgui::imgui
     implot::implot
     imguizmo::imguizmo
+    Assisi-Cook
+    Assisi::Cook
+    Assisi-GeometryImport
+    Assisi::GeometryImport
+    Assisi-ImageImport
+    Assisi::ImageImport
+    fastgltf::fastgltf
+    bc7enc::bc7enc
 )
 
 # --- What the Game binary is not allowed to contain.
@@ -230,6 +343,8 @@ if (ASSISI_BUILD_TESTS)
             ${_editor_symbols}
   )
   set_tests_properties(GameLinksNoEditor PROPERTIES
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
     SKIP_RETURN_CODE ${_symbol_scan_skip_code})
 
   # The positive control. GameEditor contains every one of those symbols by
@@ -246,20 +361,44 @@ if (ASSISI_BUILD_TESTS)
     WILL_FAIL TRUE
     SKIP_RETURN_CODE ${_symbol_scan_skip_code})
 
-  # The game still builds its GUID->path index by scanning sidecars at startup,
-  # so it links the mutable database and the loose-file provider and cannot yet
-  # do without them. WILL_FAIL records that as a known state rather than a
-  # forgotten one: when a baked pak index replaces the scan, this test starts
-  # passing, WILL_FAIL turns that into a failure, and whoever landed the index
-  # removes the property. The alternative is a comment nothing checks.
+  # The game reads cooked content from its package and nothing else, so nothing
+  # that reads or decodes source content belongs in it: not the sidecar index, not
+  # a loose-file reader, not an importer, decoder or encoder, not the cook. One of
+  # these appearing means a game that could quietly read files beside it, or
+  # carries a pipeline it never runs.
+  set(_source_pipeline_symbols
+    --forbid "Assisi::Core::AssetDatabase"
+    --forbid "Assisi::Core::LooseFileProvider"
+    --forbid "Assisi::Core::ReadTextConfig"
+    --forbid "Assisi::Runtime::SceneSerializer::ReadTextDocument"
+    --forbid "Assisi::Editor::SourceAssetSource"
+    --forbid "fastgltf::"
+    --forbid "Assisi::Geometry::ImportMesh"
+    --forbid "Assisi::Image::DecodeImage"
+    --forbid "Assisi::Image::Compress("
+    --forbid "Assisi::Cook::"
+  )
+
   add_test(NAME GameLinksNoAssetDatabase
     COMMAND Python3::Interpreter "${_symbol_scanner}"
             --binary "$<TARGET_FILE:Assisi-Game>"
             --nm "${_symbol_scan_nm}"
-            --forbid "Assisi::Core::AssetDatabase"
-            --forbid "Assisi::Core::LooseFileProvider"
+            ${_source_pipeline_symbols}
   )
   set_tests_properties(GameLinksNoAssetDatabase PROPERTIES
+    FIXTURES_REQUIRED GameBinary
+    LABELS game
+    SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+  # The positive control, as above: the editor reads source content, so it
+  # carries these, and a scan that finds none of them has gone blind.
+  add_test(NAME GameEditorCarriesSourcePipeline
+    COMMAND Python3::Interpreter "${_symbol_scanner}"
+            --binary "$<TARGET_FILE:Assisi-GameEditor>"
+            --nm "${_symbol_scan_nm}"
+            ${_source_pipeline_symbols}
+  )
+  set_tests_properties(GameEditorCarriesSourcePipeline PROPERTIES
     WILL_FAIL TRUE
     SKIP_RETURN_CODE ${_symbol_scan_skip_code})
 

@@ -121,6 +121,10 @@ public:
     ///        manifest, or the slot is unlisted.
     [[nodiscard]] AssetId SlotMaterial(AssetId meshId, std::uint32_t slot) const;
 
+    /// @brief Every slot's default material for @p meshId, slot-indexed with nil
+    ///        in any gap; empty when the mesh has no manifest.
+    [[nodiscard]] std::vector<AssetId> SlotMaterials(AssetId meshId) const;
+
 private:
     AssetIgnoreList _ignore;
 

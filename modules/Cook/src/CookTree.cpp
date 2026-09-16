@@ -153,10 +153,10 @@ std::uint64_t MixHash(std::uint64_t seed, std::uint64_t value)
 ///
 /// The source bytes are the obvious part. The rest is what would otherwise leave
 /// stale blobs behind a change that never touched a source file: the envelope's
-/// version, the payload kind, and the codec layout the reflected and scene
-/// cookers write through.
+/// version, the payload kind, the cooker's own settings, and the codec layout the
+/// reflected and scene cookers write through.
 std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::uint64_t> dependencyHashes,
-                      std::string_view cookerName)
+                      const Cooker &cooker, const CookContext &context)
 {
     std::uint64_t key = HashOf(source);
     for (const std::uint64_t dependency : dependencyHashes)
@@ -164,7 +164,9 @@ std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::ui
         key = MixHash(key, dependency);
     }
     key = MixHash(key, Core::kCookedFormatVersion);
+    const std::string_view cookerName = cooker.Name();
     key = MixHash(key, Core::ContentHash64(std::as_bytes(std::span{cookerName})));
+    key = MixHash(key, cooker.KeyVariant(context));
     // The component table, which both the scene blocks and every asset block are
     // written against. A field added to a component changes what a cooked level
     // means without changing one byte of the level file.
@@ -270,7 +272,8 @@ std::vector<ManifestEntry> DeserializeManifest(std::string_view text)
 }
 
 std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourceRoot,
-                                              const std::filesystem::path &cookedRoot)
+                                              const std::filesystem::path &cookedRoot,
+                                              Image::CompressQuality textureQuality)
 {
     if (const std::expected<void, Core::AssetError> root = Core::AssetSystem::SetRoot(sourceRoot); !root)
     {
@@ -351,6 +354,7 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
     CookContext context;
     context.database = &database;
     context.roles    = &*roles;
+    context.textureQuality = textureQuality;
 
     const std::vector<std::unique_ptr<Cooker>> cookers = MakeCookers();
 
@@ -444,7 +448,7 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
         planned.vpath  = vpath;
         planned.id     = id;
         planned.cooker = owner;
-        planned.key    = CookKey(*source, dependencyHashes, owner->Name());
+        planned.key    = CookKey(*source, dependencyHashes, *owner, context);
         planned.output = cookedRoot / (id.ToString() + std::string{kCookedExtension});
 
         // The manifest says what was produced; the tree says what is there.

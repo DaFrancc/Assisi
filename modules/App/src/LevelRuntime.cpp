@@ -24,29 +24,9 @@
 namespace Assisi::App
 {
 
-void InstallAssetResolvers(Render::AssetCache &cache, const Core::AssetDatabase &database)
+void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, Physics::PhysicsWorld &physics)
 {
-    // Serialization's path hint (asset-database D2): saved GUID references carry
-    // a readable last-known path regenerated from the database.
-    Core::SetAssetIdHintResolver([&database](const Core::AssetId &id)
-                                 { return database.PathFor(id).value_or(std::string{}); });
-
-    // The cache: id↔path so mesh/material/texture resolution and glTF import
-    // speak GUIDs. Reserved built-ins resolve without the database.
-    cache.SetAssetResolvers(
-        [&database](const Core::AssetId &id) -> Core::AssetPath
-        {
-            const std::optional<std::string> path = database.PathFor(id);
-            return path ? Core::AssetPath{std::string_view{*path}} : Core::AssetPath{};
-        },
-        [&database](std::string_view virtualPath) -> Core::AssetId
-        { return database.IdFor(virtualPath).value_or(Core::AssetId{}); });
-}
-
-void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                                 Physics::PhysicsWorld &physics)
-{
-    Runtime::ResolveSceneAssets(scene, cache, database);
+    Runtime::ResolveSceneAssets(scene, cache);
     (void)BuildSceneBodies(scene, physics);
 }
 
@@ -72,7 +52,7 @@ void FinishLoad(World &world, const LevelServices &services, AssetCacheReset res
     // hour is a jump like any other, and this is where it is one.
     services.renderer.OnSceneReplaced();
 
-    RebindSceneAssetsAndPhysics(world.scene, services.cache, services.database, world.physics);
+    RebindSceneAssetsAndPhysics(world.scene, services.cache, world.physics);
 }
 
 } // namespace
@@ -126,14 +106,13 @@ Runtime::LevelResult LoadLevelSim(World &world, std::string_view virtualPath)
     return {};
 }
 
-void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                            bool &wereLoading)
+void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, bool &wereLoading)
 {
     // Re-resolve while loads are pending, and for one frame after the last one
     // finishes so the final result is picked up.
     if (wereLoading || cache.HasPendingLoads())
     {
-        Runtime::ResolveSceneAssets(scene, cache, database);
+        Runtime::ResolveSceneAssets(scene, cache);
 
         // Sampled AFTER the resolve, and that ordering is the whole meaning of
         // the flag: a mesh's materials are only requested once its slot table

@@ -75,18 +75,6 @@ public:
     /// upload path. The pixels are uploaded when the worker's command list executes.
     void Adopt(nvrhi::TextureHandle texture) { _texture = std::move(texture); }
 
-    /// @brief Loads an image from a virtual asset path and uploads it, uncompressed.
-    /// Synchronous convenience = Image::DecodeImage + UploadDecoded on the calling
-    /// thread; the async path calls the two halves separately (worker decode, main
-    /// upload) and compresses in between.
-    ///
-    /// @p colorSpace selects the on-GPU format and the space the mips are filtered in.
-    ///
-    /// @return Success, or an AssetError if the file cannot be resolved/read/decoded.
-    std::expected<void, Assisi::Core::AssetError>
-    LoadFromAssets(nvrhi::IDevice *device, std::string_view vpath,
-                   Image::ColorSpace colorSpace = Image::ColorSpace::Srgb) noexcept;
-
     /// @brief Uploads a solid 1x1 color — used for default/placeholder textures.
     /// Always uncompressed: one texel has no block to fill, and these stand in for
     /// a texture that is missing rather than carrying content of their own.

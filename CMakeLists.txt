@@ -64,6 +64,17 @@ option(ASSISI_ENABLE_NETWORKING "Build the networking modules (fetches GameNetwo
 # to fetch and build it (a future Geometry Assimp backend would then link it).
 option(ASSISI_ENABLE_ASSIMP "Build the Assimp multi-format mesh-import backend" OFF)
 
+# Whether the game accepts --pak and ASSISI_PAK to read a content package other
+# than the one beside its executable. A development convenience, and off in
+# Release: a shipped game that read any package a player named would run content
+# that was never shipped. A signed package is what would make it safe to allow.
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(_assisi_pak_overrides_default OFF)
+else()
+  set(_assisi_pak_overrides_default ON)
+endif()
+option(ASSISI_PAK_OVERRIDES "Let the game read a content package named on its command line" ${_assisi_pak_overrides_default})
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------
@@ -493,6 +504,53 @@ else()
     target_compile_options(bc7enc PRIVATE -w)
 endif()
 add_library(bc7enc::bc7enc ALIAS bc7enc)
+
+# --- lz4 (pak slice compression, the fast-to-decompress codec)
+#
+# Built by hand from its two sources for the reason bc7enc is: upstream's CMake
+# lives under build/cmake and builds command-line tools this build never runs.
+# lz4hc.c is the high-compression encoder; the decoder is in lz4.c.
+FetchContent_Declare(lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG        v1.10.0
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
+)
+FetchContent_MakeAvailable(lz4)
+add_library(lz4_static STATIC
+    "${lz4_SOURCE_DIR}/lib/lz4.c"
+    "${lz4_SOURCE_DIR}/lib/lz4hc.c"
+)
+target_include_directories(lz4_static SYSTEM PUBLIC "${lz4_SOURCE_DIR}/lib")
+set_target_properties(lz4_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(lz4_static PRIVATE /w)
+else()
+    target_compile_options(lz4_static PRIVATE -w)
+endif()
+add_library(lz4::lz4 ALIAS lz4_static)
+
+# --- zstd (pak slice compression, the smaller-output codec)
+#
+# Through upstream's own CMake, which is the supported way to build it: the
+# sources span several directories and an assembly decoder whose inclusion
+# depends on the platform. Everything but the static library is switched off.
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED   OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC   ON  CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB  OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG        v1.5.6
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake
+    SYSTEM
+)
+FetchContent_MakeAvailable(zstd)
+add_library(zstd::zstd ALIAS libzstd_static)
 
 # --- Assimp (deferred catch-all import backend; off by default, see ASSISI_ENABLE_ASSIMP)
 if (ASSISI_ENABLE_ASSIMP)
@@ -1069,6 +1127,7 @@ add_subdirectory(apps/game)
 # After apps/game: the cooker links that target's reflection objects, since a
 # level may name a component this project declares rather than the engine.
 add_subdirectory(apps/cook)
+add_subdirectory(apps/pack)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).

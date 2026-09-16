@@ -164,10 +164,17 @@ public:
     /// minus one (leave a core for the main thread), floored at 1.
     explicit JobSystem(uint32_t workerCount = 0);
 
-    /// @brief Signals workers to stop, drains queued worker tasks, and joins.
-    /// Main-queue tasks still pending at shutdown are dropped (no main thread left
-    /// to run them).
+    /// @brief Shutdown(), if it has not already run.
     ~JobSystem();
+
+    /// @brief Signals workers to stop, runs the worker tasks already queued, and
+    /// joins. Main-queue tasks still pending are dropped (no main thread left to
+    /// run them). Idempotent.
+    ///
+    /// For an owner whose tasks use objects destroyed before the pool itself: call
+    /// this first, so no worker is still inside a task when they go. A worker task
+    /// queued afterwards runs only if something help-waits on it.
+    void Shutdown();
 
     JobSystem(const JobSystem &) = delete;
     JobSystem &operator=(const JobSystem &) = delete;

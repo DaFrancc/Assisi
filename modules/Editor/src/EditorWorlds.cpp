@@ -57,7 +57,7 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     // Reclaiming memory is SweepAssetCache's job, after travel, not this load's.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
+        Assisi::App::LoadLevel(world, virtualPath, {_assetCache, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
     if (!loaded)
     {

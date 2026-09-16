@@ -74,11 +74,15 @@ struct CookReport
 /// since a rename is a delete and an add. Readers that go through the manifest
 /// are unaffected; one that packs the directory itself would pack the orphans.
 ///
+/// @p textureQuality is the compression search tier for textures, and part of each
+/// texture's cache key, so switching it re-cooks textures and nothing else.
+///
 /// @return the report, or the first failure — the cook stops at it rather than
 ///         carrying on, so the build fails on the first named path instead of
 ///         burying it under later output.
-[[nodiscard]] std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourceRoot,
-                                                            const std::filesystem::path &cookedRoot);
+[[nodiscard]] std::expected<CookReport, CookError>
+CookTree(const std::filesystem::path &sourceRoot, const std::filesystem::path &cookedRoot,
+         Image::CompressQuality textureQuality = Image::CompressQuality::Best);
 
 /// @brief The manifest's on-disk text: one sorted line per asset.
 ///

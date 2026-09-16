@@ -22,6 +22,8 @@ add_executable(Assisi-App-Tests
   TestOscillate.cpp
   TestPerfCapture.cpp
   TestChildProcess.cpp
+  TestConfigReader.cpp
+  TestCookedAssets.cpp
   TestInstanceViews.cpp
   TestAppConfig.cpp
   TestLevelSystemsPrecheck.cpp
@@ -90,6 +92,8 @@ target_sources(Assisi-App-Tests PRIVATE
   # see what it loads.
   $<TARGET_OBJECTS:Assisi-App-Generated>
   $<TARGET_OBJECTS:Assisi-Window-Generated>
+  # MaterialData, which the cooked asset source reads back through the registry.
+  $<TARGET_OBJECTS:Assisi-Geometry-Generated>
   # Replicated is an ACOMP in NetSync; without its registrations the loader has
   # no ComponentId for it and a blueprint declaring one silently gets an entity
   # that never replicates.

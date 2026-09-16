@@ -540,7 +540,7 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
     Assisi::Core::JobSystem jobs;
 
     WorldManager worlds;
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
     worlds.SetEdited(start);
@@ -619,7 +619,7 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
 
     Assisi::Core::JobSystem jobs;
     WorldManager worlds;
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
     worlds.SetEdited(start);

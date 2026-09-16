@@ -4,7 +4,6 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Image/Decode.hpp>
 
 #include <algorithm>
 #include <array>
@@ -137,18 +136,6 @@ void Texture::UploadDecoded(nvrhi::IDevice *device, const Image::DecodedImage &i
         ownList->close();
         device->executeCommandList(ownList);
     }
-}
-
-std::expected<void, Assisi::Core::AssetError> Texture::LoadFromAssets(nvrhi::IDevice *device, std::string_view vpath,
-                                                                      Image::ColorSpace colorSpace) noexcept
-{
-    std::expected<Image::DecodedImage, Assisi::Core::AssetError> image = Image::DecodeImage(vpath, colorSpace);
-    if (!image)
-    {
-        return std::unexpected(image.error());
-    }
-    UploadDecoded(device, *image, std::string(vpath).c_str());
-    return {};
 }
 
 void Texture::UploadSolidColor(nvrhi::IDevice *device, unsigned char r, unsigned char g, unsigned char b,

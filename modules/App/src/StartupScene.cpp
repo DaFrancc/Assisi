@@ -3,9 +3,9 @@
 #include <Assisi/App/StartupScene.hpp>
 
 #include <Assisi/Core/AssetId.hpp>
-#include <Assisi/Core/AssetSystem.hpp>
 
 #include <optional>
+#include <utility>
 
 namespace Assisi::App
 {
@@ -25,7 +25,8 @@ std::string_view Describe(StartupSceneError error)
 }
 
 std::expected<std::string, StartupSceneError> ResolveStartupScene(std::string_view named,
-                                                                  const Core::AssetDatabase &database)
+                                                                  const ScenePathForId &pathFor,
+                                                                  const SceneExists &exists)
 {
     if (named.empty())
     {
@@ -37,15 +38,15 @@ std::expected<std::string, StartupSceneError> ResolveStartupScene(std::string_vi
     // asset as a missing file named after a GUID.
     if (const std::optional<Core::AssetId> id = Core::AssetId::Parse(named))
     {
-        const std::optional<std::string> path = database.PathFor(*id);
+        std::optional<std::string> path = pathFor(*id);
         if (!path)
         {
             return std::unexpected(StartupSceneError::UnknownGuid);
         }
-        return *path;
+        return std::move(*path);
     }
 
-    if (!Core::AssetSystem::Exists(named))
+    if (!exists(named))
     {
         return std::unexpected(StartupSceneError::Missing);
     }

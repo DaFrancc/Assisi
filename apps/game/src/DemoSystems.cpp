@@ -11,6 +11,8 @@
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
 
+#include <string_view>
+
 namespace Game
 {
 
@@ -106,6 +108,21 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx)
     if (ctx.input->IsMouseButtonPressed(Assisi::Window::MouseButton::Left))
     {
         ctx.input->SetMouseCaptured(true);
+    }
+}
+
+void MaterialsTravelSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.input == nullptr || ctx.worlds == nullptr) // headless host or no manager: nowhere to travel from
+    {
+        return;
+    }
+
+    if (ctx.input->IsKeyPressed(Assisi::Window::Key::M))
+    {
+        constexpr std::string_view kMaterialsLevel = "levels/Materials.alvl";
+        Assisi::Core::Log::Info("MaterialsTravel: '{}' -> '{}'.", ctx.world.levelPath, kMaterialsLevel);
+        ctx.worlds->RequestTravel(kMaterialsLevel);
     }
 }
 

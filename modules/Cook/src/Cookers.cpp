@@ -6,14 +6,17 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/CookedPayload.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Geometry/CookedMesh.hpp>
 #include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Geometry/MeshValidate.hpp>
 #include <Assisi/Image/Compress.hpp>
+#include <Assisi/Image/CookedTexture.hpp>
 #include <Assisi/Image/Decode.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -67,6 +70,7 @@ class ReflectedCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "reflected"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Reflected; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -128,9 +132,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Reflected);
-        writer.WriteString(typeName);
-        const bool encoded = Core::Reflect::WriteAsset(*meta, instance, writer);
+        const bool encoded = Core::WriteReflectedBlob(writer, *meta, instance);
         meta->destroy(instance);
 
         if (!encoded)
@@ -156,6 +158,9 @@ class SceneCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "scene"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Scene; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Runtime::kScenePayloadVersion; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -164,8 +169,18 @@ public:
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    Cook(std::string_view vpath, Core::AssetId, const CookContext &context) const override
     {
+        if (context.database == nullptr)
+        {
+            return std::unexpected(Failure(vpath, "was cooked with no asset database"));
+        }
+        const Core::AssetDatabase &database = *context.database;
+        const Runtime::BlueprintIdOf idOf = [&database](std::string_view source)
+                                            {
+                                                return database.IdFor(source).value_or(Core::AssetId{});
+                                            };
+
         ECS::Scene scene;
         Runtime::InstanceTable instances;
         Runtime::LevelHeader header;
@@ -181,7 +196,7 @@ public:
         }
 
         const std::expected<std::vector<std::byte>, Runtime::LevelError> cooked =
-            Runtime::SaveCookedScene(scene, header, &instances);
+            Runtime::SaveCookedScene(scene, header, &instances, idOf);
         if (!cooked)
         {
             return std::unexpected(Failure(vpath, std::string{Runtime::Describe(cooked.error())}));
@@ -192,15 +207,18 @@ public:
 
 // ── Meshes ────────────────────────────────────────────────────────────────────
 
-/// Version of the mesh payload's own framing, separate from the blob envelope's.
-constexpr std::uint8_t kMeshPayloadVersion = 1;
-
 /// `.gltf` / `.glb`, cooked to the arrays the GPU path already wants so no
 /// import runs at load.
 class MeshCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        return Geometry::kMeshPayloadVersion;
+    }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -264,89 +282,24 @@ public:
             return std::unexpected(Failure(vpath, std::string{Geometry::ToString(valid.error())}));
         }
 
-        Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
-        writer.WriteUInt8(kMeshPayloadVersion);
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->Vertices.size()));
-        for (const Geometry::Vertex &vertex : mesh->Vertices)
-        {
-            WriteVec3(writer, vertex.Position);
-            WriteVec3(writer, vertex.Normal);
-            writer.WriteFloat(vertex.TextureCoordinates.x);
-            writer.WriteFloat(vertex.TextureCoordinates.y);
-            writer.WriteFloat(vertex.Tangent.x);
-            writer.WriteFloat(vertex.Tangent.y);
-            writer.WriteFloat(vertex.Tangent.z);
-            writer.WriteFloat(vertex.Tangent.w);
-        }
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->Indices.size()));
-        for (const std::uint32_t index : mesh->Indices)
-        {
-            writer.WriteVarUInt32(index);
-        }
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->SubMeshes.size()));
-        for (const Geometry::SubMesh &submesh : mesh->SubMeshes)
-        {
-            writer.WriteVarUInt32(submesh.IndexOffset);
-            writer.WriteVarUInt32(submesh.IndexCount);
-            writer.WriteVarUInt32(submesh.MaterialSlot);
-            WriteVec3(writer, submesh.LocalBounds.center);
-            writer.WriteFloat(submesh.LocalBounds.radius);
-            WriteVec3(writer, submesh.LocalAabb.min);
-            WriteVec3(writer, submesh.LocalAabb.max);
-        }
-
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh->Lods.size()));
-        for (const Geometry::LodRange &lod : mesh->Lods)
-        {
-            writer.WriteVarUInt32(lod.FirstSubMesh);
-            writer.WriteVarUInt32(lod.SubMeshCount);
-            writer.WriteFloat(lod.ScreenSizeThreshold);
-        }
-
-        WriteVec3(writer, mesh->LocalBounds.center);
-        writer.WriteFloat(mesh->LocalBounds.radius);
-        WriteVec3(writer, mesh->LocalAabb.min);
-        WriteVec3(writer, mesh->LocalAabb.max);
-
         // The slot table, from the sidecar manifest rather than from the import.
         // That is what the renderer reads at runtime: the import's own
         // MaterialData is the default a `.amat` was exploded from, and the
         // sidecar is where the binding actually lives afterwards.
-        const auto slotCount = static_cast<std::uint32_t>(mesh->Materials.size());
-        writer.WriteVarUInt32(slotCount);
-        for (std::uint32_t slot = 0; slot < slotCount; ++slot)
+        std::vector<Core::AssetId> slotMaterials(mesh->Materials.size());
+        for (std::size_t slot = 0; slot < slotMaterials.size(); ++slot)
         {
-            WriteAssetId(writer, database.SlotMaterial(id, slot));
+            slotMaterials[slot] = database.SlotMaterial(id, static_cast<std::uint32_t>(slot));
         }
 
+        Core::BitWriter writer;
+        Geometry::WriteCookedMesh(writer, *mesh, slotMaterials);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
-    }
-
-private:
-    static void WriteVec3(Core::BitWriter &writer, const glm::vec3 &value)
-    {
-        writer.WriteFloat(value.x);
-        writer.WriteFloat(value.y);
-        writer.WriteFloat(value.z);
-    }
-
-    static void WriteAssetId(Core::BitWriter &writer, const Core::AssetId &id)
-    {
-        for (const std::uint8_t byte : id.bytes)
-        {
-            writer.WriteUInt8(byte);
-        }
     }
 };
 
 // ── Textures ──────────────────────────────────────────────────────────────────
-
-constexpr std::uint8_t kTexturePayloadVersion = 1;
 
 /// Images, cooked to the block-compressed mips a device uploads directly.
 ///
@@ -360,6 +313,16 @@ class TextureCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "texture"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Texture; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &context) const override
+    {
+        // The tier fits in its low byte, so the version above it cannot collide
+        // with a tier.
+        constexpr std::uint32_t kTierBits = 8;
+        return (static_cast<std::uint64_t>(Image::kTexturePayloadVersion) << kTierBits) |
+               static_cast<std::uint64_t>(context.textureQuality);
+    }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -401,10 +364,8 @@ public:
             return std::unexpected(Failure(vpath, "could not be decoded"));
         }
 
-        // Best rather than Fast: this encode happens once, offline, and the
-        // runtime tier exists only because a load is something somebody waits on.
         const std::expected<Image::DecodedImage, Core::AssetError> compressed =
-            Image::Compress(*decoded, wanted.format, Image::CompressQuality::Best);
+            Image::Compress(*decoded, wanted.format, context.textureQuality);
         if (!compressed)
         {
             return std::unexpected(Failure(vpath, "could not be block compressed"));
@@ -415,19 +376,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Texture);
-        writer.WriteUInt8(kTexturePayloadVersion);
-        writer.WriteUInt32(compressed->width);
-        writer.WriteUInt32(compressed->height);
-        writer.WriteUInt8(static_cast<std::uint8_t>(compressed->format));
-        writer.WriteUInt8(static_cast<std::uint8_t>(compressed->colorSpace));
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(compressed->mips.size()));
-        for (const std::vector<unsigned char> &mip : compressed->mips)
-        {
-            writer.WriteVarUInt32(static_cast<std::uint32_t>(mip.size()));
-            writer.WriteBytes(std::as_bytes(std::span{mip}));
-        }
-
+        Image::WriteCookedTexture(writer, *compressed);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
     }
@@ -440,6 +389,7 @@ class ShaderCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "shader"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Shader; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -489,7 +439,7 @@ public:
 
     [[nodiscard]] Core::AssetId DerivedId(std::string_view vpath) const override
     {
-        return HasExtension(vpath, ".spv") ? DerivedAssetId(vpath) : Core::AssetId{};
+        return HasExtension(vpath, ".spv") ? Core::DerivedAssetId(vpath) : Core::AssetId{};
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
@@ -502,9 +452,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Shader);
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(spirv->size()));
-        writer.WriteBytes(*spirv);
+        Core::WriteShaderBlob(writer, *spirv);
 
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
@@ -523,6 +471,7 @@ class VerbatimCooker final : public Cooker
 {
 public:
     [[nodiscard]] std::string_view Name() const override { return "verbatim"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Verbatim; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -541,9 +490,7 @@ public:
         }
 
         Core::BitWriter writer;
-        Core::WriteCookedHeader(writer, Core::CookedKind::Verbatim);
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(source->size()));
-        writer.WriteBytes(*source);
+        Core::WriteVerbatimBlob(writer, *source);
 
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
@@ -551,39 +498,6 @@ public:
 };
 
 } // namespace
-
-Core::AssetId DerivedAssetId(std::string_view vpath)
-{
-    // Two salts rather than one hash twice: FNV over the same bytes gives the
-    // same 64 bits, so the two halves would be identical.
-    constexpr std::uint64_t kHighSalt = 0x9E3779B97F4A7C15ULL;
-    constexpr std::uint64_t kLowSalt  = 0xC2B2AE3D27D4EB4FULL;
-
-    // Bound to a plain name first: a qualified one on the right of a `*` reads
-    // to the formatter as a pointer declaration, and it rewrites the space to
-    // match.
-    constexpr std::uint64_t prime = Core::kFnvPrime;
-
-    const std::uint64_t base = Core::ContentHash64(std::as_bytes(std::span{vpath}));
-    const std::uint64_t high = base ^ kHighSalt;
-    const std::uint64_t low  = (base * prime) ^ kLowSalt;
-
-    Core::AssetId id{};
-    for (std::size_t i = 0; i < 8; ++i)
-    {
-        id.bytes[i]     = static_cast<std::uint8_t>(high >> (8 * (7 - i)));
-        id.bytes[8 + i] = static_cast<std::uint8_t>(low >> (8 * (7 - i)));
-    }
-
-    // Version nibble 0xD and variant bits 0b111. RFC 4122 defines neither, so
-    // this can never collide with a minted v4 however the hash falls.
-    id.bytes[6] = static_cast<std::uint8_t>((id.bytes[6] & 0x0F) | 0xD0);
-    id.bytes[8] = static_cast<std::uint8_t>((id.bytes[8] & 0x1F) | 0xE0);
-
-    // The reserved built-in range is the first fifteen bytes zero. Byte 6 is
-    // non-zero by the line above, so an id from here is never in it.
-    return id;
-}
 
 bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material)
 {

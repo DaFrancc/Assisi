@@ -7,16 +7,23 @@
 #include <Assisi/App/StartupScene.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Chiara/Profile.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
+#include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <expected>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <typeindex>
+#include <utility>
 #include <vector>
 
 namespace Assisi::App
@@ -31,11 +38,53 @@ constexpr double kAssetPublishBudgetMs = 10.0;
 constexpr std::uint64_t kAssetPublishBudgetBytes = 128ull << 20;
 } // namespace
 
-GameApp::GameApp(GameLaunch launch) : _launch(launch)
+GameApp::GameApp(GameLaunch launch) : _launch(std::move(launch))
 {
 }
 
-GameApp::~GameApp() = default;
+GameApp::~GameApp()
+{
+    // The readers reach members of this object; nothing may call them after it.
+    if (_assetSource && Render::GetAssetSource() == &*_assetSource)
+    {
+        (void)Render::SetAssetSource(nullptr);
+    }
+    if (_pak)
+    {
+        (void)Runtime::SceneSerializer::SetDocumentReader({});
+        (void)Core::SetConfigReader({});
+    }
+}
+
+bool GameApp::MountContent()
+{
+    std::filesystem::path pak = _launch.pak;
+    if (pak.empty())
+    {
+        const std::optional<std::filesystem::path> executable = Core::AssetSystem::ExecutablePath();
+        pak = executable ? executable->parent_path() / kDefaultPakName : std::filesystem::path{kDefaultPakName};
+    }
+
+    std::expected<Core::PakProvider, Core::AssetError> mounted = Core::PakProvider::Mount(pak);
+    if (!mounted)
+    {
+        Core::Log::Error("Game: cannot start — the content package '{}' cannot be read ({}).", pak.string(),
+                         Core::ToString(mounted.error()));
+        return false;
+    }
+    Core::Log::Info("Game: reading content from '{}'.", pak.string());
+
+    _pak.emplace(std::move(*mounted));
+    _assetSource.emplace(*_pak);
+
+    const Core::PakProvider &provider = *_pak;
+    (void)Render::SetAssetSource(&*_assetSource);
+    (void)Runtime::SceneSerializer::SetDocumentReader([&provider](std::string_view vpath)
+                                                      { return Runtime::ReadCookedDocument(provider, vpath); });
+    (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)
+                                { return Core::ReadCookedConfig(provider, vpath, type, instance); });
+    return true;
+}
 
 void GameApp::OnStart()
 {
@@ -47,29 +96,10 @@ void GameApp::OnStart()
         LoadActionMap(_actions, GetOptions().bindings);
     }
 
-    // The GUID→path index every mesh and material reference resolves through.
-    // ReadOnly, never Reconcile: a shipped game indexes what it was given and
-    // writes nothing beside it. Minting a sidecar into a player's install
-    // directory is a write a game has no business making, and on a read-only
-    // install it is one that fails.
-    if (const auto indexed = _assetDatabase.Rebuild(Core::RebuildMode::ReadOnly))
-    {
-        Core::Log::Info("Game: {} assets indexed.", *indexed);
-    }
-    else
-    {
-        // Not fatal here: the world still loads, and every asset reference in it
-        // simply fails to resolve. The level load is where that becomes an error
-        // a player can be told about.
-        Core::Log::Warn("Game: the asset root is unavailable; nothing will resolve.");
-    }
-    InstallAssetResolvers(_assetCache, _assetDatabase);
-
     // What a travel needs to turn a level file into a running world. Captured by
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
     _worlds.SetServices({.cache    = &_assetCache,
-                         .database = &_assetDatabase,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
                          .jobs     = &Jobs(),
                          .events   = &GetEvents(),
@@ -92,8 +122,12 @@ void GameApp::OnStart()
     // The shipped config is the only thing that says what to open — a game takes
     // no level argument. Each way it can fail names itself, because "the game
     // would not start" sends a player looking in the wrong place.
-    const std::expected<std::string, StartupSceneError> scene =
-        ResolveStartupScene(GetConfig().startupScene.View(), _assetDatabase);
+    // A package indexes paths by hash and holds none of their text, so an id
+    // cannot be turned back into the path a level is loaded by.
+    const Core::PakProvider &pak = *_pak;
+    const std::expected<std::string, StartupSceneError> scene = ResolveStartupScene(
+        GetConfig().startupScene.View(), [](const Core::AssetId &) { return std::optional<std::string>{}; },
+        [&pak](std::string_view vpath) { return pak.Resolve(vpath).has_value(); });
     if (!scene)
     {
         Core::Log::Error("Game: cannot start — startup scene '{}': {}.", GetConfig().startupScene.View(),
@@ -269,7 +303,7 @@ void GameApp::OnUpdate(float dt)
                 {
                     return;
                 }
-                UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase, world.streamingPending);
+                UpgradeStreamingAssets(world.scene, _assetCache, world.streamingPending);
 
                 // Immediately after the upgrade, so the flag being read is the one
                 // that pass just wrote. A world whose assets have all settled runs
