@@ -85,6 +85,10 @@ private:
     /// than running a game whose window stays empty.
     [[nodiscard]] bool SetupRenderer();
 
+    /// The context the one-shot phases (Begin, Loaded) run under: no input, no
+    /// dt, no tick, because they run outside any frame. See SystemPhase::Begin.
+    [[nodiscard]] SystemContext WorldStartContext(World &world);
+
     /// Steps every world that is Active and simulating: its FixedUpdate systems,
     /// its physics, then its PostFixedUpdate systems. Worlds step sequentially,
     /// which is what lets them share one Jolt thread pool.

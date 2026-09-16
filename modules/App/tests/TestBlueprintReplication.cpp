@@ -43,6 +43,7 @@
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
 using namespace Assisi;
@@ -477,8 +478,8 @@ TEST_CASE("Blueprint over the wire: the guest installs the systems the blueprint
     // Queued, so it lands at the next safe point rather than mid-walk. The frame
     // loop drains every resident world at DrainMain; there is no frame loop here,
     // so this names the two worlds the fixture has.
-    App::DrainSystemInstalls(fixture.host);
-    App::DrainSystemInstalls(fixture.guest);
+    App::DrainSystemInstalls(App::Test::StartContext(fixture.host));
+    App::DrainSystemInstalls(App::Test::StartContext(fixture.guest));
 
     CHECK(fixture.guest.systems.Has("Counter"));
     CHECK(fixture.host.systems.Has("Counter"));

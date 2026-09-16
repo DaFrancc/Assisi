@@ -24,6 +24,7 @@
 #include <vector>
 
 #include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/TestSystems.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -40,6 +41,8 @@
 #include "LogCapture.hpp"
 
 using namespace Assisi::App;
+
+using Assisi::App::Test::StartContext;
 
 TEST_CASE("WorldManager generates unique names from the label")
 {
@@ -831,7 +834,7 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
 
     // The survivor is still owed exactly its own install, and draining it is not
     // a walk over anything the dead world could still be in.
-    DrainSystemInstalls(survivor);
+    DrainSystemInstalls(StartContext(survivor));
     CHECK(survivor.systems.Has("Follower"));
     CHECK_FALSE(survivor.systems.Has("Counter"));
     CHECK(survivor.pendingSystems.names.empty());
@@ -856,7 +859,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     REQUIRE(worlds.ApplySystems(world, {}, "levels/New.alvl"));
     CHECK(world.pendingSystems.names.empty());
 
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
     CHECK_FALSE(world.systems.Has("Counter"));
     CHECK_FALSE(world.systems.Has("Follower"));
     TickUpdate(world, events);
@@ -878,7 +881,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
 
     CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Nonexistent"}, "levels/Bad.alvl"));
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
 
     CHECK(world.systems.Has("Counter"));
     CHECK(world.systems.Has("Follower"));
@@ -903,9 +906,9 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     // The first spawn to open the queue owns the diagnostic.
     CHECK(world.pendingSystems.context == "car.abp");
 
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
     CHECK(world.pendingSystems.names.empty());
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
 
     Assisi::Core::EventQueue events;
     TickUpdate(world, events);

@@ -151,6 +151,20 @@ void EditorApp::StartPlay(NetIntent intent)
     // hands it back too.
     GetInput().SetMouseCaptured(true);
 
+    // The world begins here and nowhere earlier: opening a level for authoring
+    // leaves it resident but not begun, so level-start logic never runs over the
+    // scene being composed. Stop resets the progress, so the next Play begins it
+    // again over the restored scene.
+    //
+    // SimulateFrom::Begin rather than the game's policy: SetPlayState owns
+    // `simulate` in this host, the edited world is already resident so its assets
+    // settle a frame later anyway, and deferring here would make Pause and Resume
+    // consult start progress for no visible difference.
+    if (_world != nullptr)
+    {
+        Assisi::App::BeginWorld(WorldStartContext(*_world), Assisi::App::SimulateFrom::Begin);
+    }
+
     _netIntent   = intent;
     _joinPhase   = JoinPhase::None;
 #if defined(ASSISI_NETWORKING)
@@ -398,6 +412,17 @@ void EditorApp::StopPlay()
         {
             Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlay.levelPath);
         }
+    }
+
+    // The session is over, so the world has not begun again. Both halves matter:
+    // the progress says the world may start afresh, and the marks say its one-shot
+    // systems may run afresh. Explicit rather than relying on the ApplySystems
+    // above, which only runs when there was something to restore — a Stop with
+    // nothing to put back would otherwise leave a world that can never begin again.
+    if (_world != nullptr)
+    {
+        _world->systems.ClearOnceMarks();
+        _world->start = Assisi::App::StartProgress::NotBegun;
     }
 
     SetPlayState(PlayState::Editing);

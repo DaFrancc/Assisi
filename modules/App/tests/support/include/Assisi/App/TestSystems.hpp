@@ -115,6 +115,16 @@ ASYSTEM(Update, name = "ActiveOnly", activeWorldOnly) inline void ActiveOnlySyst
 /// names it gets the reporting too, without knowing it had to ask.
 ASYSTEM(FixedUpdate, name = "Contacts") inline void ContactsSystem(SystemContext &ctx);
 
+/// The one-shot phases, counted like the rest: a phase that fires twice and one
+/// that fires once produce the same world, so only the tally tells them apart.
+ASYSTEM(Begin, name = "Started") inline void StartedSystem(SystemContext &ctx);
+
+/// Ordered after Started, because a one-shot phase sorts its entries too and an
+/// unsorted walk would settle the order by registration instead.
+ASYSTEM(Begin, name = "StartedLate", after = Started) inline void StartedLateSystem(SystemContext &ctx);
+
+ASYSTEM(Loaded, name = "Settled") inline void SettledSystem(SystemContext &ctx);
+
 /// A pair ordered against each other in the Render phase.
 ///
 /// Render systems reach a world through a different SystemRegistry call than
@@ -141,6 +151,23 @@ inline void ActiveOnlySystem(SystemContext &ctx)
 inline void ContactsSystem(SystemContext &ctx)
 {
     RunCounts::Instance().Record(ctx.world, "Contacts");
+}
+
+inline void StartedSystem(SystemContext &ctx)
+{
+    RunCounts::Instance().Record(ctx.world, "Started");
+    RunOrder::Instance().Record("Started");
+}
+
+inline void StartedLateSystem(SystemContext &ctx)
+{
+    RunCounts::Instance().Record(ctx.world, "StartedLate");
+    RunOrder::Instance().Record("StartedLate");
+}
+
+inline void SettledSystem(SystemContext &ctx)
+{
+    RunCounts::Instance().Record(ctx.world, "Settled");
 }
 
 inline void DrawEarlySystem(RenderContext &)

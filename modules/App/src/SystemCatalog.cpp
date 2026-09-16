@@ -140,8 +140,9 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
     }
 }
 
-void DrainSystemInstalls(World &world)
+void DrainSystemInstalls(SystemContext ctx)
 {
+    World &world = ctx.world;
     if (world.pendingSystems.names.empty())
         return;
 
@@ -149,6 +150,26 @@ void DrainSystemInstalls(World &world)
     // to the vector being walked is how that becomes an infinite frame.
     const World::PendingSystems batch = std::exchange(world.pendingSystems, World::PendingSystems{});
     (void)SystemCatalog::Instance().Install(world, batch.names, batch.context);
+
+    // The one-shot phases this world has already passed, replayed for whatever
+    // just arrived. Every entry that was here before is marked, so these run the
+    // new systems alone — no name filtering, and a blueprint spawned into a
+    // running world gets the same start its level would have given it.
+    //
+    // Nothing to replay for a world that has not begun: it will begin later and
+    // run all of them at once.
+    if (world.start == StartProgress::NotBegun)
+    {
+        return;
+    }
+    world.systems.RunOnce(SystemPhase::Begin, ctx);
+    if (world.start == StartProgress::Loaded)
+    {
+        // A spawn into a settled world is settled by definition of the world, not
+        // of the spawn: its own mesh may still be streaming. Per-instance loading
+        // is a different feature, and this phase does not pretend to be it.
+        world.systems.RunOnce(SystemPhase::Loaded, ctx);
+    }
 }
 
 bool LevelSystemsAreDeclared(std::string_view virtualPath)

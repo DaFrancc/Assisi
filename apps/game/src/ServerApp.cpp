@@ -102,6 +102,14 @@ void ServerApp::OnStart()
         Log::Info("Server: loaded '{}'.", _options.level);
     }
 
+    // Begin and settle in one breath. A headless process streams nothing, so
+    // there is no second moment to wait for — and a server that honoured a
+    // config asking it to wait for assets it never loads would never start at
+    // all. The policy is a presentation choice; the authoritative clock is not
+    // one, since the fixed tick is what every client's simulation is pinned to.
+    BeginWorld(WorldStartContext(), Assisi::App::SimulateFrom::Begin);
+    SettleWorld(WorldStartContext(), /*assetsPending=*/ false);
+
     if (_options.role == ServerRole::Offline)
     {
         if (_options.level.empty())
@@ -363,7 +371,21 @@ void ServerApp::InstallQueuedSystems()
     // from the wire asks for the systems its file names, and they have to be
     // registered at the safe point rather than mid-walk. A headless process runs
     // that behaviour — it just does not draw it.
-    Assisi::App::DrainSystemInstalls(_world);
+    Assisi::App::DrainSystemInstalls(WorldStartContext());
+}
+
+Assisi::App::SystemContext ServerApp::WorldStartContext()
+{
+    // No window, so no input to pass and none expected — the same null context
+    // the windowed hosts build deliberately. See SystemPhase::Begin.
+    return {.world         = _world,
+            .dt            = 0.f,
+            .simTick       = 0,
+            .input         = nullptr,
+            .actions       = nullptr,
+            .events        = GetEvents(),
+            .isActiveWorld = true,
+            .worlds        = nullptr};
 }
 
 void ServerApp::OnShutdown()

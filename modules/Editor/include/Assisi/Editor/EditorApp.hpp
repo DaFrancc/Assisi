@@ -258,6 +258,14 @@ private:
     void SetupCamera();
     void SetupScene();
 
+    /// @brief The context the one-shot phases (Begin, Loaded) run under.
+    ///
+    /// Null input and no dt or tick, exactly as the game passes — deliberately,
+    /// even though this host has an input context it could hand over. A Begin
+    /// system that saw input here and none in the game would be a difference
+    /// nobody could explain from the system's own source.
+    [[nodiscard]] Assisi::App::SystemContext WorldStartContext(Assisi::App::World &world);
+
     /// @brief Move the editor camera onto the loaded level's active Camera
     /// entity, and adopt its projection. No-op when the level has none, which
     /// leaves the editor's default pose.

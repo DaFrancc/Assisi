@@ -16,6 +16,8 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
+#include "LogCapture.hpp"
+
 using namespace Assisi::App;
 
 namespace
@@ -85,19 +87,51 @@ TEST_CASE("SystemRegistry: Before is honored symmetrically with After")
     CHECK(order[1] == "Late");
 }
 
-TEST_CASE("SystemRegistry: a dependency on an unregistered system still runs everything")
+TEST_CASE("An ordering target this world does not hold is not a complaint")
 {
+    // A level installs its systems one at a time, so "run after the patrol
+    // system" is a reasonable thing to say in a world that has no patrol system.
+    // It is no edge and nothing more — in particular it is not an error, because
+    // a target no system anywhere declares cannot reach here: reflectgen refuses
+    // that across the whole tree before anything compiles.
     SystemRegistry systems;
     Assisi::ECS::Scene scene;
     std::vector<std::string> order;
 
     systems.RegisterRender("Solo",
                            [&order](RenderContext &) { order.emplace_back("Solo"); })
-    .After("GhostThatWasNeverRegistered");
+    .After("DeclaredElsewhereButNotInstalledHere");
 
+    const Assisi::Tests::LogCapture log;
     systems.RunRender(MakeCtx(scene));
 
-    CHECK(order.size() == 1); // logged an error, but did not drop the system
+    CHECK(order.size() == 1); // runs, unordered
+    CHECK_FALSE(log.Mentions("DeclaredElsewhereButNotInstalledHere"));
+}
+
+TEST_CASE("An ordering target installed later takes effect from then on")
+{
+    // The other half of treating an absent target as ordinary: the constraint is
+    // not discarded, it is simply unsatisfiable for now. Installing the named
+    // system re-sorts the phase with the edge in place, so a system that arrives
+    // late still runs in the order the declaration asked for.
+    SystemRegistry systems;
+    Assisi::ECS::Scene scene;
+    std::vector<std::string> order;
+
+    systems.RegisterRender("Late", [&order](RenderContext &) { order.emplace_back("Late"); })
+    .After("Early");
+
+    systems.RunRender(MakeCtx(scene));
+    REQUIRE(order == std::vector<std::string>{"Late"});
+
+    // Now the target arrives — registered second, so registration order alone
+    // would still put it last.
+    order.clear();
+    systems.RegisterRender("Early", [&order](RenderContext &) { order.emplace_back("Early"); });
+
+    systems.RunRender(MakeCtx(scene));
+    CHECK(order == std::vector<std::string>{"Early", "Late"});
 }
 
 TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the context")

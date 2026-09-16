@@ -78,6 +78,10 @@ protected:
 private:
     void ReportStatus();
 
+    /// @brief The context the one-shot phases run under. No input, no clock —
+    /// see Assisi::App::SystemPhase::Begin.
+    [[nodiscard]] Assisi::App::SystemContext WorldStartContext();
+
     /// Client only: build the world the host's handshake names — resolve the
     /// level, check its content hash, load it, and strip the entities the host
     /// owns — then answer the handshake. The headless twin of the editor's

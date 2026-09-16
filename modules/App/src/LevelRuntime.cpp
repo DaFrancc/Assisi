@@ -131,11 +131,22 @@ void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const 
 {
     // Re-resolve while loads are pending, and for one frame after the last one
     // finishes so the final result is picked up.
-    const bool loadsPending = cache.HasPendingLoads();
-    if (loadsPending || wereLoading)
+    if (wereLoading || cache.HasPendingLoads())
     {
         Runtime::ResolveSceneAssets(scene, cache, database);
-        wereLoading = loadsPending;
+
+        // Sampled AFTER the resolve, and that ordering is the whole meaning of
+        // the flag: a mesh's materials are only requested once its slot table
+        // exists, so the resolve that finally lands a mesh is also the one that
+        // asks for its materials. Sampling first reports nothing pending on that
+        // very frame, with the materials about to be requested — harmless for
+        // upgrading a placeholder, wrong for anything that treats false as
+        // "finished".
+        //
+        // False therefore means: the last resolve pass requested nothing that is
+        // still in flight. Every mesh is resident or has fallen back, so every
+        // slot table existed, so every material was asked for and has settled too.
+        wereLoading = cache.HasPendingLoads();
     }
 }
 

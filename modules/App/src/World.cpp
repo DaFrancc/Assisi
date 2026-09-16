@@ -117,6 +117,13 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // from empty.
     world.systems.Clear();
 
+    // The run marks went with the entries, so this world has not begun as far as
+    // its systems are concerned — and the progress has to agree, or a world whose
+    // systems were replaced would never begin again while still counting as
+    // settled. This is what makes the editor's Stop → Play run Begin a second
+    // time: Stop re-applies the pre-play list, which lands here.
+    world.start = StartProgress::NotBegun;
+
     // An empty list is the normal case, not a warning: the clear above is the
     // whole job.
     SystemCatalog::Instance().ApplyResolved(world, resolved);
@@ -135,8 +142,36 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
 
     incoming.levelPath = std::move(levelPath);
     incoming.state     = WorldState::Active;
-    incoming.simulate  = true;
     _active            = &incoming;
+
+    // The one place a world stops being merely resident and becomes the one being
+    // run, which is why starting it belongs here rather than at each caller:
+    // travel, a promoted preload and the game's first load all arrive through
+    // this function, and a fourth route added later cannot forget.
+    //
+    // It is also why the editor's authoring load is untouched by any of this —
+    // opening a level to edit replaces the scene in the world it already has and
+    // never comes through here, so level-start logic cannot run over a scene
+    // somebody is composing.
+    if (_services.events != nullptr)
+    {
+        BeginWorld({.world        = incoming,
+                    .dt           = 0.f,
+                    .simTick      = 0,
+                    .input        = nullptr,
+                    .actions      = nullptr,
+                    .events       = *_services.events,
+                    .isActiveWorld = true,
+                    .worlds       = this},
+                   _simulateFrom);
+    }
+    else
+    {
+        // No queue to publish into, so nothing begins — but the world still has to
+        // run, or a host without events (a test) would load a level that never
+        // ticks. The phases are what is skipped, not the simulation.
+        incoming.simulate = true;
+    }
 
     if (outgoing != nullptr)
     {
@@ -728,6 +763,49 @@ uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uin
     const uint64_t tick = Runtime::PropagateTransforms(scene, propagationTick);
     physics.RebuildSceneBodies(scene, ParentWorldResolver(scene));
     return tick;
+}
+
+void BeginWorld(SystemContext ctx, SimulateFrom policy)
+{
+    World &world = ctx.world;
+    if (world.start != StartProgress::NotBegun)
+    {
+        return;
+    }
+
+    world.start = StartProgress::Begun;
+    world.systems.RunOnce(SystemPhase::Begin, ctx);
+
+    // Under Loaded the clock stays stopped until SettleWorld releases it. The
+    // world is still Active throughout — it renders, so a loading screen drawn
+    // over it has something behind it, and the streaming pumps keep working
+    // because those run off the frame rather than off the simulation.
+    world.simulate = policy == SimulateFrom::Begin;
+
+    // A Begin system may have spawned content whose meshes nobody has asked for
+    // yet. Marking the world as streaming forces one more resolve pass, so what
+    // Begin created is requested before anything samples whether the world has
+    // settled — otherwise a world could report itself loaded without ever having
+    // looked at the entities its own start logic made.
+    world.streamingPending = true;
+}
+
+void SettleWorld(SystemContext ctx, bool assetsPending)
+{
+    World &world = ctx.world;
+    if (world.start != StartProgress::Begun || assetsPending)
+    {
+        return;
+    }
+
+    world.start = StartProgress::Loaded;
+    world.systems.RunOnce(SystemPhase::Loaded, ctx);
+
+    // Unconditional, not `policy == Loaded`: a world that waited is released
+    // here, and one that has been simulating since Begin is already true. Reading
+    // the policy again would mean carrying it to a second call site for no
+    // difference in outcome.
+    world.simulate = true;
 }
 
 } // namespace Assisi::App

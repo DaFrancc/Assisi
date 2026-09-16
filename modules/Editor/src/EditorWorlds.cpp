@@ -81,9 +81,14 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
         return false;
     }
     world.state     = Assisi::App::WorldState::Active;
-    // A world created during play simulates immediately; one created while editing
-    // stays frozen, because nothing outside the edited world has a restore story.
-    world.simulate = (_playState == PlayState::Playing);
+    // A world created during play begins immediately; one created while editing
+    // stays frozen and unbegun, because nothing outside the edited world has a
+    // restore story — and a world that never begins never runs level-start logic
+    // into a scene the author is composing.
+    if (_playState == PlayState::Playing)
+    {
+        Assisi::App::BeginWorld(WorldStartContext(world), Assisi::App::SimulateFrom::Begin);
+    }
 
     SetActiveWorld(world);
     Assisi::Core::Log::Info("World '{}' loaded from '{}' ({} resident).", world.name, virtualPath,

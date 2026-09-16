@@ -29,7 +29,7 @@ ASYSTEM(Update, name = "SpinDemo") void SpinDemoSystem(Assisi::App::SystemContex
 /// Reports the space bar. `activeWorldOnly`, so with two worlds simulating only
 /// the active one reacts — the "one InputContext, N worlds" rule made visible.
 /// Also the demo of SystemContext's nullable input.
-ASYSTEM(Update, name = "InputDemo", after = SpinDemo, activeWorldOnly)
+ASYSTEM(Update, name = "InputDemo", activeWorldOnly)
 void InputDemoSystem(Assisi::App::SystemContext &ctx);
 
 /// Drops a Bouncer on F3. Its own system rather than a branch inside InputDemo,

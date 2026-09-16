@@ -151,7 +151,7 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
 /// Per world rather than "drain everything": the queue lives on the world, so
 /// there is no global list to walk, and a caller holding a `World` is exactly who
 /// knows the world is still alive.
-void DrainSystemInstalls(World &world);
+void DrainSystemInstalls(SystemContext ctx);
 
 /// @brief Every system the blueprints placed in @p instances require, and how
 /// many distinct sources ask for each.

@@ -71,7 +71,12 @@ void GameApp::OnStart()
     _worlds.SetServices({.cache    = &_assetCache,
                          .database = &_assetDatabase,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
-                         .jobs     = &Jobs()});
+                         .jobs     = &Jobs(),
+                         .events   = &GetEvents()});
+
+    // What the shipped config asked for, before the first world starts — the
+    // policy has to be installed ahead of the load it governs, not after it.
+    _worlds.SetSimulateFrom(GetConfig().simulateFrom);
 
     // Before the level load and not after it: the load publishes meshes and
     // materials into the asset cache, which the renderer owns the bindless table
@@ -151,6 +156,21 @@ bool GameApp::SetupRenderer()
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
     _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
     return true;
+}
+
+SystemContext GameApp::WorldStartContext(World &world)
+{
+    // Null input, no dt, no tick — the one-shot phases run outside any frame, and
+    // passing what this host happens to have would let a Begin system behave one
+    // way here and another under the editor, which has an input context to give.
+    return {.world         = world,
+            .dt            = 0.f,
+            .simTick       = 0,
+            .input         = nullptr,
+            .actions       = nullptr,
+            .events        = GetEvents(),
+            .isActiveWorld = &world == _worlds.Active(),
+            .worlds        = &_worlds};
 }
 
 void GameApp::StepWorlds(float dt)
@@ -257,6 +277,26 @@ void GameApp::OnUpdate(float dt)
                     return;
                 }
                 UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase, world.streamingPending);
+
+                // Immediately after the upgrade, so the flag being read is the one
+                // that pass just wrote. A world whose assets have all settled runs
+                // its Loaded systems here and starts simulating if the config told
+                // it to wait for them.
+                SettleWorld(WorldStartContext(world), world.streamingPending);
+            });
+    }
+    else
+    {
+        // Headless: nothing streams, so a world settles the moment it has begun
+        // and the two one-shot phases land back to back. A dedicated server that
+        // waited for assets it never loads would never start.
+        _worlds.ForEach(
+            [this](World &world)
+            {
+                if (world.state != WorldState::Loading)
+                {
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
+                }
             });
     }
 
@@ -371,7 +411,7 @@ void GameApp::InstallQueuedSystems()
     // Every resident world: a blueprint can be spawned into a background one, and
     // a queue nobody drains leaves an entity holding its components and running
     // none of the code.
-    _worlds.ForEach([](World &world) { DrainSystemInstalls(world); });
+    _worlds.ForEach([this](World &world) { DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 } // namespace Assisi::App
