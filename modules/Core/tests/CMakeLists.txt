@@ -32,6 +32,7 @@ add_executable(Assisi-Core-Tests
   TestJobSystem.cpp
   TestPakCodec.cpp
   TestPakFormat.cpp
+  TestRandomAccessFile.cpp
   TestLogger.cpp
   TestTrivialString.cpp
 )
