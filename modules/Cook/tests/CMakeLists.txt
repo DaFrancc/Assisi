@@ -2,6 +2,7 @@ add_executable(Assisi-Cook-Tests
   main.cpp
   TestManifest.cpp
   TestCookTree.cpp
+  TestPakWriter.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Cook-Tests)

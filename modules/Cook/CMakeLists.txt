@@ -5,9 +5,11 @@ target_sources(Assisi-Cook
   PUBLIC
     "include/Assisi/Cook/Cooker.hpp"
     "include/Assisi/Cook/CookTree.hpp"
+    "include/Assisi/Cook/PakWriter.hpp"
   PRIVATE
     "src/Cookers.cpp"
     "src/CookTree.cpp"
+    "src/PakWriter.cpp"
 )
 
 target_include_directories(Assisi-Cook
