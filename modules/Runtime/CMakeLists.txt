@@ -34,6 +34,7 @@ target_sources(Assisi-Runtime
     "src/SceneSerializerBlueprint.cpp"
     "src/SceneSerializerCooked.cpp"
     "src/SceneSerializerContext.hpp"
+    "src/SceneSerializerDocument.cpp"
     "src/SceneSerializerFiles.cpp"
     "src/SceneSerializerInstances.cpp"
     "src/SceneSerializerInstances.hpp"

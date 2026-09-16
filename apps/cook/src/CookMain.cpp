@@ -18,6 +18,7 @@
 #include <Assisi/Cook/CookTree.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Image/Compress.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 namespace
 {
@@ -50,6 +51,9 @@ std::optional<Assisi::Image::CompressQuality> ParseTextureTier(std::string_view 
 
 int main(int argc, char **argv)
 {
+    // A level cooks by being loaded, and the cook reads the source tree.
+    (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
+
     std::filesystem::path sourceRoot;
     std::filesystem::path cookedRoot;
     Assisi::Image::CompressQuality textureQuality = Assisi::Image::CompressQuality::Best;

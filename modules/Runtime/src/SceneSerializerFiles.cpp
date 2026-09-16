@@ -229,70 +229,22 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
     }
 }
 
-std::expected<std::vector<std::string>, LevelError> SceneSerializer::ReadLevelSystems(
-    std::string_view assetPath)
+std::expected<nlohmann::json, LevelError> SceneSerializer::ReadTextDocument(std::string_view vpath)
 {
-    const auto text = Core::AssetSystem::ReadText(assetPath);
+    const auto text = Core::AssetSystem::ReadText(vpath);
     if (!text)
     {
-        Core::Log::Error("SceneSerializer: cannot read asset '{}'", assetPath);
+        Core::Log::Error("SceneSerializer: cannot read asset '{}'", vpath);
         return std::unexpected(LevelError::FileUnreadable);
     }
 
-    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
+    nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
     if (doc.is_discarded())
     {
-        Core::Log::Error("SceneSerializer: cannot parse '{}'", assetPath);
+        Core::Log::Error("SceneSerializer: '{}' is not readable JSON", vpath);
         return std::unexpected(LevelError::MalformedJson);
     }
-
-    // The same reader Load fills the header with — see ParseSystemNames for why
-    // that has to be the same reader and not merely the same rule.
-    return ParseSystemNames(doc);
-}
-
-LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
-                                          const LoadOptions &options)
-{
-    // As in LoadFromDisk: everything up to the Load call leaves the scene alone.
-    const auto text = Core::AssetSystem::ReadText(assetPath);
-    if (!text)
-    {
-        Core::Log::Error("SceneSerializer: cannot read asset '{}'", assetPath);
-        return std::unexpected(LevelFailure{.kind = LevelError::FileUnreadable});
-    }
-
-    // Parsed before Load is called, so a parse failure leaves the scene untouched.
-    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
-    if (doc.is_discarded())
-    {
-        Core::Log::Error("SceneSerializer: '{}' is not readable JSON", assetPath);
-        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson});
-    }
-
-    try
-    {
-        return Load(scene, doc, options);
-    }
-    catch (const std::exception &ex)
-    {
-        // Load reports its own failures by value and clears as it goes; what is left
-        // to catch is a throw partway through — out of a component's addToScene hook
-        // above all — which leaves the scene half-populated. Clear it, so a failed
-        // load yields an empty scene and never a corrupt one. (Load's ScopedContext
-        // has already put back whatever context was live before it.)
-        //
-        // std::exception, not json::exception: those hooks are arbitrary code, and
-        // one throwing a bad_alloc or its own container's out_of_range would
-        // otherwise escape with the half-populated scene left behind.
-        //
-        // `sceneReplaced` for the same reason as in LoadFromDisk: the Clear below is
-        // ours, so the caller's scene is gone whichever side of Load's own clear the
-        // throw came from.
-        Core::Log::Error("SceneSerializer: failed to load '{}': {}", assetPath, ex.what());
-        scene.Clear();
-        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson, .sceneReplaced = true});
-    }
+    return doc;
 }
 
 } // namespace Assisi::Runtime

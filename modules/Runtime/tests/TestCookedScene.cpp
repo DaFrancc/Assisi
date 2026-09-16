@@ -589,6 +589,25 @@ TEST_CASE("A cooked scene converts back to the document it was cooked from")
     CHECK(Runtime::SceneSerializer::Save(reloaded, reloadedHeader, &reloadedTable) == saved);
 }
 
+TEST_CASE("A level load with no document reader installed fails rather than reading text")
+{
+    // A shipped game installs a cooked reader. Falling back to the text reader when
+    // none is installed would open a loose file the pak was supposed to replace,
+    // and hide the missing reader behind a load that works on a developer machine.
+    const std::filesystem::path root = FreshRoot("no-reader");
+    Write(root, "main.alvl", {{"version", 2}, {"entities", nlohmann::json::array()}});
+
+    const Runtime::SceneSerializer::DocumentReader previous = Runtime::SceneSerializer::SetDocumentReader({});
+    ECS::Scene scene;
+    const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl");
+    const auto systems                = Runtime::SceneSerializer::ReadLevelSystems("main.alvl");
+    (void)Runtime::SceneSerializer::SetDocumentReader(previous);
+
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error().kind == LevelError::FileUnreadable);
+    CHECK_FALSE(systems.has_value());
+}
+
 TEST_CASE("A member entity is described by its instance, not written as an entity")
 {
     // The same rule Save follows. Writing members as entities too would bake a

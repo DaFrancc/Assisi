@@ -15,6 +15,7 @@
 
 #include <Assisi/App/GameApp.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstdint>
 #include <cstdio>
@@ -117,6 +118,10 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
 
 int main(int argc, char **argv)
 {
+    // Levels and blueprints are read from the source tree until the game reads
+    // its pak.
+    (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
+
     GameArgs args;
     if (!ParseArgs(static_cast<int32_t>(argc), argv, args))
     {
