@@ -26,11 +26,7 @@ namespace Assisi::Core
 namespace
 {
 
-#if defined(_WIN32)
-const RandomAccessFile::NativeHandle kInvalidHandle = static_cast<std::intptr_t>(-1);
-#else
 constexpr std::intptr_t kInvalidHandle = -1;
-#endif
 
 /// The most one platform read call is asked for. Both platforms cap a single read
 /// below the 64-bit range (Windows at 32 bits, Linux near 2 GiB), so a larger

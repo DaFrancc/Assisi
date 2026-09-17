@@ -115,7 +115,7 @@ TEST_CASE("A chain is valid only when every level is the size its format implies
     SUBCASE("more levels than the dimensions allow is refused")
     {
         DecodedImage overlong = ChainOf(PixelFormat::Bc7, 16, 16);
-        overlong.mips.emplace_back(16, 0u);
+        overlong.mips.emplace_back(16, std::uint8_t{0});
         CHECK_FALSE(ValidateMipChain(overlong));
     }
 

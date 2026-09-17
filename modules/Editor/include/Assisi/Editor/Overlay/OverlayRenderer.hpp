@@ -32,7 +32,7 @@
 
 namespace Assisi::ECS
 {
-class Scene;
+struct Scene;
 }
 
 namespace Assisi::Runtime
