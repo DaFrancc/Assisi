@@ -69,6 +69,40 @@ target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
 if (ASSISI_PAK_OVERRIDES)
   target_compile_definitions(Assisi-Game PRIVATE ASSISI_PAK_OVERRIDES)
 endif()
+# The C++ runtime goes inside the game, so a player needs no libstdc++ or
+# libgcc_s of their own — and none at least as new as the build machine's
+# compiler. glibc stays shared: a static one cannot load the Vulkan driver or the
+# windowing libraries.
+#
+# The static runtime is a separate distro package (libstdc++-static on Fedora,
+# included with the compiler on Debian and Arch). Without it a Release
+# configure stops and names it, since that build is the one players receive; any
+# other build links the runtime shared and says so, and GameNeedsOnlySystemLibraries
+# fails until it is installed.
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32 AND NOT APPLE)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_LINK_OPTIONS -static-libstdc++ -static-libgcc)
+  check_cxx_source_compiles("#include <string>\nint main() { return static_cast<int>(std::string(\"x\").size()) - 1; }"
+                            ASSISI_HAVE_STATIC_LIBSTDCXX)
+  unset(CMAKE_REQUIRED_LINK_OPTIONS)
+  if (ASSISI_HAVE_STATIC_LIBSTDCXX)
+    target_link_options(Assisi-Game PRIVATE -static-libstdc++ -static-libgcc)
+    # The game links C code (GLFW, libsodium), so CMake adds the C compiler's
+    # implicit libraries to a link the C++ driver already completes, and on some
+    # toolchains (Fedora's GCC) that list names libgcc_s. Placed ahead of the
+    # driver's own static libgcc_eh, it resolves the unwinder and puts libgcc_s
+    # back in the dynamic section that -static-libgcc took it out of.
+    foreach(_language C ASM)
+      list(REMOVE_ITEM CMAKE_${_language}_IMPLICIT_LINK_LIBRARIES gcc_s gcc_s_asneeded)
+    endforeach()
+  elseif (CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(FATAL_ERROR "The game links the C++ runtime statically, and this toolchain has no static "
+                        "libstdc++. Install it (on Fedora: libstdc++-static) and configure again.")
+  else()
+    message(WARNING "No static libstdc++: the game links the C++ runtime shared in this build. "
+                    "Install it (on Fedora: libstdc++-static) for a game that runs without one.")
+  endif()
+endif()
 
 add_executable(Assisi-GameEditor)
 Assisi_apply_defaults(Assisi-GameEditor)
@@ -401,6 +435,48 @@ if (ASSISI_BUILD_TESTS)
   set_tests_properties(GameEditorCarriesSourcePipeline PROPERTIES
     WILL_FAIL TRUE
     SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+  # The shared libraries the game asks a player's machine for: glibc and its
+  # loader, which every Linux system has, and nothing else. The C++ runtime is
+  # linked in, and the networking crypto is a static libsodium. The Vulkan loader
+  # and the windowing libraries are not in the list because they are opened at
+  # run time rather than linked, and they come with the graphics driver.
+  if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_dependency_checker "${CMAKE_SOURCE_DIR}/scripts/check-dependencies.py")
+    set(_dependency_readelf "readelf")
+    if (CMAKE_READELF)
+      set(_dependency_readelf "${CMAKE_READELF}")
+    endif()
+    set(_system_libraries
+      --allow libc.so.6
+      --allow libm.so.6
+      --allow ld-linux-x86-64.so.2
+    )
+
+    add_test(NAME GameNeedsOnlySystemLibraries
+      COMMAND Python3::Interpreter "${_dependency_checker}"
+              --binary "$<TARGET_FILE:Assisi-Game>"
+              --readelf "${_dependency_readelf}"
+              ${_system_libraries}
+    )
+    set_tests_properties(GameNeedsOnlySystemLibraries PROPERTIES
+      FIXTURES_REQUIRED GameBinary
+      LABELS game
+      SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+    # The positive control: the editor links the C++ runtime as a shared library,
+    # so the check must refuse it. If it ever passes, the checker has stopped
+    # reading the dynamic section and the test above passes for the wrong reason.
+    add_test(NAME GameEditorNeedsDevelopmentLibraries
+      COMMAND Python3::Interpreter "${_dependency_checker}"
+              --binary "$<TARGET_FILE:Assisi-GameEditor>"
+              --readelf "${_dependency_readelf}"
+              ${_system_libraries}
+    )
+    set_tests_properties(GameEditorNeedsDevelopmentLibraries PROPERTIES
+      WILL_FAIL TRUE
+      SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+  endif()
 
   # Registered beside the scans it underwrites rather than in a directory of its
   # own: the scanner exists for them, and a matcher that silently stopped
