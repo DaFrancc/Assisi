@@ -3,17 +3,21 @@
     {
       "components": {
         "DirectionalLight": {
+          "castsShadows": true,
           "color": [
             1.0,
             1.0,
             1.0
           ],
+          "colorExpression": 0,
           "direction": [
-            -0.3,
+            -0.30000001192092896,
             -1.0,
-            -0.4
+            -0.4000000059604645
           ],
-          "intensity": 2.5
+          "intensity": 2.5,
+          "temperatureKelvin": 5778.0,
+          "tintedBySky": true
         }
       },
       "name": "Entity"
@@ -21,6 +25,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -31,6 +36,20 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
+        },
+        "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
+          "enableCCD": false,
+          "halfExtents": [
+            10.0,
+            0.5,
+            10.0
+          ],
+          "halfHeight": 0.5,
+          "isStatic": true,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -56,10 +75,10 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [],
           "mesh": {
-            "guid": "f8cbc6e4-d21e-4ea9-a59b-1c8914b87553",
-            "path": "models/DamagedHelmet/DamagedHelmet.glb"
+            "guid": "f8cbc6e4-d21e-4ea9-a59b-1c8914b87553"
           }
         },
         "Transform": {
@@ -69,8 +88,8 @@
             0.0
           ],
           "rotation": [
-            0.707,
-            0.707,
+            0.7070000171661377,
+            0.7070000171661377,
             0.0,
             0.0
           ],
@@ -86,13 +105,16 @@
     {
       "components": {
         "PointLight": {
+          "castsShadows": true,
           "color": [
             1.0,
-            0.95,
-            0.9
+            0.949999988079071,
+            0.8999999761581421
           ],
           "intensity": 40.0,
-          "radius": 12.0
+          "radius": 12.0,
+          "shadowAlwaysOn": false,
+          "shadowPriority": 0.0
         },
         "Transform": {
           "position": [
@@ -118,13 +140,16 @@
     {
       "components": {
         "PointLight": {
+          "castsShadows": true,
           "color": [
-            0.4,
-            0.6,
+            0.4000000059604645,
+            0.6000000238418579,
             1.0
           ],
           "intensity": 30.0,
-          "radius": 12.0
+          "radius": 12.0,
+          "shadowAlwaysOn": false,
+          "shadowPriority": 0.0
         },
         "Transform": {
           "position": [
@@ -150,13 +175,16 @@
     {
       "components": {
         "PointLight": {
+          "castsShadows": true,
           "color": [
             1.0,
             0.5,
-            0.3
+            0.30000001192092896
           ],
           "intensity": 25.0,
-          "radius": 12.0
+          "radius": 12.0,
+          "shadowAlwaysOn": false,
+          "shadowPriority": 0.0
         },
         "Transform": {
           "position": [
@@ -182,10 +210,10 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [],
           "mesh": {
-            "guid": "ca562793-5aa4-4475-a784-1c1c6e5957ee",
-            "path": "models/car_lod/car_lod.gltf"
+            "guid": "ca562793-5aa4-4475-a784-1c1c6e5957ee"
           }
         },
         "Transform": {
@@ -208,6 +236,30 @@
         }
       },
       "name": "Entity_6"
+    }
+  ],
+  "instances": [
+    {
+      "name": "Player",
+      "source": "blueprints/Player.abp",
+      "transform": {
+        "position": [
+          1.3829116821289063,
+          2.678945302963257,
+          5.852060794830322
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
     }
   ],
   "version": 2

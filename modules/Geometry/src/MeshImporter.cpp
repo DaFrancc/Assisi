@@ -313,7 +313,7 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
         {
             warnings.negativeIor = true;
             Core::Log::Warn("MeshImporter: '{}' has a material ('{}') whose KHR_materials_ior is {}; an index of "
-                            "refraction cannot be negative — importing the default {}.",
+                            "refraction cannot be negative - importing the default {}.",
                             virtualPath, data.Name, ior, data.SpecularIor);
         }
     }
@@ -336,7 +336,7 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
         {
             warnings.specularTexture = true;
             Core::Log::Warn("MeshImporter: '{}' has a material ('{}') with a KHR_materials_specular texture; there is "
-                            "no specular texture channel — importing its factors only.",
+                            "no specular texture channel - importing its factors only.",
                             virtualPath, data.Name);
         }
     }
@@ -346,7 +346,7 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
                                    if (texCoordIndex != 0 && !warnings.secondaryTexCoord)
                                    {
                                        warnings.secondaryTexCoord = true;
-                                       Core::Log::Warn("MeshImporter: '{}' has a material sampling TEXCOORD_{} — only TEXCOORD_0 is "
+                                       Core::Log::Warn("MeshImporter: '{}' has a material sampling TEXCOORD_{} - only TEXCOORD_0 is "
                                                        "supported; that channel will sample the wrong UVs.",
                                                        virtualPath, texCoordIndex);
                                    }
@@ -396,7 +396,7 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
         // it as a cutout instead would punch holes in a surface authored to fade.
         warnings.alphaBlend = true;
         Core::Log::Warn("MeshImporter: '{}' has an alphaMode BLEND material ('{}'); blended transparency is not "
-                        "supported yet — importing as opaque.",
+                        "supported yet - importing as opaque.",
                         virtualPath, data.Name);
     }
     data.DoubleSided = material.doubleSided;
@@ -422,7 +422,7 @@ void WarnDroppedAttributes(const fastgltf::Primitive &primitive, std::string_vie
     if (!warnings.skinning && primitive.findAttribute("JOINTS_0") != primitive.attributes.end())
     {
         warnings.skinning = true;
-        Core::Log::Warn("MeshImporter: '{}' has skinning data (JOINTS_0/WEIGHTS_0); skinning is not supported — "
+        Core::Log::Warn("MeshImporter: '{}' has skinning data (JOINTS_0/WEIGHTS_0); skinning is not supported - "
                         "importing the bind pose.",
                         virtualPath);
     }

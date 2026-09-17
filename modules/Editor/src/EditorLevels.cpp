@@ -463,7 +463,7 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     // — and the file would only become unloadable at the save.
     if (NestingVerdict(source) == NestVerdict::WouldCycle)
     {
-        Assisi::Core::Log::Error("Editor: '{}' cannot be placed in '{}' — that file is already reachable "
+        Assisi::Core::Log::Error("Editor: '{}' cannot be placed in '{}' - that file is already reachable "
                                  "from it by instancing, so the two would expand forever.",
                                  source, _world->levelPath);
         return;
@@ -495,7 +495,7 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
                                                                         /*authored=*/ true);
     if (!placed)
     {
-        Assisi::Core::Log::Error("Editor: could not place '{}' — see the log above.", source);
+        Assisi::Core::Log::Error("Editor: could not place '{}' - see the log above.", source);
         return;
     }
 
@@ -817,7 +817,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
         // leaves the component off rather than half-applied, and says so.
         if (!meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component)))
         {
-            Assisi::Core::Log::Error("Editor: resetting '{}' on '{}' failed — its stored value is not "
+            Assisi::Core::Log::Error("Editor: resetting '{}' on '{}' failed - its stored value is not "
                                      "readable, so the component is now absent.",
                                      component, original.name);
         }
@@ -859,7 +859,7 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     // in the way.
     if (_pendingSaveConfirm)
     {
-        Assisi::Core::Log::Error("SaveLevel: refusing to write '{}' — the save of '{}' is still waiting on "
+        Assisi::Core::Log::Error("SaveLevel: refusing to write '{}' - the save of '{}' is still waiting on "
                                  "an answer. Answer that dialog first.",
                                  virtualPath, _pendingSaveConfirm->virtualPath);
         return false;
@@ -965,7 +965,7 @@ void EditorApp::CancelPendingSave()
             // Loud, because the decline did not take: the file holds contents the
             // author refused, and nothing else will say so.
             Assisi::Core::Log::Error("Editor: save of '{}' was cancelled but the previous contents could "
-                                     "not be written back — the file holds the NEW version.",
+                                     "not be written back - the file holds the NEW version.",
                                      save.virtualPath);
         }
     }
@@ -1075,7 +1075,7 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     // indistinguishable from having answered it.
     if (_pendingSaveConfirm)
     {
-        Assisi::Core::Log::Warn("Editor: the load of '{}' left the save of '{}' unanswered — the file "
+        Assisi::Core::Log::Warn("Editor: the load of '{}' left the save of '{}' unanswered - the file "
                                 "keeps what was written to it.",
                                 virtualPath, _pendingSaveConfirm->virtualPath);
         _pendingSaveConfirm.reset();
@@ -1089,7 +1089,7 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
 
 void EditorApp::AbandonReplacedScene(std::string_view virtualPath)
 {
-    Assisi::Core::Log::Error("Editor: the load of '{}' failed after it had already replaced the scene — "
+    Assisi::Core::Log::Error("Editor: the load of '{}' failed after it had already replaced the scene - "
                              "closing the level rather than leaving a half-loaded one open.",
                              virtualPath);
 
@@ -1145,7 +1145,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
                                {.reset = Assisi::App::AssetCacheReset::ClearFirst, .header = &header});
     if (!loaded)
     {
-        Assisi::Core::Log::Error("Editor: could not open '{}' — {}.", virtualPath,
+        Assisi::Core::Log::Error("Editor: could not open '{}' - {}.", virtualPath,
                                  Assisi::Runtime::Describe(loaded.error()));
 
         // Two very different situations, and only `sceneReplaced` separates them. A

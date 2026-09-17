@@ -110,7 +110,7 @@ std::string DescribeLevel(const FieldMeta &field, const ContainerSpec &spec, con
 
     if (state.seen > kMaxDescribedEntries)
     {
-        state.text += ", … " + std::to_string(state.seen - kMaxDescribedEntries) + " more";
+        state.text += ", ... " + std::to_string(state.seen - kMaxDescribedEntries) + " more";
     }
 
     return isMap ? "{ " + state.text + " }" : "[" + state.text + "]";

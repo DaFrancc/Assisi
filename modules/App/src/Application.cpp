@@ -307,14 +307,14 @@ bool Application::InitializePresentation()
 
 Window::WindowContext &Application::GetWindow() const
 {
-    ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process — there is no window. Guard with "
+    ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process - there is no window. Guard with "
                   "IsHeadless()/HasPresentation().");
     return *_window;
 }
 
 Window::InputContext &Application::GetInput() const
 {
-    ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process — there are no input devices. Guard with "
+    ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process - there are no input devices. Guard with "
                   "IsHeadless()/HasPresentation().");
     return *_input;
 }
@@ -754,7 +754,7 @@ void Application::Run()
         // explanation is one dump away.
         if (cpuMs >= kSlowFrameMs)
         {
-            Core::Log::Info("Slow frame {} — {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
+            Core::Log::Info("Slow frame {} - {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
                             "dump a capture for the breakdown",
                             Chiara::CurrentFrame(), cpuMs, gpuMs, gpuWaitMs, unaccountedMs);
         }

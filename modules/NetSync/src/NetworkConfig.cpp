@@ -57,7 +57,7 @@ void ApplyQuantization(const NetworkConfig &config)
     if (!QuantizationInRange(config))
     {
         Core::Log::Warn("NetSync: the network config's quantization is out of range (extents must be positive, "
-                        "bit counts {}..{}) — keeping the defaults.",
+                        "bit counts {}..{}) - keeping the defaults.",
                         kMinQuantizationBits, kMaxQuantizationBits);
         return;
     }
@@ -69,8 +69,8 @@ void ApplyQuantization(const NetworkConfig &config)
                                   .angularVelocityMax  = config.angularVelocityMax,
                                   .angularVelocityBits = config.angularVelocityBits};
     SetQuantization(loaded);
-    Core::Log::Info("NetSync: body quantization — position ±{:g} m at {} bits, linear ±{:g} m/s at {} bits, "
-                    "angular ±{:g} rad/s at {} bits.",
+    Core::Log::Info("NetSync: body quantization - position +/-{:g} m at {} bits, linear +/-{:g} m/s at {} bits, "
+                    "angular +/-{:g} rad/s at {} bits.",
                     static_cast<double>(loaded.positionExtent), loaded.positionBits,
                     static_cast<double>(loaded.linearVelocityMax), loaded.linearVelocityBits,
                     static_cast<double>(loaded.angularVelocityMax), loaded.angularVelocityBits);
@@ -81,7 +81,7 @@ void ApplySmoothing(const NetworkConfig &config)
     if (!SmoothingInRange(config))
     {
         Core::Log::Warn("NetSync: the network config's smoothing is out of range (times must be positive, "
-                        "largeErrorDistance must exceed smallErrorDistance) — keeping the defaults.");
+                        "largeErrorDistance must exceed smallErrorDistance) - keeping the defaults.");
         return;
     }
 
@@ -93,7 +93,7 @@ void ApplySmoothing(const NetworkConfig &config)
                                .snapBelowDistance          = config.snapBelowDistance,
                                .hardSnapDistance           = config.hardSnapDistance};
     SetSmoothing(loaded);
-    Core::Log::Info("NetSync: correction smoothing — converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
+    Core::Log::Info("NetSync: correction smoothing - converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
                     "below {:g} m and beyond {:g} m.",
                     static_cast<double>(loaded.positionCorrectionTime),
                     static_cast<double>(loaded.positionCorrectionTimeFast),
@@ -122,7 +122,7 @@ void ApplyPolicy(const NetworkConfig &config)
         // Loudly: falling back to "everything" quietly would leave the author
         // believing a radius is in force when it is not.
         Core::Log::Warn("NetSync: relevancyProvider is '{}', which is not a provider this build knows ('{}' or "
-                        "'{}') — telling every connection about everything.",
+                        "'{}') - telling every connection about everything.",
                         provider, kProviderAll, kProviderDistance);
     }
     relevancy.radius     = config.relevancyRadius;
@@ -149,7 +149,7 @@ void LoadNetworkConfig(std::string_view assetPath)
         // No config is not a problem; the defaults are a complete answer.
         if (read.error() != Core::ConfigError::Missing)
         {
-            Core::Log::Warn("NetSync: cannot read '{}' ({}) — keeping the defaults.", assetPath,
+            Core::Log::Warn("NetSync: cannot read '{}' ({}) - keeping the defaults.", assetPath,
                             Core::ToString(read.error()));
         }
         return;

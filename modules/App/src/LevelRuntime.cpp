@@ -196,7 +196,7 @@ std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetS
         // The two numbers only answer "are they different", which the caller's
         // message already says — so they go to the log and the message stays
         // something the player can act on.
-        Core::Log::Error("Join: level content hash mismatch for '{}' — host {}, local {}.", level.path,
+        Core::Log::Error("Join: level content hash mismatch for '{}' - host {}, local {}.", level.path,
                          Core::ToHex64(level.contentHash), Core::ToHex64(*localHash));
         return std::unexpected(JoinLevelError::ContentMismatch);
     }

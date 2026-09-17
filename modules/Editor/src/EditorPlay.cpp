@@ -57,7 +57,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // because F5 reaches this even while the Game panel is hidden.
     if (InBlueprintMode())
     {
-        Assisi::Core::Log::Warn("Play: close the blueprint editor first — a blueprint world is content, "
+        Assisi::Core::Log::Warn("Play: close the blueprint editor first - a blueprint world is content, "
                                 "not a level to run.");
         return;
     }
@@ -78,8 +78,8 @@ void EditorApp::StartPlay(NetIntent intent)
         // the other machine, for a reason nobody there can act on.
         if (HostLevelIdentity().addressing == Assisi::NetSync::LevelAddressing::None)
         {
-            _netError = "save the level to host — clients load it from disk, so it has to be there.";
-            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            _netError = "save the level to host - clients load it from disk, so it has to be there.";
+            Assisi::Core::Log::Warn("Editor: refusing to host - {}", _netError);
             return;
         }
 
@@ -107,7 +107,7 @@ void EditorApp::StartPlay(NetIntent intent)
             _netError = "some live blueprint copies are out of date with their file (" +
                         _staleInstanceSources.front() +
                         "). Save the blueprint again and accept the update, or reload the level.";
-            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            Assisi::Core::Log::Warn("Editor: refusing to host - {}", _netError);
             return;
         }
     }
@@ -380,7 +380,7 @@ void EditorApp::StopPlay()
                         if (!meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data))
                         {
                             Assisi::Core::Log::Error(
-                                "Editor: leaving play lost '{}' — it did not read back from the snapshot "
+                                "Editor: leaving play lost '{}' - it did not read back from the snapshot "
                                 "taken when play started. This is an engine bug.",
                                 meta->name);
                         }
@@ -756,7 +756,7 @@ void EditorApp::DrawGameControlWindow()
         {"Host + 1 client", NetIntent::Host, 1},
         {"Host + 2 clients", NetIntent::Host, 2},
         {"Host + 3 clients", NetIntent::Host, 3},
-        {"Join…", NetIntent::Join, 0},
+        {"Join...", NetIntent::Join, 0},
     }};
 #if defined(ASSISI_NETWORKING)
     _playNetSelection = std::clamp(_playNetSelection, 0, static_cast<std::int32_t>(kNetModes.size()) - 1);

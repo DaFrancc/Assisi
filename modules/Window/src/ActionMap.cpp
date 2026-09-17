@@ -253,7 +253,7 @@ void ActionMap::Apply(const InputBindings &bindings)
             const std::optional<ActionBinding> binding = BindingFromName(name.View());
             if (!binding)
             {
-                Core::Log::Warn("ActionMap: unknown input name '{}' in action '{}' — skipped.", name.View(),
+                Core::Log::Warn("ActionMap: unknown input name '{}' in action '{}' - skipped.", name.View(),
                                 action);
                 continue;
             }

@@ -322,7 +322,7 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     s_openerPipeline = device->createGraphicsPipeline(pipelineDesc, vulkanContext.GetFramebufferInfo());
     if (!s_openerPipeline)
     {
-        Assisi::Core::Log::Error("DebugUI: failed to build the opener pipeline — ImGui may not render.");
+        Assisi::Core::Log::Error("DebugUI: failed to build the opener pipeline - ImGui may not render.");
     }
 
     // Decode the WebP loading spinner now that the device exists (no atlas-timing

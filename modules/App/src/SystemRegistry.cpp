@@ -116,7 +116,7 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
         // the phase is worse than running them in a defined-but-arbitrary order.
         // Fall back to registration order so nothing is dropped, and log loudly.
         Core::Log::Error("SystemRegistry({}): dependency cycle detected in After()/Before() "
-                         "declarations — falling back to registration order.",
+                         "declarations - falling back to registration order.",
                          phaseName);
         sorted.clear();
         for (std::size_t i = 0; i < n; ++i)
@@ -163,7 +163,7 @@ void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
     {
         // An unreflected type has no pool and would gate the system off forever.
         // Fail loud: silently never running is the worst outcome here.
-        Core::Log::Error("SystemRegistry: RequireAny() names a type with no ComponentId — it is "
+        Core::Log::Error("SystemRegistry: RequireAny() names a type with no ComponentId - it is "
                          "not registered with the reflection system (ACOMP). Ignoring it, so the "
                          "system stays eligible.");
         return;

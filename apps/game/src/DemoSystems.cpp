@@ -111,7 +111,7 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx)
     }
 }
 
-void MaterialsTravelSystem(Assisi::App::SystemContext &ctx)
+void PrettyTravelSystem(Assisi::App::SystemContext &ctx)
 {
     if (ctx.input == nullptr || ctx.worlds == nullptr) // headless host or no manager: nowhere to travel from
     {
@@ -120,9 +120,9 @@ void MaterialsTravelSystem(Assisi::App::SystemContext &ctx)
 
     if (ctx.input->IsKeyPressed(Assisi::Window::Key::M))
     {
-        constexpr std::string_view kMaterialsLevel = "levels/Materials.alvl";
-        Assisi::Core::Log::Info("MaterialsTravel: '{}' -> '{}'.", ctx.world.levelPath, kMaterialsLevel);
-        ctx.worlds->RequestTravel(kMaterialsLevel);
+        constexpr std::string_view kPrettyLevel = "levels/Pretty.alvl";
+        Assisi::Core::Log::Info("PrettyTravel: '{}' -> '{}'.", ctx.world.levelPath, kPrettyLevel);
+        ctx.worlds->RequestTravel(kPrettyLevel);
     }
 }
 

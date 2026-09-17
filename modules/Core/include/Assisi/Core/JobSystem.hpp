@@ -361,7 +361,7 @@ auto Task<T>::Then(Pool pool, F fn) -> Task<typename detail::ThenResult<F, T>::t
     {
         std::lock_guard<std::mutex> lock(antecedent->mutex);
         ASSISI_ASSERT(!antecedent->continuationClaimed,
-                      "Then() called twice on the same task — the continuation slot is one-shot, so the "
+                      "Then() called twice on the same task - the continuation slot is one-shot, so the "
                       "first chain would be silently orphaned and its Wait() would livelock");
         antecedent->continuationClaimed = true;
         if (antecedent->done)

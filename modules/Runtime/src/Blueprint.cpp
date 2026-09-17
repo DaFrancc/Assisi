@@ -475,7 +475,7 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
         if (alreadyRemoved)
         {
             Core::Log::Warn("Blueprint: '{}' overrides fields of '{}', which an inner file removed. The "
-                            "removal wins and the override is dropped — decide which one should go.",
+                            "removal wins and the override is dropped - decide which one should go.",
                             context, componentName);
             continue;
         }
@@ -691,7 +691,7 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
             // Dropped rather than refused, and banning renames is what makes that
             // clean: a missing member can only mean deliberate deletion, so there
             // is no second reading in which this discards a real edit (§6).
-            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares — dropped.", source,
+            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares - dropped.", source,
                             full, childSource);
             continue;
         }

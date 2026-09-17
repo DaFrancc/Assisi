@@ -22,11 +22,51 @@
 #include <optional>
 #include <string_view>
 
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#endif
+
 namespace
 {
+#ifdef _WIN32
+/// The game is a GUI-subsystem program on Windows, so it opens no console
+/// window, and launched from a terminal it has no stdout either: --help and a
+/// headless run would print nothing. Borrow the terminal's console for any
+/// stream that was not handed a real handle. A redirect or a pipe (CTest, a
+/// build step) already was, and is left alone.
+void AttachParentConsole()
+{
+    const bool needOut = GetStdHandle(STD_OUTPUT_HANDLE) == nullptr;
+    const bool needErr = GetStdHandle(STD_ERROR_HANDLE) == nullptr;
+    if ((!needOut && !needErr) || !AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        return;
+    }
+    auto reopen = [](FILE *stream, DWORD stdHandle)
+    {
+        FILE *reopened = nullptr;
+        if (freopen_s(&reopened, "CONOUT$", "w", stream) == 0)
+        {
+            // Published as the process's handle too, so Core::HasConsoleOutput()
+            // sees the console and the logger adds its console sink.
+            SetStdHandle(stdHandle, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stream))));
+        }
+    };
+    if (needOut)
+    {
+        reopen(stdout, STD_OUTPUT_HANDLE);
+    }
+    if (needErr)
+    {
+        reopen(stderr, STD_ERROR_HANDLE);
+    }
+}
+#endif
+
 constexpr const char *kUsage =
     "Usage: Assisi-Game [options]\n"
-    "  --headless              run with no window, renderer or input — just the\n"
+    "  --headless              run with no window, renderer or input - just the\n"
     "                          fixed-step simulation\n"
     "  --ticks <n>             stop after n fixed ticks (0 = run until the\n"
     "                          player quits, the default)\n"
@@ -146,6 +186,10 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
 
 int main(int argc, char **argv)
 {
+#ifdef _WIN32
+    AttachParentConsole();
+#endif
+
     // No readers are installed here: everything a game reads comes from its
     // content package, and GameApp installs the readers over it once it is open.
     GameArgs args;

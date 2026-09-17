@@ -259,7 +259,7 @@ public:
     {
         static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
                       "SendIntent takes an AMSG(intent, ...). An event is the authority's word about what "
-                      "happened — send those from the server.");
+                      "happened - send those from the server.");
         if (_server)
         {
             _server->SubmitLocalIntent(intent);

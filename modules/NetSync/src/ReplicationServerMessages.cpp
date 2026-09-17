@@ -95,7 +95,7 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
     {
         // Two builds that disagree on component layout would corrupt each
         // other's state silently, which is far worse than not connecting.
-        Core::Log::Warn("NetSync: rejecting connection {} — protocol hash mismatch.", connection.id);
+        Core::Log::Warn("NetSync: rejecting connection {} - protocol hash mismatch.", connection.id);
         SendReject(connection, RejectReason::ProtocolMismatch);
         return;
     }
@@ -104,7 +104,7 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
     {
         // A hash cannot name what differs; accepted, because the point is only
         // that after a join both machines expand every blueprint identically.
-        Core::Log::Warn("NetSync: rejecting connection {} — content set mismatch (ours {:016x}, theirs "
+        Core::Log::Warn("NetSync: rejecting connection {} - content set mismatch (ours {:016x}, theirs "
                         "{:016x}).",
                         connection.id, _contentSetHash, hello.contentSetHash);
         SendReject(connection, RejectReason::ContentMismatch);
@@ -391,7 +391,7 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     const Core::Reflect::MessageMeta *meta     = registry.ById(id);
     if (meta == nullptr)
     {
-        Core::Log::Error("NetSync: refusing to send an event of an unregistered type — is it AMSG?");
+        Core::Log::Error("NetSync: refusing to send an event of an unregistered type - is it AMSG?");
         return;
     }
 

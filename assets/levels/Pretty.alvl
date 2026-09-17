@@ -11,6 +11,8 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
           "enableCCD": false,
           "halfExtents": [
             50.0,
@@ -18,7 +20,7 @@
             50.0
           ],
           "halfHeight": 0.5,
-          "isStatic": false,
+          "isStatic": true,
           "radius": 0.5,
           "shape": 0
         },
@@ -62,6 +64,8 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
           "enableCCD": true,
           "halfExtents": [
             0.5,
@@ -113,6 +117,8 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
           "enableCCD": true,
           "halfExtents": [
             0.5,
@@ -164,53 +170,6 @@
           "temperatureKelvin": 5778.0,
           "tintedBySky": true
         },
-        "Skybox": {
-          "airScattering": [
-            0.17520000040531158,
-            0.40779998898506165,
-            1.0
-          ],
-          "airThickness": 0.14000000059604645,
-          "exposure": 10.0,
-          "groundColor": [
-            0.10999999940395355,
-            0.10000000149011612,
-            0.09000000357627869
-          ],
-          "hazeForwardness": 0.7599999904632568,
-          "hazeScattering": [
-            0.004999999888241291,
-            0.004999999888241291,
-            0.004999999888241291
-          ],
-          "nightColor": [
-            5.999999848427251e-05,
-            9.999999747378752e-05,
-            0.00019999999494757503
-          ],
-          "minimumAmbient": 0.019999999552965164,
-          "minimumAmbientColor": [
-            0.3499999940395355,
-            0.44999998807907104,
-            0.699999988079071
-          ],
-          "preset": 0,
-          "skyBounce": 0.20000000298023224,
-          "sunDiskColor": [
-            1.0,
-            0.949999988079071,
-            0.8199999928474426
-          ],
-          "sunDiskIntensity": 20.0,
-          "sunEdgeSoftness": 0.10000000149011612,
-          "sunLimbDarkening": 0.6000000238418579,
-          "sunSizeDegrees": 0.5
-        },
-        "Sun": {
-          "axialTiltDegrees": 23.440000534057617,
-          "bearingDegrees": 0.0,
-          "latitudeDegrees": 45.0
-        },
         "Moon": {
           "atmosphericTint": 0.20000000298023224,
           "color": [
@@ -232,9 +191,56 @@
           "phaseAtEpoch": 0.25,
           "sizeDegrees": 0.5
         },
+        "Skybox": {
+          "airScattering": [
+            0.17520000040531158,
+            0.40779998898506165,
+            1.0
+          ],
+          "airThickness": 0.14000000059604645,
+          "exposure": 10.0,
+          "groundColor": [
+            0.10999999940395355,
+            0.10000000149011612,
+            0.09000000357627869
+          ],
+          "hazeForwardness": 0.7599999904632568,
+          "hazeScattering": [
+            0.004999999888241291,
+            0.004999999888241291,
+            0.004999999888241291
+          ],
+          "minimumAmbient": 0.019999999552965164,
+          "minimumAmbientColor": [
+            0.3499999940395355,
+            0.44999998807907104,
+            0.699999988079071
+          ],
+          "nightColor": [
+            5.999999848427251e-05,
+            9.999999747378752e-05,
+            0.00019999999494757503
+          ],
+          "preset": 0,
+          "skyBounce": 0.20000000298023224,
+          "sunDiskColor": [
+            1.0,
+            0.949999988079071,
+            0.8199999928474426
+          ],
+          "sunDiskIntensity": 20.0,
+          "sunEdgeSoftness": 0.10000000149011612,
+          "sunLimbDarkening": 0.6000000238418579,
+          "sunSizeDegrees": 0.5
+        },
+        "Sun": {
+          "axialTiltDegrees": 23.440000534057617,
+          "bearingDegrees": 0.0,
+          "latitudeDegrees": 45.0
+        },
         "TimeOfDay": {
           "day": 0,
-          "dayLengthSeconds": 120.0,
+          "dayLengthSeconds": 15.0,
           "dayOfYear": 0.0,
           "hour": 9.0,
           "paused": false,
@@ -243,6 +249,30 @@
         }
       },
       "name": "Sun"
+    }
+  ],
+  "instances": [
+    {
+      "name": "Player",
+      "source": "blueprints/Player.abp",
+      "transform": {
+        "position": [
+          1.7737207412719727,
+          5.587212085723877,
+          10.330911636352539
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
     }
   ],
   "systems": [

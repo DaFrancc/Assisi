@@ -163,7 +163,7 @@ JoltRuntimeRef::JoltRuntimeRef()
         Assisi::Core::Log::Info("Jolt: runtime up ({} worker thread(s), shared by every physics world){}.",
                                 gJoltRuntime->jobSystem.GetMaxConcurrency(),
 #if defined(ASSISI_PHYSICS_TSAN)
-                                " — single-threaded, this is a ThreadSanitizer build"
+                                " - single-threaded, this is a ThreadSanitizer build"
 #else
                                 ""
 #endif

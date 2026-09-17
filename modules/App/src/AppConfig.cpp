@@ -22,7 +22,7 @@ AppConfig Sanitized(AppConfig cfg)
     if (cfg.physicsHz <= 0.0)
     {
         const double fallbackHz = AppConfig{}.physicsHz;
-        Core::Log::Warn("App: physicsHz = {} is invalid (must be > 0) — using {} Hz.", cfg.physicsHz, fallbackHz);
+        Core::Log::Warn("App: physicsHz = {} is invalid (must be > 0) - using {} Hz.", cfg.physicsHz, fallbackHz);
         cfg.physicsHz = fallbackHz;
     }
     return cfg;
@@ -37,7 +37,7 @@ AppConfig AppConfig::FromJsonText(std::string_view text)
         Core::Reflect::ApplyAssetDocument(text, cfg);
     if (!applied)
     {
-        Core::Log::Warn("App: cannot read the game config ({}) — using defaults.",
+        Core::Log::Warn("App: cannot read the game config ({}) - using defaults.",
                         Core::Reflect::ToString(applied.error()));
         return AppConfig{};
     }
@@ -50,7 +50,7 @@ AppConfig AppConfig::Load(std::string_view assetPath)
     const std::expected<void, Core::ConfigError> read = Core::ReadConfig(assetPath, cfg);
     if (!read)
     {
-        Core::Log::Warn("App: cannot read '{}' ({}) — using default engine configuration.", assetPath,
+        Core::Log::Warn("App: cannot read '{}' ({}) - using default engine configuration.", assetPath,
                         Core::ToString(read.error()));
         return AppConfig{};
     }

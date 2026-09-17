@@ -542,7 +542,7 @@ bool EditHistory::AddComponentForRestore(Entity entity, Reflect::ComponentId id,
     // an undo that quietly dropped a component.
     if (!meta->addToScene(&_scene, entity.index, entity.generation, data))
     {
-        Assisi::Core::Log::Error("EditHistory: '{}' could not be restored from its own snapshot — this is "
+        Assisi::Core::Log::Error("EditHistory: '{}' could not be restored from its own snapshot - this is "
                                  "an engine bug. The component is now missing from the entity.",
                                  meta->name);
         return false;

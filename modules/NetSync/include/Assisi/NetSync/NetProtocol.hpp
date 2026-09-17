@@ -90,7 +90,7 @@ inline constexpr NetId InvalidNetId{0};
 static_assert(sizeof(NetIdValue) <= sizeof(std::uint32_t),
               "NetIdValue no longer fits the instanceRef codec channel: CodecContext::instanceToWire and "
               "AFIELD(instanceRef) are 32-bit by declaration. Widen the instanceRef field type through "
-              "Reflect and reflectgen, or keep instance references 32-bit — but decide it here.");
+              "Reflect and reflectgen, or keep instance references 32-bit - but decide it here.");
 
 /// @brief Does a block of @p count ids starting at @p base fit the id space?
 ///

@@ -21,7 +21,7 @@ std::expected<InputBindings, Core::ConfigError> LoadInputBindings(std::string_vi
         {
             return InputBindings{};
         }
-        Core::Log::Warn("Window: cannot read input bindings from '{}' ({}) — no actions are bound.", assetPath,
+        Core::Log::Warn("Window: cannot read input bindings from '{}' ({}) - no actions are bound.", assetPath,
                         Core::ToString(read.error()));
         return std::unexpected(read.error());
     }

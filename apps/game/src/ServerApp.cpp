@@ -87,7 +87,7 @@ void ServerApp::OnStart()
         // worked.
         if (!Assisi::App::LevelSystemsAreDeclared(_options.level))
         {
-            Log::Error("Server: refusing '{}' — it names a system this build does not declare.",
+            Log::Error("Server: refusing '{}' - it names a system this build does not declare.",
                        _options.level);
             RefuseStart();
             return;
@@ -113,7 +113,7 @@ void ServerApp::OnStart()
     if (_options.role == ServerRole::Offline)
     {
         if (_options.level.empty())
-            Log::Info("Server: no level requested — simulating an empty world.");
+            Log::Info("Server: no level requested - simulating an empty world.");
         return;
     }
 
@@ -196,7 +196,7 @@ void ServerApp::BuildJoinedWorld()
     // started, whatever the reason.
     const auto fail = [this](std::string reason)
                       {
-                          Log::Error("Client: join failed — {}", reason);
+                          Log::Error("Client: join failed - {}", reason);
                           _session->AbortJoin(std::move(reason));
                           RefuseStart();
                       };
@@ -394,7 +394,7 @@ void ServerApp::OnShutdown()
     if (_session && _session->IsClient())
     {
         const NetSync::SessionStats stats = _session->Stats();
-        Log::Info("Client: stopped after {} ticks — {} snapshots applied, {} rejected, {} entities mirrored.",
+        Log::Info("Client: stopped after {} ticks - {} snapshots applied, {} rejected, {} entities mirrored.",
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
     else

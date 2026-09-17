@@ -96,7 +96,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
                              std::size_t owner, ECS::Entity target)
         {
             Core::Log::Warn("Blueprint: {}::{} on '{}' references '{}', which is not in the "
-                            "selection — it is null in '{}'.",
+                            "selection - it is null in '{}'.",
                             meta.name, field.name, names[owner],
                             AuthoredName(scene, target), path.string());
         });

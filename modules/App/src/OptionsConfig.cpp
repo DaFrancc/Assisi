@@ -320,7 +320,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
     }
     catch (const nlohmann::json::exception &e)
     {
-        Core::Log::Warn("Failed to parse options.json: {} — using defaults.", e.what());
+        Core::Log::Warn("Failed to parse options.json: {} - using defaults.", e.what());
     }
 
     return cfg;

@@ -173,7 +173,7 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
             if (row->name == entry.name)
             {
                 Core::Log::Error("Blueprint: an instance named '{}' is already live in this world; placing a "
-                                 "second would make '{}/…' name two entities.",
+                                 "second would make '{}/...' name two entities.",
                                  entry.name, entry.name);
                 return std::unexpected(LevelError::NameAlreadyLive);
             }
@@ -258,7 +258,7 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     const BlueprintInstance *found = table.Find(instanceId);
     if (found == nullptr)
     {
-        Core::Log::Error("Blueprint: cannot re-expand instance {} — no such instance is live.", instanceId);
+        Core::Log::Error("Blueprint: cannot re-expand instance {} - no such instance is live.", instanceId);
         return std::unexpected(LevelError::InstanceNotLive);
     }
     // A copy: staging reads the row back out of the table, and this has to outlive

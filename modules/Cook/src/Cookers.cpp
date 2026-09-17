@@ -346,7 +346,7 @@ public:
             if (!first.empty())
             {
                 return std::unexpected(Failure(
-                                           vpath, std::format("is bound as two different channels, by '{}' and '{}' — one GUID is one "
+                                           vpath, std::format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
                                                               "blob, so copy the file if both are wanted",
                                                               first, second)));
             }

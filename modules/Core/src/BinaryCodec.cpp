@@ -824,9 +824,9 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
 {
     if (meta.id == kInvalidComponentId)
     {
-        ASSISI_ASSERT(false, "WriteComponent: component id is not finalized — the registry finalizes "
+        ASSISI_ASSERT(false, "WriteComponent: component id is not finalized - the registry finalizes "
                       "lazily on first query, so call this only after startup registration.");
-        Log::Error("BinaryCodec: refusing to encode '{}' — its ComponentId is not finalized", meta.name);
+        Log::Error("BinaryCodec: refusing to encode '{}' - its ComponentId is not finalized", meta.name);
         return false;
     }
 
@@ -878,9 +878,9 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
 {
     if (meta.id == kInvalidMessageId)
     {
-        ASSISI_ASSERT(false, "WriteMessage: message id is not finalized — the registry finalizes lazily on "
+        ASSISI_ASSERT(false, "WriteMessage: message id is not finalized - the registry finalizes lazily on "
                       "first query, so call this only after startup registration.");
-        Log::Error("BinaryCodec: refusing to encode message '{}' — its MessageId is not finalized", meta.name);
+        Log::Error("BinaryCodec: refusing to encode message '{}' - its MessageId is not finalized", meta.name);
         return false;
     }
 

@@ -64,7 +64,7 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
         // Destroy the half-created world rather than leave an empty resident. It
         // holds no role yet, so this always succeeds, and the scene the load may
         // have emptied is this world's own — it goes with it.
-        Assisi::Core::Log::Error("Load as new world: '{}' failed to load — {}.", virtualPath,
+        Assisi::Core::Log::Error("Load as new world: '{}' failed to load - {}.", virtualPath,
                                  Assisi::Runtime::Describe(loaded.error()));
         _worlds.Destroy(world.name);
         return false;

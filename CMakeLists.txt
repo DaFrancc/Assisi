@@ -786,31 +786,47 @@ FetchContent_MakeAvailable(nvrhi)
 # chunk off the bottom of a tall caster. The patch adds RasterState::
 # depthClampEnable, off by default, so no other pipeline changes.
 #
+# NVRHI's Vulkan backend also returns nullptr from a failed pipeline or pipeline
+# layout creation without saying what the driver answered, so a pipeline that
+# works everywhere but one GPU leaves a player's log with nothing to go on.
+# nvrhi-report-pipeline-failures.patch passes the VkResult to the device's error
+# callback, which VulkanContext routes into the log.
+#
+# NVRHI's bindless tables are partially bound but not update-after-bind, so the
+# material table's whole capacity counts against the ordinary per-stage limit on
+# sampled images. Intel sets that at 200, and the mesh pipelines would not build.
+# nvrhi-bindless-update-after-bind.patch makes immutable bindless tables
+# update-after-bind, which counts them against limits in the millions instead.
+#
 # Applied here rather than as a FetchContent PATCH_COMMAND because the shared
 # source cache (cmake/AssisiConfigureCached.cmake) skips the patch step, and a
-# cache cloned before the patch existed would otherwise never receive it. The
-# reverse check makes it a no-op on a source that already has it; a pin bump
-# the patch no longer fits stops the configure rather than building without it.
+# cache cloned before a patch existed would otherwise never receive it. The
+# reverse check makes each a no-op on a source that already has it; a pin bump
+# a patch no longer fits stops the configure rather than building without it.
+# Applied in order: each is made against the source with the ones before it.
 find_package(Git REQUIRED)
-set(_nvrhi_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/nvrhi-depth-clamp.patch")
-execute_process(
-    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_nvrhi_patch}"
-    WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
-    RESULT_VARIABLE _nvrhi_patched
-    OUTPUT_QUIET ERROR_QUIET
-)
-if (NOT _nvrhi_patched EQUAL 0)
+foreach(_nvrhi_patch_name nvrhi-depth-clamp.patch nvrhi-report-pipeline-failures.patch
+                          nvrhi-bindless-update-after-bind.patch)
+    set(_nvrhi_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/${_nvrhi_patch_name}")
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" apply "${_nvrhi_patch}"
+        COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_nvrhi_patch}"
         WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
-        RESULT_VARIABLE _nvrhi_patch_rc
+        RESULT_VARIABLE _nvrhi_patched
+        OUTPUT_QUIET ERROR_QUIET
     )
-    if (NOT _nvrhi_patch_rc EQUAL 0)
-        message(FATAL_ERROR "Could not apply ${_nvrhi_patch} to ${nvrhi_SOURCE_DIR}. "
-                            "Refresh the patch against the pinned NVRHI commit.")
+    if (NOT _nvrhi_patched EQUAL 0)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" apply "${_nvrhi_patch}"
+            WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
+            RESULT_VARIABLE _nvrhi_patch_rc
+        )
+        if (NOT _nvrhi_patch_rc EQUAL 0)
+            message(FATAL_ERROR "Could not apply ${_nvrhi_patch} to ${nvrhi_SOURCE_DIR}. "
+                                "Refresh the patch against the pinned NVRHI commit.")
+        endif()
+        message(STATUS "NVRHI: applied ${_nvrhi_patch_name}")
     endif()
-    message(STATUS "NVRHI: applied nvrhi-depth-clamp.patch")
-endif()
+endforeach()
 
 # --- glslang (GLSL -> SPIR-V compiler, used as a build-time tool only)
 set(ENABLE_OPT              OFF CACHE BOOL "" FORCE) # avoids needing SPIRV-Tools-opt / update_glslang_sources.py

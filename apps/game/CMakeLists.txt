@@ -69,6 +69,16 @@ target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
 if (ASSISI_PAK_OVERRIDES)
   target_compile_definitions(Assisi-Game PRIVATE ASSISI_PAK_OVERRIDES)
 endif()
+# Windows opens a console window for every console-subsystem program it launches,
+# so a player double-clicking the game would get one beside it. A GUI-subsystem
+# program gets none; main() stays the entry point rather than WinMain, and
+# GameMain borrows the terminal's console when there is one to borrow.
+if (WIN32)
+  set_target_properties(Assisi-Game PROPERTIES WIN32_EXECUTABLE ON)
+  if (MSVC)
+    target_link_options(Assisi-Game PRIVATE /ENTRY:mainCRTStartup)
+  endif()
+endif()
 # The C++ runtime goes inside the game, so a player needs no libstdc++ or
 # libgcc_s of their own — and none at least as new as the build machine's
 # compiler. glibc stays shared: a static one cannot load the Vulkan driver or the

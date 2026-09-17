@@ -297,21 +297,21 @@ std::string NetSession::StatusText() const
     switch (_role)
     {
     case SessionRole::Offline:
-        return _lastError.empty() ? "Offline" : std::format("Offline — {}", _lastError);
+        return _lastError.empty() ? "Offline" : std::format("Offline - {}", _lastError);
 
     case SessionRole::Host:
-        return std::format("Hosting — {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
+        return std::format("Hosting - {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
 
     case SessionRole::Client:
         if (!_client->RejectMessage().empty())
-            return std::format("Rejected — {}", _client->RejectMessage());
+            return std::format("Rejected - {}", _client->RejectMessage());
         if (_client->IsAwaitingLevel())
             return std::format("Loading the host's level ({})...", _client->Handshake().level.path);
         if (!_client->IsSynchronized())
             return "Connecting...";
         if (!_client->IsWorldComplete())
-            return std::format("Joining — {} entities so far", _client->ReplicatedEntityCount());
-        return std::format("Connected — {} entities", _client->ReplicatedEntityCount());
+            return std::format("Joining - {} entities so far", _client->ReplicatedEntityCount());
+        return std::format("Connected - {} entities", _client->ReplicatedEntityCount());
     }
     return "Offline";
 }

@@ -1,0 +1,60 @@
+diff --git a/src/vulkan/vulkan-compute.cpp b/src/vulkan/vulkan-compute.cpp
+index 64e3585..2928a70 100644
+--- a/src/vulkan/vulkan-compute.cpp
++++ b/src/vulkan/vulkan-compute.cpp
+@@ -41,7 +41,11 @@ namespace nvrhi::vulkan
+             pso->descriptorSetIdxToBindingIdx,
+             m_Context,
+             desc.bindingLayouts);
+-        CHECK_VK_FAIL(res)
++        if (res != vk::Result::eSuccess)
++        {
++            m_Context.error(std::string("createComputePipeline: vkCreatePipelineLayout failed: ") + vk::to_string(res));
++            return nullptr;
++        }
+ 
+         Shader* CS = checked_cast<Shader*>(desc.CS.Get());
+ 
+@@ -76,7 +80,11 @@ namespace nvrhi::vulkan
+                                                     m_Context.allocationCallbacks,
+                                                     &pso->pipeline);
+ 
+-        CHECK_VK_FAIL(res)
++        if (res != vk::Result::eSuccess)
++        {
++            m_Context.error(std::string("createComputePipeline: vkCreateComputePipelines failed: ") + vk::to_string(res));
++            return nullptr;
++        }
+ 
+         return ComputePipelineHandle::Create(pso);
+     }
+diff --git a/src/vulkan/vulkan-graphics.cpp b/src/vulkan/vulkan-graphics.cpp
+index 7a8d67d..adc0311 100644
+--- a/src/vulkan/vulkan-graphics.cpp
++++ b/src/vulkan/vulkan-graphics.cpp
+@@ -372,7 +372,11 @@ namespace nvrhi::vulkan
+             pso->descriptorSetIdxToBindingIdx,
+             m_Context,
+             desc.bindingLayouts);
+-        CHECK_VK_FAIL(res)
++        if (res != vk::Result::eSuccess)
++        {
++            m_Context.error(std::string("createGraphicsPipeline: vkCreatePipelineLayout failed: ") + vk::to_string(res));
++            return nullptr;
++        }
+ 
+         static_vector<vk::PipelineColorBlendAttachmentState, c_MaxRenderTargets> colorBlendAttachments(fbinfo.colorFormats.size());
+ 
+@@ -448,7 +452,11 @@ namespace nvrhi::vulkan
+                                                      m_Context.allocationCallbacks,
+                                                      &pso->pipeline);
+         ASSERT_VK_OK(res); // for debugging
+-        CHECK_VK_FAIL(res);
++        if (res != vk::Result::eSuccess)
++        {
++            m_Context.error(std::string("createGraphicsPipeline: vkCreateGraphicsPipelines failed: ") + vk::to_string(res));
++            return nullptr;
++        }
+         
+         return GraphicsPipelineHandle::Create(pso);
+     }

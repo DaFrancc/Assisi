@@ -28,7 +28,7 @@ bool WorldManager::RefuseWhileIterating(std::string_view what) const
     if (_iterationDepth == 0)
         return false;
 
-    Core::Log::Error("WorldManager: {} was called while iterating the resident worlds — refusing, "
+    Core::Log::Error("WorldManager: {} was called while iterating the resident worlds - refusing, "
                      "because it would invalidate the walk and can destroy the world whose code is "
                      "running. Game logic changes level with RequestTravel(); the host applies it "
                      "at the next frame safe point.",
@@ -206,7 +206,7 @@ bool WorldManager::Destroy(std::string_view name)
                                          { return w->name == name; });
     if (it == _worlds.end())
     {
-        Core::Log::Warn("WorldManager: Destroy('{}') — no such world.", name);
+        Core::Log::Warn("WorldManager: Destroy('{}') - no such world.", name);
         return false;
     }
 
@@ -214,14 +214,14 @@ bool WorldManager::Destroy(std::string_view name)
     // holding one may only be destroyed after the role has moved to a successor.
     if (it->get() == _active)
     {
-        Core::Log::Error("WorldManager: refusing to destroy '{}' — it is the active world. "
+        Core::Log::Error("WorldManager: refusing to destroy '{}' - it is the active world. "
                          "Activate a successor first.",
                          name);
         return false;
     }
     if (it->get() == _edited)
     {
-        Core::Log::Error("WorldManager: refusing to destroy '{}' — it is the edited world.", name);
+        Core::Log::Error("WorldManager: refusing to destroy '{}' - it is the edited world.", name);
         return false;
     }
 

@@ -26,7 +26,7 @@ void Reject(const char *component, const char *field, std::string_view expected,
     if (dump.size() > kMaxDump)
     {
         dump.resize(kMaxDump);
-        dump += "…";
+        dump += "...";
     }
 
     Log::Error("Reflect: {}.{} expects {}, but the file has {} ({}). The field is not readable, so the "

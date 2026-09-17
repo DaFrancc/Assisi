@@ -68,7 +68,7 @@ bool GameApp::MountContent()
     std::expected<Core::PakProvider, Core::AssetError> mounted = Core::PakProvider::Mount(pak);
     if (!mounted)
     {
-        Core::Log::Error("Game: cannot start — the content package '{}' cannot be read ({}).", pak.string(),
+        Core::Log::Error("Game: cannot start - the content package '{}' cannot be read ({}).", pak.string(),
                          Core::ToString(mounted.error()));
         return false;
     }
@@ -130,7 +130,7 @@ void GameApp::OnStart()
         [&pak](std::string_view vpath) { return pak.Resolve(vpath).has_value(); });
     if (!scene)
     {
-        Core::Log::Error("Game: cannot start — startup scene '{}': {}.", GetConfig().startupScene.View(),
+        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", GetConfig().startupScene.View(),
                          Describe(scene.error()));
         RefuseStart();
         return;
@@ -141,7 +141,7 @@ void GameApp::OnStart()
     // game that started and plays like one that did not.
     if (!LevelSystemsAreDeclared(*scene))
     {
-        Core::Log::Error("Game: cannot start — '{}' names a system this build does not declare.", *scene);
+        Core::Log::Error("Game: cannot start - '{}' names a system this build does not declare.", *scene);
         RefuseStart();
         return;
     }
@@ -153,7 +153,7 @@ void GameApp::OnStart()
     _world = _worlds.LoadLevel(*scene);
     if (_world == nullptr)
     {
-        Core::Log::Error("Game: cannot start — '{}' would not load.", *scene);
+        Core::Log::Error("Game: cannot start - '{}' would not load.", *scene);
         RefuseStart();
     }
 }

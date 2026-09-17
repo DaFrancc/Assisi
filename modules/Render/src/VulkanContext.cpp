@@ -201,23 +201,28 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
     // *core* but *optional* feature bits, so a 1.3 device can still lack them.
     // The bindless material table needs an unbounded, partially-bound,
     // non-uniformly-indexed sampled-image array, and the indirect-draw stages
-    // need drawIndirectCount. Required here (well before D) so unsupported
+    // need drawIndirectCount. The table is also update-after-bind
+    // (nvrhi-bindless-update-after-bind.patch): without it its capacity counts
+    // against the ordinary per-stage sampled-image limit, 200 on Intel, and the
+    // mesh pipelines fail to build. Required here (well before D) so unsupported
     // hardware fails loudly at selection instead of mid-migration. Must stay in
-    // lock-step with the
-    // enables in CreateLogicalDevice.
+    // lock-step with the enables in CreateLogicalDevice.
     if (features12.descriptorIndexing != VK_TRUE || features12.runtimeDescriptorArray != VK_TRUE ||
         features12.shaderSampledImageArrayNonUniformIndexing != VK_TRUE ||
         features12.descriptorBindingPartiallyBound != VK_TRUE ||
-        features12.descriptorBindingVariableDescriptorCount != VK_TRUE || features12.drawIndirectCount != VK_TRUE)
+        features12.descriptorBindingVariableDescriptorCount != VK_TRUE ||
+        features12.descriptorBindingSampledImageUpdateAfterBind != VK_TRUE || features12.drawIndirectCount != VK_TRUE)
     {
         Core::Log::Info("  rejected: missing bindless/descriptor-indexing support "
                         "(descriptorIndexing={}, runtimeDescriptorArray={}, "
                         "shaderSampledImageArrayNonUniformIndexing={}, descriptorBindingPartiallyBound={}, "
-                        "descriptorBindingVariableDescriptorCount={}, drawIndirectCount={})",
+                        "descriptorBindingVariableDescriptorCount={}, "
+                        "descriptorBindingSampledImageUpdateAfterBind={}, drawIndirectCount={})",
                         features12.descriptorIndexing == VK_TRUE, features12.runtimeDescriptorArray == VK_TRUE,
                         features12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
                         features12.descriptorBindingPartiallyBound == VK_TRUE,
                         features12.descriptorBindingVariableDescriptorCount == VK_TRUE,
+                        features12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE,
                         features12.drawIndirectCount == VK_TRUE);
         return false;
     }
@@ -367,14 +372,16 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     features12.timelineSemaphore = VK_TRUE;
     // Descriptor indexing / bindless (GPU-driven stage D). Enabled so the device
     // is created bindless-ready: an unbounded, partially-bound, non-uniformly-
-    // indexed sampled-image array for the material table, plus drawIndirectCount
-    // for the indirect-draw stages. DeviceMeetsRequirements already verified the
-    // chosen device supports all of these, so requesting them here can't fail.
+    // indexed, update-after-bind sampled-image array for the material table, plus
+    // drawIndirectCount for the indirect-draw stages. DeviceMeetsRequirements
+    // already verified the chosen device supports all of these, so requesting
+    // them here can't fail.
     features12.descriptorIndexing = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
     features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
     features12.drawIndirectCount = VK_TRUE;
     features12.pNext = &features13;
 
@@ -459,6 +466,64 @@ DepthFormatChoice ChooseDepthFormat(VkPhysicalDevice physicalDevice)
     return {};
 }
 
+// Logs the driver and the descriptor limits a pipeline layout is checked against.
+// A pipeline that builds on one GPU and not another usually comes down to one of
+// these, and a player's log is the only place the other GPU's values are seen.
+void LogDeviceDetails(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props)
+{
+    VkPhysicalDeviceVulkan12Properties props12{};
+    props12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+    VkPhysicalDeviceProperties2 props2{};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &props12;
+    VKD.vkGetPhysicalDeviceProperties2(device, &props2);
+
+    const VkPhysicalDeviceLimits &limits = props.limits;
+    Core::Log::Info("VulkanContext: driver {} ({}), driver version 0x{:08x}, Vulkan {}.{}.{}, "
+                    "vendor 0x{:04x}, device 0x{:04x}",
+                    props12.driverName, props12.driverInfo, props.driverVersion,
+                    VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
+                    VK_API_VERSION_PATCH(props.apiVersion), props.vendorID, props.deviceID);
+    Core::Log::Info("VulkanContext: per-stage descriptor limits: sampled images {}, samplers {}, "
+                    "storage buffers {}, uniform buffers {}, resources {}; bound sets {}",
+                    limits.maxPerStageDescriptorSampledImages, limits.maxPerStageDescriptorSamplers,
+                    limits.maxPerStageDescriptorStorageBuffers, limits.maxPerStageDescriptorUniformBuffers,
+                    limits.maxPerStageResources, limits.maxBoundDescriptorSets);
+    Core::Log::Info("VulkanContext: per-set descriptor limits: sampled images {}, storage buffers {}; "
+                    "update-after-bind per-stage sampled images {}, resources {}, per-set sampled images {}",
+                    limits.maxDescriptorSetSampledImages, limits.maxDescriptorSetStorageBuffers,
+                    props12.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                    props12.maxPerStageUpdateAfterBindResources,
+                    props12.maxDescriptorSetUpdateAfterBindSampledImages);
+}
+
+// NVRHI reports what it detects (and, patched, what the driver answered when a
+// pipeline would not build) through this. Without one it has nowhere to say it,
+// and its Vulkan backend calls the callback without checking for null. Static
+// because the device holds the pointer for its whole life.
+class NvrhiMessageLog final : public nvrhi::IMessageCallback
+{
+public:
+    void message(nvrhi::MessageSeverity severity, const char *messageText) override
+    {
+        switch (severity)
+        {
+        case nvrhi::MessageSeverity::Info:
+            Core::Log::Info("[NVRHI] {}", messageText);
+            break;
+        case nvrhi::MessageSeverity::Warning:
+            Core::Log::Warn("[NVRHI] {}", messageText);
+            break;
+        case nvrhi::MessageSeverity::Error:
+        case nvrhi::MessageSeverity::Fatal:
+            Core::Log::Error("[NVRHI] {}", messageText);
+            break;
+        }
+    }
+};
+
+NvrhiMessageLog g_nvrhiMessageLog;
+
 } // namespace
 
 std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::WindowContext &window)
@@ -480,7 +545,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     if (context->_instance == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateInstance failed.");
-        Core::ShowErrorDialog("Assisi — Vulkan unavailable",
+        Core::ShowErrorDialog("Assisi - Vulkan unavailable",
                               "Could not initialize Vulkan.\n\n"
                               "Assisi renders with Vulkan 1.3 and could not create a Vulkan instance. "
                               "This usually means the graphics drivers are missing or out of date.\n\n"
@@ -501,7 +566,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     if (!physicalDeviceChoice.has_value())
     {
         Core::Log::Error("VulkanContext: no suitable Vulkan physical device found.");
-        Core::ShowErrorDialog("Assisi — Unsupported graphics device",
+        Core::ShowErrorDialog("Assisi - Unsupported graphics device",
                               "No compatible GPU was found.\n\n"
                               "Assisi requires a graphics device with Vulkan 1.3 support "
                               "(dynamic rendering, synchronization2, and timeline semaphores).\n\n"
@@ -516,6 +581,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     VkPhysicalDeviceProperties chosenProps{};
     VKD.vkGetPhysicalDeviceProperties(context->_physicalDevice, &chosenProps);
     Core::Log::Info("VulkanContext: selected device {}", chosenProps.deviceName);
+    LogDeviceDetails(context->_physicalDevice, chosenProps);
 
     // Anisotropic filtering: enable it only if the device supports it, and clamp
     // the sampler request to the device's limit. 8x is a good quality/cost
@@ -572,6 +638,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     nvrhiDeviceDesc.numDeviceExtensions = 1;
     nvrhiDeviceDesc.instanceExtensions = instanceExtensions.data();
     nvrhiDeviceDesc.numInstanceExtensions = instanceExtensions.size();
+    nvrhiDeviceDesc.errorCB = &g_nvrhiMessageLog;
 
     context->_nvrhiDeviceHandle = nvrhi::vulkan::createDevice(nvrhiDeviceDesc);
     if (!context->_nvrhiDeviceHandle)

@@ -1106,7 +1106,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity,
                                             Assisi::App::ParentWorldResolver(*_scene)))
         {
-            Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics — it already has a "
+            Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics - it already has a "
                                     "collider of the other kind, or no Transform.",
                                     meta.name);
         }
@@ -1635,7 +1635,7 @@ void EditorApp::DrawLodVerdict()
     std::string switches;
     if (!_sceneRenderer.LodSettings().enabled)
     {
-        switches = "selection is off — every instance draws LOD0";
+        switches = "selection is off - every instance draws LOD0";
     }
     else if (lod.forced)
     {

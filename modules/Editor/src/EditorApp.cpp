@@ -326,7 +326,7 @@ void EditorApp::OnStart()
             // declared its systems, not any particular world.
             _warnedGameRenderSystems = true;
             Assisi::Core::Log::Warn("EditorApp: system '{}' is a Render system, which does not run "
-                                    "in-editor — the editor owns rendering. It will run in the "
+                                    "in-editor - the editor owns rendering. It will run in the "
                                     "standalone game build only.",
                                     definition.name);
         }
@@ -1482,7 +1482,7 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
                         ? (*definition)->members[tag->memberIndex].name
                         : std::format("#{}", tag->memberIndex);
 
-                return std::format("{} › {}", row->name.empty() ? row->source : row->name, memberPath);
+                return std::format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
             }
         }
     }

@@ -152,7 +152,12 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Image
     // Texture_SRV array in its own register space. Every resolved texture takes a
     // slot; materials reference channels by index. Capacity is fixed here at
     // creation — nvrhi's Vulkan resizeDescriptorTable is an assert-only no-op, so
-    // the table can never actually grow (see RegisterBindlessTexture).
+    // the table can never actually grow (see RegisterBindlessTexture). It is
+    // update-after-bind (nvrhi-bindless-update-after-bind.patch): otherwise the
+    // whole capacity counts against the ordinary per-stage sampled-image limit,
+    // which is 200 on Intel, and no mesh pipeline builds there. That makes it
+    // sampled images only; another descriptor type here needs its own
+    // descriptorBinding*UpdateAfterBind feature enabled in VulkanContext.
     nvrhi::BindlessLayoutDesc bindlessDesc;
     bindlessDesc.visibility = nvrhi::ShaderType::Pixel;
     bindlessDesc.firstSlot = 0;
@@ -326,7 +331,7 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetId &id, Image::ColorS
     Texture &texture = _textures[key];
     if (std::expected<void, AssetLoadError> loaded = LoadTexture(texture, id, colorSpace, format); !loaded)
     {
-        Core::Log::Warn("AssetCache: failed to load texture '{}' ({}) — drawing the error pattern.", Describe(id),
+        Core::Log::Warn("AssetCache: failed to load texture '{}' ({}) - drawing the error pattern.", Describe(id),
                         ToString(loaded.error()));
         ++_failedTextures;
         // The checkerboard rather than the channel's neutral default: a white
@@ -569,7 +574,7 @@ const Material *AssetCache::ResolveMaterial(const Core::AssetId &id)
     if (!data)
     {
         _missingMaterialWarned.insert(id);
-        Core::Log::Warn("AssetCache: material '{}' did not load ({}) — using the fallback material.", Describe(id),
+        Core::Log::Warn("AssetCache: material '{}' did not load ({}) - using the fallback material.", Describe(id),
                         ToString(data.error()));
         return &_fallbackMaterial;
     }
@@ -897,7 +902,7 @@ void AssetCache::PublishMaterial(PendingPublish publish)
             // The material named a texture and it could not be produced. The
             // neutral default would render as a perfectly ordinary white surface,
             // so this takes the checkerboard instead.
-            Core::Log::Warn("AssetCache: failed to load texture '{}' — drawing the error pattern.", Describe(rc.id));
+            Core::Log::Warn("AssetCache: failed to load texture '{}' - drawing the error pattern.", Describe(rc.id));
             ++_failedTextures;
 
             const TextureKey key{rc.id, ChannelFormat(ch).space, Image::PixelFormat::Rgba8};
