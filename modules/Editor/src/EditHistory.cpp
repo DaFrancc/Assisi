@@ -295,13 +295,15 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     txn.label           = gesture.label;
     txn.selectionBefore = gesture.selection;
     txn.selectionAfter  = gesture.selection;
-    txn.cmds.push_back(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
+    txn.Add(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
 
     // In the same transaction as the edit, never recorded separately: undo must
     // take the override back with the value, or it leaves a note claiming this
     // instance changed a field it no longer does.
     if (std::optional<InstanceDelta> record = RecordOverride(gesture.entity, gesture.id, gesture.before, after))
-        txn.cmds.push_back(std::move(*record));
+    {
+        txn.Add(std::move(*record));
+    }
 
     Push(std::move(txn));
     return true;

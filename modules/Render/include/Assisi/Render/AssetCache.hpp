@@ -618,10 +618,10 @@ private:
     void OnMaterialLoaded(Core::AssetId id, std::uint64_t epoch, MaterialLoadBundle bundle);
     /// @brief GPU-side publish of a decoded mesh (called from PumpPublishes under
     /// budget): upload into the arena via the shared list, then cache + assign an id.
-    void PublishMesh(PendingPublish publish);
+    void PublishMesh(PendingPublish &publish);
     /// @brief GPU-side publish of a decoded material (from PumpPublishes): upload each
     /// channel's texture into the shared list, build the material, write its row.
-    void PublishMaterial(PendingPublish publish);
+    void PublishMaterial(PendingPublish &publish);
 
     /// @brief The shared upload command list, opened on demand (lazily on the first
     /// publish of a pump) so many uploads batch into it; returns it for recording.

@@ -83,8 +83,14 @@ target_include_directories(Assisi-Core
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+# JobSystem's header holds std::thread, so everything above Core starts threads
+# through it. Before glibc 2.34 pthread is a library of its own, and a program
+# that does not link it fails with undefined pthread_create.
+find_package(Threads REQUIRED)
+
 target_link_libraries(Assisi-Core
   PUBLIC
+    Threads::Threads
     nlohmann_json::nlohmann_json
     # Chiara is below Core, not above it: JobSystem registers its workers with
     # the capture. PUBLIC so every module above Core can use the macros without

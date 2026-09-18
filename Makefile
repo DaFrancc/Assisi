@@ -14,6 +14,13 @@ PRESETS        := $(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(c)-$(k)))
 CHIARA_PRESETS := $(addsuffix -chiara,$(PRESETS))
 BUILDS         := $(PRESETS) $(CHIARA_PRESETS)
 
+# Inside the Steam Runtime container, and only there, its build is one more
+# ordinary build (see the steamrt targets below).
+STEAMRT_BUILD := gcc-ship-steamrt
+ifdef ASSISI_STEAMRT_SDK
+BUILDS += $(STEAMRT_BUILD)
+endif
+
 # Steps a build can be followed by, and every combination of them in the order
 # they have to run: the game's code, then a cook of assets/, then a pak of that
 # cook. Each is its own target on every build: gcc-debug-cook, gcc-debug-game-cook-pack.
@@ -83,6 +90,22 @@ $(LETTER_$(1))$(LETTER_$(2))$(call step-letters,$(3))-c: $(1)-$(2)-chiara-$(3)
 endef
 $(foreach c,$(COMPILERS),$(foreach k,$(CONFIGS),$(foreach s,$(SUFFIXES),$(eval $(call STEP_ALIASES,$(c),$(k),$(s))))))
 
+# The Steam Runtime build: gcc-ship configured and built inside Valve's SDK
+# container, for a game that starts on any distro with glibc 2.31 or newer.
+# Optional, and never reached from any other target: it is not in PRESETS, so
+# `make gcc` and configure-gcc never start a container.
+#
+# The container's image sets ASSISI_STEAMRT_SDK. Inside it this is an ordinary
+# build with every step recipe below. On the host the same target names hand
+# themselves to scripts/steamrt.py, which fetches the image the first time and
+# runs that target again inside it.
+STEAMRT_HELPER  := python3 "$(CURDIR)/scripts/steamrt.py"
+STEAMRT_TARGETS := $(STEAMRT_BUILD) $(addprefix $(STEAMRT_BUILD)-,$(SUFFIXES) test)
+
+ALIAS_NAMES += gs-steamrt $(addprefix gs-steamrt-,$(SUFFIXES) test)
+gs-steamrt: $(STEAMRT_BUILD)
+$(addprefix gs-steamrt-,$(SUFFIXES) test): gs-steamrt-%: $(STEAMRT_BUILD)-%
+
 # What `clean-<compiler>` removes: its presets, its sanitizer builds, and its
 # Chiara builds.
 define COMPILER_CLEAN
@@ -95,7 +118,8 @@ $(foreach c,$(COMPILERS),$(eval $(call COMPILER_CLEAN,$(c))))
         $(addprefix configure-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS))) \
         $(BUILDS) $(STEP_BUILDS) $(ALIAS_NAMES) \
         $(SANITIZED) $(addprefix test-,$(SANITIZED)) \
-        $(addprefix clean-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS)) $(PRESETS) $(filter-out %-chiara,$(SANITIZED)))
+        $(addprefix clean-,$(COMPILERS) $(addsuffix -chiara,$(COMPILERS)) $(PRESETS) $(filter-out %-chiara,$(SANITIZED))) \
+        $(STEAMRT_TARGETS) steamrt-fetch steamrt-remove clean-$(STEAMRT_BUILD)
 
 help:
 	@echo "Builds (editor, tests and shaders; no Game):"
@@ -112,8 +136,15 @@ help:
 	@echo "  <compiler>  <compiler>-chiara  configure-<compiler>  configure-<compiler>-chiara"
 	@echo "Sanitizers (configure + build; test- also runs ctest):"
 	@echo "  $(SANITIZED)"
+	@echo "Steam Runtime (optional; needs podman or docker, fetches a 3.9 GB SDK once):"
+	@echo "  gs-steamrt         gcc-ship built in Valve's SDK, runs on glibc 2.31+"
+	@echo "  gs-steamrt-<steps> e.g. gs-steamrt-game-cook-pack"
+	@echo "  gs-steamrt-test    the game tests in the SDK, then a boot on bare Debian 11"
+	@echo "  steamrt-fetch      download and prepare the SDK without building"
+	@echo "  steamrt-remove     delete the SDK images and the container's cache"
 	@echo "Clean:"
 	@echo "  clean-<preset>  clean-<compiler>  clean-<compiler>-chiara  clean  clean-deps"
+	@echo "  clean-$(STEAMRT_BUILD)"
 	@echo "Formatting:"
 	@echo "  format  format-check"
 	@echo "Compilers: $(COMPILERS)    configs: $(CONFIGS)"
@@ -216,10 +247,41 @@ $(addsuffix -chiara,$(COMPILERS)): %-chiara: configure-%-chiara
 $(CHIARA_PRESETS):
 	cmake --build --preset $@
 
+# The Steam Runtime build (see STEAMRT_BUILD above). Inside the container it
+# configures and builds in one step like the sanitizer builds, and its test
+# target runs the game's tests, the glibc ceiling among them. On the host each
+# target runs itself in the container; the test target then boots the staged
+# game on a bare Debian 11, which only the host can start a container for.
+ifdef ASSISI_STEAMRT_SDK
+$(STEAMRT_BUILD):
+	cmake -DPRESETS="$@" -P $(CONFIGURE_SCRIPT)
+	cmake --build --preset $@
+
+$(STEAMRT_BUILD)-test: $(STEAMRT_BUILD)
+	ctest --preset $(STEAMRT_BUILD) -L game
+else
+$(filter-out $(STEAMRT_BUILD)-test,$(STEAMRT_TARGETS)):
+	$(STEAMRT_HELPER) run -- make $@
+
+$(STEAMRT_BUILD)-test:
+	$(STEAMRT_HELPER) run -- make $@
+	$(STEAMRT_HELPER) boot-check
+endif
+
+steamrt-fetch:
+	$(STEAMRT_HELPER) prepare
+
+# The container's HOME holds its ccache, so it goes with the images.
+steamrt-remove:
+	$(STEAMRT_HELPER) remove
+	cmake -E rm -rf "$(CURDIR)/out/steamrt-home"
+
 # Clean build outputs — removes the entire build directory.
 # After cleaning, re-run the relevant configure-* target before building.
-$(addprefix clean-,$(PRESETS) $(filter-out %-chiara,$(SANITIZED))): clean-%:
+$(addprefix clean-,$(PRESETS) $(filter-out %-chiara,$(SANITIZED)) $(STEAMRT_BUILD)): clean-%:
 	cmake -E rm -rf "$(CURDIR)/out/build/$*"
+
+clean-gcc: clean-$(STEAMRT_BUILD)
 
 $(addprefix clean-,$(addsuffix -chiara,$(COMPILERS))): clean-%-chiara:
 	cmake -E rm -rf $(foreach d,$(call presets-of,$*,$(CHIARA_PRESETS) $(filter %-chiara,$(SANITIZED))),"$(CURDIR)/out/build/$(d)")

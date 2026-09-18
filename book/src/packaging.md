@@ -70,6 +70,14 @@ make gsgkp
 
 If the game can't find `assets.pak` next to it, it refuses to start and says so.
 
+## Releasing on Linux
+
+A game built with `make gsgkp` only runs on Linux systems at least as new as
+yours. For a public release, build it with `make gs-steamrt-game-cook-pack`
+instead, which runs on any distribution from about 2020 on and on Steam Deck.
+It needs podman or docker. [Building for every Linux
+distribution](steam-runtime.md) explains the difference and how to set it up.
+
 <details>
 <summary>What a player's computer needs</summary>
 
@@ -77,8 +85,9 @@ If the game can't find `assets.pak` next to it, it refuses to start and says so.
   for development.
 - **Linux:** nothing else. The C++ runtime is built into the game. The one
   exception is the system C library (glibc): it must be at least as new as the
-  one on the machine you built on. Building on an older, stable distribution
-  reaches more players.
+  one the game was built against. A game built with `make gsgkp` needs your
+  own distribution's; one built with `make gs-steamrt-game-cook-pack` needs
+  glibc 2.31, which every distribution from 2020 on has.
 - **Windows:** players may need the Microsoft Visual C++ Redistributable
   installed.
 - **A writable game folder.** The game saves `options.json`, logs and crash
