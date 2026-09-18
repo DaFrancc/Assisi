@@ -27,4 +27,14 @@ std::expected<std::vector<std::byte>, AssetError> LooseFileProvider::Open(AssetI
     return AssetSystem::ReadBinary(*path);
 }
 
+std::expected<AssetId, AssetError> LooseFileProvider::Resolve(std::string_view vpath) const
+{
+    const std::optional<AssetId> id = _database->IdFor(vpath);
+    if (!id.has_value())
+    {
+        return std::unexpected(AssetError::UnknownAssetId);
+    }
+    return *id;
+}
+
 } // namespace Assisi::Core

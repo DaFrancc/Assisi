@@ -8,7 +8,7 @@
 /// when asked and discarded. Every case here is really a test of that — a member
 /// destroyed on its own simply is not found next time, a pruned entity keeps
 /// living and stops being reachable, and a loose neighbour is never touched
-/// because it was never in the answer (docs/blueprint-system-concept.md §7).
+/// because it was never in the answer.
 
 #include <doctest/doctest.h>
 
@@ -67,6 +67,28 @@ nlohmann::json CarFile()
                           {"Parent", {{"parent", "body"}}}}}}})}};
 }
 
+/// A character with a camera parented to it — the shape a player blueprint has.
+///
+/// Named `walker`, not `player`: a case-insensitive filesystem would have a
+/// fixture called `player.abp` collide with the real `Player.abp` asset, and the
+/// failure would land on Windows only.
+nlohmann::json WalkerFile()
+{
+    return {{"version", 2},
+        {"entities",
+         nlohmann::json::array(
+             {{{"name", "walker"},
+                 {"components",
+                  {{"Transform",
+                      {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                      {"CharacterDescriptor", {{"walkSpeed", 5.f}}}}}},
+                 {{"name", "eye"},
+                     {"components",
+                      {{"Transform",
+                          {{"position", {0.f, 1.5f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                          {"Parent", {{"parent", "walker"}}}}}}})}};
+}
+
 int32_t TaggedCount(ECS::Scene &scene, ECS::InstanceId instanceId)
 {
     int32_t count = 0;
@@ -107,6 +129,40 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
     CHECK(App::FindInstance(world, ECS::InstanceId{999}) == nullptr);
 
     CHECK(App::FindMember(world, *id, "nothing") == ECS::NullEntity);
+}
+
+TEST_CASE("Verbs: spawning a blueprint holding a character builds the controller")
+{
+    // The spawn path used to build rigid bodies and only rigid bodies, so a
+    // player blueprint arrived with its descriptor and no controller — present,
+    // authored correctly, and unable to move for the rest of the level.
+    const std::filesystem::path root = FreshRoot("character");
+    Write(root, "walker.abp", WalkerFile());
+
+    App::WorldManager worlds;
+    App::World &world = worlds.Create("Test");
+
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "walker.abp", {});
+    REQUIRE(id.has_value());
+
+    ECS::Entity walker = ECS::NullEntity;
+    for (auto [entity, descriptor] : world.scene.Query<Physics::CharacterDescriptor>())
+    {
+        (void)descriptor;
+        walker = entity;
+    }
+    REQUIRE(walker != ECS::NullEntity);
+
+    // The controller exists, and the entity did not also acquire a rigid body —
+    // a character owns one internally, and a second would collide with its own.
+    CHECK(world.scene.Get<Physics::Character>(walker) != nullptr);
+    CHECK(world.scene.Get<Physics::RigidBody>(walker) == nullptr);
+
+    // And it is really in the simulation: a ray from above finds it and can name
+    // the entity behind it.
+    const auto hit = world.physics.CastRay({0.f, 5.f, 0.f}, {0.f, -10.f, 0.f}, {}, ECS::NullEntity);
+    REQUIRE(hit.has_value());
+    CHECK(hit->entity == walker);
 }
 
 TEST_CASE("Verbs: a failed spawn leaves nothing")
@@ -168,7 +224,8 @@ TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components
     constexpr Physics::PhysicsWorld::ColliderShapeDesc kBall{.shape = Physics::ColliderShape::Sphere,
                                                              .radius = 0.25f};
     const Physics::RigidBody probe =
-        world.physics.AddBody({0.f, 3.f, 0.f}, glm::quat(1.f, 0.f, 0.f, 0.f), kBall, Physics::BodyMotion::Dynamic);
+        world.physics.AddBody(Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {0.f, 3.f, 0.f}}, kBall,
+                              Physics::BodyMotion::Dynamic, {});
 
     for (int32_t i = 0; i < 180; ++i)
         world.physics.Update(kStep);

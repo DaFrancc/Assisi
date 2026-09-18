@@ -70,6 +70,26 @@ public:
     /// the same sphere/AABB tests as IntersectsSphere/IntersectsAabb.
     [[nodiscard]] const std::array<glm::vec4, 6> &Planes() const { return _planes; }
 
+    /// @brief The same frustum with nothing in front of it — the near plane
+    /// pushed out until it rejects nothing.
+    ///
+    /// What a shadow view needs, and only a shadow view. A camera's near plane
+    /// removes geometry the viewer cannot see; a shadow view's would remove
+    /// geometry between the light and everything it shades, which is the one
+    /// thing that must not be removed. A caster nearer the light than the slice
+    /// still darkens it, and the depth pass flattens such a caster onto the near
+    /// plane rather than clipping it — so culling it here deletes a shadow the
+    /// rasterizer was built to keep.
+    [[nodiscard]] Frustum WithoutNearPlane() const
+    {
+        Frustum open = *this;
+        // A zero normal makes the test `0 + d < -radius`, which for a positive d
+        // is false for every sphere and box: the plane stops rejecting rather
+        // than moving somewhere it could still reject from.
+        open._planes[4] = glm::vec4(0.f, 0.f, 0.f, 1.f);
+        return open;
+    }
+
 private:
     std::array<glm::vec4, 6> _planes{};
 };

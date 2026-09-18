@@ -5,6 +5,7 @@
 /// @brief Error codes used throughout the Assisi::Core asset pipeline.
 
 #include <cstdint>
+#include <string_view>
 
 namespace Assisi::Core
 {
@@ -19,6 +20,11 @@ enum class AssetError : std::uint8_t
     FileOpenFailed,     ///< The file exists but could not be opened.
     FileReadFailed,     ///< The file was opened but reading its contents failed.
     FileWriteFailed,    ///< The file could not be created or written (writable user root).
-    UnknownAssetId      ///< An AssetProvider was asked for an id it does not serve.
+    UnknownAssetId,     ///< An AssetProvider was asked for an id it does not serve.
+    UnsupportedEncoding, ///< A pak slice is encrypted, uses a codec, or lives in an archive, this build cannot read.
+    CorruptArchive,     ///< A pak's header, index or slice does not read as the format says it should.
 };
+
+/// @brief A short human-readable description, for a log line.
+[[nodiscard]] std::string_view ToString(AssetError error) noexcept;
 } // namespace Assisi::Core

@@ -2,7 +2,7 @@
 
 /// Tests for App::WorldManager — the invariants the rest of the app relies on:
 /// stable addresses, deterministic iteration, and roles that cannot be
-/// destroyed out from under their holders. See docs/multi-scene-design-notes.md.
+/// destroyed out from under their holders.
 
 #include <doctest/doctest.h>
 
@@ -24,6 +24,7 @@
 #include <vector>
 
 #include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/TestSystems.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -40,6 +41,8 @@
 #include "LogCapture.hpp"
 
 using namespace Assisi::App;
+
+using Assisi::App::Test::StartContext;
 
 TEST_CASE("WorldManager generates unique names from the label")
 {
@@ -149,7 +152,7 @@ std::size_t ThreadCount()
 TEST_CASE("Resident worlds share one physics thread pool")
 {
     // The multi-scene rule: N worlds must not mean N Jolt thread pools, each
-    // sized to the machine (docs/multi-scene-design-notes.md §1). Measured
+    // sized to the machine. Measured
     // rather than asserted structurally, because the sharing lives inside
     // PhysicsWorld's private impl.
     // Sampled here because it has to be read before the first world exists, but
@@ -215,8 +218,8 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     transform->position = {0.f, 10.f, 0.f};
 
     const Assisi::Physics::RigidBody body = world.physics.AddBody(
-        {0.f, 10.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
-        Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic);
+        Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 10.f, 0.f}},
+        Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic, {});
     REQUIRE(world.scene.Add<Assisi::Physics::RigidBody>(entity, body) != nullptr);
 
     constexpr float kStep = 1.f / 60.f;
@@ -257,9 +260,10 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
                                const Assisi::ECS::Entity entity = world.scene.Create();
                                world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
                                const Assisi::Physics::RigidBody body =
-                                   world.physics.AddBody(at, glm::quat{1.f, 0.f, 0.f, 0.f},
-                                                         Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
-                                                         Assisi::Physics::BodyMotion::Dynamic);
+                                   world.physics.AddBody(
+                                       Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, at},
+                                       Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
+                                       Assisi::Physics::BodyMotion::Dynamic, {});
                                (void)world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
                                return entity;
                            };
@@ -268,9 +272,9 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     const Assisi::ECS::Entity b = spawnBody(caught, {0.f, 5.f, 0.f});
 
     // Only the second world has ground under it.
-    caught.physics.AddBody({0.f, 0.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+    caught.physics.AddBody(Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}},
                            Assisi::Physics::PhysicsWorld::ColliderShapeDesc{.halfExtents = {50.f, 0.5f, 50.f}},
-                           Assisi::Physics::BodyMotion::Static);
+                           Assisi::Physics::BodyMotion::Static, {});
 
     falling.simulate = true;
     caught.simulate  = true;
@@ -362,7 +366,12 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
     CHECK(worlds.Edited() == &authored);
 
     // --- a travel that fails -------------------------------------------------
+    // The log has to say which of the refusals this was. "Travel failed" alone
+    // reads the same whether the file is absent, malformed, or a version this
+    // build does not read, and those are three different repairs.
+    const Assisi::Tests::LogCapture log;
     CHECK(worlds.LoadLevel("levels/DoesNotExist.alvl") == nullptr);
+    CHECK(log.Mentions(Assisi::Runtime::Describe(Assisi::Runtime::LevelError::FileUnreadable)));
     CHECK(worlds.Active() == inA2); // still playing exactly where we were
     CHECK(worlds.Count() == 2u);    // no half-created world left behind
 
@@ -531,7 +540,7 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
     Assisi::Core::JobSystem jobs;
 
     WorldManager worlds;
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
     worlds.SetEdited(start);
@@ -539,9 +548,9 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
 
     // A live dynamic body in the running world, so its Update() does real solver
     // work (island builder, temp allocator) concurrently with the worker's build.
-    (void)start.physics.AddBody({0.f, 20.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+    (void)start.physics.AddBody(Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 20.f, 0.f}},
                                 Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
-                                Assisi::Physics::BodyMotion::Dynamic);
+                                Assisi::Physics::BodyMotion::Dynamic, {});
 
     World *const loading = worlds.BeginLoadLevel("levels/Big.alvl");
     REQUIRE(loading != nullptr);
@@ -610,7 +619,7 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
 
     Assisi::Core::JobSystem jobs;
     WorldManager worlds;
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
     worlds.SetEdited(start);
@@ -650,7 +659,7 @@ TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
 }
 
 // ---------------------------------------------------------------------------
-// Systems (docs/blueprint-system-concept.md §8)
+// Systems
 //
 // A level names the systems it wants; ASYSTEM declarations reach the catalog by
 // being linked. The cases below use the ones in support/TestSystems.hpp.
@@ -766,6 +775,25 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     CHECK(Runs(world, "Follower") == 1);
 }
 
+TEST_CASE("A render system's after/before survives the install")
+{
+    Assisi::App::Test::RunOrder::Instance().Reset();
+
+    WorldManager worlds;
+    World &world = worlds.Create("RenderOrdered");
+
+    // Named the wrong way round, as the Update pair above is: DrawLate declares
+    // `after = DrawEarly`, so the list cannot reorder them. Render systems install
+    // through RegisterRender rather than Register, which is a second path the
+    // constraint has to survive.
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"DrawLate", "DrawEarly"}, "(test)"));
+
+    world.systems.RunRender(RenderContext{world.scene, 0.016f, glm::mat4(1.f), glm::mat4(1.f)});
+
+    CHECK(Assisi::App::Test::RunOrder::Instance().Names() ==
+          std::vector<std::string>{"DrawEarly", "DrawLate"});
+}
+
 TEST_CASE("Re-applying a list replaces the previous systems rather than stacking them")
 {
     Assisi::Core::EventQueue events;
@@ -806,7 +834,7 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
 
     // The survivor is still owed exactly its own install, and draining it is not
     // a walk over anything the dead world could still be in.
-    DrainSystemInstalls(survivor);
+    DrainSystemInstalls(StartContext(survivor));
     CHECK(survivor.systems.Has("Follower"));
     CHECK_FALSE(survivor.systems.Has("Counter"));
     CHECK(survivor.pendingSystems.names.empty());
@@ -831,7 +859,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     REQUIRE(worlds.ApplySystems(world, {}, "levels/New.alvl"));
     CHECK(world.pendingSystems.names.empty());
 
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
     CHECK_FALSE(world.systems.Has("Counter"));
     CHECK_FALSE(world.systems.Has("Follower"));
     TickUpdate(world, events);
@@ -853,7 +881,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
 
     CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Nonexistent"}, "levels/Bad.alvl"));
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
 
     CHECK(world.systems.Has("Counter"));
     CHECK(world.systems.Has("Follower"));
@@ -878,9 +906,9 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     // The first spawn to open the queue owns the diagnostic.
     CHECK(world.pendingSystems.context == "car.abp");
 
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
     CHECK(world.pendingSystems.names.empty());
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
 
     Assisi::Core::EventQueue events;
     TickUpdate(world, events);

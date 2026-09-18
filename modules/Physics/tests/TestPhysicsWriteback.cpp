@@ -42,7 +42,8 @@ ECS::Entity SpawnSimulatedBody(ECS::Scene &scene, Physics::PhysicsWorld &world, 
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, ECS::Transform{.position = position}) != nullptr);
 
-    const Physics::RigidBody body = world.AddBody(position, glm::quat(1.f, 0.f, 0.f, 0.f), kBall, motion);
+    const Physics::RigidBody body =
+        world.AddBody(Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), position}, kBall, motion, {});
     REQUIRE(scene.Add(e, body) != nullptr);
 
     // Two steps: CaptureState retires the previous snapshot each time, so after two

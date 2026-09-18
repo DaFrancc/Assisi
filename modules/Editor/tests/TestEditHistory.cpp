@@ -24,6 +24,7 @@ using Runtime::Camera;
 using Runtime::Parent;
 using Runtime::SceneSerializer;
 using Runtime::Transform;
+using Assisi::Editor::AssetDelta;
 using Assisi::Editor::ComponentDelta;
 using Assisi::Editor::ComponentSnapshot;
 using Assisi::Editor::EditHistory;
@@ -79,6 +80,65 @@ struct RebindLog
     std::vector<Call> calls;
 };
 } // namespace
+
+TEST_CASE("EditHistory: an asset edit replays through the apply hook, both ways")
+{
+    // An AssetDelta belongs to no entity, so it cannot replay through the scene
+    // the way every other command does — the hook is the whole mechanism, and a
+    // history that pushed one but never called it would look like a working undo
+    // that silently changes nothing.
+    Scene scene;
+    EditHistory hist(scene);
+
+    struct Applied
+    {
+        std::string typeName;
+        std::string path;
+        nlohmann::json state;
+    };
+    std::vector<Applied> log;
+    hist.SetAssetApplyHook([&log](std::string_view typeName, const Core::AssetPath &path,
+                                  const nlohmann::json &state)
+                           { log.push_back({std::string{typeName}, std::string{path.View()}, state}); });
+
+    Transaction txn;
+    txn.label = "Edit crate";
+    txn.cmds.push_back(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
+                                  nlohmann::json{{"RoughnessFactor", 0.25}},
+                                  nlohmann::json{{"RoughnessFactor", 0.75}}});
+    hist.Push(std::move(txn));
+
+    REQUIRE(log.empty()); // pushing is not applying
+    REQUIRE(hist.CanUndo());
+
+    hist.Undo();
+    REQUIRE(log.size() == 1);
+    CHECK(log[0].typeName == "MaterialData");
+    CHECK(log[0].path == "materials/crate.amat");
+    CHECK(log[0].state.at("RoughnessFactor").get<double>() == doctest::Approx(0.25));
+
+    hist.Redo();
+    REQUIRE(log.size() == 2);
+    CHECK(log[1].state.at("RoughnessFactor").get<double>() == doctest::Approx(0.75));
+}
+
+TEST_CASE("EditHistory: an asset edit with no apply hook installed is a safe no-op")
+{
+    // A history with no panel behind it (a test, a headless host) still has to
+    // replay the transaction without reaching through an empty std::function.
+    Scene scene;
+    EditHistory hist(scene);
+
+    Transaction txn;
+    txn.label = "Edit crate";
+    txn.cmds.push_back(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
+                                  nlohmann::json::object(), nlohmann::json::object()});
+    hist.Push(std::move(txn));
+
+    hist.Undo();
+    hist.Redo();
+    CHECK(hist.CanUndo());
+}
 
 TEST_CASE("EditHistory: field-edit transaction undoes and redoes a value")
 {

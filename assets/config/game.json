@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "type": "AppConfig",
+  "physicsHz": 60.0,
+  "clearColor": [0.15, 0.15, 0.18, 1.0],
+  "width": 1280,
+  "height": 720,
+  "keepLogs": 5,
+  "keepDumps": 5,
+  "title": "Assisi Sandbox",
+  "startupScene": "levels/Test.alvl",
+  "simulateFrom": "Begin"
+}

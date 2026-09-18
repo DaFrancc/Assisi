@@ -7,8 +7,7 @@
 /// the other side as the **same entity** — same slot, same generation. That is not a
 /// nicety. The editor's undo stack stores exact handles and Scene::ReviveAt is only
 /// valid for a free slot, so a re-expansion that recreated its members would leave
-/// every earlier transaction pointing at a slot something else now occupies
-/// (docs/blueprint-implementation-plan.md, stage 5d).
+/// every earlier transaction pointing at a slot something else now occupies.
 ///
 /// The rest of these cases pin what falls out of that: what a deleted member reports,
 /// what an added one gets, that the instance's own record survives an edit to the

@@ -134,7 +134,7 @@ FileSink::FileSink(const std::filesystem::path &path) : _file(path, std::ios::tr
     // console sink and cannot recurse into this one.
     if (!_file.is_open())
     {
-        Log::Warn("FileSink: could not open {} — this run will leave no log file.", path.string());
+        Log::Warn("FileSink: could not open {} - this run will leave no log file.", path.string());
     }
 }
 

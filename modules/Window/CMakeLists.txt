@@ -5,12 +5,14 @@ target_sources(Assisi-Window
   PUBLIC
     "include/Assisi/Window/ActionMap.hpp"
     "include/Assisi/Window/GlfwLibrary.hpp"
+    "include/Assisi/Window/InputBindings.hpp"
     "include/Assisi/Window/InputContext.hpp"
     "include/Assisi/Window/Key.hpp"
     "include/Assisi/Window/WindowContext.hpp"
   PRIVATE
     "src/ActionMap.cpp"
     "src/GlfwLibrary.cpp"
+    "src/InputBindings.cpp"
     "src/InputContext.cpp"
     "src/WindowContext.cpp"
 )
@@ -26,6 +28,16 @@ target_link_libraries(Assisi-Window
     Assisi::Deps
   PRIVATE
     nlohmann_json::nlohmann_json
+)
+
+# InputBindings is an AASSET: reflectgen emits its AssetTypeRegistry
+# registration, which is what reads config/input.json. The generated OBJECT
+# library inherits Window's include paths (and Core -> nlohmann_json)
+# transitively.
+assisi_reflect(
+  TARGET Assisi-Window
+  HEADERS
+    include/Assisi/Window/InputBindings.hpp
 )
 
 add_library(Assisi::Window ALIAS Assisi-Window)

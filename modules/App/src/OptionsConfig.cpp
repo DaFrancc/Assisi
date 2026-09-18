@@ -4,20 +4,27 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
+#include <typeindex>
+#include <utility>
 
 namespace Assisi::App
 {
 
 static Render::AaMode AaModeFromString(const std::string &str)
 {
-    if (str == "msaa")       return Render::AaMode::MSAA;
-    if (str == "fxaa")       return Render::AaMode::FXAA;
-    if (str == "msaa+fxaa")  return Render::AaMode::MSAA_FXAA;
+    if (str == "msaa")
+        return Render::AaMode::MSAA;
+    if (str == "fxaa")
+        return Render::AaMode::FXAA;
+    if (str == "msaa+fxaa")
+        return Render::AaMode::MSAA_FXAA;
     return Render::AaMode::None;
 }
 
@@ -25,28 +32,133 @@ static const char *AaModeToString(Render::AaMode mode)
 {
     switch (mode)
     {
-    case Render::AaMode::MSAA:      return "msaa";
-    case Render::AaMode::FXAA:      return "fxaa";
-    case Render::AaMode::MSAA_FXAA: return "msaa+fxaa";
-    default:                        return "none";
+    case Render::AaMode::MSAA:
+        return "msaa";
+    case Render::AaMode::FXAA:
+        return "fxaa";
+    case Render::AaMode::MSAA_FXAA:
+        return "msaa+fxaa";
+    default:
+        return "none";
     }
 }
 
-OptionsConfig OptionsConfig::LoadFromJson()
+static Render::TonemapOperator TonemapOperatorFromString(const std::string &str)
+{
+    if (str == "aces")
+        return Render::TonemapOperator::Aces;
+    if (str == "reinhard")
+        return Render::TonemapOperator::Reinhard;
+    return Render::TonemapOperator::AgX;
+}
+
+static const char *TonemapOperatorToString(Render::TonemapOperator op)
+{
+    switch (op)
+    {
+    case Render::TonemapOperator::Aces:
+        return "aces";
+    case Render::TonemapOperator::Reinhard:
+        return "reinhard";
+    default:
+        return "agx";
+    }
+}
+
+static Render::ShadowFilter ShadowFilterFromString(const std::string &str)
+{
+    if (str == "point")
+        return Render::ShadowFilter::Point;
+    if (str == "pcf5x5")
+        return Render::ShadowFilter::Pcf5x5;
+    if (str == "vogel")
+        return Render::ShadowFilter::Vogel;
+    return Render::ShadowFilter::Pcf3x3;
+}
+
+static const char *ShadowFilterToString(Render::ShadowFilter filter)
+{
+    switch (filter)
+    {
+    case Render::ShadowFilter::Point:
+        return "point";
+    case Render::ShadowFilter::Pcf5x5:
+        return "pcf5x5";
+    case Render::ShadowFilter::Vogel:
+        return "vogel";
+    default:
+        return "pcf3x3";
+    }
+}
+
+static Render::ShadowPcss ShadowPcssFromString(const std::string &str)
+{
+    if (str == "sun")
+        return Render::ShadowPcss::Sun;
+    if (str == "sunAndLocals")
+        return Render::ShadowPcss::SunAndLocals;
+    return Render::ShadowPcss::Off;
+}
+
+static const char *ShadowPcssToString(Render::ShadowPcss pcss)
+{
+    switch (pcss)
+    {
+    case Render::ShadowPcss::Sun:
+        return "sun";
+    case Render::ShadowPcss::SunAndLocals:
+        return "sunAndLocals";
+    default:
+        return "off";
+    }
+}
+
+static Render::ShadowMapFormat ShadowFormatFromString(const std::string &str)
+{
+    return str == "d16" ? Render::ShadowMapFormat::D16 : Render::ShadowMapFormat::D32;
+}
+
+static const char *ShadowFormatToString(Render::ShadowMapFormat format)
+{
+    return format == Render::ShadowMapFormat::D16 ? "d16" : "d32";
+}
+
+/// @brief Reads @p key into @p field when the object has it, and leaves the
+/// default when it does not.
+///
+/// A missing key is the normal case — options.json only ever holds what someone
+/// changed — so absence is not an error. A key of the wrong type throws, which
+/// the caller's handler turns into one warning and a whole-file fallback; that
+/// is deliberate, since a file that has been mangled badly enough to have a
+/// string where a float goes is not one to trust field by field.
+template <typename T> void ReadField(const nlohmann::json &json, const char *key, T &field)
+{
+    if (const auto entry = json.find(key); entry != json.end())
+    {
+        field = entry->get<T>();
+    }
+}
+
+/// @brief The same, for a field stored as a string and mapped by @p parse.
+///
+/// Each parse function falls back to its own default for an unrecognised
+/// string, so a typo costs that one field rather than the file.
+template <typename T, typename Parse>
+void ReadMapped(const nlohmann::json &json, const char *key, T &field, Parse parse)
+{
+    if (const auto entry = json.find(key); entry != json.end())
+    {
+        field = parse(entry->get<std::string>());
+    }
+}
+
+OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
 {
     OptionsConfig cfg;
 
-    // options.json is per-user writable state, so it lives under the user root
-    // (see SaveToJson), not the read-only asset root.
-    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
-    if (!text)
-    {
-        return cfg;
-    }
-
     try
     {
-        const nlohmann::json json = nlohmann::json::parse(*text);
+        const nlohmann::json json = nlohmann::json::parse(text);
 
         if (json.contains("antiAliasing"))
         {
@@ -62,6 +174,127 @@ OptionsConfig OptionsConfig::LoadFromJson()
                 {
                     cfg.msaaSamples = samples;
                 }
+            }
+        }
+
+        if (json.contains("toneMap"))
+        {
+            const auto &tm = json.at("toneMap");
+            ReadMapped(tm, "operator", cfg.tonemap.op, TonemapOperatorFromString);
+            ReadField(tm, "exposureStops", cfg.tonemap.exposureStops);
+            ReadField(tm, "contrast", cfg.tonemap.contrast);
+            ReadField(tm, "saturation", cfg.tonemap.saturation);
+            // Whatever the file said, the shader only ever sees values in range.
+            cfg.tonemap = Render::Sanitized(cfg.tonemap);
+        }
+
+        if (json.contains("shadows"))
+        {
+            const auto &sh = json.at("shadows");
+            Render::ShadowSettings &shadows = cfg.shadows;
+            ReadMapped(sh, "pcss", shadows.pcss, ShadowPcssFromString);
+            if (sh.contains("sun"))
+            {
+                const auto &sun = sh.at("sun");
+                ReadField(sun, "enabled", shadows.sun.enabled);
+                ReadField(sun, "cascades", shadows.sun.cascadeCount);
+                ReadField(sun, "resolution", shadows.sun.resolution);
+                ReadMapped(sun, "format", shadows.sun.format, ShadowFormatFromString);
+                ReadField(sun, "maxDistance", shadows.sun.maxDistance);
+                ReadField(sun, "splitLambda", shadows.sun.splitLambda);
+                ReadMapped(sun, "filter", shadows.sun.filter, ShadowFilterFromString);
+                ReadField(sun, "depthBiasTexels", shadows.sun.depthBiasTexels);
+                ReadField(sun, "slopeBias", shadows.sun.slopeBias);
+                ReadField(sun, "normalOffsetTexels", shadows.sun.normalOffsetTexels);
+                ReadField(sun, "cascadeBlend", shadows.sun.cascadeBlend);
+                if (sun.contains("cadence"))
+                {
+                    const auto &cadence = sun.at("cadence");
+                    ReadField(cadence, "enabled", shadows.sun.cadence.enabled);
+                    ReadField(cadence, "driftTexels", shadows.sun.cadence.driftTexels);
+                }
+            }
+            if (sh.contains("local"))
+            {
+                const auto &local = sh.at("local");
+                ReadField(local, "enabled", shadows.local.enabled);
+                ReadField(local, "atlasResolution", shadows.local.atlasResolution);
+                ReadMapped(local, "format", shadows.local.format, ShadowFormatFromString);
+                ReadField(local, "faceResolution", shadows.local.faceResolution);
+                ReadMapped(local, "filter", shadows.local.filter, ShadowFilterFromString);
+                ReadField(local, "depthBiasTexels", shadows.local.depthBiasTexels);
+                ReadField(local, "slopeBias", shadows.local.slopeBias);
+                ReadField(local, "normalOffsetTexels", shadows.local.normalOffsetTexels);
+                ReadField(local, "sourceRadius", shadows.local.sourceRadius);
+                if (local.contains("cache"))
+                {
+                    const auto &cache = local.at("cache");
+                    ReadField(cache, "enabled", shadows.local.cache.enabled);
+                    ReadField(cache, "updateBudgetFaces", shadows.local.cache.updateBudgetFaces);
+                    ReadField(cache, "promoteStillFrames", shadows.local.cache.promoteStillFrames);
+                    ReadField(cache, "movingLightUpdateDivisor", shadows.local.cache.movingLightUpdateDivisor);
+                }
+            }
+            if (sh.contains("selection"))
+            {
+                const auto &selection = sh.at("selection");
+                ReadField(selection, "capEnabled", shadows.selection.capEnabled);
+                ReadField(selection, "capSpot", shadows.selection.capSpot);
+                ReadField(selection, "capPoint", shadows.selection.capPoint);
+                ReadField(selection, "capHysteresis", shadows.selection.capHysteresis);
+                ReadField(selection, "classHysteresis", shadows.selection.classHysteresis);
+            }
+            // Whatever the file said, nothing downstream sees an out-of-range
+            // value — and here that is a texture allocation, not only a shader.
+            shadows = Render::Sanitized(shadows);
+        }
+
+        if (json.contains("environment"))
+        {
+            const auto &environment = json.at("environment");
+            ReadField(environment, "enabled", cfg.environment.enabled);
+            ReadField(environment, "resolution", cfg.environment.resolution);
+            ReadField(environment, "samples", cfg.environment.sampleCount);
+            ReadField(environment, "rebakeDegrees", cfg.environment.rebakeDegrees);
+            cfg.environment = Render::Sanitized(cfg.environment);
+        }
+
+        if (json.contains("ambientOcclusion"))
+        {
+            const auto &occlusion = json.at("ambientOcclusion");
+            ReadField(occlusion, "enabled", cfg.ambientOcclusion.enabled);
+            ReadField(occlusion, "samples", cfg.ambientOcclusion.sampleCount);
+            ReadField(occlusion, "radius", cfg.ambientOcclusion.radius);
+            ReadField(occlusion, "strength", cfg.ambientOcclusion.strength);
+            cfg.ambientOcclusion = Render::Sanitized(cfg.ambientOcclusion);
+        }
+
+        if (json.contains("window"))
+        {
+            const auto &window = json.at("window");
+            // Present means chosen. A size absent here is not "0" or "default"
+            // written out — it is the player never having picked one, which is
+            // what lets the shipped default keep moving under them.
+            if (window.contains("width"))
+            {
+                cfg.width = window.at("width").get<int32_t>();
+            }
+            if (window.contains("height"))
+            {
+                cfg.height = window.at("height").get<int32_t>();
+            }
+        }
+
+        if (json.contains("input"))
+        {
+            // Through the registry rather than by hand: the bindings are a
+            // reflected type, and a second reader here would be a second schema
+            // to keep in step with config/input.json.
+            const Core::Reflect::AssetTypeMeta *meta =
+                Core::Reflect::AssetTypeRegistry::Instance().Find(std::type_index(typeid(Window::InputBindings)));
+            if (meta != nullptr)
+            {
+                meta->deserialize(json.at("input"), &cfg.bindings);
             }
         }
 
@@ -87,21 +320,197 @@ OptionsConfig OptionsConfig::LoadFromJson()
     }
     catch (const nlohmann::json::exception &e)
     {
-        Core::Log::Warn("Failed to parse options.json: {} — using defaults.", e.what());
+        Core::Log::Warn("Failed to parse options.json: {} - using defaults.", e.what());
     }
 
     return cfg;
 }
 
+OptionsConfig OptionsConfig::LoadFromJson()
+{
+    // options.json is per-user writable state, so it lives under the user root
+    // (see SaveToJson), not the read-only asset root.
+    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
+    if (!text)
+    {
+        return OptionsConfig{};
+    }
+    return FromJsonText(*text);
+}
+
+namespace
+{
+/// @brief Every setting in @p options, defaults included.
+nlohmann::json FullJson(const OptionsConfig &options);
+
+/// Decimal places a saved float keeps. Finer than any slider can be set by hand,
+/// and coarse enough that dragging one back to its default lands on it.
+constexpr double kSavedFloatScale = 1e4;
+
+/// @brief @p json with every floating-point number rounded to
+/// kSavedFloatScale, recursively.
+nlohmann::json RoundFloats(nlohmann::json json)
+{
+    if (json.is_number_float())
+    {
+        return std::round(json.get<double>() * kSavedFloatScale) / kSavedFloatScale;
+    }
+    if (json.is_structured())
+    {
+        for (nlohmann::json &child : json)
+        {
+            child = RoundFloats(std::move(child));
+        }
+    }
+    return json;
+}
+
+/// @brief The keys of @p value that differ from @p defaults, recursively, with
+/// objects left empty by that dropped.
+nlohmann::json ChangedFrom(const nlohmann::json &value, const nlohmann::json &defaults)
+{
+    nlohmann::json changed = nlohmann::json::object();
+    for (auto entry = value.begin(); entry != value.end(); ++entry)
+    {
+        const auto fallback = defaults.find(entry.key());
+        if (fallback == defaults.end())
+        {
+            changed[entry.key()] = entry.value();
+        }
+        else if (entry->is_object() && fallback->is_object())
+        {
+            nlohmann::json nested = ChangedFrom(*entry, *fallback);
+            if (!nested.empty())
+            {
+                changed[entry.key()] = std::move(nested);
+            }
+        }
+        // Both sides are already rounded (see RoundFloats), so a value a slider
+        // left within rounding of its default compares equal to it.
+        else if (*entry != *fallback)
+        {
+            changed[entry.key()] = entry.value();
+        }
+    }
+    return changed;
+}
+} // namespace
+
+std::string OptionsConfig::ToJsonText() const
+{
+    // Only what differs from the defaults. A value written out at its default
+    // would pin it: a later change to the default would never reach this user.
+    return ChangedFrom(RoundFloats(FullJson(*this)), RoundFloats(FullJson(OptionsConfig{}))).dump(4);
+}
+
+namespace
+{
+nlohmann::json FullJson(const OptionsConfig &options)
+{
+    const Render::AaMode aaMode = options.aaMode;
+    const int32_t msaaSamples = options.msaaSamples;
+    const Render::TonemapSettings &tonemap = options.tonemap;
+    const Render::ShadowSettings &shadows = options.shadows;
+    const Render::EnvironmentSettings &environment = options.environment;
+    const Render::SsaoSettings &ambientOcclusion = options.ambientOcclusion;
+    const FrameSyncMode frameSync = options.frameSync;
+    const std::int16_t fpsLimit = options.fpsLimit;
+
+    nlohmann::json json;
+    json["antiAliasing"]["mode"] = AaModeToString(aaMode);
+    json["antiAliasing"]["msaaSamples"] = msaaSamples;
+    json["toneMap"]["operator"] = TonemapOperatorToString(tonemap.op);
+    json["toneMap"]["exposureStops"] = tonemap.exposureStops;
+    json["toneMap"]["contrast"] = tonemap.contrast;
+    json["toneMap"]["saturation"] = tonemap.saturation;
+
+    json["shadows"]["pcss"] = ShadowPcssToString(shadows.pcss);
+
+    nlohmann::json &sun = json["shadows"]["sun"];
+    sun["enabled"] = shadows.sun.enabled;
+    sun["cascades"] = shadows.sun.cascadeCount;
+    sun["resolution"] = shadows.sun.resolution;
+    sun["format"] = ShadowFormatToString(shadows.sun.format);
+    sun["maxDistance"] = shadows.sun.maxDistance;
+    sun["splitLambda"] = shadows.sun.splitLambda;
+    sun["filter"] = ShadowFilterToString(shadows.sun.filter);
+    sun["depthBiasTexels"] = shadows.sun.depthBiasTexels;
+    sun["slopeBias"] = shadows.sun.slopeBias;
+    sun["normalOffsetTexels"] = shadows.sun.normalOffsetTexels;
+    sun["cascadeBlend"] = shadows.sun.cascadeBlend;
+    sun["cadence"]["enabled"] = shadows.sun.cadence.enabled;
+    sun["cadence"]["driftTexels"] = shadows.sun.cadence.driftTexels;
+
+    nlohmann::json &local = json["shadows"]["local"];
+    local["enabled"] = shadows.local.enabled;
+    local["atlasResolution"] = shadows.local.atlasResolution;
+    local["format"] = ShadowFormatToString(shadows.local.format);
+    local["faceResolution"] = shadows.local.faceResolution;
+    local["filter"] = ShadowFilterToString(shadows.local.filter);
+    local["depthBiasTexels"] = shadows.local.depthBiasTexels;
+    local["slopeBias"] = shadows.local.slopeBias;
+    local["normalOffsetTexels"] = shadows.local.normalOffsetTexels;
+    local["sourceRadius"] = shadows.local.sourceRadius;
+
+    nlohmann::json &cache = json["shadows"]["local"]["cache"];
+    cache["enabled"] = shadows.local.cache.enabled;
+    cache["updateBudgetFaces"] = shadows.local.cache.updateBudgetFaces;
+    cache["promoteStillFrames"] = shadows.local.cache.promoteStillFrames;
+    cache["movingLightUpdateDivisor"] = shadows.local.cache.movingLightUpdateDivisor;
+
+    nlohmann::json &selection = json["shadows"]["selection"];
+    selection["capEnabled"] = shadows.selection.capEnabled;
+    selection["capSpot"] = shadows.selection.capSpot;
+    selection["capPoint"] = shadows.selection.capPoint;
+    selection["capHysteresis"] = shadows.selection.capHysteresis;
+    selection["classHysteresis"] = shadows.selection.classHysteresis;
+
+    nlohmann::json &probe = json["environment"];
+    probe["enabled"] = environment.enabled;
+    probe["resolution"] = environment.resolution;
+    probe["samples"] = environment.sampleCount;
+    probe["rebakeDegrees"] = environment.rebakeDegrees;
+
+    nlohmann::json &occlusion = json["ambientOcclusion"];
+    occlusion["enabled"] = ambientOcclusion.enabled;
+    occlusion["samples"] = ambientOcclusion.sampleCount;
+    occlusion["radius"] = ambientOcclusion.radius;
+    occlusion["strength"] = ambientOcclusion.strength;
+
+    json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
+    json["frameSync"]["fpsLimit"] = fpsLimit;
+
+    // Guarded because there is nothing to write when the player has chosen no
+    // size, not to keep the file clean — ChangedFrom already drops a value that
+    // matches the default document. Absence is the meaning here: no size stored
+    // is what lets the shipped default keep moving under the player.
+    if (options.width)
+    {
+        json["window"]["width"] = *options.width;
+    }
+    if (options.height)
+    {
+        json["window"]["height"] = *options.height;
+    }
+
+    // Same: nothing rebound is nothing to write.
+    if (!options.bindings.actions.empty())
+    {
+        const Core::Reflect::AssetTypeMeta *meta =
+            Core::Reflect::AssetTypeRegistry::Instance().Find(std::type_index(typeid(Window::InputBindings)));
+        if (meta != nullptr)
+        {
+            json["input"] = meta->serialize(&options.bindings);
+        }
+    }
+
+    return json;
+}
+} // namespace
+
 void OptionsConfig::SaveToJson() const
 {
-    nlohmann::json json;
-    json["antiAliasing"]["mode"]        = AaModeToString(aaMode);
-    json["antiAliasing"]["msaaSamples"] = msaaSamples;
-    json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
-    json["frameSync"]["fpsLimit"]       = fpsLimit;
-
-    const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", json.dump(4));
+    const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", ToJsonText());
     if (!result)
     {
         Core::Log::Warn("Could not write options.json (asset error {}).", static_cast<int32_t>(result.error()));

@@ -4,38 +4,78 @@ Assisi_apply_defaults(Assisi-Render)
 target_sources(Assisi-Render
   PUBLIC
     "include/Assisi/Render/AssetCache.hpp"
+    "include/Assisi/Render/AssetSource.hpp"
     "include/Assisi/Render/Buffer.hpp"
+    "include/Assisi/Render/Celestial.hpp"
     "include/Assisi/Render/DrawItem.hpp"
+    "include/Assisi/Render/EnvironmentSettings.hpp"
+    "include/Assisi/Render/FrameCapture.hpp"
     "include/Assisi/Render/Frustum.hpp"
+    "include/Assisi/Render/GpuLayout.hpp"
     "include/Assisi/Render/GpuTelemetry.hpp"
+    "include/Assisi/Render/IndirectLighting.hpp"
+    "include/Assisi/Render/LocalShadowCache.hpp"
+    "include/Assisi/Render/LocalShadowPass.hpp"
     "include/Assisi/Render/Material.hpp"
-    "include/Assisi/Render/LinePass.hpp"
     "include/Assisi/Render/MeshBuffer.hpp"
     "include/Assisi/Render/MeshCuller.hpp"
     "include/Assisi/Render/MeshPass.hpp"
     "include/Assisi/Render/PostProcess.hpp"
     "include/Assisi/Render/RenderFrame.hpp"
     "include/Assisi/Render/RenderSystem.hpp"
+    "include/Assisi/Render/SceneDistancePass.hpp"
     "include/Assisi/Render/ShaderModule.hpp"
+    "include/Assisi/Render/ShadowAtlas.hpp"
+    "include/Assisi/Render/ShadowCadence.hpp"
+    "include/Assisi/Render/ShadowCascades.hpp"
+    "include/Assisi/Render/ShadowDepthRenderer.hpp"
+    "include/Assisi/Render/ShadowDiagnostics.hpp"
+    "include/Assisi/Render/ShadowImportance.hpp"
+    "include/Assisi/Render/ShadowPass.hpp"
+    "include/Assisi/Render/ShadowSettings.hpp"
+    "include/Assisi/Render/ShadowView.hpp"
+    "include/Assisi/Render/Sky.hpp"
+    "include/Assisi/Render/SkyPass.hpp"
+    "include/Assisi/Render/SkyProbe.hpp"
+    "include/Assisi/Render/SkyProbeInputs.hpp"
+    "include/Assisi/Render/SpecularIbl.hpp"
+    "include/Assisi/Render/Ssao.hpp"
+    "include/Assisi/Render/SsaoPass.hpp"
+    "include/Assisi/Render/SsaoSettings.hpp"
     "include/Assisi/Render/Texture.hpp"
+    "include/Assisi/Render/Tonemap.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
     "include/Assisi/Render/ClusterGrid.hpp"
     "include/Assisi/Render/Vulkan/VulkanContext.hpp"
   PRIVATE
     "src/AssetCache.cpp"
+    "src/AssetSource.cpp"
     "src/ShaderModule.cpp"
     "src/ClusterGrid.cpp"
     "src/ComputeShader.cpp"
     "src/Buffer.cpp"
+    "src/LocalShadowCache.cpp"
+    "src/LocalShadowPass.cpp"
     "src/Material.cpp"
     "src/MeshCuller.cpp"
+    "src/FrameCapture.cpp"
     "src/Frustum.cpp"
+    "src/GpuMarker.cpp"
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
-    "src/OutlinePass.cpp"
-    "src/IconPass.cpp"
-    "src/LinePass.cpp"
     "src/PostProcess.cpp"
+    "src/SceneDistancePass.cpp"
+    "src/ShadowAtlas.cpp"
+    "src/ShadowCadence.cpp"
+    "src/ShadowCascades.cpp"
+    "src/ShadowDepthRenderer.cpp"
+    "src/ShadowDiagnostics.cpp"
+    "src/ShadowImportance.cpp"
+    "src/ShadowPass.cpp"
+    "src/ShadowView.cpp"
+    "src/SkyPass.cpp"
+    "src/SkyProbe.cpp"
+    "src/SsaoPass.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )
@@ -51,6 +91,9 @@ target_link_libraries(Assisi-Render
     Assisi::Math
     # Geometry owns MeshData (exposed in MeshBuffer's API) and the mesh importer.
     Assisi::Geometry
+    # Image owns DecodedImage and the layout arithmetic, both of which Texture's
+    # API exposes; the codecs behind them stay private to that module.
+    Assisi::Image
     Assisi::Window
     Assisi::Deps
     # nvrhi_vk (Vulkan backend) references symbols defined in nvrhi (common),
@@ -62,9 +105,6 @@ target_link_libraries(Assisi-Render
     # GpuTelemetry dlopen()s NVML at runtime; dl is needed on Linux (no-op alias
     # on platforms that fold it into libc).
     ${CMAKE_DL_LIBS}
-    # WebP decode (Texture::DecodeAnimatedWebp). webpdemux pulls in the base
-    # `webp` decoder it depends on, so listing it alone is enough.
-    webpdemux
 )
 
 # PUBLIC for the same reason Chiara's gate is: GpuMarker.hpp is header-only, so
@@ -75,3 +115,7 @@ if (ASSISI_ENABLE_GPU_MARKERS)
 endif()
 
 add_library(Assisi::Render ALIAS Assisi-Render)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -49,8 +50,39 @@ enum class FieldType : std::uint8_t
     /// String would truncate it. Appended rather than inserted, so no existing
     /// value shifts.
     EntityName,
+    /// Math::Color3 / Math::Color4 — linear RGB(A). Identical to Vec3/Vec4 in
+    /// memory and in every codec; separate types so an editor offers a colour
+    /// picker for a colour and drag boxes for a direction, without a per-field
+    /// hint that could be attached to the wrong vector. Appended rather than
+    /// inserted, so no existing value shifts.
+    Color3,
+    Color4,
     Unknown,
+    /// The narrow integers, appended after Unknown rather than beside their
+    /// wider siblings so no existing value shifts. Reading these back at the
+    /// wrong width would not fail — it would write over the neighbouring field.
+    Int8,
+    UInt8,
+    Int16,
+    UInt16,
+    /// A `std::vector` of primitives, or of one container of them. The element
+    /// type — and, for a nested element, its own container shape — lives on the
+    /// FieldMeta's `container` descriptor rather than in this enumerator, so a new
+    /// element type costs no value here.
+    Vector,
+    /// A `std::map` or `std::unordered_map`. Key and element types live on
+    /// `container` for the same reason. Encoding sorts by key whatever order the
+    /// container itself iterates in.
+    Map,
+    /// Number of field types, for a table indexed by FieldType.
+    ///
+    /// Safe to move, unlike every enumerator above it: nothing serializes this and
+    /// the protocol names types through FieldTypeName's strings rather than these
+    /// values, so appending a type shifts only this.
+    Count,
 };
+
+struct ContainerSpec;
 
 /// @brief One enumerator of a reflected `enum class` (FieldType::Enum).
 ///
@@ -72,11 +104,29 @@ enum class RadioBehavior : std::uint8_t
     Vanish, ///< Hide the field entirely while inactive.
 };
 
+// Every member carries a default initializer, the empty ones included, and that
+// is load-bearing rather than tidiness: reflectgen writes a FieldMeta with
+// designated initializers and names only the members an annotation asked for, and
+// -Wmissing-field-initializers objects to an omitted member that has no default of
+// its own. So a member added here without one breaks every generated file at once.
 struct FieldMeta
 {
-    std::string name;
+    std::string name{};
     FieldType type      = FieldType::Unknown;
     std::size_t offset    = 0;
+
+    /// @brief Shape of a `Vector` or `Map` field: its key and element types, the
+    /// operations that reach its storage, and the same again for a nested element.
+    /// Null for every other field type.
+    ///
+    /// Points at a static-storage descriptor built from the field's C++ type, so
+    /// copying a FieldMeta copies a pointer to something that outlives it.
+    ///
+    /// `enumSize` / `enumSigned` / `enumConstants` below describe the *leaf*
+    /// element when it is an enum, at whatever depth it sits. One slot is enough
+    /// because a key is never an enum.
+    const ContainerSpec *container = nullptr;
+
     bool transient = false;        ///< If true, excluded from serialization.
 
     /// @brief AFIELD(norep): saved to disk, never sent over the network.
@@ -98,12 +148,38 @@ struct FieldMeta
     // negative). Hints only — serialization does not enforce them.
     bool hasMin   = false;  ///< True when AFIELD supplied min=...
     bool hasMax   = false;  ///< True when AFIELD supplied max=...
-    float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin.
-    float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax.
+    float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin and minField is empty.
+    float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax and maxField is empty.
 
-    // Populated only for FieldType::Enum: the enumerators to offer in an editor,
-    // in declaration order. Empty for every other field type.
-    std::vector<EnumConstant> enumConstants;
+    /// A sibling numeric field this bound is read from instead of minValue /
+    /// maxValue, named by AFIELD(min = otherField) / AFIELD(max = otherField).
+    /// Empty when the bound is a literal, which is the ordinary case.
+    ///
+    /// For the bounds one field of a component imposes on another: a spot light's
+    /// inner cone cannot open wider than its outer cone, and the number that caps
+    /// it is whatever the outer angle is at the time. A literal cannot say that —
+    /// any constant is either too small to allow legal values or too large to
+    /// exclude illegal ones.
+    ///
+    /// Resolution is one step and never recurses: the named field's own bounds are
+    /// not consulted. So two fields may name each other, and that pair means what
+    /// it reads as — neither may cross the other.
+    ///
+    /// **Never read these directly** — ResolveFieldBounds is what turns a FieldMeta
+    /// and an object into the numbers that apply. Reading minValue while minField
+    /// is set silently clamps to zero.
+    std::string minField{};
+    std::string maxField{};
+
+    // The enumerators to offer in an editor, in declaration order. Populated for
+    // a FieldType::Enum field, which holds one of them, and for an unsigned
+    // integer field annotated AFIELD(bitmask = ...), which holds a set of them —
+    // one bit per enumerator, at the enumerator's own value. `enumSize` tells the
+    // two apart: non-zero for the enum, zero for the bitmask. Empty otherwise.
+    //
+    // A trailing `Count` enumerator is absent: it counts the others rather than
+    // naming a value, so offering it would let an editor select it.
+    std::vector<EnumConstant> enumConstants{};
 
     // The enum's underlying storage, so an editor reads/writes the field at its
     // true width instead of assuming a 4-byte int (which would corrupt neighbours
@@ -122,8 +198,8 @@ struct FieldMeta
     // listeners hide unconditionally, so the editor resolves visibility by
     // walking radioSource up the chain (reflectgen rejects cycles). radioSource is
     // empty for every non-listener field.
-    std::string radioSource;                                        ///< Sibling enum field this field's visibility follows ("" = not a listener).
-    std::vector<std::int64_t> radioValues;                          ///< Enum values at which this field is active; meaningful when radioSource set.
+    std::string radioSource{};                                      ///< Sibling enum field this field's visibility follows ("" = not a listener).
+    std::vector<std::int64_t> radioValues{};                        ///< Enum values at which this field is active; meaningful when radioSource set.
     RadioBehavior radioBehavior = RadioBehavior::None;               ///< Editor treatment while inactive.
 
     /// @brief AFIELD(controlled): this message field must name an entity the
@@ -173,5 +249,64 @@ struct FieldMeta
     /// decode, so two builds differing only here still parse each other.
     bool subject = false;
 };
+
+/// @brief The bounds a field is held to right now: literals as written, and
+/// sibling-field bounds as whatever that sibling currently holds.
+///
+/// Doubles rather than floats because the widest bounded field is 64-bit, and a
+/// bound narrowed to float would move — outward for a max, which lets an illegal
+/// value through, and that is the direction that matters.
+struct FieldBounds
+{
+    bool hasMin = false;
+    bool hasMax = false;
+    double minValue = 0.0;
+    double maxValue = 0.0;
+};
+
+/// @brief Read @p field of @p object as a double, for any numeric FieldType.
+///
+/// False for every other type, leaving @p out untouched — a Vec3 or a string has
+/// no single number to be compared against a bound.
+[[nodiscard]] bool ReadNumericField(const FieldMeta &field, const void *object, double &out);
+
+/// @brief Write @p value into @p field of @p object, narrowed to the field's own
+/// type.
+///
+/// False for a non-numeric field, which is left untouched. The narrowing is the
+/// caller's business: a value outside the field's range is what a cast of it
+/// gives, not an error.
+bool WriteNumericField(const FieldMeta &field, void *object, double value);
+
+/// @brief What @p field's bounds actually are for this @p object.
+///
+/// The one way to read a bound. A bound naming a sibling is resolved against
+/// @p siblings — the field list of the component @p field belongs to — and a name
+/// that resolves to nothing, or to a field with no number in it, drops that bound
+/// rather than inventing one: reflectgen has already refused the annotations that
+/// could get here wrong, so the remaining case is a caller passing the wrong
+/// component's fields, and a bound of zero would be a quiet clamp to zero.
+[[nodiscard]] FieldBounds ResolveFieldBounds(const FieldMeta &field, std::span<const FieldMeta> siblings,
+                                             const void *object);
+
+/// @brief Pull every field bounded *by another field* back inside its range, and
+/// report whether anything moved.
+///
+/// What makes a named bound hold from both sides. Editing the field that caps
+/// another leaves that other one out of range, and a clamp applied only where the
+/// capped field is edited would never notice: dragging a spot light's outer cone
+/// down past its inner one is a legal edit to a field with no upper bound of its
+/// own. This is what drags the inner cone down with it.
+///
+/// Only fields whose bound *names* a sibling are touched. A literal bound cannot
+/// be invalidated by editing something else, so a value outside one came from a
+/// hand-edited file and is the author's to see rather than this function's to
+/// quietly rewrite.
+///
+/// Repeated until nothing moves, so a chain settles in one call, and capped at
+/// one pass per field so metadata describing something perverse cannot spin.
+/// A field holding NaN is left alone: it is not ordered against the bounds, so
+/// there is no direction to move it in.
+bool SettleDependentBounds(std::span<const FieldMeta> fields, void *object);
 
 } // namespace Assisi::Core::Reflect

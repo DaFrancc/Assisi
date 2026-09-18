@@ -67,7 +67,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     // returning a document indistinguishable from an empty level.
     if (s_rawContextScene != nullptr)
     {
-        Core::Log::Error("SceneSerializer: saving while a raw-entity context is active — every entity "
+        Core::Log::Error("SceneSerializer: saving while a raw-entity context is active - every entity "
                          "reference in this file will be written as a raw handle and will not load.");
     }
 
@@ -101,7 +101,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 
     if (instances == nullptr && scene.Query<ECS::BlueprintMember>().begin() != scene.Query<ECS::BlueprintMember>().end())
     {
-        Core::Log::Error("SceneSerializer: saving a scene with blueprint members but no instance table — the "
+        Core::Log::Error("SceneSerializer: saving a scene with blueprint members but no instance table - the "
                          "instances and their entities will both be missing from the file.");
     }
 
@@ -135,7 +135,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     {
         // The entity's `name` key already carries it; emitting it here as well would
         // put the same string in two places with no rule about which wins.
-        if (meta->name == "Name")
+        if (Core::Reflect::IsComponent<Name>(*meta))
             continue;
 
         meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)
@@ -482,7 +482,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
             {
                 // The hook logged the component, the field and the mismatch; this
                 // adds the entity, which it had no way to know.
-                Core::Log::Error("SceneSerializer: entity '{}' has an unreadable '{}' — the file is refused.",
+                Core::Log::Error("SceneSerializer: entity '{}' has an unreadable '{}' - the file is refused.",
                                  names[i], compName);
                 scene.Clear();
                 return refuse(LevelError::MalformedComponent);
@@ -505,7 +505,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         for (size_t i = 0; i < bad.size() && i < 8; ++i)
             list += (i == 0 ? "" : ", ") + bad[i];
         if (bad.size() > 8)
-            list += std::format(", … ({} more)", bad.size() - 8);
+            list += std::format(", ... ({} more)", bad.size() - 8);
 
         Core::Log::Error("SceneSerializer: {} entity reference(s) name an entity the file does not declare: {}.",
                          bad.size(), list);

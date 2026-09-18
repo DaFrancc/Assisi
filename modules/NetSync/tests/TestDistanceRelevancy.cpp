@@ -10,8 +10,6 @@
 /// (filtering here is a bandwidth tool, so a missing viewpoint must mean seeing
 /// everything, never seeing nothing), and the two escape classes that let an
 /// entity opt out of the whole mechanism in either direction.
-///
-/// See docs/replication-messaging-relevancy-plan-v1.md M2.
 
 #include <doctest/doctest.h>
 

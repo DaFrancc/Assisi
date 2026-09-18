@@ -3,7 +3,7 @@
 
 /// @file DrawItem.hpp
 /// @brief One drawable submesh instance + the key it sorts by — the mesh pass's
-///        producer/consumer seam (docs/mesh-material-architecture.md §5).
+///        producer/consumer seam.
 ///
 /// A runtime *producer* extracts one DrawItem per visible submesh (cull → LOD
 /// select → emit), sorts a span of them by `sortKey`, and hands that span to
@@ -23,6 +23,55 @@ namespace Assisi::Render
 class MeshBuffer;
 class Material;
 
+/// @brief Which mesh-pass pipeline records a draw — one per combination of the
+/// two pieces of per-draw state the pass cannot fold into a material row.
+///
+/// Masked draws need a pixel shader that can `discard`, and a shader that can
+/// discard costs its whole pipeline early depth rejection — so the cutout
+/// materials get their own pipelines rather than making every opaque draw pay.
+/// Double-sided draws need the rasterizer's cull mode off, which is pipeline
+/// state and not something a shader can vary.
+///
+/// The value is two bits: kMeshPipelineDoubleSidedBit and kMeshPipelineMaskedBit.
+/// Masked is the *high* bit so every opaque pipeline sorts before every masked
+/// one whatever their cull modes — this is the sort key's top field, so a sorted
+/// span arrives grouped into one run per pipeline, with the solid geometry laying
+/// its depth before any cutout is tested against it.
+enum class MeshPipeline : uint32_t
+{
+    Opaque            = 0,
+    OpaqueDoubleSided = 1,
+    Mask              = 2, ///< Its shader can discard.
+    MaskDoubleSided   = 3,
+};
+
+inline constexpr uint32_t kMeshPipelineDoubleSidedBit = 1u;
+inline constexpr uint32_t kMeshPipelineMaskedBit      = 2u;
+
+/// @brief How many pipelines MeshPipeline names — the size of every per-pipeline
+/// array. Extending the enum without extending this would silently index past one.
+inline constexpr uint32_t kMeshPipelineCount = 4;
+
+/// @brief The pipeline a draw with these two properties belongs in. The only
+/// place the mapping is written, so nothing can disagree about it.
+[[nodiscard]] inline constexpr MeshPipeline MeshPipelineFor(bool masked, bool doubleSided)
+{
+    return static_cast<MeshPipeline>((masked ? kMeshPipelineMaskedBit : 0u) |
+                                     (doubleSided ? kMeshPipelineDoubleSidedBit : 0u));
+}
+
+/// @brief Whether @p pipeline's shader carries the alpha-test discard.
+[[nodiscard]] inline constexpr bool MeshPipelineIsMasked(MeshPipeline pipeline)
+{
+    return (static_cast<uint32_t>(pipeline) & kMeshPipelineMaskedBit) != 0u;
+}
+
+/// @brief Whether @p pipeline rasterizes back faces.
+[[nodiscard]] inline constexpr bool MeshPipelineIsDoubleSided(MeshPipeline pipeline)
+{
+    return (static_cast<uint32_t>(pipeline) & kMeshPipelineDoubleSidedBit) != 0u;
+}
+
 /// @brief A single submesh of a single entity, ready to record. Non-owning:
 /// `mesh`/`material` point into the AssetCache and stay valid until it clears;
 /// `model` is the entity's world matrix (the MVP is derived in Submit).
@@ -31,17 +80,23 @@ struct DrawItem
     uint64_t sortKey      = 0;
     const MeshBuffer *mesh         = nullptr;
     uint32_t submeshIndex = 0;          ///< Index into mesh->SubMeshes().
+    /// Whether a shadow pass should draw this item. Sits in the padding after
+    /// `submeshIndex`, so carrying it costs nothing. It is not part of `sortKey`:
+    /// the main pass draws casters and non-casters alike, so splitting runs on it
+    /// would only break up material batches.
+    bool castsShadows = true;
     const Material *material     = nullptr;
     glm::mat4 model{1.f};
 };
 
 // --- Opaque sort key: [pipeline:8 | materialId:20 | meshId:20 | depth:16] ----
 //
-// Material-major then mesh-major keeps binding-set and vertex/index-buffer
-// changes to the run boundaries, and puts same-geometry draws adjacent so Submit
-// coalesces them into instanced commands; the low 16 depth bits break ties
-// front-to-back within a run for early-Z. The transparent pass will use a
-// separate depth-major key later (§5) — hence "opaque".
+// Pipeline-major first, so the pass binds each pipeline once and every masked
+// draw follows every opaque one. Material-major then mesh-major within that keeps
+// binding-set and vertex/index-buffer changes to the run boundaries, and puts
+// same-geometry draws adjacent so Submit coalesces them into instanced commands;
+// the low 16 depth bits break ties front-to-back within a run for early-Z. A
+// blended pass would need a separate depth-major key — hence "opaque".
 inline constexpr uint32_t kSortPipelineBits = 8;
 inline constexpr uint32_t kSortMaterialBits = 20;
 inline constexpr uint32_t kSortMeshBits     = 20;
@@ -55,15 +110,24 @@ inline constexpr uint32_t kSortMeshMax     = (1u << kSortMeshBits) - 1;     ///<
 /// their field widths (ids run to ~1M before aliasing — far past any real scene;
 /// the caller may assert before this if it wants to catch overflow). @p depth is
 /// a front-to-back-quantized view distance (see QuantizeDepthFrontToBack).
-[[nodiscard]] inline uint64_t MakeOpaqueSortKey(uint32_t pipeline, uint32_t materialId, uint32_t meshId,
+[[nodiscard]] inline uint64_t MakeOpaqueSortKey(MeshPipeline pipeline, uint32_t materialId, uint32_t meshId,
                                                 uint16_t depth)
 {
-    const uint64_t pipelineBits = static_cast<uint64_t>(pipeline & ((1u << kSortPipelineBits) - 1))
+    static_assert(kMeshPipelineCount <= (1u << kSortPipelineBits),
+                  "the pipeline field must hold every MeshPipeline, or two would sort as one");
+    const uint64_t pipelineBits = static_cast<uint64_t>(pipeline)
                                   << (kSortMaterialBits + kSortMeshBits + kSortDepthBits);
     const uint64_t materialBits = static_cast<uint64_t>(materialId & kSortMaterialMax)
                                   << (kSortMeshBits + kSortDepthBits);
     const uint64_t meshBits = static_cast<uint64_t>(meshId & kSortMeshMax) << kSortDepthBits;
     return pipelineBits | materialBits | meshBits | static_cast<uint64_t>(depth);
+}
+
+/// @brief The pipeline a sort key was packed with. Submit reads it back off the
+/// key to know which pipeline a run of draws needs.
+[[nodiscard]] inline MeshPipeline SortKeyPipeline(uint64_t sortKey)
+{
+    return static_cast<MeshPipeline>(sortKey >> (kSortMaterialBits + kSortMeshBits + kSortDepthBits));
 }
 
 /// @brief Quantize a positive view-space distance into the 16-bit depth field,

@@ -4,8 +4,14 @@
 add_executable(Assisi-Physics-Tests
   main.cpp
   TestBodyLifetime.cpp
+  TestCharacter.cpp
+  TestCharacterFeel.cpp
+  TestCollisionChannels.cpp
+  TestContactEvents.cpp
   TestParentedBodies.cpp
   TestPhysicsWriteback.cpp
+  TestTriggers.cpp
+  TestWorldQueries.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Physics-Tests)

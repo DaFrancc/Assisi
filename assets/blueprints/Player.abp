@@ -1,0 +1,86 @@
+{
+  "entities": [
+    {
+      "components": {
+        "CharacterDescriptor": {
+          "airAcceleration": 10.0,
+          "canBePushed": true,
+          "canPushBodies": true,
+          "collidesWith": 31,
+          "coyoteTime": 0.10000000149011612,
+          "crouchHalfHeight": 0.30000001192092896,
+          "crouchSpeedScale": 0.4000000059604645,
+          "gravityScale": 1.0,
+          "groundAcceleration": 60.0,
+          "halfHeight": 0.6000000238418579,
+          "jumpBufferTime": 0.15000000596046448,
+          "jumpSpeed": 6.0,
+          "mass": 70.0,
+          "maxSlopeDegrees": 50.0,
+          "maxStepHeight": 0.4000000059604645,
+          "pushStrength": 100.0,
+          "radius": 0.30000001192092896,
+          "walkSpeed": 5.0
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Player"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.10000000149011612
+        },
+        "Parent": {
+          "parent": "Player"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Camera"
+    }
+  ],
+  "systems": [
+    "CharacterMove",
+    "CharacterLook",
+    "CharacterState",
+    "CharacterInput"
+  ],
+  "version": 2
+}

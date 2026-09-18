@@ -2,14 +2,14 @@
 
 /// @file TestLevelSystemsPrecheck.cpp
 /// @brief The two checks standing between a level and its systems must reach the
-/// same verdict — ENG-126, the half of round-7 B20 that ENG-114 left open.
+/// same verdict.
 ///
 /// `LoadLevelFromPath` asks twice whether a level's systems can be installed.
 /// `LevelSystemsAreDeclared` asks *before* anything is touched, reading the names
 /// straight out of the file. `WorldManager::ApplySystems` asks again on the far
 /// side of the scene replacement, against the names `Load` parsed into the level
-/// header. ENG-114 made that late refusal survivable; it did not establish that
-/// it cannot fire, and only the early check can refuse cheaply — with the level
+/// header. An earlier fix made that late refusal survivable; it did not establish
+/// that it cannot fire, and only the early check can refuse cheaply — with the level
 /// on screen still the one that was there.
 ///
 /// The hazard is that these are two readers of one array, in two files. Let them
@@ -81,11 +81,11 @@ void WriteLevel(const std::filesystem::path &root, std::string_view name, const 
 struct Verdicts
 {
     /// The pre-check, and the list it reached it from.
-    bool                     precheck = false;
+    bool precheck = false;
     std::vector<std::string> precheckNames;
 
     /// ApplySystems over the header Load filled, and the list *it* saw.
-    bool                     applied = false;
+    bool applied = false;
     std::vector<std::string> headerNames;
 };
 
@@ -100,13 +100,13 @@ Verdicts RunBothChecks(std::string_view virtualPath)
     verdicts.precheckNames = *wanted;
     verdicts.precheck      = LevelSystemsAreDeclared(virtualPath);
 
-    LevelHeader        header;
+    LevelHeader header;
     Assisi::ECS::Scene scene;
     REQUIRE(SceneSerializer::LoadFromFile(scene, virtualPath, {.header = &header}).has_value());
     verdicts.headerNames = header.systems;
 
     WorldManager worlds;
-    World       &world = worlds.Create("Precheck");
+    World &world = worlds.Create("Precheck");
     verdicts.applied   = worlds.ApplySystems(world, header.systems, virtualPath);
 
     return verdicts;
@@ -153,8 +153,8 @@ TEST_CASE("The systems pre-check and ApplySystems agree on every shape of the ar
     {
         // The sharpest case. Two hand-written parsers diverge here first: one
         // skips the junk, the other coerces it, or refuses the file outright.
-        // Either way the pre-check would pass a file ApplySystems then rejects —
-        // ENG-126's window, entered without a single bad *name* in the file.
+        // Either way the pre-check would pass a file ApplySystems then rejects,
+        // entered without a single bad *name* in the file.
         WriteLevel(root, "Junk.alvl",
                    nlohmann::json::array({"Counter", 42, nullptr, nlohmann::json::object({{"a", 1}}),
                                           nlohmann::json::array({"Follower"})}));
@@ -209,12 +209,12 @@ TEST_CASE("A level the pre-check cleared installs exactly what it named")
 
     REQUIRE(LevelSystemsAreDeclared("levels/Runs.alvl"));
 
-    LevelHeader        header;
+    LevelHeader header;
     Assisi::ECS::Scene scene;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "levels/Runs.alvl", {.header = &header}).has_value());
 
     WorldManager worlds;
-    World       &world = worlds.Create("Runs");
+    World &world = worlds.Create("Runs");
     REQUIRE(worlds.ApplySystems(world, header.systems, "levels/Runs.alvl"));
 
     CHECK(world.systems.Has("Counter"));

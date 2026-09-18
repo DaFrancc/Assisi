@@ -15,7 +15,7 @@
 ///
 /// The sleep bit is *replicated state*, not a hint. It is sent on the transition
 /// and, like anything else, resent until acked — which is what makes "the server
-/// stopped talking about this body" safe. See docs/replication-plan-v4.md §3.3.
+/// stopped talking about this body" safe.
 
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -38,11 +38,10 @@ namespace Assisi::NetSync
 /// builds quantizing the same position over different ranges corrupt each other
 /// *silently*, which is the one failure mode a handshake exists to prevent.
 ///
-/// The defaults are the published state-synchronization shape
-/// (https://gafferongames.com/post/snapshot_compression/) fitted to a level-sized
-/// world: ~2 mm of position resolution over a ±256 m box, a smallest-three
-/// quaternion at 2+9+9+9 bits, and linear velocity at ~62 mm/s. Gaffer's own
-/// caution applies — state-sync extrapolation wants *finer* position
+/// The defaults are the published state-synchronization shape fitted to a
+/// level-sized world: ~2 mm of position resolution over a ±256 m box, a
+/// smallest-three quaternion at 2+9+9+9 bits, and linear velocity at ~62 mm/s.
+/// The usual caution applies — state-sync extrapolation wants *finer* position
 /// quantization than snapshot interpolation does — so these are a starting point
 /// to be moved against measured divergence, not a settled answer.
 struct BodyQuantization
@@ -81,8 +80,7 @@ struct BodyQuantization
 ///
 /// **Convergence is bounded in time, not by a per-frame rate**, and that is a
 /// correction to what shipped first. The published state-synchronization
-/// constants (0.95 per frame under 25 cm, 0.85 over 1 m —
-/// https://gafferongames.com/post/state_synchronization/) assume corrections are
+/// constants (0.95 per frame under 25 cm, 0.85 over 1 m) assume corrections are
 /// *occasional*. They are not always: any source of divergence that reappears
 /// every interval — a contact-rich pile, a bouncing body, a gameplay rule whose
 /// contact instant lands a physics step apart on the two machines — injects a
@@ -153,25 +151,6 @@ void SetSmoothing(const ViewSmoothing &smoothing);
 /// about bytes already in flight, and the hash they agreed on at handshake would
 /// no longer describe either of them.
 void SetQuantization(const BodyQuantization &quantization);
-
-/// @brief Apply the `networking` block of a game config, if it has one.
-///
-/// Absent keys keep their defaults and a malformed block warns and changes
-/// nothing — a config typo should not be able to make this build refuse to pair
-/// with every other one without saying why. Call once at startup.
-///
-/// Per-game rather than per-level, deliberately: a level-header form would be
-/// more precise (a small arena wants finer position quantization than an open
-/// world) and is more machinery, so it waits until a level actually needs it.
-void LoadQuantizationFromConfig(std::string_view configPath = "game.json");
-
-/// @brief Apply the `smoothing` block of a game config, if it has one. Same
-/// absent-keys-keep-defaults, malformed-block-warns contract as above.
-///
-/// Separate from the quantization loader because the two are separate kinds of
-/// thing: quantization is protocol and both ends must agree on it, smoothing is
-/// presentation and nobody else can tell.
-void LoadSmoothingFromConfig(std::string_view configPath = "game.json");
 
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState

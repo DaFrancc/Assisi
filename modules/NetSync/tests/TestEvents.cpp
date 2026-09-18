@@ -13,8 +13,6 @@
 /// Recipients are computed, never enumerated. That is a security property as
 /// much as a design one: an arbitrary per-call connection list is the API
 /// through which an event leaks exactly what state filtering withholds.
-///
-/// See docs/replication-messaging-relevancy-plan-v1.md M5.
 
 #include <doctest/doctest.h>
 

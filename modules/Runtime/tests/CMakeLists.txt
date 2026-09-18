@@ -6,13 +6,20 @@ add_executable(Assisi-Runtime-Tests
   TestBlueprintOverrides.cpp
   TestBlueprintPreparedForm.cpp
   TestBlueprintReexpand.cpp
+  TestCookedScene.cpp
   TestDrawItem.cpp
+  TestIndirectResolve.cpp
+  TestMaterialConstants.cpp
   TestMeshCuller.cpp
+  TestPerfScenes.cpp
   TestFrustum.cpp
   TestSceneSerializer.cpp
   TestHierarchy.cpp
   TestLifecycle.cpp
   TestLightingSystem.cpp
+  TestLodSelection.cpp
+  TestSkyResolve.cpp
+  TestTimeOfDay.cpp
   TestWireGating.cpp
 )
 

@@ -14,15 +14,16 @@ worse than a build error.
 The spelling is `replicable`, not `replicated`, and the difference is the whole
 point: the annotation grants a *capability* (this type has a wire form), while
 whether any given entity actually sends it is policy decided elsewhere — the
-Replicated marker's exclusion mask, and the game's neverReplicate list. See
-docs/replication-optin-plan-v1.md. The old spelling is rejected by name rather
+Replicated marker's exclusion mask, and the game's neverReplicate list. The old
+spelling is rejected by name rather
 than ignored, because "unknown flag" and "this flag changed meaning" are
 different problems for a reader to debug.
 """
 
-from typing import Optional
+import re
+from typing import NamedTuple, Optional
 
-from reflect_parser import FieldInfo, ComponentInfo, MessageInfo
+from reflect_parser import FieldInfo, ComponentInfo, MessageInfo, MAX_CONTAINER_DEPTH
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
                            _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
 
@@ -46,8 +47,30 @@ NUMERIC_BOUND_RANGES: dict[str, Optional[tuple[int, int]]] = {
 }
 
 
-def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen]) -> tuple[Optional[float], Optional[float]]:
+_IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
+class Bound(NamedTuple):
+    """One resolved AFIELD(min=) or AFIELD(max=).
+
+    Exactly one of the two is set: `value` for a literal, `field` for the name of
+    a sibling the bound is read from at the moment it is needed.
+    """
+    value: Optional[float] = None
+    field: Optional[str]   = None
+
+
+def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen],
+                     siblings: list) -> tuple[Optional[Bound], Optional[Bound]]:
     """Validate AFIELD(min=/max=) hints against the field's type.
+
+    A bound is a number, or the name of another numeric field of the same
+    struct — the case a literal cannot express, where the limit is whatever a
+    neighbouring field currently holds (a spot light's inner cone against its
+    outer). Deliberately no further: not another component's field, not an
+    expression, and not a type that has no single number in it, because each of
+    those needs a lookup the editor and the wire check cannot both do cheaply,
+    and a bound nobody enforces is worse than none.
 
     Everything wrong here is a hard generation error — a typo like
     AFIELD(min=O), a negative bound on an unsigned field, or a bound on a
@@ -65,13 +88,31 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen]) -> tuple[Optional[
 
     allowed = NUMERIC_BOUND_RANGES[tc.enum_value]
 
-    def parse(raw: Optional[str], key: str) -> Optional[float]:
+    def parse(raw: Optional[str], key: str) -> Optional[Bound]:
         if raw is None:
             return None
+
+        # A name is checked before a number, so `inf` and `nan` reach the
+        # "names no field" error rather than becoming a bound float() accepts
+        # and nothing downstream can compare against.
+        if _IDENTIFIER.match(raw):
+            if raw == f.name:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" bounds it by itself')
+            source = next((s for s in siblings if s.name == raw), None)
+            if source is None:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" names no field in the '
+                                 f'same struct; a bound may only follow a sibling field')
+            source_tc = _field_tc(source)
+            if source_tc is None or source_tc.enum_value not in NUMERIC_BOUND_RANGES:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" follows "{raw}", of type '
+                                 f'{source.cpp_type!r}, which holds no number to bound by')
+            return Bound(field=raw)
+
         try:
             value = float(raw)
         except ValueError:
-            raise ValueError(f'AFIELD({key}={raw!r}) on field "{f.name}" is not a number')
+            raise ValueError(f'AFIELD({key}={raw!r}) on field "{f.name}" is neither a number nor '
+                             f'the name of a sibling field')
         if allowed is not None:
             lo, hi = allowed
             if not value.is_integer():
@@ -80,86 +121,134 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen]) -> tuple[Optional[
             if not lo <= value <= hi:
                 raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" is outside '
                                  f'the supported {f.cpp_type} bound range [{lo}, {hi}]')
-        return value
+        return Bound(value=value)
 
-    vmin = parse(raw_min, 'min')
-    vmax = parse(raw_max, 'max')
-    if vmin is not None and vmax is not None and vmin > vmax:
-        raise ValueError(f'AFIELD on field "{f.name}": min={vmin:g} exceeds max={vmax:g}')
-    return vmin, vmax
+    bmin = parse(raw_min, 'min')
+    bmax = parse(raw_max, 'max')
+    # Only two literals can be compared here. A pair involving a sibling is a
+    # runtime question — and a pair naming *each other* is legal and means what it
+    # reads as, since resolution is one step and never consults the named field's
+    # own bounds.
+    if (bmin is not None and bmax is not None
+            and bmin.value is not None and bmax.value is not None
+            and bmin.value > bmax.value):
+        raise ValueError(f'AFIELD on field "{f.name}": min={bmin.value:g} exceeds max={bmax.value:g}')
+    return bmin, bmax
 
 
 def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
-    """The codegen for a field. An AENUM enum synthesizes one that (de)serializes
-    through its underlying integer (int64 on the wire, cast back to the enum);
-    every other type comes from the TYPES table. Returns None for an unsupported
-    type — the signal _check_unsupported turns into a hard error."""
+    """The codegen for a field. An AENUM enum synthesizes one that writes its
+    underlying integer and reads either that or an enumerator name; every other
+    type comes from the TYPES table. Returns None for an unsupported type — the
+    signal _check_unsupported turns into a hard error."""
     if f.enum_info is not None:
+        # Doubled braces: this text goes through .format() with the field name and
+        # accessor, which would otherwise read each pair as a placeholder.
+        names = ', '.join(f'{{{{ "{n}", {v} }}}}' for n, v in f.enum_info.constants)
         return TypeCodegen(
             'Enum',
             'static_cast<std::int64_t>({a})',
-            '{{ std::int64_t _n = static_cast<std::int64_t>({a}); '
-            'if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "{f}", _n)) return false; '
+            '{{ static constexpr Assisi::Core::Reflect::EnumName _names[] = {{' + names + '}}; '
+            'std::int64_t _n = static_cast<std::int64_t>({a}); '
+            'if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "{f}", _names, _n)) return false; '
             '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
+    if f.container is not None:
+        # One expression either way, whatever the element type or the depth: the
+        # templates in ContainerJson.hpp resolve it from the member's own type, so
+        # nothing per-element belongs in this table.
+        return TypeCodegen(
+            f.container.kind,
+            'Assisi::Core::Reflect::ContainerToJson({a})',
+            'if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "{f}", {a})) return false;')
     return TYPES.get(f.cpp_type)
 
 
-def _gen_field_meta(f: FieldInfo) -> str:
-    tc        = _field_tc(f)
-    ftype     = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
-    transient = 'true' if f.args.has('transient') else 'false'
-    norep     = 'true' if f.args.has('norep') else 'false'
-    vmin, vmax = _validate_bounds(f, tc)
+def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
+    """One FieldMeta initializer, with every member named.
 
-    bounds_active     = vmin is not None or vmax is not None
-    enum_active       = f.enum_info is not None
-    listener_active   = f.radio is not None and f.radio.source != ''
-    controlled_active = f.args.has('controlled')
-    subject_active    = f.args.has('subject')
+    Designated initializers rather than a positional list. FieldMeta has a member
+    per annotation the engine understands and most fields use none of them, so
+    positionally an ordinary field reads `false, false, 0.f, 0.f, "", "", {}, 0,
+    false` — nine values that say nothing about the field and cannot be checked
+    against anything without counting members in another file. Naming them also
+    decouples this from FieldMeta's member *order*: a new member appends one line
+    to the output of the fields that use it and leaves every other field alone.
 
-    # FieldMeta's trailing members are positional — bounds, then the enum block
-    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled,
-    # then subject — so emitting any block forces every *earlier* block to be
-    # emitted at its default. Blocks nobody needs are omitted, which keeps an
-    # unannotated field at the short, golden-stable initializer form.
-    tail: list[str] = []
+    Members are emitted in declaration order, which designated initializers
+    require, and only when they differ from FieldMeta's own default — so what is
+    written is exactly what the annotation asked for.
+    """
+    tc         = _field_tc(f)
+    ftype      = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
+    bmin, bmax = _validate_bounds(f, tc, siblings)
 
-    if bounds_active or enum_active or listener_active or controlled_active or subject_active:
-        has_min = 'true' if vmin is not None else 'false'
-        has_max = 'true' if vmax is not None else 'false'
-        min_v   = f'{vmin}f' if vmin is not None else '0.f'
-        max_v   = f'{vmax}f' if vmax is not None else '0.f'
-        tail += [has_min, has_max, min_v, max_v]
+    parts = [
+        f'.name = "{f.name}"',
+        f'.type = {ftype}',
+        f'.offset = offsetof(T, {f.name})',
+    ]
 
-    if enum_active or listener_active or controlled_active or subject_active:
-        if enum_active:
-            consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
-            tail.append(f'{{ {consts} }}')
-            tail.append(str(f.enum_info.size))
-            tail.append('true' if f.enum_info.is_signed else 'false')
-        else:
-            # Not an enum: empty enumConstants, size 0 (which marks "not an enum").
-            tail += ['{}', '0', 'false']
+    # The shape a container field is walked through, taken from the member's own
+    # C++ type so the descriptor cannot disagree with the declaration. Emitted in
+    # declaration order, which designated initializers require.
+    if f.container is not None:
+        parts.append(
+            f'.container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::{f.name})>()')
 
-    if listener_active or controlled_active or subject_active:
-        if listener_active:
-            values = ', '.join(str(v) for v in f.radio.values)
-            tail += [
-                f'"{f.radio.source}"',
-                f'{{ {values} }}',
-                f'Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}',
-            ]
-        else:
-            tail += ['""', '{}', 'Assisi::Core::Reflect::RadioBehavior::None']
+    if f.args.has('transient'):
+        parts.append('.transient = true')
+    if f.args.has('norep'):
+        parts.append('.norep = true')
 
-    if controlled_active or subject_active:
-        tail.append('true' if controlled_active else 'false')
+    # hasMin/hasMax say a bound exists; whether the literal or the field name
+    # carries it depends on how it was written. A named bound leaves the literal
+    # at zero, which is why nothing may read the literal without checking the name
+    # first — see Reflect::ResolveFieldBounds.
+    if bmin is not None:
+        parts.append('.hasMin = true')
+    if bmax is not None:
+        parts.append('.hasMax = true')
+    if bmin is not None and bmin.value is not None:
+        parts.append(f'.minValue = {bmin.value}f')
+    if bmax is not None and bmax.value is not None:
+        parts.append(f'.maxValue = {bmax.value}f')
+    if bmin is not None and bmin.field is not None:
+        parts.append(f'.minField = "{bmin.field}"')
+    if bmax is not None and bmax.field is not None:
+        parts.append(f'.maxField = "{bmax.field}"')
 
-    if subject_active:
-        tail.append('true')
+    # A container's enum metadata describes its *leaf* element, at whatever depth
+    # that sits — a `vector<Colour>` and a bare `Colour` carry the same table, so
+    # the editor and the protocol text read one without knowing which it has.
+    enum_source = f.enum_info if f.enum_info is not None else f.leaf_enum
+    if enum_source is not None:
+        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in enum_source.constants)
+        parts.append(f'.enumConstants = {{ {consts} }}')
+        # The width marks the field as an enum at all — zero means "not one" — so
+        # it is written even for the enum whose size matches the default int.
+        parts.append(f'.enumSize = {enum_source.size}')
+        if enum_source.is_signed:
+            parts.append('.enumSigned = true')
+    elif f.bitmask_info is not None:
+        # A bitmask carries its enumerators the same way an enum does, and leaves
+        # enumSize zero. That pair is what tells the two apart: an integer field
+        # with constants holds a set of them, one per bit at the enumerator's own
+        # value; a field with constants and a width holds exactly one.
+        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.bitmask_info.constants)
+        parts.append(f'.enumConstants = {{ {consts} }}')
 
-    base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
-    return base + ' }' if not tail else base + ', ' + ', '.join(tail) + ' }'
+    if f.radio is not None and f.radio.source != '':
+        values = ', '.join(str(v) for v in f.radio.values)
+        parts.append(f'.radioSource = "{f.radio.source}"')
+        parts.append(f'.radioValues = {{ {values} }}')
+        parts.append(f'.radioBehavior = Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}')
+
+    if f.args.has('controlled'):
+        parts.append('.controlled = true')
+    if f.args.has('subject'):
+        parts.append('.subject = true')
+
+    return '{ ' + ', '.join(parts) + ' }'
 
 
 def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
@@ -347,7 +436,7 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                 f"was renamed to 'replicable'. The flag grants a capability — this type *can* "
                 f"cross the wire — while whether a given entity sends it is policy, held by the "
                 f"Replicated marker's exclusion mask and the game's neverReplicate list. Write "
-                f"'replicable'. See docs/replication-optin-plan-v1.md.")
+                f"'replicable'.")
 
         if comp.args.has('replicable'):
             if comp.is_asset:
@@ -494,7 +583,7 @@ def _check_controlled_outside_messages(components: list, header_name: str) -> No
 
 def _gen_message_block(msg: MessageInfo) -> str:
     var_name    = f'_reflectgen_msg_{msg.name}'
-    field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
+    field_metas = ',\n            '.join(_gen_field_meta(f, msg.fields) for f in msg.fields)
     serialize   = _indent(_gen_message_serialize(msg.fields), 12)
     deserialize = _indent(_gen_message_deserialize(msg.fields, msg.name), 12)
 
@@ -576,7 +665,7 @@ struct MessageTraits<::{msg.fqn}>
 def _gen_asset_block(comp: ComponentInfo) -> str:
     fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
     var_name = f'_reflectgen_{comp.name}'
-    field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
+    field_metas = ',\n            '.join(_gen_field_meta(f, comp.fields) for f in comp.fields)
     serialize   = _indent(_gen_serialize(comp.fields), 12)
     deserialize = _indent(_gen_deserialize_asset(comp.fields, comp.name), 12)
 
@@ -599,6 +688,17 @@ static const bool {var_name} = []() -> bool
         [](const nlohmann::json& j, void* out_ptr)
         {{
 {deserialize}
+        }},
+        []() -> void*
+        {{
+            // nothrow, because a null return is the failure the caller already
+            // checks for, and a bad_alloc escaping generated code has nowhere
+            // to go.
+            return new (std::nothrow) T{{}};
+        }},
+        [](void* instance_ptr)
+        {{
+            delete static_cast<T*>(instance_ptr);
         }},
     }});
     return true;
@@ -745,6 +845,29 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         if not f.args.has('transient')
     )
 
+    # Container fields need the descriptor their FieldMeta points at and the
+    # templates their JSON goes through.
+    has_containers = any(
+        f.container is not None
+        for comp in [*components, *messages]
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
+    # A struct holding a std::map or std::unordered_map is not standard-layout,
+    # and offsetof on one is conditionally-supported rather than plain legal. GCC
+    # and Clang both support it and compute the right offset; they also warn, and
+    # this build treats warnings as errors. std::vector does not have the problem,
+    # which is why the AssetId vectors have never needed this.
+    has_maps = any(
+        f.container is not None and f.container.kind == 'Map'
+        for comp in [*components, *messages]
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
     # Includes are conditional on what the header actually declares. An
     # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
     # ComponentRegistry / ECS::Scene — its home module does not link ECS.
@@ -759,6 +882,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
             includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
+        # An asset type's construct hook allocates with std::nothrow.
+        includes.append('#include <new>')
     if messages:
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
     if handlers:
@@ -769,6 +894,9 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
         includes.append('#include <Assisi/Core/Reflect/ComponentMaskJson.hpp>')
+    if has_containers:
+        includes.append('#include <Assisi/Core/Reflect/ContainerJson.hpp>')
+        includes.append('#include <Assisi/Core/Reflect/ContainerOps.hpp>')
     if has_enums:
         includes.append('#include <cstdint>')
     includes.append(f'#include <{include_path}>')
@@ -782,13 +910,30 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
                 'namespace Assisi::Runtime { template <typename T> struct InstanceView; }\n'
                 ) if view_ban else ''
 
+    # A reflected map makes its owner non-standard-layout, and offsetof on such a
+    # type is conditionally-supported. Both compilers this builds with implement
+    # it and compute the right offset; the diagnostic is about portability to one
+    # that does not, and there is no such target here. Scoped to files that
+    # actually declare a map, so nothing else loses the warning.
+    # Guarded because MSVC does not know this pragma and warns that it does not —
+    # C4068, which this build promotes to an error like every other warning.
+    # Clang defines __GNUC__ too, so the one check covers both compilers that
+    # emit the diagnostic.
+    offsetof_push = ('\n#ifdef __GNUC__\n'
+                     '#pragma GCC diagnostic push\n'
+                     '#pragma GCC diagnostic ignored "-Winvalid-offsetof"\n'
+                     '#endif\n') if has_maps else ''
+    offsetof_pop  = ('\n#ifdef __GNUC__\n'
+                     '#pragma GCC diagnostic pop\n'
+                     '#endif\n') if has_maps else ''
+
     blocks = []
     blocks.append(f"""\
 // AUTO-GENERATED by reflectgen — do not edit.
 // Source: {include_path}
 
 {include_block}
-{view_fwd}
+{view_fwd}{offsetof_push}
 namespace
 {{
 {view_ban}""")
@@ -829,7 +974,7 @@ static const bool {var_name} = []() -> bool
 """)
             continue
 
-        field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
+        field_metas = ',\n            '.join(_gen_field_meta(f, comp.fields) for f in comp.fields)
         serialize   = _indent(_gen_serialize(comp.fields), 12)
         deserialize = _indent(_gen_deserialize(comp.fields, comp.name), 12)
 
@@ -908,6 +1053,8 @@ static const bool {var_name} = []() -> bool
     for system in systems:
         blocks.append('\n' + gen_system_registration(system))
 
+    blocks.append(offsetof_pop)
+
     return ''.join(blocks)
 
 
@@ -961,8 +1108,8 @@ def _check_no_instance_views(components: list[ComponentInfo], header_name: str) 
     component's fields entirely. Neither annotation is a way through here,
     because the problem is not that a view cannot be serialized — it is that a
     view *stored* anywhere is a member list that goes stale, which is the failure
-    the whole blueprint design is built to prevent
-    (docs/blueprint-system-concept.md §7). A view lives in the scope of the call
+    the whole blueprint design is built to prevent. A view lives in the scope of
+    the call
     that produced it; only the instance id may outlive it, and an ECS::InstanceId
     field is the supported way to say so.
 
@@ -989,6 +1136,100 @@ def _check_no_instance_views(components: list[ComponentInfo], header_name: str) 
                 f"and re-resolve with FindInstance<T> when you need the members.")
 
 
+# FieldTypes a container element may ultimately be. Containers themselves are
+# handled by the nesting rule; everything else is a value the codec and the JSON
+# templates both have a definition for.
+_CONTAINER_LEAF_TYPES = {
+    'Float', 'Double', 'Int8', 'UInt8', 'Int16', 'UInt16',
+    'Int32', 'UInt32', 'Int64', 'UInt64', 'Bool', 'String', 'EntityName',
+}
+
+# What may key a map. Narrower than the leaf set: a JSON object's keys are text,
+# so a key must have an exact text spelling to round-trip through.
+_CONTAINER_KEY_TYPES = {
+    'Int8', 'UInt8', 'Int16', 'UInt16', 'Int32', 'UInt32', 'Int64', 'UInt64',
+    'String', 'EntityName',
+}
+
+
+def _element_tc(spelling: str) -> Optional[TypeCodegen]:
+    """The codegen for a container's element or key spelling.
+
+    Accepts `std::int32_t` as well as the bare `int32_t` TYPES is keyed by. A
+    scalar field is written bare throughout the engine, but inside a container the
+    qualified form reads naturally and means the same type — and the C++ side
+    never sees either spelling, since the descriptor comes from decltype.
+    """
+    tc = TYPES.get(spelling)
+    if tc is not None:
+        return tc
+    if spelling.startswith('std::'):
+        return TYPES.get(spelling[len('std::'):])
+    return None
+
+
+def _check_container(f, owner: str, header_name: str) -> None:
+    """Refuses a container whose shape reflectgen cannot generate.
+
+    Every refusal names the field and the offending spelling, because the whole
+    value of default-deny is that the build says which declaration to change.
+    """
+    where = f"{header_name}: field '{owner}::{f.name}' ({f.cpp_type})"
+
+    if f.container.depth > MAX_CONTAINER_DEPTH:
+        raise ValueError(
+            f"{where} nests {f.container.depth} containers deep, and a reflected "
+            f"container nests at most {MAX_CONTAINER_DEPTH}. Flatten it, or hold the "
+            f"inner container in a reflected struct of its own.")
+
+    # Keys are checked at every level a map appears, not just the outer one.
+    shape = f.container
+    while shape is not None:
+        if shape.kind == 'Map':
+            key_tc = _element_tc(shape.key)
+            key_ok = key_tc is not None and key_tc.enum_value in _CONTAINER_KEY_TYPES
+            if not key_ok:
+                raise ValueError(
+                    f"{where} is keyed by '{shape.key}', which cannot key a reflected map. "
+                    f"A key becomes a JSON object's field name, so it must be an integer "
+                    f"width, Core::ShortString or Core::EntityName.")
+        inner = shape.element
+        shape = inner if hasattr(inner, 'kind') else None
+
+    leaf = f.container.leaf
+    if f.leaf_enum is not None:
+        return  # an AENUM element, encoded as its underlying integer
+
+    leaf_tc = _element_tc(leaf)
+    if leaf_tc is None or leaf_tc.enum_value not in _CONTAINER_LEAF_TYPES:
+        reason = UNSUPPORTED_TYPES.get(leaf, 'no codegen for this element type')
+        raise ValueError(
+            f"{where} holds elements of type '{leaf}' ({reason}). A reflected "
+            f"container holds integers, floats, bool, Core::ShortString, "
+            f"Core::EntityName, an AENUM enum, or one container of those.")
+
+
+# The inline-string capacities TYPES has a FieldType for. The binary codec reads
+# into the buffer by capacity, so each one it supports is a distinct field type
+# rather than a parameter; these are those.
+_REFLECTABLE_STRING_CAPACITIES = (32, 64)
+
+
+def _inline_string_reason(spelling: str) -> Optional[str]:
+    """Why this TrivialString capacity has no codegen, or None if it is not one.
+
+    A near miss reads as though it should work — the template is the same one the
+    supported capacities instantiate — so the refusal names the two that do
+    instead of leaving the generic "no codegen for this type".
+    """
+    bare = spelling.removeprefix('Assisi::').removeprefix('Core::')
+    if not bare.startswith('TrivialString'):
+        return None
+    supported = ' or '.join(f'TrivialString<{n}>' for n in _REFLECTABLE_STRING_CAPACITIES)
+    return (f'only {supported} have a field type — the binary codec reads into the '
+            f'buffer by capacity, so each supported width is its own type')
+
+
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
     """Default-deny: fail generation if any non-transient AFIELD has a type
     reflectgen cannot (de)serialize (i.e. absent from TYPES).
@@ -1004,8 +1245,13 @@ def _check_unsupported(components: list[ComponentInfo], header_name: str) -> Non
         for f in comp.fields:
             if f.args.has('transient'):
                 continue
+            if f.container is not None:
+                _check_container(f, comp.name, header_name)
+                continue
             if _field_tc(f) is None:
-                reason = UNSUPPORTED_TYPES.get(f.cpp_type, 'no codegen for this type')
+                reason = (UNSUPPORTED_TYPES.get(f.cpp_type)
+                          or _inline_string_reason(f.cpp_type)
+                          or 'no codegen for this type')
                 raise ValueError(
                     f"{header_name}: field '{comp.name}::{f.name}' has type "
                     f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "

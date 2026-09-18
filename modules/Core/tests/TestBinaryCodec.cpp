@@ -83,6 +83,10 @@ struct AllTypes
 {
     float floatValue  = 0.f;
     double doubleValue = 0.0;
+    std::int8_t int8Value    = 0;
+    std::uint8_t uint8Value   = 0;
+    std::int16_t int16Value   = 0;
+    std::uint16_t uint16Value  = 0;
     std::int32_t int32Value  = 0;
     std::uint32_t uint32Value = 0;
     std::int64_t int64Value  = 0;
@@ -108,6 +112,46 @@ struct AllTypes
     float notReplicated = 0.f; ///< transient: never on the wire.
 
     bool operator==(const AllTypes &) const = default;
+};
+
+/// Which field of AllTypes an index refers to, in the order MakeAllTypesMeta
+/// registers them.
+///
+/// The codec addresses fields by position — a change mask is one bit per
+/// non-transient field in declaration order — so tests have to name positions
+/// too. Spelled out here rather than written as literals at each use, because a
+/// field added in the middle silently renumbers every later one, and a test
+/// asserting on the wrong field usually still passes.
+///
+/// Only the non-transient fields get a bit, so `notReplicated` has no entry:
+/// it is registered last precisely so its absence shifts nothing.
+enum AllTypesField
+{
+    FloatValue,
+    DoubleValue,
+    Int8Value,
+    UInt8Value,
+    Int16Value,
+    UInt16Value,
+    Int32Value,
+    UInt32Value,
+    Int64Value,
+    UInt64Value,
+    BoolValue,
+    Vec2Value,
+    Vec3Value,
+    Vec4Value,
+    QuatValue,
+    Mat4Value,
+    ModeValue,
+    NameValue,
+    EntityNameValue,
+    TargetValue,
+    PathValue,
+    PathsValue,
+    AssetIdValue,
+    AssetIdsValue,
+    Count,
 };
 
 /// Byte offset of a member, without offsetof: AllTypes holds std::vectors, so it
@@ -185,6 +229,12 @@ ComponentMeta MakeAllTypesMeta()
 
     meta.fields.push_back(Field("floatValue", FieldType::Float, OffsetOf(&AllTypes::floatValue)));
     meta.fields.push_back(Field("doubleValue", FieldType::Double, OffsetOf(&AllTypes::doubleValue)));
+    meta.fields.push_back(Field("int8Value", FieldType::Int8, OffsetOf(&AllTypes::int8Value)));
+    meta.fields.push_back(Field("uint8Value", FieldType::UInt8, OffsetOf(&AllTypes::uint8Value)));
+    meta.fields.push_back(Field("int16Value", FieldType::Int16, OffsetOf(&AllTypes::int16Value)));
+    meta.fields.push_back(Field("uint16Value", FieldType::UInt16, OffsetOf(&AllTypes::uint16Value)));
+    // Order from here has to match AllTypesField. The assert at the end of this
+    // function is what refuses to let the two drift.
     meta.fields.push_back(Field("int32Value", FieldType::Int32, OffsetOf(&AllTypes::int32Value)));
     meta.fields.push_back(Field("uint32Value", FieldType::UInt32, OffsetOf(&AllTypes::uint32Value)));
     meta.fields.push_back(Field("int64Value", FieldType::Int64, OffsetOf(&AllTypes::int64Value)));
@@ -209,7 +259,15 @@ ComponentMeta MakeAllTypesMeta()
     meta.fields.push_back(Field("paths", FieldType::AssetPathVector, OffsetOf(&AllTypes::paths)));
     meta.fields.push_back(Field("assetId", FieldType::AssetId, OffsetOf(&AllTypes::assetId)));
     meta.fields.push_back(Field("assetIds", FieldType::AssetIdVector, OffsetOf(&AllTypes::assetIds)));
+    // Registered last and transient, so it takes no mask bit and every
+    // AllTypesField index above stays the codec's index for that field.
     meta.fields.push_back(Field("notReplicated", FieldType::Float, OffsetOf(&AllTypes::notReplicated), true));
+
+    // A field added to one list and not the other is the failure this catches:
+    // every index below would still compile, and would silently name its
+    // neighbour.
+    ASSISI_ASSERT(meta.fields.size() == static_cast<std::size_t>(AllTypesField::Count) + 1u,
+                  "AllTypesField must name every registered field except the transient one");
 
     return meta;
 }
@@ -222,6 +280,13 @@ AllTypes MakePopulated()
     AllTypes value;
     value.floatValue  = -3.5f;
     value.doubleValue = 1.0 / 3.0;
+    // The extremes of each narrow width, because the failure they are here to
+    // catch is a sign bit lost on the way back or a value read at the wrong
+    // width — and both look correct for any small positive number.
+    value.int8Value   = -128;
+    value.uint8Value  = 255u;
+    value.int16Value  = -32768;
+    value.uint16Value = 65535u;
     value.int32Value  = -2147483648;
     value.uint32Value = 4294967295u;
     value.int64Value  = -9007199254740993LL;
@@ -357,10 +422,13 @@ TEST_CASE("BinaryCodec: a partial mask patches only the named fields")
     const ComponentMeta meta   = MakeAllTypesMeta();
     const AllTypes source = MakePopulated();
 
-    // Bits are indexed over the *non-transient* fields in declaration order:
-    // 0 floatValue, 2 int32Value, 13 name, 17 paths.
-    const FieldMask mask = Assisi::Core::Reflect::FieldMaskBit(0) | Assisi::Core::Reflect::FieldMaskBit(2) |
-                           Assisi::Core::Reflect::FieldMaskBit(13) | Assisi::Core::Reflect::FieldMaskBit(17);
+    // Bits are indexed over the *non-transient* fields in declaration order.
+    // Four scattered ones, so a codec that walked the mask and the fields out of
+    // step would land on the wrong field rather than merely on fewer of them.
+    const FieldMask mask = Assisi::Core::Reflect::FieldMaskBit(AllTypesField::FloatValue) |
+                           Assisi::Core::Reflect::FieldMaskBit(AllTypesField::Int32Value) |
+                           Assisi::Core::Reflect::FieldMaskBit(AllTypesField::NameValue) |
+                           Assisi::Core::Reflect::FieldMaskBit(AllTypesField::PathsValue);
 
     AllTypes decoded;
     FieldMask applied = 0;
@@ -395,9 +463,10 @@ TEST_CASE("BinaryCodec: a partial mask over a populated destination overwrites o
     destination.uint32Value  = 222u;
     destination.name         = ShortString("stale");
 
-    // Send only floatValue (bit 0): the other two must keep the destination's
-    // values, not be reset to the source's or to zero.
-    REQUIRE(RoundTrip(meta, source, destination, Assisi::Core::Reflect::FieldMaskBit(0)));
+    // Send only floatValue: the other two must keep the destination's values,
+    // not be reset to the source's or to zero.
+    REQUIRE(RoundTrip(meta, source, destination,
+                      Assisi::Core::Reflect::FieldMaskBit(AllTypesField::FloatValue)));
 
     CHECK(destination.floatValue == doctest::Approx(source.floatValue));
     CHECK(destination.uint32Value == 222u);
@@ -553,16 +622,16 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
 
     SUBCASE("a renamed field") {
         CHECK(hashWith([](ComponentMeta &m) {
-            m.fields[0].name = "renamed";
+            m.fields[AllTypesField::FloatValue].name = "renamed";
         }) != base);
     }
     SUBCASE("a retyped field")
     {
-        CHECK(hashWith([](ComponentMeta &m) { m.fields[0].type = FieldType::UInt32; }) != base);
+        CHECK(hashWith([](ComponentMeta &m) { m.fields[AllTypesField::FloatValue].type = FieldType::UInt32; }) != base);
     }
     SUBCASE("a reordered field")
     {
-        CHECK(hashWith([](ComponentMeta &m) { std::swap(m.fields[0], m.fields[1]); }) != base);
+        CHECK(hashWith([](ComponentMeta &m) { std::swap(m.fields[AllTypesField::FloatValue], m.fields[AllTypesField::DoubleValue]); }) != base);
     }
     SUBCASE("a removed field")
     {
@@ -582,11 +651,11 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
     }
     SUBCASE("a field turning transient — the mask width changes")
     {
-        CHECK(hashWith([](ComponentMeta &m) { m.fields[1].transient = true; }) != base);
+        CHECK(hashWith([](ComponentMeta &m) { m.fields[AllTypesField::DoubleValue].transient = true; }) != base);
     }
     SUBCASE("a field turning norep — the mask width changes the same way")
     {
-        CHECK(hashWith([](ComponentMeta &m) { m.fields[1].norep = true; }) != base);
+        CHECK(hashWith([](ComponentMeta &m) { m.fields[AllTypesField::DoubleValue].norep = true; }) != base);
     }
     SUBCASE("a component that stops replicating")
     {
@@ -595,23 +664,14 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
         // simply exchange different component sets.
         CHECK(hashWith([](ComponentMeta &m) { m.replicable = false; }) != base);
     }
-    SUBCASE("a changed quantization bound — the silent-corruption case")
-    {
-        CHECK(hashWith(
-                  [](ComponentMeta &m)
-        {
-            m.fields[0].hasMax   = true;
-            m.fields[0].maxValue = 10.f;
-        }) != base);
-    }
     SUBCASE("a renumbered enumerator") {
         CHECK(hashWith([](ComponentMeta &m) {
-            m.fields[12].enumConstants[1].value = 8;
+            m.fields[AllTypesField::ModeValue].enumConstants[1].value = 8;
         }) != base);
     }
     SUBCASE("a narrower enum") {
         CHECK(hashWith([](ComponentMeta &m) {
-            m.fields[12].enumSize = 4;
+            m.fields[AllTypesField::ModeValue].enumSize = 4;
         }) != base);
     }
 }
@@ -624,7 +684,7 @@ TEST_CASE("BinaryCodec: the protocol hash ignores things the wire does not carry
     // Field offsets are local memory layout: two builds whose padding differs are
     // still wire-compatible, and rejecting them would be a false positive.
     std::array<ComponentMeta, 1> repadded{MakeAllTypesMeta()};
-    repadded[0].fields[0].offset += 64;
+    repadded[0].fields[AllTypesField::FloatValue].offset += 64;
     CHECK(ProtocolHash(repadded) == base);
 
     // A transient field is not on the wire, so adding or dropping one is not a
@@ -639,6 +699,15 @@ TEST_CASE("BinaryCodec: the protocol hash ignores things the wire does not carry
     std::array<ComponentMeta, 1> withNorep{MakeAllTypesMeta()};
     withNorep[0].fields.push_back(Field("serverOnly", FieldType::Int32, 0, false, true));
     CHECK(ProtocolHash(withNorep) == base);
+
+    // An AFIELD bound clamps what an inspector will accept; nothing encodes,
+    // decodes or validates against it. Two builds that disagree about a bound
+    // still exchange identical bytes, so tightening one while a server is up is
+    // not a protocol change.
+    std::array<ComponentMeta, 1> rebounded{MakeAllTypesMeta()};
+    rebounded[0].fields[AllTypesField::FloatValue].hasMax   = true;
+    rebounded[0].fields[AllTypesField::FloatValue].maxValue = 10.f;
+    CHECK(ProtocolHash(rebounded) == base);
 }
 
 TEST_CASE("BinaryCodec: a norep field occupies no mask bit and never leaves the sender")

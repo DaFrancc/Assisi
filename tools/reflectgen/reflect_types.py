@@ -55,6 +55,27 @@ _COMPONENT_MASK = TypeCodegen(
     '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Core::Reflect::DeserializeComponentMask(*_r); }}')
 
 
+# Shared codegen for the 32-byte inline string. Core::ShortString is an alias for
+# TrivialString<32>; both spellings name one C++ type, and the pair exists for
+# the same reason as the 64-byte pair below.
+_INLINE_STRING_32 = TypeCodegen(
+    'String',
+    'std::string({a}.View())',
+    '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}')
+
+
+# Shared codegen for the 64-byte inline string. Core::EntityName is an alias for
+# TrivialString<64>, so both spellings name one C++ type and decode identically;
+# the generator needs both because it matches on how the field was written, not
+# on what it resolves to. A field says which spelling it means: EntityName where
+# the value is an entity's name, TrivialString<64> where it is any other text
+# that wants the wider capacity.
+_INLINE_STRING_64 = TypeCodegen(
+    'EntityName',
+    'std::string({a}.View())',
+    '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}')
+
+
 # Serialize expressions produce values for json initializer lists.
 # Deserialize statements read from j.at("{f}") and assign to comp.{f}.
 #
@@ -72,6 +93,22 @@ TYPES: dict[str, TypeCodegen] = {
         'Double',
         '{a}',
         'if (!Assisi::Core::Reflect::ReadDouble(j, _comp, "{f}", {a})) return false;'),
+    'int8_t':    TypeCodegen(
+        'Int8',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadInt8(j, _comp, "{f}", {a})) return false;'),
+    'uint8_t':   TypeCodegen(
+        'UInt8',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadUInt8(j, _comp, "{f}", {a})) return false;'),
+    'int16_t':   TypeCodegen(
+        'Int16',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadInt16(j, _comp, "{f}", {a})) return false;'),
+    'uint16_t':  TypeCodegen(
+        'UInt16',
+        '{a}',
+        'if (!Assisi::Core::Reflect::ReadUInt16(j, _comp, "{f}", {a})) return false;'),
     'int32_t':   TypeCodegen(
         'Int32',
         '{a}',
@@ -102,6 +139,27 @@ TYPES: dict[str, TypeCodegen] = {
         '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
     'glm::vec4': TypeCodegen(
         'Vec4',
+        '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
+        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
+    # Math::Color3 / Color4 — linear RGB(A). Deliberately the same JSON as their
+    # vectors (a flat float array, same order), so a field that changes between
+    # the two loads every file written under the other spelling and re-saves
+    # byte-identically. Only the FieldType differs, which is what lets an editor
+    # offer a colour picker. Both spellings accepted, like ECS::Entity's.
+    'Math::Color3': TypeCodegen(
+        'Color3',
+        '{{ {a}.x, {a}.y, {a}.z }}',
+        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
+    'Assisi::Math::Color3': TypeCodegen(
+        'Color3',
+        '{{ {a}.x, {a}.y, {a}.z }}',
+        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
+    'Math::Color4': TypeCodegen(
+        'Color4',
+        '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
+        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
+    'Assisi::Math::Color4': TypeCodegen(
+        'Color4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
         '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
     'glm::quat': TypeCodegen(
@@ -146,38 +204,27 @@ TYPES: dict[str, TypeCodegen] = {
         'InstanceRef',
         '{a}.value',
         '{{ std::uint32_t _n = {a}.value; if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", _n)) return false; {a} = Assisi::ECS::InstanceId{{ _n }}; }}'),
-    # Core::ShortString — a small fixed-capacity inline string. Serialized as a
-    # JSON string of its view; Assign() re-imposes the capacity on load. Same
-    # codegen as AssetPath but a distinct FieldType so the editor renders a plain
-    # text box (no asset-browse button). Accepts every spelling.
-    'ShortString': TypeCodegen(
-        'String',
-        'std::string({a}.View())',
-        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
-    'Core::ShortString': TypeCodegen(
-        'String',
-        'std::string({a}.View())',
-        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
-    'Assisi::Core::ShortString': TypeCodegen(
-        'String',
-        'std::string({a}.View())',
-        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
-    # Core::EntityName — the wider inline string an entity's name lives in. Same
-    # codegen as ShortString, but its own FieldType: the binary codec reads into
-    # the buffer by capacity, so a name decoded as a String would truncate.
-    # Accepts every spelling.
-    'EntityName': TypeCodegen(
-        'EntityName',
-        'std::string({a}.View())',
-        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
-    'Core::EntityName': TypeCodegen(
-        'EntityName',
-        'std::string({a}.View())',
-        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
-    'Assisi::Core::EntityName': TypeCodegen(
-        'EntityName',
-        'std::string({a}.View())',
-        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
+    # The 32-byte inline string, under either spelling. Serialized as a JSON
+    # string of its view; Assign() re-imposes the capacity on load. Same codegen
+    # as AssetPath but a distinct FieldType so the editor renders a plain text
+    # box (no asset-browse button).
+    'ShortString':                      _INLINE_STRING_32,
+    'Core::ShortString':                _INLINE_STRING_32,
+    'Assisi::Core::ShortString':        _INLINE_STRING_32,
+    'TrivialString<32>':                _INLINE_STRING_32,
+    'Core::TrivialString<32>':          _INLINE_STRING_32,
+    'Assisi::Core::TrivialString<32>':  _INLINE_STRING_32,
+    # The 64-byte inline string, under either spelling. Same codegen as
+    # ShortString, but its own FieldType: the binary codec reads into the buffer
+    # by capacity, so this decoded as a String would truncate. Every
+    # namespace-qualification is accepted; a capacity other than 64 is not, since
+    # there is no FieldType describing one.
+    'EntityName':                       _INLINE_STRING_64,
+    'Core::EntityName':                 _INLINE_STRING_64,
+    'Assisi::Core::EntityName':         _INLINE_STRING_64,
+    'TrivialString<64>':                _INLINE_STRING_64,
+    'Core::TrivialString<64>':          _INLINE_STRING_64,
+    'Assisi::Core::TrivialString<64>':  _INLINE_STRING_64,
     # Core::AssetPath — a fixed-capacity virtual asset path. Serialized as a JSON
     # string of its view; Assign() re-imposes the length limit on load. Accepts
     # both qualified and unqualified names.
@@ -265,7 +312,14 @@ UNSUPPORTED_TYPES: dict[str, str] = {
     'unsigned long':      'use uint64_t — unsigned long is 32-bit on Windows and 64-bit elsewhere',
     'long long':          'use int64_t',
     'unsigned long long': 'use uint64_t',
-    'short':              'use int16_t',
-    'unsigned short':     'use uint16_t',
+    'short':              'use int16_t — short has an implementation-defined width',
+    'unsigned short':     'use uint16_t — unsigned short has an implementation-defined width',
     'char':               'use int8_t/uint8_t for a number, or Core::ShortString for text',
+    # std::string allocates, so it cannot sit in a component the ECS moves and
+    # copies, and it has no capacity for the binary codec to read back into. The
+    # engine's reflected strings are the fixed-capacity inline ones.
+    'std::string':        'use Core::ShortString (32 bytes) or Core::EntityName (64)',
+    # An unsupported TrivialString capacity is diagnosed by rule rather than
+    # listed here: the capacities are a number, so a table would name a few and
+    # leave the rest on the generic message. See _inline_string_reason.
 }

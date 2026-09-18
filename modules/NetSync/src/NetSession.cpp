@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/NetSync/NetworkConfig.hpp>
 
 #include <format>
 #include <utility>
@@ -14,20 +15,20 @@ namespace Assisi::NetSync
 NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, ReplicationConfig config)
     : _scene(scene), _physics(physics), _config(std::move(config))
 {
-    // The game's never-replicate list, read here rather than inside the server:
+    // The game's never-replicate list, taken here rather than inside the server:
     // the server takes its whole configuration as a value, so a test can set the
     // list without a filesystem, and the layer that owns the session is the one
-    // that knows where the game config lives.
+    // that knows where the game's policy comes from.
     //
     // Only when the caller has not already supplied one — an explicitly
     // configured session (every test, and any embedder with its own policy
-    // source) must not have game.json silently override it.
+    // source) must not have the loaded network config silently override it.
     if (_config.neverReplicate.empty())
-        _config.neverReplicate = LoadNeverReplicateFromConfig();
+        _config.neverReplicate = NeverReplicate();
 
     // Same terms, same reason: only when the caller has left it at the default.
     if (_config.relevancy.provider == RelevancyConfig::Provider::All)
-        _config.relevancy = LoadRelevancyFromConfig();
+        _config.relevancy = Relevancy();
 }
 
 NetSession::~NetSession() { Disconnect(); }
@@ -296,21 +297,21 @@ std::string NetSession::StatusText() const
     switch (_role)
     {
     case SessionRole::Offline:
-        return _lastError.empty() ? "Offline" : std::format("Offline — {}", _lastError);
+        return _lastError.empty() ? "Offline" : std::format("Offline - {}", _lastError);
 
     case SessionRole::Host:
-        return std::format("Hosting — {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
+        return std::format("Hosting - {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
 
     case SessionRole::Client:
         if (!_client->RejectMessage().empty())
-            return std::format("Rejected — {}", _client->RejectMessage());
+            return std::format("Rejected - {}", _client->RejectMessage());
         if (_client->IsAwaitingLevel())
             return std::format("Loading the host's level ({})...", _client->Handshake().level.path);
         if (!_client->IsSynchronized())
             return "Connecting...";
         if (!_client->IsWorldComplete())
-            return std::format("Joining — {} entities so far", _client->ReplicatedEntityCount());
-        return std::format("Connected — {} entities", _client->ReplicatedEntityCount());
+            return std::format("Joining - {} entities so far", _client->ReplicatedEntityCount());
+        return std::format("Connected - {} entities", _client->ReplicatedEntityCount());
     }
     return "Offline";
 }
@@ -342,8 +343,8 @@ SessionStats NetSession::Stats() const
                 stats.relevancyEnters += diagnostics->relevancyEnters;
                 stats.relevancyExits += diagnostics->relevancyExits;
                 stats.intentsAccepted += diagnostics->intentsAccepted;
-                stats.intentsRejected += diagnostics->intentsWrongWay + diagnostics->intentsOutOfRange +
-                                         diagnostics->intentsNotYours + diagnostics->intentsMalformed;
+                stats.intentsRejected += diagnostics->intentsWrongWay + diagnostics->intentsNotYours +
+                                         diagnostics->intentsMalformed;
                 stats.intentsRateLimited += diagnostics->intentsRateLimited;
                 stats.intentsStale += diagnostics->intentsStale;
                 stats.intentsUnhandled += diagnostics->intentsUnhandled;
@@ -374,8 +375,7 @@ SessionStats NetSession::Stats() const
         // they would otherwise be the one traffic nobody could see.
         const ConnectionDiagnostics &host = _server->HostDiagnostics();
         stats.intentsAccepted += host.intentsAccepted;
-        stats.intentsRejected += host.intentsWrongWay + host.intentsOutOfRange + host.intentsNotYours +
-                                 host.intentsMalformed;
+        stats.intentsRejected += host.intentsWrongWay + host.intentsNotYours + host.intentsMalformed;
         stats.intentsUnhandled += host.intentsUnhandled;
     }
     else if (_client)

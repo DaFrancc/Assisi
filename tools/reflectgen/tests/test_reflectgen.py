@@ -78,7 +78,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(
             [c.name for c in self.components],
             ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio",
-             "SampleReplicated"],
+             "SampleReplicated", "SampleContainers"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
 
@@ -119,7 +119,7 @@ class CodegenTest(unittest.TestCase):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
         cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
         # It appears in the field-metadata table (marked transient=true)...
-        self.assertIn('"runtimeCache", Assisi::Core::Reflect::FieldType::Float', cpp)
+        self.assertIn('"runtimeCache", .type = Assisi::Core::Reflect::FieldType::Float', cpp)
         # ...but never in the serialize/deserialize bodies.
         self.assertNotIn("c.runtimeCache", cpp)
         self.assertNotIn("comp.runtimeCache", cpp)
@@ -128,7 +128,7 @@ class CodegenTest(unittest.TestCase):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
         cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
         # Field metadata carries the vector's own FieldType.
-        self.assertIn('"paths", Assisi::Core::Reflect::FieldType::AssetPathVector', cpp)
+        self.assertIn('"paths", .type = Assisi::Core::Reflect::FieldType::AssetPathVector', cpp)
         # Serialize builds a JSON array from each path's View().
         self.assertIn("nlohmann::json::array()", cpp)
         self.assertIn("_arr.push_back(std::string(_p.View()))", cpp)
@@ -143,7 +143,7 @@ class CodegenTest(unittest.TestCase):
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
-        self.assertIn('"label", Assisi::Core::Reflect::FieldType::String', cpp)
+        self.assertIn('"label", .type = Assisi::Core::Reflect::FieldType::String', cpp)
         self.assertIn("std::string(c.label.View())", cpp)          # serialize
         self.assertIn('ReadString(j, _comp, "label", _s)', cpp)       # deserialize, type-checked
         self.assertIn('comp.label.Assign(_s)', cpp)                    # ...then assigned
@@ -158,10 +158,76 @@ class CodegenTest(unittest.TestCase):
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
-        self.assertIn('"name", Assisi::Core::Reflect::FieldType::EntityName', cpp)
+        self.assertIn('"name", .type = Assisi::Core::Reflect::FieldType::EntityName', cpp)
         self.assertIn("std::string(c.name.View())", cpp)           # serialize
         self.assertIn('ReadString(j, _comp, "name", _s)', cpp)     # deserialize, type-checked
         self.assertIn("comp.name.Assign(_s)", cpp)                 # ...then assigned
+
+    def test_an_inline_string_reflects_under_its_bare_spelling(self):
+        # Core::ShortString and Core::EntityName are aliases for TrivialString at
+        # two capacities. A field whose value is neither a short label nor an
+        # entity's name says so by declaring the capacity, and must reflect the
+        # same as the alias would -- otherwise the alias is load-bearing and
+        # every such field has to borrow a name that misdescribes it.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::TrivialString<32> label;\n"
+            "  AFIELD() Assisi::Core::TrivialString<64> title;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"label", .type = Assisi::Core::Reflect::FieldType::String', cpp)
+        self.assertIn('"title", .type = Assisi::Core::Reflect::FieldType::EntityName', cpp)
+        self.assertIn("comp.title.Assign(_s)", cpp)
+
+    def test_an_inline_string_of_another_capacity_is_refused_by_name(self):
+        # Only 32 and 64 have a FieldType, because the binary codec reads into
+        # the buffer by capacity. A near miss looks like it should work, so the
+        # refusal names the two that do rather than saying "no codegen".
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::TrivialString<128> title;\n"
+            "};\n}\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn("TrivialString<64>", str(caught.exception))
+
+    def test_colour_is_its_own_field_type_over_the_vector_codec(self):
+        # A colour must carry a distinct FieldType (that is what gets an editor to
+        # offer a picker) while emitting the *same* JSON as its vector, so a field
+        # that changes between the two loads every file written under the other
+        # spelling. Both halves are asserted, because either alone would pass a
+        # broken implementation.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Math::Color3 tint;\n"
+            "  AFIELD() Assisi::Math::Color4 albedo;\n"
+            "  AFIELD() glm::vec3 dir;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"tint", .type = Assisi::Core::Reflect::FieldType::Color3', cpp)
+        self.assertIn('"albedo", .type = Assisi::Core::Reflect::FieldType::Color4', cpp)
+        self.assertIn('"dir", .type = Assisi::Core::Reflect::FieldType::Vec3', cpp)
+        # Same array shape as the vector it shadows: three components for Color3,
+        # four for Color4, read back through the same float-array helper.
+        self.assertIn("{ c.tint.x, c.tint.y, c.tint.z }", cpp)
+        self.assertIn("{ c.albedo.x, c.albedo.y, c.albedo.z, c.albedo.w }", cpp)
+        self.assertIn('ReadFloatArray(j, _comp, "tint", 3, _v)', cpp)
+        self.assertIn('ReadFloatArray(j, _comp, "albedo", 4, _v)', cpp)
+
+    def test_unqualified_colour_spelling_is_accepted(self):
+        # Both spellings, as for ECS::Entity: a header inside Assisi:: writes the
+        # short one, and an unrecognised type is a hard generation error rather
+        # than a silently unserialized field.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Math::Color3 tint;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"tint", .type = Assisi::Core::Reflect::FieldType::Color3', cpp)
 
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(
@@ -172,8 +238,8 @@ class CodegenTest(unittest.TestCase):
         )
         cpp = reflectgen.generate_cpp(comps, "N/Ref.hpp")
         # Field metadata carries the scalar and vector FieldTypes.
-        self.assertIn('"mesh", Assisi::Core::Reflect::FieldType::AssetId', cpp)
-        self.assertIn('"slots", Assisi::Core::Reflect::FieldType::AssetIdVector', cpp)
+        self.assertIn('"mesh", .type = Assisi::Core::Reflect::FieldType::AssetId', cpp)
+        self.assertIn('"slots", .type = Assisi::Core::Reflect::FieldType::AssetIdVector', cpp)
         # Serialize/deserialize route through the Core AssetId JSON helpers.
         self.assertIn("Assisi::Core::SerializeAssetId(c.mesh)", cpp)
         self.assertIn("comp.mesh = Assisi::Core::DeserializeAssetId(", cpp)
@@ -229,12 +295,63 @@ class CodegenTest(unittest.TestCase):
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
-        # min-only: hasMin, hasMax, minValue, maxValue appended.
-        self.assertIn('offsetof(T, radius), false, false, true, false, 0.0f, 0.f', cpp)
+        # min-only: the open side is absent rather than written at a default.
+        self.assertIn('.offset = offsetof(T, radius), .hasMin = true, .minValue = 0.0f }', cpp)
         # min and max together.
-        self.assertIn('offsetof(T, bias), false, false, true, true, -1.0f, 1.0f', cpp)
-        # Unannotated fields keep the short (golden-stable) initializer.
-        self.assertIn('offsetof(T, plain), false, false }', cpp)
+        self.assertIn('.offset = offsetof(T, bias), .hasMin = true, .hasMax = true, '
+                      '.minValue = -1.0f, .maxValue = 1.0f }', cpp)
+        # An unannotated field names only what it has.
+        self.assertIn('.name = "plain", .type = Assisi::Core::Reflect::FieldType::Float, '
+                      '.offset = offsetof(T, plain) }', cpp)
+
+    def test_a_bound_may_name_a_sibling_field(self):
+        # The case a literal cannot express: the limit is whatever a neighbouring
+        # field currently holds, not a constant chosen while authoring.
+        cpp = reflectgen.generate_cpp(_parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "    AFIELD(min = 0, max = outer) float inner = 15.f;\n"
+            "    AFIELD(min = 0) float outer = 30.f;\n"
+            "};\n}\n"
+        ), "N/C.hpp")
+        # hasMax says a bound exists; maxField says where to read it. No maxValue,
+        # because there is no literal — writing one would be a number nothing means.
+        self.assertIn('.offset = offsetof(T, inner), .hasMin = true, .hasMax = true, '
+                      '.minValue = 0.0f, .maxField = "outer" }', cpp)
+
+    def test_two_fields_may_bound_each_other(self):
+        # Legal, and it means what it reads as. Resolution is one step — the named
+        # field's own bounds are never consulted — so there is no cycle to detect.
+        cpp = reflectgen.generate_cpp(_parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "    AFIELD(max = outer) float inner = 15.f;\n"
+            "    AFIELD(min = inner) float outer = 30.f;\n"
+            "};\n}\n"
+        ), "N/C.hpp")
+        self.assertIn('.hasMax = true, .maxField = "outer" }', cpp)
+        self.assertIn('.hasMin = true, .minField = "inner" }', cpp)
+
+    def test_a_bound_naming_no_field_is_a_hard_error(self):
+        self._assert_bound_rejected("AFIELD(max = nothingHere) float inner = 1.f;")
+
+    def test_a_bound_naming_itself_is_a_hard_error(self):
+        self._assert_bound_rejected("AFIELD(max = inner) float inner = 1.f;")
+
+    def test_a_bound_naming_a_non_numeric_sibling_is_a_hard_error(self):
+        # A vec3 has no single number to be bounded by, so the annotation could
+        # only be read by guessing which component the author meant.
+        self._assert_bound_rejected(
+            "AFIELD(max = dir) float inner = 1.f; AFIELD() glm::vec3 dir{};")
+
+    def test_a_bound_naming_a_sibling_of_another_struct_is_a_hard_error(self):
+        # Only siblings. Reaching into another component would need a lookup the
+        # editor and the wire check cannot both do from what they hold.
+        components = _parse_source(
+            "namespace N {\n"
+            "ACOMP()\nstruct Other { AFIELD() float limit = 1.f; };\n"
+            "ACOMP()\nstruct C { AFIELD(max = limit) float inner = 1.f; };\n}\n"
+        )
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(components, "N/C.hpp")
 
     def test_non_numeric_bound_is_a_hard_error(self):
         components = _parse_source(
@@ -248,7 +365,8 @@ class CodegenTest(unittest.TestCase):
             "namespace N {\nACOMP()\nstruct C { AFIELD(min = 0, max = 100) int32_t count = 1; };\n}\n"
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
-        self.assertIn("offsetof(T, count), false, false, true, true, 0.0f, 100.0f", cpp)
+        self.assertIn(".offset = offsetof(T, count), .hasMin = true, .hasMax = true, "
+                      ".minValue = 0.0f, .maxValue = 100.0f", cpp)
 
     def _assert_bound_rejected(self, field_decl: str):
         components = _parse_source(
@@ -274,6 +392,39 @@ class CodegenTest(unittest.TestCase):
         # FieldMeta stores bounds as float; integers beyond 2^24 stop being
         # exactly representable, so the generator refuses them.
         self._assert_bound_rejected("AFIELD(max = 4294967295) uint32_t count = 0;")
+
+    @unittest.expectedFailure
+    def test_int64_bounds_are_emitted(self):
+        # Open. NUMERIC_BOUND_RANGES (reflect_codegen.py:40) is keyed by
+        # FieldType enum value and is wrong at both ends: it carries an 'Int' key
+        # that is not a FieldType value at all (bare `int` is in
+        # UNSUPPORTED_TYPES, so nothing can ever produce it), and it omits Int64
+        # and UInt64, which reflect_types maps int64_t/uint64_t onto. A bound on
+        # a 64-bit field is therefore rejected as if the field were a string —
+        # "bounds only apply to numeric fields" — which is both a refusal of
+        # legitimate input and a misleading diagnosis of it.
+        #
+        # The 2^24 cap is orthogonal and still applies: these bounds are well
+        # inside it, so a correct table entry accepts them.
+        #
+        # expectedFailure until the table is corrected; the fix removes this
+        # decorator.
+        components = _parse_source(
+            "namespace N {\nACOMP()\nstruct C { AFIELD(min = 0, max = 100) int64_t count = 1; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn(".offset = offsetof(T, count), .hasMin = true, .hasMax = true, "
+                      ".minValue = 0.0f, .maxValue = 100.0f", cpp)
+
+    @unittest.expectedFailure
+    def test_uint64_bounds_are_emitted(self):
+        # The unsigned half of the same omission. See test_int64_bounds_are_emitted.
+        components = _parse_source(
+            "namespace N {\nACOMP()\nstruct C { AFIELD(min = 0, max = 100) uint64_t count = 1; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn(".offset = offsetof(T, count), .hasMin = true, .hasMax = true, "
+                      ".minValue = 0.0f, .maxValue = 100.0f", cpp)
 
 
 class ParserEdgeCaseTest(unittest.TestCase):
@@ -339,7 +490,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
 
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
         # In the metadata table (unknown type, transient), but never (de)serialized.
-        self.assertIn("offsetof(T, cache), true, false", cpp)
+        self.assertIn(".offset = offsetof(T, cache), .transient = true", cpp)
         self.assertNotIn("c.cache", cpp)
         self.assertNotIn("comp.cache", cpp)
 
@@ -614,9 +765,26 @@ class AssetTypeTest(unittest.TestCase):
         self.assertIn("auto& a = *static_cast<T*>(out_ptr)", cpp)
         self.assertIn('ReadFloat(j, _comp, "MetallicFactor", a.MetallicFactor)', cpp)
         # Transient field is in the meta table but never (de)serialized.
-        self.assertIn('"cache", Assisi::Core::Reflect::FieldType::Int32', cpp)
+        self.assertIn('"cache", .type = Assisi::Core::Reflect::FieldType::Int32', cpp)
         self.assertNotIn("a.cache", cpp)
         self.assertNotIn("c.cache", cpp)
+
+    def test_aasset_emits_construct_and_destroy_hooks(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._MAT), "Assisi/Geometry/MaterialData.hpp")
+        # A caller that knows the type only by the name in a document's envelope
+        # cannot name it to the compiler, so the pair is the only way to own one.
+        self.assertIn("return new (std::nothrow) T{}", cpp)
+        self.assertIn("delete static_cast<T*>(instance_ptr)", cpp)
+        # std::nothrow is a declaration, not a builtin.
+        self.assertIn("#include <new>", cpp)
+
+    def test_component_only_header_emits_no_asset_construct(self):
+        src = "namespace N {\nACOMP()\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        # A component is constructed onto an entity by the scene; the heap pair
+        # belongs to asset types alone and must not follow ComponentRegistry in.
+        self.assertNotIn("std::nothrow", cpp)
+        self.assertNotIn("#include <new>", cpp)
 
     def test_aasset_entity_ref_field_is_rejected(self):
         src = (
@@ -686,8 +854,8 @@ class ReplicationAnnotationTest(unittest.TestCase):
     def test_norep_field_is_flagged_but_still_serialized_to_disk(self):
         cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
         # In the metadata table with norep = true (transient = false)...
-        self.assertIn('{ "serverOnly", Assisi::Core::Reflect::FieldType::Int32, '
-                      'offsetof(T, serverOnly), false, true }', cpp)
+        self.assertIn('{ .name = "serverOnly", .type = Assisi::Core::Reflect::FieldType::Int32, '
+                      '.offset = offsetof(T, serverOnly), .norep = true }', cpp)
         # ...and in both JSON bodies, because norep is a *wire* exclusion only.
         self.assertIn("c.serverOnly", cpp)
         self.assertIn("comp.serverOnly", cpp)
@@ -740,7 +908,10 @@ class EnumTest(unittest.TestCase):
         self.assertIn("FieldType::Enum", cpp)
         self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("static_cast<std::int64_t>(c.shape)", cpp)
-        self.assertIn('ReadInt64(j, _comp, "shape", _n)', cpp)
+        # The name table travels with the read, so a file may spell the value
+        # either way; the write stays the integer.
+        self.assertIn('ReadEnum(j, _comp, "shape", _names, _n)', cpp)
+        self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("comp.shape = static_cast<N::Shape>(_n)", cpp)
         self.assertIn("#include <cstdint>", cpp)
 
@@ -748,6 +919,95 @@ class EnumTest(unittest.TestCase):
         src = ("#include <cstdint>\nnamespace N {\n"
                "AENUM()\nenum class E : uint32_t { A = someExpr };\n"
                "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_trailing_count_enumerator_is_dropped(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { A, B, Count };\n"
+               "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        info = _parse_source(src)[0].fields[0].enum_info
+        # Count says how many there are; it is not a value the field may hold, so
+        # an editor must not offer it and a codec must not name it.
+        self.assertEqual(info.constants, [("A", 0), ("B", 1)])
+        self.assertNotIn('"Count"', reflectgen.generate_cpp(_parse_source(src), "N/C.hpp"))
+
+    def test_count_that_is_not_last_is_kept(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { Count, A };\n"
+               "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        # Only a trailing Count is the idiom. Elsewhere it is an ordinary
+        # enumerator that happens to share the name, and dropping it would
+        # silently renumber nothing but hide a real value.
+        self.assertEqual(_parse_source(src)[0].fields[0].enum_info.constants,
+                         [("Count", 0), ("A", 1)])
+
+
+class NarrowIntegerTest(unittest.TestCase):
+    _WIDTHS = [('int8_t', 'Int8'), ('uint8_t', 'UInt8'), ('int16_t', 'Int16'), ('uint16_t', 'UInt16')]
+
+    def test_each_narrow_width_reflects_as_its_own_field_type(self):
+        for cpp, field_type in self._WIDTHS:
+            with self.subTest(cpp=cpp):
+                src = (f"#include <cstdint>\nnamespace N {{\n"
+                       f"ACOMP()\nstruct C {{ AFIELD() {cpp} v = 0; }};\n}}\n")
+                cpp_out = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+                # Its own type, not a promotion to the 32-bit one: the codec reads
+                # back at the width the field actually occupies, and a wider read
+                # would overwrite whatever sits after it.
+                self.assertIn(f"FieldType::{field_type}", cpp_out)
+                self.assertIn(f"Read{field_type}(j, _comp, \"v\", comp.v)", cpp_out)
+
+    def test_implementation_defined_spellings_are_still_rejected(self):
+        # The advice these give now names a type that exists; the rejection itself
+        # has to stay, because the widths are still platform-dependent.
+        for spelling in ('short', 'unsigned short', 'int', 'unsigned'):
+            with self.subTest(spelling=spelling):
+                src = (f"namespace N {{\nACOMP()\n"
+                       f"struct C {{ AFIELD() {spelling} v; }};\n}}\n")
+                with self.assertRaises(ValueError):
+                    reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+
+
+class BitmaskTest(unittest.TestCase):
+    _SRC = (
+        "#include <cstdint>\n"
+        "namespace N {\n"
+        "AENUM()\nenum class Channel : uint8_t { World, Character, Trigger, Count };\n"
+        "ACOMP()\nstruct Body { AFIELD(bitmask = Channel) uint32_t collidesWith = 0; };\n"
+        "}\n"
+    )
+
+    def test_bitmask_field_carries_the_enums_constants(self):
+        field = _parse_source(self._SRC)[0].fields[0]
+        self.assertIsNone(field.enum_info)  # the field's own type is an integer
+        self.assertIsNotNone(field.bitmask_info)
+        self.assertEqual(field.bitmask_info.constants,
+                         [("World", 0), ("Character", 1), ("Trigger", 2)])
+
+    def test_bitmask_emits_constants_without_an_enum_size(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._SRC), "N/Body.hpp")
+        self.assertIn('{ "Trigger", 2 }', cpp)
+        self.assertIn("FieldType::UInt32", cpp)
+        # enumSize is what separates "holds one of these" from "holds a set of
+        # these"; a bitmask that emitted one would be read back as an enum.
+        self.assertNotIn(".enumSize", cpp)
+
+    def test_bitmask_on_a_signed_field_is_rejected(self):
+        src = self._SRC.replace("uint32_t collidesWith", "int32_t collidesWith")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_bitmask_naming_an_unknown_enum_is_rejected(self):
+        src = self._SRC.replace("bitmask = Channel", "bitmask = NoSuchEnum")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_enumerator_too_large_for_the_field_is_rejected(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { A = 0, B = 32 };\n"
+               "ACOMP()\nstruct C { AFIELD(bitmask = E) uint32_t m = 0; };\n}\n")
+        # Bit 32 does not exist in a 32-bit field; shifting into it is undefined.
         with self.assertRaises(ValueError):
             _parse_source(src)
 
@@ -783,8 +1043,9 @@ class EnumTest(unittest.TestCase):
             "#include <cstdint>\nnamespace N {\n"
             "AENUM()\nenum class E : std::uint8_t { A, B };\n"
             "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n"), "N/C.hpp")
-        # ... enumConstants }, size, signed
-        self.assertIn('{ { "A", 0 }, { "B", 1 } }, 1, false', cpp)
+        # The width is the member that marks a field as an enum at all, so it is
+        # written even here; `enumSigned` is absent because this one is unsigned.
+        self.assertIn('.enumConstants = { { "A", 0 }, { "B", 1 } }, .enumSize = 1 }', cpp)
 
     def test_platform_dependent_long_underlying_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -856,15 +1117,16 @@ class RadioTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
         # Non-enum listener: defaulted bounds + empty enum block (size 0), then the trio.
         self.assertIn(
-            'offsetof(T, n), false, false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 1, 2 }, '
-            "Assisi::Core::Reflect::RadioBehavior::Grey",
+            '.offset = offsetof(T, n), .radioSource = "mode", .radioValues = { 1, 2 }, '
+            ".radioBehavior = Assisi::Core::Reflect::RadioBehavior::Grey }",
             cpp,
         )
         # The broadcaster enum stays an ordinary enum field (no radio members)
         # and carries its width (default int -> 4, signed).
         self.assertIn(
-            'offsetof(T, mode), false, false, false, false, 0.f, 0.f, '
-            '{ { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 4, true }',
+            '.offset = offsetof(T, mode), '
+            '.enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, '
+            '.enumSize = 4, .enumSigned = true }',
             cpp,
         )
 
@@ -875,8 +1137,9 @@ class RadioTest(unittest.TestCase):
             "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, sub), false, false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, '
-            '"mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish',
+            '.offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, '
+            '.enumSize = 4, .enumSigned = true, .radioSource = "mode", .radioValues = { 2 }, '
+            '.radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish',
             cpp,
         )
 
@@ -886,10 +1149,61 @@ class RadioTest(unittest.TestCase):
             "AFIELD(min = 0, radioListen = {source = mode, value = High, behavior = vanish}) int32_t n = 0;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, n), false, false, true, false, 0.0f, 0.f, {}, 0, false, "mode", { 2 }, '
-            "Assisi::Core::Reflect::RadioBehavior::Vanish",
+            '.offset = offsetof(T, n), .hasMin = true, .minValue = 0.0f, '
+            '.radioSource = "mode", .radioValues = { 2 }, '
+            ".radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish",
             cpp,
         )
+
+    # ── bool sources ────────────────────────────────────────────────────────
+    #
+    # A bool is a two-valued enumeration, so it broadcasts like one. Requiring an
+    # AENUM to express an on/off radio was ceremony, not meaning.
+
+    def test_bool_can_broadcast(self):
+        f = self._fields("AFIELD(radioBroadcast) bool flag = true;")["flag"]
+        self.assertTrue(f.radio.is_broadcast)
+        self.assertEqual(f.radio.source, "")
+
+    def test_bool_listener_resolves_true_and_false_to_one_and_zero(self):
+        fields = self._fields(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = false, behavior = grey}) float x = 0.f;\n"
+            "AFIELD(radioListen = {source = flag, value = true, behavior = vanish}) float y = 0.f;"
+        )
+        self.assertEqual(fields["x"].radio.source, "flag")
+        self.assertEqual(fields["x"].radio.values, [0])
+        self.assertEqual(fields["x"].radio.behavior, "Grey")
+        self.assertEqual(fields["y"].radio.values, [1])
+        self.assertEqual(fields["y"].radio.behavior, "Vanish")
+
+    def test_bool_listener_emits_the_same_radio_members_an_enum_would(self):
+        # The runtime tells the two apart by the source's FieldType, so nothing
+        # about the emitted listener changes.
+        cpp = reflectgen.generate_cpp(_parse_source(self._src(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = false, behavior = grey}) int32_t n = 0;"
+        )), "N/C.hpp")
+        self.assertIn('.radioSource = "flag", .radioValues = { 0 }, '
+                      '.radioBehavior = Assisi::Core::Reflect::RadioBehavior::Grey', cpp)
+
+    def test_bool_source_accepts_both_values_at_once(self):
+        f = self._fields(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = {false, true}, behavior = grey}) float x = 0.f;"
+        )["x"]
+        self.assertEqual(sorted(f.radio.values), [0, 1])
+
+    def test_bool_source_rejects_a_value_that_is_not_true_or_false(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = High, behavior = grey}) float x = 0.f;")
+
+    def test_listen_to_non_broadcaster_bool_is_rejected(self):
+        # A bool must still opt in, exactly as an enum does.
+        self._assert_rejected(
+            "AFIELD() bool flag = true;\n"
+            "AFIELD(radioListen = {source = flag, value = true, behavior = grey}) float x = 0.f;")
 
     # ── hard-fail validation ────────────────────────────────────────────────
 
@@ -897,14 +1211,14 @@ class RadioTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _parse_source(self._src(body))
 
-    def test_broadcast_on_non_enum_is_rejected(self):
+    def test_broadcast_on_neither_enum_nor_bool_is_rejected(self):
         self._assert_rejected("AFIELD(radioBroadcast) float notAnEnum = 0.f;")
 
     def test_listen_to_missing_field_is_rejected(self):
         self._assert_rejected(
             "AFIELD(radioListen = {source = ghost, value = High, behavior = grey}) float x = 0.f;")
 
-    def test_listen_to_non_enum_field_is_rejected(self):
+    def test_listen_to_neither_enum_nor_bool_field_is_rejected(self):
         self._assert_rejected(
             "AFIELD() float src = 0.f;\n"
             "AFIELD(radioListen = {source = src, value = High, behavior = grey}) float x = 0.f;")
@@ -1119,11 +1433,9 @@ class ControlledFieldTest(unittest.TestCase):
                "struct Go { AFIELD(controlled) Assisi::ECS::Entity pawn; };\n}\n")
         _, messages, _ = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
-        # Emitted last in FieldMeta's positional tail, which forces every earlier
-        # block to its default — so the presence of the trailing `true` is what
-        # the dispatch site reads.
-        self.assertIn('offsetof(T, pawn), false, false, false, false, 0.f, 0.f, {}, 0, false, "", {}, '
-                      'Assisi::Core::Reflect::RadioBehavior::None, true', cpp)
+        # Named, so it is the only member the annotation adds — nothing else on
+        # this field is written, and the dispatch site reads exactly this.
+        self.assertIn('.offset = offsetof(T, pawn), .controlled = true }', cpp)
 
     def test_controlled_on_an_event_is_rejected(self):
         # The sender of an event is the server, which controls everything by
@@ -1171,11 +1483,9 @@ class SubjectFieldTest(unittest.TestCase):
                "struct Boom { AFIELD(subject) Assisi::ECS::Entity what; };\n}\n")
         _, messages, _ = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Boom.hpp", messages)
-        # Last in FieldMeta's positional tail, one past `controlled` — so an
-        # event's subject field carries a false for controlled and a true for
-        # itself, and the send site reads the trailing one.
-        self.assertIn('offsetof(T, what), false, false, false, false, 0.f, 0.f, {}, 0, false, "", {}, '
-                      'Assisi::Core::Reflect::RadioBehavior::None, false, true', cpp)
+        # `subject` alone: an event's subject is not also controlled, and naming
+        # the member is what keeps the two from being read for each other.
+        self.assertIn('.offset = offsetof(T, what), .subject = true }', cpp)
 
     def test_an_event_with_an_entity_must_mark_its_subject(self):
         # An unmarked EntityRef is not a subject by default: the alternative is
@@ -1380,6 +1690,54 @@ class MessageHandlerTest(unittest.TestCase):
             self.assertIn("B::Fire -> (no handler)", summary)
 
 
+class EmptyRegistrationUnitTest(unittest.TestCase):
+    """The placeholder .generated.cpp written for a header that registers nothing.
+
+    The build declares that path as an output, so it has to exist even when the
+    header produced nothing — and the only thing in it is a comment telling the
+    next reader why it is empty. That comment is generated output, not source, so
+    it is the one place a stale instruction survives a comment sweep.
+    """
+
+    def _generate_empty_unit(self) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            header = Path(d) / "Nothing.hpp"
+            header.write_text("#pragma once\nstruct Plain { int32_t x; };\n", encoding="utf-8")
+            outdir = Path(d) / "out"
+
+            argv = sys.argv
+            sys.argv = ["reflectgen", str(header), "--outdir", str(outdir),
+                        "--include", "Assisi/Testing/Nothing.hpp"]
+            try:
+                with self.assertRaises(SystemExit) as exited:
+                    reflectgen.main()
+                self.assertEqual(exited.exception.code, 0)
+            finally:
+                sys.argv = argv
+
+            return (outdir / "Nothing.generated.cpp").read_text(encoding="utf-8")
+
+    def test_empty_unit_is_written_for_a_header_with_no_annotations(self):
+        text = self._generate_empty_unit()
+        self.assertIn("AUTO-GENERATED by reflectgen", text)
+        self.assertIn("AMSG_HANDLER", text)
+
+    @unittest.expectedFailure
+    def test_empty_unit_names_a_flag_that_exists(self):
+        # Open. reflectgen.py:499 tells the reader that handlers are
+        # bound by `--message-handlers`. argparse defines no such option — the
+        # real one is `--check-handlers` (reflectgen.py:391) — so following the
+        # instruction produces "unrecognized arguments" and nothing else. It sits
+        # inside a Python string literal, i.e. generated output rather than a
+        # comment, which is why the comment sweep left it alone.
+        #
+        # expectedFailure until the flag name is corrected; the fix removes this
+        # decorator.
+        text = self._generate_empty_unit()
+        self.assertIn("--check-handlers", text)
+        self.assertNotIn("--message-handlers", text)
+
+
 class SystemTest(unittest.TestCase):
     """ASYSTEM: the grammar, and the three whole-tree checks.
 
@@ -1391,7 +1749,7 @@ class SystemTest(unittest.TestCase):
 
     SOURCE = (
         "namespace Game {\n"
-        "ASYSTEM(FixedUpdate) void BounceSystem(SystemContext &ctx);\n"
+        "ASYSTEM(FixedUpdate, name = \"Bounce\") void BounceSystem(SystemContext &ctx);\n"
         "ASYSTEM(Update, name = \"Spin\", after = Bounce, activeWorldOnly)\n"
         "void SpinDemoSystem(SystemContext &ctx);\n"
         "}\n")
@@ -1402,13 +1760,36 @@ class SystemTest(unittest.TestCase):
     def test_grammar_reaches_the_definition(self):
         found = {s.name: s for s in self._systems(self.SOURCE)}
         self.assertEqual(set(found), {"Bounce", "Spin"})
-        # The default name drops a trailing "System": BounceSystem in code is
-        # Bounce in a file.
         self.assertEqual(found["Bounce"].phase, "FixedUpdate")
         self.assertFalse(found["Bounce"].active_world_only)
         self.assertEqual(found["Spin"].after, ["Bounce"])
         self.assertTrue(found["Spin"].active_world_only)
         self.assertEqual(found["Spin"].fqn, "::Game::SpinDemoSystem")
+
+    def test_a_system_without_a_name_is_refused(self):
+        # The name is what a level file says, so deriving it from the function
+        # would make a C++ rename silently rename content — every level asking
+        # for the old name failing to load, with nothing pointing at the cause.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("name", str(caught.exception))
+
+    def test_every_game_phase_is_accepted(self):
+        # The phase list is a literal tuple, and a phase missing from it is
+        # rejected at build time with no hint that the enum has one more — so the
+        # two are pinned together here rather than discovered by a level failing
+        # to name a system.
+        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update",
+                      "PostUpdate"):
+            found = self._systems(
+                "ASYSTEM(%s, name = \"Tick\") void TickSystem(SystemContext &ctx);\n" % phase)
+            self.assertEqual(found[0].phase, phase)
+
+    def test_an_unknown_phase_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._systems(
+                "ASYSTEM(DuringPhysics, name = \"Tick\") void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("DuringPhysics", str(caught.exception))
 
     def test_the_phase_decides_the_context_type(self):
         # The check the manual Register/RegisterRender split leaves to the caller.
@@ -1431,7 +1812,8 @@ class SystemTest(unittest.TestCase):
     def test_duplicate_names_are_a_build_error_naming_both(self):
         with tempfile.TemporaryDirectory() as d:
             first = Path(d) / "A.hpp"
-            first.write_text("ASYSTEM(Update) void BounceSystem(SystemContext &ctx);\n", encoding="utf-8")
+            first.write_text("ASYSTEM(Update, name = \"Bounce\") void BounceSystem(SystemContext &ctx);\n",
+                             encoding="utf-8")
             second = Path(d) / "B.hpp"
             second.write_text("namespace Other {\n"
                               "ASYSTEM(Update, name = \"Bounce\") void OtherSystem(SystemContext &ctx);\n"
@@ -1447,7 +1829,7 @@ class SystemTest(unittest.TestCase):
     def test_an_after_naming_nothing_is_a_build_error(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "A.hpp"
-            path.write_text("ASYSTEM(Update, after = Ghost) void TickSystem(SystemContext &ctx);\n",
+            path.write_text("ASYSTEM(Update, name = \"Tick\", after = Ghost) void TickSystem(SystemContext &ctx);\n",
                             encoding="utf-8")
             with self.assertRaises(ValueError) as caught:
                 reflectgen.check_systems([path])
@@ -1456,8 +1838,8 @@ class SystemTest(unittest.TestCase):
     def test_an_ordering_cycle_is_a_build_error(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "A.hpp"
-            path.write_text("ASYSTEM(Update, after = B) void ASystem(SystemContext &ctx);\n"
-                            "ASYSTEM(Update, after = A) void BSystem(SystemContext &ctx);\n",
+            path.write_text("ASYSTEM(Update, name = \"A\", after = B) void ASystem(SystemContext &ctx);\n"
+                            "ASYSTEM(Update, name = \"B\", after = A) void BSystem(SystemContext &ctx);\n",
                             encoding="utf-8")
             with self.assertRaises(ValueError) as caught:
                 reflectgen.check_systems([path])
@@ -1469,6 +1851,112 @@ class SystemTest(unittest.TestCase):
             path.write_text(self.SOURCE, encoding="utf-8")
             lines = reflectgen.check_systems([path])
             self.assertIn("2 system(s)", lines[0])
+
+
+class ContainerFieldTest(unittest.TestCase):
+    """Reflected std::vector / std::map fields: what generates, and what is refused.
+
+    The refusals matter as much as the generation. reflectgen is default-deny, so
+    a container shape it cannot round-trip has to fail the build naming the
+    declaration — a silently dropped field loses its data on every save.
+    """
+
+    _PRELUDE = ("namespace N {\n"
+                "AENUM()\nenum class Colour : std::uint8_t { Red = 0, Green = 7 };\n")
+
+    def _generate(self, field_decl: str) -> str:
+        components = _parse_source(
+            self._PRELUDE + "ACOMP()\nstruct C { " + field_decl + " };\n}\n")
+        return reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def _assert_refused(self, field_decl: str, expected_text: str):
+        components = _parse_source(
+            self._PRELUDE + "ACOMP()\nstruct C { " + field_decl + " };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn(expected_text, str(caught.exception))
+
+    def test_vector_field_is_a_vector_with_a_spec(self):
+        cpp = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Vector", cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::numbers)>()",
+                      cpp)
+
+    def test_map_field_is_a_map_with_a_spec(self):
+        cpp = self._generate("AFIELD() std::map<int32_t, float> weights;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Map", cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::weights)>()",
+                      cpp)
+
+    def test_container_json_goes_through_the_container_templates(self):
+        cpp = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertIn("Assisi::Core::Reflect::ContainerToJson(c.numbers)", cpp)
+        self.assertIn('Assisi::Core::Reflect::ReadContainer(j, _comp, "numbers", comp.numbers)', cpp)
+
+    def test_container_includes_are_pulled_in(self):
+        cpp = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertIn("#include <Assisi/Core/Reflect/ContainerJson.hpp>", cpp)
+        self.assertIn("#include <Assisi/Core/Reflect/ContainerOps.hpp>", cpp)
+
+    def test_an_enum_element_carries_its_enumerators(self):
+        # The metadata describes the leaf, so a vector<Colour> reads the same as a
+        # bare Colour — which is what puts the enumerator values in the protocol
+        # text wherever the enum sits.
+        cpp = self._generate("AFIELD() std::vector<Colour> colours;")
+        self.assertIn('.enumConstants = { { "Red", 0 }, { "Green", 7 } }', cpp)
+        self.assertIn(".enumSize = 1", cpp)
+
+    def test_one_nesting_level_generates(self):
+        cpp = self._generate(
+            "AFIELD() std::map<Assisi::Core::ShortString, std::vector<Colour>> bindings;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Map", cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::bindings)>()",
+                      cpp)
+        # The leaf enum is reached through the nesting, not just at the top level.
+        self.assertIn('.enumConstants = { { "Red", 0 }, { "Green", 7 } }', cpp)
+
+    def test_a_map_suppresses_the_offsetof_diagnostic(self):
+        # A struct holding a map is not standard-layout, so offsetof on it is
+        # conditionally-supported and GCC warns. Scoped to files that need it.
+        with_map = self._generate("AFIELD() std::map<int32_t, float> weights;")
+        self.assertIn('#pragma GCC diagnostic ignored "-Winvalid-offsetof"', with_map)
+
+        # std::vector *is* standard-layout, so a file with only vectors must not
+        # lose the warning.
+        vectors_only = self._generate("AFIELD() std::vector<int32_t> numbers;")
+        self.assertNotIn("-Winvalid-offsetof", vectors_only)
+
+    def test_two_nesting_levels_are_refused(self):
+        self._assert_refused(
+            "AFIELD() std::vector<std::vector<std::vector<int32_t>>> deep;",
+            "nests 3 containers deep")
+
+    def test_a_float_key_is_refused(self):
+        # A JSON object's keys are text, and a float has no exact text spelling to
+        # round-trip through.
+        self._assert_refused("AFIELD() std::map<float, int32_t> byFloat;",
+                             "which cannot key a reflected map")
+
+    def test_an_enum_key_is_refused(self):
+        # The one enum-metadata slot on a FieldMeta describes the element.
+        self._assert_refused("AFIELD() std::map<Colour, int32_t> byColour;",
+                             "which cannot key a reflected map")
+
+    def test_a_std_string_element_is_refused_with_the_alternative_named(self):
+        self._assert_refused("AFIELD() std::vector<std::string> names;",
+                             "use Core::ShortString")
+
+    def test_an_unsupported_element_type_is_refused(self):
+        self._assert_refused("AFIELD() std::vector<glm::vec3> points;",
+                             "holds elements of type 'glm::vec3'")
+
+    def test_the_asset_vectors_keep_their_own_field_types(self):
+        # AssetPathVector and AssetIdVector predate the generic containers and
+        # have their own enumerators. Re-routing them would move the wire format
+        # for no gain, so the generic path must not claim them.
+        cpp = self._generate("AFIELD() std::vector<Assisi::Core::AssetId> overrides;")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::AssetIdVector", cpp)
+        self.assertNotIn("ContainerSpecFor<decltype(T::overrides)>", cpp)
 
 
 class IncludePathTest(unittest.TestCase):

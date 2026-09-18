@@ -5,8 +5,7 @@
 /// make it safe to prefer over the JSON path.
 ///
 /// A blueprint is parsed **once** and cached: spawning a hundred bullets must not
-/// re-read and re-parse `bullet.abp` a hundred times
-/// (docs/blueprint-system-concept.md §11).
+/// re-read and re-parse `bullet.abp` a hundred times.
 ///
 /// What is cached is not the JSON but one BinaryCodec block per component, and it
 /// has to be a decode rather than a byte copy: MeshRenderer holds a

@@ -2,8 +2,7 @@
 #pragma once
 
 /// @file Serializer.hpp
-/// @brief Writes a captured window out as a Chrome JSON trace
-///        (design: docs/chiara-design-notes.md §6).
+/// @brief Writes a captured window out as a Chrome JSON trace.
 ///
 /// The file opens in **Perfetto** (ui.perfetto.dev) and, because Tracy ships
 /// `tracy-import-chrome`, in **Tracy** as well. One exporter, two viewers: the

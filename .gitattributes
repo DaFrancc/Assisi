@@ -76,3 +76,9 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+###############################################################################
+# Patches are applied with `git apply` at configure time, which rejects a CRLF
+# checkout as corrupt (a blank context line becomes a lone "\r").
+###############################################################################
+*.patch text eol=lf

@@ -24,29 +24,9 @@
 namespace Assisi::App
 {
 
-void InstallAssetResolvers(Render::AssetCache &cache, const Core::AssetDatabase &database)
+void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, Physics::PhysicsWorld &physics)
 {
-    // Serialization's path hint (asset-database D2): saved GUID references carry
-    // a readable last-known path regenerated from the database.
-    Core::SetAssetIdHintResolver([&database](const Core::AssetId &id)
-                                 { return database.PathFor(id).value_or(std::string{}); });
-
-    // The cache: id↔path so mesh/material/texture resolution and glTF import
-    // speak GUIDs. Reserved built-ins resolve without the database.
-    cache.SetAssetResolvers(
-        [&database](const Core::AssetId &id) -> Core::AssetPath
-        {
-            const std::optional<std::string> path = database.PathFor(id);
-            return path ? Core::AssetPath{std::string_view{*path}} : Core::AssetPath{};
-        },
-        [&database](std::string_view virtualPath) -> Core::AssetId
-        { return database.IdFor(virtualPath).value_or(Core::AssetId{}); });
-}
-
-void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                                 Physics::PhysicsWorld &physics)
-{
-    Runtime::ResolveSceneAssets(scene, cache, database);
+    Runtime::ResolveSceneAssets(scene, cache);
     (void)BuildSceneBodies(scene, physics);
 }
 
@@ -66,7 +46,13 @@ void FinishLoad(World &world, const LevelServices &services, AssetCacheReset res
         services.renderer.InvalidateAssetBindings();
     }
 
-    RebindSceneAssetsAndPhysics(world.scene, services.cache, services.database, world.physics);
+    // Whatever the shadow selectors were holding described the level that was
+    // here: cascades full of that geometry's depth, under a sun the incoming
+    // level's clock may put somewhere else entirely. A level that loads at a set
+    // hour is a jump like any other, and this is where it is one.
+    services.renderer.OnSceneReplaced();
+
+    RebindSceneAssetsAndPhysics(world.scene, services.cache, world.physics);
 }
 
 } // namespace
@@ -120,16 +106,26 @@ Runtime::LevelResult LoadLevelSim(World &world, std::string_view virtualPath)
     return {};
 }
 
-void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                            bool &wereLoading)
+void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, bool &wereLoading)
 {
     // Re-resolve while loads are pending, and for one frame after the last one
     // finishes so the final result is picked up.
-    const bool loadsPending = cache.HasPendingLoads();
-    if (loadsPending || wereLoading)
+    if (wereLoading || cache.HasPendingLoads())
     {
-        Runtime::ResolveSceneAssets(scene, cache, database);
-        wereLoading = loadsPending;
+        Runtime::ResolveSceneAssets(scene, cache);
+
+        // Sampled AFTER the resolve, and that ordering is the whole meaning of
+        // the flag: a mesh's materials are only requested once its slot table
+        // exists, so the resolve that finally lands a mesh is also the one that
+        // asks for its materials. Sampling first reports nothing pending on that
+        // very frame, with the materials about to be requested — harmless for
+        // upgrading a placeholder, wrong for anything that treats false as
+        // "finished".
+        //
+        // False therefore means: the last resolve pass requested nothing that is
+        // still in flight. Every mesh is resident or has fallen back, so every
+        // slot table existed, so every material was asked for and has settled too.
+        wereLoading = cache.HasPendingLoads();
     }
 }
 
@@ -200,7 +196,7 @@ std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetS
         // The two numbers only answer "are they different", which the caller's
         // message already says — so they go to the log and the message stays
         // something the player can act on.
-        Core::Log::Error("Join: level content hash mismatch for '{}' — host {}, local {}.", level.path,
+        Core::Log::Error("Join: level content hash mismatch for '{}' - host {}, local {}.", level.path,
                          Core::ToHex64(level.contentHash), Core::ToHex64(*localHash));
         return std::unexpected(JoinLevelError::ContentMismatch);
     }

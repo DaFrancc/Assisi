@@ -142,7 +142,8 @@ public:
     /// @p deferHandshake holds the ClientHello until ConfirmLevelReady(), so a
     /// caller that must load the host's level first can do so before any
     /// snapshot is applied. A caller with nothing to build (the headless
-    /// sandbox client, the tests) leaves it false and handshakes immediately.
+    /// server's client mode, the tests) leaves it false and handshakes
+    /// immediately.
     bool Join(std::string_view address, std::uint16_t port, bool deferHandshake = false);
 
     /// @brief True when a deferred join is waiting for the local world.
@@ -258,7 +259,7 @@ public:
     {
         static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
                       "SendIntent takes an AMSG(intent, ...). An event is the authority's word about what "
-                      "happened — send those from the server.");
+                      "happened - send those from the server.");
         if (_server)
         {
             _server->SubmitLocalIntent(intent);

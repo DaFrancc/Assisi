@@ -58,6 +58,25 @@ const std::string &LaunchStamp()
 void InstallSignalStackForThisThread() noexcept
 {
 #ifndef _WIN32
+    // Never displace an alt stack somebody else installed. A sanitizer runtime
+    // installs its own on every thread it knows about and then *frees it by
+    // querying* at thread exit: ASan's UnsetAlternateSignalStack asks the kernel
+    // which stack is current and munmaps that, on the assumption it is the one
+    // ASan mmapped. Overwriting it here therefore hands ASan our buffer to
+    // unmap — and because the buffer below is thread_local, its address is an
+    // offset into the TLS block and is not page-aligned, so the munmap fails
+    // with EINVAL and ASan treats a failed unmap as fatal. Every ASan run of a
+    // binary that starts a JobSystem worker died at thread teardown, whatever
+    // the tests did.
+    //
+    // Skipping is not a compromise: any already-installed alt stack serves the
+    // same purpose this one does, so the handler is covered either way.
+    stack_t existing{};
+    if (sigaltstack(nullptr, &existing) == 0 && existing.ss_sp != nullptr && (existing.ss_flags & SS_DISABLE) == 0)
+    {
+        return;
+    }
+
     // thread_local so each thread gets its own; sharing one buffer between
     // threads would have them scribble over each other mid-handler. 64 KB is
     // ample — the crash handler composes into a static buffer and calls no

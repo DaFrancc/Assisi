@@ -88,6 +88,15 @@ public:
 
     bool operator==(const TrivialString &other) const { return View() == other.View(); }
 
+    /// @brief Lexicographic order over View(), agreeing with operator== and never
+    /// reading the unused tail bytes.
+    ///
+    /// A map keyed by one of these is serialized in sorted key order, so the
+    /// encoding is the same on every run whatever order the keys were inserted in.
+    /// Without an order the codec would have to fall back on the container's own
+    /// iteration, which for an unordered_map follows memory layout.
+    auto operator<=>(const TrivialString &other) const { return View() <=> other.View(); }
+
 private:
     std::array<char, Capacity> _data{};
     std::uint16_t _length = 0;
@@ -102,10 +111,15 @@ inline constexpr std::size_t kEntityNameMax = 64;
 
 /// @brief The name of an entity: heap-free, fixed-capacity, inline.
 ///
-/// reflectgen keys on the spelled type name `Assisi::Core::EntityName`, so a
-/// field must be declared with the alias — a bare `TrivialString<64>` is a type
-/// the generator does not know. Serializes as a plain string; the editor draws
-/// it as a text box (FieldType::EntityName).
+/// A spelling, not a distinct type: reflectgen accepts this and a bare
+/// `TrivialString<64>` alike, and they decode identically. Use this one where
+/// the value is an entity's name and the bare form for any other text wanting
+/// the wider capacity, so the declaration says which it means. Serializes as a
+/// plain string; the editor draws it as a text box.
+///
+/// Thirty-two and sixty-four are the only reflectable capacities — the binary
+/// codec reads into the buffer by capacity and has a field type for each. A
+/// field declaring any other capacity fails the build by name.
 using EntityName = TrivialString<kEntityNameMax>;
 
 } // namespace Assisi::Core

@@ -1,0 +1,86 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#pragma once
+
+/// @file IndirectResolve.hpp
+/// @brief Which indirect-lighting provider answers for a scene.
+
+#include <Assisi/Math/Color.hpp>
+#include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/IndirectLighting.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
+
+namespace Assisi::Runtime
+{
+
+/// @brief An indirect term pinned by hand, overriding whatever the scene would
+/// otherwise be lit by.
+///
+/// What an interior wants — a room is not lit by a sky it cannot see — and what
+/// the model viewer turns up to make a mesh visible without anyone lighting one.
+struct AmbientOverride
+{
+    /// False leaves the scene to answer for itself. The colour and intensity are
+    /// still read in that case, because a scene with no sky has nothing else to
+    /// be lit by and these are what it had before.
+    bool active = false;
+    Assisi::Math::Color3 color{1.0f};
+    float intensity = Render::kDefaultAmbientIntensity;
+};
+
+/// @brief Whether the sky's reflection probe holds a bake this frame, and how
+/// many mips it has to read roughness from.
+struct SpecularProbe
+{
+    bool ready = false;
+    float maxLod = 0.0f;
+};
+
+/// @brief The indirect term for one frame, as the shader wants it.
+///
+/// The one place a concrete provider is named. Everything downstream — the mesh
+/// pass, its constant buffer, mesh.frag — reads Render::IndirectConstants and
+/// knows nothing about which provider produced them, so a baked or probe-based
+/// provider arrives here and nowhere else.
+///
+/// A pinned ambient wins over the sky rather than adding to it: an author who
+/// says what the indirect term is has answered the question, and a sky arriving
+/// on top of that answer would be a second one. It wins over the probe for the
+/// same reason — the probe is the sky's, so a pinned ambient pins it off too.
+[[nodiscard]] inline Render::IndirectConstants ResolveIndirect(const SkyResolution &sky,
+                                                               const AmbientOverride &ambient,
+                                                               const SpecularProbe &probe)
+{
+    if (!ambient.active && sky.status == SkyStatus::Ready)
+    {
+        // Both bodies, so a moonlit night has a moonlit ambient without anything
+        // asking for one. Neither disk is integrated — each is already counted
+        // once as the direct light.
+        const Render::SkyAmbient fromSky = Render::AmbientFromSky(sky.sun, sky.moon, sky.settings);
+
+        // A floor, not an addition: it only ever raises, so a level that sets one
+        // is unchanged by day — the daytime term is orders above any sensible
+        // floor — and readable on a night with nothing up. Applied to both halves
+        // of the hemisphere, because "the world is at least partly lit" is about
+        // the world and not about which way a surface happens to face.
+        const glm::vec3 skyRadiance = glm::max(glm::vec3(fromSky.sky), sky.minimumAmbient);
+        const glm::vec3 groundRadiance = glm::max(glm::vec3(fromSky.ground), sky.minimumAmbient);
+        if (probe.ready)
+        {
+            return Render::SkyProbeIndirect(skyRadiance, groundRadiance,
+                                            Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings),
+                                            probe.maxLod)
+                .ShaderConstants();
+        }
+        return Render::HemisphereIndirect(skyRadiance, groundRadiance).ShaderConstants();
+    }
+    return Render::UniformIndirect(ambient.color, ambient.intensity).ShaderConstants();
+}
+
+/// @brief The same, for a frame with no reflection probe.
+[[nodiscard]] inline Render::IndirectConstants ResolveIndirect(const SkyResolution &sky,
+                                                               const AmbientOverride &ambient)
+{
+    return ResolveIndirect(sky, ambient, SpecularProbe{});
+}
+
+} // namespace Assisi::Runtime

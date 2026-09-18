@@ -5,18 +5,18 @@
 /// @brief The editor `AssetProvider` backend: id → path (via the database) →
 ///        loose file on disk.
 ///
-/// One of the two `AssetProvider` backends (the shipped one is PakProvider, S5).
-/// It resolves an `AssetId` to a virtual path through a live `AssetDatabase`,
+/// One of the two `AssetProvider` backends; the shipped one is PakProvider. It
+/// resolves an `AssetId` to a virtual path through a live `AssetDatabase`,
 /// then reads that file through `AssetSystem`. Reserved built-in ids are not
 /// served here — they are primitives resolved above the provider (the render
 /// AssetCache), so opening one is an error.
 ///
 /// Editor-only: it depends on the mutable database and the loose asset tree,
-/// neither of which exists in a shipped build. See
-/// docs/asset-database-architecture.md §3.
+/// neither of which exists in a shipped build.
 
 #include <cstddef>
 #include <expected>
+#include <string_view>
 #include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
@@ -40,6 +40,9 @@ public:
     /// @return The bytes, or AssetError::UnknownAssetId if the id is reserved or
     ///         not in the database (FileOpenFailed / FileReadFailed on I/O).
     [[nodiscard]] std::expected<std::vector<std::byte>, AssetError> Open(AssetId id) const override;
+
+    /// @brief The id the database holds for @p vpath, or UnknownAssetId.
+    [[nodiscard]] std::expected<AssetId, AssetError> Resolve(std::string_view vpath) const override;
 
 private:
     const AssetDatabase *_database;

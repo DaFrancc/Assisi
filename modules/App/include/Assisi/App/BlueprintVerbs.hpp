@@ -6,7 +6,7 @@
 ///
 /// Each is thin, none runs per frame, and all of them are engine-provided
 /// precisely because they are what everyone would otherwise hand-roll — usually
-/// as a stored member list that goes stale (docs/blueprint-system-concept.md §7).
+/// as a stored member list that goes stale.
 ///
 /// ## The rule these live under
 ///
@@ -144,7 +144,7 @@ template <typename T>
 /// The source check is the part that has to exist either way: building a `Car`
 /// view over a crate's members would otherwise resolve every field to
 /// NullEntity and look like a spawn that half-worked. This is why the instance
-/// table has to exist (docs/blueprint-system-concept.md §7).
+/// table has to exist.
 ///
 /// Re-resolves every handle, so it is also how a caller holding only the id
 /// gets a fresh view after members have come and gone.

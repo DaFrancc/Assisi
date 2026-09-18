@@ -75,7 +75,7 @@ void Registry::ReviveAt(Entity entity)
     }
 
     ASSISI_ASSERT(!_alive[entity.index],
-                  "ReviveAt: slot is already live — reviving over a live occupant would alias two "
+                  "ReviveAt: slot is already live - reviving over a live occupant would alias two "
                   "entities onto one slot. Only a freed slot may be revived (linear-history invariant).");
 
     /* Restore the exact generation — may decrease relative to the current value,

@@ -26,7 +26,9 @@
 /// goes, an array of the wrong length.
 
 #include <cstdint>
+#include <span>
 #include <string>
+#include <string_view>
 
 #include <nlohmann/json.hpp>
 
@@ -41,6 +43,16 @@ namespace Assisi::Core::Reflect
 
 /// @brief Reads an integer field. A JSON number with a fractional part is a
 /// category error here, not a silent truncation.
+///
+/// The narrow widths reject a value too large for the field for the same reason:
+/// a JSON integer outside an int8_t's range would otherwise keep its low byte and
+/// load as a different number entirely.
+[[nodiscard]] bool ReadInt8(const nlohmann::json &j, const char *component, const char *field, int8_t &out);
+[[nodiscard]] bool ReadUInt8(const nlohmann::json &j, const char *component, const char *field,
+                             uint8_t &out);
+[[nodiscard]] bool ReadInt16(const nlohmann::json &j, const char *component, const char *field, int16_t &out);
+[[nodiscard]] bool ReadUInt16(const nlohmann::json &j, const char *component, const char *field,
+                              uint16_t &out);
 [[nodiscard]] bool ReadInt32(const nlohmann::json &j, const char *component, const char *field, int32_t &out);
 [[nodiscard]] bool ReadUInt32(const nlohmann::json &j, const char *component, const char *field,
                               uint32_t &out);
@@ -62,6 +74,30 @@ namespace Assisi::Core::Reflect
 /// @param out   an array of at least @p count floats.
 [[nodiscard]] bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *field,
                                   std::size_t count, float *out);
+
+/// @brief One enumerator, as generated code spells it for ReadEnum.
+///
+/// A view rather than a copy: the name is a string literal in the generated
+/// table and outlives every call made with it.
+struct EnumName
+{
+    std::string_view name;
+    int64_t value;
+};
+
+/// @brief Reads an enum field written either as an enumerator name or as its
+/// integer value. Generated writers emit the integer.
+///
+/// A name no enumerator carries is refused, and the log lists the ones that
+/// exist. `Count` is not among them: the generated table omits it, so it is
+/// refused like any other name the enum does not define.
+///
+/// An integer is taken as written and not checked against the table.
+///
+/// @param names every enumerator of the field's type, in declaration order.
+/// @param out   the enumerator's integer value; untouched when the key is absent.
+[[nodiscard]] bool ReadEnum(const nlohmann::json &j, const char *component, const char *field,
+                            std::span<const EnumName> names, int64_t &out);
 
 /// @brief Whether @p field is present at all, for the templates that hand the
 /// value to a helper of their own (AssetId, EntityRef, ComponentMask).

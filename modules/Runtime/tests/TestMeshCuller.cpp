@@ -5,12 +5,23 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <vector>
 
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 
+using Assisi::Geometry::DefaultLodScreenSize;
+using Assisi::Geometry::LodRange;
+using Assisi::Render::CullMaterialPipeline;
 using Assisi::Render::CullTableBuilder;
 using Assisi::Render::CullTables;
+using Assisi::Render::GpuLod;
+using Assisi::Render::GpuMeshDesc;
+using Assisi::Render::GpuObject;
 using Assisi::Render::GpuSubMesh;
+using Assisi::Render::EncodeCullMaterial;
+using Assisi::Render::MeshPipeline;
+using Assisi::Render::kMeasureLod;
 using Assisi::Render::kNoMaterial;
 using Assisi::Render::MeshGeometry;
 
@@ -21,9 +32,11 @@ namespace
 const int32_t kMeshA = 0;
 const int32_t kMeshB = 0;
 
-// Builds a MeshGeometry over caller-owned submesh storage (the span is only read
-// during AddInstanceRaw). vertexBase/indexBase distinguish arena placement.
-MeshGeometry MakeGeometry(std::span<const GpuSubMesh> submeshes, uint32_t vertexBase, uint32_t indexBase)
+// Builds a MeshGeometry over caller-owned submesh storage (the spans are only
+// read during AddInstanceRaw). vertexBase/indexBase distinguish arena placement.
+// No LOD table is one level over every submesh.
+MeshGeometry MakeGeometry(std::span<const GpuSubMesh> submeshes, uint32_t vertexBase, uint32_t indexBase,
+                          std::span<const LodRange> lods = {})
 {
     MeshGeometry geometry;
     geometry.sphere        = glm::vec4(1.f, 2.f, 3.f, 4.f);
@@ -31,8 +44,59 @@ MeshGeometry MakeGeometry(std::span<const GpuSubMesh> submeshes, uint32_t vertex
     geometry.aabbMax       = glm::vec4(1.f, 2.f, 3.f, 0.f);
     geometry.vertexBase    = vertexBase;
     geometry.indexBase     = indexBase;
-    geometry.lod0Submeshes = submeshes;
+    geometry.submeshes     = submeshes;
+    geometry.lods          = lods;
     return geometry;
+}
+
+// A three-level chain over four submeshes: LOD0 draws two, one per material
+// slot, and LOD1 and LOD2 one each. LOD1 carries no authored threshold.
+struct Chain
+{
+    std::array<GpuSubMesh, 4> submeshes{GpuSubMesh{0, 6, 0, 0}, GpuSubMesh{6, 6, 1, 0}, GpuSubMesh{12, 3, 0, 0},
+                                        GpuSubMesh{15, 3, 0, 0}};
+    std::array<LodRange, 3> lods{LodRange{.FirstSubMesh = 0, .SubMeshCount = 2, .ScreenSizeThreshold = 0.5f},
+                                 LodRange{.FirstSubMesh = 2, .SubMeshCount = 1, .ScreenSizeThreshold = 0.f},
+                                 LodRange{.FirstSubMesh = 3, .SubMeshCount = 1, .ScreenSizeThreshold = 0.1f}};
+
+    [[nodiscard]] MeshGeometry Geometry() const { return MakeGeometry(submeshes, 0, 0, lods); }
+};
+
+// Replays mesh_cull.comp's append with one level picked for each measured
+// object, in object order (a named object draws its own): every submesh that
+// resolves a material grows its command by one. False when a command would run
+// past the region its template reserved.
+bool EveryAppendFits(const CullTables &tables, std::span<const uint32_t> picks)
+{
+    std::vector<uint32_t> appended(tables.batchTemplates.size(), 0u);
+    size_t nextPick = 0;
+    for (const GpuObject &obj : tables.objects)
+    {
+        const GpuMeshDesc &desc = tables.meshDescs[obj.meshDescIndex];
+        const uint32_t level = obj.lodLevel == kMeasureLod ? picks[nextPick++] : obj.lodLevel;
+        const GpuLod &lod = tables.lods[desc.firstLod + level];
+        for (uint32_t s = 0; s < lod.submeshCount; ++s)
+        {
+            const uint32_t g = lod.firstSubmesh + s;
+            const uint32_t slot = tables.submeshes[g].materialSlot;
+            if (slot >= obj.materialCount || tables.objectMaterials[obj.materialBase + slot] == kNoMaterial)
+            {
+                continue;
+            }
+            const uint32_t packed = tables.objectMaterials[obj.materialBase + slot];
+            ++appended[tables.CommandBase(CullMaterialPipeline(packed)) + g];
+        }
+    }
+    for (size_t command = 0; command < appended.size(); ++command)
+    {
+        const uint32_t regionEnd = command + 1 < appended.size() ? tables.batchTemplates[command + 1].firstInstance
+                                                                : tables.drawCapacity;
+        if (tables.batchTemplates[command].firstInstance + appended[command] > regionEnd)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 } // namespace
 
@@ -55,10 +119,14 @@ TEST_CASE("AddInstanceRaw packs one object, its mesh descriptor, submeshes, and 
     REQUIRE(tables.submeshes.size() == 2);
     REQUIRE(tables.objectMaterials.size() == 2);
 
-    // The mesh descriptor: LOD0 range, arena bases, and bounds carried verbatim.
+    // The mesh descriptor: a one-level table, arena bases, and bounds carried
+    // verbatim.
     const auto &desc = tables.meshDescs.front();
-    CHECK(desc.firstSubmesh == 0);
-    CHECK(desc.submeshCount == 2);
+    CHECK(desc.firstLod == 0);
+    CHECK(desc.lodCount == 1);
+    REQUIRE(tables.lods.size() == 1);
+    CHECK(tables.lods[0].firstSubmesh == 0);
+    CHECK(tables.lods[0].submeshCount == 2);
     CHECK(desc.vertexBase == 100);
     CHECK(desc.indexBase == 200);
     CHECK(desc.sphere.w == doctest::Approx(4.f));
@@ -76,7 +144,11 @@ TEST_CASE("AddInstanceRaw packs one object, its mesh descriptor, submeshes, and 
     CHECK(tables.objectMaterials[0] == 10u);
     CHECK(tables.objectMaterials[1] == 20u);
 
-    // drawCapacity is the per-object LOD0 submesh sum (the max draws the pass emits).
+    // One level has nothing to measure, so the object is named onto it and
+    // reserves exactly what it did before selection existed.
+    CHECK(obj.lodLevel == 0);
+
+    // drawCapacity is the per-object submesh sum (the max draws the pass emits).
     CHECK(tables.drawCapacity == 2);
 }
 
@@ -105,6 +177,139 @@ TEST_CASE("AddInstanceRaw dedups a repeated mesh but appends a fresh object + ma
     CHECK(tables.drawCapacity == 2);
 }
 
+TEST_CASE("A mesh's whole chain rides in one descriptor")
+{
+    // The level is the object's, not the descriptor's: instances of one mesh at
+    // different levels, and one left to measure, all share it.
+    CullTableBuilder builder;
+    const Chain chain;
+    const std::array<uint32_t, 2> mat{0u, 1u};
+
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), mat);
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), mat, /*level=*/ 2);
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.meshDescs.size() == 1);
+    CHECK(tables.meshDescs[0].firstLod == 0);
+    CHECK(tables.meshDescs[0].lodCount == 3);
+
+    // Every level's submeshes are interned, each level pointing at its own run.
+    REQUIRE(tables.submeshes.size() == 4);
+    CHECK(tables.submeshes[3].indexOffset == 15);
+    REQUIRE(tables.lods.size() == 3);
+    CHECK(tables.lods[0].firstSubmesh == 0);
+    CHECK(tables.lods[0].submeshCount == 2);
+    CHECK(tables.lods[1].firstSubmesh == 2);
+    CHECK(tables.lods[1].submeshCount == 1);
+    CHECK(tables.lods[2].firstSubmesh == 3);
+    CHECK(tables.lods[2].submeshCount == 1);
+
+    REQUIRE(tables.objects.size() == 2);
+    CHECK(tables.objects[0].meshDescIndex == 0);
+    CHECK(tables.objects[1].meshDescIndex == 0);
+    CHECK(tables.objects[0].lodLevel == kMeasureLod);
+    CHECK(tables.objects[1].lodLevel == 2);
+}
+
+TEST_CASE("An unauthored threshold reaches the table as its level's default")
+{
+    // Resolved here so the shader compares against numbers and never needs to
+    // know a default exists.
+    CullTableBuilder builder;
+    const Chain chain;
+    const std::array<uint32_t, 2> mat{0u, 1u};
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), mat);
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.lods.size() == 3);
+    CHECK(tables.lods[0].screenSizeThreshold == doctest::Approx(0.5f));
+    CHECK(tables.lods[1].screenSizeThreshold == doctest::Approx(DefaultLodScreenSize(1)));
+    CHECK(tables.lods[2].screenSizeThreshold == doctest::Approx(0.1f));
+}
+
+TEST_CASE("A named level past the end of the chain is its last")
+{
+    CullTableBuilder builder;
+    const Chain chain;
+    const std::array<uint32_t, 2> mat{0u, 1u};
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), mat, /*level=*/ 7);
+
+    REQUIRE(builder.Tables().objects.size() == 1);
+    CHECK(builder.Tables().objects[0].lodLevel == 2);
+    // Reserved as the level it clamped to, not as a measured instance.
+    CHECK(builder.Tables().drawCapacity == 1);
+}
+
+TEST_CASE("A measured instance reserves room at every level, a named one only at its own")
+{
+    // The CPU cannot know which level a measured instance will land on, so it
+    // holds a slot for it in every level's batches. A named instance's level is
+    // known, and holding more would be room nothing writes.
+    CullTableBuilder builder;
+    const Chain chain;
+    const std::array<uint32_t, 2> mat{0u, 1u};
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), mat);
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), mat, /*level=*/ 1);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    // The measured one's 2 + 1 + 1, and the named one's single LOD1 submesh.
+    CHECK(tables.drawCapacity == 5);
+
+    // One command per interned submesh. LOD0's two batches hold only the
+    // measured instance, LOD1's holds both, LOD2's the measured one again.
+    REQUIRE(tables.batchTemplates.size() == 4);
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 1);
+    CHECK(tables.batchTemplates[2].firstInstance == 2);
+    CHECK(tables.batchTemplates[3].firstInstance == 4);
+    CHECK(tables.batchTemplates[2].firstIndex == 12);
+    CHECK(tables.batchTemplates[3].indexCount == 3);
+}
+
+TEST_CASE("Whatever level each instance lands on, it lands inside its reserved region")
+{
+    // Every combination of picks for the measured instances, across two
+    // pipelines and with an unresolved slot among them. An overrun here is one
+    // instance's record written over another batch's on the GPU.
+    CullTableBuilder builder;
+    const Chain chain;
+    const std::array<uint32_t, 2> opaque{EncodeCullMaterial(1u, MeshPipeline::Opaque),
+                                         EncodeCullMaterial(2u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 2> masked{EncodeCullMaterial(3u, MeshPipeline::Mask),
+                                         EncodeCullMaterial(4u, MeshPipeline::Mask)};
+    const std::array<uint32_t, 2> partial{EncodeCullMaterial(5u, MeshPipeline::Opaque), kNoMaterial};
+
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), opaque);
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), opaque, /*level=*/ 1);
+    builder.AddInstanceRaw(&kMeshA, chain.Geometry(), glm::mat4(1.f), partial);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.UsesPipeline(MeshPipeline::Mask));
+
+    constexpr uint32_t kMeasured = 3;
+    constexpr uint32_t kLevels = 3;
+    uint32_t combinations = 1;
+    for (uint32_t i = 0; i < kMeasured; ++i)
+    {
+        combinations *= kLevels;
+    }
+    for (uint32_t combination = 0; combination < combinations; ++combination)
+    {
+        std::array<uint32_t, kMeasured> picks{};
+        uint32_t remaining = combination;
+        for (uint32_t &pick : picks)
+        {
+            pick = remaining % kLevels;
+            remaining /= kLevels;
+        }
+        CAPTURE(combination);
+        CHECK(EveryAppendFits(tables, picks));
+    }
+}
+
 TEST_CASE("A second distinct mesh appends its submeshes after the first's")
 {
     CullTableBuilder builder;
@@ -118,9 +323,11 @@ TEST_CASE("A second distinct mesh appends its submeshes after the first's")
     const CullTables &tables = builder.Tables();
     REQUIRE(tables.meshDescs.size() == 2);
     REQUIRE(tables.submeshes.size() == 3);
-    // Mesh B's descriptor points past mesh A's two submeshes.
-    CHECK(tables.meshDescs[1].firstSubmesh == 2);
-    CHECK(tables.meshDescs[1].submeshCount == 1);
+    // Mesh B's one level points past mesh A's two submeshes.
+    CHECK(tables.meshDescs[1].firstLod == 1);
+    REQUIRE(tables.lods.size() == 2);
+    CHECK(tables.lods[1].firstSubmesh == 2);
+    CHECK(tables.lods[1].submeshCount == 1);
     CHECK(tables.meshDescs[1].vertexBase == 50);
     CHECK(tables.drawCapacity == 3);
 }
@@ -136,12 +343,12 @@ TEST_CASE("An unresolved material slot packs the skip sentinel")
     const CullTables &tables = builder.Tables();
     CHECK(tables.objectMaterials[0] == 5u);
     CHECK(tables.objectMaterials[1] == kNoMaterial);
-    // Capacity still counts every LOD0 submesh — the shader skips the sentinel one
+    // Capacity still counts every submesh — the shader skips the sentinel one
     // at draw time, but the buffer is sized for the upper bound.
     CHECK(tables.drawCapacity == 2);
 }
 
-TEST_CASE("Geometry with no LOD0 submeshes is a no-op")
+TEST_CASE("Geometry with no submeshes is a no-op")
 {
     CullTableBuilder builder;
     const std::array<uint32_t, 1> mat{0u};
@@ -209,6 +416,169 @@ TEST_CASE("Finalize reserves per-mesh instance regions and advances bases across
     CHECK(tables.drawCapacity == 5);
 }
 
+TEST_CASE("An all-opaque frame keeps one command per batch and no masked half")
+{
+    // The pay-for-what-you-place case: with no cutout material placed, the command
+    // table and the instance reservations must be exactly what they were before
+    // masked draws existed.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 2> submeshes{GpuSubMesh{0, 6, 0, 0}, GpuSubMesh{6, 6, 1, 0}};
+    const std::array<uint32_t, 2>   materials{10u, 20u};
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), materials);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    CHECK_FALSE(tables.UsesPipeline(MeshPipeline::Mask));
+    CHECK(tables.BatchCount() == 2);
+    CHECK(tables.batchTemplates.size() == 2);
+    CHECK(tables.CommandCount(MeshPipeline::Mask) == 0);
+    CHECK(tables.CommandCount(MeshPipeline::Opaque) == 2);
+}
+
+TEST_CASE("A masked material adds a second command half the masked pipeline draws")
+{
+    // Two objects of one mesh, one opaque and one cutout. A batch is one draw and
+    // a draw is one pipeline, so the (mesh, submesh) they share cannot be one
+    // batch — the table grows a masked half for the second to land in.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1>   opaque{EncodeCullMaterial(7u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 1>   masked{EncodeCullMaterial(8u, MeshPipeline::Mask)};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), opaque);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    CHECK(tables.UsesPipeline(MeshPipeline::Mask));
+    REQUIRE(tables.BatchCount() == 1);
+    REQUIRE(tables.batchTemplates.size() == 2);
+    CHECK(tables.CommandCount(MeshPipeline::Opaque) == 1);
+    CHECK(tables.CommandCount(MeshPipeline::Mask) == 1);
+
+    // Both halves draw the same geometry; only the pipeline and the instance
+    // region they pack into differ.
+    CHECK(tables.batchTemplates[0].indexCount == 3);
+    CHECK(tables.batchTemplates[1].indexCount == 3);
+    CHECK(tables.batchTemplates[0].firstIndex == tables.batchTemplates[1].firstIndex);
+
+    // One object each, so the two reserved regions are one slot apiece and do not
+    // overlap — an overlap would have the two pipelines writing the same record.
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 1);
+}
+
+TEST_CASE("Reservations are exact, so a pipeline nothing uses reserves nothing")
+{
+    // Reserving one slot per object in both halves would double the instance
+    // buffer for every scene that has a cutout material anywhere in it. The counts
+    // are what each half will actually hold.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1>   masked{EncodeCullMaterial(4u, MeshPipeline::Mask)};
+    const std::array<uint32_t, 1>   opaque{EncodeCullMaterial(5u, MeshPipeline::Opaque)};
+
+    // Three masked objects of mesh A, one opaque object of mesh B.
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+    builder.AddInstanceRaw(&kMeshB, MakeGeometry(submeshes, 50, 60), glm::mat4(1.f), opaque);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.BatchCount() == 2);   // (A,s0) and (B,s0)
+    REQUIRE(tables.batchTemplates.size() == 4);
+
+    // Opaque half: A reserves nothing (all three of its objects are cutouts), B one.
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 0);
+    // Masked half follows B's single opaque slot: A takes three, B reserves none.
+    CHECK(tables.batchTemplates[2].firstInstance == 1);
+    CHECK(tables.batchTemplates[3].firstInstance == 4);
+
+    // Every reservation fits inside the instance buffer drawCapacity sizes.
+    CHECK(tables.drawCapacity == 4);
+}
+
+TEST_CASE("The masked bit never reaches the material id the shader indexes with")
+{
+    // The bit rides in the id's top bit, which the cull shader strips before
+    // writing the instance record. Leaving it in would index a million rows past
+    // the material table.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1>   masked{EncodeCullMaterial(9u, MeshPipeline::Mask)};
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), masked);
+
+    // The tables carry it packed — stripping is the shader's job, and it needs the
+    // bit to pick its half.
+    CHECK(builder.Tables().objectMaterials[0] == EncodeCullMaterial(9u, MeshPipeline::Mask));
+    CHECK((builder.Tables().objectMaterials[0] & Assisi::Render::kCullMaterialIdMask) == 9u);
+    // The sentinel must keep reading as "no material" rather than as a masked one.
+    CHECK((kNoMaterial &Assisi::Render::kCullMaterialIdMask) != 9u);
+}
+
+TEST_CASE("Every pipeline a frame places gets its own contiguous command block")
+{
+    // Three of the four pipelines in one frame. Blocks must follow one another in
+    // pipeline order with no gap for the pipeline nobody used, or the offsets the
+    // draw calls are issued at would skip past live commands.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1> opaque{EncodeCullMaterial(1u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 1> mask{EncodeCullMaterial(2u, MeshPipeline::Mask)};
+    const std::array<uint32_t, 1> maskBoth{EncodeCullMaterial(3u, MeshPipeline::MaskDoubleSided)};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), opaque);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), mask);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), maskBoth);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.BatchCount() == 1);
+    CHECK(tables.UsesPipeline(MeshPipeline::Opaque));
+    CHECK(tables.UsesPipeline(MeshPipeline::Mask));
+    CHECK(tables.UsesPipeline(MeshPipeline::MaskDoubleSided));
+    // Nobody placed a double-sided opaque material, so that pipeline costs nothing.
+    CHECK_FALSE(tables.UsesPipeline(MeshPipeline::OpaqueDoubleSided));
+    CHECK(tables.CommandCount(MeshPipeline::OpaqueDoubleSided) == 0);
+
+    // Three live blocks of one batch each, packed with the dead one skipped.
+    CHECK(tables.TotalCommandCount() == 3);
+    REQUIRE(tables.batchTemplates.size() == 3);
+    CHECK(tables.CommandBase(MeshPipeline::Opaque) == 0);
+    CHECK(tables.CommandBase(MeshPipeline::OpaqueDoubleSided) == 1);
+    CHECK(tables.CommandBase(MeshPipeline::Mask) == 1);
+    CHECK(tables.CommandBase(MeshPipeline::MaskDoubleSided) == 2);
+
+    // One instance each, so the three reserved regions are one slot apiece and do
+    // not overlap.
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 1);
+    CHECK(tables.batchTemplates[2].firstInstance == 2);
+    CHECK(tables.drawCapacity == 3);
+}
+
+TEST_CASE("A double-sided material is a different pipeline from the same material single-sided")
+{
+    // The cull mode splits batches exactly as the alpha mode does — one draw is
+    // one pipeline either way.
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 1> submeshes{GpuSubMesh{0, 3, 0, 0}};
+    const std::array<uint32_t, 1> single{EncodeCullMaterial(4u, MeshPipeline::Opaque)};
+    const std::array<uint32_t, 1> both{EncodeCullMaterial(5u, MeshPipeline::OpaqueDoubleSided)};
+
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), single);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, 0, 0), glm::mat4(1.f), both);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    CHECK(tables.TotalCommandCount() == 2);
+    CHECK_FALSE(tables.UsesPipeline(MeshPipeline::Mask));
+    // The packed id keeps the pipeline out of the material index the shader uses.
+    CHECK((tables.objectMaterials[1] & Assisi::Render::kCullMaterialIdMask) == 5u);
+}
+
 TEST_CASE("Reset clears the tables and the mesh dedup map")
 {
     CullTableBuilder builder;
@@ -219,6 +589,7 @@ TEST_CASE("Reset clears the tables and the mesh dedup map")
 
     builder.Reset();
     CHECK(builder.Tables().Empty());
+    CHECK(builder.Tables().lods.empty());
     CHECK(builder.Tables().drawCapacity == 0);
 
     // After Reset the same key is treated as new again (fresh descriptor).

@@ -54,10 +54,10 @@ void ComponentRegistry::Register(ComponentMeta meta)
         // The assert message is a string literal and cannot name the component, so
         // this is the only line that says *which* one, and it has to run first to be
         // seen at all.
-        Core::Log::Error("ComponentRegistry: refusing late registration of '{}' — the registry is already "
+        Core::Log::Error("ComponentRegistry: refusing late registration of '{}' - the registry is already "
                          "finalized and its ids are in use. The component will not be reflected.",
                          meta.name);
-        ASSISI_ASSERT(false, "ComponentRegistry::Register after an id was issued — ids are positions in the "
+        ASSISI_ASSERT(false, "ComponentRegistry::Register after an id was issued - ids are positions in the "
                       "name-sorted list, so registering now would renumber ids that callers have "
                       "already cached and saved scenes already store");
         return;
@@ -140,7 +140,7 @@ void ComponentRegistry::EnsureFinalized() const
     if (_replicable.size() > kReplicableComponentCount)
     {
         Core::Log::Error("ComponentRegistry: {} replicable components registered but ComponentMask was sized "
-                         "for {}. A module's headers are missing from the reflectgen scan — every reflected "
+                         "for {}. A module's headers are missing from the reflectgen scan - every reflected "
                          "header must be passed to assisi_reflect().",
                          _replicable.size(), kReplicableComponentCount);
     }

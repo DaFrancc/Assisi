@@ -5,11 +5,18 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Core/Reflect/ContainerJson.hpp>
+#include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <cstdint>
 #include <Assisi/Testing/Sample.hpp>
 
 // Declared, never defined — the real one lives in <Assisi/Runtime/InstanceView.hpp>.
 namespace Assisi::Runtime { template <typename T> struct InstanceView; }
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
 
 namespace
 {
@@ -48,6 +55,12 @@ static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadi
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::level)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleReplicated::shared)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleReplicated::serverOnly)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::numbers)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::modes)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::labels)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::weights)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::counts)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::bindings)>);
 
 // ── SampleAllTypes ────────────────────────────────────────────────────────────
 static const bool _reflectgen_SampleAllTypes = []() -> bool
@@ -57,23 +70,23 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
         "SampleAllTypes",
         typeid(T),
         {
-            { "f", Assisi::Core::Reflect::FieldType::Float, offsetof(T, f), false, false },
-            { "d", Assisi::Core::Reflect::FieldType::Double, offsetof(T, d), false, false },
-            { "i32", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, i32), false, false },
-            { "u32", Assisi::Core::Reflect::FieldType::UInt32, offsetof(T, u32), false, false },
-            { "i64", Assisi::Core::Reflect::FieldType::Int64, offsetof(T, i64), false, false },
-            { "u64", Assisi::Core::Reflect::FieldType::UInt64, offsetof(T, u64), false, false },
-            { "flag", Assisi::Core::Reflect::FieldType::Bool, offsetof(T, flag), false, false },
-            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, 4, false },
-            { "v2", Assisi::Core::Reflect::FieldType::Vec2, offsetof(T, v2), false, false },
-            { "v3", Assisi::Core::Reflect::FieldType::Vec3, offsetof(T, v3), false, false },
-            { "v4", Assisi::Core::Reflect::FieldType::Vec4, offsetof(T, v4), false, false },
-            { "q", Assisi::Core::Reflect::FieldType::Quat, offsetof(T, q), false, false },
-            { "m", Assisi::Core::Reflect::FieldType::Mat4, offsetof(T, m), false, false },
-            { "assetPath", Assisi::Core::Reflect::FieldType::AssetPath, offsetof(T, assetPath), false, false },
-            { "label", Assisi::Core::Reflect::FieldType::String, offsetof(T, label), false, false },
-            { "paths", Assisi::Core::Reflect::FieldType::AssetPathVector, offsetof(T, paths), false, false },
-            { "runtimeCache", Assisi::Core::Reflect::FieldType::Float, offsetof(T, runtimeCache), true, false }
+            { .name = "f", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, f) },
+            { .name = "d", .type = Assisi::Core::Reflect::FieldType::Double, .offset = offsetof(T, d) },
+            { .name = "i32", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, i32) },
+            { .name = "u32", .type = Assisi::Core::Reflect::FieldType::UInt32, .offset = offsetof(T, u32) },
+            { .name = "i64", .type = Assisi::Core::Reflect::FieldType::Int64, .offset = offsetof(T, i64) },
+            { .name = "u64", .type = Assisi::Core::Reflect::FieldType::UInt64, .offset = offsetof(T, u64) },
+            { .name = "flag", .type = Assisi::Core::Reflect::FieldType::Bool, .offset = offsetof(T, flag) },
+            { .name = "shape", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, shape), .enumConstants = { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, .enumSize = 4 },
+            { .name = "v2", .type = Assisi::Core::Reflect::FieldType::Vec2, .offset = offsetof(T, v2) },
+            { .name = "v3", .type = Assisi::Core::Reflect::FieldType::Vec3, .offset = offsetof(T, v3) },
+            { .name = "v4", .type = Assisi::Core::Reflect::FieldType::Vec4, .offset = offsetof(T, v4) },
+            { .name = "q", .type = Assisi::Core::Reflect::FieldType::Quat, .offset = offsetof(T, q) },
+            { .name = "m", .type = Assisi::Core::Reflect::FieldType::Mat4, .offset = offsetof(T, m) },
+            { .name = "assetPath", .type = Assisi::Core::Reflect::FieldType::AssetPath, .offset = offsetof(T, assetPath) },
+            { .name = "label", .type = Assisi::Core::Reflect::FieldType::String, .offset = offsetof(T, label) },
+            { .name = "paths", .type = Assisi::Core::Reflect::FieldType::AssetPathVector, .offset = offsetof(T, paths) },
+            { .name = "runtimeCache", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, runtimeCache), .transient = true }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -111,7 +124,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "i64", comp.i64)) return false;
             if (!Assisi::Core::Reflect::ReadUInt64(j, _comp, "u64", comp.u64)) return false;
             if (!Assisi::Core::Reflect::ReadBool(j, _comp, "flag", comp.flag)) return false;
-            { std::int64_t _n = static_cast<std::int64_t>(comp.shape); if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "shape", _n)) return false; comp.shape = static_cast<Assisi::Runtime::SampleShape>(_n); }
+            { static constexpr Assisi::Core::Reflect::EnumName _names[] = {{ "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 }}; std::int64_t _n = static_cast<std::int64_t>(comp.shape); if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "shape", _names, _n)) return false; comp.shape = static_cast<Assisi::Runtime::SampleShape>(_n); }
             { float _v[2] = { comp.v2.x, comp.v2.y }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "v2", 2, _v)) return false; comp.v2 = { _v[0], _v[1] }; }
             { float _v[3] = { comp.v3.x, comp.v3.y, comp.v3.z }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "v3", 3, _v)) return false; comp.v3 = { _v[0], _v[1], _v[2] }; }
             { float _v[4] = { comp.v4.x, comp.v4.y, comp.v4.z, comp.v4.w }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "v4", 4, _v)) return false; comp.v4 = { _v[0], _v[1], _v[2], _v[3] }; }
@@ -168,7 +181,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
         "SampleRef",
         typeid(T),
         {
-            { "target", Assisi::Core::Reflect::FieldType::EntityRef, offsetof(T, target), false, false }
+            { .name = "target", .type = Assisi::Core::Reflect::FieldType::EntityRef, .offset = offsetof(T, target) }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -314,10 +327,10 @@ static const bool _reflectgen_SampleRadio = []() -> bool
         "SampleRadio",
         typeid(T),
         {
-            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 1, false },
-            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, false, true, false, 0.0f, 0.f, {}, 0, false, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
+            { .name = "mode", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, mode), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 },
+            { .name = "intensity", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, intensity), .radioSource = "mode", .radioValues = { 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { .name = "sub", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, .enumSize = 4, .enumSigned = true, .radioSource = "mode", .radioValues = { 1, 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { .name = "level", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, level), .hasMin = true, .minValue = 0.0f, .radioSource = "sub", .radioValues = { 1 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Grey }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -336,9 +349,9 @@ static const bool _reflectgen_SampleRadio = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             Assisi::ECS::Entity e{entity_index, entity_gen};
             T comp{};
-            { std::int64_t _n = static_cast<std::int64_t>(comp.mode); if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "mode", _n)) return false; comp.mode = static_cast<Assisi::Runtime::SampleMode>(_n); }
+            { static constexpr Assisi::Core::Reflect::EnumName _names[] = {{ "Off", 0 }, { "Low", 1 }, { "High", 2 }}; std::int64_t _n = static_cast<std::int64_t>(comp.mode); if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "mode", _names, _n)) return false; comp.mode = static_cast<Assisi::Runtime::SampleMode>(_n); }
             if (!Assisi::Core::Reflect::ReadFloat(j, _comp, "intensity", comp.intensity)) return false;
-            { std::int64_t _n = static_cast<std::int64_t>(comp.sub); if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "sub", _n)) return false; comp.sub = static_cast<Assisi::Runtime::SampleSub>(_n); }
+            { static constexpr Assisi::Core::Reflect::EnumName _names[] = {{ "A", 0 }, { "B", 1 }}; std::int64_t _n = static_cast<std::int64_t>(comp.sub); if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "sub", _names, _n)) return false; comp.sub = static_cast<Assisi::Runtime::SampleSub>(_n); }
             if (!Assisi::Core::Reflect::ReadInt32(j, _comp, "level", comp.level)) return false;
             (void)scene.Add(e, comp);
             return true;
@@ -387,8 +400,8 @@ static const bool _reflectgen_SampleReplicated = []() -> bool
         "SampleReplicated",
         typeid(T),
         {
-            { "shared", Assisi::Core::Reflect::FieldType::Float, offsetof(T, shared), false, false },
-            { "serverOnly", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, serverOnly), false, true }
+            { .name = "shared", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, shared) },
+            { .name = "serverOnly", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, serverOnly), .norep = true }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -448,4 +461,87 @@ static const bool _reflectgen_SampleReplicated = []() -> bool
     return true;
 }();
 
+// ── SampleContainers ──────────────────────────────────────────────────────────
+static const bool _reflectgen_SampleContainers = []() -> bool
+{
+    using T = Assisi::Runtime::SampleContainers;
+    Assisi::Core::Reflect::ComponentRegistry::Instance().Register({
+        "SampleContainers",
+        typeid(T),
+        {
+            { .name = "numbers", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, numbers), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::numbers)>() },
+            { .name = "modes", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, modes), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::modes)>(), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 },
+            { .name = "labels", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, labels), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::labels)>() },
+            { .name = "weights", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, weights), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::weights)>() },
+            { .name = "counts", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, counts), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::counts)>() },
+            { .name = "bindings", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, bindings), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::bindings)>(), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 }
+        },
+        [](const void* ptr) -> nlohmann::json
+        {
+            const auto& c = *static_cast<const T*>(ptr);
+            return nlohmann::json{
+                { "numbers", Assisi::Core::Reflect::ContainerToJson(c.numbers) },
+                { "modes", Assisi::Core::Reflect::ContainerToJson(c.modes) },
+                { "labels", Assisi::Core::Reflect::ContainerToJson(c.labels) },
+                { "weights", Assisi::Core::Reflect::ContainerToJson(c.weights) },
+                { "counts", Assisi::Core::Reflect::ContainerToJson(c.counts) },
+                { "bindings", Assisi::Core::Reflect::ContainerToJson(c.bindings) },
+            };
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
+        {
+            constexpr const char* _comp = "SampleContainers";
+            (void)_comp;
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            T comp{};
+            if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "numbers", comp.numbers)) return false;
+            if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "modes", comp.modes)) return false;
+            if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "labels", comp.labels)) return false;
+            if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "weights", comp.weights)) return false;
+            if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "counts", comp.counts)) return false;
+            if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "bindings", comp.bindings)) return false;
+            (void)scene.Add(e, comp);
+            return true;
+        },
+        [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            for (auto [e, comp] : scene.Query<T>())
+                cb(e.index, e.generation, &comp);
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        true       // serializable
+    });
+    return true;
+}();
+
 } // namespace
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif

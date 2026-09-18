@@ -56,13 +56,6 @@ struct RelevancyConfig
     std::uint32_t dwellTicks = 30;
 };
 
-/// @brief Read the `networking.relevancy` object of a game config.
-///
-/// An absent key yields the default (everything relevant); a malformed one warns
-/// and yields the same. Every loader here fails in that direction on purpose — a
-/// config typo must not silently *narrow* what a game sends.
-[[nodiscard]] RelevancyConfig LoadRelevancyFromConfig(std::string_view configPath = "game.json");
-
 /// @brief Tuning shared by both halves.
 struct ReplicationConfig
 {
@@ -160,24 +153,15 @@ struct ReplicationConfig
     /// hashed because it changes how bytes decode. This only changes which
     /// self-describing blocks are sent, and the server's list governs.
     ///
-    /// Filled by whoever owns the session, from game.json; the server never
-    /// reads the filesystem itself, so a test can set it without a file.
+    /// Filled by whoever owns the session, from the loaded network config; the
+    /// server never reads the filesystem itself, so a test can set it without a
+    /// file.
     std::vector<std::string> neverReplicate;
 
     /// Who is told about what. Defaults to everything, which costs nothing; a
     /// server whose provider is `Distance` installs one at construction. Filled
-    /// from game.json on the same terms as `neverReplicate`.
+    /// on the same terms as `neverReplicate`.
     RelevancyConfig relevancy;
 };
-
-/// @brief Read the `networking.neverReplicate` array of a game config.
-///
-/// An absent key yields an empty list; a malformed one warns and yields the
-/// same. Call at session start and put the result in
-/// ReplicationConfig::neverReplicate.
-///
-/// Read per session rather than once per process, so editing it and hosting
-/// again takes effect. That is safe precisely because it is not hashed.
-[[nodiscard]] std::vector<std::string> LoadNeverReplicateFromConfig(std::string_view configPath = "game.json");
 
 } // namespace Assisi::NetSync

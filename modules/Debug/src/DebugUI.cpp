@@ -20,6 +20,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
+#include <Assisi/Image/Decode.hpp>
 #include <Assisi/Render/Texture.hpp>
 
 #include <algorithm>
@@ -75,6 +76,10 @@ std::uint64_t s_frameIndex = 0;
 // (NVRHI's Vulkan backend only calls vkCmdBeginRendering from inside
 // setGraphicsState) so there's always something bound for ImGui to draw into
 // — including when the scene has nothing to draw this frame.
+// Compiled under the asset root by the build; resolved through Core::AssetSystem.
+constexpr const char *kOpenerVertexShader = "shaders/imgui_opener.vert.spv";
+constexpr const char *kOpenerPixelShader = "shaders/imgui_opener.frag.spv";
+
 nvrhi::GraphicsPipelineHandle s_openerPipeline;
 
 // Kept alive for VkPipelineRenderingCreateInfoKHR::pColorAttachmentFormats,
@@ -213,8 +218,8 @@ void LoadLoadingSpinnerWebp(nvrhi::IDevice *device)
     if (!Core::AssetSystem::Resolve(kWebpVPath).has_value())
         return;
 
-    const std::expected<std::vector<Render::DecodedImage>, Core::AssetError> frames =
-        Render::Texture::DecodeAnimatedWebp(kWebpVPath, Render::ColorSpace::Srgb);
+    const std::expected<std::vector<Image::DecodedImage>, Core::AssetError> frames =
+        Image::DecodeAnimatedWebp(kWebpVPath, Image::ColorSpace::Srgb);
     if (!frames.has_value())
     {
         Core::Log::Warn("DebugUI: failed to decode WebP loading spinner '{}'.", kWebpVPath);
@@ -305,9 +310,9 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
 
     nvrhi::IDevice *device = vulkanContext.GetDevice();
     const nvrhi::ShaderHandle vertexShader =
-        Render::LoadSpirvShader(device, "shaders/imgui_opener.vert.spv", nvrhi::ShaderType::Vertex);
+        Render::LoadSpirvShader(device, kOpenerVertexShader, nvrhi::ShaderType::Vertex);
     const nvrhi::ShaderHandle pixelShader =
-        Render::LoadSpirvShader(device, "shaders/imgui_opener.frag.spv", nvrhi::ShaderType::Pixel);
+        Render::LoadSpirvShader(device, kOpenerPixelShader, nvrhi::ShaderType::Pixel);
 
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
@@ -317,7 +322,7 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     s_openerPipeline = device->createGraphicsPipeline(pipelineDesc, vulkanContext.GetFramebufferInfo());
     if (!s_openerPipeline)
     {
-        Assisi::Core::Log::Error("DebugUI: failed to build the opener pipeline — ImGui may not render.");
+        Assisi::Core::Log::Error("DebugUI: failed to build the opener pipeline - ImGui may not render.");
     }
 
     // Decode the WebP loading spinner now that the device exists (no atlas-timing

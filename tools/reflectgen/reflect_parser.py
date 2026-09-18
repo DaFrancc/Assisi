@@ -13,6 +13,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+from reflect_types import TYPES
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Data model
 # ──────────────────────────────────────────────────────────────────────────────
@@ -55,11 +57,46 @@ class RadioInfo:
 
 
 @dataclass
+class ContainerInfo:
+    """A reflected container's decomposed shape.
+
+    `element` is a nested ContainerInfo when the element is itself a container,
+    and a type spelling otherwise — so the chain ends where the nesting does, the
+    same way the C++ ContainerSpec's does.
+    """
+    kind:    str                 # 'Vector' | 'Map'
+    key:     str  = ''           # key spelling; '' for a vector
+    element: object = ''         # str spelling, or a nested ContainerInfo
+
+    @property
+    def depth(self) -> int:
+        """Container levels, counting this one."""
+        inner = self.element
+        return 1 + (inner.depth if isinstance(inner, ContainerInfo) else 0)
+
+    @property
+    def leaf(self) -> str:
+        """The innermost element spelling — where the enum sits, if there is one."""
+        inner = self.element
+        return inner.leaf if isinstance(inner, ContainerInfo) else inner
+
+
+@dataclass
 class FieldInfo:
     name:      str
     cpp_type:  str
     args:      AnnotArgs
     enum_info: Optional[EnumInfo]  = None  # set when cpp_type names an AENUM enum
+    # Set when cpp_type spells a reflected container; None for every scalar.
+    container: Optional[ContainerInfo] = None
+    # The AENUM of a container's *leaf* element, resolved the same way enum_info
+    # is. A container field's enum metadata describes what it ultimately holds.
+    leaf_enum: Optional[EnumInfo] = None
+    # The AENUM whose enumerators are the bits of this integer field, named by
+    # AFIELD(bitmask = EnumName). Distinct from enum_info: the field stores a set
+    # of enumerators, not one of them, so its C++ type is an integer and the enum
+    # never appears in the declaration.
+    bitmask_info: Optional[EnumInfo] = None
     radio:     Optional[RadioInfo] = None  # set by _resolve_radio after parsing
     # Why this field's type reaches an InstanceView without spelling one — an
     # alias, an alias of an alias, a struct that holds one. Set from
@@ -128,7 +165,7 @@ class SystemInfo:
     """
     function:        str    # unqualified function name
     namespaces:      list   # enclosing namespaces at the declaration
-    name:            str    # the name a file uses; defaults to function minus a trailing "System"
+    name:            str    # the name a file uses; declared explicitly, never derived
     phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
     after:           list   # system names this must run after
     before:          list   # system names this must run before
@@ -266,7 +303,8 @@ _ASYSTEM_RE = re.compile(
     r'\)\s*;'
 )
 
-_ASYSTEM_PHASES = ('PreUpdate', 'FixedUpdate', 'Update', 'PostUpdate', 'Render')
+_ASYSTEM_PHASES = ('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
+                   'PostUpdate', 'Render')
 _ASYSTEM_FLAGS  = {'activeWorldOnly'}
 _ASYSTEM_KEYS   = {'name', 'after', 'before'}
 
@@ -330,6 +368,12 @@ def parse_enum_constants(body: str) -> list:
     0x-hex, possibly negative). A non-integer initializer (e.g. referencing
     another constant or an expression) is a hard error — reflectgen needs the
     concrete value to serialize by number and to drive the editor combo.
+
+    A trailing `Count` enumerator is dropped. It names how many enumerators
+    there are, not a value anything may hold, so leaving it in would offer it in
+    every editor dropdown and let a level select it. Only the last one is
+    dropped: `Count` anywhere else is an ordinary enumerator that happens to
+    share the name.
     """
     constants: list = []
     next_value = 0
@@ -350,7 +394,59 @@ def parse_enum_constants(body: str) -> list:
             value = next_value
         constants.append((enum_name, value))
         next_value = value + 1
+    if constants and constants[-1][0] == 'Count':
+        constants.pop()
     return constants
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bitmask (an integer field holding a set of enumerators)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Reflected unsigned integer spellings, and how many bits each one can hold.
+# Signed types are absent deliberately: the top bit of a signed field is the sign,
+# so the highest enumerator would set a negative value and every comparison
+# against it would be wrong.
+_BITMASK_WIDTHS = {'uint8_t': 8, 'uint16_t': 16, 'uint32_t': 32, 'uint64_t': 64}
+
+
+def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
+    """Attach the AENUM named by AFIELD(bitmask = EnumName) to an integer field.
+
+    The field stores one bit per enumerator, at the enumerator's own value, so
+    the enum's values are bit indices and must fit the field's width.
+    """
+    named = f.args.get('bitmask')
+    if named is None:
+        return
+    named = str(named).strip()
+
+    if f.cpp_type not in _BITMASK_WIDTHS:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' is AFIELD(bitmask = {named}) but its type is "
+            f"'{f.cpp_type}'. A bitmask must be one of: {', '.join(sorted(_BITMASK_WIDTHS))}.")
+
+    info = enums.get(named)
+    if info is None:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' names '{named}' as its bitmask, but no AENUM "
+            f"by that name is declared in this header.")
+
+    if not info.constants:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' names '{named}' as its bitmask, but that enum "
+            f"has no enumerators to make bits of.")
+
+    width   = _BITMASK_WIDTHS[f.cpp_type]
+    highest = max(value for _, value in info.constants)
+    lowest  = min(value for _, value in info.constants)
+    if lowest < 0 or highest >= width:
+        raise ValueError(
+            f"{header_name}: enum '{named}' has enumerator values in [{lowest}, {highest}], "
+            f"which do not all index a bit of a {width}-bit '{f.cpp_type}' field '{f.name}'. "
+            f"A bitmask enum's values are bit positions, so they must be in [0, {width - 1}].")
+
+    f.bitmask_info = info
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -396,13 +492,13 @@ def parse_radio_spec(raw: str, where: str) -> dict:
 def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
     """Resolve and validate every field's AFIELD(radio ...) against its struct,
     attaching a RadioInfo to each field. A field may be a broadcaster
-    (AFIELD(radioBroadcast) on an enum), a listener (AFIELD(radioListen = {
+    (AFIELD(radioBroadcast) on an enum or a bool), a listener (AFIELD(radioListen = {
     source, value, behavior })), or both — listeners can follow a broadcaster
     that itself follows another, forming a chain.
 
-    Every misuse is a hard build failure: a broadcaster that isn't an enum, a
-    listener naming a missing / non-enum / non-broadcaster field, an unknown
-    enumerator, a bad behavior, or a cycle in the source chain."""
+    Every misuse is a hard build failure: a broadcaster that is neither an enum
+    nor a bool, a listener naming a missing / wrong-typed / non-broadcaster field,
+    an unknown enumerator, a bad behavior, or a cycle in the source chain."""
     by_name = {f.name: f for f in comp.fields}
 
     for f in comp.fields:
@@ -412,10 +508,10 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
         info          = RadioInfo()
 
         if has_broadcast:
-            if f.enum_info is None:
+            if f.enum_info is None and f.cpp_type != 'bool':
                 raise ValueError(
-                    f"{where} is marked AFIELD(radioBroadcast) but is not an AENUM enum "
-                    f"field (its type is '{f.cpp_type}'). Only enum fields can broadcast.")
+                    f"{where} is marked AFIELD(radioBroadcast) but is neither an AENUM enum "
+                    f"field nor a bool (its type is '{f.cpp_type}'). Only those can broadcast.")
             info.is_broadcast = True
 
         if raw_spec is not None:
@@ -439,10 +535,10 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
                 raise ValueError(
                     f"{where}: AFIELD(radioListen source = {source_name}) names no field in "
                     f"struct '{comp.name}'.")
-            if source.enum_info is None:
+            if source.enum_info is None and source.cpp_type != 'bool':
                 raise ValueError(
-                    f"{where}: AFIELD(radioListen) follows '{source_name}', which is not an "
-                    f"AENUM enum field.")
+                    f"{where}: AFIELD(radioListen) follows '{source_name}', which is neither an "
+                    f"AENUM enum field nor a bool.")
             if not source.args.has('radioBroadcast'):
                 raise ValueError(
                     f"{where}: AFIELD(radioListen) follows '{source_name}', which is not "
@@ -451,13 +547,23 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
             value_names = _parse_value_list(spec['value'])
             if not value_names:
                 raise ValueError(f"{where}: AFIELD(radioListen value = ...) is empty.")
-            const_map = {name: val for name, val in source.enum_info.constants}
+
+            # A bool broadcasts the same way an enum does — it is a two-valued
+            # enumeration, and requiring one to be spelled as an AENUM to drive a
+            # radio is ceremony rather than meaning. `true`/`false` are its
+            # enumerator names, and reach the runtime as the 1/0 a bool holds.
+            if source.enum_info is None:
+                const_map = {'false': 0, 'true': 1}
+                source_desc = f"bool '{source_name}'"
+            else:
+                const_map = {name: val for name, val in source.enum_info.constants}
+                source_desc = f"'{source.enum_info.name}'"
             values: list = []
             for vname in value_names:
                 if vname not in const_map:
                     raise ValueError(
-                        f"{where}: AFIELD(radioListen value = {vname}) is not an enumerator "
-                        f"of '{source.enum_info.name}' (valid: {sorted(const_map)}).")
+                        f"{where}: AFIELD(radioListen value = {vname}) is not a value "
+                        f"of {source_desc} (valid: {sorted(const_map)}).")
                 values.append(const_map[vname])
 
             behavior = _RADIO_BEHAVIORS.get(spec['behavior'].lower())
@@ -489,18 +595,170 @@ def _resolve_radio(comp: ComponentInfo, header_name: str) -> None:
             cur = by_name[cur.radio.source]  # existence validated above
 
 
-# Field declaration: optional cv/storage-class keywords, type with optional
-# namespace/template args, optional ptr/ref, name, optional default, semicolon.
-# - Type modifiers (const, unsigned, etc.) can precede the base type token.
-# - The pointer/ref marker may be flush against the variable name (int*foo),
-#   so \s* (not \s+) separates type from name.
-_FIELD_RE  = re.compile(
-    r'((?:(?:const|unsigned|signed|long|short|volatile)\s+)*'  # cv/modifier keywords
-    r'[\w:]+(?:\s*<[^>]*>)?'                                   # base type + optional template
-    r'(?:\s*[*&])?)'                                           # optional ptr/ref
-    r'\s*(\w+)'                                                # variable name (zero or more spaces after type)
-    r'\s*(?:[={][^;]*)?\s*;'                                   # optional default + semicolon
+# The head of a field declaration: optional cv/storage-class keywords, then the
+# base type token. The template arguments (if any) are scanned separately —
+# see _match_field_decl.
+_FIELD_HEAD_RE = re.compile(
+    r'(?:(?:const|unsigned|signed|long|short|volatile)\s+)*'  # cv/modifier keywords
+    r'[\w:]+'                                                # base type
 )
+
+# The tail: optional ptr/ref, the variable name, an optional default, semicolon.
+# The pointer/ref marker may be flush against the name (int*foo), so \s* rather
+# than \s+ separates the two.
+_FIELD_TAIL_RE = re.compile(
+    r'(\s*[*&])?'          # optional ptr/ref, kept with the type
+    r'\s*(\w+)'            # variable name
+    r'\s*(?:[={][^;]*)?\s*;'  # optional default + semicolon
+)
+
+
+def _scan_template_args(text: str, start: int) -> int:
+    """End index (exclusive) of the `<...>` beginning at @p start, or -1.
+
+    A depth counter rather than a pattern, because a reflected container may hold
+    another one: `map<ShortString, vector<InputSource>>` closes two levels on its
+    final token, and matching to the first `>` would cut the type in half. An
+    unterminated `<` returns -1, which surfaces as "not a recognisable field
+    declaration" rather than running to the end of the struct.
+    """
+    depth = 0
+    i     = start
+    while i < len(text):
+        char = text[i]
+        if char == '<':
+            depth += 1
+        elif char == '>':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        elif char == ';' or char == '{':
+            break  # a declaration cannot span these; the '<' was something else
+        i += 1
+    return -1
+
+
+def _match_field_decl(text: str):
+    """Splits `Type name;` into (type, name), or None if it is not one.
+
+    Replaces a single regex because the type may carry balanced template
+    arguments to arbitrary depth — which the generator then refuses above its
+    nesting limit, but must be able to *read* in order to say so.
+    """
+    head = _FIELD_HEAD_RE.match(text)
+    if not head:
+        return None
+
+    end = head.end()
+
+    # Template arguments, if the next non-space character opens them.
+    probe = end
+    while probe < len(text) and text[probe].isspace():
+        probe += 1
+    if probe < len(text) and text[probe] == '<':
+        end = _scan_template_args(text, probe)
+        if end < 0:
+            return None
+
+    tail = _FIELD_TAIL_RE.match(text, end)
+    if not tail:
+        return None
+
+    raw_type = text[:end] + (tail.group(1) or '')
+    return raw_type.strip(), tail.group(2).strip()
+
+
+# Deepest nesting a reflected field may declare — one container inside another,
+# and no further. Must agree with kMaxContainerDepth in Reflect/ContainerOps.hpp;
+# a disagreement surfaces as a compile error from the static_assert there, never
+# as a silently mis-generated field.
+MAX_CONTAINER_DEPTH = 2
+
+# The container templates reflectgen decomposes, and how many template arguments
+# carry meaning. A map's remaining arguments — hash, comparator, allocator — are
+# accepted and ignored: they change how the container stores entries, and the
+# encoding sorts by key regardless of that.
+_CONTAINER_KINDS = {
+    'std::vector':        'Vector',
+    'std::map':           'Map',
+    'std::unordered_map': 'Map',
+}
+
+
+def _split_template_args(text: str) -> list:
+    """Splits `A, B<C, D>, E` on its TOP-LEVEL commas only."""
+    args: list = []
+    depth = 0
+    start = 0
+    for i, char in enumerate(text):
+        if char == '<':
+            depth += 1
+        elif char == '>':
+            depth -= 1
+        elif char == ',' and depth == 0:
+            args.append(text[start:i].strip())
+            start = i + 1
+    args.append(text[start:].strip())
+    return args
+
+
+def split_container(cpp_type: str) -> Optional[ContainerInfo]:
+    """Decomposes a container spelling, recursively. None if it is not one.
+
+    Whitespace inside the arguments is normalised, so `std::vector< float >` and
+    `std::vector<float>` decompose identically — unlike the flat TYPES lookup,
+    where the two are different keys.
+    """
+    open_bracket = cpp_type.find('<')
+    if open_bracket < 0 or not cpp_type.rstrip().endswith('>'):
+        return None
+
+    kind = _CONTAINER_KINDS.get(cpp_type[:open_bracket].strip())
+    if kind is None:
+        return None
+
+    inner = cpp_type.rstrip()[open_bracket + 1:-1]
+    args  = _split_template_args(inner)
+
+    def normalise(spelling: str) -> str:
+        return ' '.join(spelling.split())
+
+    if kind == 'Vector':
+        if len(args) < 1:
+            return None
+        element = normalise(args[0])
+        return ContainerInfo(kind='Vector', key='', element=split_container(element) or element)
+
+    if len(args) < 2:
+        return None
+    key     = normalise(args[0])
+    element = normalise(args[1])
+    return ContainerInfo(kind='Map', key=key, element=split_container(element) or element)
+
+
+def _iter_field_decls(body: str):
+    """Yields every `Type name;` in @p body as its type spelling.
+
+    The scanning counterpart of _match_field_decl, for callers that sweep a whole
+    struct rather than reading the one declaration after an AFIELD. Candidate
+    starts come from the head pattern; each is confirmed by the full match, so a
+    template argument is never mistaken for a declaration of its own.
+    """
+    position = 0
+    while position < len(body):
+        head = _FIELD_HEAD_RE.search(body, position)
+        if not head:
+            return
+
+        declaration = _match_field_decl(body[head.start():])
+        if declaration:
+            yield declaration[0]
+            # Past this declaration's semicolon, so its template arguments are not
+            # rescanned as declarations themselves.
+            semicolon = body.find(';', head.start())
+            position  = len(body) if semicolon < 0 else semicolon + 1
+        else:
+            position = head.end()
 
 
 def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[str, str, AnnotArgs]:
@@ -635,13 +893,18 @@ def find_systems(text: str, path: Path) -> list:
                 f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
                 f"being drawn and nothing else, so the flag would say nothing.")
 
-        # Default: the function name with a trailing "System" stripped, because
-        # `BounceSystem` in code is `Bounce` in a file and repeating the suffix in
-        # every level would be noise.
+        # Mandatory, with no default derived from the function name. The name is
+        # what a level file says, so it is part of the content format: deriving it
+        # means renaming a C++ function silently renames something levels refer to
+        # by string, and every file naming the old one fails to load with nothing
+        # pointing at the rename. Spelling it out makes that a deliberate edit in
+        # a place a reader can see.
         if not name:
-            name = match.group('fn')
-            if name.endswith('System') and len(name) > len('System'):
-                name = name[: -len('System')]
+            raise ValueError(
+                f"{where} does not declare a name. Every system needs one: "
+                f"ASYSTEM({phase}, name = \"Something\"). It is what a level file "
+                f"names, so it cannot be derived from the function — renaming the "
+                f"function would silently break every level that asks for it.")
 
         systems.append(SystemInfo(function=match.group('fn'),
                                   namespaces=_namespaces_at(text, match.start()),
@@ -742,8 +1005,8 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
             break
         args = parse_annot_args(m.group(1))
         rest = body[m.end():]
-        fm = _FIELD_RE.match(rest.lstrip())
-        if not fm:
+        declaration = _match_field_decl(rest.lstrip())
+        if not declaration:
             # A malformed AFIELD would otherwise silently drop the field — and its
             # data on every save. Fail the build loudly instead of moving on.
             snippet = ' '.join(rest.lstrip()[:60].split())
@@ -751,8 +1014,7 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
                 f"{source_header}: AFIELD is not followed by a recognisable field "
                 f"declaration (got: '{snippet}...'). A reflected field must be a plain "
                 f"'Type name;' declaration immediately after the AFIELD(...) macro.")
-        raw_type = fm.group(1).strip()
-        name     = fm.group(2).strip()
+        raw_type, name = declaration
         cpp_type = raw_type.replace('const ', '').replace('*', '').replace('&', '').strip()
         fields.append(FieldInfo(name=name, cpp_type=cpp_type, args=args))
         i = m.end()
@@ -810,17 +1072,17 @@ def find_view_spellings(text: str) -> dict:
     for m in _TYPEDEF_RE.finditer(text):
         aliases.append((m.group(2), ' '.join(m.group(1).split())))
 
-    # Member declarations only. _FIELD_RE's shape ends at a ';' with no parameter
-    # list between, so a method that *returns* a view is not a struct that
-    # *stores* one — the distinction the ban is about. A view declared as a local
-    # inside an inline method body is over-read as storage, which is the
+    # Member declarations only. A field declaration ends at a ';' with no
+    # parameter list between, so a method that *returns* a view is not a struct
+    # that *stores* one — the distinction the ban is about. A view declared as a
+    # local inside an inline method body is over-read as storage, which is the
     # default-deny side to err on.
     records: list = []
     for m in _RECORD_RE.finditer(text):
         body, _ = _extract_brace_body(text, m.end() - 1)
         if body is None:
             continue
-        records.append((m.group(1), [f.group(1).strip() for f in _FIELD_RE.finditer(body)]))
+        records.append((m.group(1), [spelling.strip() for spelling in _iter_field_decls(body)]))
 
     # To a fixpoint: an alias of an alias, or a struct holding a struct holding a
     # view, is as stored as the direct spelling, and neither declaration order
@@ -1027,6 +1289,24 @@ def parse_header_full(path: Path) -> tuple[list, list, list]:
     for msg in messages:
         for f in msg.fields:
             f.enum_info = enums.get(f.cpp_type)
+
+    # Container fields, and the enum their leaf element names if it names one. A
+    # spelling already in TYPES keeps its own enumerator, so the AssetPath and
+    # AssetId vectors are untouched by this and their wire format does not move.
+    for owner in (*components, *messages):
+        for f in owner.fields:
+            # A transient field serializes nowhere, so it needs no descriptor —
+            # and it is the one place a container of something unreflectable is
+            # legal, like the resolved material pointers a MeshRenderer caches.
+            if f.args.has('transient') or f.cpp_type in TYPES:
+                continue
+            f.container = split_container(f.cpp_type)
+            if f.container is not None:
+                f.leaf_enum = enums.get(f.container.leaf)
+
+    for owner in (*components, *messages):
+        for f in owner.fields:
+            _resolve_bitmask(f, enums, path.name)
 
     # The InstanceView storage ban is on storing one, not on spelling one, so a
     # field's type is resolved through this header's aliases and holder structs

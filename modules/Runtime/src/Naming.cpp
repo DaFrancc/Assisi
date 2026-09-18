@@ -23,7 +23,7 @@ std::string_view Describe(NameError error)
         static_assert(Core::kEntityNameMax == 64, "the refusal below spells the limit");
         return "a name is at most 64 characters";
     case NameError::ContainsSeparator:
-        return "a name cannot contain '/' — that separates an instance from its member";
+        return "a name cannot contain '/' - that separates an instance from its member";
     case NameError::Taken:
         return "another entity already has this name";
     }

@@ -138,11 +138,21 @@ std::optional<std::uint64_t> HashGltfSource(std::string_view gltfVirtualPath)
 ///        (factors + channel GUIDs) — deliberately ignoring `Name`, which never
 ///        enters a `.amat`. This is the "did the material change?" test the
 ///        reconciler classifies with.
+///
+/// Every serialized field has to be here. A field left out reads as unchanged,
+/// so a re-export that touched only that field is classified geometry-only, the
+/// source hash is refreshed, and the new value is lost with nothing left to
+/// report it as stale.
 bool SameMaterialFields(const MaterialData &a, const MaterialData &b)
 {
     return a.BaseColorFactor == b.BaseColorFactor && a.MetallicFactor == b.MetallicFactor &&
            a.RoughnessFactor == b.RoughnessFactor && a.NormalScale == b.NormalScale &&
            a.OcclusionStrength == b.OcclusionStrength && a.EmissiveFactor == b.EmissiveFactor &&
+           a.BaseWeight == b.BaseWeight && a.SpecularWeight == b.SpecularWeight &&
+           a.SpecularColor == b.SpecularColor && a.SpecularIor == b.SpecularIor &&
+           a.BaseDiffuseRoughness == b.BaseDiffuseRoughness &&
+           a.SpecularAntiAliasing == b.SpecularAntiAliasing &&
+           a.SpecularAaVarianceClamp == b.SpecularAaVarianceClamp &&
            a.BaseColorTexture == b.BaseColorTexture && a.NormalTexture == b.NormalTexture &&
            a.MetallicRoughnessTexture == b.MetallicRoughnessTexture && a.OcclusionTexture == b.OcclusionTexture &&
            a.EmissiveTexture == b.EmissiveTexture;
@@ -222,6 +232,127 @@ Core::AssetId OverwriteMaterialFile(const fs::path &amatAbs, const MaterialData 
 }
 
 } // namespace
+
+std::string_view ToString(MaterialWriteError error) noexcept
+{
+    switch (error)
+    {
+    case MaterialWriteError::SerializeFailed:
+        return "material reflection is not registered";
+    case MaterialWriteError::PathUnresolvable:
+        return "path does not resolve under the asset root";
+    case MaterialWriteError::WriteFailed:
+        return "the file could not be written";
+    case MaterialWriteError::TargetExists:
+        return "a material of that name already exists";
+    }
+    return "unknown error";
+}
+
+std::expected<void, MaterialWriteError> SaveMaterial(std::string_view virtualPath, const MaterialData &material)
+{
+    const std::expected<std::string, MaterialFileError> text = SerializeMaterial(material);
+    if (!text)
+    {
+        Core::Log::Error("SaveMaterial: cannot serialize '{}' ({}).", virtualPath, ToString(text.error()));
+        return std::unexpected(MaterialWriteError::SerializeFailed);
+    }
+
+    // Resolve before writing: this is what rejects a traversal out of the tree.
+    // weakly_canonical does not require the file to exist, so a brand-new
+    // material resolves the same way an existing one does.
+    const std::expected<fs::path, Core::AssetError> absolute = Core::AssetSystem::Resolve(virtualPath);
+    if (!absolute)
+    {
+        return std::unexpected(MaterialWriteError::PathUnresolvable);
+    }
+
+    std::error_code ec;
+    fs::create_directories(absolute->parent_path(), ec);
+    if (!WriteWholeFile(*absolute, *text))
+    {
+        Core::Log::Warn("SaveMaterial: failed to write '{}'.", absolute->generic_string());
+        return std::unexpected(MaterialWriteError::WriteFailed);
+    }
+    return {};
+}
+
+std::expected<void, MaterialWriteError> RenameMaterial(std::string_view oldVirtualPath,
+                                                       std::string_view newVirtualPath)
+{
+    const std::expected<fs::path, Core::AssetError> from = Core::AssetSystem::Resolve(oldVirtualPath);
+    const std::expected<fs::path, Core::AssetError> to   = Core::AssetSystem::Resolve(newVirtualPath);
+    if (!from || !to)
+    {
+        return std::unexpected(MaterialWriteError::PathUnresolvable);
+    }
+
+    std::error_code ec;
+    if (fs::exists(*to, ec))
+    {
+        return std::unexpected(MaterialWriteError::TargetExists);
+    }
+
+    fs::create_directories(to->parent_path(), ec);
+    fs::rename(*from, *to, ec);
+    if (ec)
+    {
+        Core::Log::Warn("RenameMaterial: could not move '{}' to '{}'.", oldVirtualPath, newVirtualPath);
+        return std::unexpected(MaterialWriteError::WriteFailed);
+    }
+
+    // The sidecar carries the GUID. If it cannot follow, put the payload back
+    // rather than leave a material whose id is attached to a name that no longer
+    // exists — a half-rename is worse than none, because the next reconcile mints
+    // a *new* id and silently breaks every reference.
+    const fs::path fromSidecar = SidecarPathOf(*from);
+    if (fs::exists(fromSidecar, ec))
+    {
+        fs::rename(fromSidecar, SidecarPathOf(*to), ec);
+        if (ec)
+        {
+            std::error_code rollbackEc;
+            fs::rename(*to, *from, rollbackEc);
+            Core::Log::Warn("RenameMaterial: could not move the sidecar of '{}'; the rename was undone.",
+                            oldVirtualPath);
+            return std::unexpected(MaterialWriteError::WriteFailed);
+        }
+    }
+
+    return {};
+}
+
+bool DeleteMaterialFile(std::string_view virtualPath)
+{
+    const std::expected<fs::path, Core::AssetError> absolute = Core::AssetSystem::Resolve(virtualPath);
+    if (!absolute)
+    {
+        return false;
+    }
+
+    std::error_code ec;
+    const bool removed = fs::remove(*absolute, ec);
+    fs::remove(SidecarPathOf(*absolute), ec);
+    return removed;
+}
+
+std::string UniqueMaterialPath(std::string_view dirVirtualPath, std::string_view stem)
+{
+    const std::string prefix = dirVirtualPath.empty() ? std::string{} : std::string{dirVirtualPath} + "/";
+    const std::string safe   = SanitizeName(stem);
+
+    std::string candidate = prefix + safe + ".amat";
+    // No iteration cap: the returned name must be free, because SaveMaterial
+    // overwrites what it is given — a capped search that gave up would hand New
+    // or Duplicate an existing material to destroy. Each pass tries a suffix no
+    // earlier pass did, and the search stops at the first free name, so it ends
+    // once the directory has any gap at all.
+    for (std::size_t suffix = 1; Core::AssetSystem::Exists(candidate); ++suffix)
+    {
+        candidate = prefix + safe + '_' + std::to_string(suffix) + ".amat";
+    }
+    return candidate;
+}
 
 std::expected<std::size_t, MeshImportError> ExplodeGltfMaterials(std::string_view gltfVirtualPath,
                                                                  const AssetIdResolver &resolveTextureId)

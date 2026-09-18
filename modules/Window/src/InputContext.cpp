@@ -101,7 +101,33 @@ glm::vec2 InputContext::MouseDelta() const
 void InputContext::SetMouseCaptured(bool captured)
 {
     _mouseCaptured = captured;
-    glfwSetInputMode(_window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+
+    if (!captured)
+    {
+        glfwSetInputMode(_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        return;
+    }
+
+    glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    // Giving the window back to the default cursor is what keeps the pointer off
+    // screen, not the mode above. A cursor image carries a frame delay, and under
+    // Wayland GLFW repaints the window's current cursor on that delay without
+    // consulting the cursor mode — so a locked pointer whose window still owns a
+    // cursor object has it painted back within a frame or two, stranded wherever
+    // the lock froze it. A UI layer that swaps cursor shapes leaves one installed
+    // at all times, so there is always one to strand.
+    glfwSetCursor(_window, nullptr);
+
+    // Unaccelerated deltas, which is what aiming wants — the pointer acceleration
+    // curve a desktop applies is tuned for reaching a target on screen, not for
+    // turning. Only meaningful while the cursor is locked, and only where the
+    // platform offers it.
+    if (glfwRawMouseMotionSupported())
+    {
+        glfwSetInputMode(_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
 }
 
 bool InputContext::IsMouseCaptured() const

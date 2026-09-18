@@ -1,0 +1,98 @@
+RENDERING — ORDER OF WORK
+=========================
+
+Local scratch, not repository content. The plan of record is the Linear
+"Rendering" project description; this file is a working copy of the order and
+goes stale the moment that changes. Check it against the tracker before
+trusting it.
+
+Written 2026-08-30.
+
+
+IN FLIGHT
+---------
+
+  ENG-213  Shadow casters — the gather honors maxDistance          2 pts
+
+
+1. FINISH THE SUN'S CASTER PATH
+-------------------------------
+
+  ENG-214  Shadow casters — per-cascade lists replace the per-view sweep
+
+    Same function and same file as ENG-213, and step 2 of the same research
+    recommendation ENG-213 was step 1 of. Classify each caster once against all
+    cascades into a 6-bit mask during the gather; each view then walks its own
+    list instead of sweeping the whole span. ~7100 frustum tests become ~1183
+    classifications plus list walks. Also produces the per-view caster entries
+    ENG-215 needs later.
+
+
+2. THE ATLAS'S REAL PREREQUISITES
+---------------------------------
+
+  ENG-86   Sky and atmosphere rendering
+  ENG-142  Hemisphere ambient and the indirect-lighting provider seam   1 pt
+
+    There is no skybox at all today, so outdoor scenes render against a clear
+    colour, and mesh.frag's indirect term is a flat 0.03 constant — shadows over
+    it read as black pits and would look worse than no shadows. No atlas visual
+    gate means anything until this lands.
+
+    ENG-142 also installs the indirect-lighting provider seam, which is the
+    whole insurance policy for global illumination, and it is free here because
+    that shader line is being rewritten anyway.
+
+
+3. THE ATLAS — POINT AND SPOT SHADOWS
+-------------------------------------
+
+  ENG-139  Local-light shadow atlas + importance cap                8 pts
+  ENG-140  Local-light shadow atlas — static-depth caching          4 pts
+  ENG-141  Editor shadow diagnostics                                2 pts
+  ENG-201  Sun shadow cadence — cascade validity and re-render      4 pts
+
+    ENG-139's four formal blockers (ENG-200, ENG-80, ENG-136, ENG-84) are all
+    Done. Spot = 1 face, point = 6 faces, one shared tiered atlas, top-N
+    importance selection with per-type caps.
+
+    The milestone closes at ENG-140, not at ENG-139: the cap alone bounds the
+    cost, caching is what makes generous shadowed-light counts cheap. ENG-141 is
+    blocked by 139; ENG-201 is blocked by 140.
+
+
+4. THE LOD CHAIN, WHICH UNLOCKS SHADOW LOD
+------------------------------------------
+
+  ENG-209  Runtime LOD — screen-size selection with hysteresis
+  ENG-212  Authored LODs — force a level and see the pick in the editor
+  ENG-210  GPU-driven F2b — LOD selection in mesh_cull.comp
+  ENG-215  Shadow LOD — each cascade picks by its own texel size
+
+    ENG-209 is the CPU-side pick everything else builds on; ENG-212 makes it
+    inspectable; ENG-210 ports it to the GPU path. ENG-215 needs both a LOD
+    selector (209) and per-view caster entries (214).
+
+
+5. LOOK-PER-EFFORT, ORDER OPEN
+------------------------------
+
+  ENG-144  Global sky IBL probe        — also unblocks the coat and fuzz lobes
+  ENG-145  PCSS — contact-hardening soft shadows
+  ENG-146  SSAO — screen-space contact occlusion
+  ENG-217  Spot lights cull as their range sphere, not as their cone
+  ENG-218  Area lights via linearly transformed cosines
+
+    ENG-217 shares a file with ENG-180 (cluster_cull.comp dispatch shape), which
+    is the larger win there; whichever lands first, the other rebases onto it.
+    ENG-218 wants the atlas and the sky work behind it before its highlight can
+    be judged.
+
+
+THE ONE OPEN CALL
+-----------------
+
+ENG-139 has no formal blockers left, so the atlas could start immediately rather
+than after the sky. The Shadows milestone says not to, and that holds: ENG-142 is
+a 1-pointer, which makes the sky detour cheap insurance against gating an
+8-point feature on an image nobody can judge.

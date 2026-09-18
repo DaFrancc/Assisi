@@ -7,10 +7,12 @@
 
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/InputContext.hpp>
@@ -19,6 +21,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <span>
 
 namespace Assisi::App
@@ -37,8 +40,9 @@ namespace Assisi::App
 ///     into the swapchain afterwards, transparently to this override.
 ///
 /// Optional overrides (no-ops by default):
-///   - OnImGui()                 — called after OnRender(), inside the same
-///     ImGui frame DebugUI opens; build ImGui:: windows here
+///   - OnRenderUi(Render::RenderFrame&) — called after OnRender(), last in the
+///     frame; draw whatever UI layer you own here, opening and closing it
+///     yourself
 ///   - OnResize(int32_t, int32_t) — called when the framebuffer is resized
 ///   - OnRenderTargetsChanged(const nvrhi::FramebufferInfo&) — called whenever
 ///     the FramebufferInfo that OnRender()'s `frame` is compatible with changes
@@ -61,8 +65,11 @@ public:
     /// A flag on Application rather than a separate headless class: the simulation
     /// hooks, the SystemRegistry, and a listen server embedding a server inside a
     /// client process all want the two modes to be the *same* object with one of
-    /// its halves not brought up. `game.json` may also set it; Initialize() takes
-    /// either.
+    /// its halves not brought up.
+    ///
+    /// The caller decides, and nothing else does. A shipped config cannot ask for
+    /// it: a game whose config file could suppress its own window has a way to
+    /// start that a player can neither see nor undo.
     void SetHeadless(bool headless) { _headless = headless; }
 
     /// @brief Whether this process runs without presentation. Valid before
@@ -84,6 +91,20 @@ public:
 
     [[nodiscard]] bool IsRestrictedViewer() const { return _restrictedViewer; }
 
+    /// @brief Run as a performance capture: measure a fixed number of frames,
+    /// print the medians, write the report, and exit. Must be called before
+    /// Initialize().
+    ///
+    /// This is what makes a performance gate one command rather than a person
+    /// watching an ImGui graph and forming an impression. It also forces the
+    /// pacing off — a capture under vsync measures the display, not the
+    /// renderer — and turns per-pass timing on, since a capture is exactly the
+    /// case where the render-pass splits those cost are worth paying.
+    void SetPerfCapture(const PerfCaptureConfig &config);
+
+    /// @brief Whether this process is a capture run.
+    [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
+
     /// @brief Brings up the engine (asset system, window, renderer, ImGui,
     /// input, post-process). Must be called once, after construction and before
     /// Run(). In headless mode only the simulation half is brought up.
@@ -98,16 +119,56 @@ public:
     /// bare bool is enough for main() to decide to bail.
     [[nodiscard]] bool Initialize();
 
-    void Run();
+    /// @brief Runs until the app closes, then ends the process without running
+    /// destructors.
+    ///
+    /// The exit code is EXIT_FAILURE when StartupFailed, EXIT_SUCCESS otherwise.
+    /// systemd, Docker and CI all read a 0 exit as a clean shutdown and either
+    /// ignore it or restart-loop in silence.
+    [[noreturn]] void Run();
+
+    /// @brief True when the app closed because it could not start, rather than
+    /// because it finished.
+    [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
 protected:
+    /// @brief Refuse the launch: close the app and make Run exit with failure.
+    ///
+    /// For OnStart to call once it has logged what is wrong. Every app that can
+    /// refuse to start shares this rather than keeping its own flag, so a new one
+    /// cannot exit 0 on a start it never made.
+    void RefuseStart();
+
+    /// @brief Make the shipped content readable, before the first config is read.
+    ///
+    /// The default opens the source asset root, which is what an app reading the
+    /// files an author edits wants; it installs no readers, which that app's main()
+    /// does. An app reading packaged content overrides this to open the package
+    /// and install the readers over it. False, logged, refuses the launch.
+    [[nodiscard]] virtual bool MountContent();
+
     virtual void OnStart()               = 0;
     virtual void OnFixedUpdate(float dt) = 0;
     virtual void OnUpdate(float dt)      = 0;
     /// Not pure: a headless app never receives this call and should not have to
     /// write an empty override to say so.
     virtual void OnRender(Render::RenderFrame & /*frame*/) {}
-    virtual void OnImGui() {}
+    /// @brief Called after the tone map, into a display-encoded target that still
+    /// carries the depth the scene wrote. For content whose colours are already
+    /// what they should look like on screen — editor chrome — so the tone map
+    /// does not restate them. Only called by apps that answer UsesOverlayStage().
+    virtual void OnRenderOverlays(Render::RenderFrame & /*frame*/) {}
+    /// @brief Whether this app draws display-referred content after the tone map.
+    /// The seam costs a target and a copy, so it exists only where it is used.
+    /// Read during Initialize(), so it must answer from constructor-set state.
+    [[nodiscard]] virtual bool UsesOverlayStage() const { return false; }
+    /// @brief Called last in the frame, after the overlays, to draw a UI layer.
+    ///
+    /// Whoever overrides this owns the layer entirely — opening it, drawing into
+    /// it, and submitting it. That is why no UI toolkit is brought up or driven
+    /// here: an application that draws no UI does not link one, which is what
+    /// keeps a shipped game free of the editor's.
+    virtual void OnRenderUi(Render::RenderFrame & /*frame*/) {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
@@ -166,8 +227,7 @@ protected:
     /// (ctx.events); this accessor is for app code outside a system.
     Core::EventQueue &GetEvents() { return _events; }
 
-    /// @brief The engine's shared task scheduler (design:
-    /// docs/job-system-design-notes.md). Owned by Application; its main-thread
+    /// @brief The engine's shared task scheduler. Owned by Application; its main-thread
     /// queue is drained once per frame in Run() just before OnUpdate. Use
     /// Jobs().RunOnMain(...) to marshal background results back to a safe point,
     /// ParallelFor(...) to fan work out, or Run(pool, fn) for async chains.
@@ -184,6 +244,10 @@ protected:
     [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
 
     void      RequestClose();
+
+    /// @brief Feed one frame to the running capture, and close the app once it
+    /// has the frames it asked for.
+    void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
     int32_t   GetFps()             const { return _fps; }
 
     /// @brief Averaged CPU main-thread work per frame, in milliseconds —
@@ -201,6 +265,16 @@ protected:
     /// correct if an anti-aliasing mode is active from a saved options.json.
     nvrhi::FramebufferInfo GetSceneFramebufferInfo() const { return _postProcess.SceneFramebufferInfo(); }
 
+    /// @brief The FramebufferInfo OnRenderOverlays()'s `frame` is compatible
+    /// with. Build overlay pipelines against this: it differs from the scene's,
+    /// which is HDR.
+    nvrhi::FramebufferInfo GetOverlayFramebufferInfo() const { return _postProcess.OverlayFramebufferInfo(); }
+
+    /// @brief Tells the post chain that this frame's scene target holds display
+    /// values rather than radiance, so the tone map must copy it through. For the
+    /// material debug views, which show a channel raw.
+    void SetTonemapPassthrough(bool passthrough) { _postProcess.SetTonemapPassthrough(passthrough); }
+
     /// @brief The persisted user options (AA mode, MSAA samples, frame-sync
     /// mode, FPS cap) the engine consumes each frame in Run(). Exposed mutable
     /// so an app-side options overlay can edit them; after changing aaMode or
@@ -209,9 +283,11 @@ protected:
     /// picked up by Run() on the next iteration with no extra call.
     OptionsConfig &GetOptions() { return _options; }
 
-    /// @brief The engine config loaded at Initialize() (game.json): window
-    /// title/size, physics rate. Read-only — it reflects bring-up, and editing
-    /// it after the fact would change nothing.
+    /// @brief The engine config loaded at Initialize(): window title/size,
+    /// physics rate. The size here is what the window was actually created at,
+    /// so it already carries the player's choice and a capture's override.
+    /// Read-only — it reflects bring-up, and editing it after the fact would
+    /// change nothing.
     const AppConfig &GetConfig() const { return _config; }
 
     /// @brief Rebuilds the post-process render targets from the current
@@ -252,7 +328,7 @@ private:
     /// Declared first so the capture runtime is up before anything else exists —
     /// in particular before _jobs spawns its workers, which register themselves
     /// with it — and so it is torn down last. Inert and empty unless built with
-    /// -c (see docs/chiara-design-notes.md).
+    /// -c.
     Chiara::InitGuard _chiara;
 
     AppConfig _config;
@@ -273,15 +349,50 @@ private:
 
     bool _headless = false;
     bool _restrictedViewer = false;
-    /// Tracks the presentation half specifically: teardown of DebugUI /
-    /// PostProcess / RenderSystem must be gated on *that* having been brought
-    /// up, not on Initialize() having succeeded — headless satisfies the latter
-    /// without any of the former existing.
+    /// Tracks the presentation half specifically: teardown of PostProcess and
+    /// RenderSystem must be gated on *that* having been brought up, not on
+    /// Initialize() having succeeded — headless satisfies the latter without any
+    /// of the former existing.
     bool _presentationInitialized = false;
     /// Set by RequestClose(). The headless loop has no window to ask, and even
     /// the windowed loop is cleaner asking one flag than dereferencing a pointer
     /// that may not exist.
     bool _closeRequested = false;
+
+    /// Set by RefuseStart(). Distinct from _closeRequested, which a clean quit
+    /// also sets: what separates a game a player closed from one that never
+    /// opened is this flag alone.
+    bool _startupFailed = false;
+
+    /// Null unless this process is a capture run — see SetPerfCapture. Held by
+    /// pointer so a normal run carries no sample buffers at all, which is the
+    /// same pay-for-what-you-place rule the thing exists to check.
+    std::unique_ptr<PerfCapture> _perfCapture;
+
+    /// See PerfCaptureConfig::imagePath and optionsPath. The options path is read
+    /// in Initialize, which is what loads the options.
+    std::string _captureImagePath;
+    std::string _captureOptionsPath;
+
+    /// Resolution a capture asked to render at, 0 when it did not ask. Applied
+    /// in InitializePresentation rather than at SetPerfCapture, because
+    /// Initialize() reloads _config from the game config in between.
+    int32_t _captureWidth  = 0;
+    int32_t _captureHeight = 0;
+
+    /// Whether the capture asked for per-pass timers. Off by default because
+    /// they change the frame's render-pass structure — see PerfCaptureConfig.
+    bool _capturePerPassTiming = false;
+
+    /// Whether the next frame is the one to write to _captureImagePath. Armed once
+    /// the measured frames are done: the image is taken from inside a frame,
+    /// before the debug UI draws, so it has to be the next one.
+    bool _captureImagePending = false;
+
+    /// NVML readings taken alongside a capture's frame times. Its worker spins
+    /// up on the first Poll(), so a non-capture run never initialises NVML —
+    /// the F11 overlay keeps its own for the same reason.
+    Render::GpuTelemetry _captureTelemetry;
 
     /// See GetSimTick(). Monotonic for the process's lifetime; never reset.
     std::uint64_t _simTick = 0;
@@ -318,11 +429,32 @@ private:
     void PumpChiaraCounters();
 
 public:
-    /// @brief Draws the capture control panel — recording toggle, ring coverage,
-    /// and the dump buttons. Call it from OnImGui inside a window of your own;
-    /// it draws contents, not a window, so a game can put it wherever it likes.
-    /// Draws nothing in a build without the capture system.
-    void DrawChiaraPanel();
+    /// @brief What the last capture written to disk did, and whether one is
+    /// being written right now.
+    ///
+    /// Flat rather than the serializer's own result type, so reading a capture's
+    /// outcome does not oblige a caller to compile against the serializer. Empty
+    /// in a build without the capture system.
+    struct ChiaraDumpReport
+    {
+        /// Where the last completed dump landed. Empty until one has.
+        std::string path;
+        /// Why it failed. Empty when it succeeded, and when none has run.
+        std::string error;
+        double windowSeconds = 0.0;
+        std::uint64_t bytesWritten  = 0;
+        std::uint64_t eventsWritten = 0;
+        /// Args written with no enclosing scope to attach them to; they are
+        /// dropped, and a count that is not zero means the trace is incomplete.
+        std::uint64_t orphanedArgs  = 0;
+        bool success = false;
+        /// A dump is in flight. Asking for another until it finishes does
+        /// nothing, so a caller offering the choice should not offer it now.
+        bool running = false;
+    };
+
+    /// @brief The outcome of the last dump, read consistently.
+    [[nodiscard]] ChiaraDumpReport LastChiaraDump() const;
 
     /// @brief Writes the last @p lastSeconds of capture to a timestamped file
     /// under the user root (0 = everything the rings hold).

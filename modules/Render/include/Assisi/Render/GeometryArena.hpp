@@ -14,7 +14,7 @@
 /// MeshBuffer indirects through its arena rather than caching a raw handle, the
 /// swap is invisible to the draw loop.
 ///
-/// Deliberately deferred (see docs/asset-streaming-design-notes.md): per-mesh
+/// Deliberately deferred: per-mesh
 /// Free + semi-space compaction for streaming residency, and a second
 /// format-keyed arena for divergent vertex formats. This type is
 /// stride-parameterized and standalone precisely so the latter is "instantiate

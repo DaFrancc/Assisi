@@ -14,6 +14,7 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
+#    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
@@ -56,7 +57,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // because F5 reaches this even while the Game panel is hidden.
     if (InBlueprintMode())
     {
-        Assisi::Core::Log::Warn("Play: close the blueprint editor first — a blueprint world is content, "
+        Assisi::Core::Log::Warn("Play: close the blueprint editor first - a blueprint world is content, "
                                 "not a level to run.");
         return;
     }
@@ -77,8 +78,8 @@ void EditorApp::StartPlay(NetIntent intent)
         // the other machine, for a reason nobody there can act on.
         if (HostLevelIdentity().addressing == Assisi::NetSync::LevelAddressing::None)
         {
-            _netError = "save the level to host — clients load it from disk, so it has to be there.";
-            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            _netError = "save the level to host - clients load it from disk, so it has to be there.";
+            Assisi::Core::Log::Warn("Editor: refusing to host - {}", _netError);
             return;
         }
 
@@ -106,7 +107,7 @@ void EditorApp::StartPlay(NetIntent intent)
             _netError = "some live blueprint copies are out of date with their file (" +
                         _staleInstanceSources.front() +
                         "). Save the blueprint again and accept the update, or reload the level.";
-            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            Assisi::Core::Log::Warn("Editor: refusing to host - {}", _netError);
             return;
         }
     }
@@ -144,6 +145,26 @@ void EditorApp::StartPlay(NetIntent intent)
                                  : PrePlayState{};
 
     SetPlayState(PlayState::Playing);
+
+    // The session takes the cursor as it starts, the way launching a game does.
+    // F8 hands it back without ending the session; Escape ends the session, which
+    // hands it back too.
+    GetInput().SetMouseCaptured(true);
+
+    // The world begins here and nowhere earlier: opening a level for authoring
+    // leaves it resident but not begun, so level-start logic never runs over the
+    // scene being composed. Stop resets the progress, so the next Play begins it
+    // again over the restored scene.
+    //
+    // SimulateFrom::Begin rather than the game's policy: SetPlayState owns
+    // `simulate` in this host, the edited world is already resident so its assets
+    // settle a frame later anyway, and deferring here would make Pause and Resume
+    // consult start progress for no visible difference.
+    if (_world != nullptr)
+    {
+        Assisi::App::BeginWorld(WorldStartContext(*_world), Assisi::App::SimulateFrom::Begin);
+    }
+
     _netIntent   = intent;
     _joinPhase   = JoinPhase::None;
 #if defined(ASSISI_NETWORKING)
@@ -188,7 +209,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
     // is fixed for the life of a session, and the inspector redraws constantly.
-    _netVetoedComponentNames = Assisi::NetSync::LoadNeverReplicateFromConfig();
+    _netVetoedComponentNames = Assisi::NetSync::NeverReplicate();
 
     const auto port = static_cast<std::uint16_t>(_netPort);
 
@@ -232,6 +253,10 @@ void EditorApp::ResumePlay()
     // but they were never part of the editing history, so they stop being undoable.
     _pausedHistory.reset();
     SetPlayState(PlayState::Playing);
+
+    // Back to the session, the way starting one takes it.
+    GetInput().SetMouseCaptured(true);
+    _playCursorLent = false;
 }
 
 void EditorApp::PausePlay()
@@ -258,7 +283,14 @@ void EditorApp::PausePlay()
     if (Assisi::App::World *edited = _worlds.Edited())
     {
         _pausedHistory.emplace(edited->scene, MakeEditRebindHook(), &edited->instances);
+        InstallHistoryHooks(*_pausedHistory);
     }
+    // A pause exists to be edited in, so the cursor comes back — and comes back
+    // visible. Held, it would be a pointer the author can click panels with and
+    // cannot see.
+    GetInput().SetMouseCaptured(false);
+    _playCursorLent = false;
+
     SetPlayState(PlayState::Paused);
 }
 
@@ -268,6 +300,13 @@ void EditorApp::StopPlay()
     {
         return;
     }
+
+    // Whatever the session captured, it gives back here. A game system holds the
+    // cursor for as long as it runs and has no "session ended" of its own to
+    // release on — and a cursor still captured by a session that no longer exists
+    // is an editor nothing can click.
+    GetInput().SetMouseCaptured(false);
+    _playCursorLent = false;
 
     // The session ends with play, both roles and whatever the reason. FIRST, so a
     // client's mirrors are dropped before the restore rebuilds the editing scene
@@ -341,7 +380,7 @@ void EditorApp::StopPlay()
                         if (!meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data))
                         {
                             Assisi::Core::Log::Error(
-                                "Editor: leaving play lost '{}' — it did not read back from the snapshot "
+                                "Editor: leaving play lost '{}' - it did not read back from the snapshot "
                                 "taken when play started. This is an engine bug.",
                                 meta->name);
                         }
@@ -351,7 +390,11 @@ void EditorApp::StopPlay()
         }
 
         ClearSelection();
-        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
+        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, *_physics);
+        // Every entity was destroyed and revived, and the clock went back to the
+        // hour play started at — so the cascades hold depth from a sun that has
+        // now moved, cast by geometry that has been rebuilt underneath them.
+        _sceneRenderer.OnSceneReplaced();
     }
 
     // A joined session loaded the *host's* level into this world, retargeting its
@@ -369,6 +412,17 @@ void EditorApp::StopPlay()
         {
             Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlay.levelPath);
         }
+    }
+
+    // The session is over, so the world has not begun again. Both halves matter:
+    // the progress says the world may start afresh, and the marks say its one-shot
+    // systems may run afresh. Explicit rather than relying on the ApplySystems
+    // above, which only runs when there was something to restore — a Stop with
+    // nothing to put back would otherwise leave a world that can never begin again.
+    if (_world != nullptr)
+    {
+        _world->systems.ClearOnceMarks();
+        _world->start = Assisi::App::StartProgress::NotBegun;
     }
 
     SetPlayState(PlayState::Editing);
@@ -655,17 +709,13 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
             txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
-    // Tear down each entity's Jolt body, then queue the entity for destruction.
-    // RigidBody is transient — never captured; undo rebuilds it from
-    // RigidBodyDescriptor through the rebind hook. Destroy is deferred, so the slots
-    // free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
+    // Tear down each entity's simulated object, then queue the entity for
+    // destruction. The handles are transient — never captured; undo rebuilds them
+    // from the descriptor through the rebind hook. Destroy is deferred, so the
+    // slots free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
     for (const Assisi::ECS::Entity e : doomed)
     {
-        if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
-        {
-            _physics->RemoveBody(*rbc);
-            _scene->Remove<Assisi::Physics::RigidBody>(e);
-        }
+        _physics->RemoveEntityPhysics(*_scene, e);
         _scene->Destroy(e);
     }
 
@@ -706,7 +756,7 @@ void EditorApp::DrawGameControlWindow()
         {"Host + 1 client", NetIntent::Host, 1},
         {"Host + 2 clients", NetIntent::Host, 2},
         {"Host + 3 clients", NetIntent::Host, 3},
-        {"Join…", NetIntent::Join, 0},
+        {"Join...", NetIntent::Join, 0},
     }};
 #if defined(ASSISI_NETWORKING)
     _playNetSelection = std::clamp(_playNetSelection, 0, static_cast<std::int32_t>(kNetModes.size()) - 1);
@@ -735,9 +785,9 @@ void EditorApp::DrawGameControlWindow()
     // F5 run/resume, F6 pause, F7 stop — handled here so the keys live with the
     // window that owns them (the pattern F11 follows in DrawOptionsWindow). Each
     // transition no-ops unless the current state allows it, so a keypress in the
-    // wrong state does nothing. Gated on ImGuiWantsKeyboard so they do not fire
+    // wrong state does nothing. Gated on ImGuiWantsTextInput so they do not fire
     // while a text field has focus.
-    if (!ImGuiWantsKeyboard())
+    if (!ImGuiWantsTextInput())
     {
         Assisi::Window::InputContext &input = GetInput();
         if (input.IsKeyPressed(Assisi::Window::Key::F5))
@@ -872,7 +922,7 @@ void EditorApp::DrawGameControlWindow()
 
     // During play only. Play/Stop's snapshot-and-restore is defined for the edited
     // world alone, and a second resident level that nothing simulates has no restore
-    // story (docs/multi-scene-design-notes.md).
+    // story.
     const bool canAddWorld =
         (playing || paused) && !networked && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
     ImGui::BeginDisabled(!canAddWorld);

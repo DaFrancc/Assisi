@@ -6,3 +6,6 @@
 
 # style: format the tree Allman with uncrustify — Fixes ENG-132
 1d2bdc5042e1959428c72b9b643a57b5f8d3e84a
+
+# style: reformat the files that drifted since the tree was formatted
+59cfc9129f1ed2715c34ad454c78968bf6693e14

@@ -209,7 +209,7 @@ struct ConnectionDiagnostics
     // ── Intents ──────────────────────────────────────────────────────────────
     // One counter per way an intent can be refused: "intents dropped" is not a
     // diagnosis. Rate-limited means a misbehaving client, stale means a clock
-    // problem, out-of-range means a liar or a build mismatch, unhandled means a
+    // problem, not-yours means a control transfer in flight, unhandled means a
     // missing handler — four different conversations.
 
     /// Intents that made it to a handler.
@@ -220,9 +220,6 @@ struct ConnectionDiagnostics
     std::uint64_t intentsRateLimited = 0;
     /// Rejected because the client's tick was outside the accepted window.
     std::uint64_t intentsStale       = 0;
-    /// Rejected because a field was outside its declared range — the client is
-    /// lying, or the two builds disagree. Never clamped: see FieldsWithinBounds.
-    std::uint64_t intentsOutOfRange  = 0;
     /// Rejected because the sender does not control the entity it named. An
     /// honest client hits this during a control transfer, so it is counted
     /// rather than treated as an attack.

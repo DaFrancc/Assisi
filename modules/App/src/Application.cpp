@@ -20,8 +20,9 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Core/Platform.hpp>
-#include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 
@@ -30,9 +31,15 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iostream>
 #include <optional>
+#include <sstream>
+#include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace Assisi::App
 {
@@ -69,7 +76,7 @@ struct TimerResolutionScope
 
 // ---------------------------------------------------------------------------
 
-// Ceiling applied before game.json is available. High enough that it can never
+// Ceiling applied before the game config is available. High enough that it can never
 // trim below a configured keepLogs/keepDumps, low enough to bound a directory
 // on a build that never reaches InitializeCore.
 constexpr uint32_t kRetentionBackstop = 50;
@@ -101,7 +108,7 @@ Application::Application()
 
     // Backstop retention, deliberately *before* this run's log exists — the one
     // file that must never be deleted cannot be, because there is nothing to
-    // delete yet. game.json has not been read (it needs the asset system), so
+    // delete yet. The config has not been read (it needs the asset system), so
     // this cannot use keepLogs; the cap is fixed and generous precisely so it
     // can never cut below anyone's configured value. InitializeCore prunes to
     // the real counts once they are known.
@@ -146,30 +153,50 @@ bool Application::Initialize()
     return true;
 }
 
-bool Application::InitializeCore()
+bool Application::MountContent()
 {
     if (auto result = Core::AssetSystem::Initialize(); !result)
     {
         Core::Log::Fatal("Failed to initialize asset system.");
         return false;
     }
+    return true;
+}
 
-#ifdef ASSISI_SOURCE_ASSET_ROOT
-    // Dev build: assets are read from the staged copy next to the executable
-    // (generated .spv files exist only there), but that copy is disposable, so
-    // any asset id minted into it alone is regenerated differently after a clean
-    // build and every by-GUID reference to that asset silently stops resolving.
-    // Mirror minted sidecars back into the source tree, which is the durable,
-    // version-controlled copy. Not defined for Release — a shipped build has no
-    // source tree, and its staged copy IS the durable one.
-    Core::AssetSystem::SetAuthoringRoot(ASSISI_SOURCE_ASSET_ROOT);
-#endif
+bool Application::InitializeCore()
+{
+    if (!MountContent())
+    {
+        return false;
+    }
 
-    _config  = AppConfig::LoadFromJson();
+    _config  = AppConfig::Load();
     _options = OptionsConfig::LoadFromJson();
+    if (!_captureOptionsPath.empty())
+    {
+        std::ifstream file(_captureOptionsPath);
+        if (!file)
+        {
+            Core::Log::Error("PerfCapture: could not open options '{}'.", _captureOptionsPath);
+            return false;
+        }
+        std::stringstream text;
+        text << file.rdbuf();
+        _options = OptionsConfig::FromJsonText(text.str());
+    }
 
-    // Retention runs here rather than in the constructor because it is game.json
-    // that says how many to keep. The counts are totals including this run.
+    // A capture must not be paced. Under vsync the frame time is the display's
+    // refresh interval and the GPU idles between presents — which both hides the
+    // renderer's real cost and lets the driver drop the core clock, so the
+    // measurement is taken on hardware that is no longer at speed.
+    if (_perfCapture)
+    {
+        _options.frameSync = FrameSyncMode::FpsLimit;
+        _options.fpsLimit  = -1;
+    }
+
+    // Retention runs here rather than in the constructor because it is the game
+    // config that says how many to keep. The counts are totals including this run.
     //
     // Both calls name this run's own artifact as protected. Relying on it
     // sorting newest is not enough: LaunchStamp() is local time, so a DST
@@ -187,18 +214,45 @@ bool Application::InitializeCore()
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
     Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
 
-    // Either source turns it on; a --server flag must not be undone by a config
-    // file that says nothing about headless mode.
-    _headless = _headless || _config.headless;
     return true;
 }
 
 bool Application::InitializePresentation()
 {
+    // The player's chosen size over the shipped default, and the capture's over
+    // both. Order matters in one direction only: a capture must render exactly
+    // what it was asked for, so whatever the options say, it is overwritten
+    // below rather than consulted.
+    if (_options.width)
+    {
+        _config.width = *_options.width;
+    }
+    if (_options.height)
+    {
+        _config.height = *_options.height;
+    }
+
+    // A capture's requested resolution wins over both — the ledger needs both
+    // 1440p and 1080p from the same committed config.
+    if (_captureWidth > 0 && _captureHeight > 0)
+    {
+        _config.width  = _captureWidth;
+        _config.height = _captureHeight;
+    }
+
+    // GLFW wants a null-terminated string and an inline one carries no
+    // terminator, so the window holds the only copy that has one.
+    const std::string title(_config.title.View());
+
     Window::WindowConfiguration winCfg;
     winCfg.Width  = _config.width;
     winCfg.Height = _config.height;
-    winCfg.Title  = _config.title.c_str();
+    winCfg.Title  = title.c_str();
+    // Undecorated for a capture, so the framebuffer is exactly the size asked
+    // for: 1440p on a 1440p display does not fit once a title bar is added, and
+    // a report labelled 1440p that rendered 2560x1400 is quoting a workload
+    // nobody ran.
+    winCfg.Undecorated = _perfCapture != nullptr;
 
     _window = std::make_unique<Window::WindowContext>(winCfg);
     if (!_window->IsValid())
@@ -208,9 +262,10 @@ bool Application::InitializePresentation()
     }
 
     // Subscribe through WindowContext (the sole owner of GLFW callbacks) rather
-    // than registering GLFW callbacks directly. WindowContext installed its
-    // callbacks in its constructor, so ImGui (initialized below with
-    // install_callbacks=true) chains to them instead of clobbering them.
+    // than registering GLFW callbacks directly. WindowContext installs its own
+    // in its constructor, so anything that installs GLFW callbacks after this
+    // point must chain to them rather than replace them — a UI toolkit's backend
+    // is the usual case, and the two both receiving input is the whole point.
     _window->OnFramebufferSize([this](int32_t width, int32_t height) { HandleFramebufferResize(width, height); });
     _window->OnWindowRefresh([this]() { RenderFrame(); });
 
@@ -220,20 +275,30 @@ bool Application::InitializePresentation()
         return false;
     }
 
-    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext(),
-                               /*persistLayout=*/ !_restrictedViewer);
-
     _input = std::make_unique<Window::InputContext>(*_window);
 
     if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
-        if (!_postProcess.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo(),
-                                     "shaders/fullscreen.vert.spv", "shaders/fxaa.frag.spv"))
+        if (!_postProcess.Initialize({.device = vulkanContext->GetDevice(),
+                                      .swapchainFramebufferInfo = vulkanContext->GetFramebufferInfo(),
+                                      .vertexShaderSpvPath = "shaders/fullscreen.vert.spv",
+                                      .tonemapShaderSpvPath = "shaders/tonemap.frag.spv",
+                                      .fxaaShaderSpvPath = "shaders/fxaa.frag.spv"}))
         {
             Core::Log::Fatal("Failed to initialize post-process pipeline.");
             return false;
         }
         ConfigurePostProcess();
+
+        // A capture is exactly the case the per-pass render-pass splits are
+        // worth paying for: nobody is looking at this frame, and the whole point
+        // of the run is to find out where the time went. An interactive run
+        // starts with them off and turns them on from the Chiara panel, once it
+        // is showing the thing worth measuring.
+        if (_perfCapture && _capturePerPassTiming)
+        {
+            vulkanContext->SetPassTimingEnabled(true);
+        }
     }
 
     _presentationInitialized = true;
@@ -242,21 +307,21 @@ bool Application::InitializePresentation()
 
 Window::WindowContext &Application::GetWindow() const
 {
-    ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process — there is no window. Guard with "
+    ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process - there is no window. Guard with "
                   "IsHeadless()/HasPresentation().");
     return *_window;
 }
 
 Window::InputContext &Application::GetInput() const
 {
-    ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process — there are no input devices. Guard with "
+    ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process - there are no input devices. Guard with "
                   "IsHeadless()/HasPresentation().");
     return *_input;
 }
 
 Application::~Application()
 {
-    // DebugUI/render teardown only ran meaningful bring-up if the presentation
+    // Render teardown only ran meaningful bring-up if the presentation
     // half was brought up — which a headless process skips entirely, while still
     // reporting a successful Initialize(). Tear the GPU stack down in order and
     // — crucially — here, before main() returns: the device lives in
@@ -266,7 +331,6 @@ Application::~Application()
     // this only orders the releases: our own resources first, then the device last.
     if (_presentationInitialized)
     {
-        Debug::DebugUI::Shutdown();
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -284,9 +348,96 @@ void Application::RequestClose()
     }
 }
 
+void Application::RefuseStart()
+{
+    _startupFailed = true;
+    RequestClose();
+}
+
 bool Application::ShouldClose() const
 {
     return _closeRequested || (_window && _window->ShouldClose());
+}
+
+void Application::SetPerfCapture(const PerfCaptureConfig &config)
+{
+    _perfCapture = std::make_unique<PerfCapture>(config);
+
+    // A capture under vsync measures the display's refresh, not the renderer, so
+    // the pacing comes off here rather than being left to whatever options.json
+    // happens to say. Written into _options so the rest of the loop and the
+    // vsync reconcile above both see one answer.
+    // Neither the pacing nor the resolution is applied here, and for the same
+    // reason: Initialize() replaces _options from options.json and _config from
+    // the game config, both of which run after this. Setting them now looks right and
+    // is silently undone — which is exactly what happened, and is why every
+    // early capture ran vsync-locked to the display and reported frame times
+    // taken while the GPU sat idle between presents. They are applied after
+    // those loads instead.
+    _captureWidth         = config.width;
+    _captureHeight        = config.height;
+    _capturePerPassTiming = config.perPassTiming;
+    _captureImagePath     = config.imagePath;
+    _captureOptionsPath   = config.optionsPath;
+}
+
+void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
+                                     Render::Vulkan::VulkanContext *context)
+{
+    PerfSample sample;
+    sample.cpuMs        = cpuMs;
+    sample.gpuMs        = gpuMs;
+    sample.frameDeltaMs = rawDt * 1000.0;
+
+    // Polled every frame rather than once: the clock guard's whole job is to
+    // notice the hardware moving mid-run, and a single reading at either end
+    // could not. Poll() returns the background worker's latest published sample
+    // and never touches the driver, so this costs a copy.
+    const Render::GpuTelemetrySample &telemetry = _captureTelemetry.Poll();
+    sample.telemetryValid                       = telemetry.valid;
+    sample.coreClockMhz                         = telemetry.coreClockMhz;
+    sample.temperatureC                         = telemetry.temperatureC;
+    sample.telemetrySequence                    = telemetry.sequence;
+
+    _perfCapture->AddSample(sample);
+
+    // After AddSample, which is what decides whether this frame counts.
+    if (context != nullptr)
+    {
+        for (const Render::Vulkan::VulkanContext::PassTiming &pass : context->GetPassTimings())
+        {
+            _perfCapture->AddPassTiming(pass.name, static_cast<double>(pass.milliseconds));
+        }
+    }
+
+    if (!_perfCapture->IsComplete() || _captureImagePending)
+    {
+        return;
+    }
+
+    _perfCapture->SetDeviceName(telemetry.valid ? telemetry.name : std::string{});
+
+    // The extent actually rendered, read off the framebuffer rather than the
+    // size that was requested: a window manager is free to hand back something
+    // else, and a report quoting the request would be quoting a resolution that
+    // was never drawn.
+    if (_window)
+    {
+        const Window::WindowSize size = _window->GetFramebufferSize();
+        _perfCapture->SetRenderExtent(static_cast<uint32_t>(size.Width), static_cast<uint32_t>(size.Height));
+    }
+    Core::Log::Info("{}", _perfCapture->FormatReport());
+    if (!_perfCapture->WriteReport())
+    {
+        Core::Log::Error("PerfCapture: the report could not be written.");
+    }
+    if (_captureImagePath.empty())
+    {
+        RequestClose();
+        return;
+    }
+    // RenderFrame takes the image on the next frame and closes after it.
+    _captureImagePending = true;
 }
 
 namespace
@@ -342,7 +493,8 @@ void Application::Run()
     if (!_initialized)
     {
         Core::Log::Error("Application::Run() called without a successful Initialize(); aborting.");
-        return;
+        std::fflush(nullptr);
+        std::_Exit(EXIT_FAILURE);
     }
 
 #ifdef _WIN32
@@ -491,7 +643,7 @@ void Application::Run()
 
         // Run work marshalled back to the main thread (Jobs().RunOnMain) at this
         // safe point — before OnUpdate's systems run and before any render command
-        // list is open. This is where deferred level loads land (see SandboxApp);
+        // list is open. This is where deferred level loads land (see GameApp);
         // background async results (streaming) publish here too. The budget (0 =
         // unbounded by default) lets an app spread a burst of streaming asset
         // publishes across frames — see SetMainThreadTaskBudget.
@@ -602,7 +754,7 @@ void Application::Run()
         // explanation is one dump away.
         if (cpuMs >= kSlowFrameMs)
         {
-            Core::Log::Info("Slow frame {} — {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
+            Core::Log::Info("Slow frame {} - {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
                             "dump a capture for the breakdown",
                             Chiara::CurrentFrame(), cpuMs, gpuMs, gpuWaitMs, unaccountedMs);
         }
@@ -618,6 +770,11 @@ void Application::Run()
         if (_frameSampleCount < kFrameHistory)
         {
             ++_frameSampleCount;
+        }
+
+        if (_perfCapture)
+        {
+            RecordCaptureFrame(cpuMs, gpuMs, rawDt, vulkanContext);
         }
 
         fpsAccum += rawDt;
@@ -649,7 +806,38 @@ void Application::Run()
     }
 
     OnShutdown();
+
+    // The process ends here instead of unwinding. Workers may be mid-way through a
+    // texture encode that takes seconds, and waiting for it makes a closed window
+    // hang; tearing down around it instead has workers call into objects already
+    // destroyed. Nothing left needs a destructor to reach disk: log sinks flush
+    // every line and a capture report is written during the frame loop, so only
+    // the stdio buffers remain.
+    std::cout.flush();
+    std::cerr.flush();
+    std::fflush(nullptr);
+    std::_Exit(_startupFailed ? EXIT_FAILURE : EXIT_SUCCESS);
 }
+
+namespace
+{
+/// @brief `gpu/<pass>` for a pass name, kept alive for the process.
+///
+/// A counter's name is stored by pointer and read long after the emit, so it
+/// must outlive the frame. Pass names are literals and there are a handful, so
+/// keying the table by the literal's address makes a repeat lookup a pointer
+/// compare and never builds the same string twice.
+[[nodiscard]] const char *GpuPassCounterName(const char *pass)
+{
+    static std::unordered_map<const char *, std::string> names;
+    auto [entry, inserted] = names.try_emplace(pass);
+    if (inserted)
+    {
+        entry->second = std::string("gpu/") + pass;
+    }
+    return entry->second.c_str();
+}
+} // namespace
 
 void Application::PumpChiaraCounters()
 {
@@ -674,6 +862,18 @@ void Application::PumpChiaraCounters()
             const Window::WindowSize fb = _window->GetFramebufferSize();
             ASSISI_PROFILE_COUNTER("render/framebuffer-width", static_cast<double>(fb.Width));
             ASSISI_PROFILE_COUNTER("render/framebuffer-height", static_cast<double>(fb.Height));
+        }
+    }
+
+    // Per-pass GPU time, when the panel has asked for it. Empty otherwise, so
+    // this costs a load and a branch on a normal frame. These are the only
+    // numbers in a capture that describe the device rather than the thread that
+    // fed it, which is the half of a frame no scope tree can reach.
+    if (Render::Vulkan::VulkanContext *context = Render::RenderSystem::GetVulkanContext())
+    {
+        for (const Render::Vulkan::VulkanContext::PassTiming &pass : context->GetPassTimings())
+        {
+            ASSISI_PROFILE_COUNTER(GpuPassCounterName(pass.name), static_cast<double>(pass.milliseconds));
         }
     }
 
@@ -716,24 +916,25 @@ void Application::RenderFrame()
         return; // minimized, or swapchain is stale and about to be resized
     }
 
-    // When an AA mode is active, the scene renders into PostProcess's offscreen
-    // target instead of the swapchain directly — everything else about `frame`
-    // (commandList, width, height) stays the same either way.
+    // The scene always renders into PostProcess's HDR offscreen target — the
+    // swapchain cannot hold radiance. Everything else about `frame` (commandList,
+    // width, height) is unchanged.
     Render::RenderFrame sceneFrame = *frame;
-    if (nvrhi::IFramebuffer *offscreenFramebuffer = _postProcess.SceneFramebuffer())
-    {
-        sceneFrame.framebuffer = offscreenFramebuffer;
-        sceneFrame.colorTexture = _postProcess.SceneColorTexture();
-        sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
-    }
+    sceneFrame.framebuffer = _postProcess.SceneFramebuffer();
+    sceneFrame.colorTexture = _postProcess.SceneColorTexture();
+    sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
 
     {
         // The last unscoped thing inside `render` — small, but an unnamed gap
         // between two slices is exactly what sends you looking in the wrong place.
-        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "clear-targets");
+        ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
+        // The configured clear colour is an sRGB colour, and the scene target
+        // holds radiance, so it is decoded on the way in — same treatment any
+        // sRGB texture gets. The tone map puts it back where it was.
+        const glm::vec3 clearLinear = glm::pow(glm::vec3(_config.clearColor), glm::vec3(2.2f));
         sceneFrame.commandList->clearTextureFloat(
             sceneFrame.colorTexture, nvrhi::AllSubresources,
-            nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
+            nvrhi::Color(clearLinear.r, clearLinear.g, clearLinear.b, _config.clearColor.a));
         if (sceneFrame.depthTexture)
         {
             sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true,
@@ -747,36 +948,66 @@ void Application::RenderFrame()
     }
 
     {
-        // No-op if AA is off (the scene already rendered directly into `frame`
-        // above); otherwise resolves/FXAA's the offscreen render into it.
-        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "post-process");
-        _postProcess.Resolve(frame->commandList, *frame);
+        // Resolve, then tone map: the chain's HDR half. The look rides in push
+        // constants, so handing it over per frame is what makes an editor slider
+        // land on the next frame with nothing to rebuild.
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
+        _postProcess.SetTonemapSettings(_options.tonemap);
+        _postProcess.RunBeforeOverlays(frame->commandList, *frame);
+    }
+
+    // Display-referred content, drawn into the tone-mapped image rather than
+    // through the tone map. The target still carries the scene's depth, so
+    // overlays occlude against the scene exactly as they did.
+    if (nvrhi::IFramebuffer *overlayFramebuffer = _postProcess.OverlayFramebuffer())
+    {
+        Render::RenderFrame overlayFrame = *frame;
+        overlayFrame.framebuffer = overlayFramebuffer;
+        overlayFrame.depthTexture = _postProcess.SceneDepthTexture();
+
+        // A scope, not a pass: the overlay passes open their own pass timers.
+        ASSISI_PROFILE_GPU_SCOPE(overlayFrame.commandList, "overlays");
+        OnRenderOverlays(overlayFrame);
     }
 
     {
-        // Split three ways because the three costs move for unrelated reasons:
-        // `imgui-begin` is the backend's per-frame setup plus the texture sweep,
-        // `imgui-panels` is the app's own panel code (the part a game controls),
-        // and `imgui-render` is building + recording the draw data, which scales
-        // with how much got drawn rather than with how much code ran.
-        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui");
+        // Whatever is left: the overlay resolve, and FXAA or the final copy.
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process-output");
+        _postProcess.RunAfterOverlays(frame->commandList, *frame);
+    }
+
+    // The finished frame, before the debug UI draws over it.
+    Render::FrameCapture frameCapture;
+    bool captureImage = false;
+    if (_captureImagePending && !_closeRequested)
+    {
+        captureImage = frameCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
+        if (!captureImage)
         {
-            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-begin");
-            Debug::DebugUI::BeginFrame(*frame);
+            RequestClose();
         }
-        {
-            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-panels");
-            OnImGui();
-        }
-        {
-            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-render");
-            Debug::DebugUI::EndFrame(*frame);
-        }
+    }
+
+    {
+        // One scope, because what happens inside belongs to whoever overrode
+        // this: bringing a UI toolkit up, drawing into it and submitting it are
+        // that layer's business, and an application that draws no UI spends
+        // nothing here.
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "ui");
+        OnRenderUi(*frame);
     }
 
     {
         ASSISI_PROFILE_SCOPE("end-frame");
         vulkanContext->EndFrame();
+    }
+
+    // After EndFrame, which submits the list the copy was recorded on. The flag
+    // stays set so the capture's report is not written a second time.
+    if (captureImage)
+    {
+        (void)frameCapture.Write(vulkanContext->GetDevice(), _captureImagePath);
+        RequestClose();
     }
 }
 
@@ -804,14 +1035,15 @@ void Application::ConfigurePostProcess()
 
     const nvrhi::FramebufferInfo before = _postProcess.SceneFramebufferInfo();
     _postProcess.Configure(static_cast<uint32_t>(fb.Width), static_cast<uint32_t>(fb.Height), _options.aaMode,
-                           msaaSamples);
+                           msaaSamples, {.overlays = UsesOverlayStage()});
     const nvrhi::FramebufferInfo after = _postProcess.SceneFramebufferInfo();
 
     // Only fires for an actual sample-count change (F11 toggling into/out of
     // MSAA) — resizing alone never changes FramebufferInfo. When called during
     // Initialize() (before OnStart()), the derived OnRenderTargetsChanged runs
-    // but no-ops because the derived render resources aren't built yet (e.g.
-    // SandboxApp guards on MeshPass::IsValid()).
+    // but no-ops because the derived render resources aren't built yet
+    // (Runtime::SceneRenderer::OnRenderTargetsChanged returns true untouched
+    // until its own Initialize has run).
     if (!(before == after))
     {
         OnRenderTargetsChanged(after);

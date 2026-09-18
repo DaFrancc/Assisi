@@ -2,9 +2,12 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/Core/AssetIgnore.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -18,6 +21,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace Assisi::Editor
 {
@@ -246,6 +250,44 @@ void DrawLoadingFrame(const ImVec2 &origin, float size)
         DrawTtfLoadingFrame(origin, size);
 }
 
+/// @brief Whether anything under @p dir survives the ignore rules — i.e. some
+/// rule re-includes a file inside an otherwise-excluded directory. @p vdir is
+/// that directory's virtual path, which the rules are stated against.
+///
+/// Walked only for a directory already known to be ignored, so the cost is
+/// bounded by the part of the tree the pipeline skips anyway.
+bool HoldsUnignoredFile(const std::filesystem::path &dir, const std::string &vdir,
+                        const Assisi::Core::AssetIgnoreList &ignore)
+{
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator it(dir, std::filesystem::directory_options::skip_permission_denied,
+                                                     ec);
+    const std::filesystem::recursive_directory_iterator end;
+    if (ec)
+    {
+        return false;
+    }
+
+    for (; it != end; it.increment(ec))
+    {
+        std::error_code entryEc;
+        if (!it->is_regular_file(entryEc) || entryEc)
+        {
+            continue;
+        }
+        const std::string relative = std::filesystem::relative(it->path(), dir, entryEc).generic_string();
+        if (entryEc || relative.empty())
+        {
+            continue;
+        }
+        if (!ignore.IsFileIgnored(vdir + "/" + relative))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// @brief Paints a small amber "!" badge over the top-right corner of a @p size
 /// tile at @p origin, marking an asset whose source changed since import and
 /// could not be auto-reconciled.
@@ -274,6 +316,8 @@ void DrawStaleBadge(const ImVec2 &origin, float size)
 void EditorApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
 {
     _assetBrowserOpen        = true;
+    _assetBrowserTarget      = AssetBrowserTarget::ComponentField;
+    _assetBrowserFilter      = AssetBrowserFilter::All;
     _assetBrowserEntity      = _selectedEntity;
     _assetBrowserMeta        = &meta;
     _assetBrowserFieldOffset = fieldOffset;
@@ -286,12 +330,41 @@ void EditorApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMe
                                         int32_t slot)
 {
     OpenAssetBrowserFor(meta, fieldOffset);
-    // A non-negative slot also narrows the listing to materials: see DrawAssetBrowser.
     _assetBrowserVectorSlot = slot;
+    _assetBrowserFilter     = AssetBrowserFilter::Materials;
 }
 
 void EditorApp::SelectAsset(std::string_view vpath)
 {
+    // A material's texture channel: the target is this object's own working copy,
+    // which cannot move, so there is nothing to re-resolve. Handled before the
+    // component path, which would otherwise reject it for having no meta.
+    if (_assetBrowserTarget == AssetBrowserTarget::MaterialField)
+    {
+        // Dropped, not misapplied, if the panel moved to another material while
+        // the browser sat open: the offset would name the right field of the
+        // wrong file.
+        if (_materialEditorPath == _assetBrowserMaterialPath && !_materialEditorPath.Empty())
+        {
+            auto *field = reinterpret_cast<Assisi::Core::AssetId *>(reinterpret_cast<char *>(&_materialEditorData) +
+                                                                    _assetBrowserFieldOffset);
+            *field = _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{});
+            ApplyMaterialEdit(true); // a channel changed: rebuild, don't rewrite the row
+        }
+        _assetBrowserOpen = false;
+        _assetBrowserMeta = nullptr;
+        return;
+    }
+
+    // An assignment to the slot being previewed supersedes the preview: the
+    // author has now really chosen this material, so dropping the binding without
+    // restoring is what keeps the choice. Restoring here would silently undo it.
+    if (_materialPreviewActive && _assetBrowserEntity == _materialPreviewEntity &&
+        _assetBrowserFieldOffset == _materialPreviewFieldOffset && _assetBrowserVectorSlot == _materialPreviewSlot)
+    {
+        EndMaterialPreview(false);
+    }
+
     // Re-resolve the target from (entity, meta, offset): the component pool may have
     // moved since the browser was opened. The inspector's eyedropper pins its target
     // the same way, for the same reason.
@@ -343,7 +416,7 @@ void EditorApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
     Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc == nullptr)
         return;
-    Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache, _assetDatabase);
+    Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache);
 }
 
 void EditorApp::RescanAssetBrowser()
@@ -351,7 +424,7 @@ void EditorApp::RescanAssetBrowser()
     // Drop the previous directory's thumbnails, so browsing many folders does not
     // grow VRAM without bound. ClearThumbnails waits for the GPU to idle before
     // freeing, which is what makes releasing the ImGui binding here safe.
-    _thumbnailCache.ClearThumbnails(
+    _thumbnailCache.Clear(
         [](nvrhi::ITexture *texture) { Assisi::Debug::DebugUI::ReleaseTexture(texture); });
 
     _assetBrowserDirs.clear();
@@ -370,18 +443,45 @@ void EditorApp::RescanAssetBrowser()
         _assetBrowserReadError = true;
         return;
     }
+    // The same rules the reconcile pass indexed with, borrowed rather than
+    // reloaded: a file the database refused to mint must not be offered here as
+    // something to assign.
+    const Assisi::Core::AssetIgnoreList &ignore = _assetDatabase.Ignore();
+
     for (const std::filesystem::directory_entry &entry : dirIt)
     {
         std::error_code entryEc;
-        const std::string name = entry.path().filename().string();
+        const std::string name  = entry.path().filename().string();
+        const std::string vpath = _assetBrowserDir.empty() ? name : _assetBrowserDir + "/" + name;
+
         if (entry.is_directory(entryEc))
-            _assetBrowserDirs.push_back(name);
-        else if (IsThumbnailableImage(entry.path()))
+        {
+            // An ignored directory may still hold a file a later rule took back,
+            // and hiding the directory would put that file out of reach.
+            if (!ignore.IsDirectoryIgnored(vpath) || HoldsUnignoredFile(entry.path(), vpath, ignore))
+            {
+                _assetBrowserDirs.push_back(name);
+            }
+            continue;
+        }
+
+        if (ignore.IsFileIgnored(vpath))
+        {
+            continue;
+        }
+
+        if (IsThumbnailableImage(entry.path()))
+        {
             _assetBrowserImages.push_back(name);
+        }
         else if (IsMeshFile(entry.path()))
+        {
             _assetBrowserMeshes.push_back(name);
+        }
         else if (IsMaterialFile(entry.path()))
+        {
             _assetBrowserMaterials.push_back(name);
+        }
     }
     std::sort(_assetBrowserDirs.begin(), _assetBrowserDirs.end());
     std::sort(_assetBrowserImages.begin(), _assetBrowserImages.end());
@@ -492,9 +592,9 @@ void EditorApp::DrawAssetBrowser()
             ImGui::SameLine();
     }
 
-    // Images and meshes, hidden entirely while picking for a material slot, where
-    // a .amat is the only valid choice.
-    if (_assetBrowserVectorSlot < 0)
+    // Images and meshes, hidden while picking for a material slot, where a .amat
+    // is the only valid choice.
+    if (_assetBrowserFilter != AssetBrowserFilter::Materials)
     {
         for (const std::string &img : _assetBrowserImages)
         {
@@ -509,14 +609,14 @@ void EditorApp::DrawAssetBrowser()
             // decode on a worker — ResolveThumbnail returns null until one lands.
             const bool visible = ImGui::IsRectVisible(ImVec2(thumb, thumb));
             const Assisi::Render::Texture *tex =
-                visible ? _thumbnailCache.ResolveThumbnail(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
+                visible ? _thumbnailCache.Resolve(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
             if (tex != nullptr && tex->IsValid())
             {
                 const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(tex->NativeTexture());
                 clicked = ImGui::ImageButton("thumb", id, ImVec2(thumb, thumb));
             }
             else if (visible &&
-                     _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
+                     _thumbnailCache.IsLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
                      LoadingSpinnerAvailable())
             {
                 // Still decoding: a blank tile under the spinner, so it reads as
@@ -579,7 +679,7 @@ void EditorApp::DrawAssetBrowser()
             if (++col % cols != 0)
                 ImGui::SameLine();
         }
-    } // end (_assetBrowserVectorSlot < 0)
+    } // end (filter != Materials)
 
     // Materials are listed in both modes, and are the only tiles left when the
     // browser was opened for a material slot.
@@ -596,8 +696,21 @@ void EditorApp::DrawAssetBrowser()
         ImGui::TextWrapped("%s", material.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
+
+        // A shortcut into the Material panel, not a second home for authoring:
+        // creating, duplicating and deleting all live there, so browsing for a
+        // mesh never puts a material-authoring action in front of the author.
+        if (ImGui::BeginPopupContextItem("##materialactions"))
+        {
+            if (ImGui::MenuItem("Edit in Material panel"))
+                OpenMaterialEditor(vpath);
+            ImGui::EndPopup();
+        }
         ImGui::PopID();
 
+        // A left click always assigns: the browser is only ever opened to fill a
+        // field. Editing a material is the right-click action above, so the two
+        // cannot be confused with each other.
         if (clicked)
             SelectAsset(vpath);
 

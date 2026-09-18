@@ -7,8 +7,7 @@
 ///
 /// An `AssetId` is a plain 16-byte value: trivially copyable, heap-free, cheap
 /// to hash, safe to store inline in a component or serialize into a level. It is
-/// the identity half of the asset-database architecture
-/// (docs/asset-database-architecture.md §1): stored references point at an
+/// the identity half of the asset-database architecture: stored references point at an
 /// `AssetId`, and the database maps that id to the file currently holding it, so
 /// references survive any rename or move.
 ///
@@ -87,6 +86,21 @@ inline constexpr AssetId Cube        = detail::ReservedAssetId(1); ///< prim://c
 inline constexpr AssetId White       = detail::ReservedAssetId(2); ///< prim://white.
 inline constexpr AssetId WhiteLinear = detail::ReservedAssetId(3); ///< prim://white-linear.
 inline constexpr AssetId FlatNormal  = detail::ReservedAssetId(4); ///< prim://flat-normal.
+
+// The primitive-shape ladder. Each rung is its own id because a reserved id is
+// a compile-time constant and cannot be minted for arbitrary parameters — which
+// is exactly why this is a small fixed set of engine presets rather than a way
+// to author geometry. A sphere at a density not listed here belongs to the
+// procedural-mesh asset, which mints an ordinary id like any other file.
+// Tessellations live in Geometry::PrimitiveTessellation.
+inline constexpr AssetId SphereLow      = detail::ReservedAssetId(5);  ///< prim://sphere-low.
+inline constexpr AssetId Sphere         = detail::ReservedAssetId(6);  ///< prim://sphere.
+inline constexpr AssetId SphereHigh     = detail::ReservedAssetId(7);  ///< prim://sphere-high.
+inline constexpr AssetId IcosphereLow   = detail::ReservedAssetId(8);  ///< prim://icosphere-low.
+inline constexpr AssetId Icosphere      = detail::ReservedAssetId(9);  ///< prim://icosphere.
+inline constexpr AssetId IcosphereHigh  = detail::ReservedAssetId(10); ///< prim://icosphere-high.
+inline constexpr AssetId Cylinder       = detail::ReservedAssetId(11); ///< prim://cylinder.
+inline constexpr AssetId CylinderHigh   = detail::ReservedAssetId(12); ///< prim://cylinder-high.
 } // namespace BuiltinAssetId
 
 /// @brief One reserved built-in id and the virtual path it stands in for.
@@ -100,6 +114,17 @@ struct BuiltinAssetEntry
 ///        reserved id resolves to its primitive exactly as a `prim://` path does
 ///        today. Nil is not included (it is not a resolvable asset).
 [[nodiscard]] std::span<const BuiltinAssetEntry> BuiltinAssets() noexcept;
+
+/// @brief An id derived from @p vpath alone, for an asset whose sidecar does not
+///        ship and for looking an asset up by path where no database exists.
+///
+/// Two hashes of the path under different salts fill the sixteen bytes. The
+/// version and variant nibbles are then set to values RFC 4122 does not use, so
+/// one of these can never equal a minted v4 — and the leading bytes are never
+/// all zero, so it cannot land in the reserved built-in range either. Both are
+/// structural rather than improbable, which is the same guarantee MintAssetId
+/// gives from the other direction.
+[[nodiscard]] AssetId DerivedAssetId(std::string_view vpath) noexcept;
 
 } // namespace Assisi::Core
 

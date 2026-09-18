@@ -11,7 +11,7 @@
 /// That is only worth anything if it holds under the conditions the server
 /// actually runs in — ordinary entities being created in between, members
 /// noticed in the wrong order, and an instance the provider cannot describe.
-/// Those are the cases here (docs/blueprint-implementation-plan.md, stage 7b).
+/// Those are the cases here.
 
 #include <doctest/doctest.h>
 
@@ -1176,14 +1176,15 @@ TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly 
 TEST_CASE("Blueprint replication: ControllerOnly is ignored when no relevancy provider is installed" *
           doctest::should_fail())
 {
-    // ENG-129, open. Every other ControllerOnly case installs a provider, which
+    // Open. Every other ControllerOnly case installs a provider, which
     // is what hid this: RelevancyConfig::Provider defaults to All, that leaves
     // _relevancy null, and ComputeEffective returns the live set outright before
     // either ApplyControllerOnly call is reached. The class is inert in the
     // default configuration, and the entity goes out on the wire — the client
     // below really does build a mirror of a member it must not know about.
     //
-    // should_fail until ENG-129 lands; the fix removes this decorator. Setup is
+    // should_fail until the provider default is fixed; the fix removes this
+    // decorator. Setup is
     // deliberately identical to the escalation case above except for the one
     // missing SetRelevancyProvider call, so the diff between them is the finding.
     Fixture fixture;

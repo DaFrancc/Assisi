@@ -22,9 +22,10 @@
 
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Editor/ColliderPose.hpp>
+#include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Render/LinePass.hpp>
+#include <Assisi/Editor/Overlay/LinePass.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
@@ -35,7 +36,7 @@ namespace Assisi::Editor
 
 namespace
 {
-using Assisi::Render::LineVertex;
+using Assisi::Editor::LineVertex;
 
 // Wireframe colours, written straight to the scene target (see outline_edge.frag).
 // Only the unselected one is defined here: a selected collider borrows the very
@@ -43,103 +44,8 @@ using Assisi::Render::LineVertex;
 // "selected" and "this is the one being edited" in one vocabulary rather than two
 // kept in step by hand.
 constexpr glm::vec4 kUnselectedColor{0.40f, 0.95f, 0.45f, 1.0f}; // light green
-constexpr glm::vec4 kSelectedColor{Assisi::Runtime::kSelectionOutline, 1.0f};
-constexpr glm::vec4 kActiveSelectedColor{Assisi::Runtime::kActiveSelectionOutline, 1.0f};
-
-// Tessellation of curved shapes. 24 segments per full circle is smooth enough for
-// an editor overlay without flooding the line batch.
-constexpr int32_t kCircleSegments = 24;
-
-const glm::vec3 kAxisX{1.f, 0.f, 0.f};
-const glm::vec3 kAxisY{0.f, 1.f, 0.f};
-const glm::vec3 kAxisZ{0.f, 0.f, 1.f};
-
-/// @brief Append one segment, transforming both local endpoints by @p model.
-void AddSegment(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color, const glm::vec3 &a,
-                const glm::vec3 &b)
-{
-    out.push_back({glm::vec3(model * glm::vec4(a, 1.f)), color});
-    out.push_back({glm::vec3(model * glm::vec4(b, 1.f)), color});
-}
-
-/// @brief Append a poly-line arc of @p segments in the plane spanned by unit axes
-/// @p u, @p v, centred at @p center with radius @p radius, sweeping angle
-/// [@p a0, @p a1]. A full circle is a0=0, a1=2π.
-void AddArc(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color, const glm::vec3 &center,
-            const glm::vec3 &u, const glm::vec3 &v, float radius, float a0, float a1, int32_t segments)
-{
-    glm::vec3 prev = center + radius * (std::cos(a0) * u + std::sin(a0) * v);
-    for (int32_t i = 1; i <= segments; ++i)
-    {
-        const float t   = a0 + (a1 - a0) * (static_cast<float>(i) / static_cast<float>(segments));
-        glm::vec3 cur = center + radius * (std::cos(t) * u + std::sin(t) * v);
-        AddSegment(out, model, color, prev, cur);
-        prev = cur;
-    }
-}
-
-void AddBoxWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
-                     const glm::vec3 &halfExtents)
-{
-    const glm::vec3 &h = halfExtents;
-    // Eight corners, indexed by sign bits (x = bit0, y = bit1, z = bit2).
-    glm::vec3 c[8];
-    for (int32_t i = 0; i < 8; ++i)
-    {
-        c[i] = {(i & 1) ? h.x : -h.x, (i & 2) ? h.y : -h.y, (i & 4) ? h.z : -h.z};
-    }
-    // 12 edges: pairs of corners differing in exactly one axis bit.
-    constexpr int32_t edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},  // along X
-        {0, 2}, {1, 3}, {4, 6}, {5, 7},                            // along Y
-        {0, 4}, {1, 5}, {2, 6}, {3, 7}};                           // along Z
-    for (const auto &e : edges)
-    {
-        AddSegment(out, model, color, c[e[0]], c[e[1]]);
-    }
-}
-
-void AddSphereWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color, float radius)
-{
-    const float full = glm::two_pi<float>();
-    AddArc(out, model, color, glm::vec3(0.f), kAxisX, kAxisY, radius, 0.f, full, kCircleSegments);
-    AddArc(out, model, color, glm::vec3(0.f), kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
-    AddArc(out, model, color, glm::vec3(0.f), kAxisY, kAxisZ, radius, 0.f, full, kCircleSegments);
-}
-
-/// @brief Two rings (at ±halfHeight along Y) plus four vertical connectors — the
-/// shared cylindrical body of a cylinder and a capsule.
-void AddCylinderBody(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color, float radius,
-                     float halfHeight)
-{
-    const glm::vec3 top(0.f, halfHeight, 0.f);
-    const glm::vec3 bot(0.f, -halfHeight, 0.f);
-    const float full = glm::two_pi<float>();
-    AddArc(out, model, color, top, kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
-    AddArc(out, model, color, bot, kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
-    for (int32_t k = 0; k < 4; ++k)
-    {
-        const float angle = static_cast<float>(k) * glm::half_pi<float>();
-        const glm::vec3 offset = radius * (std::cos(angle) * kAxisX + std::sin(angle) * kAxisZ);
-        AddSegment(out, model, color, top + offset, bot + offset);
-    }
-}
-
-void AddCapsuleWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color, float radius,
-                         float halfHeight)
-{
-    AddCylinderBody(out, model, color, radius, halfHeight);
-
-    const glm::vec3 top(0.f, halfHeight, 0.f);
-    const glm::vec3 bot(0.f, -halfHeight, 0.f);
-    const float pi = glm::pi<float>();
-    const int32_t capSegs = kCircleSegments / 2;
-    // Two orthogonal profile half-arcs per hemisphere: rim point, over the pole, to
-    // the opposite rim point. Top domes up (+Y), bottom domes down (−Y).
-    AddArc(out, model, color, top, kAxisX, kAxisY, radius, 0.f, pi, capSegs);
-    AddArc(out, model, color, top, kAxisZ, kAxisY, radius, 0.f, pi, capSegs);
-    AddArc(out, model, color, bot, kAxisX, kAxisY, radius, 0.f, -pi, capSegs);
-    AddArc(out, model, color, bot, kAxisZ, kAxisY, radius, 0.f, -pi, capSegs);
-}
+constexpr glm::vec4 kSelectedColor{Assisi::Editor::kSelectionOutline, 1.0f};
+constexpr glm::vec4 kActiveSelectedColor{Assisi::Editor::kActiveSelectionOutline, 1.0f};
 
 /// @brief Append the wireframe for one collider descriptor into @p out.
 void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
@@ -206,7 +112,7 @@ void EditorApp::SubmitColliderWireframes()
         const glm::mat4 bodyModel = ColliderBodyModel(*_scene, entity, tc);
 
         // The traced edges go out for EVERY collider.
-        std::vector<Assisi::Render::LineVertex> &lineOut =
+        std::vector<LineVertex> &lineOut =
             selected ? _colliderLinesOnTop : _colliderLinesDepthTested;
         AppendColliderWireframe(lineOut, bodyModel, lineColor, desc);
 
@@ -226,14 +132,43 @@ void EditorApp::SubmitColliderWireframes()
             if (const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
                 mrc != nullptr && mrc->meshBuffer != nullptr)
             {
-                _sceneRenderer.SubmitOutline(mrc->meshBuffer, tc.worldMatrix, outlineColor);
+                _overlays.SubmitOutline(mrc->meshBuffer, tc.worldMatrix, outlineColor);
             }
         }
     }
 
-    _sceneRenderer.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);
-    _sceneRenderer.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/ true);
-    _sceneRenderer.SetIconSuppressedEntities(_colliderEntities);
+    // Characters, on the same lines and in the same colours. Their capsule stands
+    // on the entity's Transform rather than being centred on it, so the wireframe
+    // is lifted by its own half-height — drawn where the author placed the feet,
+    // which is the whole reason a character is authored that way.
+    for (auto [entity, tc, desc] :
+         _scene->Query<Assisi::ECS::Transform, Assisi::Physics::CharacterDescriptor>())
+    {
+        _colliderEntities.push_back(entity);
+
+        const bool selected = IsSelected(entity);
+        const bool active   = selected && entity == _selectedEntity;
+
+        const glm::vec4 lineColor = active     ? kActiveSelectedColor
+                                    : selected ? kSelectedColor
+                                               : kUnselectedColor;
+
+        const glm::mat4 feet = ColliderBodyModel(*_scene, entity, tc);
+        const glm::mat4 bodyModel =
+            glm::translate(feet, glm::vec3(0.f, desc.halfHeight + desc.radius, 0.f));
+
+        std::vector<LineVertex> &lineOut =
+            selected ? _colliderLinesOnTop : _colliderLinesDepthTested;
+
+        // Only the standing shape. A crouch is a runtime state with no authored
+        // pose to draw it at, and two capsules at once would read as two
+        // characters.
+        AddCapsuleWireframe(lineOut, bodyModel, lineColor, desc.radius, desc.halfHeight);
+    }
+
+    _overlays.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);
+    _overlays.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/ true);
+    _overlays.SetIconSuppressedEntities(_colliderEntities);
 
     // Drop the bodies from the generic selection highlight: their mesh and collider
     // outlines already went out above, and the highlight would draw a second mesh
@@ -249,7 +184,7 @@ void EditorApp::SubmitColliderWireframes()
             if (std::find(outlinedAsBodies.begin(), outlinedAsBodies.end(), entity) == outlinedAsBodies.end())
                 stillHighlighted.push_back(entity);
         }
-        _sceneRenderer.SetHighlightedEntities(stillHighlighted);
+        _overlays.SetHighlightedEntities(stillHighlighted);
     }
 }
 
@@ -257,7 +192,7 @@ void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
                                       const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
 {
     using Assisi::Physics::ColliderShape;
-    using Item = Assisi::Render::OutlinePass::OutlineItem;
+    using Item = Assisi::Editor::OutlinePass::OutlineItem;
 
     // One group per collider: its own outline pass, so it cannot merge with the
     // entity mesh's outline. Within a group the meshes DO union — a capsule's
@@ -287,7 +222,7 @@ void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
         items.push_back({&_colliderBoxMesh, glm::scale(bodyModel, desc.halfExtents * 2.0f)});
         break;
     }
-    _sceneRenderer.SubmitOutlineGroup(items, color);
+    _overlays.SubmitOutlineGroup(items, color);
 }
 
 } // namespace Assisi::Editor

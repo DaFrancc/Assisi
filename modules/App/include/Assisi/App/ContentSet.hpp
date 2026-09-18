@@ -8,7 +8,7 @@
 /// it has to, for a reason that only shows up once blueprints replicate: a
 /// blueprint spawned from C++ is named by no level and would never be hashed —
 /// while spawning replicates as "expand this file", which makes every blueprint's
-/// content load-bearing across the wire (docs/blueprint-system-concept.md §9).
+/// content load-bearing across the wire.
 ///
 /// The check is deliberately strict. *Any* difference refuses a join, including
 /// files neither machine ever loads, because a stray experimental `.abp` is

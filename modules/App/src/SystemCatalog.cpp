@@ -93,20 +93,27 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
         if (world.systems.Has(definition->name))
             continue;
 
-        if (definition->isRender)
+        // The two halves differ only in how the system is registered. A render
+        // system has no phase to pass and no meaning for activeWorldOnly — it
+        // runs once, for the world being drawn — so those two are the whole of
+        // what the branch is for. The ordering constraints apply to both, and
+        // reflectgen has already refused an `after` naming nothing.
+        SystemRegistry::SystemHandle handle =
+            definition->isRender
+            ? world.systems.RegisterRender(definition->name, definition->runRender)
+            : world.systems.Register(definition->phase, definition->name, definition->run);
+
+        for (const std::string &target : definition->after)
         {
-            world.systems.RegisterRender(definition->name, definition->runRender);
+            handle.After(target);
         }
-        else
+        for (const std::string &target : definition->before)
         {
-            SystemRegistry::SystemHandle handle =
-                world.systems.Register(definition->phase, definition->name, definition->run);
-            for (const std::string &target : definition->after)
-                handle.After(target);
-            for (const std::string &target : definition->before)
-                handle.Before(target);
-            if (definition->activeWorldOnly)
-                handle.ActiveWorldOnly();
+            handle.Before(target);
+        }
+        if (definition->activeWorldOnly && !definition->isRender)
+        {
+            handle.ActiveWorldOnly();
         }
     }
 }
@@ -133,8 +140,9 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
     }
 }
 
-void DrainSystemInstalls(World &world)
+void DrainSystemInstalls(SystemContext ctx)
 {
+    World &world = ctx.world;
     if (world.pendingSystems.names.empty())
         return;
 
@@ -142,6 +150,26 @@ void DrainSystemInstalls(World &world)
     // to the vector being walked is how that becomes an infinite frame.
     const World::PendingSystems batch = std::exchange(world.pendingSystems, World::PendingSystems{});
     (void)SystemCatalog::Instance().Install(world, batch.names, batch.context);
+
+    // The one-shot phases this world has already passed, replayed for whatever
+    // just arrived. Every entry that was here before is marked, so these run the
+    // new systems alone — no name filtering, and a blueprint spawned into a
+    // running world gets the same start its level would have given it.
+    //
+    // Nothing to replay for a world that has not begun: it will begin later and
+    // run all of them at once.
+    if (world.start == StartProgress::NotBegun)
+    {
+        return;
+    }
+    world.systems.RunOnce(SystemPhase::Begin, ctx);
+    if (world.start == StartProgress::Loaded)
+    {
+        // A spawn into a settled world is settled by definition of the world, not
+        // of the spawn: its own mesh may still be streaming. Per-instance loading
+        // is a different feature, and this phase does not pretend to be it.
+        world.systems.RunOnce(SystemPhase::Loaded, ctx);
+    }
 }
 
 bool LevelSystemsAreDeclared(std::string_view virtualPath)
@@ -161,6 +189,42 @@ bool LevelSystemsAreDeclared(std::string_view virtualPath)
         ok = false;
     }
     return ok;
+}
+
+std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(const Runtime::InstanceTable &instances)
+{
+    std::map<std::string, int32_t, std::less<>> counts;
+
+    // Distinct sources first: the definition cache is keyed by path, so this is
+    // about not counting one blueprint once per copy of it in the level.
+    std::vector<std::string_view> sources;
+    for (const auto &[id, row] : instances.All())
+    {
+        (void)id;
+        if (!row->authored)
+        {
+            continue;
+        }
+        if (std::find(sources.begin(), sources.end(), row->source) != sources.end())
+        {
+            continue;
+        }
+        sources.push_back(row->source);
+    }
+
+    for (const std::string_view source : sources)
+    {
+        const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(source);
+        if (!definition)
+        {
+            continue; // Unreadable, and whatever placed it has already said so.
+        }
+        for (const std::string &name : (*definition)->systems)
+        {
+            ++counts[name];
+        }
+    }
+    return counts;
 }
 
 } // namespace Assisi::App

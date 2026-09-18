@@ -57,34 +57,37 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
                        }
                    };
 
+    // An ordering target this world does not hold is silently no edge.
+    //
+    // It means the named system exists but this world did not install it, which
+    // is ordinary: a level picks its systems one at a time, and "run after the
+    // patrol system, if there is one" is a reasonable thing for a system to say.
+    // Install that system later and the phase is re-sorted with the edge in
+    // place, so the constraint is honoured from then on rather than lost.
+    //
+    // The other reading — a target no system anywhere declares — cannot reach
+    // here: reflectgen refuses it across the whole tree before anything is
+    // compiled, which is the only scope where "anywhere" can be asked.
     for (std::size_t i = 0; i < n; ++i)
     {
         for (const std::string &dep : entries[i].after)
         {
             const std::unordered_map<std::string, std::size_t>::const_iterator it =
                 nameToIndex.find(dep);
-            if (it == nameToIndex.end())
+            if (it != nameToIndex.end())
             {
-                Core::Log::Error(
-                    "SystemRegistry({}): '{}' declares After(\"{}\") but \"{}\" is not registered.",
-                    phaseName, entries[i].name, dep, dep);
-                continue;
+                addEdge(it->second, i);
             }
-            addEdge(it->second, i);
         }
 
         for (const std::string &dep : entries[i].before)
         {
             const std::unordered_map<std::string, std::size_t>::const_iterator it =
                 nameToIndex.find(dep);
-            if (it == nameToIndex.end())
+            if (it != nameToIndex.end())
             {
-                Core::Log::Error(
-                    "SystemRegistry({}): '{}' declares Before(\"{}\") but \"{}\" is not registered.",
-                    phaseName, entries[i].name, dep, dep);
-                continue;
+                addEdge(i, it->second);
             }
-            addEdge(i, it->second);
         }
     }
 
@@ -113,7 +116,7 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
         // the phase is worse than running them in a defined-but-arbitrary order.
         // Fall back to registration order so nothing is dropped, and log loudly.
         Core::Log::Error("SystemRegistry({}): dependency cycle detected in After()/Before() "
-                         "declarations — falling back to registration order.",
+                         "declarations - falling back to registration order.",
                          phaseName);
         sorted.clear();
         for (std::size_t i = 0; i < n; ++i)
@@ -160,7 +163,7 @@ void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
     {
         // An unreflected type has no pool and would gate the system off forever.
         // Fail loud: silently never running is the worst outcome here.
-        Core::Log::Error("SystemRegistry: RequireAny() names a type with no ComponentId — it is "
+        Core::Log::Error("SystemRegistry: RequireAny() names a type with no ComponentId - it is "
                          "not registered with the reflection system (ACOMP). Ignoring it, so the "
                          "system stays eligible.");
         return;
@@ -197,8 +200,15 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/ false, {},
-                             Chiara::InternString(name)});
+    phase.entries.push_back({.name       = std::string(name),
+                             .fn         = std::move(fn),
+                             .after      = {},
+                             .before     = {},
+                             .activeOnly = false,
+                             .enabled    = true,
+                             .ran        = false,
+                             .requireAny = {},
+                             .chiaraName = Chiara::InternString(name)});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -223,10 +233,56 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
 // RunPhase — sort-on-demand then dispatch
 // ---------------------------------------------------------------------------
 
+namespace
+{
+// The scene a phase's activation gates are asked about. Both context types carry
+// one; they just reach it differently, and an overload here is what lets
+// RunPhase take the context alone rather than the context and its own scene.
+const ECS::Scene &GateScene(const SystemContext &ctx) { return ctx.world.scene; }
+const ECS::Scene &GateScene(const RenderContext &ctx) { return ctx.scene; }
+
+/// Whether @p entry runs this dispatch: not muted, not gated out by the world
+/// role, and holding at least one of the components it requires.
+///
+/// One predicate for both the repeating phases and the one-shot ones. They must
+/// agree about what "would run" means: a one-shot marks every entry it reaches
+/// as having had its moment, and an entry the two disagreed about would either
+/// be marked without running or run twice.
+template <typename Entry>
+bool ShouldRun(const Entry &entry, bool skipActiveOnly, const ECS::Scene &gateScene)
+{
+    if (!entry.enabled)
+    {
+        return false;
+    }
+    if (skipActiveOnly && entry.activeOnly)
+    {
+        return false;
+    }
+    if (entry.requireAny.empty())
+    {
+        return true;
+    }
+    // Each id indexes the scene's pool array, so a system whose components are
+    // absent costs a load and a compare rather than a call. That is what makes it
+    // affordable for a level to name systems a given world may never need.
+    for (const Core::Reflect::ComponentId id : entry.requireAny)
+    {
+        if (gateScene.ComponentCount(id) > 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 template <typename Ctx>
 void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, const char *profileName, Ctx &ctx,
-                              bool skipActiveOnly, const ECS::Scene &gateScene)
+                              bool skipActiveOnly)
 {
+    const ECS::Scene &gateScene = GateScene(ctx);
+
     // This is the chokepoint that makes instrumentation feel automatic: a scope
     // here and one per entry means every system ever written is profiled with no
     // further work, which is how engines with "magic" coverage actually get it —
@@ -239,30 +295,13 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
         phase.dirty  = false;
     }
 
-    // Whether a gated system has anything to work on. Cheap enough to pay every
-    // frame for every system: each id is an index into the scene's pool array,
-    // so a system whose components are absent costs a load and a compare rather
-    // than a call. That is what makes it affordable for a level to name systems a
-    // given world may never need.
-    const auto eligible = [&gateScene](const typename Phase<Ctx>::Entry &entry)
-                          {
-                              if (entry.requireAny.empty())
-                                  return true;
-                              for (const Core::Reflect::ComponentId id : entry.requireAny)
-                              {
-                                  if (gateScene.ComponentCount(id) > 0)
-                                      return true;
-                              }
-                              return false;
-                          };
-
     for (std::size_t i : phase.sorted)
     {
         const typename Phase<Ctx>::Entry &entry = phase.entries[i];
-        if (skipActiveOnly && entry.activeOnly)
+        if (!ShouldRun(entry, skipActiveOnly, gateScene))
+        {
             continue;
-        if (!eligible(entry))
-            continue;
+        }
 
         ASSISI_PROFILE_SCOPE(entry.chiaraName);
         entry.fn(ctx);
@@ -273,17 +312,25 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
 // Public API
 // ---------------------------------------------------------------------------
 
+// Both tables are indexed by SystemPhase, so they have to be in its order and as
+// long as it is — the asserts are what turn adding an enumerator and forgetting a
+// name into a build error rather than a phase that profiles as another one.
+namespace
+{
+constexpr const char *kPhaseNames[] = {"Begin",       "Loaded",     "PreUpdate", "FixedUpdate",
+                                       "PostFixedUpdate", "Update", "PostUpdate"};
+static_assert(std::size(kPhaseNames) == static_cast<std::size_t>(SystemPhase::Count),
+              "Every SystemPhase needs a name, in the enum's order.");
+} // namespace
+
 std::string_view SystemRegistry::PhaseName(std::size_t gamePhaseIndex)
 {
-    static constexpr std::string_view kNames[] = {"PreUpdate", "FixedUpdate", "Update",
-                                                  "PostUpdate"};
-    return kNames[gamePhaseIndex];
+    return kPhaseNames[gamePhaseIndex];
 }
 
 const char *SystemRegistry::PhaseProfileName(std::size_t gamePhaseIndex)
 {
-    static constexpr const char *kNames[] = {"PreUpdate", "FixedUpdate", "Update", "PostUpdate"};
-    return kNames[gamePhaseIndex];
+    return kPhaseNames[gamePhaseIndex];
 }
 
 SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase phase,
@@ -301,9 +348,10 @@ SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view nam
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
-    // Pool occupancy, once per world per frame. PreUpdate is simply the first
-    // phase to run, so it is where a world's frame begins — emitting from every
-    // phase would quadruple the samples without adding anything.
+    // Pool occupancy, once per world per frame. PreUpdate is the first per-frame
+    // phase, so it is where a world's frame begins — emitting from every phase
+    // would quadruple the samples without adding anything. The one-shot phases
+    // run through RunOnce and emit none of this: they are not a frame.
     //
     // A runtime loop over ComponentRegistry rather than generated code: the
     // registry already enumerates every ACOMP with a stable name, so this stays
@@ -339,12 +387,64 @@ void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
     }
 
     RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), PhaseProfileName(Index(phase)), ctx,
-             /*skipActiveOnly=*/ !ctx.isActiveWorld, ctx.world.scene);
+             /*skipActiveOnly=*/ !ctx.isActiveWorld);
+}
+
+void SystemRegistry::RunOnce(SystemPhase phase, SystemContext ctx)
+{
+    Phase<SystemContext> &oncePhase = _gamePhases[Index(phase)];
+
+    // Sorted here as well as in RunPhase: a one-shot's After()/Before() decide
+    // which of two Begin systems sees the world first, and an unsorted walk would
+    // settle that by registration order.
+    if (oncePhase.dirty)
+    {
+        oncePhase.sorted = TopoSort(oncePhase.entries, PhaseName(Index(phase)));
+        oncePhase.dirty  = false;
+    }
+
+    ASSISI_PROFILE_SCOPE(PhaseProfileName(Index(phase)));
+
+    const ECS::Scene &gateScene = ctx.world.scene;
+    for (const std::size_t i : oncePhase.sorted)
+    {
+        Phase<SystemContext>::Entry &entry = oncePhase.entries[i];
+        if (entry.ran)
+        {
+            continue;
+        }
+
+        // Marked before the eligibility question, not after it: an entry that
+        // declines its moment has still had it. Marking only the ones that ran
+        // would leave a muted or gated system waiting to fire at whatever
+        // unrelated drain next runs this phase.
+        entry.ran = true;
+        if (!ShouldRun(entry, /*skipActiveOnly=*/ !ctx.isActiveWorld, gateScene))
+        {
+            continue;
+        }
+
+        ASSISI_PROFILE_SCOPE(entry.chiaraName);
+        entry.fn(ctx);
+    }
+}
+
+void SystemRegistry::ClearOnceMarks()
+{
+    // Only the one-shot phases carry a mark; the repeating ones never read it,
+    // so walking them would be work with nothing to undo.
+    for (const SystemPhase phase : {SystemPhase::Begin, SystemPhase::Loaded})
+    {
+        for (Phase<SystemContext>::Entry &entry : _gamePhases[Index(phase)].entries)
+        {
+            entry.ran = false;
+        }
+    }
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/ false, ctx.scene);
+    RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/ false);
 }
 
 bool SystemRegistry::Has(std::string_view name) const
@@ -363,6 +463,44 @@ bool SystemRegistry::Has(std::string_view name) const
             return true;
     }
     return false;
+}
+
+void SystemRegistry::SetEnabled(std::string_view name, bool enabled)
+{
+    // Every phase, not the first hit: Add() warns about a duplicate name but does
+    // not refuse it, so a name can reach more than one entry and muting half of
+    // them would be the confusing outcome.
+    for (Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (auto &entry : phase.entries)
+        {
+            if (entry.name == name)
+                entry.enabled = enabled;
+        }
+    }
+    for (auto &entry : _renderPhase.entries)
+    {
+        if (entry.name == name)
+            entry.enabled = enabled;
+    }
+}
+
+bool SystemRegistry::IsEnabled(std::string_view name) const
+{
+    for (const Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (const auto &entry : phase.entries)
+        {
+            if (entry.name == name && !entry.enabled)
+                return false;
+        }
+    }
+    for (const auto &entry : _renderPhase.entries)
+    {
+        if (entry.name == name && !entry.enabled)
+            return false;
+    }
+    return true;
 }
 
 void SystemRegistry::Clear()

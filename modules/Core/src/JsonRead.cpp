@@ -26,7 +26,7 @@ void Reject(const char *component, const char *field, std::string_view expected,
     if (dump.size() > kMaxDump)
     {
         dump.resize(kMaxDump);
-        dump += "…";
+        dump += "...";
     }
 
     Log::Error("Reflect: {}.{} expects {}, but the file has {} ({}). The field is not readable, so the "
@@ -87,6 +87,64 @@ bool ReadDouble(const nlohmann::json &j, const char *component, const char *fiel
     return true;
 }
 
+namespace
+{
+
+/// Shared by the narrow integer readers: whole, in range, and rejected rather
+/// than truncated when it is not.
+///
+/// The wide readers get this for free, because a JSON integer cannot overflow
+/// them. A narrow one can, and `get<uint8_t>()` would quietly keep the low byte —
+/// so a hand-edited 300 would load as 44 with nothing said.
+template <typename T>
+bool ReadNarrow(const nlohmann::json &j, const char *component, const char *field, T &out)
+{
+    const nlohmann::json *value = Present(j, field);
+    if (value == nullptr)
+        return true;
+
+    constexpr bool isSigned = std::is_signed_v<T>;
+    if (isSigned ? !value->is_number_integer() : !value->is_number_unsigned())
+    {
+        Reject(component, field, isSigned ? "a whole number" : "a whole number that is not negative",
+               *value);
+        return false;
+    }
+
+    const int64_t raw = value->get<int64_t>();
+    if (raw < static_cast<int64_t>(std::numeric_limits<T>::min()) ||
+        raw > static_cast<int64_t>(std::numeric_limits<T>::max()))
+    {
+        Reject(component, field, "a whole number small enough for this field", *value);
+        return false;
+    }
+
+    out = static_cast<T>(raw);
+    return true;
+}
+
+} // namespace
+
+bool ReadInt8(const nlohmann::json &j, const char *component, const char *field, int8_t &out)
+{
+    return ReadNarrow(j, component, field, out);
+}
+
+bool ReadUInt8(const nlohmann::json &j, const char *component, const char *field, uint8_t &out)
+{
+    return ReadNarrow(j, component, field, out);
+}
+
+bool ReadInt16(const nlohmann::json &j, const char *component, const char *field, int16_t &out)
+{
+    return ReadNarrow(j, component, field, out);
+}
+
+bool ReadUInt16(const nlohmann::json &j, const char *component, const char *field, uint16_t &out)
+{
+    return ReadNarrow(j, component, field, out);
+}
+
 bool ReadInt32(const nlohmann::json &j, const char *component, const char *field, int32_t &out)
 {
     const nlohmann::json *value = Present(j, field);
@@ -125,6 +183,49 @@ bool ReadInt64(const nlohmann::json &j, const char *component, const char *field
         Reject(component, field, "a whole number", *value);
         return false;
     }
+    out = value->get<int64_t>();
+    return true;
+}
+
+bool ReadEnum(const nlohmann::json &j, const char *component, const char *field,
+              std::span<const EnumName> names, int64_t &out)
+{
+    const nlohmann::json *value = Present(j, field);
+    if (value == nullptr)
+        return true;
+
+    if (value->is_string())
+    {
+        const std::string text = value->get<std::string>();
+        for (const EnumName &entry : names)
+        {
+            if (entry.name == text)
+            {
+                out = entry.value;
+                return true;
+            }
+        }
+
+        // The names that would have worked, so a misspelling is one edit to fix.
+        std::string allowed;
+        for (const EnumName &entry : names)
+        {
+            if (!allowed.empty())
+                allowed += ", ";
+            allowed += entry.name;
+        }
+        Reject(component, field, "one of: " + allowed, *value);
+        return false;
+    }
+
+    if (!value->is_number_integer())
+    {
+        Reject(component, field, "an enumerator name or its whole number", *value);
+        return false;
+    }
+
+    // Taken as written, unchecked against the table: this is the form the writer
+    // emits, and a range check here would refuse files it produced.
     out = value->get<int64_t>();
     return true;
 }

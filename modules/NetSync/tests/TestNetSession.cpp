@@ -88,7 +88,7 @@ TEST_CASE("a session hosts, another joins, and the world arrives")
     const std::uint16_t port = HostOnFreePort(host);
     REQUIRE_MESSAGE(port != 0, "could not bind any port in 27200-27239: ", host.LastError());
     CHECK(host.IsHost());
-    CHECK(host.StatusText() == "Hosting — 0 clients");
+    CHECK(host.StatusText() == "Hosting - 0 clients");
 
     SpawnReplicated(hostScene, 1.f);
     SpawnReplicated(hostScene, 2.f);
@@ -119,8 +119,8 @@ TEST_CASE("a session hosts, another joins, and the world arrives")
 
     // The status line is what the UI shows, so it is worth asserting rather
     // than leaving to be noticed as "that looks wrong" later.
-    CHECK(host.StatusText() == "Hosting — 1 client");
-    CHECK(client.StatusText() == "Connected — 3 entities");
+    CHECK(host.StatusText() == "Hosting - 1 client");
+    CHECK(client.StatusText() == "Connected - 3 entities");
 }
 
 TEST_CASE("a client's mirrored entities leave with the session")

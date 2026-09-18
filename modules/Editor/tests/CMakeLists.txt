@@ -12,7 +12,9 @@ add_executable(Assisi-Editor-Tests
   TestInspectorFieldChrome.cpp
   TestInstanceGesture.cpp
   TestInstanceHistory.cpp
+  TestOutlinePicking.cpp
   TestPrePlayState.cpp
+  TestSystemSearch.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
@@ -20,6 +22,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/SystemSearch.cpp"
 )
 
 Assisi_apply_test_defaults(Assisi-Editor-Tests)
@@ -52,7 +55,8 @@ target_link_libraries(Assisi-Editor-Tests
     Assisi::Runtime
     nlohmann_json::nlohmann_json
     # InspectorFieldChrome scopes an ImGui colour push, so the suite needs core
-    # ImGui. Core only — the backends live in Assisi::App, which stays out.
+    # ImGui. It arrives through Assisi::Editor, which is the module that draws a
+    # UI and therefore the one that links the toolkit.
     imgui::imgui
 )
 

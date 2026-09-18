@@ -2,8 +2,7 @@
 """Generation of InstanceView<T> specializations from .abp files.
 
 A blueprint's member list is flat at runtime — `body`, `car/wheel_fl` — and this
-turns it back into the nested aggregate the game writes against
-(docs/blueprint-system-concept.md section 7).
+turns it back into the nested aggregate the game writes against.
 
 The one thing to be careful about: the member *names* produced here must match
 the ones Blueprint.cpp produces byte for byte, because a field whose name is not

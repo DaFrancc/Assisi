@@ -46,7 +46,7 @@
 /// trip.
 ///
 /// There is **no v1 reader**: a positional path would keep the exact failure
-/// names exist to remove (docs/blueprint-system-concept.md §6).
+/// names exist to remove.
 ///
 /// A file is refused outright — the load fails and leaves an empty scene — for a
 /// duplicate name, a missing or empty name, a name too long for Runtime::Name,
@@ -92,7 +92,7 @@ struct LevelHeader
     std::vector<LevelInstance> instances;
 
     /// @brief The systems this file needs, by name — closer to a module import
-    /// than an include (docs/blueprint-system-concept.md §8).
+    /// than an include.
     ///
     /// The list is a **union, not a concatenation** — naming a system twice, or
     /// two nested blueprints both naming `Bounce`, installs it once — and **file
@@ -348,10 +348,35 @@ public:
     [[nodiscard]] static std::expected<std::vector<std::string>, LevelError>
     ReadLevelSystems(std::string_view assetPath);
 
-    /// @brief Load the scene from an asset-relative path via AssetSystem.
+    /// @brief Reads a level or blueprint document by virtual path.
     ///
-    /// Reads and parses the file before calling Load, so an unreadable or
-    /// unparseable one costs the caller nothing.
+    /// What a document is stored as belongs to the executable: the editor reads
+    /// the `.alvl` text, a shipped game a cooked blob. Each installs its reader
+    /// before any load, and every level load and blueprint definition reads
+    /// through it — so the text reader is linked only where it is installed.
+    using DocumentReader = std::function<std::expected<nlohmann::json, LevelError>(std::string_view vpath)>;
+
+    /// @brief Install the reader every document read goes through, returning the
+    ///        one it replaces.
+    ///
+    /// Install at startup, before a load can run on another thread: the reader is
+    /// read without a lock.
+    static DocumentReader SetDocumentReader(DocumentReader reader);
+
+    /// @brief The document at @p vpath, through the installed reader.
+    ///
+    /// FileUnreadable, logged, when no reader is installed. There is no fallback
+    /// to reading text, because a shipped game that quietly opened a loose file
+    /// would hide a pak that is missing the level.
+    [[nodiscard]] static std::expected<nlohmann::json, LevelError> ReadDocument(std::string_view vpath);
+
+    /// @brief The reader for levels stored as JSON text under the asset root.
+    [[nodiscard]] static std::expected<nlohmann::json, LevelError> ReadTextDocument(std::string_view vpath);
+
+    /// @brief Load the scene from a virtual path, through the installed reader.
+    ///
+    /// Reads the document before calling Load, so an unreadable or unparseable
+    /// one costs the caller nothing.
     ///
     /// @param assetPath Virtual path relative to the asset root (e.g.
     ///        "levels/main.alvl").
@@ -375,7 +400,7 @@ public:
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///
-    /// Entity migration (docs/multi-scene-design-notes.md §2, S4): the entities
+    /// Entity migration: the entities
     /// in @p entities are serialized out of @p src, recreated in @p dst as fresh
     /// entities, and destroyed in @p src. This is a **third** EntityRef mapping
     /// mode, distinct from the two above:

@@ -4,11 +4,12 @@
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/Logger.hpp>
-
-#include <nlohmann/json.hpp>
+#include <Assisi/Window/InputBindings.hpp>
 
 #include <algorithm>
 #include <array>
+#include <string>
+#include <string_view>
 
 namespace Assisi::Window
 {
@@ -77,10 +78,12 @@ static constexpr std::array kKeyTable{
     KeyEntry{"Backspace",    Key::Backspace},
     KeyEntry{"Insert",       Key::Insert},
     KeyEntry{"Delete",       Key::Delete},
-    KeyEntry{"Right",        Key::Right},
-    KeyEntry{"Left",         Key::Left},
-    KeyEntry{"Down",         Key::Down},
-    KeyEntry{"Up",           Key::Up},
+    // The arrows carry the suffix because a binding name space covers keys and
+    // mouse buttons together, and bare Left/Right are both.
+    KeyEntry{"RightArrow",   Key::Right},
+    KeyEntry{"LeftArrow",    Key::Left},
+    KeyEntry{"DownArrow",    Key::Down},
+    KeyEntry{"UpArrow",      Key::Up},
     KeyEntry{"F1",           Key::F1},
     KeyEntry{"F2",           Key::F2},
     KeyEntry{"F3",           Key::F3},
@@ -108,9 +111,9 @@ struct ButtonEntry
 };
 
 static constexpr std::array kButtonTable{
-    ButtonEntry{"Left",   MouseButton::Left},
-    ButtonEntry{"Right",  MouseButton::Right},
-    ButtonEntry{"Middle", MouseButton::Middle},
+    ButtonEntry{"LeftMouse",   MouseButton::Left},
+    ButtonEntry{"RightMouse",  MouseButton::Right},
+    ButtonEntry{"MiddleMouse", MouseButton::Middle},
 };
 
 } // namespace
@@ -232,70 +235,73 @@ bool ActionMap::IsActionReleased(std::string_view action, const InputContext &in
 // Serialisation
 // ---------------------------------------------------------------------------
 
-void ActionMap::LoadFromJson(const nlohmann::json &j)
+void ActionMap::Apply(const InputBindings &bindings)
 {
-    if (!j.is_object())
+    for (const auto &[actionName, names] : bindings.actions)
     {
-        Core::Log::Warn("ActionMap::LoadFromJson: expected a JSON object, skipping.");
-        return;
-    }
+        const std::string_view action = actionName.View();
 
-    for (const auto &[actionName, bindingsJson] : j.items())
-    {
-        if (!bindingsJson.is_array())
-            continue;
+        // Replace this action's bindings rather than adding to them. Apply is
+        // called once per layer — the shipped file, then the player's overrides
+        // — and a player who rebinds Jump to one key means *only* that key. Any
+        // action the override does not name is left exactly as the layer below
+        // set it, which is what makes the two calls a merge.
+        Unbind(action);
 
-        for (const auto &entry : bindingsJson)
+        for (const Assisi::Core::ShortString &name : names)
         {
-            if (entry.contains("key"))
+            const std::optional<ActionBinding> binding = BindingFromName(name.View());
+            if (!binding)
             {
-                const auto keyStr = entry.at("key").get<std::string>();
-                const auto key    = KeyFromName(keyStr);
-                if (key)
-                    Bind(actionName, *key);
-                else
-                    Core::Log::Warn("ActionMap: unknown key name '{}' in action '{}' — skipped.",
-                                    keyStr, actionName);
+                Core::Log::Warn("ActionMap: unknown input name '{}' in action '{}' - skipped.", name.View(),
+                                action);
+                continue;
             }
-            else if (entry.contains("button"))
-            {
-                const auto btnStr = entry.at("button").get<std::string>();
-                const auto button = MouseButtonFromName(btnStr);
-                if (button)
-                    Bind(actionName, *button);
-                else
-                    Core::Log::Warn(
-                        "ActionMap: unknown button name '{}' in action '{}' — skipped.", btnStr,
-                        actionName);
-            }
+            _actions[std::string(action)].push_back(*binding);
         }
     }
 }
 
-nlohmann::json ActionMap::ToJson() const
+InputBindings ActionMap::ToBindings() const
 {
-    auto j = nlohmann::json::object();
-    for (const auto &[name, bindings] : _actions)
+    InputBindings bindings;
+    for (const auto &[name, actionBindings] : _actions)
     {
-        auto arr = nlohmann::json::array();
-        for (const auto &b : bindings)
+        std::vector<Assisi::Core::ShortString> &names =
+            bindings.actions[Assisi::Core::ShortString(name)];
+        for (const ActionBinding &binding : actionBindings)
         {
-            nlohmann::json entry;
-            std::visit(
-                [&](auto v)
-                {
-                    using T = std::decay_t<decltype(v)>;
-                    if constexpr (std::is_same_v<T, Key>)
-                        entry["key"] = std::string(KeyName(v));
-                    else
-                        entry["button"] = std::string(MouseButtonName(v));
-                },
-                b.input);
-            arr.push_back(entry);
+            names.emplace_back(BindingName(binding));
         }
-        j[name] = arr;
     }
-    return j;
+    return bindings;
+}
+
+std::optional<ActionBinding> ActionMap::BindingFromName(std::string_view name) noexcept
+{
+    if (const std::optional<Key> key = KeyFromName(name))
+    {
+        return ActionBinding::FromKey(*key);
+    }
+    if (const std::optional<MouseButton> button = MouseButtonFromName(name))
+    {
+        return ActionBinding::FromMouseButton(*button);
+    }
+    return std::nullopt;
+}
+
+std::string_view ActionMap::BindingName(const ActionBinding &binding) noexcept
+{
+    return std::visit(
+        [](auto v)
+        {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, Key>)
+                return KeyName(v);
+            else
+                return MouseButtonName(v);
+        },
+        binding.input);
 }
 
 // ---------------------------------------------------------------------------

@@ -36,11 +36,9 @@ constexpr const char *kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
 // Routes every validation message into Core::Log. Returns VK_FALSE so the
 // offending Vulkan call is NOT aborted — we want to observe, not intercept.
-VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
-    const VkDebugUtilsMessengerCallbackDataEXT *data,
-    void * /*userData*/)
+VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+                                             VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+                                             const VkDebugUtilsMessengerCallbackDataEXT *data, void * /*userData*/)
 {
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         Core::Log::Error("[Vulkan] {}", data->pMessage);
@@ -56,10 +54,9 @@ VkDebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo()
     VkDebugUtilsMessengerCreateInfoEXT info{};
     info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
     // Warnings + errors only; the info/verbose streams are noise at this stage.
-    info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                       VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+    info.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     info.pfnUserCallback = DebugCallback;
     return info;
@@ -156,8 +153,8 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
 {
     if (props.apiVersion < VK_API_VERSION_1_3)
     {
-        Core::Log::Info("  rejected: reports Vulkan {}.{}, need 1.3",
-                        VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion));
+        Core::Log::Info("  rejected: reports Vulkan {}.{}, need 1.3", VK_API_VERSION_MAJOR(props.apiVersion),
+                        VK_API_VERSION_MINOR(props.apiVersion));
         return false;
     }
 
@@ -166,11 +163,9 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
     std::vector<VkExtensionProperties> extensions(extensionCount);
     VKD.vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.data());
 
-    const bool hasSwapchain = std::any_of(extensions.begin(), extensions.end(),
-                                          [](const VkExtensionProperties &ext) {
-                return std::strcmp(ext.extensionName,
-                                   VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
-            });
+    const bool hasSwapchain =
+        std::any_of(extensions.begin(), extensions.end(), [](const VkExtensionProperties &ext)
+                    { return std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; });
     if (!hasSwapchain)
     {
         Core::Log::Info("  rejected: missing {}", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -198,8 +193,7 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
         Core::Log::Info("  rejected: missing a required feature (timelineSemaphore={}, "
                         "synchronization2={}, dynamicRendering={}, shaderDemoteToHelperInvocation={})",
                         features12.timelineSemaphore == VK_TRUE, features13.synchronization2 == VK_TRUE,
-                        features13.dynamicRendering == VK_TRUE,
-                        features13.shaderDemoteToHelperInvocation == VK_TRUE);
+                        features13.dynamicRendering == VK_TRUE, features13.shaderDemoteToHelperInvocation == VK_TRUE);
         return false;
     }
 
@@ -207,23 +201,28 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
     // *core* but *optional* feature bits, so a 1.3 device can still lack them.
     // The bindless material table needs an unbounded, partially-bound,
     // non-uniformly-indexed sampled-image array, and the indirect-draw stages
-    // need drawIndirectCount. Required here (well before D) so unsupported
-    // hardware fails loudly at selection instead of mid-migration — see
-    // docs/mesh-material-architecture.md §10. Must stay in lock-step with the
-    // enables in CreateLogicalDevice.
+    // need drawIndirectCount. The table is also update-after-bind
+    // (nvrhi-bindless-update-after-bind.patch): without it its capacity counts
+    // against the ordinary per-stage sampled-image limit, 200 on Intel, and the
+    // mesh pipelines fail to build. Required here (well before D) so unsupported
+    // hardware fails loudly at selection instead of mid-migration. Must stay in
+    // lock-step with the enables in CreateLogicalDevice.
     if (features12.descriptorIndexing != VK_TRUE || features12.runtimeDescriptorArray != VK_TRUE ||
         features12.shaderSampledImageArrayNonUniformIndexing != VK_TRUE ||
         features12.descriptorBindingPartiallyBound != VK_TRUE ||
-        features12.descriptorBindingVariableDescriptorCount != VK_TRUE || features12.drawIndirectCount != VK_TRUE)
+        features12.descriptorBindingVariableDescriptorCount != VK_TRUE ||
+        features12.descriptorBindingSampledImageUpdateAfterBind != VK_TRUE || features12.drawIndirectCount != VK_TRUE)
     {
         Core::Log::Info("  rejected: missing bindless/descriptor-indexing support "
                         "(descriptorIndexing={}, runtimeDescriptorArray={}, "
                         "shaderSampledImageArrayNonUniformIndexing={}, descriptorBindingPartiallyBound={}, "
-                        "descriptorBindingVariableDescriptorCount={}, drawIndirectCount={})",
+                        "descriptorBindingVariableDescriptorCount={}, "
+                        "descriptorBindingSampledImageUpdateAfterBind={}, drawIndirectCount={})",
                         features12.descriptorIndexing == VK_TRUE, features12.runtimeDescriptorArray == VK_TRUE,
                         features12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
                         features12.descriptorBindingPartiallyBound == VK_TRUE,
                         features12.descriptorBindingVariableDescriptorCount == VK_TRUE,
+                        features12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE,
                         features12.drawIndirectCount == VK_TRUE);
         return false;
     }
@@ -242,6 +241,28 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
                         "drawIndirectFirstInstance={})",
                         features2.features.multiDrawIndirect == VK_TRUE,
                         features2.features.drawIndirectFirstInstance == VK_TRUE);
+        return false;
+    }
+
+    // Shadow depth passes cap their slope-scaled bias with depthBiasClamp (see
+    // ShadowDepthRenderer's ApplyDepthBias). Without the feature Vulkan requires
+    // the clamp to be zero, and a zero clamp lets a caster seen edge-on push its
+    // own depth past every receiver behind it. Core 1.0 but optional; every
+    // desktop driver has it. Lock-step with the enable in CreateLogicalDevice.
+    if (features2.features.depthBiasClamp != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing depthBiasClamp");
+        return false;
+    }
+
+    // The sun's cascades flatten casters above their near plane onto it by
+    // clamping each fragment's depth (ShadowDepthRenderer). Clamping vertices
+    // instead bends every triangle that crosses the plane, and the far plane
+    // then cuts tall casters short. Core 1.0 but optional; every desktop driver
+    // has it. Lock-step with the enable in CreateLogicalDevice.
+    if (features2.features.depthClamp != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing depthClamp");
         return false;
     }
 
@@ -294,8 +315,7 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
 
         const bool isDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
-        Core::Log::Info("Vulkan candidate: {} ({})", props.deviceName,
-                        isDiscrete ? "discrete" : "integrated/other");
+        Core::Log::Info("Vulkan candidate: {} ({})", props.deviceName, isDiscrete ? "discrete" : "integrated/other");
 
         // Selection must agree with CreateLogicalDevice's hard requirements, or a
         // capable-looking-but-unsupported device gets chosen and then fails at
@@ -318,7 +338,8 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
     return best;
 }
 
-VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQueueFamily, bool enableAnisotropy)
+VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQueueFamily, bool enableAnisotropy,
+                             bool enableTextureCompressionBc)
 {
     const float queuePriority = 1.0f;
 
@@ -351,14 +372,16 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     features12.timelineSemaphore = VK_TRUE;
     // Descriptor indexing / bindless (GPU-driven stage D). Enabled so the device
     // is created bindless-ready: an unbounded, partially-bound, non-uniformly-
-    // indexed sampled-image array for the material table, plus drawIndirectCount
-    // for the indirect-draw stages. DeviceMeetsRequirements already verified the
-    // chosen device supports all of these, so requesting them here can't fail.
+    // indexed, update-after-bind sampled-image array for the material table, plus
+    // drawIndirectCount for the indirect-draw stages. DeviceMeetsRequirements
+    // already verified the chosen device supports all of these, so requesting
+    // them here can't fail.
     features12.descriptorIndexing = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
     features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
     features12.drawIndirectCount = VK_TRUE;
     features12.pNext = &features13;
 
@@ -372,6 +395,16 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     // non-zero firstInstance. DeviceMeetsRequirements already verified both bits.
     coreFeatures.multiDrawIndirect = VK_TRUE;
     coreFeatures.drawIndirectFirstInstance = VK_TRUE;
+    // The shadow passes' slope-bias cap. DeviceMeetsRequirements verified it.
+    coreFeatures.depthBiasClamp = VK_TRUE;
+    // The cascades' per-fragment pancaking. DeviceMeetsRequirements verified it.
+    coreFeatures.depthClamp = VK_TRUE;
+    // Block-compressed textures. Requested only when the device advertises it, for
+    // the same reason anisotropy is: asking for a feature the device lacks fails
+    // vkCreateDevice outright. Unlike the features above it is not a requirement —
+    // a device without it renders from uncompressed textures instead, so this is a
+    // capability the asset path reads back rather than a reason to reject hardware.
+    coreFeatures.textureCompressionBC = enableTextureCompressionBc ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -394,16 +427,19 @@ nvrhi::Format ToNvrhiFormat(VkFormat format)
 {
     switch (format)
     {
-    case VK_FORMAT_B8G8R8A8_UNORM: return nvrhi::Format::BGRA8_UNORM;
-    case VK_FORMAT_B8G8R8A8_SRGB:  return nvrhi::Format::SBGRA8_UNORM;
-    default:                       return nvrhi::Format::UNKNOWN;
+    case VK_FORMAT_B8G8R8A8_UNORM:
+        return nvrhi::Format::BGRA8_UNORM;
+    case VK_FORMAT_B8G8R8A8_SRGB:
+        return nvrhi::Format::SBGRA8_UNORM;
+    default:
+        return nvrhi::Format::UNKNOWN;
     }
 }
 
 struct DepthFormatChoice
 {
-    VkFormat vk        = VK_FORMAT_UNDEFINED;
-    nvrhi::Format nvrhiFmt  = nvrhi::Format::UNKNOWN;
+    VkFormat vk = VK_FORMAT_UNDEFINED;
+    nvrhi::Format nvrhiFmt = nvrhi::Format::UNKNOWN;
 };
 
 // The Vulkan spec only guarantees that ONE of D24_UNORM_S8_UINT /
@@ -414,9 +450,9 @@ struct DepthFormatChoice
 DepthFormatChoice ChooseDepthFormat(VkPhysicalDevice physicalDevice)
 {
     const std::array<DepthFormatChoice, 3> candidates{{
-        { VK_FORMAT_D24_UNORM_S8_UINT,  nvrhi::Format::D24S8 },
-        { VK_FORMAT_D32_SFLOAT_S8_UINT, nvrhi::Format::D32S8 },
-        { VK_FORMAT_D32_SFLOAT,         nvrhi::Format::D32   },
+        {VK_FORMAT_D24_UNORM_S8_UINT, nvrhi::Format::D24S8},
+        {VK_FORMAT_D32_SFLOAT_S8_UINT, nvrhi::Format::D32S8},
+        {VK_FORMAT_D32_SFLOAT, nvrhi::Format::D32},
     }};
 
     for (const DepthFormatChoice &candidate : candidates)
@@ -429,6 +465,64 @@ DepthFormatChoice ChooseDepthFormat(VkPhysicalDevice physicalDevice)
 
     return {};
 }
+
+// Logs the driver and the descriptor limits a pipeline layout is checked against.
+// A pipeline that builds on one GPU and not another usually comes down to one of
+// these, and a player's log is the only place the other GPU's values are seen.
+void LogDeviceDetails(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props)
+{
+    VkPhysicalDeviceVulkan12Properties props12{};
+    props12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+    VkPhysicalDeviceProperties2 props2{};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &props12;
+    VKD.vkGetPhysicalDeviceProperties2(device, &props2);
+
+    const VkPhysicalDeviceLimits &limits = props.limits;
+    Core::Log::Info("VulkanContext: driver {} ({}), driver version 0x{:08x}, Vulkan {}.{}.{}, "
+                    "vendor 0x{:04x}, device 0x{:04x}",
+                    props12.driverName, props12.driverInfo, props.driverVersion,
+                    VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
+                    VK_API_VERSION_PATCH(props.apiVersion), props.vendorID, props.deviceID);
+    Core::Log::Info("VulkanContext: per-stage descriptor limits: sampled images {}, samplers {}, "
+                    "storage buffers {}, uniform buffers {}, resources {}; bound sets {}",
+                    limits.maxPerStageDescriptorSampledImages, limits.maxPerStageDescriptorSamplers,
+                    limits.maxPerStageDescriptorStorageBuffers, limits.maxPerStageDescriptorUniformBuffers,
+                    limits.maxPerStageResources, limits.maxBoundDescriptorSets);
+    Core::Log::Info("VulkanContext: per-set descriptor limits: sampled images {}, storage buffers {}; "
+                    "update-after-bind per-stage sampled images {}, resources {}, per-set sampled images {}",
+                    limits.maxDescriptorSetSampledImages, limits.maxDescriptorSetStorageBuffers,
+                    props12.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                    props12.maxPerStageUpdateAfterBindResources,
+                    props12.maxDescriptorSetUpdateAfterBindSampledImages);
+}
+
+// NVRHI reports what it detects (and, patched, what the driver answered when a
+// pipeline would not build) through this. Without one it has nowhere to say it,
+// and its Vulkan backend calls the callback without checking for null. Static
+// because the device holds the pointer for its whole life.
+class NvrhiMessageLog final : public nvrhi::IMessageCallback
+{
+public:
+    void message(nvrhi::MessageSeverity severity, const char *messageText) override
+    {
+        switch (severity)
+        {
+        case nvrhi::MessageSeverity::Info:
+            Core::Log::Info("[NVRHI] {}", messageText);
+            break;
+        case nvrhi::MessageSeverity::Warning:
+            Core::Log::Warn("[NVRHI] {}", messageText);
+            break;
+        case nvrhi::MessageSeverity::Error:
+        case nvrhi::MessageSeverity::Fatal:
+            Core::Log::Error("[NVRHI] {}", messageText);
+            break;
+        }
+    }
+};
+
+NvrhiMessageLog g_nvrhiMessageLog;
 
 } // namespace
 
@@ -451,7 +545,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     if (context->_instance == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateInstance failed.");
-        Core::ShowErrorDialog("Assisi — Vulkan unavailable",
+        Core::ShowErrorDialog("Assisi - Vulkan unavailable",
                               "Could not initialize Vulkan.\n\n"
                               "Assisi renders with Vulkan 1.3 and could not create a Vulkan instance. "
                               "This usually means the graphics drivers are missing or out of date.\n\n"
@@ -472,7 +566,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     if (!physicalDeviceChoice.has_value())
     {
         Core::Log::Error("VulkanContext: no suitable Vulkan physical device found.");
-        Core::ShowErrorDialog("Assisi — Unsupported graphics device",
+        Core::ShowErrorDialog("Assisi - Unsupported graphics device",
                               "No compatible GPU was found.\n\n"
                               "Assisi requires a graphics device with Vulkan 1.3 support "
                               "(dynamic rendering, synchronization2, and timeline semaphores).\n\n"
@@ -487,6 +581,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     VkPhysicalDeviceProperties chosenProps{};
     VKD.vkGetPhysicalDeviceProperties(context->_physicalDevice, &chosenProps);
     Core::Log::Info("VulkanContext: selected device {}", chosenProps.deviceName);
+    LogDeviceDetails(context->_physicalDevice, chosenProps);
 
     // Anisotropic filtering: enable it only if the device supports it, and clamp
     // the sampler request to the device's limit. 8x is a good quality/cost
@@ -499,8 +594,19 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     context->_maxAnisotropy =
         anisotropySupported ? std::min(kDesiredMaxAnisotropy, chosenProps.limits.maxSamplerAnisotropy) : 1.0f;
 
-    context->_device =
-        CreateLogicalDevice(context->_physicalDevice, context->_graphicsQueueFamily, anisotropySupported);
+    // Block-compressed textures. Optional rather than required: a device without
+    // it still renders, from uncompressed textures at four times the memory. It is
+    // reported because that difference is otherwise invisible until something runs
+    // out of video memory on hardware nobody tested.
+    context->_textureCompressionBc = supportedFeatures.textureCompressionBC == VK_TRUE;
+    if (!context->_textureCompressionBc)
+    {
+        Core::Log::Warn("VulkanContext: device does not support BC texture compression; "
+                        "textures stay uncompressed and cost four times the memory.");
+    }
+
+    context->_device = CreateLogicalDevice(context->_physicalDevice, context->_graphicsQueueFamily,
+                                           anisotropySupported, context->_textureCompressionBc);
     if (context->_device == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateDevice failed.");
@@ -532,6 +638,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     nvrhiDeviceDesc.numDeviceExtensions = 1;
     nvrhiDeviceDesc.instanceExtensions = instanceExtensions.data();
     nvrhiDeviceDesc.numInstanceExtensions = instanceExtensions.size();
+    nvrhiDeviceDesc.errorCB = &g_nvrhiMessageLog;
 
     context->_nvrhiDeviceHandle = nvrhi::vulkan::createDevice(nvrhiDeviceDesc);
     if (!context->_nvrhiDeviceHandle)
@@ -564,6 +671,15 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
             }
             context->_frameQueries[i] = context->_nvrhiDevice->createEventQuery();
             context->_timerQueries[i] = context->_nvrhiDevice->createTimerQuery();
+
+            // The per-pass pool is created up front even though pass timing
+            // starts off: creating queries on the first frame someone ticks the
+            // profiling box would put the allocation inside the frame they are
+            // about to measure. Idle queries cost a handle each.
+            for (nvrhi::TimerQueryHandle &query : context->_passTimers[i].queries)
+            {
+                query = context->_nvrhiDevice->createTimerQuery();
+            }
         }
     }
 
@@ -588,12 +704,18 @@ uint32_t VulkanContext::GetMaxUsableSampleCount() const
     const VkSampleCountFlags counts =
         props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts;
 
-    if (counts & VK_SAMPLE_COUNT_64_BIT) return 64u;
-    if (counts & VK_SAMPLE_COUNT_32_BIT) return 32u;
-    if (counts & VK_SAMPLE_COUNT_16_BIT) return 16u;
-    if (counts & VK_SAMPLE_COUNT_8_BIT)  return 8u;
-    if (counts & VK_SAMPLE_COUNT_4_BIT)  return 4u;
-    if (counts & VK_SAMPLE_COUNT_2_BIT)  return 2u;
+    if (counts & VK_SAMPLE_COUNT_64_BIT)
+        return 64u;
+    if (counts & VK_SAMPLE_COUNT_32_BIT)
+        return 32u;
+    if (counts & VK_SAMPLE_COUNT_16_BIT)
+        return 16u;
+    if (counts & VK_SAMPLE_COUNT_8_BIT)
+        return 8u;
+    if (counts & VK_SAMPLE_COUNT_4_BIT)
+        return 4u;
+    if (counts & VK_SAMPLE_COUNT_2_BIT)
+        return 2u;
     return 1u;
 }
 
@@ -626,10 +748,11 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     // just formats[0]: an unmappable format (ToNvrhiFormat -> UNKNOWN) fails
     // swapchain creation far below with a message about NVRHI rather than about the
     // surface, and an _SRGB format maps fine but makes the hardware apply the sRGB
-    // transfer function to values the fragment shader has *already* gamma encoded
-    // (cube_min.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
-    // Lighting stage L2 moves that encode into a tonemap pass, at which point an
-    // sRGB surface becomes the correct choice; until then linear (UNORM) is.
+    // transfer function to values the tone map has *already* encoded (tonemap.frag
+    // owns the encode, whichever operator is selected) — a washed-out image with
+    // no error anywhere.
+    // The last stage of the post chain writes display values, so the surface must
+    // be the one that passes them through: linear (UNORM).
     const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };
 
     const VkSurfaceFormatKHR *ideal = nullptr;
@@ -657,7 +780,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
         }
     }
 
-    const VkSurfaceFormatKHR *pick = ideal != nullptr ? ideal
+    const VkSurfaceFormatKHR *pick = ideal != nullptr            ? ideal
                                      : linearFallback != nullptr ? linearFallback
                                                                  : srgbFallback;
     if (pick == nullptr)
@@ -670,8 +793,8 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     if (pick == srgbFallback)
     {
         Core::Log::Warn("VulkanContext: no linear (UNORM) surface format available; falling back to an sRGB "
-                        "one. The shader also gamma-encodes, so the image will look washed out until the "
-                        "tonemap pass (lighting stage L2) takes over that encode.");
+                        "one. The tone map pass already encodes, so the hardware will encode a second time "
+                        "and the image will look washed out.");
     }
     const VkSurfaceFormatKHR chosenFormat = *pick;
 
@@ -708,6 +831,11 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     if (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
     {
         createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    }
+    // A frame capture copies the finished image out of the swapchain.
+    if (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+    {
+        createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     }
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     createInfo.preTransform = capabilities.currentTransform;
@@ -781,8 +909,8 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
         textureDesc.debugName = "SwapchainImage";
         textureDesc.enableAutomaticStateTracking(nvrhi::ResourceStates::Present);
 
-        nvrhi::TextureHandle texture = _nvrhiDevice->createHandleForNativeTexture(
-            nvrhi::ObjectTypes::VK_Image, nvrhi::Object(image), textureDesc);
+        nvrhi::TextureHandle texture =
+            _nvrhiDevice->createHandleForNativeTexture(nvrhi::ObjectTypes::VK_Image, nvrhi::Object(image), textureDesc);
         _swapchainTextures.push_back(texture);
     }
 
@@ -956,6 +1084,24 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
         // beginTimerQuery() below can reuse it.
         _lastGpuFrameMs = _nvrhiDevice->getTimerQueryTime(_timerQueries[slot]) * 1000.0f;
         _frameQueryPending[slot] = false;
+
+        // Same argument for the pass timers: the slot's frame is proven done, so
+        // resolving them here cannot block either. They are published as a set
+        // rather than incrementally, so a reader never sees half of one frame's
+        // passes next to half of the previous one's.
+        PassTimerSlot &timers = _passTimers[slot];
+        if (timers.pending)
+        {
+            _resolvedPassTimings.clear();
+            for (uint32_t i = 0; i < timers.used; ++i)
+            {
+                _resolvedPassTimings.push_back(
+                    PassTiming{timers.names[i], _nvrhiDevice->getTimerQueryTime(timers.queries[i]) * 1000.0f});
+            }
+            timers.pending = false;
+            EmitGpuTrackSlices(timers.frameBeginTicks);
+        }
+        timers.used = 0;
     }
 
     // vkAcquireNextImageKHR blocks the CPU until the presentation engine hands
@@ -988,6 +1134,24 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
 
     _commandList->open();
     _commandList->beginTimerQuery(_timerQueries[slot]); // spans the whole frame; ended in EndFrame()
+
+    // Latch the enable for the frame's duration. Flipping the checkbox mid-frame
+    // would otherwise leave a BeginPassTimer without its End, or vice versa.
+    _passTimingActive = _passTimingEnabled;
+    _openPassTimer = kMaxTimedPasses;
+    // Taken now rather than when the slot resolves, which is kFramesInFlight
+    // frames later: the passes about to be recorded belong to this frame, and
+    // this is the only moment that knows where this frame sits on the clock.
+    //
+    // Zero while nothing is recording, because a tick from before the capture
+    // began sits before the trace's own origin and cannot be placed in it. The
+    // first frames of a capture therefore have no GPU row, which is the honest
+    // answer — their passes were timed against a clock the trace does not share.
+    _passTimers[slot].frameBeginTicks = Chiara::IsRecording() ? Chiara::ReadTicks() : 0;
+    if (!_passTimingActive)
+    {
+        _resolvedPassTimings.clear();
+    }
     _commandList->setTextureState(_swapchainTextures[_currentImageIndex], nvrhi::AllSubresources,
                                   nvrhi::ResourceStates::RenderTarget);
 
@@ -1001,6 +1165,120 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     return frame;
 }
 
+bool VulkanContext::BeginPassTimer(const char *name)
+{
+    if (!_passTimingActive || _commandList == nullptr)
+    {
+        return false;
+    }
+
+    const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
+    PassTimerSlot &timers = _passTimers[slot];
+
+    if (_openPassTimer != kMaxTimedPasses)
+    {
+        // Nesting would time a range containing another render-pass break, so
+        // the inner reading would be of the break rather than the work. Said
+        // once: a nesting is a fact about the code and recurs every frame.
+        if (!_passNestingWarned)
+        {
+            Core::Log::Warn("VulkanContext: pass timer '{}' opened inside '{}'; ignoring the inner one.", name,
+                            timers.names[_openPassTimer]);
+            _passNestingWarned = true;
+        }
+        return false;
+    }
+    if (timers.used >= kMaxTimedPasses)
+    {
+        if (!_passCapacityWarned)
+        {
+            Core::Log::Warn("VulkanContext: more than {} timed passes in a frame; the rest go unmeasured.",
+                            kMaxTimedPasses);
+            _passCapacityWarned = true;
+        }
+        return false;
+    }
+
+    _openPassTimer = timers.used;
+    timers.names[timers.used] = name;
+    _commandList->beginTimerQuery(timers.queries[timers.used]);
+    return true;
+}
+
+void VulkanContext::EndPassTimer()
+{
+    if (!_passTimingActive || _commandList == nullptr || _openPassTimer == kMaxTimedPasses)
+    {
+        return;
+    }
+
+    const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
+    PassTimerSlot &timers = _passTimers[slot];
+
+    _commandList->endTimerQuery(timers.queries[_openPassTimer]);
+    ++timers.used;
+    timers.pending = true;
+    _openPassTimer = kMaxTimedPasses;
+}
+
+void VulkanContext::EmitGpuTrackSlices(std::uint64_t frameBeginTicks)
+{
+    // A zero stamp is a slot whose frame opened before the capture did. Its
+    // ticks predate the session's origin, and a slice placed there is reported
+    // as beginning before the trace began — which reads back as one enormous
+    // negative duration rather than as the missing row it really is.
+    if (_resolvedPassTimings.empty() || frameBeginTicks == 0 || !Chiara::IsRecording())
+    {
+        return;
+    }
+    if (_gpuTrack == nullptr)
+    {
+        // The name carries the caveat, because the row cannot. Every reader of a
+        // trace takes a slice's left edge for where the work started, and here
+        // only its width means anything.
+        _gpuTrack = Chiara::RegisterTrack("gpu (durations, not aligned)");
+        if (_gpuTrack == nullptr)
+        {
+            return; // recording has not begun; the next resolve tries again
+        }
+    }
+
+    const double ticksPerMs = Chiara::TicksPerSecond() / 1000.0;
+
+    // The passes go inside a slice that starts where their frame started, so the
+    // row says which frame they belong to rather than leaving it to be inferred
+    // from a left edge that means nothing on its own. That edge lines up with
+    // the CPU's own Frame slice directly above it, which is the whole of the
+    // answer to "which frame is this".
+    //
+    // Except when it cannot: a frame's passes laid end-to-end span the GPU's
+    // whole cost for it, and on a GPU-bound frame that is longer than the wall
+    // clock between one frame starting and the next. Anchored at the frame every
+    // time, consecutive blocks then run into each other and the row is rejected
+    // as overlapping — which is the honest shape of the problem, since a GPU
+    // that has not finished a frame before the next begins is exactly what being
+    // GPU-bound is. So the block starts at its frame or after the previous
+    // block, whichever is later, and a saturated GPU shows as a row that lags
+    // rather than as one that overlaps.
+    const std::uint64_t blockBegin = std::max(frameBeginTicks, _gpuTrackEnd + Chiara::TrackLayout::GapTicks());
+    Chiara::TrackLayout layout(blockBegin + Chiara::TrackLayout::GapTicks());
+    for (const PassTiming &pass : _resolvedPassTimings)
+    {
+        const auto width =
+            static_cast<std::uint64_t>(std::max(0.0, static_cast<double>(pass.milliseconds)) * ticksPerMs);
+        Chiara::EmitScopeOn(_gpuTrack, pass.name, layout.Place(width), width);
+    }
+    // Emitted last and spanning them all, so nesting is by containment rather
+    // than by the order the records happen to arrive in.
+    _gpuTrackEnd = layout.End() + Chiara::TrackLayout::GapTicks();
+    Chiara::EmitScopeOn(_gpuTrack, "frame", blockBegin, _gpuTrackEnd - blockBegin);
+}
+
+std::span<const VulkanContext::PassTiming> VulkanContext::GetPassTimings() const
+{
+    return _resolvedPassTimings;
+}
+
 void VulkanContext::EndFrame()
 {
     // Same slot BeginFrame() used — _frameCounter isn't advanced until the end of
@@ -1012,30 +1290,63 @@ void VulkanContext::EndFrame()
     // CPU work, so time it and fold it into _lastGpuWaitMs. GC (below, after this
     // window) is genuine CPU work and stays counted.
     const std::chrono::steady_clock::time_point presentWaitStart = std::chrono::steady_clock::now();
-    VkResult presentResult    = VK_SUCCESS;
+    VkResult presentResult = VK_SUCCESS;
     {
         ASSISI_PROFILE_SCOPE("submit-present");
 
-        _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
-        _commandList->close();
+        // Three costs that move independently: closing the recording (nvrhi
+        // resolves the frame's barriers here), handing it to the queue, and the
+        // presentation engine's own pacing. A rise in the whole is only
+        // actionable once it is attributed to one of them.
+        {
+            ASSISI_PROFILE_SCOPE("record-close");
+            {
+                ASSISI_PROFILE_SCOPE("end-timer-query");
+                _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
+            }
+            {
+                ASSISI_PROFILE_SCOPE("close");
+                _commandList->close();
+            }
+        }
 
-        _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
-        _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
-        _nvrhiDevice->executeCommandList(_commandList);
+        {
+            ASSISI_PROFILE_SCOPE("queue-submit");
+            {
+                ASSISI_PROFILE_SCOPE("queue-semaphores");
+                _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
+                _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics,
+                                                   _renderFinishedSemaphores[_currentImageIndex], 0);
+            }
+            {
+                ASSISI_PROFILE_SCOPE("execute-command-list");
+                _nvrhiDevice->executeCommandList(_commandList);
+            }
+            {
+                // Snapshot this submission's completion into the slot's query; the frame that
+                // reuses this slot kFramesInFlight later waits on it in BeginFrame().
+                ASSISI_PROFILE_SCOPE("frame-fence");
+                _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
+                _frameQueryPending[slot] = true;
+            }
+        }
 
-        // Snapshot this submission's completion into the slot's query; the frame that
-        // reuses this slot kFramesInFlight later waits on it in BeginFrame().
-        _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
-        _frameQueryPending[slot] = true;
-
-        VkPresentInfoKHR presentInfo{};
-        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = &_swapchain;
-        presentInfo.pImageIndices = &_currentImageIndex;
-        presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+        {
+            // `present` minus `queue-present` is the descriptor fill, so a
+            // difference between the two is measurement overhead, not work.
+            ASSISI_PROFILE_SCOPE("present");
+            VkPresentInfoKHR presentInfo{};
+            presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+            presentInfo.waitSemaphoreCount = 1;
+            presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
+            presentInfo.swapchainCount = 1;
+            presentInfo.pSwapchains = &_swapchain;
+            presentInfo.pImageIndices = &_currentImageIndex;
+            {
+                ASSISI_PROFILE_SCOPE("queue-present");
+                presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+            }
+        }
     }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
@@ -1100,25 +1411,34 @@ VulkanContext::~VulkanContext()
             query = nullptr;
         for (nvrhi::TimerQueryHandle &query : _timerQueries)
             query = nullptr;
+        for (PassTimerSlot &timers : _passTimers)
+        {
+            for (nvrhi::TimerQueryHandle &query : timers.queries)
+                query = nullptr;
+        }
         DestroySwapchainResources(); // also frees the per-image render-finished semaphores
         _nvrhiDevice = nullptr;
         _nvrhiDeviceHandle = nullptr;
 
         for (VkSemaphore &semaphore : _imageAvailableSemaphores)
         {
-            if (semaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, semaphore, nullptr);
+            if (semaphore != VK_NULL_HANDLE)
+                VKD.vkDestroySemaphore(_device, semaphore, nullptr);
         }
 
-        if (_swapchain != VK_NULL_HANDLE) VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+        if (_swapchain != VK_NULL_HANDLE)
+            VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
         VKD.vkDestroyDevice(_device, nullptr);
     }
 
-    if (_surface != VK_NULL_HANDLE) VKD.vkDestroySurfaceKHR(_instance, _surface, nullptr);
+    if (_surface != VK_NULL_HANDLE)
+        VKD.vkDestroySurfaceKHR(_instance, _surface, nullptr);
 
     if (_debugMessenger != VK_NULL_HANDLE)
         VKD.vkDestroyDebugUtilsMessengerEXT(_instance, _debugMessenger, nullptr);
 
-    if (_instance != VK_NULL_HANDLE) VKD.vkDestroyInstance(_instance, nullptr);
+    if (_instance != VK_NULL_HANDLE)
+        VKD.vkDestroyInstance(_instance, nullptr);
 }
 
 } // namespace Assisi::Render::Vulkan

@@ -14,9 +14,8 @@
 /// path and every reference still resolves.
 ///
 /// This is **editor-only**. A shipped build never scans an asset tree or mints
-/// ids — it consumes a baked pak index (PakProvider, S5). See
-/// docs/asset-database-architecture.md §3a, §4. It moves behind that gate once a
-/// shipped/editor build split exists; until then it lives in Core and builds in
+/// ids — it consumes a baked pak index (PakProvider, S5). It moves behind that
+/// gate once a shipped/editor build split exists; until then it lives in Core and builds in
 /// every configuration.
 ///
 /// Reconcile-not-clobber (D3): an existing sidecar is never rewritten or
@@ -35,6 +34,7 @@
 #include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/AssetIgnore.hpp>
 #include <Assisi/Core/AssetSidecar.hpp> // MintAssetId; AssetSubAsset (manifest entries).
 #include <Assisi/Core/Errors.hpp>
 
@@ -66,11 +66,17 @@ class AssetDatabase
 public:
     /// @brief Scan the asset root, reconcile sidecars, and (re)build the map.
     ///
-    /// Clears any previous state, seeds the reserved built-ins, then walks the
-    /// asset root: for every non-`.aast` file, reads its sidecar's id (minting +
-    /// writing a sidecar first if none exists) and registers `guid → path`. A
-    /// sidecar that exists but cannot be parsed is left untouched and its file
-    /// is skipped with a warning (never clobbered).
+    /// Clears any previous state, seeds the reserved built-ins, reloads the
+    /// `.assisiignore` rules, then walks the asset root: for every non-`.aast`
+    /// file the rules do not exclude, reads its sidecar's id (minting + writing a
+    /// sidecar first if none exists) and registers `guid → path`. A sidecar that
+    /// exists but cannot be parsed is left untouched and its file is skipped with
+    /// a warning (never clobbered).
+    ///
+    /// An ignored file is skipped before any of that, so nothing is written
+    /// beside it and it never becomes addressable. The walk still descends into
+    /// an ignored directory, because a later rule can re-include a file inside
+    /// one; see AssetIgnoreList.
     ///
     /// @p mode selects whether the reconcile may write; see RebuildMode.
     ///
@@ -101,13 +107,27 @@ public:
     ///        explosion pass skips a mesh that already has one (reconcile).
     [[nodiscard]] bool HasManifest(AssetId meshId) const;
 
+    /// @brief The `.assisiignore` rules this database last scanned with.
+    ///
+    /// Every walker of the asset tree must agree about what is not content, so
+    /// the views of the index — the editor's asset browser above all — filter
+    /// through this copy rather than loading one of their own. Empty until the
+    /// first Rebuild(), which ignores nothing.
+    [[nodiscard]] const AssetIgnoreList &Ignore() const noexcept;
+
     /// @brief The default material bound to @p slot of composite @p meshId,
     ///        from the mesh's `.aast` manifest — the stored binding the renderer
     ///        uses instead of deriving it live (D4). Nil when the mesh has no
     ///        manifest, or the slot is unlisted.
     [[nodiscard]] AssetId SlotMaterial(AssetId meshId, std::uint32_t slot) const;
 
+    /// @brief Every slot's default material for @p meshId, slot-indexed with nil
+    ///        in any gap; empty when the mesh has no manifest.
+    [[nodiscard]] std::vector<AssetId> SlotMaterials(AssetId meshId) const;
+
 private:
+    AssetIgnoreList _ignore;
+
     std::unordered_map<AssetId, std::string> _idToPath;
     std::unordered_map<std::string, AssetId> _pathToId;
 

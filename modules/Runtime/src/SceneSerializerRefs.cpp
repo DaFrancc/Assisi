@@ -55,6 +55,12 @@ std::string_view Describe(LevelError error)
         return "no such instance is live";
     case LevelError::NameAlreadyLive:
         return "an instance of that name is already live in this world";
+    case LevelError::MalformedBlob:
+        return "the cooked bytes are not a scene, or end part-way through one";
+    case LevelError::ProtocolMismatch:
+        return "the cooked scene was written against a different component table";
+    case LevelError::CodecRefused:
+        return "a component holds a field the codec would not carry to disk";
     }
     return "the file cannot be used";
 }
@@ -156,7 +162,7 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
     // name does — and it says the same thing either way, because which of the two
     // removals it was is not something the reference can see (§6).
     if (it->second == ECS::NullEntity)
-        Core::Log::Warn("SceneSerializer: a reference names '{}', which was removed — left null.", name);
+        Core::Log::Warn("SceneSerializer: a reference names '{}', which was removed - left null.", name);
 
     return it->second;
 }
@@ -199,7 +205,7 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
                                     ECS::Entity target)
         {
             Core::Log::Warn("Migrate: {}::{} on entity (index {}, gen {}) references entity "
-                            "(index {}, gen {}) outside the migrated set — it will be null "
+                            "(index {}, gen {}) outside the migrated set - it will be null "
                             "in the destination.",
                             meta.name, field.name, entities[owner].index,
                             entities[owner].generation, target.index, target.generation);
@@ -250,7 +256,7 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
                 !c.meta->addToScene(&dst, created[i].index, created[i].generation, c.data))
             {
                 Core::Log::Error("SceneSerializer: migrating '{}' lost a component the source scene had "
-                                 "written — this is an engine bug, not a bad file.",
+                                 "written - this is an engine bug, not a bad file.",
                                  c.meta->name);
             }
         }

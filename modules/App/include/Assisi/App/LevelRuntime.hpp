@@ -10,15 +10,7 @@
 /// turns RigidBodyDescriptors into Jolt bodies. This header is the layer that
 /// composes them — it lives in App because App is the only module that links
 /// both Runtime and Physics (Runtime deliberately does not link Physics).
-///
-/// Interim caveat (until asset-database S5, the cooker/PakProvider): a game
-/// still builds its GUID→path index by scanning sidecars at startup via
-/// AssetDatabase::Rebuild(). Rebuild *mints and writes* a sidecar for any
-/// asset that lacks one — write-free only when every asset already has its
-/// `.aast`. S5 replaces the scan with a baked index; only the material
-/// reconcile (ReconcileMeshMaterials) is genuinely editor-only.
 
-#include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -53,23 +45,11 @@ namespace Assisi::App
 // already included it.
 struct World;
 
-/// @brief Wires @p database into the two places that translate asset ids:
-/// serialization's save-time path hint, and the cache's id↔path resolution
-/// (mesh/material/texture loads and glTF import speak GUIDs; reserved
-/// built-ins resolve without the database).
-///
-/// @p database is captured by reference and must outlive the installation
-/// (it is engine-lifetime state in practice). Rebuild() mutates the same
-/// object, so a re-scan needs no re-install — but calling this again with the
-/// same database is harmless.
-void InstallAssetResolvers(Render::AssetCache &cache, const Core::AssetDatabase &database);
-
 /// @brief Rebuilds every transient from the scene's durable components, after
 /// the scene's entities were replaced wholesale (level load or a play-session
 /// restore): re-resolves each MeshRenderer's GPU pointers and rebuilds the
 /// physics world from the RigidBodyDescriptors.
-void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                                 Physics::PhysicsWorld &physics);
+void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, Physics::PhysicsWorld &physics);
 
 /// @brief What a load should do with the asset cache before resolving.
 enum class AssetCacheReset : std::uint8_t
@@ -83,8 +63,8 @@ enum class AssetCacheReset : std::uint8_t
     /// Leave the cache alone: the new level's assets are added to whatever is
     /// already there, and assets shared with a resident level are reused rather
     /// than re-uploaded. Required for any load that happens while another world
-    /// is alive (docs/multi-scene-design-notes.md §0 — the Clear moves out of
-    /// the load path and becomes a post-travel sweep).
+    /// is alive: the Clear moves out of the load path and becomes a post-travel
+    /// sweep.
     Keep,
 };
 
@@ -99,7 +79,6 @@ enum class AssetCacheReset : std::uint8_t
 struct LevelServices
 {
     Render::AssetCache &cache;
-    const Core::AssetDatabase &database;
     Runtime::SceneRenderer &renderer;
 };
 
@@ -110,8 +89,7 @@ struct LevelLoadOptions
     AssetCacheReset reset = AssetCacheReset::ClearFirst;
 
     /// Receives the level's non-entity metadata — notably the list of systems it
-    /// names, which the caller applies to the world it loaded into
-    /// (docs/world-system-binding-design-notes.md §3).
+    /// names, which the caller applies to the world it loaded into.
     Runtime::LevelHeader *header = nullptr;
 };
 
@@ -197,8 +175,7 @@ struct LevelLoadOptions
 /// @p wereLoading is the caller's persistent flag (start it false); the
 /// function reads and updates it to implement the one-frame tail. Call once
 /// per update tick.
-void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                            bool &wereLoading);
+void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, bool &wereLoading);
 
 /// @brief Resolve @p virtualPath and hash it the way every peer must, or nullopt
 /// if it cannot be resolved or read.

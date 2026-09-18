@@ -1,0 +1,860 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include <doctest/doctest.h>
+
+#include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/ShadowCascades.hpp>
+#include <Assisi/Render/ShadowDepthRenderer.hpp>
+#include <Assisi/Render/ShadowSettings.hpp>
+#include <Assisi/Render/ShadowView.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <span>
+#include <vector>
+
+using namespace Assisi::Render;
+
+namespace
+{
+/// An orthographic view looking down -Z from z = 50, bounding [-10, 10] in x
+/// and y. Built the way a fitted cascade is, so it carries the same clip-space
+/// convention the frustum extraction assumes.
+glm::mat4 BoxView(float halfExtent = 10.f)
+{
+    return glm::ortho(-halfExtent, halfExtent, -halfExtent, halfExtent, 0.f, 100.f) *
+           glm::lookAt(glm::vec3(0.f, 0.f, 50.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+}
+
+ShadowView ViewOf(const glm::mat4 &viewProjection)
+{
+    ShadowView view;
+    view.viewProjection = viewProjection;
+    view.rect = ShadowViewRect{.x = 0, .y = 0, .width = 1024, .height = 1024};
+    view.targetResolution = 1024;
+    // Every view in this file is built from BoxView, which is an ortho fit — and
+    // saying so is what admits the casters upstream of the near plane that the
+    // pancaking exists to keep. A perspective view must not claim it.
+    view.orthographic = true;
+    return view;
+}
+
+/// A caster at @p center of radius @p radius, drawing @p indexCount indices of
+/// the geometry named by @p key. The buffer handles are never dereferenced by
+/// anything under test — only compared — so a distinct address per arena is all
+/// they have to be.
+ShadowCaster CasterAt(const glm::vec3 &center, float radius, std::uint64_t key, nvrhi::IBuffer *vertexBuffer = nullptr,
+                      nvrhi::IBuffer *indexBuffer = nullptr)
+{
+    ShadowCaster caster;
+    caster.geometryKey = key;
+    caster.vertexBuffer = vertexBuffer;
+    caster.indexBuffer = indexBuffer;
+    caster.indexCount = 36;
+    caster.startIndexLocation = static_cast<std::uint32_t>(key) * 36u;
+    caster.baseVertexLocation = 0;
+    caster.model = glm::translate(glm::mat4(1.f), center);
+    caster.worldSphere = Assisi::Geometry::BoundingSphere{center, radius};
+    return caster;
+}
+
+/// The same caster, drawn from both sides.
+ShadowCaster TwoSided(ShadowCaster caster)
+{
+    caster.doubleSided = true;
+    return caster;
+}
+
+/// Where view @p view's alpha-tested commands begin.
+///
+/// The classes run opaque, opaque-two-sided, masked, masked-two-sided, so the
+/// masked half starts where the third does. Spelled out here rather than in
+/// every case, because what most of these cases are about is the opaque/masked
+/// split and not the cull mode that now subdivides it.
+std::uint32_t MaskedStart(const ShadowDrawList &list, std::uint32_t view)
+{
+    return list.viewPipelineStart[view * kMeshPipelineCount + static_cast<std::uint32_t>(MeshPipeline::Mask)];
+}
+
+ShadowDepthTarget TargetOf(const ShadowView &view)
+{
+    return ShadowDepthTarget{.view = view, .framebuffer = nullptr};
+}
+
+/// The same caster, alpha-tested against material row @p materialIndex.
+ShadowCaster Masked(ShadowCaster caster, std::uint32_t materialIndex)
+{
+    caster.alphaMasked = true;
+    caster.materialIndex = materialIndex;
+    return caster;
+}
+
+/// The same caster, classified into the views @p viewMask names.
+ShadowCaster InViews(ShadowCaster caster, std::uint32_t viewMask)
+{
+    caster.viewMask = viewMask;
+    return caster;
+}
+} // namespace
+
+TEST_CASE("A view owning its whole target samples with the identity transform")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
+
+    CHECK(scaleOffset.x == doctest::Approx(1.f));
+    CHECK(scaleOffset.y == doctest::Approx(1.f));
+    CHECK(scaleOffset.z == doctest::Approx(0.f));
+    CHECK(scaleOffset.w == doctest::Approx(0.f));
+
+    const nvrhi::Viewport viewport = ShadowViewViewport(view);
+    CHECK(viewport.minX == doctest::Approx(0.f));
+    CHECK(viewport.maxX == doctest::Approx(1024.f));
+    CHECK(viewport.minY == doctest::Approx(0.f));
+    CHECK(viewport.maxY == doctest::Approx(1024.f));
+}
+
+TEST_CASE("A view into a sub-rect maps its own corners and nothing else")
+{
+    // A 512-texel tile at (1024, 2048) of a 4096 atlas — the shape a local
+    // light's face takes. The UV transform and the viewport are derived from
+    // one rectangle, so they cannot disagree about where the tile is.
+    ShadowView view = ViewOf(BoxView());
+    view.rect = ShadowViewRect{.x = 1024, .y = 2048, .width = 512, .height = 512};
+    view.targetResolution = 4096;
+
+    const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
+    CHECK(scaleOffset.x == doctest::Approx(0.125f));
+    CHECK(scaleOffset.y == doctest::Approx(0.125f));
+    CHECK(scaleOffset.z == doctest::Approx(0.25f));
+    CHECK(scaleOffset.w == doctest::Approx(0.5f));
+
+    // The view's own [0, 1] maps onto exactly the tile, so a lookup at its edge
+    // lands on the tile's edge rather than in a neighbour.
+    const auto sample = [&scaleOffset](glm::vec2 uv)
+                        { return uv * glm::vec2(scaleOffset.x, scaleOffset.y) + glm::vec2(scaleOffset.z, scaleOffset.w); };
+    CHECK(sample({0.f, 0.f}).x == doctest::Approx(1024.f / 4096.f));
+    CHECK(sample({0.f, 0.f}).y == doctest::Approx(2048.f / 4096.f));
+    CHECK(sample({1.f, 1.f}).x == doctest::Approx(1536.f / 4096.f));
+    CHECK(sample({1.f, 1.f}).y == doctest::Approx(2560.f / 4096.f));
+
+    const nvrhi::Viewport viewport = ShadowViewViewport(view);
+    CHECK(viewport.minX == doctest::Approx(1024.f));
+    CHECK(viewport.maxX == doctest::Approx(1536.f));
+    CHECK(viewport.minY == doctest::Approx(2048.f));
+    CHECK(viewport.maxY == doctest::Approx(2560.f));
+
+    // An unfitted view divides by nothing rather than by zero.
+    ShadowView empty;
+    CHECK(ShadowViewUvScaleOffset(empty).x == doctest::Approx(1.f));
+}
+
+TEST_CASE("A packed view carries every lane the table promises")
+{
+    ShadowView view = ViewOf(BoxView());
+    view.rect = ShadowViewRect{.x = 512, .y = 0, .width = 512, .height = 512};
+    view.targetResolution = 2048;
+    view.arraySlice = 3;
+    view.depthBias = 0.002f;
+    view.normalOffset = 0.05f;
+    view.filterTapStepUv = 1.f / 2048.f;
+    view.pcssPenumbraUvPerDepth = 0.25f;
+    view.pcssTexelDepthTimesDistance = 0.0005f;
+    view.pcssMaxReachUv = 16.f / 2048.f;
+
+    const ShadowViewGpu packed = PackShadowView(view);
+
+    CHECK(packed.viewProjection == view.viewProjection);
+    CHECK(packed.uvScaleOffset == ShadowViewUvScaleOffset(view));
+    CHECK(packed.params.x == doctest::Approx(view.depthBias));
+    CHECK(packed.params.y == doctest::Approx(view.normalOffset));
+    CHECK(packed.params.z == doctest::Approx(view.filterTapStepUv));
+    // The slice rides in a float lane because that is the form the array
+    // sampler takes it in — no conversion at the sample site.
+    CHECK(packed.params.w == doctest::Approx(3.f));
+    CHECK(packed.pcss.x == doctest::Approx(view.pcssPenumbraUvPerDepth));
+    CHECK(packed.pcss.y == doctest::Approx(view.pcssTexelDepthTimesDistance));
+    CHECK(packed.pcss.z == doctest::Approx(view.pcssMaxReachUv));
+}
+
+TEST_CASE("A cascade becomes a view that agrees with the cascade math")
+{
+    CascadeFitParams params;
+    params.cameraView = glm::lookAt(glm::vec3(0.f), glm::vec3(0.f, 0.f, -1.f), glm::vec3(0.f, 1.f, 0.f));
+    params.tanHalfFovY = 0.5773502692f;
+    params.aspectRatio = 16.f / 9.f;
+    params.nearZ = 0.1f;
+    params.farZ = 200.f;
+    params.lightDirection = glm::normalize(glm::vec3(-0.4f, -1.f, -0.3f));
+    params.settings.cascadeCount = 4;
+    params.settings.resolution = 2048;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 4);
+
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        CAPTURE(i);
+        const ShadowView view = CascadeShadowView(fit.cascades[i], i, params.settings);
+
+        // A cascade owns its whole slice, so its rect is the target and its
+        // sampling transform is the identity.
+        CHECK(view.viewProjection == fit.cascades[i].viewProjection);
+        CHECK(view.rect.width == params.settings.resolution);
+        CHECK(view.rect.height == params.settings.resolution);
+        CHECK(view.targetResolution == params.settings.resolution);
+        CHECK(view.arraySlice == i);
+        CHECK(ShadowViewUvScaleOffset(view).x == doctest::Approx(1.f));
+
+        // The biases arrive already scaled by this cascade's texel size, which
+        // is the whole reason one setting holds across all of them.
+        CHECK(view.depthBias == doctest::Approx(CascadeDepthBiasNdc(fit.cascades[i], params.settings)));
+        CHECK(view.normalOffset == doctest::Approx(CascadeNormalOffsetWorld(fit.cascades[i], params.settings)));
+        CHECK(view.filterTapStepUv == doctest::Approx(FilterTapStepUv(params.settings)));
+    }
+
+    // Far cascades cover more world per texel, so their world-space offsets are
+    // larger from the same texel-quoted setting. A view that lost the scaling
+    // would report the same offset for every cascade.
+    const ShadowView near = CascadeShadowView(fit.cascades[0], 0, params.settings);
+    const ShadowView far = CascadeShadowView(fit.cascades[3], 3, params.settings);
+    CHECK(far.normalOffset > near.normalOffset);
+}
+
+TEST_CASE("A view culls the casters its frustum does not reach")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),           // inside
+        CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 2), // far outside
+        CasterAt(glm::vec3(5.f, 5.f, 0.f), 1.f, 3),  // inside
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    CHECK(list.culled == 1);
+    CHECK(list.instances.size() == 2);
+    CHECK(list.commands.size() == 2); // two distinct geometries, so two batches
+    REQUIRE(list.viewCommandStart.size() == 2);
+    CHECK(list.viewCommandStart[0] == 0);
+    CHECK(list.viewCommandStart[1] == 2);
+}
+
+TEST_CASE("A caster between the light and the slice still casts into it")
+{
+    // The view's eye sits at z = 50 looking down -Z, so its near plane is the
+    // world's z = 50 and anything beyond that is upstream of the view — nearer
+    // the light than everything the view shades.
+    //
+    // Such a caster shadows every surface in the slice, and the cascade
+    // pipeline's depth clamp flattens it onto the near plane rather than letting
+    // it clip, precisely so that it can. Culling it here undoes that before the rasterizer sees it,
+    // and the shape of the bug is a shadow that disappears as the camera walks
+    // toward it: the nearest cascade's slice closes in around the viewer, its
+    // near plane rises past whatever is overhead, and the shadow of that thing
+    // goes out. Which casters survive depends on how far above the slice each
+    // one sits, so from outside it looks like no rule at all.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f, 0.f, 80.f), 1.f, 1),    // upstream of the near plane
+        CasterAt(glm::vec3(0.f, 0.f, 0.f), 1.f, 2),     // inside
+        CasterAt(glm::vec3(0.f, 0.f, -400.f), 1.f, 3),  // past the far plane
+        CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 4),   // outside sideways
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    // Only the near plane opens. The far plane and the sides still reject, or
+    // the cull would have stopped being a cull.
+    CHECK(list.culled == 2);
+    CHECK(list.instances.size() == 2);
+}
+
+TEST_CASE("Consecutive instances of one geometry coalesce into a single draw")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    // Three of one geometry, then two of another — the geometry-major order the
+    // gather sorts into.
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f, 0.f, 0.f), 1.f, 7),  CasterAt(glm::vec3(1.f, 0.f, 0.f), 1.f, 7),
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 7),  CasterAt(glm::vec3(3.f, 0.f, 0.f), 1.f, 9),
+        CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 9),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.commands.size() == 2);
+    CHECK(list.commands[0].instanceCount == 3);
+    CHECK(list.commands[0].startInstanceLocation == 0);
+    CHECK(list.commands[1].instanceCount == 2);
+    CHECK(list.commands[1].startInstanceLocation == 3);
+    CHECK(list.instances.size() == 5);
+
+    // A command draws the geometry its key named, at the offsets the gather
+    // resolved.
+    CHECK(list.commands[0].indexCount == 36);
+    CHECK(list.commands[0].startIndexLocation == 7u * 36u);
+    CHECK(list.commands[1].startIndexLocation == 9u * 36u);
+}
+
+TEST_CASE("A culled caster breaks the run it was in the middle of")
+{
+    // The defect this guards: coalescing on the key alone would merge the two
+    // surviving instances into one draw whose instance range spans the culled
+    // one, drawing a caster this view rejected.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f, 0.f, 0.f), 1.f, 5),
+        CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 5), // same geometry, out of frustum
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 5),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    CHECK(list.culled == 1);
+    CHECK(list.instances.size() == 2);
+    REQUIRE(list.commands.size() == 2);
+    CHECK(list.commands[0].instanceCount == 1);
+    CHECK(list.commands[1].instanceCount == 1);
+    CHECK(list.commands[1].startInstanceLocation == 1);
+}
+
+TEST_CASE("Every view owns its own range of one frame's commands")
+{
+    // The property that lets a frame upload once however many views it draws:
+    // all of them share one instance buffer, and each view's commands index
+    // only its own run of it.
+    const ShadowView wide = ViewOf(BoxView(10.f));
+    const ShadowView narrow = ViewOf(BoxView(2.f));
+    const ShadowDepthTarget targets[] = {TargetOf(wide), TargetOf(narrow)};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 0.5f, 1),           // in both
+        CasterAt(glm::vec3(6.f, 0.f, 0.f), 0.5f, 2), // in the wide view only
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 3);
+    CHECK(list.viewCommandStart[0] == 0);
+    CHECK(list.viewCommandStart[1] == 2); // the wide view kept both
+    CHECK(list.viewCommandStart[2] == 3); // the narrow view kept one
+    CHECK(list.culled == 1);
+
+    // An instance record per caster-view pair, not per caster: a caster in two
+    // views is submitted twice, with a different matrix slot each time.
+    CHECK(list.instances.size() == 3);
+
+    // The second view's commands index the second view's instances, which start
+    // after the first view's.
+    CHECK(list.commands[list.viewCommandStart[1]].startInstanceLocation == 2);
+
+    // Every command's instance range stays inside the buffer it indexes.
+    for (const nvrhi::DrawIndexedIndirectArguments &command : list.commands)
+    {
+        CHECK(command.startInstanceLocation + command.instanceCount <= list.instances.size());
+    }
+}
+
+TEST_CASE("A view into a sub-rect of a larger target draws like any other")
+{
+    // The shape the local-light atlas needs: the same renderer, the same
+    // casters, a view that owns a rectangle rather than a whole target. Nothing
+    // about the cull or the batching may depend on which of the two it is.
+    const glm::mat4 viewProjection = BoxView();
+
+    ShadowView whole = ViewOf(viewProjection);
+
+    ShadowView tile;
+    tile.viewProjection = viewProjection;
+    tile.rect = ShadowViewRect{.x = 2048, .y = 512, .width = 256, .height = 256};
+    tile.targetResolution = 4096;
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 2),
+        CasterAt(glm::vec3(3.f, 0.f, 0.f), 1.f, 3),
+    };
+
+    ShadowDrawList wholeList;
+    ShadowDrawList tileList;
+    const ShadowDepthTarget wholeTargets[] = {TargetOf(whole)};
+    const ShadowDepthTarget tileTargets[] = {TargetOf(tile)};
+    BuildShadowDrawList(wholeTargets, casters, wholeList);
+    BuildShadowDrawList(tileTargets, casters, tileList);
+
+    CHECK(wholeList.culled == tileList.culled);
+    CHECK(wholeList.instances.size() == tileList.instances.size());
+    REQUIRE(wholeList.commands.size() == tileList.commands.size());
+    for (std::size_t i = 0; i < wholeList.commands.size(); ++i)
+    {
+        CAPTURE(i);
+        CHECK(wholeList.commands[i].indexCount == tileList.commands[i].indexCount);
+        CHECK(wholeList.commands[i].instanceCount == tileList.commands[i].instanceCount);
+        CHECK(wholeList.commands[i].startInstanceLocation == tileList.commands[i].startInstanceLocation);
+    }
+
+    // What differs is only where it lands, and that is the viewport alone.
+    const nvrhi::Viewport viewport = ShadowViewViewport(tile);
+    CHECK(viewport.minX == doctest::Approx(2048.f));
+    CHECK(viewport.maxX == doctest::Approx(2304.f));
+    CHECK(viewport.minY == doctest::Approx(512.f));
+    CHECK(viewport.maxY == doctest::Approx(768.f));
+}
+
+TEST_CASE("Casters that only look alike are not merged")
+{
+    // A shared key with a different draw range is what a mesh that never got an
+    // id would produce. Merging those draws one caster's geometry at the
+    // other's place, and nothing downstream would report it — so the batch test
+    // is the draw itself, not the key alone.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    ShadowCaster first = CasterAt(glm::vec3(0.f), 1.f, 0);
+    ShadowCaster second = CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 0);
+    second.startIndexLocation = 720; // same key, different geometry
+    REQUIRE(first.geometryKey == second.geometryKey);
+    CHECK_FALSE(SameShadowGeometry(first, second));
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{first, second}, list);
+    CHECK(list.commands.size() == 2);
+
+    // And two that really are the same geometry still coalesce.
+    ShadowDrawList same;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{first, CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 0)}, same);
+    REQUIRE(same.commands.size() == 1);
+    CHECK(same.commands[0].instanceCount == 2);
+}
+
+TEST_CASE("Commands record the buffers they draw from, so runs split on the arena")
+{
+    // Two arenas is the case a single multi-draw cannot serve: the vertex and
+    // index bindings differ, so the submission has to break between them.
+    auto *const arenaA = reinterpret_cast<nvrhi::IBuffer *>(std::uintptr_t{0x1000});
+    auto *const arenaAIndices = reinterpret_cast<nvrhi::IBuffer *>(std::uintptr_t{0x2000});
+    auto *const arenaB = reinterpret_cast<nvrhi::IBuffer *>(std::uintptr_t{0x3000});
+    auto *const arenaBIndices = reinterpret_cast<nvrhi::IBuffer *>(std::uintptr_t{0x4000});
+
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1, arenaA, arenaAIndices),
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2, arenaA, arenaAIndices),
+        CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 3, arenaB, arenaBIndices),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.commands.size() == 3);
+    REQUIRE(list.commandVertexBuffers.size() == 3);
+    CHECK(list.commandVertexBuffers[0] == arenaA);
+    CHECK(list.commandVertexBuffers[1] == arenaA);
+    CHECK(list.commandVertexBuffers[2] == arenaB);
+    CHECK(list.commandIndexBuffers[2] == arenaBIndices);
+}
+
+TEST_CASE("Rebuilding the draw list leaves nothing of the last one")
+{
+    // The list is kept across frames so a steady state allocates nothing, which
+    // only works if a refill is a full reset — a stale command range would draw
+    // last frame's geometry into this frame's map.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{CasterAt(glm::vec3(0.f), 1.f, 1)}, list);
+    REQUIRE(list.commands.size() == 1);
+    REQUIRE(list.culled == 0);
+
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 1)}, list);
+    CHECK(list.commands.empty());
+    CHECK(list.instances.empty());
+    CHECK(list.commandVertexBuffers.empty());
+    CHECK(list.culled == 1);
+    REQUIRE(list.viewCommandStart.size() == 2);
+    CHECK(list.viewCommandStart[1] == 0);
+}
+
+TEST_CASE("An alpha-tested caster does not merge with an opaque draw of the same geometry")
+{
+    // The two draw through different pipelines — one that can discard and one
+    // that must not — so merging them would submit both under whichever pipeline
+    // the batch happened to land in, and the cutout would cast solid.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const ShadowCaster opaque = CasterAt(glm::vec3(0.f), 1.f, 1);
+    const ShadowCaster cutout = Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 1), 7);
+    CHECK_FALSE(SameShadowGeometry(opaque, cutout));
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{opaque, cutout}, list);
+
+    REQUIRE(list.commands.size() == 2);
+    CHECK(list.commands[0].instanceCount == 1);
+    CHECK(list.commands[1].instanceCount == 1);
+}
+
+TEST_CASE("Alpha-tested commands sit in their own range after the view's opaque ones")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    // Deliberately interleaved: the split must come from the flag, not from the
+    // caller having sorted the span.
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 4),
+        CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 3),
+        Masked(CasterAt(glm::vec3(6.f, 0.f, 0.f), 1.f, 5), 9),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 2);
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    CHECK(list.viewCommandStart[0] == 0);
+    CHECK(MaskedStart(list, 0) == 2);
+    CHECK(list.viewCommandStart[1] == 4);
+
+    // Every command in the opaque range draws an opaque instance and every one
+    // in the masked range an alpha-tested one — checked through the instance the
+    // command starts at, which is what the shader actually reads.
+    for (std::uint32_t i = 0; i < MaskedStart(list, 0); ++i)
+    {
+        CHECK(list.instances[list.commands[i].startInstanceLocation].materialIndex == 0u);
+    }
+    CHECK(list.instances[list.commands[2].startInstanceLocation].materialIndex == 4u);
+    CHECK(list.instances[list.commands[3].startInstanceLocation].materialIndex == 9u);
+}
+
+TEST_CASE("A caster's cull mode splits it as surely as its alpha test does")
+{
+    // Four classes, not two. The cull mode is pipeline state exactly as the
+    // fragment stage is, so a single-sided and a double-sided caster cannot
+    // share a draw however identical their geometry — and deciding the cull by
+    // the alpha test, as this once did, put a solid cutout crate and a
+    // double-sided plane in each other's pipelines.
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    // One of each class, interleaved: the split must come from the material,
+    // not from the caller having sorted the span.
+    const std::vector<ShadowCaster> casters = {
+        Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 4),
+        TwoSided(CasterAt(glm::vec3(0.f), 1.f, 1)),
+        TwoSided(Masked(CasterAt(glm::vec3(6.f, 0.f, 0.f), 1.f, 5), 9)),
+        CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 3),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    REQUIRE(list.commands.size() == 4);
+
+    // One command per class, in MeshPipeline's order, whatever order they arrived in.
+    for (std::uint32_t klass = 0; klass < kMeshPipelineCount; ++klass)
+    {
+        CHECK(list.viewPipelineStart[klass] == klass);
+    }
+    CHECK(list.viewCommandStart[1] == 4);
+
+    // And each class drew the caster that belongs to it, checked through the
+    // material row the shader actually reads.
+    CHECK(list.instances[list.commands[0].startInstanceLocation].materialIndex == 0u); // opaque
+    CHECK(list.instances[list.commands[1].startInstanceLocation].materialIndex == 0u); // opaque, two-sided
+    CHECK(list.instances[list.commands[2].startInstanceLocation].materialIndex == 4u); // masked
+    CHECK(list.instances[list.commands[3].startInstanceLocation].materialIndex == 9u); // masked, two-sided
+}
+
+TEST_CASE("Two casters of one geometry do not merge across cull modes")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    const ShadowCaster single = CasterAt(glm::vec3(0.f), 1.f, 1);
+    const ShadowCaster both = TwoSided(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 1));
+    CHECK_FALSE(SameShadowGeometry(single, both));
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{single, both}, list);
+
+    REQUIRE(list.commands.size() == 2);
+    CHECK(list.commands[0].instanceCount == 1);
+    CHECK(list.commands[1].instanceCount == 1);
+}
+
+TEST_CASE("An all-opaque span leaves every view's alpha-tested range empty")
+{
+    // The no-regression case: nothing is submitted through the discarding
+    // pipeline, so a scene with no cutout in it costs exactly what it did.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView(20.f)))};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewPipelineStart.size() == 2u * kMeshPipelineCount);
+    for (std::uint32_t view = 0; view < 2u; ++view)
+    {
+        CHECK(MaskedStart(list, view) == list.viewCommandStart[view + 1u]);
+    }
+}
+
+TEST_CASE("Every view splits its own commands, and each keeps its own instances")
+{
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView(20.f)))};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f), 1.f, 1),
+        Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 3),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewPipelineStart.size() == 2u * kMeshPipelineCount);
+    REQUIRE(list.viewCommandStart.size() == 3);
+    CHECK(MaskedStart(list, 0) == 1);
+    CHECK(list.viewCommandStart[1] == 2);
+    CHECK(MaskedStart(list, 1) == 3);
+    CHECK(list.viewCommandStart[2] == 4);
+
+    // Four commands, four instances, and no command shares a record with
+    // another: a view's masked pass appends after its own opaque pass, so the
+    // ranges stay disjoint.
+    REQUIRE(list.instances.size() == 4);
+    for (std::uint32_t i = 0; i < 4u; ++i)
+    {
+        CHECK(list.commands[i].startInstanceLocation == i);
+    }
+}
+
+TEST_CASE("A rebuilt draw list keeps no alpha-tested range from the last one")
+{
+    const ShadowView view = ViewOf(BoxView());
+    const ShadowDepthTarget targets[] = {TargetOf(view)};
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{Masked(CasterAt(glm::vec3(0.f), 1.f, 1), 2)}, list);
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    REQUIRE(MaskedStart(list, 0) == 0);
+    REQUIRE(list.commands.size() == 1);
+
+    BuildShadowDrawList(targets, std::vector<ShadowCaster>{CasterAt(glm::vec3(0.f), 1.f, 1)}, list);
+    REQUIRE(list.viewPipelineStart.size() == kMeshPipelineCount);
+    CHECK(MaskedStart(list, 0) == 1);
+    CHECK(list.viewCommandStart[1] == 1);
+}
+
+TEST_CASE("A caster draws only into the views its mask names")
+{
+    // Two views of the same box, so the frustum test keeps the caster in both
+    // and only the classification can tell them apart.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {InViews(CasterAt(glm::vec3(0.f), 1.f, 1), 0b01u)};
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 3);
+    CHECK(list.viewCommandStart[1] == 1); // the view it was classified into
+    CHECK(list.viewCommandStart[2] == 1); // the other drew nothing
+    CHECK(list.instances.size() == 1);
+}
+
+TEST_CASE("A classified-out pair is still counted as culled")
+{
+    // The tally names every caster-view pair no view drew, whichever cull
+    // rejected it — a mask that made the number smaller would report a saving
+    // the pass did not make.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {
+        InViews(CasterAt(glm::vec3(0.f), 1.f, 1), 0b01u),
+        InViews(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 0b10u),
+        // Classified into both, and inside neither: the frustum test is what
+        // rejects this one, and both rejections land in the same tally.
+        InViews(CasterAt(glm::vec3(500.f, 0.f, 0.f), 1.f, 3), 0b11u),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    CHECK(list.instances.size() == 2);
+    CHECK(list.culled == 4);
+}
+
+TEST_CASE("A caster the mask excludes leaves the run around it whole")
+{
+    // A view's instances are appended in its own member order, so the two
+    // survivors are adjacent in the buffer and one command covers them. The
+    // caster between them is not in this view at all — there is no gap in the
+    // range for it to be drawn through.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {
+        CasterAt(glm::vec3(0.f, 0.f, 0.f), 1.f, 5),
+        InViews(CasterAt(glm::vec3(1.f, 0.f, 0.f), 1.f, 5), 0u),
+        CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 5),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    CHECK(list.culled == 1);
+    CHECK(list.instances.size() == 2);
+    REQUIRE(list.commands.size() == 1);
+    CHECK(list.commands[0].instanceCount == 2);
+    CHECK(list.commands[0].startInstanceLocation == 0);
+}
+
+TEST_CASE("A view's members keep the span's class-major order")
+{
+    // The masked half still follows the opaque half inside every view, and each
+    // view's ranges describe its own members rather than the whole span.
+    const ShadowDepthTarget targets[] = {TargetOf(ViewOf(BoxView())), TargetOf(ViewOf(BoxView()))};
+
+    const std::vector<ShadowCaster> casters = {
+        InViews(CasterAt(glm::vec3(0.f), 1.f, 1), 0b11u),
+        InViews(Masked(CasterAt(glm::vec3(2.f, 0.f, 0.f), 1.f, 2), 3), 0b01u),
+        InViews(Masked(CasterAt(glm::vec3(4.f, 0.f, 0.f), 1.f, 4), 3), 0b10u),
+    };
+
+    ShadowDrawList list;
+    BuildShadowDrawList(targets, casters, list);
+
+    REQUIRE(list.viewCommandStart.size() == 3);
+    // One opaque command then one masked, in each view.
+    CHECK(MaskedStart(list, 0) == 1);
+    CHECK(list.viewCommandStart[1] == 2);
+    CHECK(MaskedStart(list, 1) == 3);
+    CHECK(list.viewCommandStart[2] == 4);
+
+    // The second view's masked command draws the geometry classified into it,
+    // not the one the first view drew.
+    CHECK(list.commands[MaskedStart(list, 1)].startIndexLocation == 4u * 36u);
+}
+
+TEST_CASE("Classifying a real cascade set draws exactly what sweeping it drew")
+{
+    // The property the whole classification rests on: each cascade's volume
+    // contains that cascade's ortho box, so a cleared bit is a caster the
+    // cascade's own frustum test would have rejected anyway. The mask may only
+    // remove work, never a shadow — and this is that claim run end to end
+    // rather than argued.
+    CascadeFitParams params;
+    params.cameraView = glm::lookAt(glm::vec3(0.f), glm::vec3(0.f, 0.f, -1.f), glm::vec3(0.f, 1.f, 0.f));
+    params.tanHalfFovY = 0.5773502692f;
+    params.aspectRatio = 16.f / 9.f;
+    params.nearZ = 0.1f;
+    params.farZ = 200.f;
+    params.lightDirection = glm::normalize(glm::vec3(-0.4f, -1.f, -0.3f));
+    params.settings.cascadeCount = 4;
+    params.settings.resolution = 2048;
+
+    const CascadeFit fit = FitCascades(params);
+    REQUIRE(fit.count == 4);
+
+    std::array<Assisi::Geometry::BoundingSphere, kMaxShadowCascades> volumes{};
+    const std::uint32_t volumeCount = CascadeVolumeBounds(fit, volumes);
+    const std::span<const Assisi::Geometry::BoundingSphere> span(volumes.data(), volumeCount);
+
+    std::vector<ShadowDepthTarget> targets;
+    for (std::uint32_t i = 0; i < fit.count; ++i)
+    {
+        targets.push_back(TargetOf(CascadeShadowView(fit.cascades[i], i, params.settings)));
+    }
+
+    // A grid through the whole shadowed depth range and out past it, so every
+    // cascade gets members, some casters straddle two, and some reach none.
+    std::vector<ShadowCaster> classified;
+    for (std::int32_t x = -6; x <= 6; ++x)
+    {
+        for (std::int32_t z = 0; z <= 24; ++z)
+        {
+            const glm::vec3 center(static_cast<float>(x) * 12.f, 0.f, static_cast<float>(z) * -12.f);
+            ShadowCaster caster = CasterAt(center, 2.f, static_cast<std::uint64_t>(z % 3));
+            caster.viewMask = ShadowCasterViewMask(caster.worldSphere, span, params.lightDirection);
+            classified.push_back(caster);
+        }
+    }
+    std::sort(classified.begin(), classified.end(),
+              [](const ShadowCaster &lhs, const ShadowCaster &rhs) { return lhs.geometryKey < rhs.geometryKey; });
+
+    std::vector<ShadowCaster> unclassified = classified;
+    for (ShadowCaster &caster : unclassified)
+    {
+        caster.viewMask = ~0u;
+    }
+
+    ShadowDrawList masked;
+    ShadowDrawList swept;
+    BuildShadowDrawList(targets, classified, masked);
+    BuildShadowDrawList(targets, unclassified, swept);
+
+    // Something was actually classified out, or this proves nothing.
+    REQUIRE(std::any_of(classified.begin(), classified.end(),
+                        [](const ShadowCaster &caster) { return caster.viewMask != 0b1111u; }));
+    // And something is actually drawn.
+    REQUIRE(masked.instances.size() > 0);
+
+    // Every view submits the same casters in the same order, so the instance
+    // buffer is identical record for record — the picture is the same picture.
+    REQUIRE(masked.instances.size() == swept.instances.size());
+    for (std::size_t i = 0; i < masked.instances.size(); ++i)
+    {
+        CAPTURE(i);
+        CHECK(masked.instances[i].model == swept.instances[i].model);
+    }
+    CHECK(masked.culled == swept.culled);
+
+    // Each view draws its own instances, and the same ones.
+    REQUIRE(masked.viewCommandStart.size() == swept.viewCommandStart.size());
+    for (std::uint32_t view = 0; view < targets.size(); ++view)
+    {
+        CAPTURE(view);
+        const auto instancesIn = [](const ShadowDrawList &list, std::uint32_t index)
+                                 {
+                                     std::uint32_t total = 0;
+                                     for (std::uint32_t i = list.viewCommandStart[index]; i < list.viewCommandStart[index + 1u]; ++i)
+                                     {
+                                         total += list.commands[i].instanceCount;
+                                     }
+                                     return total;
+                                 };
+        CHECK(instancesIn(masked, view) == instancesIn(swept, view));
+        CHECK(masked.commands[masked.viewCommandStart[view]].startInstanceLocation ==
+              swept.commands[swept.viewCommandStart[view]].startInstanceLocation);
+    }
+
+    // What does differ is the batching, and only in the one direction: the sweep
+    // broke a run wherever it rejected a caster mid-span, while a caster the
+    // mask kept out of a view is not in that view's list to break anything.
+    CHECK(masked.commands.size() < swept.commands.size());
+}

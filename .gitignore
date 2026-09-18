@@ -63,9 +63,35 @@ CLAUDE.md
 # Art
 logo/
 
+# Screenshots kept while working on something — before/after comparisons, a bug
+# caught in the act. They are about one session, and the tracker is where any of
+# them that still mean something get attached.
+pics/
+
 # Model assets — heavy binary art (glTF .bin + textures), kept local only.
 assets/models/
+
+# Compiled shaders, which the build writes beside the GLSL they come from. The
+# asset tree is the only one, so build outputs land in it rather than in a staged
+# copy; they are reproducible from the source beside them and belong to no clone
+# but this one. The .aast is the id the asset database mints for each on first
+# load — an id for a derived file, regenerated with it. The .tmp is a compiled
+# shader mid-rename, present only while a build is running.
+assets/**/*.spv
+assets/**/*.spv.aast
+assets/**/*.spv.*.tmp
+# Captures, of every kind. Machine-specific measurements of one run on one
+# machine: large, stale the moment anything changes, and worthless to anyone
+# who did not take them. Quote a number in the tracker instead of committing
+# the file it came from.
+#
+# Chiara writes to <user root>/captures, and the user root is the exe directory
+# by default — so running from the repo root leaves them here, the same way the
+# logs above arrive. The build tree's copies are already covered by out/.
+captures/
+
 # RenderDoc captures (scripts/rdc-capture.sh) and the reports rdc-analyze.py
-# writes beside them. Large binaries, machine-specific, never worth committing.
+# writes beside them.
 captures-rdc/
 *.rdc
+

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "type": "NetworkConfig",
+  "neverReplicate": [],
+  "positionExtent": 256.0,
+  "positionBits": 18,
+  "linearVelocityMax": 128.0,
+  "linearVelocityBits": 12,
+  "angularVelocityMax": 64.0,
+  "angularVelocityBits": 11,
+  "positionCorrectionTime": 0.1,
+  "positionCorrectionTimeFast": 0.1,
+  "smallErrorDistance": 0.25,
+  "largeErrorDistance": 1.0,
+  "rotationCorrectionTime": 0.05,
+  "snapBelowDistance": 0.02,
+  "hardSnapDistance": 2.5,
+  "relevancyRadius": 60.0,
+  "relevancyExitRadius": 75.0,
+  "relevancyDwellTicks": 30,
+  "relevancyProvider": "all"
+}

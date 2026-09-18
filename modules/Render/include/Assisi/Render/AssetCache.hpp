@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file AssetCache.hpp
-/// @brief Cache resolving stable asset ids (and, for thumbnails, paths) to shared
-///        GPU meshes, textures, and materials.
+/// @brief Cache resolving stable asset ids to shared GPU meshes, textures, and
+///        materials.
 ///
 /// The game holds stable GUIDs (`AssetId`) on its components (see MeshRenderer);
 /// the AssetCache turns those ids into concrete GPU resources, deduplicating so
@@ -11,23 +11,16 @@
 /// texture, and material it hands out, so the pointers it returns stay valid
 /// until Clear().
 ///
-/// Ids are mapped to virtual paths through resolvers the editor installs from its
-/// AssetDatabase (SetAssetResolvers); reserved built-in ids (the `prim://`
-/// primitives) are handled internally without a resolver. Internally the caches
-/// stay keyed by path — the id is translated once at the boundary — which keeps
-/// deduplication and the primitive tables unchanged. The texture path API
-/// (ResolveTexture) stays public and path-based for the ImGui thumbnail cache,
-/// which browses files directly.
+/// The decoded data comes from the installed AssetSource, which is the source
+/// tree in the editor and a pak in a shipped game; the cache does not know which.
+/// Reserved built-in ids are generated here instead: the `prim://` meshes, and
+/// the solid-colour textures (white, linear white, flat normal) that stand in for
+/// a material's empty channels — engine assets that live in this same cache, so a
+/// device rebuild regenerates them uniformly.
 ///
-/// Mesh paths resolve the built-in `prim://` primitives or a mesh file loaded
-/// through Geometry::ImportMesh (glTF today); an empty path, or one that fails to
-/// load, falls back to the unit cube so the entity still renders. Texture paths
-/// are virtual asset paths resolved through AssetSystem (see Texture::LoadFromAssets),
-/// plus a handful of `prim://` solid-colour texture primitives that stand in for
-/// a material's empty channels (white, linear white, flat normal) — engine-
-/// generated assets that live in this same cache rather than a separate static,
-/// so a device rebuild regenerates them uniformly. Material paths resolve `.amat`
-/// files (empty/failed -> a neutral fallback material).
+/// A nil or unknown mesh, or one that fails to load, falls back to the unit cube
+/// so the entity still renders; a material that fails falls back to a neutral
+/// one; a texture that fails draws as an error pattern.
 
 #include <array>
 #include <optional>
@@ -37,6 +30,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -45,11 +39,11 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/Core/AssetId.hpp>
-#include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
-#include <Assisi/Geometry/MeshImporter.hpp>
+#include <Assisi/Render/AssetSource.hpp>
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
 #include <Assisi/Render/Material.hpp>
@@ -70,21 +64,13 @@ public:
     /// thread — see ResolveMesh/ResolveMaterial). @p textureColorSpace is the
     /// default colour space for ResolveTexture calls that don't specify one — Srgb
     /// for scene albedo, Linear for textures shown straight through ImGui.
-    void Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace = ColorSpace::Srgb);
+    void Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs,
+                    Image::ColorSpace textureColorSpace = Image::ColorSpace::Srgb);
 
-    /// @brief Id↔path translators supplied by the editor (from the AssetDatabase).
-    using IdToPathFn = std::function<Core::AssetPath (const Core::AssetId &)>;
-    using PathToIdFn = std::function<Core::AssetId (std::string_view)>;
-
-    /// @brief Install the id↔path resolvers. Reserved built-in ids resolve without
-    /// them; real files need them. `pathToId` is handed to the mesh importer so a
-    /// glTF's texture channels are stored as ids. Unset resolvers mean real-file
-    /// ids resolve to nothing (fallback) — the state before an editor wires them.
-    void SetAssetResolvers(IdToPathFn idToPath, PathToIdFn pathToId)
-    {
-        _idToPath = std::move(idToPath);
-        _pathToId = std::move(pathToId);
-    }
+    /// @brief Tell the cache whether the device can sample block-compressed
+    ///        textures. Without it every channel is asked for uncompressed, and a
+    ///        source that only holds compressed textures draws the error pattern.
+    void SetTextureCompressionSupported(bool supported) { _textureCompressionSupported = supported; }
 
     /// @brief Resolves a mesh id to a cached MeshBuffer. Built-in primitives (e.g.
     /// `prim://cube`) resolve synchronously. A mesh **file** imports on a worker
@@ -96,58 +82,15 @@ public:
     /// loading mesh becomes non-null.
     const MeshBuffer *ResolveMesh(const Core::AssetId &id);
 
-    /// @brief Resolves a texture path to a cached Texture, loading on first use,
-    /// in the cache's default colour space (see Initialize).
-    const Texture *ResolveTexture(const Core::AssetPath &path)
-    {
-        return ResolveTexture(path, _textureColorSpace);
-    }
-
-    /// @brief Resolves a texture path in an explicit colour space. The cache is
-    /// keyed on (path, colour space), so the same file can be resident as both an
-    /// sRGB colour map and a linear data map without one clobbering the other.
-    /// An empty path returns null; a non-empty path that fails to load also
-    /// returns null (after a one-time warning). `prim://` texture primitives
-    /// (white / white-linear / flat-normal) resolve here too, in their own fixed
-    /// colour space. A successful pointer stays valid until Clear().
-    const Texture *ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace);
-
-    /// @brief Resolves a texture path to an editor thumbnail, decoded on a worker
-    /// thread. Unlike ResolveTexture (synchronous, and bindless-registered for the
-    /// scene's materials), thumbnails live in their own cache: the first resolve
-    /// kicks a worker decode and returns **nullptr** ("still loading" — the browser
-    /// shows a placeholder tile); once decoded and uploaded on the main thread a
-    /// later resolve returns the Texture. A path that fails to decode returns null
-    /// permanently (the failure is remembered, not retried every frame). Thumbnails
-    /// are never bindless-registered (they display through ImGui, they aren't
-    /// sampled by materials). Always Linear colour space. Falls back to a synchronous
-    /// load when no job system is bound (e.g. a headless test).
-    const Texture *ResolveThumbnail(const Core::AssetPath &path);
-
-    /// @brief Whether a thumbnail decode for @p path is currently in flight. A tile
-    /// that ResolveThumbnail returned null for is either still decoding (true) or
-    /// failed to decode (false) — the browser uses this to show a loading indicator
-    /// only while the decode is actually pending.
-    bool IsThumbnailLoading(const Core::AssetPath &path) const
-    {
-        return _thumbnailLoading.find(path) != _thumbnailLoading.end();
-    }
-
-    /// @brief Invoked once per resident thumbnail about to be freed (see
-    /// ClearThumbnails), with the texture still valid, so the caller can drop any
-    /// external reference to it — chiefly the ImGui descriptor-set binding the
-    /// editor made via DebugUI::GetOrCreateTextureId. Without this, a freed
-    /// `nvrhi::ITexture` whose address a later texture reuses would alias a stale
-    /// ImGui binding.
-    using ThumbnailReleaseFn = std::function<void (nvrhi::ITexture *)>;
-
-    /// @brief Drop every resident thumbnail and cancel in-flight thumbnail decodes
-    /// (their publishes become no-ops). Call on asset-browser directory change /
-    /// refresh so browsing many folders doesn't grow VRAM without bound. Waits for
-    /// the GPU to idle before freeing (a navigation-time stall, not per frame), and
-    /// invokes @p onRelease for each texture first so the caller can release its
-    /// ImGui binding. Leaves the scene/material texture cache (_textures) untouched.
-    void ClearThumbnails(const ThumbnailReleaseFn &onRelease = {});
+    /// @brief Resolves a texture id in an explicit colour space and format. The
+    /// cache is keyed on all three, so the same image can be resident as an sRGB
+    /// colour map and as a linear data map, and as BC5 for one channel and BC7 for
+    /// another, without any of them clobbering the others.
+    /// A nil id returns null; one that fails to load draws the error pattern (after
+    /// a warning). The reserved solid-colour textures (white / white-linear /
+    /// flat-normal) resolve here too, in their own fixed colour space and always
+    /// uncompressed. A successful pointer stays valid until Clear().
+    const Texture *ResolveTexture(const Core::AssetId &id, Image::ColorSpace colorSpace, Image::PixelFormat format);
 
     /// @brief Resolves a `.amat` material id to a cached Material. The `.amat` is
     /// parsed on the main thread; its **images decode on a worker thread**, so the
@@ -160,10 +103,76 @@ public:
     /// HasPendingLoads) until a loading material upgrades from the fallback.
     const Material *ResolveMaterial(const Core::AssetId &id);
 
+    /// @brief The material @p slot of mesh @p meshId draws with when an entity
+    ///        overrides nothing, or nil if the mesh is not resident or has no such slot.
+    ///
+    /// Read from the mesh as it loaded, so a slot's default is known exactly when
+    /// the mesh is, whichever source it came from.
+    [[nodiscard]] Core::AssetId SlotMaterial(const Core::AssetId &meshId, std::uint32_t slot) const;
+
+    /// @brief Replace a resident mesh's slot defaults. For the editor, after a
+    ///        reimport rewrites what a mesh's slots bind; a no-op for a mesh that
+    ///        is not resident, which picks the new binding up when it loads.
+    void SetSlotMaterials(const Core::AssetId &meshId, std::vector<Core::AssetId> slotMaterials);
+
     /// @brief The neutral fallback material (id 0): white albedo, metallic 0,
     /// roughness 0.6 — the engine's pre-material look, also shown while a real
     /// material is still loading. Never null.
     const Material *FallbackMaterial() const { return &_fallbackMaterial; }
+
+    // --- Live editing (the editor's material panel) -----------------------
+    //
+    // A material's factors and its texture channels are edited by the same panel
+    // but cannot be applied the same way, because a channel change is the one
+    // thing that invalidates the resolved bindless slots baked into the row.
+    // Hence the split: the cheap path stays cheap, and the expensive path is
+    // named so a caller cannot take it by accident.
+
+    /// @brief Rewrite a resident material's constants row from @p data, keeping
+    /// its id and its already-resolved textures. Returns false if @p id names no
+    /// resident material (nothing is written).
+    ///
+    /// For factor edits only — @p data's texture channels are ignored, since the
+    /// bindless slots in the row come from the resolved textures rather than
+    /// from the ids. The material's id is its row, so every draw already
+    /// referencing it picks the new values up with no re-resolve, and no binding
+    /// set is touched. That is what makes a drag in the editor land on screen
+    /// the same frame.
+    ///
+    /// Unlike a load-time row write, this rewrites a row the scene is actively
+    /// drawing from, on its own immediately-submitted command list. Ordering
+    /// against an in-flight frame's reads is not fenced, so a value can land one
+    /// frame late; it cannot tear a row, because a row is one write.
+    bool UpdateMaterialFactors(const Core::AssetId &id, const Geometry::MaterialData &data);
+
+    /// @brief Build @p data as the material for @p id under a **fresh id**,
+    /// resolving its texture channels, creating the cache entry if @p id is not
+    /// resident yet. Returns false only if @p id names no asset at all.
+    ///
+    /// For texture-channel edits, where the bindless slots baked into the row are
+    /// stale and the new channels have to be loaded and registered. Takes the
+    /// material by value rather than re-reading the `.amat`, so an unsaved edit
+    /// is as live as a saved one.
+    ///
+    /// Creating the entry is what makes a *newly authored* material editable at
+    /// all: nothing has resolved it yet, and the ordinary resolve path only kicks
+    /// an async load and hands back the fallback meanwhile, so an editor waiting
+    /// for residency would wait for a disk read of a file the edits have not
+    /// reached.
+    ///
+    /// A new row rather than the old one, deliberately: the row's texture indices
+    /// are changing, and rewriting them in place would change them underneath an
+    /// in-flight frame already reading that row. The old row is abandoned — ids
+    /// are dense and never recycled, so a session that rewires channels thousands
+    /// of times can exhaust the table and saturate onto the fallback (see
+    /// MintMaterialId). Clear() resets that.
+    ///
+    /// The cache entry is rebuilt in place, so pointers previously handed out for
+    /// this material stay valid and pick the new id up on their own — no scene
+    /// re-resolve is needed. Channel textures load **synchronously** here, unlike
+    /// the async first resolve: this runs on an explicit authoring action, where a
+    /// brief stall is better than a frame of the fallback material.
+    bool ReloadMaterial(const Core::AssetId &id, const Geometry::MaterialData &data);
 
     /// @brief Whether any async mesh/material load is still in flight — decoding on
     /// a worker, OR decoded and waiting in the publish queue for its GPU upload (a
@@ -229,28 +238,43 @@ public:
     void Clear();
 
 private:
-    /// @brief The virtual path an id currently maps to. Reserved built-ins resolve
-    /// from the static table (no resolver needed); other ids go through the
-    /// installed id→path resolver. Nil/unknown ids return an empty path.
-    Core::AssetPath PathForId(const Core::AssetId &id) const;
+    /// @brief Load @p id from the installed source and upload it into @p texture.
+    ///
+    /// The synchronous load. @p format is what the channel asked for, after
+    /// EffectiveFormat has had its say.
+    std::expected<void, AssetLoadError> LoadTexture(Texture &texture, const Core::AssetId &id,
+                                                    Image::ColorSpace colorSpace, Image::PixelFormat format);
 
-    /// @brief Path-keyed mesh resolve (built-in or file). Backs ResolveMesh after
-    /// it translates an id to a path.
-    const MeshBuffer *ResolveMeshPath(const Core::AssetPath &path);
+    /// @brief How to name @p id in a log line, through the installed source.
+    [[nodiscard]] std::string Describe(const Core::AssetId &id) const;
 
-    /// @brief Path-keyed `.amat` resolve. Backs ResolveMaterial after translation.
-    const Material *ResolveMaterialPath(const Core::AssetPath &path);
+    /// @brief Log the running total of failed textures, once, whenever it moves.
+    ///
+    /// Called as the publish queue drains, so a load that loses several textures
+    /// reports one number instead of a warning per texture in a log that already
+    /// runs to hundreds of lines.
+    void ReportTextureFailures();
 
-    /// @brief Returns the cached buffer for a registered primitive path, uploading
-    /// it on first use, or null if @p path names no known primitive.
-    const MeshBuffer *ResolvePrimitive(const Core::AssetPath &path);
+    /// @brief The format a channel asking for @p wanted actually gets.
+    ///
+    /// Rgba8 whenever the device cannot sample compression, so there is one place
+    /// that decision is made and the cache key, the load and the upload cannot
+    /// disagree about it.
+    [[nodiscard]] Image::PixelFormat EffectiveFormat(Image::PixelFormat wanted) const;
 
-    /// @brief Resolves channel id @p channelId (or, if nil/failed, @p
-    /// fallbackPrimitive) for one material channel, returning the texture's slot
+    /// @brief Returns the cached buffer for a reserved primitive mesh id, uploading
+    /// it on first use, or null if @p id names no known primitive.
+    const MeshBuffer *ResolvePrimitive(const Core::AssetId &id);
+
+    /// @brief Resolves channel @p channelIndex's id @p channelId (or, if
+    /// nil/failed, that channel's `prim://` default) returning the texture's slot
     /// in the bindless descriptor table. Sets @p *outPresent to whether the real
     /// (non-fallback) texture was used.
-    uint32_t ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
-                            const Core::AssetPath &fallbackPrimitive, bool *outPresent = nullptr);
+    ///
+    /// Takes the channel's index rather than its colour space and fallback, so the
+    /// two cannot be passed from different rows of the channel table.
+    uint32_t ResolveChannel(const Core::AssetId &channelId, Geometry::MaterialChannel channel,
+                            bool *outPresent = nullptr);
 
     /// @brief Ensures @p texture has a slot in the bindless descriptor table,
     /// assigning and writing one on first call. Returns the slot. The table's
@@ -279,18 +303,31 @@ private:
     /// @brief (Re)build the id-0 fallback material from the engine defaults.
     void BuildFallbackMaterial();
 
-    // A texture cache key: the same file may be resident once per colour space.
+    /// @brief Record that the editor's copy of @p id outranks the stored one, so a
+    /// load already in flight cannot publish over it.
+    void MarkMaterialAuthored(const Core::AssetId &id);
+
+    // A texture cache key: the same image may be resident once per way it is read.
+    //
+    // The format is part of it, not just the colour space. A normal map and a
+    // metallic-roughness map are both linear but want different formats, so a key
+    // without the format would hand whichever resolved first to both channels.
     struct TextureKey
     {
-        Core::AssetPath path;
-        ColorSpace space;
-        bool operator==(const TextureKey &other) const { return space == other.space && path == other.path; }
+        Core::AssetId id;
+        Image::ColorSpace space;
+        Image::PixelFormat format;
+        bool operator==(const TextureKey &other) const
+        {
+            return space == other.space && format == other.format && id == other.id;
+        }
     };
     struct TextureKeyHash
     {
         std::size_t operator()(const TextureKey &key) const
         {
-            return std::hash<Core::AssetPath>{}(key.path) ^ (static_cast<std::size_t>(key.space) * 0x9e3779b9u);
+            return std::hash<Core::AssetId>{}(key.id) ^ (static_cast<std::size_t>(key.space) * 0x9e3779b9u)
+                   ^ (static_cast<std::size_t>(key.format) * 0x85ebca6bu);
         }
     };
 
@@ -298,21 +335,27 @@ private:
     struct SolidColor
     {
         unsigned char r, g, b, a;
-        ColorSpace space;
+        Image::ColorSpace space;
     };
 
     nvrhi::IDevice *_device = nullptr;
-    ColorSpace _textureColorSpace = ColorSpace::Srgb;
+    Image::ColorSpace _textureColorSpace = Image::ColorSpace::Srgb;
 
-    // Editor-installed id↔path translators (see SetAssetResolvers). Empty until an
-    // editor wires them; reserved built-ins resolve without them.
-    IdToPathFn _idToPath;
-    PathToIdFn _pathToId;
+    // The device's answer to whether it samples BC formats: creating a BC texture
+    // without the feature is invalid, so without it every channel is uncompressed.
+    bool _textureCompressionSupported = true;
 
-    // Registered at Initialize(): `prim://` mesh factories and solid-colour
-    // texture primitives (white / white-linear / flat-normal).
-    std::unordered_map<Core::AssetPath, std::function<Geometry::MeshData()>> _primitiveFactories;
-    std::unordered_map<Core::AssetPath, SolidColor>                          _texturePrimitives;
+    // Textures that could not be read, decoded or compressed, and so are drawn as
+    // the error pattern. Counted here rather than only warned about, so a load
+    // that loses several reports one number; the upload half of the same story is
+    // Texture::UploadFailureCount.
+    std::uint32_t _failedTextures          = 0;
+    std::uint32_t _reportedTextureFailures = 0;
+
+    // Registered at Initialize(), by reserved id: `prim://` mesh factories and
+    // solid-colour texture primitives (white / white-linear / flat-normal).
+    std::unordered_map<Core::AssetId, std::function<Geometry::MeshData()>> _primitiveFactories;
+    std::unordered_map<Core::AssetId, SolidColor>                          _texturePrimitives;
 
     // One shared vertex/index buffer every mesh sub-allocates a range from
     // (GPU-driven stage C). MeshBuffers hold ranges into this, not their own
@@ -338,21 +381,12 @@ private:
     // would race in-flight frames reading other rows and flicker the scene.
     Buffer _materialTable;
 
-    std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
+    std::unordered_map<Core::AssetId, MeshBuffer>           _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;
-    std::unordered_map<Core::AssetPath, Material>           _materials; // .amat files
+    std::unordered_map<Core::AssetId, Material>             _materials;
 
-    // Editor asset-browser thumbnails, decoded asynchronously (see ResolveThumbnail).
-    // Kept apart from _textures so they never take a bindless slot (they display
-    // through ImGui, not the material path). Path-keyed: thumbnails are always
-    // Linear, so no colour-space dimension. A default-constructed (invalid) entry
-    // marks a decode that failed, so a broken file isn't re-kicked every frame.
-    std::unordered_map<Core::AssetPath, Texture> _thumbnails;
-    std::unordered_set<Core::AssetPath>          _thumbnailLoading;
-    // Bumped when the thumbnail set is invalidated; an in-flight decode whose
-    // captured epoch no longer matches is dropped on publish. Atomic because the
-    // worker reads it (to bail early); the authoritative drop is on the main thread.
-    std::atomic<uint64_t> _thumbnailEpoch = 0;
+    // Each resident mesh's slot defaults, as it loaded (see SlotMaterial).
+    std::unordered_map<Core::AssetId, std::vector<Core::AssetId>> _slotMaterials;
 
     // The id-0 fallback; rebuilt on Clear (its texture pointers would dangle).
     Material _fallbackMaterial;
@@ -373,16 +407,21 @@ private:
     // of every subsequent material. Reset by Clear() alongside _nextMaterialId.
     bool _materialTableFull = false;
 
-    // Mesh paths that failed to load (see ResolveMesh): warn once, and don't
-    // re-parse a broken path every frame. Reset by Clear().
-    std::unordered_set<Core::AssetPath> _missingMeshWarned;
-    // Material paths that failed to load/parse: same rationale.
-    std::unordered_set<Core::AssetPath> _missingMaterialWarned;
+    // Meshes that failed to load (see ResolveMesh): warn once, and don't re-load a
+    // broken asset every frame. Reset by Clear().
+    std::unordered_set<Core::AssetId> _missingMeshWarned;
+    // Materials the editor has authored live. Their resident material is newer than
+    // the stored one, so an async load still in flight for one must not publish
+    // over it. Reset by Clear() with everything else.
+    std::unordered_set<Core::AssetId> _authoredMaterials;
 
-    // --- Async loading (workers decode/import; the main thread publishes) -------
-    // AssetCache is only mutated on the main thread: worker jobs run pure CPU
-    // (ImportMesh / Texture::DecodeImage) over copied inputs and touch no cache
-    // state; their results publish back on the main thread (`.Then(Pool::Main, …)`),
+    // Materials that failed to load: same rationale.
+    std::unordered_set<Core::AssetId> _missingMaterialWarned;
+
+    // --- Async loading (workers load; the main thread publishes) ----------------
+    // AssetCache is only mutated on the main thread: worker jobs load through the
+    // installed AssetSource and touch no cache state; their results publish back on
+    // the main thread (`.Then(Pool::Main, …)`),
     // so no locks are needed. Non-owning; the app (Application) owns the job system
     // and outlives the cache.
     Core::JobSystem *_jobs = nullptr;
@@ -400,8 +439,8 @@ private:
     // placeholder (null mesh / fallback material) without re-kicking, and
     // HasPendingLoads() knows work is outstanding. Cleared by Clear() (the epoch
     // bump makes the in-flight publishes no-ops).
-    std::unordered_set<Core::AssetPath> _meshLoading;
-    std::unordered_set<Core::AssetPath> _materialLoading;
+    std::unordered_set<Core::AssetId> _meshLoading;
+    std::unordered_set<Core::AssetId> _materialLoading;
 
     // --- In-flight load throttle (see SetMaxConcurrentLoads) --------------------
     // A load is *queued* the moment it is requested (its path enters
@@ -419,7 +458,13 @@ private:
     struct RecordedChannel
     {
         nvrhi::TextureHandle texture;
-        Core::AssetPath path;
+        Core::AssetId id;
+
+        /// The channel named a texture and it could not be decoded or compressed.
+        /// Distinct from a null `texture` with a nil `id`, which is the
+        /// ordinary case of a material that binds nothing to this channel: that
+        /// one takes the neutral default, this one takes the error pattern.
+        bool failed = false;
     };
     /// @brief A material load's result: parsed data, every channel's GPU texture
     /// (created + recorded on the worker), and the single closed command list that
@@ -443,6 +488,7 @@ private:
     struct MeshLoadBundle
     {
         Geometry::MeshData data;
+        std::vector<Core::AssetId> slotMaterials;
         nvrhi::BufferHandle staging;
         uint32_t vertexCount = 0;
         uint32_t indexCount  = 0;
@@ -453,11 +499,10 @@ private:
     struct PendingLoad
     {
         bool isMaterial = false;
-        Core::AssetPath path;
+        Core::AssetId id;
         std::uint64_t epoch = 0;
-        PathToIdFn pathToId;                         ///< mesh only
-        Geometry::MaterialData materialData;         ///< material only
-        std::array<Core::AssetPath, 5> channelPaths; ///< material only
+        Geometry::MaterialData materialData;     ///< material only
+        std::array<Core::AssetId, 5> channelIds; ///< material only
     };
 
     std::size_t _maxConcurrentLoads = 3;
@@ -476,7 +521,7 @@ private:
     struct PendingPublish
     {
         bool isMaterial = false;
-        Core::AssetPath path;
+        Core::AssetId id;
         std::uint64_t epoch    = 0;
         std::size_t byteSize = 0;        ///< decoded bytes, for the pump's byte budget
         MeshLoadBundle mesh;             ///< mesh only
@@ -551,25 +596,26 @@ private:
     /// @brief Starts queued loads up to the concurrency cap. Called when a load is
     /// queued and again after each running load publishes. Main thread only.
     void PumpLoadQueue();
-    /// @brief Wires up a mesh import job (worker) + its publish (OnMeshLoaded).
-    void StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::uint64_t epoch);
+    /// @brief Wires up a mesh load job (worker) + its publish (OnMeshLoaded).
+    void StartMeshLoad(Core::AssetId id, std::uint64_t epoch);
     /// @brief Wires up a material decode job (worker) + its publish (OnMaterialLoaded).
-    void StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData data,
-                           std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch);
-    /// @brief Main-thread continuation of a finished mesh import: free the load slot
+    void StartMaterialLoad(Core::AssetId id, Geometry::MaterialData data, std::array<Core::AssetId, 5> channelIds,
+                           std::uint64_t epoch);
+    /// @brief Main-thread continuation of a finished mesh load: free the load slot
     /// and enqueue a publish (O(1) — the GPU work is deferred to PumpPublishes).
-    void OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
-                      std::expected<MeshLoadBundle, Geometry::MeshImportError> imported);
-    /// @brief Worker-thread body of a mesh load: import, then copy the geometry into
+    void OnMeshLoaded(Core::AssetId id, std::uint64_t epoch, std::expected<MeshLoadBundle, AssetLoadError> loaded);
+    /// @brief Worker-thread body of a mesh load: load, then copy the geometry into
     /// a GPU staging buffer so the main-thread publish is a recorded copy rather than
     /// a memcpy proportional to the mesh. Touches no cache state (createBuffer and
     /// mapBuffer on a fresh buffer are free-threaded), so it is safe off the main thread.
-    static std::expected<MeshLoadBundle, Geometry::MeshImportError>
-    ImportAndStageMesh(AssetCache &cache, Core::AssetPath path, const PathToIdFn &pathToId, std::uint64_t epoch,
-                       const std::atomic<std::uint64_t> &loadEpoch);
+    /// A load superseded before it ran returns an error without loading; its
+    /// continuation drops it on the epoch before looking at the result.
+    static std::expected<MeshLoadBundle, AssetLoadError> LoadAndStageMesh(AssetCache &cache, Core::AssetId id,
+                                                                          std::uint64_t epoch,
+                                                                          const std::atomic<std::uint64_t> &loadEpoch);
     /// @brief Main-thread continuation of a finished material decode: free the load
     /// slot and enqueue a publish (O(1) — the GPU work is deferred to PumpPublishes).
-    void OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle);
+    void OnMaterialLoaded(Core::AssetId id, std::uint64_t epoch, MaterialLoadBundle bundle);
     /// @brief GPU-side publish of a decoded mesh (called from PumpPublishes under
     /// budget): upload into the arena via the shared list, then cache + assign an id.
     void PublishMesh(PendingPublish publish);
@@ -594,7 +640,7 @@ private:
     /// @p cache is used only for its thread-safe upload-resource pool and device;
     /// no cache state is read or mutated.
     static MaterialLoadBundle DecodeAndRecordMaterialChannels(AssetCache &cache, Geometry::MaterialData data,
-                                                              std::array<Core::AssetPath, 5> channelPaths,
+                                                              std::array<Core::AssetId, 5> channelIds,
                                                               std::uint64_t epoch,
                                                               const std::atomic<std::uint64_t> &loadEpoch);
 };

@@ -1,8 +1,11 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Runtime/LightingSystem.hpp>
+
+#include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 
 #include <Assisi/Render/GpuMarker.hpp>
 
@@ -24,6 +27,11 @@ glm::vec3 SafeDirection(const glm::vec3 &direction)
     const float lengthSq = glm::dot(direction, direction);
     return lengthSq > 0.f ? direction / glm::sqrt(lengthSq) : kFallbackLightDirection;
 }
+
+constexpr ShadowCaster AsShadowCaster(bool castsShadows)
+{
+    return castsShadows ? ShadowCaster::Yes : ShadowCaster::No;
+}
 } // namespace
 
 bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int32_t width,
@@ -42,29 +50,76 @@ void LightingSystem::Resize(nvrhi::ICommandList *commandList, int32_t width, int
     _grid.BuildClusters(commandList, width, height, nearZ, farZ, glm::inverse(projection));
 }
 
-glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection)
+glm::vec3 LightingSystem::SunlightColor(const glm::vec3 &color, const glm::vec3 &directionToSun,
+                                        const Render::SkySettings *atmosphere)
 {
-    return SafeDirection(glm::mat3(worldMatrix) * localDirection);
+    if (atmosphere == nullptr)
+    {
+        return color;
+    }
+    // White through the air, not the authored colour through it: while
+    // tintedBySky is on the sky IS the colour, and the inspector greys the
+    // authored one out to say so. Multiplying it in here would make that grey a
+    // lie.
+    return Render::SunlightTransmittance(directionToSun, *atmosphere);
+}
+
+std::optional<LightingSystem::ShadowSun> LightingSystem::ShadowCastingSun() const
+{
+    // Bounded by _dirLightCount rather than the vector's size: lights past the
+    // buffer's capacity were dropped on upload, so the shader has no index for
+    // them and a shadow map for one would light nothing.
+    for (uint32_t i = 0; i < _dirLightCount; ++i)
+    {
+        if (_dirShadowFlags[i] == ShadowCaster::Yes)
+        {
+            return ShadowSun{.index = i, .direction = glm::vec3(_dirLights[i].directionIntensity)};
+        }
+    }
+    return std::nullopt;
+}
+
+void LightingSystem::SetSpotShadowView(uint32_t index, uint32_t firstView)
+{
+    if (index < _spotLights.size())
+    {
+        _spotLights[index].shadowView = firstView;
+    }
+}
+
+void LightingSystem::SetPointShadowView(uint32_t index, uint32_t firstView)
+{
+    if (index < _pointLights.size())
+    {
+        _pointLights[index].shadowView.x = firstView;
+    }
 }
 
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
-    ASSISI_PROFILE_GPU_SCOPE(commandList, "lighting");
+    Gather(scene);
+    Upload(commandList, view);
+}
 
+void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial)
+{
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
     _pointLights.clear();
     _spotLights.clear();
     _dirLights.clear();
+    _pointShadowFlags.clear();
+    _spotShadowFlags.clear();
+    _dirShadowFlags.clear();
+    _shadowSpots.clear();
+    _shadowPoints.clear();
 
     // World position comes from the propagated worldMatrix, not transform.position:
     // a parented light's local position is relative to its parent. For a root,
     // worldMatrix[3] equals position.
     //
-    // A spot light's `direction` is LOCAL and is rotated into world space by the
-    // same matrix, so a headlight or a held torch aims where its parent faces — and
-    // an unparented light is aimed by its own rotation. A direction is a vector, not
-    // a normal, so the plain upper-left 3x3 is the correct transform (no
-    // inverse-transpose); SafeDirection renormalises, absorbing any scale.
+    // A spot light's aim comes off the same matrix — it shines down its own local
+    // -Y — so a headlight or a held torch points where its parent faces, and an
+    // unparented light points where it was turned. See SpotWorldDirection.
     //
     // One scope over all three queries: same CPU-side staging-array rebuild, and the
     // per-type split is already in the counters below.
@@ -73,30 +128,84 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
 
         for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
         {
+            const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+            // Every light starts holding no tile. The shadow pass stamps the
+            // winners between here and Upload, so a light it never reaches is
+            // unshadowed by default rather than by last frame's answer.
             _pointLights.push_back({
-                    .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
+                    .positionRadius = {position, light.radius},
                     .colorIntensity = {light.color, light.intensity},
+                    .shadowView = {Render::kNoShadowView, 0u, 0u, 0u},
                 });
+            _pointShadowFlags.push_back(AsShadowCaster(light.castsShadows));
+            if (light.castsShadows)
+            {
+                _shadowPoints.push_back(LocalLight{
+                        .index = static_cast<uint32_t>(_pointLights.size() - 1u),
+                        .entity = entity,
+                        .position = position,
+                        .range = light.radius,
+                        .intensity = light.intensity,
+                        .shadowPriority = light.shadowPriority,
+                        .shadowAlwaysOn = light.shadowAlwaysOn});
+            }
         }
 
         for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
         {
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
+            const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+            const glm::vec3 direction = SpotWorldDirection(transform.worldMatrix);
             _spotLights.push_back({
-                    .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-                    .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
+                    .positionRadius = {position, light.radius},
+                    .directionInner = {direction, innerCos},
                     .colorIntensity = {light.color, light.intensity},
                     .outerCutoff    = outerCos,
+                    .shadowView     = Render::kNoShadowView,
                 });
+            _spotShadowFlags.push_back(AsShadowCaster(light.castsShadows));
+            if (light.castsShadows)
+            {
+                _shadowSpots.push_back(LocalLight{
+                        .index = static_cast<uint32_t>(_spotLights.size() - 1u),
+                        .entity = entity,
+                        .position = position,
+                        .direction = direction,
+                        .range = light.radius,
+                        .intensity = light.intensity,
+                        .outerAngleDegrees = light.outerAngle,
+                        .shadowPriority = light.shadowPriority,
+                        .shadowAlwaysOn = light.shadowAlwaysOn});
+            }
         }
 
         for (auto [entity, light] : scene.Query<DirectionalLight>())
         {
+            // The scene's celestial light, when it is this entity's. Everything
+            // the clock decides is already in it: where the body is, whether that
+            // body is the sun or the moon, the ramp that takes both to zero at the
+            // horizon, and the atmosphere the beam crossed on the way down.
+            //
+            // Resolved rather than derived here because a light's colour depends
+            // on where its body IS, and only the resolver knows that — this used
+            // to reach for the entity's Skybox and tint the authored aim, which
+            // cannot answer for a sun on a clock.
+            const bool resolved = celestial != nullptr && celestial->entity == entity;
+
+            const glm::vec3 direction = resolved ? celestial->direction : SafeDirection(light.direction);
+            const glm::vec3 color = resolved ? celestial->color : AuthoredSunColor(light);
+            const float intensity = resolved ? celestial->intensity : light.intensity;
+            // A body at zero intensity draws cascades nothing can see, so the flag
+            // carries the intensity as well as the author's wish. This is what
+            // makes polar night cost nothing: no lighting body, no shadow pass.
+            const bool castsShadows = resolved ? celestial->castsShadows && intensity > 0.f : light.castsShadows;
+
             _dirLights.push_back({
-                    .directionIntensity = {SafeDirection(light.direction), light.intensity},
-                    .colorPad           = {light.color, 0.f},
+                    .directionIntensity = {direction, intensity},
+                    .colorPad           = {color, 0.f},
                 });
+            _dirShadowFlags.push_back(AsShadowCaster(castsShadows));
         }
     }
 
@@ -109,12 +218,16 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     // Clamped for the same reason CullLights clamps its counts: Upload
     // truncates at capacity and the shader must not read past it.
     _dirLightCount = std::min(static_cast<uint32_t>(_dirLights.size()), Render::ClusterGrid::kMaxDirLights);
-    {
-        // CPU-side this is three buffer uploads plus a dispatch record, so it is
-        // measuring the upload — the cull itself is GPU time and lands in frame/gpu-ms.
-        ASSISI_PROFILE_GPU_SCOPE(commandList, "light-cull");
-        _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
-    }
+}
+
+void LightingSystem::Upload(nvrhi::ICommandList *commandList, const glm::mat4 &view)
+{
+    ASSISI_PROFILE_GPU_PASS(commandList, "lighting");
+
+    // CPU-side this is three buffer uploads plus a dispatch record, so it is
+    // measuring the upload — the cull itself is GPU time and lands in frame/gpu-ms.
+    ASSISI_PROFILE_GPU_SCOPE(commandList, "light-cull");
+    _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
 }
 
 } // namespace Assisi::Runtime

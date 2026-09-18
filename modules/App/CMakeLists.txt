@@ -8,9 +8,14 @@ target_sources(Assisi-App
     "include/Assisi/App/BlueprintVerbs.hpp"
     "include/Assisi/App/ChildProcess.hpp"
     "include/Assisi/App/ContentSet.hpp"
+    "include/Assisi/App/CookedAssets.hpp"
+    "include/Assisi/App/GameApp.hpp"
+    "include/Assisi/App/InputSetup.hpp"
     "include/Assisi/App/LevelRuntime.hpp"
     "include/Assisi/App/OptionsConfig.hpp"
+    "include/Assisi/App/SceneCamera.hpp"
     "include/Assisi/App/PhysicsSystems.hpp"
+    "include/Assisi/App/MotionSystems.hpp"
     "include/Assisi/App/SystemCatalog.hpp"
     "include/Assisi/App/SystemRegistry.hpp"
     "include/Assisi/App/World.hpp"
@@ -20,11 +25,18 @@ target_sources(Assisi-App
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
     "src/ChildProcess.cpp"
-    "src/ChiaraPanel.cpp"
+    "src/ChiaraCapture.cpp"
     "src/ContentSet.cpp"
+    "src/CookedAssets.cpp"
     "src/CrashReport.cpp"
+    "src/GameApp.cpp"
+    "src/InputSetup.cpp"
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
+    "src/SceneCamera.cpp"
+    "src/StartupScene.cpp"
+    "src/PerfCapture.cpp"
+    "src/MotionSystems.cpp"
     "src/PhysicsSystems.cpp"
     "src/SystemCatalog.cpp"
     "src/SystemRegistry.cpp"
@@ -36,12 +48,16 @@ target_include_directories(Assisi-App
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+# Assisi::Debug is deliberately absent, and so is any UI toolkit. Application
+# drives the frame but draws no UI of its own: OnRenderUi hands the last slot in
+# the frame to whoever overrode it, and that subclass links what it draws with.
+# An application that overrides nothing therefore contains no UI code at all,
+# which is what lets the Game executable ship without the editor's.
 target_link_libraries(Assisi-App
   PUBLIC
     Assisi::Core
     Assisi::Window
     Assisi::Render
-    Assisi::Debug
     Assisi::ECS
     Assisi::Runtime
     Assisi::Physics
@@ -64,7 +80,9 @@ endif()
 assisi_reflect(
   TARGET Assisi-App
   HEADERS
+    include/Assisi/App/AppConfig.hpp
     include/Assisi/App/PhysicsSystems.hpp
+    include/Assisi/App/MotionSystems.hpp
 )
 
 add_library(Assisi::App ALIAS Assisi-App)

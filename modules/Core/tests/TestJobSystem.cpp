@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -39,6 +40,49 @@ bool DrainMainUntil(JobSystem &jobs, Predicate predicate)
     return false;
 }
 } // namespace
+
+TEST_CASE("Shutdown returns only after every queued worker task has run")
+{
+    // An application stops its workers before the objects their tasks use are
+    // destroyed. A Shutdown that returned with a task still queued or running
+    // would let that task reach an object already gone.
+    constexpr uint32_t kWorkers = 2;
+    constexpr uint32_t kTasks   = 16;
+    constexpr std::chrono::milliseconds kTaskTime{5};
+
+    JobSystem jobs(kWorkers);
+    std::atomic<uint32_t> finished{0};
+    for (uint32_t i = 0; i < kTasks; ++i)
+    {
+        (void)jobs.Run(Pool::Worker,
+                       [&finished, kTaskTime]()
+                       {
+                           std::this_thread::sleep_for(kTaskTime);
+                           ++finished;
+                       });
+    }
+
+    jobs.Shutdown();
+    CHECK(finished.load() == kTasks);
+
+    // The destructor after an explicit Shutdown has nothing left to join.
+    jobs.Shutdown();
+}
+
+TEST_CASE("Shutdown releases what pending main-thread tasks hold")
+{
+    // A load finishing during shutdown queues a main-thread continuation that owns
+    // its GPU resources. Nothing will run it, and it must not keep those resources
+    // alive past the device that made them.
+    JobSystem jobs(1);
+    const auto held = std::make_shared<int32_t>(0);
+    jobs.RunOnMain([held]() { (void)held; });
+    REQUIRE(held.use_count() == 2);
+
+    jobs.Shutdown();
+    CHECK(held.use_count() == 1);
+    CHECK(jobs.MainQueueDepth() == 0);
+}
 
 TEST_CASE("JobSystem constructs with worker threads")
 {
@@ -399,11 +443,31 @@ TEST_CASE("Workers name themselves for the capture")
     }
 }
 
-TEST_CASE("A JobSystem built with the capture runtime down is harmless")
+TEST_CASE("A JobSystem built with the capture runtime down is harmless" * doctest::should_fail())
 {
     // The case that matters for every headless test and tool in the tree: no
     // Application, so no InitGuard, so worker registration happens with nothing
     // initialized. It must behave exactly as it does in a default build.
+    //
+    // Open, and a test-integrity finding: the precondition is destroyed
+    // by the case above, which calls Chiara::Initialize() and never undoes it.
+    // Chiara::Shutdown() would not help — it only clears the recording flag
+    // (Chiara.cpp:370); g_initialized stays set and the registered thread
+    // buffers stay in the list, so Initialize is one-way within a process. In an
+    // in-order run the capture runtime is therefore *up* here and this case
+    // exercises nothing it names.
+    //
+    // The assertion below is the same "runtime down" marker TestPreInit.cpp uses.
+    // The fix is not to change it: it is to move this case into a binary that
+    // never calls Initialize — the Assisi-Chiara-PreInit-Tests pattern, which
+    // exists for exactly this problem — after which the assertion holds and this
+    // decorator comes off.
+    //
+    // Run this case on its own (`-tc="*capture runtime down*"`) and it goes red
+    // with "should have failed but didn't" — the case above never ran, so the
+    // precondition holds. That is the finding stated backwards, not a flaky test.
+    CHECK(Assisi::Chiara::SnapshotThreads().empty());
+
     JobSystem jobs(2);
 
     std::atomic<int32_t> ran{0};

@@ -23,7 +23,7 @@ namespace Assisi::ECS
 /// @brief @p world's rotation alone, with scale divided out of each basis vector.
 ///
 /// Exact for uniform scale, which is what a blueprint instance root is
-/// constrained to (docs/blueprint-system-concept.md §3) — and a non-uniformly
+/// constrained to — and a non-uniformly
 /// scaled matrix has no exact rotation to extract in the first place, because the
 /// composition is a shear rather than a TRS.
 [[nodiscard]] inline glm::quat WorldRotationOf(const glm::mat4 &world)

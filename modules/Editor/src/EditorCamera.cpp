@@ -6,7 +6,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
-#include <Assisi/Render/IconPass.hpp>
+#include <Assisi/Editor/Overlay/IconPass.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -29,7 +29,18 @@ void EditorApp::HandleEntityPicking()
         !input.IsMouseCaptured() && !ImGuiWantsMouse() && !IsUsingGizmo())
     {
         float entityT = 0.f;
-        const Assisi::ECS::Entity picked  = PickEntity(input.MousePosition(), entityT);
+        Assisi::ECS::Entity picked = PickEntity(input.MousePosition(), entityT);
+
+        // A light's outline is clickable along the lines themselves, and competes
+        // on distance like anything else. Resolved before the eyedropper so it can
+        // be picked up as a reference the same way a meshed entity can.
+        float outlineT = 0.f;
+        const Assisi::ECS::Entity light = PickLightOutline(input.MousePosition(), outlineT);
+        if (light != Assisi::ECS::NullEntity && outlineT < entityT)
+        {
+            picked  = light;
+            entityT = outlineT;
+        }
 
         // An armed eyedropper consumes the click to fill its EntityRef field; the
         // selection does not move.
@@ -97,6 +108,18 @@ void EditorApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 
 void EditorApp::UpdateCamera(float dt)
 {
+    // The keys and the mouse belong to the session while one is running, and the
+    // two controllers read the same ones — WASD and mouse movement would fly the
+    // editor camera and walk the player at once, and the pose the author left
+    // would be gone when they stopped.
+    //
+    // Only while the session actually holds the cursor: F8 lends it back, and an
+    // author who has asked for the mouse wants the viewport controls with it.
+    if (_playState != PlayState::Editing && GetInput().IsMouseCaptured())
+    {
+        return;
+    }
+
     auto &input          = GetInput();
     const bool imguiWantsMouse = ImGuiWantsMouse();
 
@@ -213,6 +236,14 @@ glm::quat LookRotation(glm::vec3 forwardWanted)
 }
 } // namespace
 
+void EditorApp::AimCamera(const glm::vec3 &eye, const glm::vec3 &target)
+{
+    _cameraTransform.position = eye;
+    _cameraTransform.rotation = LookRotation(target - eye);
+    SyncYawPitchFromRotation();
+    RefreshCameraMatrix();
+}
+
 void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
@@ -285,13 +316,21 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     PickRay ray;
 
     RefreshCameraMatrix();
-    const glm::mat4 view   = Assisi::Runtime::ViewMatrix(_cameraTransform);
+
+    // Whichever camera the viewport is actually drawn from. While a play session
+    // looks through a scene camera, a ray built from the editor's own would select
+    // whatever sits under the cursor *in a view nobody is looking at*.
+    Assisi::Runtime::Transform viewPose;
+    Assisi::Runtime::Camera    viewCamera;
+    ViewCamera(viewPose, viewCamera);
+
+    const glm::mat4 view   = Assisi::Runtime::ViewMatrix(viewPose);
     const auto fbSize = GetWindow().GetFramebufferSize();
     const float w      = static_cast<float>(fbSize.Width);
     const float h      = static_cast<float>(fbSize.Height);
     if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
         return ray;
-    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(_camera, w / h);
+    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(viewCamera, w / h);
 
     const float ndcX    = (2.f * mousePos.x / w) - 1.f;
     const float ndcY    = 1.f - (2.f * mousePos.y / h);
@@ -300,13 +339,18 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     viewDir.w           = 0.f;
 
     ray.direction = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    ray.origin    = _cameraTransform.position;
+    ray.origin    = viewPose.position;
     // The camera's world basis, read out of the view matrix's rows. The billboards
     // are built from the same two axes, so a picked icon quad is exactly the drawn
     // one.
     ray.cameraRight = glm::vec3(view[0][0], view[1][0], view[2][0]);
     ray.cameraUp    = glm::vec3(view[0][1], view[1][1], view[2][1]);
-    ray.valid       = true;
+    // The same transform the overlay's lines are drawn through, so a screen-space
+    // pick measures against where a line actually landed rather than a second
+    // opinion about where it should have.
+    ray.viewProjection = projection * view;
+    ray.viewportSize   = glm::vec2(w, h);
+    ray.valid          = true;
     return ray;
 }
 
@@ -326,7 +370,7 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     if (!ray.valid)
         return {};
 
-    const float iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const float iconHalf = 0.5f * Assisi::Editor::kEntityIconWorldSize;
     Assisi::ECS::InstanceId result;
 
     // The same quad the renderer draws for an instance root — see
@@ -357,7 +401,7 @@ Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos, float &tOut)
     if (!_scene)
         return Assisi::ECS::NullEntity;
 
-    const float iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const float iconHalf = 0.5f * Assisi::Editor::kEntityIconWorldSize;
     return PickEntityInScene(*_scene, BuildPickRay(mousePos), iconHalf, &MeshPickBounds, tOut);
 }
 

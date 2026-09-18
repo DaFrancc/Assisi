@@ -87,6 +87,14 @@ public:
     /// @brief One bit. The unit that makes per-field change masks cheap.
     void WriteBool(bool value) { WriteBits(value ? 1u : 0u, 1); }
 
+    // The narrow widths write exactly their own bits, so a uint8_t field costs a
+    // byte on the wire rather than the four a promotion to uint32_t would spend.
+    // The signed forms go through the same two's-complement round trip the wider
+    // ones use: the bits are written raw and sign-extended on the way back.
+    void WriteUInt8(std::uint8_t value) { WriteBits(value, 8); }
+    void WriteInt8(std::int8_t value) { WriteBits(static_cast<std::uint8_t>(value), 8); }
+    void WriteUInt16(std::uint16_t value) { WriteBits(value, 16); }
+    void WriteInt16(std::int16_t value) { WriteBits(static_cast<std::uint16_t>(value), 16); }
     void WriteUInt32(std::uint32_t value) { WriteBits(value, 32); }
     void WriteInt32(std::int32_t value);
     void WriteUInt64(std::uint64_t value) { WriteBits64(value, 64); }
@@ -177,6 +185,10 @@ public:
     std::uint64_t ReadBits64(std::uint32_t bitCount);
 
     bool          ReadBool() { return ReadBits(1) != 0; }
+    std::uint8_t  ReadUInt8() { return static_cast<std::uint8_t>(ReadBits(8)); }
+    std::int8_t   ReadInt8() { return static_cast<std::int8_t>(static_cast<std::uint8_t>(ReadBits(8))); }
+    std::uint16_t ReadUInt16() { return static_cast<std::uint16_t>(ReadBits(16)); }
+    std::int16_t  ReadInt16() { return static_cast<std::int16_t>(static_cast<std::uint16_t>(ReadBits(16))); }
     std::uint32_t ReadUInt32() { return ReadBits(32); }
     std::int32_t  ReadInt32();
     std::uint64_t ReadUInt64() { return ReadBits64(64); }

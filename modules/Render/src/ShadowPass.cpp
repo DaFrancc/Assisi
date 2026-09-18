@@ -1,0 +1,282 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include <Assisi/Render/ShadowPass.hpp>
+
+#include <Assisi/Core/Logger.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
+
+#include <algorithm>
+
+namespace Assisi::Render
+{
+namespace
+{
+nvrhi::Format DepthFormat(ShadowMapFormat format)
+{
+    return format == ShadowMapFormat::D16 ? nvrhi::Format::D16 : nvrhi::Format::D32;
+}
+} // namespace
+
+bool ShadowPass::Initialize(const InitParams &params)
+{
+    _device = params.device;
+    _depthRenderer = params.depthRenderer;
+    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    {
+        return false;
+    }
+    return CreateNoCascadesTexture();
+}
+
+bool ShadowPass::CreateNoCascadesTexture()
+{
+    nvrhi::TextureDesc desc;
+    desc.width = 1;
+    desc.height = 1;
+    desc.arraySize = 1;
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
+    desc.format = nvrhi::Format::D32;
+    desc.isShaderResource = true;
+    // Never drawn into, but a depth-format image is sampled from the depth
+    // read-only layout, and Vulkan admits an image to that layout only if it
+    // was created usable as a depth attachment.
+    desc.isRenderTarget = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    desc.debugName = "ShadowPass::NoCascades";
+    _noCascadesTexture = _device->createTexture(desc);
+    if (_noCascadesTexture == nullptr)
+    {
+        Core::Log::Error("ShadowPass: failed to create the empty cascade texture.");
+        return false;
+    }
+    _cascadeTexture = _noCascadesTexture;
+    return true;
+}
+
+void ShadowPass::ReleaseTargets()
+{
+    _cascadeFramebuffers.clear();
+    _cascadeTexture = _noCascadesTexture;
+    _builtCascades = 0;
+    _builtResolution = 0;
+    ++_allocationGeneration;
+}
+
+bool ShadowPass::RebuildTargets()
+{
+    _cascadeFramebuffers.clear();
+
+    nvrhi::TextureDesc desc;
+    desc.width = _settings.resolution;
+    desc.height = _settings.resolution;
+    desc.arraySize = _settings.cascadeCount;
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
+    desc.format = DepthFormat(_settings.format);
+    desc.isRenderTarget = true;
+    desc.isShaderResource = true;
+    // Written as depth every frame and read as an SRV in the same frame; nvrhi's
+    // automatic barriers move it between the two and restore this on the way out.
+    desc.initialState = nvrhi::ResourceStates::DepthWrite;
+    desc.keepInitialState = true;
+    desc.debugName = "ShadowPass::Cascades";
+
+    nvrhi::TextureHandle texture = _device->createTexture(desc);
+    if (texture == nullptr)
+    {
+        Core::Log::Error("ShadowPass: failed to allocate the {}x{} x{} cascade array.", _settings.resolution,
+                         _settings.resolution, _settings.cascadeCount);
+        return false;
+    }
+
+    // One framebuffer per slice rather than one layered framebuffer: each
+    // cascade is drawn with its own matrix, so there is nothing for a
+    // layered pass to amortise without a geometry stage this does not have.
+    _cascadeFramebuffers.reserve(_settings.cascadeCount);
+    for (std::uint32_t i = 0; i < _settings.cascadeCount; ++i)
+    {
+        nvrhi::FramebufferDesc framebufferDesc;
+        framebufferDesc.setDepthAttachment(
+            nvrhi::FramebufferAttachment().setTexture(texture).setArraySlice(static_cast<nvrhi::ArraySlice>(i)));
+        nvrhi::FramebufferHandle framebuffer = _device->createFramebuffer(framebufferDesc);
+        if (framebuffer == nullptr)
+        {
+            Core::Log::Error("ShadowPass: failed to create the framebuffer for cascade {}.", i);
+            _cascadeFramebuffers.clear();
+            return false;
+        }
+        _cascadeFramebuffers.push_back(std::move(framebuffer));
+    }
+
+    _cascadeTexture = std::move(texture);
+    _builtCascades = _settings.cascadeCount;
+    _builtResolution = _settings.resolution;
+    _builtFormat = _settings.format;
+    ++_allocationGeneration;
+    return true;
+}
+
+bool ShadowPass::RebuildPipeline()
+{
+    if (_cascadeFramebuffers.empty())
+    {
+        return false;
+    }
+
+    // Sized against the map's texel, so raising the resolution narrows the gap
+    // the slope bias can open instead of widening it.
+    const float slopeBiasClamp = SlopeBiasClampNdc(_settings);
+
+    for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
+    {
+        _pipelines[index] = _depthRenderer->CreatePipeline(_cascadeFramebuffers.front(),
+                                                           static_cast<MeshPipeline>(index), _settings.slopeBias,
+                                                           slopeBiasClamp, ShadowProjection::Orthographic);
+    }
+    // The opaque single-sided class is the one nothing can do without: it is
+    // what every other class falls back to. A null masked entry is not a
+    // failure — the renderer simply carries no alpha-testing variant, and the
+    // cascades still render with cutouts casting their full silhouette.
+    if (_pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr)
+    {
+        return false;
+    }
+    _builtSlopeBias = _settings.slopeBias;
+    return true;
+}
+
+bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
+{
+    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    {
+        return false; // Initialize failed; the pass stays inactive for good
+    }
+
+    if (!active)
+    {
+        if (_active)
+        {
+            // Nothing wants shadows any more: give the memory back rather than
+            // holding a 4-cascade array against a scene with no sun in it.
+            ReleaseTargets();
+            _pipelines = {};
+            _active = false;
+        }
+        return true;
+    }
+
+    const SunShadowSettings safe = Sanitized(settings);
+    const bool targetsStale = _cascadeFramebuffers.empty() || safe.cascadeCount != _builtCascades ||
+                              safe.resolution != _builtResolution || safe.format != _builtFormat;
+    const bool pipelineStale = _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr ||
+                               safe.slopeBias != _builtSlopeBias;
+    _settings = safe;
+
+    if (!targetsStale && !pipelineStale)
+    {
+        _active = true;
+        return true;
+    }
+
+    if (targetsStale && !RebuildTargets())
+    {
+        ReleaseTargets();
+        _pipelines = {};
+        _active = false;
+        return false;
+    }
+    // A new array means new framebuffers, and a pipeline is built against one.
+    if ((targetsStale || pipelineStale) && !RebuildPipeline())
+    {
+        ReleaseTargets();
+        _pipelines = {};
+        _active = false;
+        return false;
+    }
+
+    _active = true;
+    return true;
+}
+
+ShadowPipelines ShadowPass::PipelineSet() const
+{
+    ShadowPipelines set;
+    for (std::uint32_t index = 0; index < kMeshPipelineCount; ++index)
+    {
+        set.byPipeline[index] = _pipelines[index];
+    }
+    return set;
+}
+
+ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const CascadeFit &fit,
+                                     std::span<const std::uint32_t> redraw,
+                                     std::span<const ShadowCaster> casters) const
+{
+    Stats stats;
+    if (!IsActive() || commandList == nullptr || fit.count == 0)
+    {
+        return stats;
+    }
+
+    const std::uint32_t cascadeCount = std::min<std::uint32_t>(fit.count, _builtCascades);
+
+    ASSISI_PROFILE_GPU_PASS(commandList, "shadow-cascades");
+
+    // The pass is a fixed setup cost per cascade plus whatever the geometry
+    // costs; separating them says whether a jump came from raising the cascade
+    // count or from the scene.
+    {
+        ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-clears");
+        _scratchTargets.clear();
+        _scratchTargets.reserve(redraw.size());
+        for (const std::uint32_t cascade : redraw)
+        {
+            if (cascade >= cascadeCount)
+            {
+                continue; // a cascade the allocation does not have
+            }
+            // Cleared because it is about to be redrawn, and only then: a slice
+            // this frame is keeping holds depth that is still what the fit
+            // describes, and clearing it would blank a shadow nothing asked to
+            // lose. The clear is this pass's business rather than the
+            // renderer's, which is what makes the two policies separable.
+            commandList->clearDepthStencilTexture(
+                _cascadeTexture, nvrhi::TextureSubresourceSet(0, 1, static_cast<nvrhi::ArraySlice>(cascade), 1), true,
+                1.0f, false, 0);
+
+            _scratchTargets.push_back(
+                ShadowDepthTarget{.view = CascadeShadowView(fit.cascades[cascade], cascade, _settings),
+                                  .framebuffer = _cascadeFramebuffers[cascade]});
+        }
+    }
+
+    ShadowDepthRenderer::Stats drawn;
+    {
+        ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-depth");
+        drawn = _depthRenderer->Render(commandList, PipelineSet(), _scratchTargets, casters);
+    }
+
+    _firstView = drawn.firstView;
+    stats.cascades = drawn.views;
+    stats.cascadesKept = cascadeCount - std::min(cascadeCount, drawn.views);
+    stats.instances = drawn.instances;
+    stats.batches = drawn.batches;
+    stats.maskedBatches = drawn.maskedBatches;
+    stats.drawCalls = drawn.drawCalls;
+    stats.culled = drawn.culled;
+    // Read back by the index each cascade was *submitted* at, then filed under
+    // the cascade it was. The two are only the same when every cascade is being
+    // drawn, and reading this list by cascade index would otherwise credit a far
+    // cascade's casters to a near one.
+    if (_cascadeCounts)
+    {
+        const ShadowDrawList &list = _depthRenderer->LastDrawList();
+        for (std::uint32_t target = 0; target < _scratchTargets.size(); ++target)
+        {
+            stats.cascadeCasters[_scratchTargets[target].view.arraySlice] = ShadowViewCasterCount(list, target);
+        }
+    }
+    return stats;
+}
+
+} // namespace Assisi::Render

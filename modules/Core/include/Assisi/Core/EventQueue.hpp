@@ -24,7 +24,7 @@
 ///     Update          → Read<CollisionEvent>()  ← visible, same frame as FixedUpdate
 ///     PostUpdate      → reads whatever Update pushed
 ///
-///   RenderFrame + OnImGui
+///   RenderFrame + OnRenderUi
 ///     (events pushed here are NOT visible to systems this frame —
 ///      they are flushed at end of frame before systems run again)
 ///

@@ -52,7 +52,7 @@ bool ProbeWritable(const std::filesystem::path &path) noexcept
 
     if (!writable)
     {
-        Core::Log::Warn("Crash reports cannot be written to {} — this run will produce none.", path.string());
+        Core::Log::Warn("Crash reports cannot be written to {} - this run will produce none.", path.string());
     }
     return writable;
 }
@@ -169,7 +169,7 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
     }
     else
     {
-        Core::Log::Warn("Crash report path is too long ({} bytes) — dumps disabled.", text.size());
+        Core::Log::Warn("Crash report path is too long ({} bytes) - dumps disabled.", text.size());
     }
 
     SetUnhandledExceptionFilter(ExceptionFilter);
@@ -414,7 +414,7 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
     }
     else
     {
-        Core::Log::Warn("Crash report path is too long ({} bytes) — crash reports disabled.", text.size());
+        Core::Log::Warn("Crash report path is too long ({} bytes) - crash reports disabled.", text.size());
     }
 
     // Warm the unwinder while allocating is still safe: its first call dlopens
@@ -437,7 +437,7 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
     altStack.ss_flags = 0;
     if (sigaltstack(&altStack, nullptr) != 0)
     {
-        Core::Log::Warn("sigaltstack failed — a stack-overflow crash will not be reported.");
+        Core::Log::Warn("sigaltstack failed - a stack-overflow crash will not be reported.");
     }
 
     struct sigaction action {};

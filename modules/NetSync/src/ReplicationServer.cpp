@@ -39,7 +39,7 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     const std::uint32_t effectiveHz = static_cast<std::uint32_t>(_config.tickRateHz / _snapshotDiv);
     if (effectiveHz != _config.snapshotHz)
     {
-        Core::Log::Info("NetSync: snapshot rate {} Hz is not a divisor of the {} Hz tick rate — using {} Hz.",
+        Core::Log::Info("NetSync: snapshot rate {} Hz is not a divisor of the {} Hz tick rate - using {} Hz.",
                         _config.snapshotHz, _config.tickRateHz, effectiveHz);
         _config.snapshotHz = effectiveHz;
     }
@@ -62,14 +62,14 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
         const Core::Reflect::ComponentMeta *meta = registry.Find(name);
         if (meta == nullptr)
         {
-            Core::Log::Warn("NetSync: 'neverReplicate' names '{}', which no registered component matches — "
+            Core::Log::Warn("NetSync: 'neverReplicate' names '{}', which no registered component matches - "
                             "ignoring it. Was the type renamed?",
                             name);
             continue;
         }
         if (!meta->replicable)
         {
-            Core::Log::Info("NetSync: 'neverReplicate' names '{}', which is not ACOMP(replicable) anyway — it was "
+            Core::Log::Info("NetSync: 'neverReplicate' names '{}', which is not ACOMP(replicable) anyway - it was "
                             "never going to be sent.",
                             name);
             continue;
@@ -120,7 +120,7 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     if (_config.relevancy.provider == RelevancyConfig::Provider::Distance)
     {
         _relevancy = std::make_unique<DistanceRelevancy>(_config.relevancy);
-        Core::Log::Info("NetSync: relevancy is distance-based — enter {} m, exit {} m, dwell {} ticks.",
+        Core::Log::Info("NetSync: relevancy is distance-based - enter {} m, exit {} m, dwell {} ticks.",
                         static_cast<double>(_config.relevancy.radius),
                         static_cast<double>(_config.relevancy.exitRadius), _config.relevancy.dwellTicks);
     }
@@ -142,7 +142,7 @@ void ReplicationServer::StripAuthoredControl()
 
     if (!authored.empty())
     {
-        Core::Log::Info("NetSync: stripped {} authored ControlledBy component{} at session start — control is "
+        Core::Log::Info("NetSync: stripped {} authored ControlledBy component{} at session start - control is "
                         "assigned at runtime, never saved.",
                         authored.size(), authored.size() == 1 ? "" : "s");
     }
@@ -432,7 +432,7 @@ NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
     // with the definition is a bug; a colliding NetId is a corrupt mirror.
     if (tag->memberIndex >= it->second.memberCount)
     {
-        Core::Log::Error("Replication: instance {} member index {} is outside its block of {} — "
+        Core::Log::Error("Replication: instance {} member index {} is outside its block of {} - "
                          "replicating it as a loose entity",
                          tag->instanceId, tag->memberIndex, it->second.memberCount);
         return InvalidNetId;

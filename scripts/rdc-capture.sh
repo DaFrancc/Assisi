@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Launch the sandbox under RenderDoc so a frame can be captured with F12.
+# Launch the editor under RenderDoc so a frame can be captured with F12.
 #
 # Exists because two things about this are not guessable, and both fail in ways
-# that look like an engine bug rather than a tooling one — see
-# docs/gpu-profiling-guide.md for the long version:
+# that look like an engine bug rather than a tooling one:
 #
 #   1. RenderDoc cannot capture Wayland. It does not expose
 #      VK_KHR_wayland_surface, so window creation fails outright with
@@ -22,7 +21,7 @@
 
 set -euo pipefail
 
-BUILD_DIR="out/build/gcc-ship-chiara/apps/sandbox"
+BUILD_DIR="out/build/gcc-ship-chiara/apps/game"
 OUT_DIR="$(pwd)/captures-rdc"
 APP_ARGS=(-l levels/Lights.alvl)
 
@@ -41,8 +40,8 @@ command -v renderdoccmd >/dev/null || {
     exit 1
 }
 
-[[ -x "$BUILD_DIR/Assisi-Sandbox" ]] || {
-    echo "no Assisi-Sandbox in $BUILD_DIR — build it first with: make gs-c" >&2
+[[ -x "$BUILD_DIR/Assisi-GameEditor" ]] || {
+    echo "no Assisi-GameEditor in $BUILD_DIR — build it first with: make gs-c" >&2
     exit 1
 }
 
@@ -66,4 +65,4 @@ exec env \
     WAYLAND_DISPLAY=nonexistent-sock \
     XDG_SESSION_TYPE=x11 \
     DISPLAY="${DISPLAY:-:0}" \
-    renderdoccmd capture -w -c "$OUT_DIR/assisi" ./Assisi-Sandbox "${APP_ARGS[@]}"
+    renderdoccmd capture -w -c "$OUT_DIR/assisi" ./Assisi-GameEditor "${APP_ARGS[@]}"

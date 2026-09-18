@@ -48,13 +48,46 @@ TEST_CASE("RemoveBody refuses a default-constructed handle instead of passing it
     // `operator[]` produces on a miss, and what a caller iterating its records at
     // teardown would hand over without ever looking at it.
     const Physics::RigidBody unnamed;
-    REQUIRE(unnamed.bodyId.IsInvalid());
+    REQUIRE_FALSE(unnamed.bodyId.IsValid());
 
     world.RemoveBody(unnamed);
     // Twice, because a guard that only worked by luck the first time — say one
     // that erased bookkeeping before checking — would not survive being asked
     // again with nothing left to erase.
     world.RemoveBody(unnamed);
+}
+
+TEST_CASE("GetBodyTransform refuses a handle that names nothing, like its sibling accessors")
+{
+    // GetBodyTransform is the one accessor with no `IsAdded` guard —
+    // GetBodyVelocity and IsBodyCCDEnabled both check first, and RemoveBody
+    // checks the handle names something. This pins what the unguarded path
+    // actually does with the two handles a caller can hold by mistake, so the
+    // guard can be added without guessing at the behaviour it has to preserve.
+    Physics::PhysicsWorld world;
+
+    const Physics::RigidBody unnamed;
+    REQUIRE_FALSE(unnamed.bodyId.IsValid());
+
+    const auto [position, rotation] = world.GetBodyTransform(unnamed);
+    CHECK(position == glm::vec3(0.f));
+    CHECK(rotation.w == doctest::Approx(1.f)); // identity, not garbage
+
+    // The other reachable shape: a handle that named a real body until it was
+    // removed. The velocity accessor answers zero for this one by contract.
+    const Physics::RigidBody removed =
+        world.AddBody(Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {3.f, 4.f, 5.f}}, kBall,
+                      Physics::BodyMotion::Dynamic, {});
+    REQUIRE(removed.bodyId.IsValid());
+    world.RemoveBody(removed);
+
+    const auto [staleLinear, staleAngular] = world.GetBodyVelocity(removed);
+    CHECK(staleLinear == glm::vec3(0.f));
+    CHECK(staleAngular == glm::vec3(0.f));
+
+    const auto [stalePosition, staleRotation] = world.GetBodyTransform(removed);
+    CHECK(stalePosition == glm::vec3(0.f));
+    CHECK(staleRotation.w == doctest::Approx(1.f));
 }
 
 TEST_CASE("removing a handle that names nothing leaves the bodies that do alone")
@@ -66,14 +99,15 @@ TEST_CASE("removing a handle that names nothing leaves the bodies that do alone"
     Physics::PhysicsWorld world;
 
     const Physics::RigidBody ground =
-        world.AddBody({0.f, -1.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+        world.AddBody(Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
                       Physics::PhysicsWorld::ColliderShapeDesc{.shape       = Physics::ColliderShape::Box,
                                                                .halfExtents = {20.f, 1.f, 20.f}},
-                      Physics::BodyMotion::Static);
+                      Physics::BodyMotion::Static, {});
     const Physics::RigidBody falling =
-        world.AddBody({0.f, 4.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f}, kBall, Physics::BodyMotion::Dynamic);
-    REQUIRE_FALSE(ground.bodyId.IsInvalid());
-    REQUIRE_FALSE(falling.bodyId.IsInvalid());
+        world.AddBody(Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 4.f, 0.f}}, kBall,
+                      Physics::BodyMotion::Dynamic, {});
+    REQUIRE(ground.bodyId.IsValid());
+    REQUIRE(falling.bodyId.IsValid());
 
     world.Update(kStep);
     world.CaptureState();
