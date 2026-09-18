@@ -24,6 +24,7 @@
 #include <vector>
 
 #include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/TestSystems.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -40,6 +41,8 @@
 #include "LogCapture.hpp"
 
 using namespace Assisi::App;
+
+using Assisi::App::Test::StartContext;
 
 TEST_CASE("WorldManager generates unique names from the label")
 {
@@ -363,7 +366,12 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
     CHECK(worlds.Edited() == &authored);
 
     // --- a travel that fails -------------------------------------------------
+    // The log has to say which of the refusals this was. "Travel failed" alone
+    // reads the same whether the file is absent, malformed, or a version this
+    // build does not read, and those are three different repairs.
+    const Assisi::Tests::LogCapture log;
     CHECK(worlds.LoadLevel("levels/DoesNotExist.alvl") == nullptr);
+    CHECK(log.Mentions(Assisi::Runtime::Describe(Assisi::Runtime::LevelError::FileUnreadable)));
     CHECK(worlds.Active() == inA2); // still playing exactly where we were
     CHECK(worlds.Count() == 2u);    // no half-created world left behind
 
@@ -532,7 +540,7 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
     Assisi::Core::JobSystem jobs;
 
     WorldManager worlds;
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
     worlds.SetEdited(start);
@@ -611,7 +619,7 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
 
     Assisi::Core::JobSystem jobs;
     WorldManager worlds;
-    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
     worlds.SetEdited(start);
@@ -767,6 +775,25 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     CHECK(Runs(world, "Follower") == 1);
 }
 
+TEST_CASE("A render system's after/before survives the install")
+{
+    Assisi::App::Test::RunOrder::Instance().Reset();
+
+    WorldManager worlds;
+    World &world = worlds.Create("RenderOrdered");
+
+    // Named the wrong way round, as the Update pair above is: DrawLate declares
+    // `after = DrawEarly`, so the list cannot reorder them. Render systems install
+    // through RegisterRender rather than Register, which is a second path the
+    // constraint has to survive.
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"DrawLate", "DrawEarly"}, "(test)"));
+
+    world.systems.RunRender(RenderContext{world.scene, 0.016f, glm::mat4(1.f), glm::mat4(1.f)});
+
+    CHECK(Assisi::App::Test::RunOrder::Instance().Names() ==
+          std::vector<std::string>{"DrawEarly", "DrawLate"});
+}
+
 TEST_CASE("Re-applying a list replaces the previous systems rather than stacking them")
 {
     Assisi::Core::EventQueue events;
@@ -807,7 +834,7 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
 
     // The survivor is still owed exactly its own install, and draining it is not
     // a walk over anything the dead world could still be in.
-    DrainSystemInstalls(survivor);
+    DrainSystemInstalls(StartContext(survivor));
     CHECK(survivor.systems.Has("Follower"));
     CHECK_FALSE(survivor.systems.Has("Counter"));
     CHECK(survivor.pendingSystems.names.empty());
@@ -832,7 +859,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     REQUIRE(worlds.ApplySystems(world, {}, "levels/New.alvl"));
     CHECK(world.pendingSystems.names.empty());
 
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
     CHECK_FALSE(world.systems.Has("Counter"));
     CHECK_FALSE(world.systems.Has("Follower"));
     TickUpdate(world, events);
@@ -854,7 +881,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
 
     CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Nonexistent"}, "levels/Bad.alvl"));
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
 
     CHECK(world.systems.Has("Counter"));
     CHECK(world.systems.Has("Follower"));
@@ -879,9 +906,9 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     // The first spawn to open the queue owns the diagnostic.
     CHECK(world.pendingSystems.context == "car.abp");
 
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
     CHECK(world.pendingSystems.names.empty());
-    DrainSystemInstalls(world);
+    DrainSystemInstalls(StartContext(world));
 
     Assisi::Core::EventQueue events;
     TickUpdate(world, events);

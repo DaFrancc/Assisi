@@ -186,7 +186,8 @@ struct PerfCaptureConfig
     /// can still say what it measured.
     std::string levelPath;
 
-    /// Resolution to render at, overriding game.json. 0 leaves the configured
+    /// Resolution to render at, overriding both the shipped size and the
+    /// player's. 0 leaves the configured
     /// size alone. The ledger wants both 1440p (the dev machine) and 1080p (the
     /// modal Steam display), so switching between them has to be a flag rather
     /// than an edit to a committed config file.

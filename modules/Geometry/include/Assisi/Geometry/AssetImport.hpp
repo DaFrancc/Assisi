@@ -61,13 +61,6 @@ std::string_view ToString(MaterialWriteError error) noexcept;
 /// it, so reconcile-not-clobber does not apply. The `.aast` beside it is never
 /// read or written, which is what preserves the asset's identity across a save —
 /// every level referencing it holds that GUID and nothing else.
-///
-/// The body is also mirrored into the authoring root when one is configured
-/// (dev builds — see AssetSystem::SetAuthoringRoot). Without that an authored
-/// material would live only in the staged asset copy, which the next clean build
-/// deletes. This differs from the sidecar mirror, which declines to write a file
-/// the durable tree does not already have: a sidecar may describe a build
-/// artifact, whereas an authored `.amat` *is* source.
 [[nodiscard]] std::expected<void, MaterialWriteError> SaveMaterial(std::string_view virtualPath,
                                                                    const MaterialData &material);
 

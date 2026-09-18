@@ -3,17 +3,21 @@
     {
       "components": {
         "DirectionalLight": {
+          "castsShadows": true,
           "color": [
             1.0,
             1.0,
             1.0
           ],
+          "colorExpression": 0,
           "direction": [
-            -0.4,
+            -0.4000000059604645,
             -1.0,
             -0.5
           ],
-          "intensity": 0.5
+          "intensity": 0.5,
+          "temperatureKelvin": 5778.0,
+          "tintedBySky": true
         }
       },
       "name": "Entity"
@@ -21,6 +25,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -33,13 +38,18 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
           "enableCCD": true,
           "halfExtents": [
             5.0,
             0.25,
             5.0
           ],
-          "isStatic": true
+          "halfHeight": 0.5,
+          "isStatic": true,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -65,6 +75,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -77,13 +88,18 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
           "enableCCD": true,
           "halfExtents": [
             0.5,
             0.5,
             0.5
           ],
-          "isStatic": false
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -92,10 +108,10 @@
             0.0
           ],
           "rotation": [
-            0.8536,
-            0.3536,
-            0.1464,
-            0.3536
+            0.853600025177002,
+            0.35359999537467957,
+            0.14640000462532043,
+            0.35359999537467957
           ],
           "scale": [
             1.0,
@@ -109,6 +125,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -121,12 +138,18 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
+          "enableCCD": false,
           "halfExtents": [
             0.5,
             0.5,
             0.5
           ],
-          "isStatic": false
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -152,6 +175,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -164,12 +188,18 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
+          "enableCCD": false,
           "halfExtents": [
             0.5,
             0.5,
             0.5
           ],
-          "isStatic": false
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -195,6 +225,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -207,12 +238,18 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
+          "enableCCD": false,
           "halfExtents": [
             0.5,
             0.5,
             0.5
           ],
-          "isStatic": false
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -238,13 +275,16 @@
     {
       "components": {
         "PointLight": {
+          "castsShadows": true,
           "color": [
             1.0,
             1.0,
             1.0
           ],
           "intensity": 150.0,
-          "radius": 8.0
+          "radius": 8.0,
+          "shadowAlwaysOn": false,
+          "shadowPriority": 0.0
         },
         "Transform": {
           "position": [
@@ -270,13 +310,16 @@
     {
       "components": {
         "PointLight": {
+          "castsShadows": true,
           "color": [
-            0.2,
-            0.4,
+            0.20000000298023224,
+            0.4000000059604645,
             1.0
           ],
           "intensity": 200.0,
-          "radius": 50.0
+          "radius": 50.0,
+          "shadowAlwaysOn": false,
+          "shadowPriority": 0.0
         },
         "Transform": {
           "position": [
@@ -302,13 +345,16 @@
     {
       "components": {
         "PointLight": {
+          "castsShadows": true,
           "color": [
             1.0,
-            0.1,
-            0.1
+            0.10000000149011612,
+            0.10000000149011612
           ],
           "intensity": 200.0,
-          "radius": 30.0
+          "radius": 30.0,
+          "shadowAlwaysOn": false,
+          "shadowPriority": 0.0
         },
         "Transform": {
           "position": [
@@ -334,6 +380,7 @@
     {
       "components": {
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -371,39 +418,11 @@
     },
     {
       "components": {
-        "Camera": {
-          "farZ": 200.0,
-          "fovDegrees": 60.0,
-          "isActive": true,
-          "nearZ": 0.1
-        },
-        "Transform": {
-          "position": [
-            0.0,
-            3.0,
-            8.0
-          ],
-          "rotation": [
-            0.984,
-            -0.179,
-            0.0,
-            0.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "name": "Entity_10"
-    },
-    {
-      "components": {
         "Bounce": {
-          "rebound": 0.8
+          "rebound": 0.800000011920929
         },
         "MeshRenderer": {
+          "castsShadows": true,
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
@@ -416,13 +435,18 @@
           }
         },
         "RigidBodyDescriptor": {
+          "channel": 0,
+          "collidesWith": 31,
           "enableCCD": true,
           "halfExtents": [
-            0.3,
-            0.3,
-            0.3
+            0.30000001192092896,
+            0.30000001192092896,
+            0.30000001192092896
           ],
-          "isStatic": false
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
         },
         "Transform": {
           "position": [
@@ -437,18 +461,45 @@
             0.0
           ],
           "scale": [
-            0.6,
-            0.6,
-            0.6
+            0.6000000238418579,
+            0.6000000238418579,
+            0.6000000238418579
           ]
         }
       },
-      "name": "Entity_11"
+      "name": "Entity_10"
+    }
+  ],
+  "instances": [
+    {
+      "name": "Player",
+      "source": "blueprints/Player.abp",
+      "transform": {
+        "position": [
+          -0.3029193878173828,
+          2.185513973236084,
+          2.3160159587860107
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
     }
   ],
   "systems": [
     "Bounce",
-    "InputDemo"
+    "CaptureCursor",
+    "CursorToggle",
+    "InputDemo",
+    "PrettyTravel"
   ],
   "version": 2
 }

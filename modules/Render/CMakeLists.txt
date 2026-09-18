@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-Render)
 target_sources(Assisi-Render
   PUBLIC
     "include/Assisi/Render/AssetCache.hpp"
+    "include/Assisi/Render/AssetSource.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/Celestial.hpp"
     "include/Assisi/Render/DrawItem.hpp"
@@ -16,7 +17,6 @@ target_sources(Assisi-Render
     "include/Assisi/Render/LocalShadowCache.hpp"
     "include/Assisi/Render/LocalShadowPass.hpp"
     "include/Assisi/Render/Material.hpp"
-    "include/Assisi/Render/LinePass.hpp"
     "include/Assisi/Render/MeshBuffer.hpp"
     "include/Assisi/Render/MeshCuller.hpp"
     "include/Assisi/Render/MeshPass.hpp"
@@ -49,6 +49,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/Vulkan/VulkanContext.hpp"
   PRIVATE
     "src/AssetCache.cpp"
+    "src/AssetSource.cpp"
     "src/ShaderModule.cpp"
     "src/ClusterGrid.cpp"
     "src/ComputeShader.cpp"
@@ -62,9 +63,6 @@ target_sources(Assisi-Render
     "src/GpuMarker.cpp"
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
-    "src/OutlinePass.cpp"
-    "src/IconPass.cpp"
-    "src/LinePass.cpp"
     "src/PostProcess.cpp"
     "src/SceneDistancePass.cpp"
     "src/ShadowAtlas.cpp"
@@ -93,6 +91,9 @@ target_link_libraries(Assisi-Render
     Assisi::Math
     # Geometry owns MeshData (exposed in MeshBuffer's API) and the mesh importer.
     Assisi::Geometry
+    # Image owns DecodedImage and the layout arithmetic, both of which Texture's
+    # API exposes; the codecs behind them stay private to that module.
+    Assisi::Image
     Assisi::Window
     Assisi::Deps
     # nvrhi_vk (Vulkan backend) references symbols defined in nvrhi (common),
@@ -104,9 +105,6 @@ target_link_libraries(Assisi-Render
     # GpuTelemetry dlopen()s NVML at runtime; dl is needed on Linux (no-op alias
     # on platforms that fold it into libc).
     ${CMAKE_DL_LIBS}
-    # WebP decode (Texture::DecodeAnimatedWebp). webpdemux pulls in the base
-    # `webp` decoder it depends on, so listing it alone is enough.
-    webpdemux
 )
 
 # PUBLIC for the same reason Chiara's gate is: GpuMarker.hpp is header-only, so

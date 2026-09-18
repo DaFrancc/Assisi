@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -39,6 +40,49 @@ bool DrainMainUntil(JobSystem &jobs, Predicate predicate)
     return false;
 }
 } // namespace
+
+TEST_CASE("Shutdown returns only after every queued worker task has run")
+{
+    // An application stops its workers before the objects their tasks use are
+    // destroyed. A Shutdown that returned with a task still queued or running
+    // would let that task reach an object already gone.
+    constexpr uint32_t kWorkers = 2;
+    constexpr uint32_t kTasks   = 16;
+    constexpr std::chrono::milliseconds kTaskTime{5};
+
+    JobSystem jobs(kWorkers);
+    std::atomic<uint32_t> finished{0};
+    for (uint32_t i = 0; i < kTasks; ++i)
+    {
+        (void)jobs.Run(Pool::Worker,
+                       [&finished, kTaskTime]()
+                       {
+                           std::this_thread::sleep_for(kTaskTime);
+                           ++finished;
+                       });
+    }
+
+    jobs.Shutdown();
+    CHECK(finished.load() == kTasks);
+
+    // The destructor after an explicit Shutdown has nothing left to join.
+    jobs.Shutdown();
+}
+
+TEST_CASE("Shutdown releases what pending main-thread tasks hold")
+{
+    // A load finishing during shutdown queues a main-thread continuation that owns
+    // its GPU resources. Nothing will run it, and it must not keep those resources
+    // alive past the device that made them.
+    JobSystem jobs(1);
+    const auto held = std::make_shared<int32_t>(0);
+    jobs.RunOnMain([held]() { (void)held; });
+    REQUIRE(held.use_count() == 2);
+
+    jobs.Shutdown();
+    CHECK(held.use_count() == 1);
+    CHECK(jobs.MainQueueDepth() == 0);
+}
 
 TEST_CASE("JobSystem constructs with worker threads")
 {

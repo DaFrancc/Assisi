@@ -123,7 +123,7 @@ Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
 void EditorApp::FailJoin(std::string reason)
 {
     _netError = reason;
-    Assisi::Core::Log::Error("Editor: join failed — {}", reason);
+    Assisi::Core::Log::Error("Editor: join failed - {}", reason);
     if (_netSession)
         _netSession->AbortJoin(std::move(reason));
     _joinPhase = JoinPhase::None;
@@ -176,7 +176,7 @@ void EditorApp::BuildJoinedWorld()
     Assisi::Runtime::LevelHeader header;
     const auto reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
                                                              : Assisi::App::AssetCacheReset::ClearFirst;
-    const Assisi::App::LevelServices services{_assetCache, _assetDatabase, _sceneRenderer};
+    const Assisi::App::LevelServices services{_assetCache, _sceneRenderer};
     const Assisi::App::LevelLoadOptions options{.reset = reset, .header = &header};
     const Assisi::Runtime::LevelResult loaded =
         level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
@@ -223,7 +223,7 @@ void EditorApp::BuildJoinedWorld()
     _netSession->ConfirmLevelReady();
     _joinPhase = JoinPhase::Live;
     _netError.clear();
-    Assisi::Core::Log::Info("Editor: joined — built '{}' and answered the handshake.", level.path);
+    Assisi::Core::Log::Info("Editor: joined - built '{}' and answered the handshake.", level.path);
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +395,7 @@ void EditorApp::PollNetSession(float dt)
 
         _joinElapsed += dt;
         if (_joinElapsed >= kJoinTimeoutSeconds)
-            FailJoin("no answer from the host — check the address and that it is hosting.");
+            FailJoin("no answer from the host - check the address and that it is hosting.");
     }
 }
 
@@ -649,7 +649,7 @@ void EditorApp::DrawNetworkWindow()
                 const bool vetoed = std::find(_netVetoedComponentNames.begin(), _netVetoedComponentNames.end(),
                                               meta->name) != _netVetoedComponentNames.end();
                 if (vetoed)
-                    ImGui::TextDisabled("%s — vetoed by game.json", meta->name.c_str());
+                    ImGui::TextDisabled("%s — vetoed by the network config", meta->name.c_str());
                 else
                     ImGui::BulletText("%s", meta->name.c_str());
             }
@@ -708,7 +708,7 @@ void EditorApp::DrawNetworkWindow()
             NetCounterRow("Intents rate-limited", stats.intentsRateLimited,
                           "A client exceeding the per-type ceiling. Dropped before the payload is decoded.");
             NetCounterRow("Intents stale", stats.intentsStale,
-                          "A client tick outside the accepted window — too old to act on, or too far ahead "
+                          "A client tick outside the accepted window - too old to act on, or too far ahead "
                           "to have happened.");
             NetCounterRow("Intents unhandled", stats.intentsUnhandled,
                           "A registered message type with no AMSG_HANDLER. Normal if deliberate.");

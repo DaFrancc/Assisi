@@ -54,9 +54,9 @@ struct CapturingSink final : Sink
 
 TEST_CASE("The default level follows the build configuration")
 {
-    // Developer builds keep everything; a shipped log starts at the narrative
-    // and leaves out instrumentation aimed at whoever wrote the code.
-#ifdef ASSISI_SHIPPING_BUILD
+    // Debug and dev builds keep everything; a Release log starts at the
+    // narrative and leaves out instrumentation aimed at whoever wrote the code.
+#ifdef ASSISI_RELEASE_BUILD
     CHECK(DefaultMinLevel() == LogLevel::Info);
     CHECK_FALSE(GetLogger().IsEnabled(LogLevel::Debug));
 #else

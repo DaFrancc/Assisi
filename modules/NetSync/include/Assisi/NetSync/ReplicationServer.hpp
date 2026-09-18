@@ -214,7 +214,7 @@ public:
     {
         static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
                       "SubmitLocalIntent takes an AMSG(intent, ...). An event is the authority speaking, "
-                      "and the host is the authority — send it, do not submit it.");
+                      "and the host is the authority - send it, do not submit it.");
         DispatchLocalIntent(&intent, typeid(T));
     }
 

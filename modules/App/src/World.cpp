@@ -28,7 +28,7 @@ bool WorldManager::RefuseWhileIterating(std::string_view what) const
     if (_iterationDepth == 0)
         return false;
 
-    Core::Log::Error("WorldManager: {} was called while iterating the resident worlds — refusing, "
+    Core::Log::Error("WorldManager: {} was called while iterating the resident worlds - refusing, "
                      "because it would invalidate the walk and can destroy the world whose code is "
                      "running. Game logic changes level with RequestTravel(); the host applies it "
                      "at the next frame safe point.",
@@ -117,6 +117,13 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // from empty.
     world.systems.Clear();
 
+    // The run marks went with the entries, so this world has not begun as far as
+    // its systems are concerned — and the progress has to agree, or a world whose
+    // systems were replaced would never begin again while still counting as
+    // settled. This is what makes the editor's Stop → Play run Begin a second
+    // time: Stop re-applies the pre-play list, which lands here.
+    world.start = StartProgress::NotBegun;
+
     // An empty list is the normal case, not a warning: the clear above is the
     // whole job.
     SystemCatalog::Instance().ApplyResolved(world, resolved);
@@ -135,8 +142,38 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
 
     incoming.levelPath = std::move(levelPath);
     incoming.state     = WorldState::Active;
-    incoming.simulate  = true;
     _active            = &incoming;
+
+    // The one place a world stops being merely resident and becomes the one being
+    // run, which is why starting it belongs here rather than at each caller:
+    // travel, a promoted preload and the game's first load all arrive through
+    // this function, and a fourth route added later cannot forget.
+    //
+    // It is also why the editor's authoring load is untouched by any of this —
+    // opening a level to edit replaces the scene in the world it already has and
+    // never comes through here, so level-start logic cannot run over a scene
+    // somebody is composing.
+    if (_services.events != nullptr)
+    {
+        // dt and the tick are zero because no frame has run yet; everything else
+        // is what any other phase would get.
+        BeginWorld({.world         = incoming,
+                    .dt            = 0.f,
+                    .simTick       = 0,
+                    .input         = _services.input,
+                    .actions       = _services.actions,
+                    .events        = *_services.events,
+                    .isActiveWorld = true,
+                    .worldManager  = this},
+                   _simulateFrom);
+    }
+    else
+    {
+        // No queue to publish into, so nothing begins — but the world still has to
+        // run, or a host without events (a test) would load a level that never
+        // ticks. The phases are what is skipped, not the simulation.
+        incoming.simulate = true;
+    }
 
     if (outgoing != nullptr)
     {
@@ -169,7 +206,7 @@ bool WorldManager::Destroy(std::string_view name)
                                          { return w->name == name; });
     if (it == _worlds.end())
     {
-        Core::Log::Warn("WorldManager: Destroy('{}') — no such world.", name);
+        Core::Log::Warn("WorldManager: Destroy('{}') - no such world.", name);
         return false;
     }
 
@@ -177,14 +214,14 @@ bool WorldManager::Destroy(std::string_view name)
     // holding one may only be destroyed after the role has moved to a successor.
     if (it->get() == _active)
     {
-        Core::Log::Error("WorldManager: refusing to destroy '{}' — it is the active world. "
+        Core::Log::Error("WorldManager: refusing to destroy '{}' - it is the active world. "
                          "Activate a successor first.",
                          name);
         return false;
     }
     if (it->get() == _edited)
     {
-        Core::Log::Error("WorldManager: refusing to destroy '{}' — it is the edited world.", name);
+        Core::Log::Error("WorldManager: refusing to destroy '{}' - it is the edited world.", name);
         return false;
     }
 
@@ -221,22 +258,20 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     incoming.state  = WorldState::Loading;
 
     Runtime::LevelHeader header;
-    bool loaded = false;
-    if (_services.cache != nullptr && _services.database != nullptr && _services.renderer != nullptr)
+    Runtime::LevelResult loaded;
+    if (_services.cache != nullptr && _services.renderer != nullptr)
     {
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
-        loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.database, *_services.renderer},
-                                {.reset = AssetCacheReset::Keep, .header = &header})
-                 .has_value();
+        loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.renderer},
+                                {.reset = AssetCacheReset::Keep, .header = &header});
     }
     else
     {
         // No render services (a headless server): the scene and its bodies are
         // all that matter.
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
-                                                        {.header = &header, .instances = &incoming.instances})
-                 .has_value();
+                                                        {.header = &header, .instances = &incoming.instances});
         if (loaded)
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
@@ -245,7 +280,12 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     {
         // A failed travel must never strand the game between worlds: drop the
         // half-built one and leave everything else exactly as it was.
-        Core::Log::Error("Travel to '{}' failed; staying in '{}'.", levelPath,
+        //
+        // Which refusal it was, not just that there was one: absent, malformed,
+        // and a version this build does not read are three different repairs and
+        // read identically without it.
+        Core::Log::Error("Travel to '{}' failed ({}); staying in '{}'.", levelPath,
+                         Runtime::Describe(loaded.error()),
                          outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
         EraseWorld(incoming);
         return nullptr;
@@ -383,7 +423,7 @@ void WorldManager::PumpPendingLoad()
     }
 
     // No render services (headless): there are no GPU assets to stream.
-    if (_services.cache == nullptr || _services.database == nullptr)
+    if (_services.cache == nullptr)
     {
         _pending->assetProgress = 1.f;
         _pending->ready         = true;
@@ -397,14 +437,14 @@ void WorldManager::PumpPendingLoad()
     // rendered yet, so streaming placeholders are invisible.
     if (!_pending->resolveStarted)
     {
-        Runtime::ResolveSceneAssets(world.scene, *_services.cache, *_services.database);
+        Runtime::ResolveSceneAssets(world.scene, *_services.cache);
         _pending->resolveStarted        = true;
         _pending->resolveInitialPending = _services.cache->PendingLoadCount();
         world.streamingPending          = true;
     }
     else
     {
-        App::UpgradeStreamingAssets(world.scene, *_services.cache, *_services.database,
+        App::UpgradeStreamingAssets(world.scene, *_services.cache,
                                     world.streamingPending);
     }
 
@@ -484,9 +524,9 @@ World *WorldManager::PromotePendingLoad()
     // Assets were resolved by PumpPendingLoad while the world was still hidden, so
     // a ready promotion has no pop-in. Only a forced early promote (before the pump
     // ever resolved) needs the fallback resolve here.
-    if (!resolved && _services.cache != nullptr && _services.database != nullptr)
+    if (!resolved && _services.cache != nullptr)
     {
-        Runtime::ResolveSceneAssets(incoming->scene, *_services.cache, *_services.database);
+        Runtime::ResolveSceneAssets(incoming->scene, *_services.cache);
         incoming->streamingPending = true;
     }
 
@@ -602,7 +642,7 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
 
 bool WorldManager::SweepAssetCache()
 {
-    if (_services.cache == nullptr || _services.database == nullptr || _services.renderer == nullptr)
+    if (_services.cache == nullptr || _services.renderer == nullptr)
         return false;
 
     // The sweep condition, stated as the code sees it: exactly one world that is
@@ -640,7 +680,7 @@ bool WorldManager::SweepAssetCache()
 
     // Re-resolve re-imports from disk asynchronously — the survivor will show
     // placeholders for a moment, exactly as on a normal level load.
-    Runtime::ResolveSceneAssets(live->scene, *_services.cache, *_services.database);
+    Runtime::ResolveSceneAssets(live->scene, *_services.cache);
     live->streamingPending = true;
 
     Core::Log::Info("AssetCache swept after travel (survivor '{}'{}).", live->name,
@@ -686,13 +726,13 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
         return;
 
     const WorldManager::Services &services = world.manager->GetServices();
-    if (services.cache == nullptr || services.database == nullptr)
+    if (services.cache == nullptr)
         return;
 
     for (const ECS::Entity entity : entities)
     {
         if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(entity))
-            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache, *services.database);
+            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache);
     }
 }
 
@@ -725,6 +765,49 @@ uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uin
     const uint64_t tick = Runtime::PropagateTransforms(scene, propagationTick);
     physics.RebuildSceneBodies(scene, ParentWorldResolver(scene));
     return tick;
+}
+
+void BeginWorld(SystemContext ctx, SimulateFrom policy)
+{
+    World &world = ctx.world;
+    if (world.start != StartProgress::NotBegun)
+    {
+        return;
+    }
+
+    world.start = StartProgress::Begun;
+    world.systems.RunOnce(SystemPhase::Begin, ctx);
+
+    // Under Loaded the clock stays stopped until SettleWorld releases it. The
+    // world is still Active throughout — it renders, so a loading screen drawn
+    // over it has something behind it, and the streaming pumps keep working
+    // because those run off the frame rather than off the simulation.
+    world.simulate = policy == SimulateFrom::Begin;
+
+    // A Begin system may have spawned content whose meshes nobody has asked for
+    // yet. Marking the world as streaming forces one more resolve pass, so what
+    // Begin created is requested before anything samples whether the world has
+    // settled — otherwise a world could report itself loaded without ever having
+    // looked at the entities its own start logic made.
+    world.streamingPending = true;
+}
+
+void SettleWorld(SystemContext ctx, bool assetsPending)
+{
+    World &world = ctx.world;
+    if (world.start != StartProgress::Begun || assetsPending)
+    {
+        return;
+    }
+
+    world.start = StartProgress::Loaded;
+    world.systems.RunOnce(SystemPhase::Loaded, ctx);
+
+    // Unconditional, not `policy == Loaded`: a world that waited is released
+    // here, and one that has been simulating since Begin is already true. Reading
+    // the policy again would mean carrying it to a second call site for no
+    // difference in outcome.
+    world.simulate = true;
 }
 
 } // namespace Assisi::App

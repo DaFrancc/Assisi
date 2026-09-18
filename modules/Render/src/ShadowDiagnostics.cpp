@@ -136,7 +136,7 @@ const char *DescribeLocalShadowState(LocalShadowState state)
     case LocalShadowState::Shadowed:
         return "Shadowed at full size.";
     case LocalShadowState::Demoted:
-        return "Shadowed, but at a smaller tile than it asked for — the atlas had no rectangle of that class. "
+        return "Shadowed, but at a smaller tile than it asked for - the atlas had no rectangle of that class. "
                "A larger atlas, or fewer shadowed lights, gives it back.";
     case LocalShadowState::Deferred:
         return "Unshadowed this frame: the redraw budget has not reached it yet. Expected on the frame a room "

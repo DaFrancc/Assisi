@@ -1,24 +1,31 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Geometry/MaterialFile.hpp>
 
-#include <cstdint>
-#include <typeindex>
-
-#include <nlohmann/json.hpp>
-
-#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
+#include <Assisi/Core/Reflect/AssetDocument.hpp>
 
 namespace Assisi::Geometry
 {
 namespace
 {
-constexpr int32_t kMaterialFileVersion = 1;
-
-/// The registered asset meta for MaterialData, or nullptr if the generated
-/// reflection object was not linked into this binary.
-const Core::Reflect::AssetTypeMeta *MaterialMeta()
+/// @brief The .amat spelling of an envelope failure.
+///
+/// A material has no field the reader can reject on its own terms — every type
+/// the schema uses either reads or is absent — so BadField arrives only from a
+/// value of the wrong JSON type, which is the same thing to a caller as a
+/// document that will not parse.
+MaterialFileError FromDocumentError(Core::Reflect::AssetDocumentError error)
 {
-    return Core::Reflect::AssetTypeRegistry::Instance().Find(std::type_index(typeid(MaterialData)));
+    switch (error)
+    {
+    case Core::Reflect::AssetDocumentError::NotRegistered:
+        return MaterialFileError::NotRegistered;
+    case Core::Reflect::AssetDocumentError::WrongType:
+        return MaterialFileError::WrongType;
+    case Core::Reflect::AssetDocumentError::ParseFailed:
+    case Core::Reflect::AssetDocumentError::BadField:
+        return MaterialFileError::ParseFailed;
+    }
+    return MaterialFileError::ParseFailed;
 }
 } // namespace
 
@@ -38,51 +45,27 @@ std::string_view ToString(MaterialFileError error) noexcept
 
 std::expected<std::string, MaterialFileError> SerializeMaterial(const MaterialData &material)
 {
-    const Core::Reflect::AssetTypeMeta *meta = MaterialMeta();
-    if (meta == nullptr)
+    const std::expected<std::string, Core::Reflect::AssetDocumentError> text =
+        Core::Reflect::SerializeAssetDocument(material);
+    if (!text)
     {
-        return std::unexpected(MaterialFileError::NotRegistered);
+        return std::unexpected(FromDocumentError(text.error()));
     }
-
-    // Envelope first so "version"/"type" read at the top of the file; the
-    // reflected field payload is merged in flat beneath them.
-    nlohmann::json document;
-    document["version"] = kMaterialFileVersion;
-    document["type"] = meta->name;
-
-    const nlohmann::json fields = meta->serialize(&material);
-    for (const auto &[key, value] : fields.items())
-    {
-        document[key] = value;
-    }
-
-    return document.dump(2);
+    return *text;
 }
 
 std::expected<MaterialData, MaterialFileError> DeserializeMaterial(std::string_view jsonText)
 {
-    const Core::Reflect::AssetTypeMeta *meta = MaterialMeta();
-    if (meta == nullptr)
-    {
-        return std::unexpected(MaterialFileError::NotRegistered);
-    }
-
-    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/ false);
-    if (document.is_discarded() || !document.is_object())
-    {
-        return std::unexpected(MaterialFileError::ParseFailed);
-    }
-
-    if (document.value("type", std::string{}) != meta->name)
-    {
-        return std::unexpected(MaterialFileError::WrongType);
-    }
-
-    // Start from defaults; deserialize applies only the keys present, so a file
-    // written by an older engine (missing newer fields) still loads cleanly.
-    // The envelope keys "version"/"type" are ignored (no field is named them).
+    // Start from defaults; the document applies only the keys it names, so a
+    // file written by an older engine still loads and the fields it predates
+    // keep the value this build ships.
     MaterialData material;
-    meta->deserialize(document, &material);
+    const std::expected<void, Core::Reflect::AssetDocumentError> applied =
+        Core::Reflect::ApplyAssetDocument(jsonText, material);
+    if (!applied)
+    {
+        return std::unexpected(FromDocumentError(applied.error()));
+    }
     return material;
 }
 

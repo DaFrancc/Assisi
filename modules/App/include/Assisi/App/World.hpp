@@ -11,6 +11,7 @@
 /// the same time, and a game running two levels at once (different players in
 /// different places) needs both simulating.
 
+#include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -54,6 +55,26 @@ enum class WorldState : std::uint8_t
     Dormant,   ///< Resident and inspectable, but not stepped — e.g. the edited
                ///< world while the game has travelled elsewhere.
     Unloading, ///< Scheduled for destruction at the next safe point.
+};
+
+/// @brief How far through starting a world is, as the one-shot phases fire.
+///
+/// Monotonic within one start, and reset to NotBegun when the world's systems
+/// are re-applied — which is what lets the editor's Stop and the next Play run
+/// Begin again over the same world.
+enum class StartProgress : std::uint8_t
+{
+    /// Resident, possibly Active, but not being run: nothing has begun. Where
+    /// the editor's authored world sits for a whole session.
+    NotBegun,
+
+    /// Begin has run. The world works as data; its assets may still be streaming.
+    Begun,
+
+    /// Loaded has run: every asset the world references has settled.
+    Loaded,
+
+    Count
 };
 
 /// @brief One resident level: its entities, its physics, and the bookkeeping
@@ -137,6 +158,12 @@ struct World
     std::string levelPath;
 
     WorldState state = WorldState::Loading;
+
+    /// How far through starting this world is — which one-shot phases have had
+    /// their moment. Separate from @ref state because a world can be Active
+    /// without having started: the editor's authored world is Active the whole
+    /// session and begins only when Play is pressed.
+    StartProgress start = StartProgress::NotBegun;
 
     /// Stepped by the fixed-update loop? Whether a world with nobody in it
     /// ticks is game policy, not engine policy — the engine only exposes the
@@ -293,13 +320,30 @@ public:
     struct Services
     {
         Render::AssetCache *cache    = nullptr;
-        const Core::AssetDatabase *database = nullptr;
         Runtime::SceneRenderer *renderer = nullptr;
         /// The scheduler async travel loads on. Null → BeginLoadLevel falls back
         /// to a synchronous load (still correct, just hitches).
         Core::JobSystem *jobs = nullptr;
+
+        /// What a starting world's one-shot systems are given, so Begin and
+        /// Loaded reach the same things every per-frame phase reaches.
+        ///
+        /// Null in a host that has none: a dedicated server has no window and so
+        /// no input, exactly as it passes null to every other phase. A world
+        /// whose manager has no event queue does not begin at all — BeginWorld
+        /// needs one to build a context, and half a world is worse than none.
+        Core::EventQueue *events = nullptr;
+        Window::InputContext *input = nullptr;
+        Window::ActionMap *actions = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
+
+    /// @brief Whether worlds start simulating at Begin or wait for Loaded.
+    ///
+    /// Set from the game config at startup. Applies to every world the manager
+    /// starts, so travel behaves the way the boot level did.
+    void SetSimulateFrom(SimulateFrom policy) { _simulateFrom = policy; }
+    [[nodiscard]] SimulateFrom GetSimulateFrom() const { return _simulateFrom; }
 
     /// @brief The installed services. For code that has a World and needs the
     /// engine-wide pieces a load would use — App::SpawnBlueprint resolving a
@@ -479,6 +523,10 @@ private:
     std::uint32_t _nextId = 1;
     Services _services;
 
+    /// See SetSimulateFrom. Begin by default, which is how every world behaved
+    /// before the policy existed.
+    SimulateFrom _simulateFrom = SimulateFrom::Begin;
+
     // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
     // rather than invalidate it. A counter, not a flag, so nested iteration
     // unwinds correctly.
@@ -537,8 +585,8 @@ private:
 /// migration, a blueprint instance arriving over the wire — have to be resolved
 /// as they are created, or they draw nothing at all.
 ///
-/// **A no-op when the world has no manager, or its manager has no cache and
-/// database.** That is the headless case and it is correct rather than merely
+/// **A no-op when the world has no manager, or its manager has no cache.** That
+/// is the headless case and it is correct rather than merely
 /// tolerated: a dedicated server holds the same entities and has no GPU to
 /// resolve them onto.
 void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
@@ -585,5 +633,25 @@ void SyncUnrenderedWorld(World &world);
 /// @return The scene's change tick after propagating; store it if the caller
 ///         keeps a bookmark, discard it to simply lose one frame of skipping.
 uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick = 0);
+
+/// @brief Start a world: run its Begin systems, and start its clock unless
+/// @p policy says to wait for its assets.
+///
+/// Does nothing to a world that has already begun, which is what makes it safe
+/// at every commit point rather than only the first one to think of it.
+///
+/// This is where a world stops being merely resident and becomes one that is
+/// being run — the distinction the editor depends on, since a level opened for
+/// authoring is Active for a whole session and must never run level-start logic
+/// over the scene someone is editing.
+void BeginWorld(SystemContext ctx, SimulateFrom policy);
+
+/// @brief Settle a world: run its Loaded systems and release its clock, once
+/// @p assetsPending says nothing is still streaming.
+///
+/// Does nothing until the world has begun, and nothing twice. A world that never
+/// streams anything — a headless host, a level of primitives — settles on the
+/// first call, so both phases land back to back rather than one never arriving.
+void SettleWorld(SystemContext ctx, bool assetsPending);
 
 } // namespace Assisi::App

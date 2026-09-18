@@ -39,6 +39,8 @@ target_link_libraries(Assisi-Debug
     Assisi::Render
   PRIVATE
     Assisi::Deps
+    # The animated WebP decoder the loading spinner uses.
+    Assisi::ImageImport
 )
 
 # No Vulkan SDK in this dev environment — imgui_impl_vulkan.cpp must load its

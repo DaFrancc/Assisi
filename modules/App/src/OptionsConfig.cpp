@@ -4,12 +4,14 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <typeindex>
 #include <utility>
 
 namespace Assisi::App
@@ -267,6 +269,35 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             cfg.ambientOcclusion = Render::Sanitized(cfg.ambientOcclusion);
         }
 
+        if (json.contains("window"))
+        {
+            const auto &window = json.at("window");
+            // Present means chosen. A size absent here is not "0" or "default"
+            // written out — it is the player never having picked one, which is
+            // what lets the shipped default keep moving under them.
+            if (window.contains("width"))
+            {
+                cfg.width = window.at("width").get<int32_t>();
+            }
+            if (window.contains("height"))
+            {
+                cfg.height = window.at("height").get<int32_t>();
+            }
+        }
+
+        if (json.contains("input"))
+        {
+            // Through the registry rather than by hand: the bindings are a
+            // reflected type, and a second reader here would be a second schema
+            // to keep in step with config/input.json.
+            const Core::Reflect::AssetTypeMeta *meta =
+                Core::Reflect::AssetTypeRegistry::Instance().Find(std::type_index(typeid(Window::InputBindings)));
+            if (meta != nullptr)
+            {
+                meta->deserialize(json.at("input"), &cfg.bindings);
+            }
+        }
+
         if (json.contains("frameSync"))
         {
             const auto &fs = json.at("frameSync");
@@ -289,7 +320,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
     }
     catch (const nlohmann::json::exception &e)
     {
-        Core::Log::Warn("Failed to parse options.json: {} — using defaults.", e.what());
+        Core::Log::Warn("Failed to parse options.json: {} - using defaults.", e.what());
     }
 
     return cfg;
@@ -448,6 +479,30 @@ nlohmann::json FullJson(const OptionsConfig &options)
 
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;
+
+    // Guarded because there is nothing to write when the player has chosen no
+    // size, not to keep the file clean — ChangedFrom already drops a value that
+    // matches the default document. Absence is the meaning here: no size stored
+    // is what lets the shipped default keep moving under the player.
+    if (options.width)
+    {
+        json["window"]["width"] = *options.width;
+    }
+    if (options.height)
+    {
+        json["window"]["height"] = *options.height;
+    }
+
+    // Same: nothing rebound is nothing to write.
+    if (!options.bindings.actions.empty())
+    {
+        const Core::Reflect::AssetTypeMeta *meta =
+            Core::Reflect::AssetTypeRegistry::Instance().Find(std::type_index(typeid(Window::InputBindings)));
+        if (meta != nullptr)
+        {
+            json["input"] = meta->serialize(&options.bindings);
+        }
+    }
 
     return json;
 }

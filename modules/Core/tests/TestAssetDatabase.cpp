@@ -340,6 +340,52 @@ TEST_CASE("Rebuild survives a sidecar with a wrapping (negative) manifest slot")
     CHECK_FALSE(db.HasManifest(*AssetId::Parse("11111111-2222-4333-8444-555555555555")));
 }
 
+TEST_CASE("Rebuild mints no sidecar for an ignored file, nor for the ignore list itself")
+{
+    const fs::path root = MakeTree();
+    WriteFile(root / "models" / "source.zip", "PK");
+    WriteFile(root / ".assisiignore", "*.zip\n");
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    const std::expected<std::size_t, AssetError> count = db.Rebuild();
+    REQUIRE(count.has_value());
+
+    // Only the two payload files from MakeTree: the archive and the list itself
+    // are both out.
+    CHECK(*count == 2);
+    CHECK_FALSE(db.IdFor("models/source.zip").has_value());
+    CHECK_FALSE(db.IdFor(".assisiignore").has_value());
+
+    // Ignoring is not deleting: the files stay, but nothing was written beside
+    // them, so neither has become addressable content.
+    CHECK(fs::exists(root / "models" / "source.zip"));
+    CHECK_FALSE(fs::exists(root / "models" / "source.zip.aast"));
+    CHECK_FALSE(fs::exists(root / ".assisiignore.aast"));
+}
+
+TEST_CASE("Rebuild honours a negation that re-includes one file inside an ignored directory")
+{
+    const fs::path root = MakeTree();
+    WriteFile(root / "editor" / "entity_icon.png", "PNG-BYTES");
+    WriteFile(root / "editor" / "loading" / "Spinner.webp", "WEBP-BYTES");
+    WriteFile(root / ".assisiignore", "/editor/\n"
+                                      "!/editor/loading/Spinner.webp\n");
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    const std::expected<std::size_t, AssetError> count = db.Rebuild();
+    REQUIRE(count.has_value());
+
+    // The two payloads from MakeTree, plus the one file the negation takes back.
+    // The walk must not prune the excluded directory, or it would never reach it.
+    CHECK(*count == 3);
+    CHECK(db.IdFor("editor/loading/Spinner.webp").has_value());
+    CHECK(fs::exists(root / "editor" / "loading" / "Spinner.webp.aast"));
+    CHECK_FALSE(db.IdFor("editor/entity_icon.png").has_value());
+    CHECK_FALSE(fs::exists(root / "editor" / "entity_icon.png.aast"));
+}
+
 TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
 {
     const fs::path root = MakeTree();
@@ -364,6 +410,24 @@ TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
     auto missing = provider.Open(MintAssetId());
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error() == AssetError::UnknownAssetId);
+}
+
+TEST_CASE("LooseFileProvider resolves a virtual path to the id the database holds")
+{
+    const fs::path root = MakeTree();
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+    const LooseFileProvider provider(db);
+
+    const std::expected<AssetId, AssetError> crate = provider.Resolve("textures/crate.png");
+    REQUIRE(crate.has_value());
+    CHECK(*crate == *db.IdFor("textures/crate.png"));
+
+    const std::expected<AssetId, AssetError> absent = provider.Resolve("textures/absent.png");
+    REQUIRE_FALSE(absent.has_value());
+    CHECK(absent.error() == AssetError::UnknownAssetId);
 }
 
 TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
@@ -399,62 +463,3 @@ TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
     CHECK(second.IdFor("textures/copy_b.png") == idB);
 }
 
-TEST_CASE("Minted sidecars are mirrored into the authoring root")
-{
-    const fs::path root = MakeTree();
-    const fs::path authoring = fs::temp_directory_path() / "assisi_assetdb_authoring";
-    std::error_code ec;
-    fs::remove_all(authoring, ec);
-    // The durable tree holds the assets themselves; the read root above is the
-    // staged copy the app actually loads from. Only assets present here get a
-    // mirrored sidecar (see the partial-tree case below).
-    WriteFile(authoring / "textures" / "crate.png", "PNG-BYTES");
-    WriteFile(authoring / "materials" / "checker.amat", "{\"type\":\"MaterialData\"}");
-
-    REQUIRE(AssetSystem::SetRoot(root).has_value());
-    AssetSystem::SetAuthoringRoot(authoring);
-
-    AssetDatabase db;
-    REQUIRE(db.Rebuild().has_value());
-
-    // The read root is a disposable staged copy in a dev build; the id must also
-    // land in the durable tree or it is regenerated differently after a clean
-    // build, breaking every by-GUID reference to that asset.
-    const fs::path mirrored = authoring / "textures" / "crate.png.aast";
-    REQUIRE(fs::exists(mirrored));
-    CHECK(ReadFile(mirrored) == ReadFile(root / "textures" / "crate.png.aast"));
-
-    // An id already present in the durable tree is never clobbered.
-    const std::string before = ReadFile(mirrored);
-    AssetDatabase again;
-    REQUIRE(again.Rebuild().has_value());
-    CHECK(ReadFile(mirrored) == before);
-
-    AssetSystem::SetAuthoringRoot({}); // don't leak the setting into other cases
-}
-
-TEST_CASE("A sidecar is not mirrored for an asset absent from the authoring root")
-{
-    const fs::path root = MakeTree();
-    const fs::path authoring = fs::temp_directory_path() / "assisi_assetdb_authoring_partial";
-    std::error_code ec;
-    fs::remove_all(authoring, ec);
-
-    // The durable tree has the texture but not the material — the shape a build
-    // output takes: staged next to the executable, with no source counterpart.
-    fs::create_directories(authoring / "textures", ec);
-    WriteFile(authoring / "textures" / "crate.png", "PNG-BYTES");
-
-    REQUIRE(AssetSystem::SetRoot(root).has_value());
-    AssetSystem::SetAuthoringRoot(authoring);
-
-    AssetDatabase db;
-    REQUIRE(db.Rebuild().has_value());
-
-    CHECK(fs::exists(authoring / "textures" / "crate.png.aast"));
-    // Mirroring this one would strand a sidecar describing a file the durable
-    // tree does not contain, and show up as an untracked source-tree change.
-    CHECK_FALSE(fs::exists(authoring / "materials" / "checker.amat.aast"));
-
-    AssetSystem::SetAuthoringRoot({});
-}

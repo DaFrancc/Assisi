@@ -142,13 +142,13 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     // it — re-uploading them to look at one would be the expensive way round.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(world, source, {_assetCache, _assetDatabase, _sceneRenderer},
+        Assisi::App::LoadLevel(world, source, {_assetCache, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
     if (!loaded)
     {
         // Same as opening a level as a new world: the scene this may have emptied is
         // the throwaway one created two lines up, and it is destroyed here.
-        Assisi::Core::Log::Error("Blueprint editor: '{}' failed to load — {}.", source,
+        Assisi::Core::Log::Error("Blueprint editor: '{}' failed to load - {}.", source,
                                  Assisi::Runtime::Describe(loaded.error()));
         _worlds.Destroy(world.name);
         return;
@@ -331,12 +331,12 @@ void EditorApp::SubmitInstanceIcons()
         (void)id;
         positions.push_back(row->transform.position);
     }
-    _sceneRenderer.SubmitEditorIcons(positions);
+    _overlays.SubmitEditorIcons(positions);
 
     if (_selectedInstance.IsValid())
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance))
-            _sceneRenderer.SubmitIconOutline(row->transform.position);
+            _overlays.SubmitIconOutline(row->transform.position);
     }
 }
 
@@ -623,7 +623,7 @@ void EditorApp::ApplyPendingReexpand()
 
             if (dropped > 0)
             {
-                Assisi::Core::Log::Info("Blueprint '{}': {} undo step(s) dropped — they named members the "
+                Assisi::Core::Log::Info("Blueprint '{}': {} undo step(s) dropped - they named members the "
                                         "edit removed.",
                                         _pendingReexpandSource, dropped);
             }

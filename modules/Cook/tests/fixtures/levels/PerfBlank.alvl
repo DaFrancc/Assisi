@@ -1,0 +1,35 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Camera": {
+          "farZ": 500.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            3.0,
+            12.0
+          ],
+          "rotation": [
+            0.996593,
+            -0.082481,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "MeasurementCamera"
+    }
+  ],
+  "systems": [],
+  "version": 2
+}

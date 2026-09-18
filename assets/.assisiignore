@@ -1,0 +1,25 @@
+# What under assets/ is not content.
+#
+# Not the same question .gitignore answers. That file says what is not worth
+# versioning, and it already excludes models/ and every .spv -- between them most
+# of the art and all of the shaders. This file says what has no role in the
+# pipeline, so nothing here is minted an id, listed in the browser, or cooked.
+#
+# Syntax is .gitignore's, with one difference: a directory excluded here is still
+# descended into, so a later ! line can take one file back out of it.
+
+# Authoring sources kept beside their output, and the backups a DCC tool leaves
+# next to them.
+*.blend
+*.blend1
+*.zip
+
+# Test models too large to ship: their textures alone are most of the pak.
+DamagedHelmet*
+
+# Editor-only content. DebugUI draws the spinner and loads the fonts from here
+# without checking for an editor, but DebugUI is inside Assisi::Debug, which only
+# Assisi::Editor links and which the Game target is forbidden to -- so nothing in
+# a standalone build can read any of it.
+/editor/
+Coffee_Machine/

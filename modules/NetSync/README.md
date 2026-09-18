@@ -14,7 +14,7 @@ them:
 
 **Gates** — five of them, each at the scope that owns the decision, so an engine
 module cannot set a game's network policy by editing one of its own headers:
-`ACOMP(replicable)` grants a capability, `game.json`'s `neverReplicate` is the
+`ACOMP(replicable)` grants a capability, `NetworkConfig`'s `neverReplicate` is the
 game's veto, the `Replicated` marker is the entity's opt-in, its `excluded` mask
 is that entity's opt-out, and `AFIELD(norep)` keeps a field off the wire while
 still saving it to disk. See `Assisi/Core/Reflect/Annotations.hpp`.

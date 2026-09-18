@@ -23,7 +23,7 @@ different problems for a reader to debug.
 import re
 from typing import NamedTuple, Optional
 
-from reflect_parser import FieldInfo, ComponentInfo, MessageInfo
+from reflect_parser import FieldInfo, ComponentInfo, MessageInfo, MAX_CONTAINER_DEPTH
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
                            _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
 
@@ -137,17 +137,29 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen],
 
 
 def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
-    """The codegen for a field. An AENUM enum synthesizes one that (de)serializes
-    through its underlying integer (int64 on the wire, cast back to the enum);
-    every other type comes from the TYPES table. Returns None for an unsupported
-    type — the signal _check_unsupported turns into a hard error."""
+    """The codegen for a field. An AENUM enum synthesizes one that writes its
+    underlying integer and reads either that or an enumerator name; every other
+    type comes from the TYPES table. Returns None for an unsupported type — the
+    signal _check_unsupported turns into a hard error."""
     if f.enum_info is not None:
+        # Doubled braces: this text goes through .format() with the field name and
+        # accessor, which would otherwise read each pair as a placeholder.
+        names = ', '.join(f'{{{{ "{n}", {v} }}}}' for n, v in f.enum_info.constants)
         return TypeCodegen(
             'Enum',
             'static_cast<std::int64_t>({a})',
-            '{{ std::int64_t _n = static_cast<std::int64_t>({a}); '
-            'if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "{f}", _n)) return false; '
+            '{{ static constexpr Assisi::Core::Reflect::EnumName _names[] = {{' + names + '}}; '
+            'std::int64_t _n = static_cast<std::int64_t>({a}); '
+            'if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "{f}", _names, _n)) return false; '
             '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
+    if f.container is not None:
+        # One expression either way, whatever the element type or the depth: the
+        # templates in ContainerJson.hpp resolve it from the member's own type, so
+        # nothing per-element belongs in this table.
+        return TypeCodegen(
+            f.container.kind,
+            'Assisi::Core::Reflect::ContainerToJson({a})',
+            'if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "{f}", {a})) return false;')
     return TYPES.get(f.cpp_type)
 
 
@@ -176,6 +188,13 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
         f'.offset = offsetof(T, {f.name})',
     ]
 
+    # The shape a container field is walked through, taken from the member's own
+    # C++ type so the descriptor cannot disagree with the declaration. Emitted in
+    # declaration order, which designated initializers require.
+    if f.container is not None:
+        parts.append(
+            f'.container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::{f.name})>()')
+
     if f.args.has('transient'):
         parts.append('.transient = true')
     if f.args.has('norep'):
@@ -198,13 +217,17 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
     if bmax is not None and bmax.field is not None:
         parts.append(f'.maxField = "{bmax.field}"')
 
-    if f.enum_info is not None:
-        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
+    # A container's enum metadata describes its *leaf* element, at whatever depth
+    # that sits — a `vector<Colour>` and a bare `Colour` carry the same table, so
+    # the editor and the protocol text read one without knowing which it has.
+    enum_source = f.enum_info if f.enum_info is not None else f.leaf_enum
+    if enum_source is not None:
+        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in enum_source.constants)
         parts.append(f'.enumConstants = {{ {consts} }}')
         # The width marks the field as an enum at all — zero means "not one" — so
         # it is written even for the enum whose size matches the default int.
-        parts.append(f'.enumSize = {f.enum_info.size}')
-        if f.enum_info.is_signed:
+        parts.append(f'.enumSize = {enum_source.size}')
+        if enum_source.is_signed:
             parts.append('.enumSigned = true')
     elif f.bitmask_info is not None:
         # A bitmask carries its enumerators the same way an enum does, and leaves
@@ -666,6 +689,17 @@ static const bool {var_name} = []() -> bool
         {{
 {deserialize}
         }},
+        []() -> void*
+        {{
+            // nothrow, because a null return is the failure the caller already
+            // checks for, and a bad_alloc escaping generated code has nowhere
+            // to go.
+            return new (std::nothrow) T{{}};
+        }},
+        [](void* instance_ptr)
+        {{
+            delete static_cast<T*>(instance_ptr);
+        }},
     }});
     return true;
 }}();
@@ -811,6 +845,29 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         if not f.args.has('transient')
     )
 
+    # Container fields need the descriptor their FieldMeta points at and the
+    # templates their JSON goes through.
+    has_containers = any(
+        f.container is not None
+        for comp in [*components, *messages]
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
+    # A struct holding a std::map or std::unordered_map is not standard-layout,
+    # and offsetof on one is conditionally-supported rather than plain legal. GCC
+    # and Clang both support it and compute the right offset; they also warn, and
+    # this build treats warnings as errors. std::vector does not have the problem,
+    # which is why the AssetId vectors have never needed this.
+    has_maps = any(
+        f.container is not None and f.container.kind == 'Map'
+        for comp in [*components, *messages]
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
     # Includes are conditional on what the header actually declares. An
     # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
     # ComponentRegistry / ECS::Scene — its home module does not link ECS.
@@ -825,6 +882,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
             includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
+        # An asset type's construct hook allocates with std::nothrow.
+        includes.append('#include <new>')
     if messages:
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
     if handlers:
@@ -835,6 +894,9 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
         includes.append('#include <Assisi/Core/Reflect/ComponentMaskJson.hpp>')
+    if has_containers:
+        includes.append('#include <Assisi/Core/Reflect/ContainerJson.hpp>')
+        includes.append('#include <Assisi/Core/Reflect/ContainerOps.hpp>')
     if has_enums:
         includes.append('#include <cstdint>')
     includes.append(f'#include <{include_path}>')
@@ -848,13 +910,30 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
                 'namespace Assisi::Runtime { template <typename T> struct InstanceView; }\n'
                 ) if view_ban else ''
 
+    # A reflected map makes its owner non-standard-layout, and offsetof on such a
+    # type is conditionally-supported. Both compilers this builds with implement
+    # it and compute the right offset; the diagnostic is about portability to one
+    # that does not, and there is no such target here. Scoped to files that
+    # actually declare a map, so nothing else loses the warning.
+    # Guarded because MSVC does not know this pragma and warns that it does not —
+    # C4068, which this build promotes to an error like every other warning.
+    # Clang defines __GNUC__ too, so the one check covers both compilers that
+    # emit the diagnostic.
+    offsetof_push = ('\n#ifdef __GNUC__\n'
+                     '#pragma GCC diagnostic push\n'
+                     '#pragma GCC diagnostic ignored "-Winvalid-offsetof"\n'
+                     '#endif\n') if has_maps else ''
+    offsetof_pop  = ('\n#ifdef __GNUC__\n'
+                     '#pragma GCC diagnostic pop\n'
+                     '#endif\n') if has_maps else ''
+
     blocks = []
     blocks.append(f"""\
 // AUTO-GENERATED by reflectgen — do not edit.
 // Source: {include_path}
 
 {include_block}
-{view_fwd}
+{view_fwd}{offsetof_push}
 namespace
 {{
 {view_ban}""")
@@ -974,6 +1053,8 @@ static const bool {var_name} = []() -> bool
     for system in systems:
         blocks.append('\n' + gen_system_registration(system))
 
+    blocks.append(offsetof_pop)
+
     return ''.join(blocks)
 
 
@@ -1055,6 +1136,100 @@ def _check_no_instance_views(components: list[ComponentInfo], header_name: str) 
                 f"and re-resolve with FindInstance<T> when you need the members.")
 
 
+# FieldTypes a container element may ultimately be. Containers themselves are
+# handled by the nesting rule; everything else is a value the codec and the JSON
+# templates both have a definition for.
+_CONTAINER_LEAF_TYPES = {
+    'Float', 'Double', 'Int8', 'UInt8', 'Int16', 'UInt16',
+    'Int32', 'UInt32', 'Int64', 'UInt64', 'Bool', 'String', 'EntityName',
+}
+
+# What may key a map. Narrower than the leaf set: a JSON object's keys are text,
+# so a key must have an exact text spelling to round-trip through.
+_CONTAINER_KEY_TYPES = {
+    'Int8', 'UInt8', 'Int16', 'UInt16', 'Int32', 'UInt32', 'Int64', 'UInt64',
+    'String', 'EntityName',
+}
+
+
+def _element_tc(spelling: str) -> Optional[TypeCodegen]:
+    """The codegen for a container's element or key spelling.
+
+    Accepts `std::int32_t` as well as the bare `int32_t` TYPES is keyed by. A
+    scalar field is written bare throughout the engine, but inside a container the
+    qualified form reads naturally and means the same type — and the C++ side
+    never sees either spelling, since the descriptor comes from decltype.
+    """
+    tc = TYPES.get(spelling)
+    if tc is not None:
+        return tc
+    if spelling.startswith('std::'):
+        return TYPES.get(spelling[len('std::'):])
+    return None
+
+
+def _check_container(f, owner: str, header_name: str) -> None:
+    """Refuses a container whose shape reflectgen cannot generate.
+
+    Every refusal names the field and the offending spelling, because the whole
+    value of default-deny is that the build says which declaration to change.
+    """
+    where = f"{header_name}: field '{owner}::{f.name}' ({f.cpp_type})"
+
+    if f.container.depth > MAX_CONTAINER_DEPTH:
+        raise ValueError(
+            f"{where} nests {f.container.depth} containers deep, and a reflected "
+            f"container nests at most {MAX_CONTAINER_DEPTH}. Flatten it, or hold the "
+            f"inner container in a reflected struct of its own.")
+
+    # Keys are checked at every level a map appears, not just the outer one.
+    shape = f.container
+    while shape is not None:
+        if shape.kind == 'Map':
+            key_tc = _element_tc(shape.key)
+            key_ok = key_tc is not None and key_tc.enum_value in _CONTAINER_KEY_TYPES
+            if not key_ok:
+                raise ValueError(
+                    f"{where} is keyed by '{shape.key}', which cannot key a reflected map. "
+                    f"A key becomes a JSON object's field name, so it must be an integer "
+                    f"width, Core::ShortString or Core::EntityName.")
+        inner = shape.element
+        shape = inner if hasattr(inner, 'kind') else None
+
+    leaf = f.container.leaf
+    if f.leaf_enum is not None:
+        return  # an AENUM element, encoded as its underlying integer
+
+    leaf_tc = _element_tc(leaf)
+    if leaf_tc is None or leaf_tc.enum_value not in _CONTAINER_LEAF_TYPES:
+        reason = UNSUPPORTED_TYPES.get(leaf, 'no codegen for this element type')
+        raise ValueError(
+            f"{where} holds elements of type '{leaf}' ({reason}). A reflected "
+            f"container holds integers, floats, bool, Core::ShortString, "
+            f"Core::EntityName, an AENUM enum, or one container of those.")
+
+
+# The inline-string capacities TYPES has a FieldType for. The binary codec reads
+# into the buffer by capacity, so each one it supports is a distinct field type
+# rather than a parameter; these are those.
+_REFLECTABLE_STRING_CAPACITIES = (32, 64)
+
+
+def _inline_string_reason(spelling: str) -> Optional[str]:
+    """Why this TrivialString capacity has no codegen, or None if it is not one.
+
+    A near miss reads as though it should work — the template is the same one the
+    supported capacities instantiate — so the refusal names the two that do
+    instead of leaving the generic "no codegen for this type".
+    """
+    bare = spelling.removeprefix('Assisi::').removeprefix('Core::')
+    if not bare.startswith('TrivialString'):
+        return None
+    supported = ' or '.join(f'TrivialString<{n}>' for n in _REFLECTABLE_STRING_CAPACITIES)
+    return (f'only {supported} have a field type — the binary codec reads into the '
+            f'buffer by capacity, so each supported width is its own type')
+
+
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
     """Default-deny: fail generation if any non-transient AFIELD has a type
     reflectgen cannot (de)serialize (i.e. absent from TYPES).
@@ -1070,8 +1245,13 @@ def _check_unsupported(components: list[ComponentInfo], header_name: str) -> Non
         for f in comp.fields:
             if f.args.has('transient'):
                 continue
+            if f.container is not None:
+                _check_container(f, comp.name, header_name)
+                continue
             if _field_tc(f) is None:
-                reason = UNSUPPORTED_TYPES.get(f.cpp_type, 'no codegen for this type')
+                reason = (UNSUPPORTED_TYPES.get(f.cpp_type)
+                          or _inline_string_reason(f.cpp_type)
+                          or 'no codegen for this type')
                 raise ValueError(
                     f"{header_name}: field '{comp.name}::{f.name}' has type "
                     f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "

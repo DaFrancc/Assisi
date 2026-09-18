@@ -64,6 +64,17 @@ option(ASSISI_ENABLE_NETWORKING "Build the networking modules (fetches GameNetwo
 # to fetch and build it (a future Geometry Assimp backend would then link it).
 option(ASSISI_ENABLE_ASSIMP "Build the Assimp multi-format mesh-import backend" OFF)
 
+# Whether the game accepts --pak and ASSISI_PAK to read a content package other
+# than the one beside its executable. A development convenience, and off in
+# Release: a shipped game that read any package a player named would run content
+# that was never shipped. A signed package is what would make it safe to allow.
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(_assisi_pak_overrides_default OFF)
+else()
+  set(_assisi_pak_overrides_default ON)
+endif()
+option(ASSISI_PAK_OVERRIDES "Let the game read a content package named on its command line" ${_assisi_pak_overrides_default})
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------
@@ -189,7 +200,7 @@ endif()
 # tree needs no guard — networking code lives in its own translation units, which
 # the option simply leaves out of the build (see App's BlueprintReplication.cpp).
 # The macro is for the two places that cannot do that: EditorApp holds a
-# NetSession by value-owning pointer in a *public header*, and Sandbox's
+# NetSession by value-owning pointer in a *public header*, and GameLib's
 # ServerApp has a headless mode that exists with or without sockets.
 #
 # On Assisi-Options rather than a single target, because it has to agree
@@ -256,20 +267,26 @@ if (ASSISI_ENABLE_FAST_MATH)
   endif()
 endif()
 
-# ---- Dev-only: the source asset tree, so a running editor can mirror newly
-# minted asset-id sidecars back out of the disposable staged copy it reads from
-# (see AssetSystem::SetAuthoringRoot). Deliberately absent in Release: a shipped
-# build has no source tree, and its staged assets are the durable copy.
+# ---- Where the asset tree is, for tests that read committed levels directly.
+# They cannot go through AssetSystem: its root is global and the blueprint and
+# serializer cases repoint it at temporary directories, so a test reading the
+# real tree through it would depend on the order doctest happens to run in.
+# Every configuration gets this — the asset tree is the same one for all of them.
 target_compile_definitions(Assisi-Options INTERFACE
-  $<$<NOT:$<CONFIG:Release>>:ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets">
+  ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
 )
 
-# ---- Shipping marker. Release is the ship preset; Debug and RelWithDebInfo are
-# the debug and dev ones. NDEBUG cannot stand in for this — dev defines it too,
-# and dev wants developer defaults. Currently read only by Logger.cpp, to pick
-# the default minimum log level, so it is not on any header's ABI.
+# ---- Release marker. NDEBUG cannot stand in for it — dev defines that too, and
+# dev wants developer defaults. Read only by Logger.cpp, to pick the default
+# minimum log level, so it is not on any header's ABI.
+#
+# Named for the configuration because that is all it can describe. It is true of
+# everything built in a Release tree, the editor included, so it cannot say
+# whether a given binary is the shipping one — that is a per-target property and
+# the two executables come out of the same build directory. Anything that must
+# change what a build *contains* belongs to a preset that builds only the game.
 target_compile_definitions(Assisi-Options INTERFACE
-  $<$<CONFIG:Release>:ASSISI_SHIPPING_BUILD>
+  $<$<CONFIG:Release>:ASSISI_RELEASE_BUILD>
 )
 
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
@@ -449,6 +466,91 @@ FetchContent_Declare(libwebp
     SYSTEM
 )
 FetchContent_MakeAvailable(libwebp)
+
+# --- bc7enc (BC7 block encoder + decoder, used by Assisi::Image)
+#
+# stb_dxt.h (already in the stb checkout) covers BC1, BC3, BC4 and BC5; BC7 is the
+# one colour format it has no encoder for, and it is the one base-colour maps need.
+#
+# SOURCE_SUBDIR names a directory that does not exist, so MakeAvailable populates
+# the source without add_subdirectory'ing it. The upstream CMakeLists builds a
+# command-line tool against OpenMP rather than a library, and adding it would drag
+# both into every configure. The two files below are the whole encoder/decoder and
+# depend on nothing else in that repository.
+#
+# The repository publishes no tags, so the pin is a commit.
+FetchContent_Declare(bc7enc
+    GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+    GIT_TAG        b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 # bc7enc_rdo has no tagged releases; pinned to a specific commit
+    SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
+)
+FetchContent_MakeAvailable(bc7enc)
+
+# bc7enc.cpp is the BC7 encoder and bc7decomp.cpp its decoder. rgbcx.cpp carries
+# the BC1-BC5 unpackers, which is how a BC4 or BC5 block is read back — stb_dxt
+# encodes those two but cannot decode them.
+add_library(bc7enc STATIC
+    "${bc7enc_SOURCE_DIR}/bc7enc.cpp"
+    "${bc7enc_SOURCE_DIR}/bc7decomp.cpp"
+    "${bc7enc_SOURCE_DIR}/rgbcx.cpp"
+)
+target_include_directories(bc7enc SYSTEM PUBLIC "${bc7enc_SOURCE_DIR}")
+# Deliberately not Assisi_apply_defaults: this is vendored third-party source and
+# does not compile clean under our warning set. Ours stay on everywhere else.
+set_target_properties(bc7enc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(bc7enc PRIVATE /w)
+else()
+    target_compile_options(bc7enc PRIVATE -w)
+endif()
+add_library(bc7enc::bc7enc ALIAS bc7enc)
+
+# --- lz4 (pak slice compression, the fast-to-decompress codec)
+#
+# Built by hand from its two sources for the reason bc7enc is: upstream's CMake
+# lives under build/cmake and builds command-line tools this build never runs.
+# lz4hc.c is the high-compression encoder; the decoder is in lz4.c.
+FetchContent_Declare(lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG        v1.10.0
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
+)
+FetchContent_MakeAvailable(lz4)
+add_library(lz4_static STATIC
+    "${lz4_SOURCE_DIR}/lib/lz4.c"
+    "${lz4_SOURCE_DIR}/lib/lz4hc.c"
+)
+target_include_directories(lz4_static SYSTEM PUBLIC "${lz4_SOURCE_DIR}/lib")
+set_target_properties(lz4_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(lz4_static PRIVATE /w)
+else()
+    target_compile_options(lz4_static PRIVATE -w)
+endif()
+add_library(lz4::lz4 ALIAS lz4_static)
+
+# --- zstd (pak slice compression, the smaller-output codec)
+#
+# Through upstream's own CMake, which is the supported way to build it: the
+# sources span several directories and an assembly decoder whose inclusion
+# depends on the platform. Everything but the static library is switched off.
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED   OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC   ON  CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB  OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG        v1.5.6
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake
+    SYSTEM
+)
+FetchContent_MakeAvailable(zstd)
+add_library(zstd::zstd ALIAS libzstd_static)
 
 # --- Assimp (deferred catch-all import backend; off by default, see ASSISI_ENABLE_ASSIMP)
 if (ASSISI_ENABLE_ASSIMP)
@@ -684,31 +786,47 @@ FetchContent_MakeAvailable(nvrhi)
 # chunk off the bottom of a tall caster. The patch adds RasterState::
 # depthClampEnable, off by default, so no other pipeline changes.
 #
+# NVRHI's Vulkan backend also returns nullptr from a failed pipeline or pipeline
+# layout creation without saying what the driver answered, so a pipeline that
+# works everywhere but one GPU leaves a player's log with nothing to go on.
+# nvrhi-report-pipeline-failures.patch passes the VkResult to the device's error
+# callback, which VulkanContext routes into the log.
+#
+# NVRHI's bindless tables are partially bound but not update-after-bind, so the
+# material table's whole capacity counts against the ordinary per-stage limit on
+# sampled images. Intel sets that at 200, and the mesh pipelines would not build.
+# nvrhi-bindless-update-after-bind.patch makes immutable bindless tables
+# update-after-bind, which counts them against limits in the millions instead.
+#
 # Applied here rather than as a FetchContent PATCH_COMMAND because the shared
 # source cache (cmake/AssisiConfigureCached.cmake) skips the patch step, and a
-# cache cloned before the patch existed would otherwise never receive it. The
-# reverse check makes it a no-op on a source that already has it; a pin bump
-# the patch no longer fits stops the configure rather than building without it.
+# cache cloned before a patch existed would otherwise never receive it. The
+# reverse check makes each a no-op on a source that already has it; a pin bump
+# a patch no longer fits stops the configure rather than building without it.
+# Applied in order: each is made against the source with the ones before it.
 find_package(Git REQUIRED)
-set(_nvrhi_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/nvrhi-depth-clamp.patch")
-execute_process(
-    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_nvrhi_patch}"
-    WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
-    RESULT_VARIABLE _nvrhi_patched
-    OUTPUT_QUIET ERROR_QUIET
-)
-if (NOT _nvrhi_patched EQUAL 0)
+foreach(_nvrhi_patch_name nvrhi-depth-clamp.patch nvrhi-report-pipeline-failures.patch
+                          nvrhi-bindless-update-after-bind.patch)
+    set(_nvrhi_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/${_nvrhi_patch_name}")
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" apply "${_nvrhi_patch}"
+        COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_nvrhi_patch}"
         WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
-        RESULT_VARIABLE _nvrhi_patch_rc
+        RESULT_VARIABLE _nvrhi_patched
+        OUTPUT_QUIET ERROR_QUIET
     )
-    if (NOT _nvrhi_patch_rc EQUAL 0)
-        message(FATAL_ERROR "Could not apply ${_nvrhi_patch} to ${nvrhi_SOURCE_DIR}. "
-                            "Refresh the patch against the pinned NVRHI commit.")
+    if (NOT _nvrhi_patched EQUAL 0)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" apply "${_nvrhi_patch}"
+            WORKING_DIRECTORY "${nvrhi_SOURCE_DIR}"
+            RESULT_VARIABLE _nvrhi_patch_rc
+        )
+        if (NOT _nvrhi_patch_rc EQUAL 0)
+            message(FATAL_ERROR "Could not apply ${_nvrhi_patch} to ${nvrhi_SOURCE_DIR}. "
+                                "Refresh the patch against the pinned NVRHI commit.")
+        endif()
+        message(STATUS "NVRHI: applied ${_nvrhi_patch_name}")
     endif()
-    message(STATUS "NVRHI: applied nvrhi-depth-clamp.patch")
-endif()
+endforeach()
 
 # --- glslang (GLSL -> SPIR-V compiler, used as a build-time tool only)
 set(ENABLE_OPT              OFF CACHE BOOL "" FORCE) # avoids needing SPIRV-Tools-opt / update_glslang_sources.py
@@ -895,12 +1013,11 @@ if (ASSISI_ENABLE_NETWORKING)
     # 2026-06-06) and carries the modern-protobuf compatibility and native-ICE
     # work the tag predates. Record the SHA + date on any bump.
     #
-    # Crypto backend is per-platform and adds no fetched dependency:
+    # Crypto backend is per-platform:
     #   Windows — AES via the OS (BCrypt), 25519 via GNS's bundled reference impl.
-    #   Linux   — system OpenSSL. A deliberate, documented exception to this
-    #             tree's "fully self-contained" rule, same class as GLFW's system
-    #             X11 libs; OpenSSL is universally present on Linux dev machines.
-    #             (Escape hatch if that ever chafes: USE_CRYPTO=libsodium.)
+    #   Linux   — libsodium, built statically below. The system OpenSSL it
+    #             replaces made every shipped game need libcrypto (and zlib
+    #             through it) installed, in a version that differs by distro.
     # ENABLE_ICE stays at its default ON: the native ICE client is in-tree and
     # pulls in nothing extra (USE_STEAMWEBRTC, which *would* drag in Google's
     # WebRTC, stays off), so the Stage-7 NAT-traversal path costs a rebuild of
@@ -916,8 +1033,75 @@ if (ASSISI_ENABLE_NETWORKING)
         set(USE_CRYPTO      "BCrypt"    CACHE STRING "" FORCE)
         set(USE_CRYPTO25519 "Reference" CACHE STRING "" FORCE)
     else()
-        set(USE_CRYPTO      "OpenSSL" CACHE STRING "" FORCE)
-        set(USE_CRYPTO25519 "OpenSSL" CACHE STRING "" FORCE)
+        # ---- libsodium
+        #
+        # Built here from its own sources rather than through its autotools build
+        # or a third-party CMake wrapper. The wrappers define none of libsodium's
+        # HAVE_* feature macros on GCC, which compiles its AES-GCM out entirely and
+        # makes crypto_aead_aes256gcm_is_available() return 0 — and GNS refuses to
+        # open a connection without it. The macros below are the ones libsodium's
+        # own build.zig sets for x86-64 Linux, and the assembly is built with the C
+        # as it does there. It cannot be left out: on GCC, the AVX check that
+        # AES-GCM depends on is inline assembly enabled by the same HAVE_AVX_ASM
+        # that the assembly Curve25519 needs.
+        #
+        # OVERRIDE_FIND_PACKAGE is what GNS's find_package(sodium) resolves to, so
+        # its own Find module, which looks for a system libsodium, never runs.
+        FetchContent_Declare(sodium
+            GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
+            GIT_TAG        1.0.22-RELEASE
+            GIT_SHALLOW    TRUE
+            SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
+            SYSTEM
+            OVERRIDE_FIND_PACKAGE
+        )
+        FetchContent_MakeAvailable(sodium)
+
+        enable_language(ASM)
+        file(GLOB_RECURSE _sodium_sources CONFIGURE_DEPENDS
+             "${sodium_SOURCE_DIR}/src/libsodium/*.c"
+             "${sodium_SOURCE_DIR}/src/libsodium/*.S")
+        add_library(sodium STATIC ${_sodium_sources})
+
+        # version.h is generated by the autotools build. The prebuilt copy the
+        # MSVC and Zig builds use goes beside the headers that include it, as the
+        # Zig build does: it includes export.h by a path relative to itself.
+        configure_file("${sodium_SOURCE_DIR}/builds/msvc/version.h"
+                       "${sodium_SOURCE_DIR}/src/libsodium/include/sodium/version.h" COPYONLY)
+
+        target_include_directories(sodium SYSTEM
+            PUBLIC
+                # Build-tree only, for the export set GNS declares (see below).
+                "$<BUILD_INTERFACE:${sodium_SOURCE_DIR}/src/libsodium/include>"
+            PRIVATE
+                "${sodium_SOURCE_DIR}/src/libsodium/include/sodium"
+        )
+        target_compile_definitions(sodium
+            PUBLIC
+                SODIUM_STATIC
+            PRIVATE
+                _GNU_SOURCE CONFIGURED
+                HAVE_ATOMIC_OPS HAVE_C11_MEMORY_FENCES HAVE_GCC_MEMORY_FENCES HAVE_INLINE_ASM
+                HAVE_INTTYPES_H HAVE_STDINT_H HAVE_TI_MODE NATIVE_LITTLE_ENDIAN
+                TLS=_Thread_local HAVE_CATCHABLE_ABRT HAVE_WEAK_SYMBOLS
+                HAVE_CATCHABLE_SEGV HAVE_CLOCK_GETTIME HAVE_GETPID HAVE_MADVISE HAVE_MLOCK
+                HAVE_MMAP HAVE_MPROTECT HAVE_NANOSLEEP HAVE_POSIX_MEMALIGN HAVE_PTHREAD
+                HAVE_PTHREAD_PRIO_INHERIT HAVE_RAISE HAVE_SYSCONF HAVE_SYS_AUXV_H
+                HAVE_SYS_MMAN_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_GETAUXVAL
+                ASM_HIDE_SYMBOL=.hidden HAVE_AMD64_ASM HAVE_AVX_ASM
+                HAVE_CPUID HAVE_MMINTRIN_H HAVE_EMMINTRIN_H HAVE_PMMINTRIN_H HAVE_TMMINTRIN_H
+                HAVE_SMMINTRIN_H HAVE_AVXINTRIN_H HAVE_AVX2INTRIN_H HAVE_AVX512FINTRIN_H
+                HAVE_WMMINTRIN_H HAVE_RDRAND
+        )
+        target_compile_options(sodium PRIVATE
+            "$<$<COMPILE_LANGUAGE:C>:-fvisibility=hidden;-fno-strict-aliasing;-fno-strict-overflow;-fwrapv;-flax-vector-conversions>"
+            -w)
+        find_package(Threads REQUIRED)
+        target_link_libraries(sodium PUBLIC Threads::Threads)
+        set_target_properties(sodium PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+        set(USE_CRYPTO      "libsodium" CACHE STRING "" FORCE)
+        set(USE_CRYPTO25519 "libsodium" CACHE STRING "" FORCE)
     endif()
     FetchContent_Declare(GameNetworkingSockets
         GIT_REPOSITORY https://github.com/ValveSoftware/GameNetworkingSockets.git
@@ -925,6 +1109,13 @@ if (ASSISI_ENABLE_NETWORKING)
         SYSTEM
     )
     FetchContent_MakeAvailable(GameNetworkingSockets)
+
+    # GNS declares an install export set, and CMake refuses to generate one that
+    # links a target no export set contains. Nothing here is ever installed; this
+    # only satisfies that check for the libsodium built above.
+    if (TARGET sodium)
+        install(TARGETS sodium EXPORT GameNetworkingSockets ARCHIVE DESTINATION lib)
+    endif()
 
 endif()
 
@@ -942,11 +1133,15 @@ unset(CMAKE_POLICY_DEFAULT_CMP0175)
 # --- Assisi-Deps: aggregate third-party deps into one interface target
 add_library(Assisi-Deps INTERFACE)
 add_library(Assisi::Deps ALIAS Assisi-Deps)
+# Dear ImGui is deliberately absent. It is linked by the modules that actually
+# draw with it — Assisi-Debug for the backends, Assisi-Editor for the panels —
+# so that a target which does not draw UI cannot acquire it by depending on the
+# common bundle. The Game executable is the reason: it must contain no editor,
+# and an aggregate that quietly carried ImGui put it in every link in the tree.
 target_link_libraries(Assisi-Deps INTERFACE
     glfw
     glm::glm
     stb::stb
-    imgui::imgui
 )
 
 # ------------------------------------------------------------
@@ -976,8 +1171,16 @@ endif()
 add_subdirectory(modules/Chiara)
 add_subdirectory(modules/Core)
 add_subdirectory(modules/Math)
-# Geometry sits above Core+Math and below Render: CPU-side mesh data and the
-# mesh-file importer (glTF via fastgltf), with no GPU dependency.
+# Image sits just above Core: pixels in, pixels out, with no device anywhere.
+# Decode, mip generation and block compression all run on a worker thread or in
+# an offline tool, neither of which may link the renderer.
+#
+# Ahead of Geometry because Geometry names Assisi::Image — a material channel's
+# pixel format is a property of what the channel is for, so it belongs beside
+# MaterialData rather than in the renderer that happens to upload it.
+add_subdirectory(modules/Image)
+# Geometry sits above Core+Math+Image and below Render: CPU-side mesh data and
+# the mesh-file importer (glTF via fastgltf), with no GPU dependency.
 add_subdirectory(modules/Geometry)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
@@ -995,6 +1198,10 @@ if (ASSISI_ENABLE_NETWORKING)
   add_subdirectory(modules/NetSync)
 endif()
 add_subdirectory(modules/Runtime)
+# Cook sits above Runtime because cooking a level means loading it through the
+# same SceneSerializer the engine does — a second reader for the format would be
+# a second opinion about what a level is.
+add_subdirectory(modules/Cook)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
@@ -1003,9 +1210,13 @@ add_subdirectory(modules/Editor)
 # CMake 4.x scans each binary subdir for CMakePresets.json immediately after
 # creating it, before the subdirectory's CMakeLists.txt is processed. Pre-create
 # empty stubs so the scan succeeds. Must be done before add_subdirectory.
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
-file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
-add_subdirectory(apps/sandbox)
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/game")
+file(WRITE "${CMAKE_BINARY_DIR}/apps/game/CMakePresets.json" "{\"version\":10}")
+add_subdirectory(apps/game)
+# After apps/game: the cooker links that target's reflection objects, since a
+# level may name a component this project declares rather than the engine.
+add_subdirectory(apps/cook)
+add_subdirectory(apps/pack)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).

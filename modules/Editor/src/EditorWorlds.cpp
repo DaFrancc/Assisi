@@ -57,14 +57,14 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     // Reclaiming memory is SweepAssetCache's job, after travel, not this load's.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
+        Assisi::App::LoadLevel(world, virtualPath, {_assetCache, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
     if (!loaded)
     {
         // Destroy the half-created world rather than leave an empty resident. It
         // holds no role yet, so this always succeeds, and the scene the load may
         // have emptied is this world's own — it goes with it.
-        Assisi::Core::Log::Error("Load as new world: '{}' failed to load — {}.", virtualPath,
+        Assisi::Core::Log::Error("Load as new world: '{}' failed to load - {}.", virtualPath,
                                  Assisi::Runtime::Describe(loaded.error()));
         _worlds.Destroy(world.name);
         return false;
@@ -81,9 +81,14 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
         return false;
     }
     world.state     = Assisi::App::WorldState::Active;
-    // A world created during play simulates immediately; one created while editing
-    // stays frozen, because nothing outside the edited world has a restore story.
-    world.simulate = (_playState == PlayState::Playing);
+    // A world created during play begins immediately; one created while editing
+    // stays frozen and unbegun, because nothing outside the edited world has a
+    // restore story — and a world that never begins never runs level-start logic
+    // into a scene the author is composing.
+    if (_playState == PlayState::Playing)
+    {
+        Assisi::App::BeginWorld(WorldStartContext(world), Assisi::App::SimulateFrom::Begin);
+    }
 
     SetActiveWorld(world);
     Assisi::Core::Log::Info("World '{}' loaded from '{}' ({} resident).", world.name, virtualPath,

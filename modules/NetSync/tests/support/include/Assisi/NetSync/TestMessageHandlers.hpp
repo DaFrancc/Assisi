@@ -8,7 +8,7 @@
 /// bindings for a header land in that header's reflection OBJECT library, and
 /// every executable in the tree links every such library. A binding that
 /// referenced a symbol living in a static library only the tests link would fail
-/// to resolve in the sandbox. Inline definitions make the handlers travel with
+/// to resolve in the game binaries. Inline definitions make the handlers travel with
 /// their bindings, which is the arrangement a test-support header wants anyway.
 ///
 /// Two of the handlers are deliberately named the same thing in two different

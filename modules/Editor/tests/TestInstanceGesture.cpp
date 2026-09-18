@@ -130,7 +130,7 @@ struct Fixture
 
     /// One frame in which an edit site still has the placement: it raises the
     /// hold, opens (or re-opens) the gesture, writes, and then the end-of-frame
-    /// sweep runs — exactly the order OnImGui uses.
+    /// sweep runs — exactly the order DrawPanels uses.
     void HeldFrame(float dx)
     {
         gesture.Hold();

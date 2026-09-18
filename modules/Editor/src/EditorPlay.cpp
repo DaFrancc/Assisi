@@ -14,6 +14,7 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
+#    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
@@ -56,7 +57,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // because F5 reaches this even while the Game panel is hidden.
     if (InBlueprintMode())
     {
-        Assisi::Core::Log::Warn("Play: close the blueprint editor first — a blueprint world is content, "
+        Assisi::Core::Log::Warn("Play: close the blueprint editor first - a blueprint world is content, "
                                 "not a level to run.");
         return;
     }
@@ -77,8 +78,8 @@ void EditorApp::StartPlay(NetIntent intent)
         // the other machine, for a reason nobody there can act on.
         if (HostLevelIdentity().addressing == Assisi::NetSync::LevelAddressing::None)
         {
-            _netError = "save the level to host — clients load it from disk, so it has to be there.";
-            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            _netError = "save the level to host - clients load it from disk, so it has to be there.";
+            Assisi::Core::Log::Warn("Editor: refusing to host - {}", _netError);
             return;
         }
 
@@ -106,7 +107,7 @@ void EditorApp::StartPlay(NetIntent intent)
             _netError = "some live blueprint copies are out of date with their file (" +
                         _staleInstanceSources.front() +
                         "). Save the blueprint again and accept the update, or reload the level.";
-            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            Assisi::Core::Log::Warn("Editor: refusing to host - {}", _netError);
             return;
         }
     }
@@ -149,6 +150,20 @@ void EditorApp::StartPlay(NetIntent intent)
     // F8 hands it back without ending the session; Escape ends the session, which
     // hands it back too.
     GetInput().SetMouseCaptured(true);
+
+    // The world begins here and nowhere earlier: opening a level for authoring
+    // leaves it resident but not begun, so level-start logic never runs over the
+    // scene being composed. Stop resets the progress, so the next Play begins it
+    // again over the restored scene.
+    //
+    // SimulateFrom::Begin rather than the game's policy: SetPlayState owns
+    // `simulate` in this host, the edited world is already resident so its assets
+    // settle a frame later anyway, and deferring here would make Pause and Resume
+    // consult start progress for no visible difference.
+    if (_world != nullptr)
+    {
+        Assisi::App::BeginWorld(WorldStartContext(*_world), Assisi::App::SimulateFrom::Begin);
+    }
 
     _netIntent   = intent;
     _joinPhase   = JoinPhase::None;
@@ -194,7 +209,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
     // is fixed for the life of a session, and the inspector redraws constantly.
-    _netVetoedComponentNames = Assisi::NetSync::LoadNeverReplicateFromConfig();
+    _netVetoedComponentNames = Assisi::NetSync::NeverReplicate();
 
     const auto port = static_cast<std::uint16_t>(_netPort);
 
@@ -365,7 +380,7 @@ void EditorApp::StopPlay()
                         if (!meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data))
                         {
                             Assisi::Core::Log::Error(
-                                "Editor: leaving play lost '{}' — it did not read back from the snapshot "
+                                "Editor: leaving play lost '{}' - it did not read back from the snapshot "
                                 "taken when play started. This is an engine bug.",
                                 meta->name);
                         }
@@ -375,7 +390,7 @@ void EditorApp::StopPlay()
         }
 
         ClearSelection();
-        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
+        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, *_physics);
         // Every entity was destroyed and revived, and the clock went back to the
         // hour play started at — so the cascades hold depth from a sun that has
         // now moved, cast by geometry that has been rebuilt underneath them.
@@ -397,6 +412,17 @@ void EditorApp::StopPlay()
         {
             Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlay.levelPath);
         }
+    }
+
+    // The session is over, so the world has not begun again. Both halves matter:
+    // the progress says the world may start afresh, and the marks say its one-shot
+    // systems may run afresh. Explicit rather than relying on the ApplySystems
+    // above, which only runs when there was something to restore — a Stop with
+    // nothing to put back would otherwise leave a world that can never begin again.
+    if (_world != nullptr)
+    {
+        _world->systems.ClearOnceMarks();
+        _world->start = Assisi::App::StartProgress::NotBegun;
     }
 
     SetPlayState(PlayState::Editing);
@@ -730,7 +756,7 @@ void EditorApp::DrawGameControlWindow()
         {"Host + 1 client", NetIntent::Host, 1},
         {"Host + 2 clients", NetIntent::Host, 2},
         {"Host + 3 clients", NetIntent::Host, 3},
-        {"Join…", NetIntent::Join, 0},
+        {"Join...", NetIntent::Join, 0},
     }};
 #if defined(ASSISI_NETWORKING)
     _playNetSelection = std::clamp(_playNetSelection, 0, static_cast<std::int32_t>(kNetModes.size()) - 1);

@@ -426,7 +426,9 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
         _pipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
         if (_pipelines[i] == nullptr)
         {
-            Core::Log::Error("MeshPass: failed to create the graphics pipeline.");
+            Core::Log::Error("MeshPass: failed to create the graphics pipeline ({}, {}).",
+                             MeshPipelineIsMasked(pipeline) ? "masked" : "opaque",
+                             MeshPipelineIsDoubleSided(pipeline) ? "double-sided" : "back-face culled");
             return false;
         }
     }
@@ -804,7 +806,7 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
         // that from happening; catch a violation here, in debug, before it ships
         // to the GPU where it would be silent.
         ASSISI_ASSERT(item.material->Id() < AssetCache::kMaxMaterials,
-                      "material id indexes past the material table — the shader read would be out of bounds");
+                      "material id indexes past the material table - the shader read would be out of bounds");
         instances.push_back(InstanceData{item.model, item.material->Id()});
 
         const MeshPipeline pipeline = SortKeyPipeline(item.sortKey);

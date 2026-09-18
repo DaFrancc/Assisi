@@ -286,7 +286,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
         const std::optional<uint32_t> index = definition->IndexOf(memberPath);
         if (!index.has_value())
         {
-            Core::Log::Warn("Blueprint: instance '{}' overrides '{}', which '{}' does not declare — dropped.",
+            Core::Log::Warn("Blueprint: instance '{}' overrides '{}', which '{}' does not declare - dropped.",
                             entry.name.empty() ? definition->source : entry.name, memberPath,
                             definition->source);
             continue;
@@ -406,7 +406,7 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                 if (meta == nullptr || !meta->serializable)
                 {
                     Core::Log::Warn("Blueprint: '{}' member '{}' names component '{}', which this build does "
-                                    "not have — skipped.",
+                                    "not have - skipped.",
                                     staged.definition->source, desc.name, componentName);
                     continue;
                 }
@@ -421,7 +421,7 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                 if (!meta->addToScene(&scene, e.index, e.generation, wrapper.at(componentName)))
                 {
                     Core::Log::Error("Blueprint: instance '{}' member '{}' overrides '{}' with something "
-                                     "unreadable — the component is left as the blueprint had it.",
+                                     "unreadable - the component is left as the blueprint had it.",
                                      instanceName, staged.resolved[i].name, componentName);
                 }
             }

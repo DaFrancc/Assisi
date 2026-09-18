@@ -1,4 +1,4 @@
-# LeakSanitizer suppressions for the ASan sandbox run.
+# LeakSanitizer suppressions for the ASan editor run.
 #
 # The desktop stack (Vulkan ICD, GLFW's Wayland backend, GTK modules the
 # compositor injects, dbus, glib) allocates at init and intentionally never

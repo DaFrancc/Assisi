@@ -1,7 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Runtime/Blueprint.hpp>
 
-#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
@@ -476,7 +475,7 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
         if (alreadyRemoved)
         {
             Core::Log::Warn("Blueprint: '{}' overrides fields of '{}', which an inner file removed. The "
-                            "removal wins and the override is dropped — decide which one should go.",
+                            "removal wins and the override is dropped - decide which one should go.",
                             context, componentName);
             continue;
         }
@@ -546,30 +545,21 @@ void ReadInstanceClaims(const nlohmann::json &entry, LevelInstance &out)
     }
 }
 
-/// Reads @p source through the asset system and parses it.
+/// Reads @p source through the installed document reader.
 ///
 /// Logs which file is wrong before returning the kind, here and at every failure
 /// site below: by the time this reaches the caller, `source` may be a file three
 /// levels of nesting under the one it asked for, and nothing above can name it.
-///
-/// Parsed with `allow_exceptions=false` so a malformed file is a value here rather
-/// than a throw the boundary has to catch — the same shape AssetSidecar and
-/// MaterialFile use.
 std::expected<nlohmann::json, BlueprintError> ReadFile(std::string_view source)
 {
-    const auto text = Core::AssetSystem::ReadText(source);
-    if (!text)
+    std::expected<nlohmann::json, LevelError> read = SceneSerializer::ReadDocument(source);
+    if (!read)
     {
         Core::Log::Error("Blueprint: cannot read '{}'.", source);
-        return std::unexpected(BlueprintError::FileUnreadable);
+        return std::unexpected(read.error() == LevelError::MalformedJson ? BlueprintError::MalformedJson
+                                                                         : BlueprintError::FileUnreadable);
     }
-
-    nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
-    if (doc.is_discarded())
-    {
-        Core::Log::Error("Blueprint: '{}' is not readable JSON.", source);
-        return std::unexpected(BlueprintError::MalformedJson);
-    }
+    nlohmann::json doc = std::move(*read);
 
     if (doc.value("version", 0) != 2)
     {
@@ -701,7 +691,7 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
             // Dropped rather than refused, and banning renames is what makes that
             // clean: a missing member can only mean deliberate deletion, so there
             // is no second reading in which this discards a real edit (§6).
-            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares — dropped.", source,
+            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares - dropped.", source,
                             full, childSource);
             continue;
         }

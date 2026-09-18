@@ -98,7 +98,7 @@ void ReplicationClient::AbortJoin(std::string reason)
 {
     _awaitingLevel = false;
     _rejectMessage = std::move(reason);
-    Core::Log::Error("NetSync: join aborted — {}", _rejectMessage);
+    Core::Log::Error("NetSync: join aborted - {}", _rejectMessage);
 }
 
 void ReplicationClient::SendAck(std::uint64_t serverTick)
@@ -175,7 +175,7 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
         // Unreachable through SendIntent, whose static_assert needs a
         // MessageTraits specialization only a registered message has — but this
         // entry point is type-erased, and silently sending nothing is worse.
-        Core::Log::Error("NetSync: refusing to send an intent of an unregistered type — is it AMSG?");
+        Core::Log::Error("NetSync: refusing to send an intent of an unregistered type - is it AMSG?");
         return false;
     }
 
@@ -373,7 +373,7 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
             _rejectMessage = "server rejected the connection: protocol mismatch";
             break;
         case RejectReason::ContentMismatch:
-            _rejectMessage = "server rejected the connection: content sets differ — remove stray .alvl/.abp "
+            _rejectMessage = "server rejected the connection: content sets differ - remove stray .alvl/.abp "
                              "files or sync assets";
             break;
         case RejectReason::ServerFull:
@@ -491,7 +491,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // member ids to the wrong entities, and every delta after this one
             // lands on the wrong member — wrong rather than merely incomplete.
             Core::Log::Error("NetSync: could not expand instance blueprint {} ({} members expected, {} "
-                             "produced) — refusing the snapshot",
+                             "produced) - refusing the snapshot",
                              entry.blueprintIndex, entry.memberCount, members.size());
 
             // A short expansion still built something: those entities were never

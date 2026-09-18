@@ -61,7 +61,7 @@ ComponentMask DeserializeComponentMask(const nlohmann::json &value)
         // are dropped — but the reader deserves to know which happened.
         if (meta == nullptr)
         {
-            Core::Log::Warn("ComponentMask: no component named '{}' is registered — dropping the exclusion. "
+            Core::Log::Warn("ComponentMask: no component named '{}' is registered - dropping the exclusion. "
                             "Was the type renamed?",
                             name);
             continue;
@@ -69,7 +69,7 @@ ComponentMask DeserializeComponentMask(const nlohmann::json &value)
         const std::size_t ordinal = registry.ReplicableOrdinalOf(meta->id);
         if (ordinal == ComponentRegistry::kInvalidOrdinal)
         {
-            Core::Log::Warn("ComponentMask: '{}' is not ACOMP(replicable), so excluding it means nothing — "
+            Core::Log::Warn("ComponentMask: '{}' is not ACOMP(replicable), so excluding it means nothing - "
                             "dropping it. Nothing about this component crosses the wire anyway.",
                             name);
             continue;

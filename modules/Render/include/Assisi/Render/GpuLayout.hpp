@@ -57,7 +57,7 @@ inline constexpr std::size_t kGpuLaneAlignment = 16;
 #define ASSISI_GPU_LAYOUT(type)                                                                                      \
         static_assert(std::is_standard_layout_v<type>, #type " must be standard-layout to mirror a shader struct.");      \
         static_assert(std::is_trivially_copyable_v<type>,                                                                \
-                      #type " must be trivially copyable — it is uploaded to the GPU as bytes.");                         \
+                      #type " must be trivially copyable - it is uploaded to the GPU as bytes.");                         \
         static_assert(sizeof(type) % ::Assisi::Render::kGpuLaneAlignment == 0,                                           \
                       #type " must be a whole number of GPU lanes, or its array stride will not match the shader's.")
 

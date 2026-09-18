@@ -9,18 +9,20 @@
 /// instead of specific hardware inputs, enabling rebindable controls and a
 /// clean injection point for networked input in the future.
 ///
-/// Bindings can be loaded from the "input.actions" section of game.json:
+/// Bindings arrive as an InputBindings, which is what a config file holds:
 /// @code
 /// {
-///   "input": {
-///     "actions": {
-///       "Jump":        [{"key": "Space"}],
-///       "MoveForward": [{"key": "W"}, {"key": "Up"}],
-///       "Fire":        [{"button": "Left"}]
-///     }
+///   "actions": {
+///     "Jump":        ["Space"],
+///     "MoveForward": ["W", "UpArrow"],
+///     "Fire":        ["LeftMouse"]
 ///   }
 /// }
 /// @endcode
+/// Keys and mouse buttons share one name space, so a binding is a bare name and
+/// nothing says which device it came from. That is why the arrow keys are
+/// `LeftArrow`/`RightArrow` and the mouse buttons `LeftMouse`/`RightMouse` — a
+/// bare `Left` would be both.
 ///
 /// @par Usage in a system:
 /// @code
@@ -36,10 +38,9 @@
 /// replicated commands instead of polling here.
 
 #include <Assisi/Core/StringHash.hpp>
+#include <Assisi/Window/InputBindings.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
-
-#include <nlohmann/json_fwd.hpp>
 
 #include <cstddef>
 #include <functional>
@@ -119,20 +120,23 @@ public:
     // Serialisation
     // -------------------------------------------------------------------------
 
-    /// @brief Populate bindings from a JSON object.
+    /// @brief Bind every action @p bindings names, replacing that action's
+    ///        existing bindings and leaving every other action alone.
     ///
-    /// @p j must be an object where each key is an action name and each value
-    /// is an array of binding objects, e.g.:
-    /// @code
-    /// { "Jump": [{"key": "Space"}], "Fire": [{"button": "Left"}] }
-    /// @endcode
-    /// Unknown key/button name strings are skipped with a log warning.
-    /// Existing bindings are not cleared before loading.
-    void LoadFromJson(const nlohmann::json &j);
+    /// Per-action replacement is what layers a player's overrides over the
+    /// shipped defaults: apply the shipped bindings, then apply the overrides,
+    /// and an action the player never touched keeps what shipped while one they
+    /// rebound holds only what they chose. Adding instead would leave the old
+    /// key live alongside the new one; replacing the whole map would delete
+    /// every action the override does not mention.
+    ///
+    /// A name this build does not recognise is skipped with a warning; its
+    /// siblings in the same action still bind.
+    void Apply(const InputBindings &bindings);
 
-    /// @brief Serialise all bindings to a JSON object suitable for round-tripping
-    ///        through LoadFromJson().
-    [[nodiscard]] nlohmann::json ToJson() const;
+    /// @brief Every binding held here, in the form a config file stores.
+    ///        Round-trips through Apply() on a cleared map.
+    [[nodiscard]] InputBindings ToBindings() const;
 
     // -------------------------------------------------------------------------
     // Introspection
@@ -145,8 +149,16 @@ public:
     [[nodiscard]] const ActionTable &GetAllActions() const { return _actions; }
 
     // -------------------------------------------------------------------------
-    // Name ↔ enum helpers (used by LoadFromJson / ToJson)
+    // The binding name space — one namespace over keys and mouse buttons, and
+    // the only place a config file's spelling is decided.
     // -------------------------------------------------------------------------
+
+    /// @brief Resolve a binding name to the input it names, whichever device
+    ///        that is. std::nullopt if this build knows no such input.
+    [[nodiscard]] static std::optional<ActionBinding> BindingFromName(std::string_view name) noexcept;
+
+    /// @brief The name @p binding is written as. Empty if unknown.
+    [[nodiscard]] static std::string_view BindingName(const ActionBinding &binding) noexcept;
 
     /// @brief Canonical name for a Key (e.g. Key::W → "W"). Empty if unknown.
     [[nodiscard]] static std::string_view KeyName(Key key) noexcept;
@@ -154,7 +166,7 @@ public:
     /// @brief Parse a Key from its name string. std::nullopt if unrecognised.
     [[nodiscard]] static std::optional<Key> KeyFromName(std::string_view name) noexcept;
 
-    /// @brief Canonical name for a MouseButton (e.g. MouseButton::Left → "Left").
+    /// @brief Canonical name for a MouseButton (e.g. MouseButton::Left → "LeftMouse").
     [[nodiscard]] static std::string_view MouseButtonName(MouseButton button) noexcept;
 
     /// @brief Parse a MouseButton from its name string. std::nullopt if unrecognised.

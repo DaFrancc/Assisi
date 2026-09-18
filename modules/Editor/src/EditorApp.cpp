@@ -5,16 +5,23 @@
 #include "EditorOptionsPanel.hpp"
 #include "ImGuiQueries.hpp"
 
+#include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Chiara/Profile.hpp>
+#include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Editor/EditorChiaraPanel.hpp>
+#include <Assisi/Editor/TextureFile.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
@@ -27,8 +34,10 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
+#    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Window/InputBindings.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <imgui.h>
@@ -53,6 +62,9 @@ namespace Assisi::Editor
 EditorApp::EditorApp(EditorConfig config)
     : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
 {
+    // Before Initialize, which loads the post-process shaders through it.
+    (void)Assisi::Render::SetAssetSource(&_assetSource);
+
     // Application reads these during Initialize(), which runs before OnStart, so
     // they cannot wait for a hook — hence the constructor body.
     SetRestrictedViewer(_editorConfig.restrictedViewer);
@@ -62,7 +74,15 @@ EditorApp::EditorApp(EditorConfig config)
     }
 }
 
-EditorApp::~EditorApp() = default;
+EditorApp::~EditorApp()
+{
+    // The source is a member, so it goes with this object; nothing may reach it
+    // through the installed pointer after that.
+    if (Assisi::Render::GetAssetSource() == &_assetSource)
+    {
+        (void)Assisi::Render::SetAssetSource(nullptr);
+    }
+}
 
 // The panel cannot reach Application's timing history — it is protected, and
 // only a derived class may read it. So this hands the frame over, and applies
@@ -216,49 +236,20 @@ bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime
         return false;
     }
 
-    bool found = false;
-    for (auto [entity, sceneCamera] : _scene->Query<Assisi::Runtime::Camera>())
+    // Which camera the scene nominates is the same question the game asks, and
+    // App::ActiveSceneCamera is the one answer to it. What is editor-specific is
+    // the gate above: *whether* to ask at all.
+    const std::optional<Assisi::App::SceneView> view = Assisi::App::ActiveSceneCamera(*_scene);
+    if (!view)
     {
-        if (!sceneCamera.isActive)
-        {
-            continue;
-        }
-        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
-        if (transform == nullptr)
-        {
-            continue;
-        }
-
-        // Two active cameras is a state nothing else expects, and the one that
-        // wins is whichever the query reached first — which is to say, arbitrary.
-        // Said once per frame rather than silently picking: the symptom otherwise
-        // is a viewport looking through a camera the author did not mean, which
-        // reads as the camera they *did* mean being broken.
-        if (found)
-        {
-            Assisi::Core::Log::Warn("Play view: more than one Camera is marked active; looking through "
-                                    "the first one found. Clear isActive on the others.");
-            break;
-        }
-        found = true;
-
-        // The whole Transform, world matrix included — Runtime::ViewMatrix derives
-        // the view from `worldMatrix` and reads no other field, so a pose carrying
-        // only position and rotation renders from the origin looking down -Z
-        // however far the camera actually is. The editor's own camera avoids that
-        // by calling RefreshCameraMatrix before its view is taken.
-        //
-        // The world matrix rather than the local pose for the usual reason too: a
-        // player's camera is parented to the character, so its Transform is an
-        // offset from it.
-        pose        = *transform;
-        camera      = sceneCamera;
-        return true;
+        // No active camera in the scene: the editor's own view is the fallback,
+        // which is what a level that has not composed a camera yet should get.
+        return false;
     }
 
-    // No active camera in the scene: the editor's own view is the fallback, which
-    // is what a level that has not composed a camera yet should get.
-    return false;
+    pose   = view->pose;
+    camera = view->camera;
+    return true;
 }
 
 void EditorApp::AdoptLevelCamera()
@@ -268,31 +259,25 @@ void EditorApp::AdoptLevelCamera()
         return;
     }
 
-    for (auto [entity, camera] : _scene->Query<Assisi::Runtime::Camera>())
+    const std::optional<Assisi::App::SceneView> view = Assisi::App::ActiveSceneCamera(*_scene);
+    if (!view)
     {
-        if (!camera.isActive)
-        {
-            continue;
-        }
-        const Assisi::ECS::Transform *transform = _scene->Get<Assisi::ECS::Transform>(entity);
-        if (transform == nullptr)
-        {
-            continue;
-        }
-
-        _cameraTransform.position = transform->position;
-        _cameraTransform.rotation = transform->rotation;
-        _camera                   = camera;
-        // The editor's own camera is never the level's, so it must not be left
-        // marked active — two active cameras is a state nothing else expects.
-        _camera.isActive = false;
-        SyncYawPitchFromRotation();
-        RefreshCameraMatrix();
+        Assisi::Core::Log::Warn("Capture: the level has no active Camera; using the editor's default view. "
+                                "The numbers will be of whatever sits near the origin.");
         return;
     }
 
-    Assisi::Core::Log::Warn("Capture: the level has no active Camera; using the editor's default view. "
-                            "The numbers will be of whatever sits near the origin.");
+    // The local pose, not the whole Transform: this drives the editor's own
+    // camera, whose world matrix RefreshCameraMatrix rebuilds from yaw and pitch
+    // below. Copying the level camera's matrix in would be overwritten anyway.
+    _cameraTransform.position = view->pose.position;
+    _cameraTransform.rotation = view->pose.rotation;
+    _camera                   = view->camera;
+    // The editor's own camera is never the level's, so it must not be left
+    // marked active — two active cameras is a state nothing else expects.
+    _camera.isActive = false;
+    SyncYawPitchFromRotation();
+    RefreshCameraMatrix();
 }
 
 // ---------------------------------------------------------------------------
@@ -301,42 +286,30 @@ void EditorApp::AdoptLevelCamera()
 
 void EditorApp::OnStart()
 {
-    // Action bindings from game.json. A missing or malformed file warns and leaves
-    // the defaults.
-    {
-        const auto pathResult = Assisi::Core::AssetSystem::Resolve("game.json");
-        if (pathResult)
-        {
-            if (std::ifstream file(pathResult.value()); file.is_open())
-            {
-                try
-                {
-                    const auto json = nlohmann::json::parse(file);
-                    if (json.contains("input") && json.at("input").contains("actions"))
-                        _actions.LoadFromJson(json.at("input").at("actions"));
-                }
-                catch (const nlohmann::json::exception &e)
-                {
-                    Assisi::Core::Log::Warn("Failed to parse input bindings from game.json: {}", e.what());
-                }
-            }
-        }
-    }
+    // The shipped bindings, then whatever the player rebound over the top — the
+    // same two layers in the same order the game applies, stated once in App so
+    // the two cannot drift.
+    Assisi::App::LoadActionMap(_actions, GetOptions().bindings);
 
     // Before any session can exist: quantization is inside the handshake hash, so
-    // it has to be settled before the first hello is written. Smoothing is purely
-    // local, but reads the same file.
+    // it has to be settled before the first hello is written.
 #if defined(ASSISI_NETWORKING)
-    Assisi::NetSync::LoadQuantizationFromConfig();
-    Assisi::NetSync::LoadSmoothingFromConfig();
+    Assisi::NetSync::LoadNetworkConfig();
 #endif
 
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
     _worlds.SetServices({.cache    = &_assetCache,
-                         .database = &_assetDatabase,
                          .renderer = &_sceneRenderer,
-                         .jobs     = &Jobs()});
+                         .jobs     = &Jobs(),
+                         .events   = &GetEvents(),
+                         .input    = &GetInput(),
+                         .actions  = &_actions});
+
+    // Editor travel is the game's path, so it honours the game's policy: a level
+    // that waits for its assets in the shipped game waits here too, or testing a
+    // travel in the editor would not be testing what ships.
+    _worlds.SetSimulateFrom(GetConfig().simulateFrom);
 
     // Warn about Render systems the game declared. Systems come from each level's
     // own list, resolved through SystemCatalog, which every ASYSTEM declaration in
@@ -353,7 +326,7 @@ void EditorApp::OnStart()
             // declared its systems, not any particular world.
             _warnedGameRenderSystems = true;
             Assisi::Core::Log::Warn("EditorApp: system '{}' is a Render system, which does not run "
-                                    "in-editor — the editor owns rendering. It will run in the "
+                                    "in-editor - the editor owns rendering. It will run in the "
                                     "standalone game build only.",
                                     definition.name);
         }
@@ -493,10 +466,11 @@ void EditorApp::ReimportAssets()
     Assisi::Core::Log::Info("Asset reimport: {} assets indexed ({}).", *result,
                             IsRestrictedViewer() ? "read-only scan" : "GUID sidecars reconciled");
 
-    // Wire the rebuilt database into serialization's path hint and the asset
-    // cache's id↔path translation. The resolvers hold the database by reference,
-    // so re-running reimport needs no reinstall; doing it anyway is harmless.
-    Assisi::App::InstallAssetResolvers(_assetCache, _assetDatabase);
+    // Saved GUID references carry a readable last-known path, taken from the
+    // database. The resolver holds it by reference, so a re-scan needs no
+    // reinstall; doing it anyway is harmless.
+    Assisi::Core::SetAssetIdHintResolver([this](const Assisi::Core::AssetId &id)
+                                         { return _assetDatabase.PathFor(id).value_or(std::string{}); });
 
     // Bring glTF materials up to date: explode new meshes, reconcile already
     // exploded ones against their current source. Any write means new or updated
@@ -509,6 +483,17 @@ void EditorApp::ReimportAssets()
     {
         if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
             Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material reconcile.", *rescan);
+    }
+
+    // A reconcile may have rebound what a mesh's slots draw with, and a mesh
+    // already resident holds the binding it loaded with.
+    for (const auto &[id, path] : _assetDatabase.Assets())
+    {
+        std::vector<Assisi::Core::AssetId> slots = _assetDatabase.SlotMaterials(id);
+        if (!slots.empty())
+        {
+            _assetCache.SetSlotMaterials(id, std::move(slots));
+        }
     }
 
     // Queue a resolution prompt for every stale mesh the open scene actually draws:
@@ -726,7 +711,7 @@ void EditorApp::ApplyStaleResolution(bool regenerate)
             }
             if (_scene != nullptr)
             {
-                Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+                Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache);
             }
             _assetBrowserDirty = true;
         }
@@ -845,6 +830,9 @@ void EditorApp::SetupScene()
     // Before the scene renderer: the asset cache owns the bindless material-texture
     // table the mesh pipeline binds, and its layout/table are threaded through below.
     _assetCache.Initialize(device, &Jobs());
+    // Creating a block-compressed texture on a device that did not enable the
+    // feature is invalid, so the cache is told before it loads anything.
+    _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
 
     // Unit collider silhouettes, in a persistent arena that is never reset, so they
     // survive level loads. The editor scales these per collider to outline the
@@ -857,23 +845,38 @@ void EditorApp::SetupScene()
     // The engine's default scene-render path: lighting plus the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo, so it is already correct if options.json saved an MSAA mode.
-    // The editor opts into the overlay passes (selection outline, entity icons,
-    // collider wireframes); a game build leaves them off and never loads
-    // assets/editor/**.
     if (!_sceneRenderer.Initialize({.device = device,
                                     .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .overlayFramebufferInfo = GetOverlayFramebufferInfo(),
                                     .width = fbSize.Width,
                                     .height = fbSize.Height,
                                     .camera = _camera,
                                     .bindlessLayout = _assetCache.BindlessLayout(),
                                     .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer(),
-                                    .enableEditorVisuals = _editorConfig.enableEditorVisuals}))
+                                    .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         RequestClose();
         return;
     }
+
+    // The overlay marks — selection outlines, entity icons, collider wireframes.
+    // They target the display-encoded overlay framebuffer rather than the scene's,
+    // because their colours are already what they should look like on screen and
+    // are drawn after the tone map. A viewer build turns them off and then builds
+    // no pipelines and loads nothing under assets/editor/**.
+    if (_editorConfig.enableEditorVisuals)
+    {
+        _overlaysBuilt = _overlays.Initialize(device, GetOverlayFramebufferInfo(),
+                                              static_cast<uint32_t>(fbSize.Width),
+                                              static_cast<uint32_t>(fbSize.Height));
+    }
+
+    // The debug UI, and with it Dear ImGui. Brought up here rather than by
+    // Application because the editor is what draws a UI: an application that
+    // overrides no UI hook links no toolkit at all.
+    Assisi::Debug::DebugUI::Initialize(GetWindow(), *Assisi::Render::RenderSystem::GetVulkanContext(),
+                                       /*persistLayout=*/ !IsRestrictedViewer());
+    _debugUiBrought = true;
+
     _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
     // The saved shadow knobs, applied once here; the options panel pushes every
     // later edit. Nothing is allocated until a level with a sun in it loads.
@@ -885,10 +888,10 @@ void EditorApp::SetupScene()
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
-    _thumbnailCache.Initialize(device, &Jobs(), Assisi::Render::ColorSpace::Linear);
+    _thumbnailCache.Initialize(device, &Jobs());
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Linear for the same reason as the thumbnails: ImGui, not the mesh shader.
-            _helloTexture.LoadFromAssets(device, "textures/hello.png", Assisi::Render::ColorSpace::Linear);
+            Assisi::Editor::LoadTextureFile(_helloTexture, device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
         !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/hello.png for the ImGui image test.");
@@ -902,11 +905,16 @@ void EditorApp::OnResize(int32_t width, int32_t height)
 
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    // The overlay target's sample count moves with the scene's, so the same
-    // notification covers both.
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo, GetOverlayFramebufferInfo()))
+    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
+    }
+    // The overlay target's sample count moves with the scene's, so the same
+    // notification covers both. A failed overlay rebuild costs the marks, not the
+    // scene, so it warns rather than failing the change.
+    if (_overlaysBuilt && !_overlays.OnRenderTargetsChanged(GetOverlayFramebufferInfo()))
+    {
+        Assisi::Core::Log::Warn("Overlay pipelines failed to rebuild; selection marks are disabled.");
     }
 }
 
@@ -952,15 +960,19 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // without touching how the scene renders. Whether the overlay *passes* exist at
     // all is a separate Initialize-time decision: EditorConfig::enableEditorVisuals.
     if (_showEditorOverlays)
-        _sceneRenderer.SetHighlightedEntities(_selection);
+    {
+        _overlays.SetHighlightedEntities(_selection);
+    }
     else
-        _sceneRenderer.SetHighlightedEntity(Assisi::ECS::NullEntity);
+    {
+        _overlays.SetHighlightedEntity(Assisi::ECS::NullEntity);
+    }
     // Which of the highlighted entities is the one being edited. Must come after
     // the list above: SetHighlightedEntity(Null) clears this as part of clearing
     // the selection.
-    _sceneRenderer.SetActiveHighlight(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
+    _overlays.SetActiveHighlight(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
     // Entity icons show while authoring/paused, but not during live play.
-    _sceneRenderer.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
+    _overlays.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
     if (_showEditorOverlays)
     {
         // Build half of the collider wireframes, queued before Render() consumes
@@ -1013,7 +1025,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
 {
-    if (!_sceneRenderer.IsValid() || !_scene)
+    if (!_overlaysBuilt || !_sceneRenderer.IsValid() || !_scene)
     {
         return;
     }
@@ -1023,11 +1035,11 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     Assisi::Runtime::Camera    playCamera;
     if (PlayViewCamera(playPose, playCamera))
     {
-        _sceneRenderer.RenderOverlays(frame, *_scene, playPose, playCamera);
+        _overlays.Render(frame, *_scene, playPose, playCamera, _sceneRenderer);
         return;
     }
 
-    _sceneRenderer.RenderOverlays(frame, *_scene, _cameraTransform, _camera);
+    _overlays.Render(frame, *_scene, _cameraTransform, _camera, _sceneRenderer);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
@@ -1273,8 +1285,12 @@ void EditorApp::OnUpdate(float dt)
         {
             if (world.state == Assisi::App::WorldState::Loading)
                 return;
-            Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
-                                                world.streamingPending);
+            Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, world.streamingPending);
+
+            // Reads the flag the pass above just wrote. Only a world that has
+            // begun settles, so the authored world sitting in Editing is skipped
+            // by SettleWorld itself rather than by a condition here.
+            Assisi::App::SettleWorld(WorldStartContext(world), world.streamingPending);
         });
 
     // Resolve assets for entities that arrived over the wire. A mirror carries
@@ -1295,7 +1311,7 @@ void EditorApp::OnUpdate(float dt)
             revision != _netStructureRevision)
         {
             _netStructureRevision = revision;
-            Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+            Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache);
         }
     }
 #endif
@@ -1348,6 +1364,20 @@ void EditorApp::OnUpdate(float dt)
     }
 }
 
+Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &world)
+{
+    // Everything a per-frame phase gets, matching the game. dt and the tick are
+    // zero: a one-shot runs outside any frame.
+    return {.world         = world,
+            .dt            = 0.f,
+            .simTick       = 0,
+            .input         = &GetInput(),
+            .actions       = &_actions,
+            .events        = GetEvents(),
+            .isActiveWorld = &world == _worlds.Active(),
+            .worldManager  = &_worlds};
+}
+
 void EditorApp::InstallQueuedSystems()
 {
     // Every resident world, not just the active one: a blueprint can be spawned
@@ -1357,7 +1387,8 @@ void EditorApp::InstallQueuedSystems()
     // Loading worlds included, harmlessly: their scene belongs to a worker until
     // promotion, but the system registry is main-thread only, and promotion runs
     // ApplySystems, which clears the queue anyway.
-    _worlds.ForEach([](Assisi::App::World &world) { Assisi::App::DrainSystemInstalls(world); });
+    _worlds.ForEach([this](Assisi::App::World &world)
+                    { Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 void EditorApp::FlushDeferred()
@@ -1405,6 +1436,16 @@ void EditorApp::OnShutdown()
     ShutdownNetSession();
     ShutdownPieClients();
 #endif
+
+    // Before ~Application, which releases the device: the UI backend holds Vulkan
+    // objects of its own, and freeing them through a destroyed device is a crash.
+    // OnShutdown runs after the loop exits and before that teardown, which is the
+    // window this needs.
+    if (_debugUiBrought)
+    {
+        Assisi::Debug::DebugUI::Shutdown();
+        _debugUiBrought = false;
+    }
 }
 
 bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
@@ -1441,7 +1482,7 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
                         ? (*definition)->members[tag->memberIndex].name
                         : std::format("#{}", tag->memberIndex);
 
-                return std::format("{} › {}", row->name.empty() ? row->source : row->name, memberPath);
+                return std::format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
             }
         }
     }
@@ -1683,7 +1724,7 @@ void EditorApp::DrawChiaraWindow()
     {
         // App-level, so a game gets the same panel; the editor only decides where
         // it lives and what opens it.
-        DrawChiaraPanel();
+        DrawChiaraPanel(*this);
     }
     ImGui::End();
 }
@@ -1747,7 +1788,33 @@ void EditorApp::DrawHistoryWindow()
     ImGui::End();
 }
 
-void EditorApp::OnImGui()
+void EditorApp::OnRenderUi(Assisi::Render::RenderFrame &frame)
+{
+    if (!_debugUiBrought)
+    {
+        return; // headless: no window, no swapchain, nothing to draw a panel into
+    }
+
+    // Split three ways because the three costs move for unrelated reasons:
+    // `ui-begin` is the backend's per-frame setup plus the texture sweep,
+    // `ui-panels` is the editor's own panel code, and `ui-render` is building and
+    // recording the draw data, which scales with how much got drawn rather than
+    // with how much code ran.
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-begin");
+        Assisi::Debug::DebugUI::BeginFrame(frame);
+    }
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-panels");
+        DrawPanels();
+    }
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-render");
+        Assisi::Debug::DebugUI::EndFrame(frame);
+    }
+}
+
+void EditorApp::DrawPanels()
 {
     // Per-frame "an edit widget is being held" accumulator, raised by the gizmo and
     // the inspector below and read by the end-of-frame capture sweep.
@@ -1852,11 +1919,12 @@ void EditorApp::OnImGui()
     }
 
     // Show unsaved changes in the OS window title, re-setting it only when the
-    // dirty state flips rather than every frame. The base title is the game's own,
-    // from game.json, not an editor hardcode.
+    // dirty state flips rather than every frame. The base title is the game's
+    // own, from its config, not an editor hardcode.
     if (const bool dirty = IsSceneDirty(); dirty != _titleDirtyShown)
     {
-        GetWindow().SetTitle(dirty ? GetConfig().title + " *" : GetConfig().title);
+        const std::string title(GetConfig().title.View());
+        GetWindow().SetTitle(dirty ? title + " *" : title);
         _titleDirtyShown = dirty;
     }
 

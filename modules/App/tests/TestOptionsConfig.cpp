@@ -3,7 +3,9 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
 
+#include <filesystem>
 #include <string>
 
 using namespace Assisi::App;
@@ -251,4 +253,59 @@ TEST_CASE("A document that will not parse costs the settings, not the launch")
     const OptionsConfig defaults;
     CHECK(read.shadows.sun.cascadeCount == defaults.shadows.sun.cascadeCount);
     CHECK(read.aaMode == defaults.aaMode);
+}
+
+TEST_CASE("A fresh install pins neither the window size nor the bindings")
+{
+    // Both default to files under assets/config/, so writing them out at a
+    // value nobody chose would freeze this build's defaults onto the player and
+    // no later change would ever reach them.
+    const std::string text = OptionsConfig{}.ToJsonText();
+    CHECK(text.find("window") == std::string::npos);
+    CHECK(text.find("input") == std::string::npos);
+    CHECK(text == "{}");
+}
+
+TEST_CASE("A chosen window size and a rebound action survive a write and a read")
+{
+    OptionsConfig written;
+    written.width  = 1920;
+    written.height = 1080;
+    written.bindings.actions[Assisi::Core::ShortString("Jump")] = {Assisi::Core::ShortString("F")};
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+
+    REQUIRE(read.width.has_value());
+    REQUIRE(read.height.has_value());
+    CHECK(*read.width == 1920);
+    CHECK(*read.height == 1080);
+    REQUIRE(read.bindings.actions.size() == 1);
+    CHECK(read.bindings.actions.at(Assisi::Core::ShortString("Jump")).front().View() == "F");
+}
+
+TEST_CASE("What the player changed survives a restart")
+{
+    // The round-trips above never touch a disk. This is the clause that says a
+    // rebind is still there after the process that made it is gone, which is the
+    // whole reason the settings live under the writable user root rather than
+    // beside the shipped defaults.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi-options-restart";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    REQUIRE(Assisi::Core::AssetSystem::SetUserRoot(root).has_value());
+
+    OptionsConfig written;
+    written.width = 1600;
+    written.bindings.actions[Assisi::Core::ShortString("Fire")] = {Assisi::Core::ShortString("LeftMouse")};
+    written.SaveToJson();
+
+    // A second load, as a relaunch would do it.
+    const OptionsConfig reloaded = OptionsConfig::LoadFromJson();
+
+    REQUIRE(reloaded.width.has_value());
+    CHECK(*reloaded.width == 1600);
+    REQUIRE(reloaded.bindings.actions.size() == 1);
+    CHECK(reloaded.bindings.actions.at(Assisi::Core::ShortString("Fire")).front().View() == "LeftMouse");
+
+    std::filesystem::remove_all(root);
 }

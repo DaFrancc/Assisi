@@ -100,10 +100,10 @@ struct SystemContext
     /// A system runs inside the frame loop's walk over the worlds, so it must
     /// **never** call LoadLevel/Destroy/Promote directly — those would invalidate
     /// the walk and can free the very world the system is running in. They refuse
-    /// and log if tried. Change level with `ctx.worlds->RequestTravel(path)`,
+    /// and log if tried. Change level with `ctx.worldManager->RequestTravel(path)`,
     /// which the host applies at its next frame safe point. Null in hosts that
     /// run systems without a manager (tests).
-    WorldManager *worlds = nullptr;
+    WorldManager *worldManager = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).
@@ -126,8 +126,32 @@ struct RenderContext
 /// decides which side of the step a system lands on.
 enum class SystemPhase : std::uint8_t
 {
-    PreUpdate   = 0, ///< After input is polled; before physics and game logic.
-    FixedUpdate = 1, ///< Fixed timestep, before the physics step; may run several times per frame.
+    /// Once, when a world's content is committed and it starts being run: its
+    /// entities, physics bodies, instance table and systems are all in place.
+    ///
+    /// Where level-start logic belongs — spawn the player at a PlayerStart, open
+    /// a door authored closed. Run through RunOnce, never Run: each system fires
+    /// once per world and is marked, so a blueprint installed later begins at the
+    /// next drain without the caller filtering by name.
+    ///
+    /// GPU assets may still be streaming here, so a mesh may be a placeholder;
+    /// wait for @ref Loaded if that matters.
+    ///
+    /// The context is a per-frame phase's, with two exceptions: `dt` and
+    /// `simTick` are zero, because a one-shot runs outside any frame and belongs
+    /// to no tick. Input is whatever the host has — real in the game and the
+    /// editor, null on a dedicated server, exactly as every other phase sees it.
+    Begin = 0,
+
+    /// Once, when every asset the world references has settled — resident, or
+    /// fallen back after a failure that will never resolve.
+    ///
+    /// What a loading screen waits for. Same run-once rule and same null context
+    /// as @ref Begin.
+    Loaded = 1,
+
+    PreUpdate   = 2, ///< After input is polled; before physics and game logic.
+    FixedUpdate = 3, ///< Fixed timestep, before the physics step; may run several times per frame.
 
     /// Fixed timestep, immediately **after** the physics step, once per step.
     ///
@@ -137,10 +161,10 @@ enum class SystemPhase : std::uint8_t
     /// per-frame — a frame that runs three fixed steps runs this three times and
     /// PostUpdate once, so a system that must see every tick cannot use the
     /// latter.
-    PostFixedUpdate = 2,
+    PostFixedUpdate = 4,
 
-    Update     = 3, ///< Once per render frame; main game logic.
-    PostUpdate = 4, ///< After game logic; transform propagation and cleanup.
+    Update     = 5, ///< Once per render frame; main game logic.
+    PostUpdate = 6, ///< After game logic; transform propagation and cleanup.
     Count
 };
 
@@ -235,6 +259,20 @@ private:
     /// @brief Run all game logic systems for the given phase in dependency order.
     void Run(SystemPhase phase, SystemContext ctx);
 
+    /// @brief Run the systems of a one-shot phase that have not run yet for this
+    /// world, and mark them as run. For SystemPhase::Begin and Loaded.
+    ///
+    /// Marks every entry it reaches, including those skipped by ActiveWorldOnly()
+    /// or an unmet RequireAny(): a one-shot that declined its moment has had it.
+    /// The alternative — leaving it unmarked — fires it at whatever unrelated
+    /// drain next happens to run the phase, which is the silent late start this
+    /// phase exists to remove.
+    ///
+    /// Calling it again is a no-op, which is what makes it safe at every commit
+    /// point. A system registered after an earlier call runs on the next one,
+    /// alone; that is how a blueprint spawned mid-session begins.
+    void RunOnce(SystemPhase phase, SystemContext ctx);
+
     /// @brief Run all render systems in dependency order.
     void RunRender(RenderContext ctx);
 
@@ -271,6 +309,15 @@ private:
     /// nothing is muting it.
     [[nodiscard]] bool IsEnabled(std::string_view name) const;
 
+    /// @brief Forget which one-shot systems have run, so Begin and Loaded fire
+    /// again over the same registry.
+    ///
+    /// For a host that restarts a world it did not reload — the editor's Stop,
+    /// which restores the authored scene into the world that was just played.
+    /// Clear() has the same effect by dropping the entries outright; this is for
+    /// when the entries are the ones that should stay.
+    void ClearOnceMarks();
+
     /// @brief Drops every registered system, in every phase.
     ///
     /// Registration is otherwise append-only, and re-registering a name corrupts
@@ -303,6 +350,16 @@ private:
             /// Cleared by SetEnabled to skip this system at dispatch while leaving
             /// everything else about it in place — the editor's per-system mute.
             bool enabled = true;
+            /// Set by RunOnce once this entry has had its moment, so a one-shot
+            /// phase cannot fire twice for one world. Only ever true in the Begin
+            /// and Loaded phases; the per-frame phases never consult it.
+            ///
+            /// Not the same thing as @ref enabled, which is a mute the author
+            /// toggles: a muted one-shot still counts as run, because its moment
+            /// passed while it was muted and unmuting must not resurrect it.
+            /// Cleared with the entry by Clear(), which is what lets the editor's
+            /// Stop and the next Play run Begin again.
+            bool ran = false;
             /// Set by SystemHandle::RequireAny(). Empty means "always eligible";
             /// otherwise the system runs only while the scene holds at least one
             /// of these components.
@@ -344,11 +401,11 @@ private:
 
     /// @brief Re-sort @p phase if dirty, then run its systems in dependency order,
     /// omitting active-world-only entries when @p skipActiveOnly and entries whose
-    /// RequireAny components are all absent from @p gateScene.
+    /// RequireAny components are absent from the context's own scene.
     /// @p profileName is @p phaseName with program lifetime — see PhaseProfileName.
     template <typename Ctx>
     void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, const char *profileName, Ctx &ctx,
-                  bool skipActiveOnly, const ECS::Scene &gateScene);
+                  bool skipActiveOnly);
 
     std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
     Phase<RenderContext>                              _renderPhase;

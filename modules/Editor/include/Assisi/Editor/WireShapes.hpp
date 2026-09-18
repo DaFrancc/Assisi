@@ -19,7 +19,7 @@
 #include <vector>
 
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/LinePass.hpp>
+#include <Assisi/Editor/Overlay/LinePass.hpp>
 
 namespace Assisi::Editor
 {
@@ -33,31 +33,31 @@ inline constexpr glm::vec3 kAxisY{0.f, 1.f, 0.f};
 inline constexpr glm::vec3 kAxisZ{0.f, 0.f, 1.f};
 
 /// @brief Append one segment, transforming both local endpoints by @p model.
-void AddSegment(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddSegment(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                 const glm::vec3 &a, const glm::vec3 &b);
 
 /// @brief Append a poly-line arc of @p segments in the plane spanned by unit axes
 /// @p u and @p v, centred at @p center with radius @p radius, sweeping
 /// [@p a0, @p a1]. A full circle is a0 = 0, a1 = 2*pi.
-void AddArc(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddArc(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
             const glm::vec3 &center, const glm::vec3 &u, const glm::vec3 &v, float radius, float a0, float a1,
             std::int32_t segments);
 
 /// @brief A box's twelve edges, centred on the origin.
-void AddBoxWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddBoxWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                      const glm::vec3 &halfExtents);
 
 /// @brief Three orthogonal great circles — a sphere, as far as an overlay goes.
-void AddSphereWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddSphereWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                         float radius);
 
 /// @brief Two rings at +/- @p halfHeight along Y plus four vertical connectors:
 /// the body a cylinder and a capsule share.
-void AddCylinderBody(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddCylinderBody(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                      float radius, float halfHeight);
 
 /// @brief A cylinder body capped by two hemispherical profiles.
-void AddCapsuleWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddCapsuleWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                          float radius, float halfHeight);
 
 /// @brief A cone from the origin opening along -Y: the rim circle at @p height,
@@ -66,7 +66,7 @@ void AddCapsuleWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &
 /// Along -Y because that is a spot light's own convention for "forward", so a
 /// caller aiming one has no basis to build and no sign to get wrong — the model
 /// matrix carries the aim.
-void AddConeWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddConeWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                       float halfAngleDegrees, float height, bool drawAxis);
 
 /// @brief An arrow from the origin along -Y of @p length, with a head of four
@@ -75,7 +75,7 @@ void AddConeWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &mod
 /// The same -Y convention as the cone, and for the same reason: a light's aim is
 /// a direction, and the matrix that orients the shape is the one place that
 /// direction has to be turned into a basis.
-void AddArrowWireframe(std::vector<Render::LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
+void AddArrowWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
                        float length);
 
 /// @brief A rotation carrying -Y onto @p direction.

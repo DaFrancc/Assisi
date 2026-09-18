@@ -2,93 +2,59 @@
 
 #include <Assisi/App/AppConfig.hpp>
 
-#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 
-#include <nlohmann/json.hpp>
-
-#include <cstdint>
-#include <fstream>
+#include <expected>
+#include <string>
 
 namespace Assisi::App
 {
 
-AppConfig AppConfig::LoadFromJson()
+namespace
 {
-    AppConfig cfg;
 
-    const auto pathResult = Core::AssetSystem::Resolve("game.json");
-    if (!pathResult)
-    {
-        Core::Log::Warn("game.json not found — using default engine configuration.");
-        return cfg;
-    }
-
-    std::ifstream file(pathResult.value());
-    if (!file.is_open())
-    {
-        Core::Log::Warn("Could not open game.json — using default engine configuration.");
-        return cfg;
-    }
-
-    try
-    {
-        const auto json = nlohmann::json::parse(file);
-
-        if (json.contains("window"))
-        {
-            const auto &w = json.at("window");
-            if (w.contains("title"))  cfg.title  = w.at("title").get<std::string>();
-            if (w.contains("width"))  cfg.width  = w.at("width").get<int32_t>();
-            if (w.contains("height")) cfg.height = w.at("height").get<int32_t>();
-        }
-
-        if (json.contains("render"))
-        {
-            const auto &r = json.at("render");
-            if (r.contains("clearColor"))
-            {
-                const auto &c = r.at("clearColor");
-                if (c.is_array() && c.size() == 4)
-                {
-                    cfg.clearColor = {c[0].get<float>(), c[1].get<float>(),
-                                      c[2].get<float>(), c[3].get<float>()};
-                }
-            }
-        }
-
-        if (json.contains("headless")) cfg.headless = json.at("headless").get<bool>();
-
-        if (json.contains("timing"))
-        {
-            const auto &t = json.at("timing");
-            if (t.contains("physicsHz")) cfg.physicsHz = t.at("physicsHz").get<double>();
-        }
-
-        if (json.contains("diagnostics"))
-        {
-            const auto &d = json.at("diagnostics");
-            if (d.contains("keepLogs"))  cfg.keepLogs  = d.at("keepLogs").get<uint32_t>();
-            if (d.contains("keepDumps")) cfg.keepDumps = d.at("keepDumps").get<uint32_t>();
-        }
-    }
-    catch (const nlohmann::json::exception &e)
-    {
-        Core::Log::Warn("Failed to parse game.json: {} — using defaults.", e.what());
-    }
-
-    // A zero rate silently disables fixed update (step = inf) and a negative
-    // one makes the accumulator loop in Application::Run non-terminating, so
-    // reject both here rather than trusting the config file.
+AppConfig Sanitized(AppConfig cfg)
+{
+    // A zero rate silently disables fixed update (step = inf) and a negative one
+    // makes the accumulator loop in Application::Run non-terminating, so reject
+    // both here rather than trusting the config file.
     if (cfg.physicsHz <= 0.0)
     {
         const double fallbackHz = AppConfig{}.physicsHz;
-        Core::Log::Warn("game.json timing.physicsHz = {} is invalid (must be > 0) — using {} Hz.",
-                        cfg.physicsHz, fallbackHz);
+        Core::Log::Warn("App: physicsHz = {} is invalid (must be > 0) - using {} Hz.", cfg.physicsHz, fallbackHz);
         cfg.physicsHz = fallbackHz;
     }
-
     return cfg;
+}
+
+} // namespace
+
+AppConfig AppConfig::FromJsonText(std::string_view text)
+{
+    AppConfig cfg;
+    const std::expected<void, Core::Reflect::AssetDocumentError> applied =
+        Core::Reflect::ApplyAssetDocument(text, cfg);
+    if (!applied)
+    {
+        Core::Log::Warn("App: cannot read the game config ({}) - using defaults.",
+                        Core::Reflect::ToString(applied.error()));
+        return AppConfig{};
+    }
+    return Sanitized(cfg);
+}
+
+AppConfig AppConfig::Load(std::string_view assetPath)
+{
+    AppConfig cfg;
+    const std::expected<void, Core::ConfigError> read = Core::ReadConfig(assetPath, cfg);
+    if (!read)
+    {
+        Core::Log::Warn("App: cannot read '{}' ({}) - using default engine configuration.", assetPath,
+                        Core::ToString(read.error()));
+        return AppConfig{};
+    }
+    return Sanitized(cfg);
 }
 
 } // namespace Assisi::App

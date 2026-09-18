@@ -164,10 +164,17 @@ public:
     /// minus one (leave a core for the main thread), floored at 1.
     explicit JobSystem(uint32_t workerCount = 0);
 
-    /// @brief Signals workers to stop, drains queued worker tasks, and joins.
-    /// Main-queue tasks still pending at shutdown are dropped (no main thread left
-    /// to run them).
+    /// @brief Shutdown(), if it has not already run.
     ~JobSystem();
+
+    /// @brief Signals workers to stop, runs the worker tasks already queued, and
+    /// joins. Main-queue tasks still pending are dropped (no main thread left to
+    /// run them). Idempotent.
+    ///
+    /// For an owner whose tasks use objects destroyed before the pool itself: call
+    /// this first, so no worker is still inside a task when they go. A worker task
+    /// queued afterwards runs only if something help-waits on it.
+    void Shutdown();
 
     JobSystem(const JobSystem &) = delete;
     JobSystem &operator=(const JobSystem &) = delete;
@@ -354,7 +361,7 @@ auto Task<T>::Then(Pool pool, F fn) -> Task<typename detail::ThenResult<F, T>::t
     {
         std::lock_guard<std::mutex> lock(antecedent->mutex);
         ASSISI_ASSERT(!antecedent->continuationClaimed,
-                      "Then() called twice on the same task — the continuation slot is one-shot, so the "
+                      "Then() called twice on the same task - the continuation slot is one-shot, so the "
                       "first chain would be silently orphaned and its Wait() would livelock");
         antecedent->continuationClaimed = true;
         if (antecedent->done)

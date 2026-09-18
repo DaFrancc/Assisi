@@ -1,0 +1,3 @@
+# The fixture's own ignore list, so the walk over it exercises the same rule the
+# real tree does: an authoring source sits beside its output and is not content.
+*.zip

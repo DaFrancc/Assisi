@@ -1,0 +1,58 @@
+diff --git a/src/vulkan/vulkan-backend.h b/src/vulkan/vulkan-backend.h
+index 4cb87f7..84be8d9 100644
+--- a/src/vulkan/vulkan-backend.h
++++ b/src/vulkan/vulkan-backend.h
+@@ -756,6 +756,12 @@ namespace nvrhi::vulkan
+         const BindlessLayoutDesc* getBindlessDesc() const override { return isBindless ? &bindlessDesc : nullptr; }
+         Object getNativeObject(ObjectType objectType) override;
+ 
++        // An immutable bindless layout, whose table is update-after-bind (see bake()).
++        bool isUpdateAfterBind() const
++        {
++            return isBindless && bindlessDesc.layoutType == BindlessLayoutDesc::LayoutType::Immutable;
++        }
++
+         // generate the descriptor set layout
+         vk::Result bake();
+ 
+diff --git a/src/vulkan/vulkan-resource-bindings.cpp b/src/vulkan/vulkan-resource-bindings.cpp
+index fa8fa97..49c203c 100644
+--- a/src/vulkan/vulkan-resource-bindings.cpp
++++ b/src/vulkan/vulkan-resource-bindings.cpp
+@@ -181,7 +181,22 @@ namespace nvrhi::vulkan
+             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
+             .setPBindings(vulkanLayoutBindings.data());
+ 
+-        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(), vk::DescriptorBindingFlagBits::ePartiallyBound);
++        vk::DescriptorBindingFlags bindingFlags = vk::DescriptorBindingFlagBits::ePartiallyBound;
++
++        // An immutable bindless table is update-after-bind. Its whole capacity is
++        // otherwise counted against the ordinary per-stage descriptor limits, which
++        // some drivers set in the hundreds (Intel: 200 sampled images per stage), and
++        // the pipelines using it fail to build there. Update-after-bind descriptors are
++        // counted against their own, far larger limits. The device must enable the
++        // matching descriptorBinding*UpdateAfterBind feature for each descriptor type
++        // a table holds.
++        if (isUpdateAfterBind())
++        {
++            descriptorSetLayoutInfo.setFlags(vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool);
++            bindingFlags |= vk::DescriptorBindingFlagBits::eUpdateAfterBind;
++        }
++
++        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(), bindingFlags);
+ 
+         auto extendedInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo()
+             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
+@@ -667,6 +682,12 @@ namespace nvrhi::vulkan
+             .setPPoolSizes(poolSizes.data())
+             .setMaxSets(1);
+ 
++        // A set from an update-after-bind layout can only come from a pool that allows it.
++        if (layout->isUpdateAfterBind())
++        {
++            poolInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind);
++        }
++
+         vk::Result res = m_Context.device.createDescriptorPool(&poolInfo,
+                                                              m_Context.allocationCallbacks,
+                                                              &ret->descriptorPool);

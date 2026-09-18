@@ -22,6 +22,7 @@
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
 #if defined(ASSISI_NETWORKING)
@@ -441,6 +442,15 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         }
         break;
     }
+    // Shown, not editable. Editing one in place needs a list widget with per-row
+    // identity, add and remove, and a nested list for a nested element — and
+    // nothing authors a container by hand yet. A field that simply vanished from
+    // the inspector would read as a bug, so it reads as what it holds.
+    case FieldType::Vector:
+    case FieldType::Map:
+        ImGui::LabelText(field.name.c_str(), "%s",
+                         Assisi::Core::Reflect::DescribeContainer(field, fp).c_str());
+        break;
     default:
         // Either a type only an owning component can draw (the caller handles
         // those before delegating here) or one nothing draws yet.
@@ -1096,7 +1106,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity,
                                             Assisi::App::ParentWorldResolver(*_scene)))
         {
-            Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics — it already has a "
+            Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics - it already has a "
                                     "collider of the other kind, or no Transform.",
                                     meta.name);
         }
@@ -1419,7 +1429,7 @@ void EditorApp::DrawReplicationPolicy()
         const bool gameVeto = IsComponentGameVetoed(*meta);
         bool sends    = SelectedEntitySends(*meta);
 
-        // A component game.json forbids gets a dead switch with a reason, not a
+        // A component the network config forbids gets a dead switch with a reason, not a
         // live one that silently does nothing.
         ImGui::BeginDisabled(gameVeto);
         if (ImGui::Checkbox(meta->name.c_str(), &sends))
@@ -1429,7 +1439,7 @@ void EditorApp::DrawReplicationPolicy()
         if (gameVeto)
         {
             ImGui::SameLine();
-            ImGui::TextDisabled("(filtered by game.json)");
+            ImGui::TextDisabled("(filtered by the network config)");
         }
     }
 
@@ -1625,7 +1635,7 @@ void EditorApp::DrawLodVerdict()
     std::string switches;
     if (!_sceneRenderer.LodSettings().enabled)
     {
-        switches = "selection is off — every instance draws LOD0";
+        switches = "selection is off - every instance draws LOD0";
     }
     else if (lod.forced)
     {
@@ -2170,7 +2180,8 @@ void EditorApp::DrawInspector()
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
                 if (gameVeto)
-                    ImGui::SetTooltip("Never sent — game.json's neverReplicate list forbids this component type.");
+                    ImGui::SetTooltip(
+                        "Never sent — the network config's neverReplicate list forbids this component type.");
                 else if (!editable)
                     ImGui::SetTooltip(sends ? "Sent to clients." : "Withheld — stays on this machine.");
                 else if (sends)

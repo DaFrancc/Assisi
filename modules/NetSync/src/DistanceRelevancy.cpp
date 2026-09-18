@@ -16,7 +16,7 @@ DistanceRelevancy::DistanceRelevancy(RelevancyConfig config) : _config(config)
 {
     if (_config.radius <= 0.f)
     {
-        Core::Log::Warn("NetSync: relevancy radius {} is not positive — using 60 m.",
+        Core::Log::Warn("NetSync: relevancy radius {} is not positive - using 60 m.",
                         static_cast<double>(_config.radius));
         _config.radius = 60.f;
     }
@@ -28,7 +28,7 @@ DistanceRelevancy::DistanceRelevancy(RelevancyConfig config) : _config(config)
     {
         const float widened = _config.radius * 1.25f;
         Core::Log::Warn("NetSync: relevancy exitRadius {} must exceed radius {} or entities on the boundary "
-                        "despawn and respawn on every crossing — using {}.",
+                        "despawn and respawn on every crossing - using {}.",
                         static_cast<double>(_config.exitRadius), static_cast<double>(_config.radius),
                         static_cast<double>(widened));
         _config.exitRadius = widened;

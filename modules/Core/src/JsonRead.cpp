@@ -26,7 +26,7 @@ void Reject(const char *component, const char *field, std::string_view expected,
     if (dump.size() > kMaxDump)
     {
         dump.resize(kMaxDump);
-        dump += "…";
+        dump += "...";
     }
 
     Log::Error("Reflect: {}.{} expects {}, but the file has {} ({}). The field is not readable, so the "
@@ -183,6 +183,49 @@ bool ReadInt64(const nlohmann::json &j, const char *component, const char *field
         Reject(component, field, "a whole number", *value);
         return false;
     }
+    out = value->get<int64_t>();
+    return true;
+}
+
+bool ReadEnum(const nlohmann::json &j, const char *component, const char *field,
+              std::span<const EnumName> names, int64_t &out)
+{
+    const nlohmann::json *value = Present(j, field);
+    if (value == nullptr)
+        return true;
+
+    if (value->is_string())
+    {
+        const std::string text = value->get<std::string>();
+        for (const EnumName &entry : names)
+        {
+            if (entry.name == text)
+            {
+                out = entry.value;
+                return true;
+            }
+        }
+
+        // The names that would have worked, so a misspelling is one edit to fix.
+        std::string allowed;
+        for (const EnumName &entry : names)
+        {
+            if (!allowed.empty())
+                allowed += ", ";
+            allowed += entry.name;
+        }
+        Reject(component, field, "one of: " + allowed, *value);
+        return false;
+    }
+
+    if (!value->is_number_integer())
+    {
+        Reject(component, field, "an enumerator name or its whole number", *value);
+        return false;
+    }
+
+    // Taken as written, unchecked against the table: this is the form the writer
+    // emits, and a range check here would refuse files it produced.
     out = value->get<int64_t>();
     return true;
 }

@@ -53,7 +53,7 @@ struct Event
     std::uint32_t reserved2      = 0;
 };
 
-static_assert(sizeof(Event) == 32, "Event must stay 32 bytes — ring sizing and the wrap math assume it");
+static_assert(sizeof(Event) == 32, "Event must stay 32 bytes - ring sizing and the wrap math assume it");
 static_assert(alignof(Event) == 8, "Event must stay 8-byte aligned so a slot store is never split");
 static_assert(std::is_trivially_copyable_v<Event>, "Ring slots are overwritten in place");
 

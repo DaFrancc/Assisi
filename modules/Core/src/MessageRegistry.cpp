@@ -23,10 +23,10 @@ void MessageRegistry::Register(MessageMeta meta)
     // the vector. A late arrival would both renumber and dangle.
     if (_finalized)
     {
-        Core::Log::Error("MessageRegistry: refusing late registration of '{}' — the registry is already "
+        Core::Log::Error("MessageRegistry: refusing late registration of '{}' - the registry is already "
                          "finalized and its ids are on the wire. The message will not be reflected.",
                          meta.name);
-        ASSISI_ASSERT(false, "MessageRegistry::Register after an id was issued — ids are positions in the "
+        ASSISI_ASSERT(false, "MessageRegistry::Register after an id was issued - ids are positions in the "
                       "name-sorted list, and they are what the wire carries");
         return;
     }
@@ -54,9 +54,9 @@ void MessageRegistry::EnsureFinalized() const
         if (_metas[i].name == _metas[i - 1].name)
         {
             Core::Log::Error("MessageRegistry: two message types are both named '{}'. Message names are the "
-                             "wire identity — rename one.",
+                             "wire identity - rename one.",
                              _metas[i].name);
-            ASSISI_ASSERT(false, "duplicate AMSG name — the two would share a dense wire id and misdispatch");
+            ASSISI_ASSERT(false, "duplicate AMSG name - the two would share a dense wire id and misdispatch");
         }
     }
 
