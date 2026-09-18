@@ -11,7 +11,16 @@
 #   )
 #
 # For each listed header that contains ACOMP annotations, a .generated.cpp is
-# produced in ${CMAKE_CURRENT_BINARY_DIR}/generated/.  The sources are compiled
+# produced in ${CMAKE_CURRENT_BINARY_DIR}/generated/.
+#
+# INCLUDE_ROOT names the directory the headers are included relative to. Without
+# it, reflectgen includes a header by the path after its `include/` segment, or
+# by bare filename when there is none — which only resolves for a header sitting
+# directly in an include directory. With it, each header is included by its path
+# under the root, and its output lands in the matching subdirectory of generated/,
+# so two headers with the same name in different folders do not collide.
+#
+# The sources are compiled
 # into a separate OBJECT library (${TARGET}-Generated) rather than into the
 # module's static library.  This avoids the MSVC linker stripping unreferenced
 # translation units from static libraries, which would silently discard all
@@ -36,7 +45,7 @@ set(_ASSISI_REFLECTGEN_SOURCES "${_ASSISI_REFLECTGEN_SOURCES}"
     CACHE INTERNAL "reflectgen implementation files the generated sources depend on" FORCE)
 
 function(assisi_reflect)
-    cmake_parse_arguments(_ARG "" "TARGET" "HEADERS" ${ARGN})
+    cmake_parse_arguments(_ARG "" "TARGET;INCLUDE_ROOT" "HEADERS" ${ARGN})
 
     if(NOT _ARG_TARGET)
         message(FATAL_ERROR "assisi_reflect: TARGET is required")
@@ -57,14 +66,27 @@ function(assisi_reflect)
 
         # Output file in binary dir/generated/.
         get_filename_component(_stem "${_header}" NAME_WE)
-        set(_out "${CMAKE_CURRENT_BINARY_DIR}/generated/${_stem}.generated.cpp")
+        set(_outdir "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        set(_include_args "")
+        if(_ARG_INCLUDE_ROOT)
+            cmake_path(ABSOLUTE_PATH _ARG_INCLUDE_ROOT BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                       OUTPUT_VARIABLE _root)
+            cmake_path(RELATIVE_PATH _abs BASE_DIRECTORY "${_root}" OUTPUT_VARIABLE _rel)
+            cmake_path(GET _rel PARENT_PATH _rel_dir)
+            if(_rel_dir)
+                set(_outdir "${_outdir}/${_rel_dir}")
+            endif()
+            set(_include_args --include "${_rel}")
+        endif()
+        set(_out "${_outdir}/${_stem}.generated.cpp")
 
         add_custom_command(
             OUTPUT  "${_out}"
             COMMAND Python3::Interpreter
                     "${_ASSISI_REFLECTGEN}"
                     "${_abs}"
-                    --outdir "${CMAKE_CURRENT_BINARY_DIR}/generated"
+                    --outdir "${_outdir}"
+                    ${_include_args}
             DEPENDS "${_abs}" "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
             COMMENT "reflectgen: ${_header}"
             VERBATIM

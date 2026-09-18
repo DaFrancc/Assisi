@@ -208,7 +208,7 @@ SystemContext GameApp::WorldStartContext(World &world)
             .actions       = &_actions,
             .events        = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
-            .worlds        = &_worlds};
+            .worldManager  = &_worlds};
 }
 
 void GameApp::StepWorlds(float dt)

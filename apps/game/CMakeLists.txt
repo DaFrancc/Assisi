@@ -1,23 +1,41 @@
-# The project's own code, shared by both executables: the game's systems, the
-# headless server, and the argument parsers. A static library rather than a set
-# of sources listed twice, so the two binaries cannot drift in what they contain.
+# The project splits in two:
 #
-# The reflection registrations deliberately do NOT live here — see the INTERFACE
-# library below for why an archive is the wrong place for them.
+#   src/     the game itself — its systems and components. Everything here is
+#            picked up by glob, so adding a file to the game is only ever
+#            creating it. CONFIGURE_DEPENDS re-runs the glob on every build, so a
+#            new file is seen without anyone re-running CMake by hand.
+#   launch/  how the game starts: the two main()s, their argument parsing, and
+#            the headless server. A game can change these but rarely needs to,
+#            so they are listed by name and kept out of the way.
+#
+# Both are compiled into one static library that both executables link, so the
+# two binaries cannot drift in what they contain. The reflection registrations
+# deliberately do NOT live here — see the INTERFACE library below for why an
+# archive is the wrong place for them.
 add_library(Assisi-GameLib STATIC)
 Assisi_apply_defaults(Assisi-GameLib)
 
+file(GLOB_RECURSE _game_sources CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+file(GLOB_RECURSE _game_headers CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
+
 target_sources(Assisi-GameLib
   PRIVATE
-    "src/DemoSystems.cpp"
-    "src/DemoSystems.hpp"
-    "src/LaunchArgs.cpp"
-    "src/LaunchArgs.hpp"
-    "src/ServerApp.cpp"
-    "src/ServerApp.hpp"
+    ${_game_sources}
+    ${_game_headers}
+    "launch/LaunchArgs.cpp"
+    "launch/LaunchArgs.hpp"
+    "launch/ServerApp.cpp"
+    "launch/ServerApp.hpp"
 )
 
-target_include_directories(Assisi-GameLib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(Assisi-GameLib
+  PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/launch"
+)
 
 target_link_libraries(Assisi-GameLib
   PUBLIC
@@ -33,9 +51,15 @@ if (ASSISI_ENABLE_NETWORKING)
   target_link_libraries(Assisi-GameLib PUBLIC Assisi::NetSync)
 endif()
 
-# The game's own ASYSTEM declarations. Scanning them is what puts them in the
-# catalog: a level names a system, and the declaration in a reflected header is
-# the registration — there is no registerGameSystems to call.
+# The game's own ASYSTEM and ACOMP declarations. Scanning them is what puts them
+# in the catalog: a level names a system, and the declaration in a reflected
+# header is the registration — there is no registerGameSystems to call.
+#
+# Every header under src/ is scanned, not a hand-kept list of the annotated
+# ones. A header missing from such a list compiles and links fine and simply
+# never registers, which is a failure nothing reports. A header with no
+# annotations costs one empty generated file, and a src/ with no headers at all
+# reflects nothing rather than failing to configure.
 #
 # Reflected on an INTERFACE lib rather than on Assisi-GameLib, and the generated
 # objects are added to each executable rather than to the archive. Both halves
@@ -45,11 +69,13 @@ endif()
 add_library(Assisi-Game-Systems INTERFACE)
 target_include_directories(Assisi-Game-Systems INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(Assisi-Game-Systems INTERFACE Assisi::App)
-assisi_reflect(
-  TARGET Assisi-Game-Systems
-  HEADERS
-    src/DemoSystems.hpp
-)
+if (_game_headers)
+  assisi_reflect(
+    TARGET       Assisi-Game-Systems
+    INCLUDE_ROOT src
+    HEADERS      ${_game_headers}
+  )
+endif()
 
 # --- The two executables.
 #
@@ -64,7 +90,7 @@ assisi_reflect(
 # target).
 add_executable(Assisi-Game EXCLUDE_FROM_ALL)
 Assisi_apply_defaults(Assisi-Game)
-target_sources(Assisi-Game PRIVATE "src/GameMain.cpp")
+target_sources(Assisi-Game PRIVATE "launch/GameMain.cpp")
 target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
 if (ASSISI_PAK_OVERRIDES)
   target_compile_definitions(Assisi-Game PRIVATE ASSISI_PAK_OVERRIDES)
@@ -116,13 +142,15 @@ endif()
 
 add_executable(Assisi-GameEditor)
 Assisi_apply_defaults(Assisi-GameEditor)
-target_sources(Assisi-GameEditor PRIVATE "src/EditorMain.cpp")
+target_sources(Assisi-GameEditor PRIVATE "launch/EditorMain.cpp")
 target_link_libraries(Assisi-GameEditor PRIVATE Assisi-GameLib Assisi-Game-Systems Assisi::Editor)
 
 # Per-binary, for the reason stated above the INTERFACE library: an executable
 # cannot be linked into, so its registrations arrive as objects.
 foreach(_exe Assisi-Game Assisi-GameEditor)
-  target_sources("${_exe}" PRIVATE $<TARGET_OBJECTS:Assisi-Game-Systems-Generated>)
+  if (TARGET Assisi-Game-Systems-Generated)
+    target_sources("${_exe}" PRIVATE $<TARGET_OBJECTS:Assisi-Game-Systems-Generated>)
+  endif()
   assisi_link_reflections("${_exe}")
 endforeach()
 

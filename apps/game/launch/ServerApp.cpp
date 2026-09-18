@@ -385,7 +385,7 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
             .actions       = nullptr,
             .events        = GetEvents(),
             .isActiveWorld = true,
-            .worlds        = nullptr};
+            .worldManager  = nullptr};
 }
 
 void ServerApp::OnShutdown()

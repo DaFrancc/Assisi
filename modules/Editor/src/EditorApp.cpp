@@ -1375,7 +1375,7 @@ Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &worl
             .actions       = &_actions,
             .events        = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
-            .worlds        = &_worlds};
+            .worldManager  = &_worlds};
 }
 
 void EditorApp::InstallQueuedSystems()

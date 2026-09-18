@@ -113,7 +113,7 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx)
 
 void PrettyTravelSystem(Assisi::App::SystemContext &ctx)
 {
-    if (ctx.input == nullptr || ctx.worlds == nullptr) // headless host or no manager: nowhere to travel from
+    if (ctx.input == nullptr || ctx.worldManager == nullptr) // headless host or no manager: nowhere to travel from
     {
         return;
     }
@@ -122,7 +122,7 @@ void PrettyTravelSystem(Assisi::App::SystemContext &ctx)
     {
         constexpr std::string_view kPrettyLevel = "levels/Pretty.alvl";
         Assisi::Core::Log::Info("PrettyTravel: '{}' -> '{}'.", ctx.world.levelPath, kPrettyLevel);
-        ctx.worlds->RequestTravel(kPrettyLevel);
+        ctx.worldManager->RequestTravel(kPrettyLevel);
     }
 }
 
