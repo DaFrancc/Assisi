@@ -100,10 +100,10 @@ struct SystemContext
     /// A system runs inside the frame loop's walk over the worlds, so it must
     /// **never** call LoadLevel/Destroy/Promote directly — those would invalidate
     /// the walk and can free the very world the system is running in. They refuse
-    /// and log if tried. Change level with `ctx.worlds->RequestTravel(path)`,
+    /// and log if tried. Change level with `ctx.worldManager->RequestTravel(path)`,
     /// which the host applies at its next frame safe point. Null in hosts that
     /// run systems without a manager (tests).
-    WorldManager *worlds = nullptr;
+    WorldManager *worldManager = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).

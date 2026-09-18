@@ -157,14 +157,14 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
     {
         // dt and the tick are zero because no frame has run yet; everything else
         // is what any other phase would get.
-        BeginWorld({.world        = incoming,
-                    .dt           = 0.f,
-                    .simTick      = 0,
-                    .input        = _services.input,
-                    .actions      = _services.actions,
-                    .events       = *_services.events,
+        BeginWorld({.world         = incoming,
+                    .dt            = 0.f,
+                    .simTick       = 0,
+                    .input         = _services.input,
+                    .actions       = _services.actions,
+                    .events        = *_services.events,
                     .isActiveWorld = true,
-                    .worlds       = this},
+                    .worldManager  = this},
                    _simulateFrom);
     }
     else

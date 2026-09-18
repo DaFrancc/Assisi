@@ -31,7 +31,7 @@ inline SystemContext StartContext(World &world)
             .actions       = nullptr,
             .events        = events,
             .isActiveWorld = true,
-            .worlds        = nullptr};
+            .worldManager  = nullptr};
 }
 
 } // namespace Assisi::App::Test
