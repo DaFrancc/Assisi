@@ -522,13 +522,13 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
         txn.label           = "Place " + name;
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = Assisi::ECS::NullEntity;
-        txn.cmds.push_back(Assisi::Editor::InstanceDelta{
+        txn.Add(Assisi::Editor::InstanceDelta{
                 .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
         for (const Assisi::ECS::Entity member : placed->members)
         {
             if (member != Assisi::ECS::NullEntity)
-                txn.cmds.push_back(Assisi::Editor::EntityDelta{member, std::nullopt,
-                                                               history->CaptureEntityComponents(member)});
+                txn.Add(Assisi::Editor::EntityDelta{member, std::nullopt,
+                                                    history->CaptureEntityComponents(member)});
         }
         history->Push(std::move(txn));
     }
@@ -593,7 +593,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     if (history != nullptr)
     {
         for (const Assisi::ECS::Entity entity : subtree)
-            txn.cmds.push_back(
+            txn.Add(
                 Assisi::Editor::EntityDelta{entity, history->CaptureEntityComponents(entity), std::nullopt});
     }
 
@@ -639,13 +639,13 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 
     if (history != nullptr)
     {
-        txn.cmds.push_back(Assisi::Editor::InstanceDelta{
+        txn.Add(Assisi::Editor::InstanceDelta{
                 .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
         for (const Assisi::ECS::Entity member : placed->members)
         {
             if (member != Assisi::ECS::NullEntity)
-                txn.cmds.push_back(Assisi::Editor::EntityDelta{member, std::nullopt,
-                                                               history->CaptureEntityComponents(member)});
+                txn.Add(Assisi::Editor::EntityDelta{member, std::nullopt,
+                                                    history->CaptureEntityComponents(member)});
         }
         history->Push(std::move(txn));
     }
@@ -831,9 +831,9 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
         txn.label           = field.empty() ? "Reset " + component : "Reset " + component + "." + field;
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = _selectedEntity;
-        txn.cmds.push_back(Assisi::Editor::ComponentDelta{entity, meta->id, before,
-                                                          history->CaptureComponent(entity, meta->id)});
-        txn.cmds.push_back(
+        txn.Add(Assisi::Editor::ComponentDelta{entity, meta->id, before,
+                                               history->CaptureComponent(entity, meta->id)});
+        txn.Add(
             Assisi::Editor::InstanceDelta{.instanceId = tag->instanceId, .before = original, .after = updated});
         history->Push(std::move(txn));
     }

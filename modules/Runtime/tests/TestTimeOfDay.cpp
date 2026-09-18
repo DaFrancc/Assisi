@@ -118,11 +118,14 @@ TEST_CASE("A twenty-four hour day needs a double hour, and a float would run it 
     AdvanceFor(clock, static_cast<int32_t>(kSteps));
     CHECK(clock.hour == doctest::Approx(17.0).epsilon(1e-7));
 
-    float asFloat = 16.f;
+    // volatile so every tick is its own rounded add. Under fast-math the
+    // optimizer may otherwise split the loop into partial sums, which rounds far
+    // less and measures the compiler instead of the float.
+    volatile float asFloat = 16.f;
     const float step = kTick * 24.f / kRealDaySeconds;
     for (int32_t i = 0; i < static_cast<int32_t>(kSteps); ++i)
     {
-        asFloat += step;
+        asFloat = asFloat + step;
     }
     // Falsifiable in the other direction: this is the bug the double avoids, and
     // if a float ever became good enough the assertion would say so.

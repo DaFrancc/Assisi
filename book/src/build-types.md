@@ -28,6 +28,11 @@ Every build has a long name and a short alias. The first letter is the compiler
 Each build lives in its own folder, like `out/build/gcc-ship/`, so switching
 between them doesn't throw away the others.
 
+On Linux, ship has a second form for public releases, `make gs-steamrt`, which
+builds inside Valve's Steam Runtime so the game runs on other people's
+distributions too. [Building for every Linux distribution](steam-runtime.md)
+explains it.
+
 ## Never judge performance in debug
 
 A debug build isn't just a uniformly slower build. It changes *which* code is

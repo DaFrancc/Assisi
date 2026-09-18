@@ -75,6 +75,11 @@ else()
 endif()
 option(ASSISI_PAK_OVERRIDES "Let the game read a content package named on its command line" ${_assisi_pak_overrides_default})
 
+# The oldest glibc the game promises to start on, which GameNeedsOnlySystemLibraries
+# then holds it to. Empty everywhere but the gcc-ship-steamrt preset: a game built
+# against this machine's glibc needs that glibc, and that is not a defect.
+set(ASSISI_GLIBC_CEILING "" CACHE STRING "Newest glibc version the Game may need, e.g. 2.31; empty for no ceiling")
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------
