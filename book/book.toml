@@ -1,0 +1,18 @@
+[book]
+title = "The Assisi Book"
+description = "A beginner's guide to making games with the Assisi engine."
+authors = ["Francisco Vivas Puerto (DaFrancc)"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../out/book"
+
+[output.html]
+git-repository-url = "https://github.com/DaFrancc/Assisi"
+edit-url-template = "https://github.com/DaFrancc/Assisi/edit/main/book/{path}"
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.search]
+enable = true
