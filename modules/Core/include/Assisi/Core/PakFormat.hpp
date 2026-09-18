@@ -11,6 +11,9 @@
 ///
 /// Every field is written at a fixed width, so the index is a flat array a reader
 /// takes in one read and addresses by position.
+///
+/// Slices may sit in any order with gaps between them: a writer that keeps each
+/// slice where the previous release had it leaves holes where slices were removed.
 
 #include <cstddef>
 #include <cstdint>
