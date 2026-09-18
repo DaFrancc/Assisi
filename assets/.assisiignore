@@ -14,8 +14,12 @@
 *.blend1
 *.zip
 
+# Test models too large to ship: their textures alone are most of the pak.
+DamagedHelmet*
+
 # Editor-only content. DebugUI draws the spinner and loads the fonts from here
 # without checking for an editor, but DebugUI is inside Assisi::Debug, which only
 # Assisi::Editor links and which the Game target is forbidden to -- so nothing in
 # a standalone build can read any of it.
 /editor/
+Coffee_Machine/

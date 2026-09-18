@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -53,6 +54,9 @@ public:
     /// @brief Every entry of @p kind, ordered by id so the order is a property of
     ///        the pak rather than of how the index was hashed.
     [[nodiscard]] std::vector<PakEntry> EntriesOfKind(CookedKind kind) const;
+
+    /// @brief Every entry, in index order: what a packer lays the next release out from.
+    [[nodiscard]] std::span<const PakEntry> Entries() const { return _entries; }
 
 private:
     PakProvider(RandomAccessFile file, std::vector<PakEntry> entries);
