@@ -92,10 +92,8 @@ class FieldInfo:
     # The AENUM of a container's *leaf* element, resolved the same way enum_info
     # is. A container field's enum metadata describes what it ultimately holds.
     leaf_enum: Optional[EnumInfo] = None
-    # The AENUM whose enumerators are the bits of this integer field, named by
-    # AFIELD(bitmask = EnumName). Distinct from enum_info: the field stores a set
-    # of enumerators, not one of them, so its C++ type is an integer and the enum
-    # never appears in the declaration.
+    # The AENUM E of a Core::Bitmask<E> field. Distinct from enum_info: the field
+    # stores a set of enumerators, not one of them.
     bitmask_info: Optional[EnumInfo] = None
     radio:     Optional[RadioInfo] = None  # set by _resolve_radio after parsing
     # Why this field's type reaches an InstanceView without spelling one — an
@@ -217,8 +215,27 @@ def _split_args(s: str) -> list[str]:
     return result
 
 
-def parse_annot_args(content: str) -> AnnotArgs:
-    """Parse the argument list inside ACOMP(...) or AFIELD(...)."""
+def _refuse_quoted(key: str, value: str, where: str) -> None:
+    """Refuse a quoted value where the value names something in C++.
+
+    The one rule every annotation shares: a value that is C++ — a number, a
+    type, a field, an enumerator, a grammar keyword — is bare, and only a string
+    C++ cannot check, such as a system name, is quoted. Refused rather than
+    unquoted, so the form a reader sees is the only form that parses.
+    """
+    if '"' in value or "'" in value:
+        bare = value.replace('"', '').replace("'", '')
+        raise ValueError(
+            f"{where}: '{key} = {value}' is quoted, but it names something in C++. "
+            f"Quotes are for strings C++ cannot check, such as a system name; write "
+            f"'{key} = {bare}'.")
+
+
+def parse_annot_args(content: str, where: str) -> AnnotArgs:
+    """Parse the argument list inside ACOMP(...), AASSET(...) or AFIELD(...).
+
+    None of their keys takes a string, so every quoted value is refused.
+    """
     args = AnnotArgs()
     for token in _split_args(content):
         token = token.strip()
@@ -226,7 +243,9 @@ def parse_annot_args(content: str) -> AnnotArgs:
             continue
         if '=' in token:
             k, _, v = token.partition('=')
-            args.kvs[k.strip()] = v.strip().strip("\"'")
+            k, v = k.strip(), v.strip()
+            _refuse_quoted(k, v, where)
+            args.kvs[k] = v
         else:
             args.flags.add(token)
     return args
@@ -403,28 +422,30 @@ def parse_enum_constants(body: str) -> list:
 # Bitmask (an integer field holding a set of enumerators)
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Reflected unsigned integer spellings, and how many bits each one can hold.
-# Signed types are absent deliberately: the top bit of a signed field is the sign,
-# so the highest enumerator would set a negative value and every comparison
-# against it would be wrong.
-_BITMASK_WIDTHS = {'uint8_t': 8, 'uint16_t': 16, 'uint32_t': 32, 'uint64_t': 64}
+# Core::Bitmask<E> in each spelling a header may use; group 1 is the enum.
+_BITMASK_RE = re.compile(r'^(?:(?:Assisi::)?Core::)?Bitmask\s*<\s*([\w:]+)\s*>$')
+
+# Core::Bitmask stores its bits in a uint32_t.
+_BITMASK_BITS = 32
 
 
 def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
-    """Attach the AENUM named by AFIELD(bitmask = EnumName) to an integer field.
+    """Attach the AENUM a Core::Bitmask<E> field is a set of.
 
     The field stores one bit per enumerator, at the enumerator's own value, so
-    the enum's values are bit indices and must fit the field's width.
+    the enum's values are bit indices and must fit the mask's width.
     """
-    named = f.args.get('bitmask')
-    if named is None:
-        return
-    named = str(named).strip()
-
-    if f.cpp_type not in _BITMASK_WIDTHS:
+    keyed = f.args.get('bitmask')
+    if keyed is not None:
         raise ValueError(
-            f"{header_name}: field '{f.name}' is AFIELD(bitmask = {named}) but its type is "
-            f"'{f.cpp_type}'. A bitmask must be one of: {', '.join(sorted(_BITMASK_WIDTHS))}.")
+            f"{header_name}: field '{f.name}' is AFIELD(bitmask = {keyed}). A set of "
+            f"enumerators is a field type, not an annotation: declare it "
+            f"Core::Bitmask<{keyed}>, so the compiler knows what its bits mean.")
+
+    match = _BITMASK_RE.match(f.cpp_type)
+    if match is None:
+        return
+    named = match.group(1)
 
     info = enums.get(named)
     if info is None:
@@ -437,14 +458,14 @@ def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
             f"{header_name}: field '{f.name}' names '{named}' as its bitmask, but that enum "
             f"has no enumerators to make bits of.")
 
-    width   = _BITMASK_WIDTHS[f.cpp_type]
     highest = max(value for _, value in info.constants)
     lowest  = min(value for _, value in info.constants)
-    if lowest < 0 or highest >= width:
+    if lowest < 0 or highest >= _BITMASK_BITS:
         raise ValueError(
             f"{header_name}: enum '{named}' has enumerator values in [{lowest}, {highest}], "
-            f"which do not all index a bit of a {width}-bit '{f.cpp_type}' field '{f.name}'. "
-            f"A bitmask enum's values are bit positions, so they must be in [0, {width - 1}].")
+            f"which do not all index a bit of the {_BITMASK_BITS}-bit field '{f.name}'. "
+            f"A bitmask enum's values are bit positions, so they must be in "
+            f"[0, {_BITMASK_BITS - 1}].")
 
     f.bitmask_info = info
 
@@ -485,7 +506,9 @@ def parse_radio_spec(raw: str, where: str) -> dict:
             raise ValueError(
                 f"{where}: AFIELD(radio) sub-argument '{tok}' is not a key = value pair.")
         key, _, value = tok.partition('=')
-        spec[key.strip()] = value.strip()
+        key, value = key.strip(), value.strip()
+        _refuse_quoted(key, value, where)
+        spec[key] = value
     return spec
 
 
@@ -802,7 +825,7 @@ def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[s
             f"{where} has '{reliability}' as its second argument, which is not a reliability. "
             f"{grammar}")
 
-    extras = parse_annot_args(','.join(tokens[2:]))
+    extras = parse_annot_args(','.join(tokens[2:]), where)
     unknown = extras.flags - _AMSG_EXTRA_FLAGS
     if unknown:
         raise ValueError(
@@ -865,11 +888,21 @@ def find_systems(text: str, path: Path) -> list:
                 continue
             if '=' in arg:
                 key, _, value = arg.partition('=')
-                key, value    = key.strip(), value.strip().strip('"')
+                key, value    = key.strip(), value.strip()
                 if key not in _ASYSTEM_KEYS:
                     raise ValueError(
                         f"{where} sets unknown key '{key}'. Recognised: "
                         f"{', '.join(sorted(_ASYSTEM_KEYS))}.")
+                # Every key here holds a system name: a string a level file
+                # writes, which no C++ symbol shares — so it is quoted where it
+                # is declared and everywhere it is referred to.
+                quoted = len(value) >= 2 and value[0] == '"' and value[-1] == '"'
+                bare   = value.strip('"')
+                if value and not quoted:
+                    raise ValueError(
+                        f"{where} writes '{key} = {value}'. A system name is a string a level "
+                        f"file uses, not a C++ symbol, so it is quoted: {key} = \"{bare}\".")
+                value = bare
                 if not value:
                     raise ValueError(f"{where} sets '{key}' to nothing.")
                 if key == 'name':
@@ -1003,7 +1036,7 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
         m = _AFIELD_RE.search(body, i)
         if not m:
             break
-        args = parse_annot_args(m.group(1))
+        args = parse_annot_args(m.group(1), f"{source_header}: AFIELD({m.group(1).strip()})")
         rest = body[m.end():]
         declaration = _match_field_decl(rest.lstrip())
         if not declaration:
@@ -1173,13 +1206,13 @@ def parse_header_full(path: Path) -> tuple[list, list, list]:
         # ── ACOMP / AASSET / AENUM ──────────────────────────────────────────
         acomp_m = _ACOMP_RE.match(text, i)
         if acomp_m:
-            pending_acomp = parse_annot_args(acomp_m.group(1))
+            pending_acomp = parse_annot_args(acomp_m.group(1), f"{path.name}: ACOMP({acomp_m.group(1).strip()})")
             pending_is_asset = False
             i = acomp_m.end()
             continue
         aasset_m = _AASSET_RE.match(text, i)
         if aasset_m:
-            pending_acomp = parse_annot_args(aasset_m.group(1))
+            pending_acomp = parse_annot_args(aasset_m.group(1), f"{path.name}: AASSET({aasset_m.group(1).strip()})")
             pending_is_asset = True
             i = aasset_m.end()
             continue

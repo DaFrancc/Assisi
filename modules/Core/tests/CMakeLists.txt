@@ -18,6 +18,7 @@ add_executable(Assisi-Core-Tests
   TestBiMap.cpp
   TestAssetCodec.cpp
   TestBinaryCodec.cpp
+  TestBitmask.cpp
   TestComponentMask.cpp
   TestBitStream.cpp
   TestComponentRegistry.cpp

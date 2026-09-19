@@ -5,6 +5,7 @@
 /// @brief ECS components for Jolt physics integration.
 
 #include <Assisi/Prelude.hpp>
+#include <Assisi/Core/Bitmask.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Math/GLM.hpp>
 
@@ -107,13 +108,10 @@ enum class CollisionChannel : std::uint8_t
     Count,
 };
 
-/// @brief Every channel — the mask a body carries unless it narrows it.
-///
-/// One bit per channel, so a body defaults to interacting with everything and an
-/// author subtracts rather than having to enumerate. Built from `Count` so it
-/// widens with the enum instead of needing a matching edit.
-inline constexpr std::uint32_t AllChannels =
-    (1u << static_cast<std::uint32_t>(CollisionChannel::Count)) - 1u;
+/// @brief Every channel — the mask a body carries unless it narrows it, so a
+/// body defaults to interacting with everything and an author subtracts rather
+/// than having to enumerate.
+inline constexpr Core::Bitmask<CollisionChannel> AllChannels = Core::Bitmask<CollisionChannel>::All();
 
 /// @brief Serializable descriptor for a rigid body's collider.
 ///
@@ -138,13 +136,9 @@ struct RigidBodyDescriptor
     AFIELD(min = 0.0, radioListen = {source = shape, value = {Capsule, Cylinder}, behavior = vanish})
     float halfHeight = 0.5f;              ///< Capsule/Cylinder half-height of the cylindrical part.
 
-    /// The channels this body collides with — one bit per CollisionChannel, at
-    /// that enumerator's value. Interaction needs both sides to agree, so
-    /// clearing a bit here stops the pair whatever the other body says.
-    ///
-    /// uint32_t rather than uint16_t because 16-bit fields are not reflected;
-    /// only the low `CollisionChannel::Count` bits are ever read.
-    AFIELD(bitmask = CollisionChannel) uint32_t collidesWith = AllChannels;
+    /// The channels this body collides with. Interaction needs both sides to
+    /// agree, so clearing a bit here stops the pair whatever the other body says.
+    AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
 
     /// @brief Which channel this body is on.
     ///
@@ -297,13 +291,9 @@ struct CharacterState
 ACOMP(replicable)
 struct CharacterDescriptor
 {
-    /// The channels this character collides with — one bit per CollisionChannel,
-    /// at that enumerator's value. Interaction needs both sides to agree, so
-    /// clearing a bit here stops the pair whatever the other body says.
-    ///
-    /// uint32_t rather than uint16_t because 16-bit fields are not reflected;
-    /// only the low `CollisionChannel::Count` bits are ever read.
-    AFIELD(bitmask = CollisionChannel) uint32_t collidesWith = AllChannels;
+    /// The channels this character collides with. Interaction needs both sides to
+    /// agree, so clearing a bit here stops the pair whatever the other body says.
+    AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
 
     AFIELD(min = 0.0) float radius = 0.3f; ///< Capsule radius; half the character's width.
 

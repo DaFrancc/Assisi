@@ -104,7 +104,7 @@ ASYSTEM(Update, name = "Counter") inline void CounterSystem(SystemContext &ctx);
 
 /// Ordered after Counter, so a test can assert the graph was honoured rather
 /// than that both merely ran.
-ASYSTEM(Update, name = "Follower", after = Counter) inline void FollowerSystem(SystemContext &ctx);
+ASYSTEM(Update, name = "Follower", after = "Counter") inline void FollowerSystem(SystemContext &ctx);
 
 /// One InputContext, N resident worlds — this is the flag that keeps a system
 /// from applying the same keypresses in every one.
@@ -121,7 +121,7 @@ ASYSTEM(Begin, name = "Started") inline void StartedSystem(SystemContext &ctx);
 
 /// Ordered after Started, because a one-shot phase sorts its entries too and an
 /// unsorted walk would settle the order by registration instead.
-ASYSTEM(Begin, name = "StartedLate", after = Started) inline void StartedLateSystem(SystemContext &ctx);
+ASYSTEM(Begin, name = "StartedLate", after = "Started") inline void StartedLateSystem(SystemContext &ctx);
 
 ASYSTEM(Loaded, name = "Settled") inline void SettledSystem(SystemContext &ctx);
 
@@ -131,7 +131,7 @@ ASYSTEM(Loaded, name = "Settled") inline void SettledSystem(SystemContext &ctx);
 /// every other phase, so their `after`/`before` travels a path of its own and
 /// needs a case of its own — the Update pair above exercises none of it.
 ASYSTEM(Render, name = "DrawEarly") inline void DrawEarlySystem(RenderContext &ctx);
-ASYSTEM(Render, name = "DrawLate", after = DrawEarly) inline void DrawLateSystem(RenderContext &ctx);
+ASYSTEM(Render, name = "DrawLate", after = "DrawEarly") inline void DrawLateSystem(RenderContext &ctx);
 
 inline void CounterSystem(SystemContext &ctx)
 {

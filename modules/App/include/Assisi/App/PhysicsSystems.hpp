@@ -212,7 +212,7 @@ inline constexpr float kMaxPitchDegrees = 89.f;
 ///
 /// `activeWorldOnly`, and it null-checks the input regardless: a headless host
 /// has no mouse, and a server reads look from replicated commands instead.
-ASYSTEM(Update, name = "CharacterLook", before = CharacterInput, activeWorldOnly)
+ASYSTEM(Update, name = "CharacterLook", before = "CharacterInput", activeWorldOnly)
 void CharacterLookSystem(SystemContext &ctx);
 
 } // namespace Assisi::App

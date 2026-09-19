@@ -172,9 +172,9 @@ struct FieldMeta
     std::string maxField{};
 
     // The enumerators to offer in an editor, in declaration order. Populated for
-    // a FieldType::Enum field, which holds one of them, and for an unsigned
-    // integer field annotated AFIELD(bitmask = ...), which holds a set of them —
-    // one bit per enumerator, at the enumerator's own value. `enumSize` tells the
+    // a FieldType::Enum field, which holds one of them, and for a Core::Bitmask
+    // field (a FieldType::UInt32), which holds a set of them — one bit per
+    // enumerator, at the enumerator's own value. `enumSize` tells the
     // two apart: non-zero for the enum, zero for the bitmask. Empty otherwise.
     //
     // A trailing `Count` enumerator is absent: it counts the others rather than
