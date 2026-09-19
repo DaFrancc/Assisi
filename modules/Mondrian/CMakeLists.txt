@@ -10,6 +10,7 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/DrawList.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
   PRIVATE
+    "src/DrawList.cpp"
     "src/Ui.cpp"
 )
 

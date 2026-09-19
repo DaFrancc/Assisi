@@ -298,6 +298,8 @@ bool Application::InitializePresentation()
             return false;
         }
         _ui = std::make_unique<Mondrian::Ui>();
+        Mondrian::Engine::UploadPlaceholderTexture(_uiPlaceholderTexture, vulkanContext->GetDevice());
+        _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
 
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
@@ -341,6 +343,7 @@ Application::~Application()
     if (_presentationInitialized)
     {
         _uiPass.Shutdown();
+        _uiPlaceholderTexture = Render::Texture{};
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -626,8 +629,12 @@ void Application::Run()
 
                 // Before the fixed update, so the UI takes what it consumes
                 // before any system can read it.
-                ASSISI_PROFILE_SCOPE("ui-input");
-                _ui->ProcessInput();
+                _uiShown = ShowsGameUi();
+                if (_uiShown)
+                {
+                    ASSISI_PROFILE_SCOPE("ui-input");
+                    _ui->ProcessInput();
+                }
             }
         }
         const Clock::time_point inputEnd = Clock::now();
@@ -685,7 +692,7 @@ void Application::Run()
 
         // After OnUpdate and directly before the render, so what the UI shows is
         // this frame's state rather than the last one's.
-        if (!_headless)
+        if (_uiShown)
         {
             ASSISI_PROFILE_SCOPE("ui-sync");
             const Window::WindowSize size = _window->GetFramebufferSize();
@@ -1007,10 +1014,10 @@ void Application::RenderFrame()
     // below. A redraw from the window-refresh callback lands here without a Sync
     // and shows the last one's list, which is still current. Null only if that
     // callback fires during bring-up, before the UI exists.
-    if (_ui)
+    if (_ui && _uiShown)
     {
         ASSISI_PROFILE_GPU_PASS(frame->commandList, "game-ui");
-        _uiPass.Draw(*frame, _ui->GetDrawList());
+        _uiPass.Draw(frame->commandList, frame->framebuffer, _ui->GetDrawList());
     }
 
     // The finished frame, before the debug UI draws over it.

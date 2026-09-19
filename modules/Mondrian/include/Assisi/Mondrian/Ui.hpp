@@ -27,9 +27,14 @@ public:
     /// scratch. Must follow ProcessInput.
     void Sync(Extent viewport);
 
-    /// @brief What the last Sync produced. Stays valid until the next Sync, so
-    /// a redraw between frames shows the same thing without laying out again.
+    /// @brief What the last Sync produced, finalized. Stays valid until the next
+    /// Sync, so a redraw between frames shows the same thing without laying out
+    /// again.
     [[nodiscard]] const DrawList &GetDrawList() const { return _drawList; }
+
+    /// @brief The texture the placeholder strip samples; the engine registers
+    /// one and hands it over. Until then the strip samples white.
+    void SetPlaceholderTexture(TextureId texture) { _placeholderTexture = texture; }
 
 private:
     /// Which step the host loop owes next.
@@ -41,7 +46,8 @@ private:
     };
 
     DrawList _drawList;
-    FrameStep _nextStep = FrameStep::AwaitingInput;
+    TextureId _placeholderTexture = kWhiteTexture;
+    FrameStep _nextStep           = FrameStep::AwaitingInput;
 };
 
 } // namespace Assisi::Mondrian

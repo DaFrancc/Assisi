@@ -164,6 +164,10 @@ protected:
     /// The seam costs a target and a copy, so it exists only where it is used.
     /// Read during Initialize(), so it must answer from constructor-set state.
     [[nodiscard]] virtual bool UsesOverlayStage() const { return false; }
+    /// @brief Whether the game UI takes input and draws this frame. Asked once,
+    /// at the start of the frame, so both of its steps agree. While it answers
+    /// false the UI neither consumes input nor appears.
+    [[nodiscard]] virtual bool ShowsGameUi() const { return true; }
     /// @brief Called last in the frame, after the overlays, to draw a UI layer.
     ///
     /// Whoever overrides this owns the layer entirely — opening it, drawing into
@@ -349,6 +353,9 @@ private:
     /// run with no world loaded, and before the fixed update reads input.
     std::unique_ptr<Mondrian::Ui> _ui;
     Mondrian::Engine::QuadPass _uiPass;
+    Render::Texture _uiPlaceholderTexture;
+    /// ShowsGameUi's answer for the current frame.
+    bool _uiShown = false;
 
     // Declared before the subsystems (post-process, and the derived app's caches)
     // so it is destroyed last: workers join only after everything that might have

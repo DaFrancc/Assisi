@@ -240,6 +240,9 @@ public:
     /// the same switch as the overlay passes themselves, so a viewer build with
     /// them off pays for neither.
     [[nodiscard]] bool UsesOverlayStage() const override { return _editorConfig.enableEditorVisuals; }
+    /// The game's UI belongs to the game being played, so it shows from Play
+    /// until Stop, paused included, and never over a level being edited.
+    [[nodiscard]] bool ShowsGameUi() const override { return _playState != PlayState::Editing; }
     /// The editor owns its UI layer entirely: this opens the ImGui frame, draws
     /// every panel into it, and submits it. Application drives no UI toolkit of
     /// its own, which is what keeps one out of a game's link.
