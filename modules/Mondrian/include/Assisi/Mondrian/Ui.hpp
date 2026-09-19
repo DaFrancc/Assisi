@@ -11,6 +11,7 @@
 /// either twice in a row is a bug in the host loop and asserts.
 
 #include <Assisi/Mondrian/DrawList.hpp>
+#include <Assisi/Mondrian/Font.hpp>
 
 #include <cstdint>
 
@@ -36,6 +37,15 @@ public:
     /// one and hands it over. Until then the strip samples white.
     void SetPlaceholderTexture(TextureId texture) { _placeholderTexture = texture; }
 
+    /// @brief The font the placeholder writes a sample word in, and the texture
+    /// its atlas was registered as. The font must outlive the Ui or be replaced
+    /// first. Until one is set the placeholder writes no text.
+    void SetPlaceholderFont(const Font *font, TextureId atlas)
+    {
+        _placeholderFont      = font;
+        _placeholderFontAtlas = atlas;
+    }
+
 private:
     /// Which step the host loop owes next.
     enum class FrameStep : uint8_t
@@ -46,7 +56,9 @@ private:
     };
 
     DrawList _drawList;
-    TextureId _placeholderTexture = kWhiteTexture;
+    const Font *_placeholderFont    = nullptr;
+    TextureId _placeholderTexture   = kWhiteTexture;
+    TextureId _placeholderFontAtlas = kWhiteTexture;
     FrameStep _nextStep           = FrameStep::AwaitingInput;
 };
 

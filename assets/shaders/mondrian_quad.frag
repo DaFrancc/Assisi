@@ -23,6 +23,14 @@ const float kAaWidth = 1.0;
 // A distance at the pixel centre maps to coverage through the ramp's midpoint.
 const float kCoverageMidpoint = 0.5;
 
+// A glyph atlas stores a signed distance field: the outline at 128 of 255,
+// inside above it.
+const float kSdfOutline = 128.0 / 255.0;
+
+// The smallest screen-space gradient the glyph edge is ramped over, so a texel
+// with a flat field does not divide by zero.
+const float kSdfMinGradient = 1.0 / 1024.0;
+
 // 1 / sqrt(2): scales a distance measured along a diagonal to a true distance.
 const float kInvSqrt2 = 0.70710678;
 
@@ -109,14 +117,21 @@ void main()
 
     const float outer = ShapeDistance(local, halfSize, radius, style);
 
+    // Sampled, and its gradient taken, outside any branch: derivatives are only
+    // defined where every pixel of a 2x2 quad runs the same code.
+    const vec4 texel       = texture(sampler2D(uTexture, uSampler), vUv);
+    const float fieldWidth = max(fwidth(texel.r), kSdfMinGradient);
+
     vec4 fill = color;
     if (kind == kKindImage || kind == kKindNineSlice)
     {
-        fill *= texture(sampler2D(uTexture, uSampler), vUv);
+        fill *= texel;
     }
     else if (kind == kKindGlyph)
     {
-        fill.a *= texture(sampler2D(uTexture, uSampler), vUv).r;
+        // The edge ramps over one screen pixel of field whatever the glyph's
+        // size, which is what keeps one atlas crisp small and large.
+        fill.a *= clamp((texel.r - kSdfOutline) / fieldWidth + kCoverageMidpoint, 0.0, 1.0);
     }
 
     // The border is the band between the shape and the same shape moved in by

@@ -21,6 +21,8 @@
 #include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Mondrian/FontReader.hpp>
+#include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstdint>
@@ -378,9 +380,12 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
 int main(int argc, char **argv)
 {
     // The editor works on the source tree, so levels, blueprints and configs are
-    // read as the JSON an author saves. Installed before anything could load one.
+    // read as the JSON an author saves, and fonts are rasterised from the
+    // description and font file an author edits. Installed before anything could
+    // load one.
     (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
     (void)Assisi::Core::SetConfigReader(&Assisi::Core::ReadTextConfig);
+    (void)Assisi::Mondrian::SetFontReader(&Assisi::Mondrian::Import::ReadSourceFont);
 
     EditorArgs args;
     args.capture.frames = 0; // 0 means "not a capture run"; --capture sets it

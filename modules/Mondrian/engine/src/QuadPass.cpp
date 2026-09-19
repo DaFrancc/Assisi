@@ -253,6 +253,25 @@ void QuadPass::Shutdown()
     _instanceCapacity = 0;
 }
 
+bool UploadFontAtlas(Render::Texture &texture, nvrhi::IDevice *device, const Font &font)
+{
+    if (font.atlas.empty())
+    {
+        Core::Log::Error("Mondrian: a font with no atlas has nothing to upload.");
+        return false;
+    }
+    // One level: a distance field is resampled by its own threshold, and a mip
+    // averaged from it would move the outline.
+    Image::DecodedImage image;
+    image.width      = font.atlasWidth;
+    image.height     = font.atlasHeight;
+    image.format     = Image::PixelFormat::R8;
+    image.colorSpace = Image::ColorSpace::Linear;
+    image.mips.emplace_back(font.atlas.begin(), font.atlas.end());
+    texture.UploadDecoded(device, image, "Mondrian::FontAtlas");
+    return texture.IsValid();
+}
+
 void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device)
 {
     Image::DecodedImage image;

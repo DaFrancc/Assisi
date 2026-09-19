@@ -47,7 +47,8 @@ enum class CookedKind : std::uint8_t
     Mesh,      ///< Vertex and index arenas with the submesh, LOD and slot tables.
     Texture,   ///< Block-compressed mips, ready for upload with no decode.
     Shader,    ///< SPIR-V, exactly as the compiler emitted it.
-    Verbatim,  ///< Bytes with no cooker of their own — a font, an animated WebP.
+    Verbatim,  ///< Bytes with no cooker of their own — an animated WebP, a licence text.
+    Font,      ///< A glyph atlas with its metrics and kerning.
     Count,
 };
 

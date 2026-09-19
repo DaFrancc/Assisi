@@ -365,6 +365,10 @@ assisi_assert_link_excludes(Assisi-Game
     Assisi::GeometryImport
     Assisi-ImageImport
     Assisi::ImageImport
+    Assisi-FontImport
+    Assisi::FontImport
+    freetype
+    Freetype::Freetype
     fastgltf::fastgltf
     bc7enc::bc7enc
 )
@@ -448,6 +452,8 @@ if (ASSISI_BUILD_TESTS)
     --forbid "Assisi::Geometry::ImportMesh"
     --forbid "Assisi::Image::DecodeImage"
     --forbid "Assisi::Image::Compress("
+    --forbid "Assisi::Mondrian::Import::"
+    --forbid "FT_Init_FreeType"
     --forbid "Assisi::Cook::"
   )
 

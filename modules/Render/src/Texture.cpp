@@ -53,6 +53,8 @@ nvrhi::Format NvrhiFormatFor(Image::PixelFormat format, Image::ColorSpace colorS
         return srgb ? nvrhi::Format::BC7_UNORM_SRGB : nvrhi::Format::BC7_UNORM;
     case Image::PixelFormat::Rgba8:
         return srgb ? nvrhi::Format::SRGBA8_UNORM : nvrhi::Format::RGBA8_UNORM;
+    case Image::PixelFormat::R8:
+        return nvrhi::Format::R8_UNORM;
     // A format with no mapping would otherwise be uploaded as whatever the
     // fallback happens to be, which samples as noise rather than failing.
     default:

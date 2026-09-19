@@ -39,7 +39,7 @@ enum class ColorSpace : std::uint8_t
 
 /// @brief How an image's texels are stored.
 ///
-/// Rgba8 is four bytes per texel, addressed by row. Every other value is a
+/// Rgba8 and R8 are uncompressed, addressed by row. Every other value is a
 /// block-compressed format: texels are grouped into 4x4 blocks, each block is a
 /// fixed number of bytes whatever it contains, and a level is addressed by block
 /// row. That fixed size is the point — a shader indexes a block in constant time,
@@ -50,16 +50,20 @@ enum class PixelFormat : std::uint8_t
     Bc4,   ///< One channel, 8 bytes per block.
     Bc5,   ///< Two channels, 16 bytes per block. Normal maps: X and Y stored, Z reconstructed.
     Bc7,   ///< Four channels, 16 bytes per block. The colour format.
+    R8,    ///< Uncompressed, one byte per texel. Data that block compression would blur: a glyph distance field.
     Count,
 };
 
 /// @brief Texels along each edge of one compressed block.
 inline constexpr std::uint32_t kBlockExtent = 4;
 
-/// @brief Bytes in one texel of an uncompressed image.
+/// @brief Bytes in one texel of an uncompressed Rgba8 image.
 inline constexpr std::size_t kRgba8BytesPerTexel = 4;
 
-/// @brief Bytes one 4x4 block of @p format occupies, or 0 for Rgba8.
+/// @brief Bytes in one texel of an uncompressed R8 image.
+inline constexpr std::size_t kR8BytesPerTexel = 1;
+
+/// @brief Bytes one 4x4 block of @p format occupies, or 0 for an uncompressed format.
 [[nodiscard]] constexpr std::size_t BytesPerBlock(PixelFormat format)
 {
     switch (format)
@@ -70,6 +74,7 @@ inline constexpr std::size_t kRgba8BytesPerTexel = 4;
     case PixelFormat::Bc7:
         return 16;
     case PixelFormat::Rgba8:
+    case PixelFormat::R8:
         return 0;
     // A block format missing from the cases above lands here and reads as
     // uncompressed, which is the wrong pitch rather than a refusal. This is
@@ -121,7 +126,8 @@ struct LevelLayout
         layout.byteSize = layout.rowPitch * blocksHigh;
         return layout;
     }
-    layout.rowPitch = static_cast<std::size_t>(width) * kRgba8BytesPerTexel;
+    const std::size_t texelBytes = format == PixelFormat::R8 ? kR8BytesPerTexel : kRgba8BytesPerTexel;
+    layout.rowPitch = static_cast<std::size_t>(width) * texelBytes;
     layout.byteSize = layout.rowPitch * height;
     return layout;
 }

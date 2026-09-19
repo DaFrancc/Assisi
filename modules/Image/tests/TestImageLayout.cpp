@@ -64,6 +64,22 @@ TEST_CASE("An uncompressed level is four bytes a texel, addressed by row")
     CHECK_FALSE(IsBlockCompressed(PixelFormat::Rgba8));
 }
 
+TEST_CASE("A single-channel level is one byte a texel, addressed by row")
+{
+    CHECK(LayoutFor(PixelFormat::R8, 3, 1).rowPitch == 3);
+    CHECK(LayoutFor(PixelFormat::R8, 3, 2).byteSize == 6);
+    CHECK_FALSE(IsBlockCompressed(PixelFormat::R8));
+
+    DecodedImage image;
+    image.width  = 5;
+    image.height = 3;
+    image.format = PixelFormat::R8;
+    image.mips.emplace_back(15u);
+    CHECK(ValidateMipChain(image));
+    image.mips[0].resize(60u); // sized as Rgba8 would be
+    CHECK_FALSE(ValidateMipChain(image));
+}
+
 TEST_CASE("The uncompressed pitch agrees with the block pitch exactly where it must not be trusted")
 {
     // The reason the tail levels above are the test that matters: for a 16-byte

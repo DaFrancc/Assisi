@@ -18,6 +18,8 @@
 #include <Assisi/Image/Compress.hpp>
 #include <Assisi/Image/CookedTexture.hpp>
 #include <Assisi/Image/Decode.hpp>
+#include <Assisi/Mondrian/Font.hpp>
+#include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -459,9 +461,101 @@ public:
     }
 };
 
+// ── Fonts ─────────────────────────────────────────────────────────────────────
+
+/// `.afont` descriptions, cooked to a distance-field atlas with its metrics, so
+/// the game draws text with no font file and no rasteriser. The font file a
+/// description names is claimed and produces nothing of its own: its glyphs
+/// reach the cooked tree through the description.
+class FontCooker final : public Cooker
+{
+public:
+    [[nodiscard]] std::string_view Name() const override { return "font"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Font; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        // The rasteriser's version beside the layout's: a FreeType upgrade that
+        // changes a single distance value is a different atlas.
+        constexpr std::uint32_t kComponentBits = 8;
+        return (static_cast<std::uint64_t>(Mondrian::kFontPayloadVersion) << (3 * kComponentBits)) |
+               Mondrian::Import::RasterizerVersion();
+    }
+
+    [[nodiscard]] Claim Claims(std::string_view vpath) const override
+    {
+        if (HasExtension(vpath, ".afont"))
+        {
+            return Claim::Output;
+        }
+        // A font's licence text travels with the font file, so it stays with it
+        // in the source tree; the game ships neither.
+        static constexpr std::array kSources{std::string_view{".ttf"}, std::string_view{".otf"},
+                                             std::string_view{".txt"}};
+        return HasAnyExtension(vpath, kSources) ? Claim::SourceOnly : Claim::None;
+    }
+
+    [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
+    {
+        // Editing the font file changes every glyph without touching the
+        // description this is keyed on.
+        if (!HasExtension(vpath, ".afont"))
+        {
+            return {};
+        }
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return {};
+        }
+        const std::expected<Mondrian::FontDescription, Mondrian::Import::FontImportError> description =
+            Mondrian::Import::ParseFontDescription(*text);
+        if (!description)
+        {
+            return {};
+        }
+        return {std::string{description->source.View()}};
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
+    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+        const std::expected<Mondrian::FontDescription, Mondrian::Import::FontImportError> description =
+            Mondrian::Import::ParseFontDescription(*text);
+        if (!description)
+        {
+            return std::unexpected(Failure(vpath, std::string{Mondrian::Import::ToString(description.error())}));
+        }
+
+        const std::string_view source = description->source.View();
+        const std::expected<std::vector<std::byte>, CookError> fontFile = ReadSource(source);
+        if (!fontFile)
+        {
+            return std::unexpected(Failure(vpath, std::format("names '{}', which could not be read", source)));
+        }
+
+        const std::expected<Mondrian::Font, Mondrian::Import::FontImportError> font =
+            Mondrian::Import::RasterizeFont(*description, *fontFile);
+        if (!font)
+        {
+            return std::unexpected(Failure(vpath, std::string{Mondrian::Import::ToString(font.error())}));
+        }
+
+        Core::BitWriter writer;
+        Mondrian::WriteCookedFont(writer, *font);
+        const std::span<const std::byte> bytes = writer.Data();
+        return std::vector<std::byte>{bytes.begin(), bytes.end()};
+    }
+};
+
 // ── Everything else that is still content ─────────────────────────────────────
 
-/// Fonts and animated WebP: bytes with no transformation to apply, wrapped in the
+/// Animated WebP: bytes with no transformation to apply, wrapped in the
 /// envelope so a cooked tree is uniformly readable.
 ///
 /// Last in the list and explicit about what it takes. A catch-all that claimed
@@ -475,8 +569,7 @@ public:
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
-        static constexpr std::array kExtensions{std::string_view{".ttf"}, std::string_view{".webp"},
-                                                std::string_view{".txt"}};
+        static constexpr std::array kExtensions{std::string_view{".webp"}};
         return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
@@ -553,6 +646,7 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<MeshCooker>());
     cookers.push_back(std::make_unique<TextureCooker>());
     cookers.push_back(std::make_unique<ShaderCooker>());
+    cookers.push_back(std::make_unique<FontCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
     return cookers;
 }

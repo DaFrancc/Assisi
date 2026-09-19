@@ -4,6 +4,10 @@
 #include <Assisi/Core/Assert.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <string_view>
 
 namespace Assisi::Mondrian
 {
@@ -45,6 +49,55 @@ constexpr Color kBorderColor{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
 constexpr Color kUntinted{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
 constexpr Rect kWholeTexture{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
 
+/// The word the placeholder writes below the strip, once at each size, so a
+/// capture shows at a glance whether one atlas stays crisp small and large.
+/// ASCII, so every font the placeholder is given can draw it.
+constexpr std::string_view kSampleWord = "Assisi";
+
+/// Text sizes as fractions of the viewport's shorter side, each double the
+/// last, so a row is the one above it scaled.
+constexpr std::array kTextFractions{0.025f, 0.05f, 0.1f};
+
+constexpr Color kTextColor{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
+
+/// Where the next glyph goes: the pen's left edge and the line's baseline.
+struct Pen
+{
+    float x        = 0.f;
+    float baseline = 0.f;
+};
+
+/// Writes kSampleWord in @p font at @p pen, @p size pixels high. A pen walk and
+/// nothing more: no kerning, no wrapping, one glyph per byte of ASCII.
+void WriteSample(DrawList &list, const Font &font, TextureId atlas, Pen pen, float size)
+{
+    const float scale = size / font.pixelSize;
+    const float atlasWidth  = static_cast<float>(font.atlasWidth);
+    const float atlasHeight = static_cast<float>(font.atlasHeight);
+    for (const char letter : kSampleWord)
+    {
+        const std::optional<uint32_t> index = font.GlyphFor(static_cast<unsigned char>(letter));
+        const Glyph *glyph                  = index ? font.FindGlyph(*index) : nullptr;
+        if (glyph == nullptr)
+        {
+            continue;
+        }
+        if (glyph->width > 0 && glyph->height > 0)
+        {
+            const Rect rect{.x      = pen.x + static_cast<float>(glyph->bearingX) * scale,
+                            .y      = pen.baseline - static_cast<float>(glyph->bearingY) * scale,
+                            .width  = static_cast<float>(glyph->width) * scale,
+                            .height = static_cast<float>(glyph->height) * scale};
+            const Rect uv{.x      = static_cast<float>(glyph->x) / atlasWidth,
+                          .y      = static_cast<float>(glyph->y) / atlasHeight,
+                          .width  = static_cast<float>(glyph->width) / atlasWidth,
+                          .height = static_cast<float>(glyph->height) / atlasHeight};
+            list.Quad(rect).Fill(kTextColor).Texture(atlas, uv).Kind(QuadKind::Glyph);
+        }
+        pen.x += glyph->advance * scale;
+    }
+}
+
 } // namespace
 
 void Ui::ProcessInput()
@@ -82,6 +135,20 @@ void Ui::Sync(Extent viewport)
     Rect clip  = tileRect(Tile::Clipped);
     clip.width *= kClipKeepFraction;
     _drawList.Quad(tileRect(Tile::Clipped)).Fill(kTileColor).Corners(radius, CornerStyle::Rounded).Clip(clip);
+
+    if (_placeholderFont != nullptr && _placeholderFont->pixelSize > 0.f && shorter > 0.f)
+    {
+        const Font &font = *_placeholderFont;
+        Pen pen{.x = margin, .baseline = margin + side};
+        for (const float fraction : kTextFractions)
+        {
+            const float size  = shorter * fraction;
+            const float scale = size / font.pixelSize;
+            pen.baseline += gap + font.ascender * scale;
+            WriteSample(_drawList, font, _placeholderFontAtlas, pen, size);
+            pen.baseline -= font.descender * scale;
+        }
+    }
 
     _drawList.Finalize();
 }

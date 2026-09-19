@@ -10,6 +10,7 @@
 /// them, and blended premultiplied.
 
 #include <Assisi/Mondrian/DrawList.hpp>
+#include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Render/Texture.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -86,6 +87,10 @@ private:
     /// colours first and the encode restores them.
     bool _encodeSrgb = false;
 };
+
+/// @brief Uploads @p font's atlas as a single-channel texture for Glyph quads to
+/// sample. False, logged, for a font with no atlas.
+[[nodiscard]] bool UploadFontAtlas(Render::Texture &texture, nvrhi::IDevice *device, const Font &font);
 
 /// @brief Uploads the checkerboard the placeholder strip's textured tile shows.
 /// Display values in a non-sRGB format, as RegisterTexture requires.
