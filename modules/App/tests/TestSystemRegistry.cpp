@@ -153,6 +153,7 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
         seenWorld = &ctx.world;
         seenAlive = ctx.world.scene.IsAlive(entity) ? 1u : 0u;
         CHECK(ctx.input == nullptr);
+        CHECK(ctx.ui == nullptr);
     });
 
     systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ true));

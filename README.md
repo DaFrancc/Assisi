@@ -589,6 +589,14 @@ Debug is the developer UI: [Dear ImGui](https://github.com/ocornut/imgui) and
 `DebugUI::Initialize(window, vulkanContext)` has to be called after the Vulkan context exists. Override
 `OnImGui()` in your application class to draw your own panels and overlays.
 
+### Mondrian
+Mondrian is the game UI, the one a player sees: menus, HUD and, later, in-world screens. It is retained
+mode and lives outside the ECS. Every windowed `Application` owns one and drives it in two steps a
+frame: input right after the input poll, and layout plus the draw list right before rendering. Systems
+reach it as `ctx.ui`, which is null on a headless server. The core (`Assisi::Mondrian`) links only Core,
+so layout, focus and parsing are tested without a window or GPU; the engine layer
+(`Assisi::MondrianEngine`) is what draws its output. Dear ImGui stays the editor's and debug UI's.
+
 ### App
 App is the framework that ties the lower modules together. `Application` is the base class you derive
 from: it runs physics on a fixed timestep (60 Hz by default, `AppConfig::physicsHz`) and paces rendering

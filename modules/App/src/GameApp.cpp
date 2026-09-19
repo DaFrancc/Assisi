@@ -104,7 +104,8 @@ void GameApp::OnStart()
                          .jobs     = &Jobs(),
                          .events   = &GetEvents(),
                          .input    = HasPresentation() ? &GetInput() : nullptr,
-                         .actions  = &_actions});
+                         .actions  = &_actions,
+                         .ui       = GetUi()});
 
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
@@ -208,7 +209,8 @@ SystemContext GameApp::WorldStartContext(World &world)
             .actions       = &_actions,
             .events        = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
-            .worldManager  = &_worlds};
+            .worldManager  = &_worlds,
+            .ui            = GetUi()};
 }
 
 void GameApp::StepWorlds(float dt)
@@ -226,7 +228,7 @@ void GameApp::StepWorlds(float dt)
             // system lands on; ordering within a phase cannot substitute for it.
             world.systems.Run(SystemPhase::FixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &_actions,
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
@@ -242,7 +244,7 @@ void GameApp::StepWorlds(float dt)
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &_actions,
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
         });
 }
 
@@ -353,7 +355,7 @@ void GameApp::OnUpdate(float dt)
                                     GetSimTick(), HasPresentation() ? &GetInput() : nullptr,
                                     &_actions,    GetEvents(),
                                     /*isActiveWorld=*/ &world == _worlds.Active(),
-                                    &_worlds};
+                                    &_worlds,     GetUi()};
             world.systems.Run(SystemPhase::PreUpdate,  ctx);
             world.systems.Run(SystemPhase::Update,     ctx);
             world.systems.Run(SystemPhase::PostUpdate, ctx);

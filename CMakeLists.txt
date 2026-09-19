@@ -1209,6 +1209,9 @@ add_subdirectory(modules/Runtime)
 add_subdirectory(modules/Cook)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
+# Mondrian's core sits on Core alone; its engine layer adds Render. Above both so
+# App, which owns the game UI, can link it.
+add_subdirectory(modules/Mondrian)
 add_subdirectory(modules/App)
 add_subdirectory(modules/Editor)
 

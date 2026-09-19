@@ -304,7 +304,8 @@ void EditorApp::OnStart()
                          .jobs     = &Jobs(),
                          .events   = &GetEvents(),
                          .input    = &GetInput(),
-                         .actions  = &_actions});
+                         .actions  = &_actions,
+                         .ui       = GetUi()});
 
     // Editor travel is the game's path, so it honours the game's policy: a level
     // that waits for its assets in the shipped game waits here too, or testing a
@@ -1083,7 +1084,7 @@ void EditorApp::OnFixedUpdate(float dt)
 
                 world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
                                   {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
-                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds});
+                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
 
                 {
                     // Jolt's whole step, including its internal job dispatch:
@@ -1105,7 +1106,7 @@ void EditorApp::OnFixedUpdate(float dt)
                 // them rather than only the last.
                 world.systems.Run(Assisi::App::SystemPhase::PostFixedUpdate,
                                   {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
-                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds});
+                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
             });
     }
 
@@ -1336,7 +1337,7 @@ void EditorApp::OnUpdate(float dt)
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
     const Assisi::App::SystemContext editorCtx{
-        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/ true, &_worlds};
+        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/ true, &_worlds, GetUi()};
     _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
@@ -1356,7 +1357,7 @@ void EditorApp::OnUpdate(float dt)
 
                 const Assisi::App::SystemContext ctx{
                     world,   dt, GetSimTick(), &input, &_actions, GetEvents(),
-                    /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds};
+                    /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()};
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
@@ -1375,7 +1376,8 @@ Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &worl
             .actions       = &_actions,
             .events        = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
-            .worldManager  = &_worlds};
+            .worldManager  = &_worlds,
+            .ui            = GetUi()};
 }
 
 void EditorApp::InstallQueuedSystems()
