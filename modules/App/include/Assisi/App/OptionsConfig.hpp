@@ -4,6 +4,7 @@
 /// @file OptionsConfig.hpp
 /// @brief User-facing runtime options persisted to options.json.
 
+#include <Assisi/App/AppConfig.hpp>
 #include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -36,6 +37,10 @@ enum class FrameSyncMode : std::uint8_t
 /// `assets/config/`. Both are the player's, which is why they are together.
 struct OptionsConfig
 {
+    /// @brief The tap interval the player chose, or nullopt to keep the game's
+    /// standard. Ignored when the game holds everyone to its standard.
+    std::optional<double> multiTapSeconds;
+
     /// @brief The window size the player chose, or nullopt to keep the shipped
     /// one. A size is stored only once it differs from what shipped, so a patch
     /// that changes the default reaches everyone who never picked a size.
@@ -48,8 +53,8 @@ struct OptionsConfig
     /// keeps what shipped. Empty on a fresh install.
     Window::InputBindings bindings;
 
-    Render::AaMode aaMode      = Render::AaMode::None;
-    int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
+    Render::AaMode aaMode = Render::AaMode::None;
+    int32_t msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
 
     /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
     /// hand-editable and these lanes reach a shader.
@@ -74,6 +79,13 @@ struct OptionsConfig
     /// values: -1 means unlimited (no CPU-side cap); 0 is invalid and never stored.
     /// Any positive value is the FPS cap the frame pacer targets.
     std::int16_t fpsLimit = -1;
+
+    /// @brief The tap interval to run with: the player's when @p config lets
+    /// players choose and they have, the game's standard otherwise.
+    [[nodiscard]] double MultiTapSeconds(const AppConfig &config) const
+    {
+        return config.playerSetsMultiTap && multiTapSeconds ? *multiTapSeconds : config.multiTapSeconds;
+    }
 
     /// @brief Parse @p text as an options document.
     ///

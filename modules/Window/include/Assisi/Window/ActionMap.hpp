@@ -43,6 +43,7 @@
 #include <Assisi/Window/Key.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -72,11 +73,14 @@ struct ActionBinding
 
     /// @brief True on the first frame the bound input transitions from down to up.
     [[nodiscard]] bool IsReleased(const InputContext &ctx) const noexcept;
+
+    /// @brief The bound input's tap count this frame (see InputContext::TapCount).
+    [[nodiscard]] uint32_t TapCount(const InputContext &ctx) const noexcept;
 };
 
 /// @brief Action-name → bindings map with heterogeneous (allocation-free) lookup.
-using ActionTable = std::unordered_map<std::string, std::vector<ActionBinding>,
-                                       Core::TransparentStringHash, std::equal_to<>>;
+using ActionTable =
+    std::unordered_map<std::string, std::vector<ActionBinding>, Core::TransparentStringHash, std::equal_to<>>;
 
 /// @brief Maps named actions to one or more @ref ActionBinding values.
 ///
@@ -85,7 +89,7 @@ using ActionTable = std::unordered_map<std::string, std::vector<ActionBinding>,
 /// remove existing ones — call Unbind() first if you want to replace them.
 class ActionMap
 {
-public:
+  public:
     // -------------------------------------------------------------------------
     // Registration
     // -------------------------------------------------------------------------
@@ -115,6 +119,10 @@ public:
 
     /// @brief True on the first frame any bound input for the action is released.
     [[nodiscard]] bool IsActionReleased(std::string_view action, const InputContext &input) const;
+
+    /// @brief The longest run of quick taps among the action's inputs pressed
+    /// this frame: 2 for a double tap, and so on. Zero when none was pressed.
+    [[nodiscard]] uint32_t ActionTapCount(std::string_view action, const InputContext &input) const;
 
     // -------------------------------------------------------------------------
     // Serialisation
@@ -172,7 +180,7 @@ public:
     /// @brief Parse a MouseButton from its name string. std::nullopt if unrecognised.
     [[nodiscard]] static std::optional<MouseButton> MouseButtonFromName(std::string_view name) noexcept;
 
-private:
+  private:
     ActionTable _actions;
 
     static const std::vector<ActionBinding> _emptyBindings;

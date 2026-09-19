@@ -7,6 +7,7 @@ target_sources(Assisi-Window
     "include/Assisi/Window/GlfwLibrary.hpp"
     "include/Assisi/Window/InputBindings.hpp"
     "include/Assisi/Window/InputContext.hpp"
+    "include/Assisi/Window/InputEvent.hpp"
     "include/Assisi/Window/Key.hpp"
     "include/Assisi/Window/WindowContext.hpp"
   PRIVATE

@@ -20,6 +20,29 @@ InputBindings OneAction(const char *action, std::vector<ShortString> names)
 }
 } // namespace
 
+TEST_CASE("ActionMap: an action's tap count is its quickest-tapped input's")
+{
+    constexpr double kQuick = 0.1;
+    ActionMap map;
+    map.Bind("Dash", Key::LeftShift);
+    map.Bind("Dash", MouseButton::Right);
+
+    InputContext input;
+    for (const double time : {0.0, kQuick})
+    {
+        input.OnKey(Key::LeftShift, KeyAction::Press, time);
+        input.OnKey(Key::LeftShift, KeyAction::Release, time);
+    }
+    input.OnMouseButton(MouseButton::Right, KeyAction::Press, kQuick);
+    input.Poll();
+
+    CHECK(map.ActionTapCount("Dash", input) == 2);
+    CHECK(map.ActionTapCount("Jump", input) == 0);
+
+    input.Poll();
+    CHECK(map.ActionTapCount("Dash", input) == 0);
+}
+
 TEST_CASE("ActionMap: key name <-> enum round-trips")
 {
     CHECK(ActionMap::KeyName(Key::W) == "W");

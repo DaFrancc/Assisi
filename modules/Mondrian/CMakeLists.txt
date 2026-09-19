@@ -7,6 +7,7 @@ Assisi_apply_defaults(Assisi-Mondrian)
 
 target_sources(Assisi-Mondrian
   PUBLIC
+    "include/Assisi/Mondrian/Clipboard.hpp"
     "include/Assisi/Mondrian/Draw.hpp"
     "include/Assisi/Mondrian/DrawList.hpp"
     "include/Assisi/Mondrian/Font.hpp"

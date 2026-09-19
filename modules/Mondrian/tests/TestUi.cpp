@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 using namespace Assisi::Mondrian;
 using Assisi::Mondrian::Testing::FixtureFont;
@@ -116,6 +118,20 @@ TEST_CASE("Mondrian: without a font the screen draws no text")
     CHECK_FALSE(
         std::ranges::any_of(drawn.Instances(), [](const QuadInstance &quad) { return IsKind(quad, QuadKind::Glyph); }));
     CHECK_FALSE(drawn.Instances().empty());
+}
+
+TEST_CASE("Mondrian: the clipboard reads and writes through what the host supplied, and is inert without it")
+{
+    Ui ui;
+    CHECK(ui.GetClipboard().Read().empty());
+    ui.GetClipboard().Write("dropped");
+
+    std::string held = "caf\xC3\xA9";
+    ui.SetClipboard(
+        Clipboard{.read = [&held] { return held; }, .write = [&held](std::string_view text) { held = text; }});
+    CHECK(ui.GetClipboard().Read() == "caf\xC3\xA9");
+    ui.GetClipboard().Write("copied");
+    CHECK(held == "copied");
 }
 
 TEST_CASE("Mondrian: a zero-sized viewport draws nothing and does not assert")

@@ -12,9 +12,11 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Assisi/Window/GlfwLibrary.hpp>
+#include <Assisi/Window/InputEvent.hpp>
 
 struct GLFWwindow;
 
@@ -67,7 +69,7 @@ struct WindowConfiguration
 /// Move semantics transfer window ownership; copying is disabled.
 class WindowContext
 {
-public:
+  public:
     /// @brief Creates the GLFW window and installs its GLFW callbacks.
     ///
     /// On failure (GLFW not initialised, or window creation error) the object
@@ -136,11 +138,36 @@ public:
     /// during a live resize/move where the main loop is otherwise blocked).
     void OnWindowRefresh(std::function<void()> callback);
 
-private:
+    /// @brief Subscribe to key presses, releases and repeats. Keys the engine
+    /// has no Key for are not delivered.
+    void OnKey(std::function<void(const KeyEvent &event)> callback);
+
+    /// @brief Subscribe to typed text, one Unicode codepoint at a time, as the
+    /// platform's keyboard layout and input method produce it.
+    void OnCharacter(std::function<void(char32_t codepoint)> callback);
+
+    /// @brief Subscribe to mouse button presses and releases.
+    void OnMouseButton(std::function<void(const MouseButtonEvent &event)> callback);
+
+    /// @brief Subscribe to cursor movement, in window coordinates.
+    void OnCursorPosition(std::function<void(double x, double y)> callback);
+
+    // -------------------------------------------------------------------------
+    // Clipboard
+    // -------------------------------------------------------------------------
+
+    /// @brief The system clipboard's text as UTF-8; empty when it holds none.
+    [[nodiscard]] std::string GetClipboardText() const;
+
+    /// @brief Puts @p text, UTF-8, on the system clipboard.
+    void SetClipboardText(std::string_view text) const;
+
+  private:
     /// @brief Points the window's GLFW user pointer at this object and installs
-    /// the GLFW callbacks that fan out to subscribers. Called on construction;
-    /// a move only re-seats the user pointer, since the trampolines stay
-    /// installed on the same window handle.
+    /// the GLFW callbacks that fan out to subscribers. Called on construction
+    /// only, before anything else can install callbacks, and never again: ImGui
+    /// chains to what is installed when it starts, so a callback installed
+    /// later would cut it off. A move only re-seats the user pointer.
     void InstallCallbacks();
 
     // GLFW C-callback trampolines: recover the WindowContext from the user
@@ -148,6 +175,10 @@ private:
     static void FramebufferSizeTrampoline(GLFWwindow *window, int width, int height);
     static void ScrollTrampoline(GLFWwindow *window, double xOffset, double yOffset);
     static void WindowRefreshTrampoline(GLFWwindow *window);
+    static void KeyTrampoline(GLFWwindow *window, int key, int scancode, int action, int mods);
+    static void CharacterTrampoline(GLFWwindow *window, unsigned int codepoint);
+    static void MouseButtonTrampoline(GLFWwindow *window, int button, int action, int mods);
+    static void CursorPositionTrampoline(GLFWwindow *window, double x, double y);
 
     /// @brief Keeps GLFW alive for at least as long as this window.
     std::shared_ptr<GlfwLibrary> _glfwLibrary;
@@ -158,8 +189,12 @@ private:
     /// @brief True after successful window creation.
     bool _isValid = false;
 
-    std::vector<std::function<void(int, int)>>     _framebufferSizeCallbacks;
+    std::vector<std::function<void(int, int)>> _framebufferSizeCallbacks;
     std::vector<std::function<void(double, double)>> _scrollCallbacks;
-    std::vector<std::function<void()>>             _windowRefreshCallbacks;
+    std::vector<std::function<void()>> _windowRefreshCallbacks;
+    std::vector<std::function<void(const KeyEvent &)>> _keyCallbacks;
+    std::vector<std::function<void(char32_t)>> _characterCallbacks;
+    std::vector<std::function<void(const MouseButtonEvent &)>> _mouseButtonCallbacks;
+    std::vector<std::function<void(double, double)>> _cursorPositionCallbacks;
 };
 } /* namespace Assisi::Window */

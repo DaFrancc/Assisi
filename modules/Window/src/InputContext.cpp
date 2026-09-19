@@ -4,103 +4,182 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace Assisi::Window
 {
+namespace
+{
+
+/// @p value as an index below @p count, or nothing when it is out of range.
+std::optional<std::size_t> IndexOf(int32_t value, std::size_t count)
+{
+    if (value < 0 || static_cast<std::size_t>(value) >= count)
+    {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(value);
+}
+
+bool IsSet(const auto &flags, int32_t value)
+{
+    const std::optional<std::size_t> index = IndexOf(value, flags.size());
+    return index && flags[*index];
+}
+
+} // namespace
+
+template <std::size_t Count> bool InputContext::Switches<Count>::Apply(std::size_t index, KeyAction action)
+{
+    // A press of a key already down, or a release of one already up, is no
+    // edge: a repeat is the first, and a duplicate from the platform the other.
+    const bool goesDown = action == KeyAction::Press || action == KeyAction::Repeat;
+    if (goesDown == live[index])
+    {
+        return false;
+    }
+    live[index] = goesDown;
+    (goesDown ? pressedSince : releasedSince)[index] = true;
+    return goesDown;
+}
+
+template <std::size_t Count> void InputContext::Switches<Count>::Tap(std::size_t index, double time, bool continues)
+{
+    run[index] = continues ? run[index] + 1 : 1;
+    lastPress[index] = time;
+    tapsSince[index] = run[index];
+}
+
+template <std::size_t Count> void InputContext::Switches<Count>::Latch()
+{
+    down = live;
+    pressed = pressedSince;
+    released = releasedSince;
+    taps = tapsSince;
+    pressedSince.fill(false);
+    releasedSince.fill(false);
+    tapsSince.fill(0);
+}
 
 InputContext::InputContext(WindowContext &window) : _window(window.NativeHandle())
 {
-    /* Snapshot initial mouse position so the first MouseDelta() is (0,0). */
-    double xPos = 0.0;
-    double yPos = 0.0;
-    glfwGetCursorPos(_window, &xPos, &yPos);
-    _currMousePos = {static_cast<float>(xPos), static_cast<float>(yPos)};
-    _prevMousePos = _currMousePos;
+    // Subscribe through the window rather than setting GLFW callbacks here: the
+    // window owns them and fans out to ImGui (which chains) and us both.
+    window.OnKey([this](const KeyEvent &event) { OnKey(event.key, event.action, event.time); });
+    window.OnMouseButton([this](const MouseButtonEvent &event)
+                         { OnMouseButton(event.button, event.action, event.time); });
+    window.OnCursorPosition([this](double x, double y) { OnCursorPosition(x, y); });
+    window.OnScroll([this](double /*xOffset*/, double yOffset) { OnScroll(yOffset); });
 
-    // Subscribe through the window rather than calling glfwSetScrollCallback
-    // directly: the window owns the GLFW callbacks and fans out to ImGui (which
-    // chains) and us both, instead of one clobbering the other.
-    window.OnScroll([this](double /*xOffset*/, double yOffset) { _scrollAccum += static_cast<float>(yOffset); });
+    // The cursor reports only when it moves, so start from where it is, and make
+    // that the first frame's so its delta is zero.
+    double x = 0.0;
+    double y = 0.0;
+    glfwGetCursorPos(_window, &x, &y);
+    OnCursorPosition(x, y);
+    _framePosition = _livePosition;
 }
 
 void InputContext::Poll()
 {
-    _prevKeys = _currKeys;
-    // GLFW key tokens start at Space (32, mirrored by Key::Space); querying
-    // codes below that raises GLFW_INVALID_ENUM on every poll. The skipped
-    // low entries stay false.
-    for (int32_t k = static_cast<int32_t>(Key::Space); k < kKeyCount; ++k)
+    _keys.Latch();
+    _buttons.Latch();
+    _frameDelta = _livePosition - _framePosition;
+    _framePosition = _livePosition;
+    _frameScroll = _scrollSince;
+    _scrollSince = 0.f;
+}
+
+void InputContext::OnKey(Key key, KeyAction action, double time)
+{
+    const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(key), kKeyCount);
+    if (index && _keys.Apply(*index, action))
     {
-        _currKeys[static_cast<std::size_t>(k)] = glfwGetKey(_window, k) == GLFW_PRESS;
+        _keys.Tap(*index, time, time - _keys.lastPress[*index] <= _multiTapSeconds);
     }
+}
 
-    _prevButtons = _currButtons;
-    for (int32_t b = 0; b < kButtonCount; ++b)
+void InputContext::OnMouseButton(MouseButton button, KeyAction action, double time)
+{
+    const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(button), kButtonCount);
+    if (index && _buttons.Apply(*index, action))
     {
-        _currButtons[static_cast<std::size_t>(b)] = glfwGetMouseButton(_window, b) == GLFW_PRESS;
+        const bool near = glm::length(_livePosition - _lastClickPosition[*index]) <= kMultiClickSlop;
+        _buttons.Tap(*index, time, near && time - _buttons.lastPress[*index] <= _multiTapSeconds);
+        _lastClickPosition[*index] = _livePosition;
     }
+}
 
-    _prevMousePos = _currMousePos;
-    double xPos = 0.0;
-    double yPos = 0.0;
-    glfwGetCursorPos(_window, &xPos, &yPos);
-    _currMousePos = {static_cast<float>(xPos), static_cast<float>(yPos)};
-    _mouseDelta = _currMousePos - _prevMousePos;
+void InputContext::SetMultiTapInterval(double seconds)
+{
+    if (std::isfinite(seconds))
+    {
+        _multiTapSeconds = std::clamp(seconds, kMinMultiTapSeconds, kMaxMultiTapSeconds);
+    }
+}
 
-    _scrollDelta = _scrollAccum;
-    _scrollAccum = 0.f;
+uint32_t InputContext::TapCount(Key key) const
+{
+    const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(key), kKeyCount);
+    return index ? _keys.taps[*index] : 0;
+}
+
+uint32_t InputContext::ClickCount(MouseButton button) const
+{
+    const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(button), kButtonCount);
+    return index ? _buttons.taps[*index] : 0;
+}
+
+void InputContext::OnCursorPosition(double x, double y)
+{
+    _livePosition = {static_cast<float>(x), static_cast<float>(y)};
+}
+
+void InputContext::OnScroll(double yOffset)
+{
+    _scrollSince += static_cast<float>(yOffset);
 }
 
 bool InputContext::IsKeyDown(Key key) const
 {
-    const int32_t idx = static_cast<int32_t>(key);
-    return idx >= 0 && idx < kKeyCount && _currKeys[static_cast<std::size_t>(idx)];
+    return IsSet(_keys.down, static_cast<int32_t>(key));
 }
 
 bool InputContext::IsKeyPressed(Key key) const
 {
-    const int32_t idx = static_cast<int32_t>(key);
-    return idx >= 0 && idx < kKeyCount && _currKeys[static_cast<std::size_t>(idx)] && !_prevKeys[static_cast<std::size_t>(idx)];
+    return IsSet(_keys.pressed, static_cast<int32_t>(key));
 }
 
 bool InputContext::IsKeyReleased(Key key) const
 {
-    const int32_t idx = static_cast<int32_t>(key);
-    return idx >= 0 && idx < kKeyCount && !_currKeys[static_cast<std::size_t>(idx)] && _prevKeys[static_cast<std::size_t>(idx)];
+    return IsSet(_keys.released, static_cast<int32_t>(key));
 }
 
 bool InputContext::IsMouseButtonDown(MouseButton button) const
 {
-    const int32_t idx = static_cast<int32_t>(button);
-    return idx >= 0 && idx < kButtonCount && _currButtons[static_cast<std::size_t>(idx)];
+    return IsSet(_buttons.down, static_cast<int32_t>(button));
 }
 
 bool InputContext::IsMouseButtonPressed(MouseButton button) const
 {
-    const int32_t idx = static_cast<int32_t>(button);
-    return idx >= 0 && idx < kButtonCount && _currButtons[static_cast<std::size_t>(idx)] && !_prevButtons[static_cast<std::size_t>(idx)];
+    return IsSet(_buttons.pressed, static_cast<int32_t>(button));
 }
 
 bool InputContext::IsMouseButtonReleased(MouseButton button) const
 {
-    const int32_t idx = static_cast<int32_t>(button);
-    return idx >= 0 && idx < kButtonCount && !_currButtons[static_cast<std::size_t>(idx)] && _prevButtons[static_cast<std::size_t>(idx)];
-}
-
-glm::vec2 InputContext::MousePosition() const
-{
-    return _currMousePos;
-}
-
-glm::vec2 InputContext::MouseDelta() const
-{
-    return _mouseDelta;
+    return IsSet(_buttons.released, static_cast<int32_t>(button));
 }
 
 void InputContext::SetMouseCaptured(bool captured)
 {
     _mouseCaptured = captured;
+    if (_window == nullptr)
+    {
+        return;
+    }
 
     if (!captured)
     {
@@ -128,16 +207,6 @@ void InputContext::SetMouseCaptured(bool captured)
     {
         glfwSetInputMode(_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     }
-}
-
-bool InputContext::IsMouseCaptured() const
-{
-    return _mouseCaptured;
-}
-
-float InputContext::ScrollDelta() const
-{
-    return _scrollDelta;
 }
 
 } // namespace Assisi::Window
