@@ -4,6 +4,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 
 using namespace Assisi::Mondrian;
@@ -16,58 +17,82 @@ namespace
 constexpr Extent kLandscape{1280, 720};
 constexpr Extent kPortrait{480, 960};
 
-/// Whether @p quad covers some pixels and all of them lie inside @p viewport.
-bool VisibleWithin(const DrawQuad &quad, Extent viewport)
+constexpr TextureId kPlaceholder{7};
+
+/// Whether @p rect covers some pixels and all of them lie inside @p viewport.
+bool VisibleWithin(const Rect &rect, Extent viewport)
 {
-    const Rect &rect = quad.rect;
     return rect.width > 0.f && rect.height > 0.f && rect.x >= 0.f && rect.y >= 0.f &&
            rect.x + rect.width <= static_cast<float>(viewport.width) &&
-           rect.y + rect.height <= static_cast<float>(viewport.height) && quad.color.a > 0.f;
+           rect.y + rect.height <= static_cast<float>(viewport.height);
 }
 
-/// Runs one whole frame and returns the quads it produced.
-DrawList Frame(Ui &ui, Extent viewport)
+/// Runs one whole frame and returns what it drew.
+const DrawList &Frame(Ui &ui, Extent viewport)
 {
     ui.ProcessInput();
     ui.Sync(viewport);
     return ui.GetDrawList();
 }
 
+/// Whether some quad in @p list has a corner of @p style.
+bool HasCornerStyle(const DrawList &list, CornerStyle style)
+{
+    return std::ranges::any_of(list.Instances(), [style](const QuadInstance &quad)
+                               { return UnpackCornerStyle(quad.cornerStyles, Corner::TopLeft) == style; });
+}
+
 } // namespace
 
-TEST_CASE("Mondrian: a synced UI draws one visible quad inside the viewport")
+TEST_CASE("Mondrian: the placeholder strip shows every quad the pass draws, inside the viewport")
 {
     Ui ui;
-    const DrawList drawn = Frame(ui, kLandscape);
+    ui.SetPlaceholderTexture(kPlaceholder);
+    const DrawList &drawn = Frame(ui, kLandscape);
 
-    REQUIRE(drawn.Quads().size() == 1);
-    CHECK(VisibleWithin(drawn.Quads()[0], kLandscape));
+    REQUIRE(drawn.IsFinalized());
+    REQUIRE_FALSE(drawn.Instances().empty());
+    for (const QuadInstance &quad : drawn.Instances())
+    {
+        CHECK(VisibleWithin(quad.rect, kLandscape));
+    }
+
+    CHECK(HasCornerStyle(drawn, CornerStyle::Square));
+    CHECK(HasCornerStyle(drawn, CornerStyle::Rounded));
+    CHECK(HasCornerStyle(drawn, CornerStyle::Cut));
+    CHECK(std::ranges::any_of(drawn.Instances(), [](const QuadInstance &quad) { return quad.borderWidth > 0.f; }));
+
+    // Clipped: the clip cuts into the quad rather than containing it.
+    CHECK(std::ranges::any_of(drawn.Instances(),
+                              [](const QuadInstance &quad)
+                              { return quad.clip.width < quad.rect.width && quad.clip.width > 0.f; }));
+
+    // Textured with whatever the engine registered.
+    CHECK(std::ranges::any_of(drawn.Entries(), [](const DrawEntry &entry) { return entry.texture == kPlaceholder; }));
+    CHECK(std::ranges::any_of(drawn.Instances(), [](const QuadInstance &quad)
+                              { return quad.kind == static_cast<uint32_t>(QuadKind::Image); }));
 }
 
-TEST_CASE("Mondrian: every sync lays out against the viewport it is given")
+TEST_CASE("Mondrian: every sync rebuilds the strip against the viewport it is given")
 {
     Ui ui;
-    const DrawList landscapeList = Frame(ui, kLandscape);
-    REQUIRE(landscapeList.Quads().size() == 1);
-    const DrawQuad landscape = landscapeList.Quads()[0];
-    const DrawList portrait  = Frame(ui, kPortrait);
+    const std::size_t landscapeCount = Frame(ui, kLandscape).Instances().size();
+    const Rect landscapeFirst        = Frame(ui, kLandscape).Instances()[0].rect;
+    const DrawList &portrait         = Frame(ui, kPortrait);
 
     // A second sync rebuilds rather than appends.
-    REQUIRE(portrait.Quads().size() == 1);
-    CHECK(VisibleWithin(portrait.Quads()[0], kPortrait));
-    CHECK(portrait.Quads()[0].rect.width != landscape.rect.width);
-    CHECK(portrait.Quads()[0].rect.height != landscape.rect.height);
+    REQUIRE(portrait.Instances().size() == landscapeCount);
+    for (const QuadInstance &quad : portrait.Instances())
+    {
+        CHECK(VisibleWithin(quad.rect, kPortrait));
+    }
+    CHECK(portrait.Instances()[0].rect.width != landscapeFirst.width);
 }
 
-TEST_CASE("Mondrian: a zero-sized viewport draws nothing visible and does not assert")
+TEST_CASE("Mondrian: a zero-sized viewport draws nothing and does not assert")
 {
     Ui ui;
-    const DrawList drawn = Frame(ui, Extent{0, 0});
-    for (const DrawQuad &quad : drawn.Quads())
-    {
-        CHECK(quad.rect.width == 0.f);
-        CHECK(quad.rect.height == 0.f);
-    }
+    CHECK(Frame(ui, Extent{0, 0}).Instances().empty());
 }
 
 #ifndef NDEBUG
