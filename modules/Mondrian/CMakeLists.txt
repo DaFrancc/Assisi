@@ -7,17 +7,24 @@ Assisi_apply_defaults(Assisi-Mondrian)
 
 target_sources(Assisi-Mondrian
   PUBLIC
+    "include/Assisi/Mondrian/Draw.hpp"
     "include/Assisi/Mondrian/DrawList.hpp"
     "include/Assisi/Mondrian/Font.hpp"
     "include/Assisi/Mondrian/FontDescription.hpp"
     "include/Assisi/Mondrian/FontReader.hpp"
+    "include/Assisi/Mondrian/Layout.hpp"
+    "include/Assisi/Mondrian/NodeTree.hpp"
+    "include/Assisi/Mondrian/Style.hpp"
     "include/Assisi/Mondrian/Text.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
     "include/Assisi/Mondrian/Utf8.hpp"
   PRIVATE
+    "src/Draw.cpp"
     "src/DrawList.cpp"
     "src/Font.cpp"
     "src/FontReader.cpp"
+    "src/Layout.cpp"
+    "src/NodeTree.cpp"
     "src/Text.cpp"
     "src/Ui.cpp"
     "src/Utf8.cpp"

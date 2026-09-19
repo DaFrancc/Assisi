@@ -34,10 +34,10 @@ enum class GlyphClass : uint8_t
 /// @brief One glyph as the shaper produced it.
 struct ShapedGlyph
 {
-    float advance    = 0.f; ///< in the font's cooked pixels, kerning with the next glyph included
-    uint32_t index   = 0;   ///< the font's glyph index
-    uint32_t cluster = 0;   ///< byte offset of the text it came from; only mapping back to the text reads it
-    GlyphClass kind  = GlyphClass::Ink;
+    float advance = 0.f;  ///< in the font's cooked pixels, kerning with the next glyph included
+    uint32_t index = 0;   ///< the font's glyph index
+    uint32_t cluster = 0; ///< byte offset of the text it came from; only mapping back to the text reads it
+    GlyphClass kind = GlyphClass::Ink;
 };
 
 /// @brief A string as glyphs, in the order they are laid out.
@@ -58,18 +58,18 @@ enum class TextAlign : uint8_t
 /// @brief One glyph where layout put it, relative to the block's top-left.
 struct PlacedGlyph
 {
-    float x          = 0.f; ///< the pen, in pixels
-    float y          = 0.f; ///< the line's baseline, in pixels
-    uint32_t index   = 0;
+    float x = 0.f; ///< the pen, in pixels
+    float y = 0.f; ///< the line's baseline, in pixels
+    uint32_t index = 0;
     uint32_t cluster = 0;
-    GlyphClass kind  = GlyphClass::Ink;
+    GlyphClass kind = GlyphClass::Ink;
 };
 
 /// @brief One line of a layout, as a range of its glyphs.
 struct TextLine
 {
-    float width    = 0.f; ///< pen extent, not counting whitespace at its end
-    float x        = 0.f; ///< left edge, in whole pixels
+    float width = 0.f;    ///< pen extent, not counting whitespace at its end
+    float x = 0.f;        ///< left edge, in whole pixels
     float baseline = 0.f; ///< in whole pixels
     uint32_t first = 0;
     uint32_t count = 0;
@@ -83,9 +83,9 @@ struct TextLayout
     std::vector<PlacedGlyph> glyphs; ///< every shaped glyph, whitespace included
     std::vector<TextLine> lines;     ///< at least one, even for empty text
     const Font *font = nullptr;
-    float scale      = 0.f; ///< drawn size over the font's cooked size
-    float width      = 0.f; ///< the widest line, rounded up to whole pixels
-    float height     = 0.f; ///< every line's height, rounded up to whole pixels
+    float scale = 0.f;  ///< drawn size over the font's cooked size
+    float width = 0.f;  ///< the widest line, rounded up to whole pixels
+    float height = 0.f; ///< every line's height, rounded up to whole pixels
 };
 
 /// @brief @p utf8 as @p font's glyphs.
@@ -104,6 +104,10 @@ struct TextLayout
 /// Alignment is within @p wrapWidth, or within the widest line without one.
 [[nodiscard]] TextLayout LayoutText(const ShapedText &shaped, const Font &font, float size,
                                     std::optional<float> wrapWidth, TextAlign align);
+
+/// @brief The widest run of ink in @p shaped at @p size pixels, rounded up: the
+/// narrowest width it can wrap to without breaking a word.
+[[nodiscard]] float MeasureLongestWord(const ShapedText &shaped, const Font &font, float size);
 
 /// @brief Adds a glyph quad to @p list for each drawn glyph of @p layout, with
 /// the block's top-left at @p origin.

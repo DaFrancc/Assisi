@@ -12,15 +12,15 @@ namespace
 {
 
 /// A continuation byte is 10xxxxxx and carries six bits.
-constexpr uint8_t kContinuationMask  = 0xC0;
-constexpr uint8_t kContinuationTag   = 0x80;
+constexpr uint8_t kContinuationMask = 0xC0;
+constexpr uint8_t kContinuationTag = 0x80;
 constexpr uint8_t kContinuationValue = 0x3F;
 constexpr uint32_t kContinuationBits = 6;
 
 /// The first codepoints UTF-8 does not allow: surrogates and past the end.
 constexpr uint32_t kSurrogateFirst = 0xD800;
-constexpr uint32_t kSurrogateLast  = 0xDFFF;
-constexpr uint32_t kLastCodepoint  = 0x10FFFF;
+constexpr uint32_t kSurrogateLast = 0xDFFF;
+constexpr uint32_t kLastCodepoint = 0x10FFFF;
 
 /// One multi-byte form: the lead bytes that start it, the bits a lead byte
 /// carries, and the smallest codepoint it may encode, below which it is overlong.
@@ -28,8 +28,8 @@ struct Form
 {
     uint32_t minimum = 0;
     uint8_t leadMask = 0; ///< the lead byte's tag bits
-    uint8_t leadTag  = 0;
-    uint8_t length   = 0; ///< bytes in the sequence, lead included
+    uint8_t leadTag = 0;
+    uint8_t length = 0; ///< bytes in the sequence, lead included
 };
 
 constexpr std::array kForms{
@@ -70,12 +70,12 @@ uint32_t DecodeUtf8(std::string_view text, uint32_t &offset)
             break;
         }
         uint32_t codepoint = lead & static_cast<uint8_t>(~form.leadMask);
-        bool continued     = true;
+        bool continued = true;
         for (uint32_t i = 1; i < form.length; ++i)
         {
             const uint8_t next = ByteAt(text, offset + i);
-            continued          = continued && (next & kContinuationMask) == kContinuationTag;
-            codepoint          = (codepoint << kContinuationBits) | (next & kContinuationValue);
+            continued = continued && (next & kContinuationMask) == kContinuationTag;
+            codepoint = (codepoint << kContinuationBits) | (next & kContinuationValue);
         }
         const bool surrogate = codepoint >= kSurrogateFirst && codepoint <= kSurrogateLast;
         if (!continued || codepoint < form.minimum || surrogate || codepoint > kLastCodepoint)

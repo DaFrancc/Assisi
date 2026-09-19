@@ -315,7 +315,7 @@ bool Application::InitializePresentation()
         else if (_uiFont = std::move(*font);
                  Mondrian::Engine::UploadFontAtlas(_uiFontAtlas, vulkanContext->GetDevice(), _uiFont))
         {
-            _ui->SetPlaceholderFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
+            _ui->SetFont(&_uiFont,_uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
         }
 
         // A capture is exactly the case the per-pass render-pass splits are

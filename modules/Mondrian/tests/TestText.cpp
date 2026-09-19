@@ -17,22 +17,22 @@ namespace
 {
 
 constexpr uint32_t kAtlasSide = 64;
-constexpr float kCookedSize   = 32.f;
-constexpr float kAscender     = 29.f;
-constexpr float kLineHeight   = 39.f;
+constexpr float kCookedSize = 32.f;
+constexpr float kAscender = 29.f;
+constexpr float kLineHeight = 39.f;
 
 /// Glyph indices, out of codepoint order as a real font's are.
 constexpr uint32_t kNotdef = 0;
-constexpr uint32_t kA      = 10;
-constexpr uint32_t kS      = 20;
-constexpr uint32_t kI      = 30;
-constexpr uint32_t kSpace  = 40;
+constexpr uint32_t kA = 10;
+constexpr uint32_t kS = 20;
+constexpr uint32_t kI = 30;
+constexpr uint32_t kSpace = 40;
 constexpr uint32_t kEAcute = 50;
 
 /// Advances, whole pixels at the cooked size so expected positions are exact.
-constexpr float kAAdvance     = 20.f;
-constexpr float kSAdvance     = 16.f;
-constexpr float kIAdvance     = 8.f;
+constexpr float kAAdvance = 20.f;
+constexpr float kSAdvance = 16.f;
+constexpr float kIAdvance = 8.f;
 constexpr float kSpaceAdvance = 8.f;
 
 /// A font that maps A, s, i, e acute, space and no-break space, lacks sharp s,
@@ -41,23 +41,52 @@ constexpr float kSpaceAdvance = 8.f;
 Font PlainFont()
 {
     Font font;
-    font.pixelSize   = kCookedSize;
-    font.ascender    = kAscender;
-    font.descender   = -7.f;
-    font.lineHeight  = kLineHeight;
-    font.atlasWidth  = kAtlasSide;
+    font.pixelSize = kCookedSize;
+    font.ascender = kAscender;
+    font.descender = -7.f;
+    font.lineHeight = kLineHeight;
+    font.atlasWidth = kAtlasSide;
     font.atlasHeight = kAtlasSide;
     font.atlas.assign(static_cast<std::size_t>(kAtlasSide) * kAtlasSide, 0);
     font.glyphs = {
-        Glyph{.advance = 24.f, .index = kNotdef, .x = 0, .y = 0, .width = 10, .height = 12, .bearingX = 1, .bearingY = 23},
-        Glyph{.advance = kAAdvance, .index = kA, .x = 10, .y = 0, .width = 8, .height = 10, .bearingX = 1, .bearingY = 23},
-        Glyph{.advance = kSAdvance, .index = kS, .x = 18, .y = 0, .width = 6, .height = 8, .bearingX = 1, .bearingY = 17},
-        Glyph{.advance = kIAdvance, .index = kI, .x = 24, .y = 0, .width = 3, .height = 10, .bearingX = 2, .bearingY = 23},
+        Glyph{.advance = 24.f,
+              .index = kNotdef,
+              .x = 0,
+              .y = 0,
+              .width = 10,
+              .height = 12,
+              .bearingX = 1,
+              .bearingY = 23},
+        Glyph{.advance = kAAdvance,
+              .index = kA,
+              .x = 10,
+              .y = 0,
+              .width = 8,
+              .height = 10,
+              .bearingX = 1,
+              .bearingY = 23},
+        Glyph{
+            .advance = kSAdvance, .index = kS, .x = 18, .y = 0, .width = 6, .height = 8, .bearingX = 1, .bearingY = 17},
+        Glyph{.advance = kIAdvance,
+              .index = kI,
+              .x = 24,
+              .y = 0,
+              .width = 3,
+              .height = 10,
+              .bearingX = 2,
+              .bearingY = 23},
         Glyph{.advance = kSpaceAdvance, .index = kSpace},
-        Glyph{.advance = 16.f, .index = kEAcute, .x = 27, .y = 0, .width = 6, .height = 12, .bearingX = 1, .bearingY = 24},
+        Glyph{.advance = 16.f,
+              .index = kEAcute,
+              .x = 27,
+              .y = 0,
+              .width = 6,
+              .height = 12,
+              .bearingX = 1,
+              .bearingY = 24},
     };
-    font.cmap = {CmapEntry{.codepoint = ' ', .glyph = kSpace}, CmapEntry{.codepoint = 'A', .glyph = kA},
-                 CmapEntry{.codepoint = 'i', .glyph = kI},     CmapEntry{.codepoint = 's', .glyph = kS},
+    font.cmap = {CmapEntry{.codepoint = ' ', .glyph = kSpace},  CmapEntry{.codepoint = 'A', .glyph = kA},
+                 CmapEntry{.codepoint = 'i', .glyph = kI},      CmapEntry{.codepoint = 's', .glyph = kS},
                  CmapEntry{.codepoint = 0xA0, .glyph = kSpace}, CmapEntry{.codepoint = 0xE9, .glyph = kEAcute}};
     return font;
 }
@@ -67,7 +96,7 @@ constexpr float kAIKerning = -2.f;
 /// PlainFont with A pulled towards a following i.
 Font KernedFont()
 {
-    Font font    = PlainFont();
+    Font font = PlainFont();
     font.kerning = {KerningPair{.adjust = kAIKerning, .left = kA, .right = kI}};
     return font;
 }
@@ -87,7 +116,7 @@ TextLayout Lay(const Font &font, std::string_view text, float size, std::optiona
 
 TEST_CASE("Text: shaping yields one glyph a codepoint, not a byte, and keeps where each came from")
 {
-    const Font font  = PlainFont();
+    const Font font = PlainFont();
     const std::string text = std::string("A") + std::string(kEAcuteUtf8) + "s";
     const ShapedText shaped = Shape(text, font);
 
@@ -161,6 +190,16 @@ TEST_CASE("Text: an unwrapped line is measured by its advances, scaled to the si
     CHECK(doubled.glyphs[0].y == 2.f * kAscender);
     CHECK(doubled.width == 2.f * cooked.width);
     CHECK(doubled.height == 2.f * kLineHeight);
+}
+
+TEST_CASE("Text: the longest word is the narrowest a text can wrap to")
+{
+    const Font font = PlainFont();
+    const ShapedText shaped = Shape("Ai sAis\nA", font); // words of 28, 60 and 20
+    CHECK(MeasureLongestWord(shaped, font, kCookedSize) == 60.f);
+    CHECK(MeasureLongestWord(shaped, font, 2.f * kCookedSize) == 120.f);
+    CHECK(MeasureLongestWord(shaped, font, 30.f) == 57.f); // 56.25, rounded up
+    CHECK(MeasureLongestWord(Shape("", font), font, kCookedSize) == 0.f);
 }
 
 TEST_CASE("Text: kerning reaches the layout")
@@ -299,7 +338,7 @@ TEST_CASE("Text: lines align within the wrap width, or within the widest line wi
 
 TEST_CASE("Text: at a fractional scale, edges and the measurement land on whole pixels")
 {
-    const Font font      = PlainFont();
+    const Font font = PlainFont();
     constexpr float kSize = 30.f; // scale 0.9375
 
     const TextLayout layout = Lay(font, "A\nA", kSize);
@@ -325,7 +364,7 @@ constexpr Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> kInk{0.2f, 0.4f, 
 
 TEST_CASE("Text: drawing puts each glyph's image at the pen layout placed it")
 {
-    const Font font         = PlainFont();
+    const Font font = PlainFont();
     const TextLayout layout = Lay(font, "Ai ", kCookedSize);
     DrawList list;
     DrawGlyphs(list, layout, kAtlas, kOrigin, kInk);
@@ -356,7 +395,7 @@ TEST_CASE("Text: drawing puts each glyph's image at the pen layout placed it")
 
 TEST_CASE("Text: drawn glyphs scale with the size, from the same texels")
 {
-    const Font font         = PlainFont();
+    const Font font = PlainFont();
     const TextLayout layout = Lay(font, "A", 2.f * kCookedSize);
     DrawList list;
     DrawGlyphs(list, layout, kAtlas, kOrigin, kInk);
@@ -387,7 +426,7 @@ TEST_CASE("Text: every drawn glyph's pen lies inside the measured box")
     for (const TextAlign align : {TextAlign::Left, TextAlign::Center, TextAlign::Right})
     {
         const TextLayout layout = Lay(font, text, 45.f, 120.f, align);
-        const float box         = 120.f;
+        const float box = 120.f;
         REQUIRE(layout.lines.size() > 2); // the text wraps, beyond its one newline
         for (const TextLine &line : layout.lines)
         {

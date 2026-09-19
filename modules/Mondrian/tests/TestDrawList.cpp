@@ -25,7 +25,7 @@ TEST_CASE("DrawList: the builder sets each property on the quad it made, and onl
     constexpr Rect kUv{.x = 0.25f, .y = 0.5f, .width = 0.25f, .height = 0.5f};
     constexpr float kBorder = 3.f;
     constexpr float kRadius = 6.f;
-    constexpr float kLone   = 2.f;
+    constexpr float kLone = 2.f;
 
     DrawList list;
     list.Quad(kVisible);
@@ -57,13 +57,32 @@ TEST_CASE("DrawList: the builder sets each property on the quad it made, and onl
     CHECK(built.kind == static_cast<uint32_t>(QuadKind::Image));
 }
 
+TEST_CASE("DrawList: quads start with the default clip until it changes, and clearing forgets it")
+{
+    DrawList list;
+    list.SetDefaultClip(kElsewhere);
+    list.Quad(kVisible);
+    list.Quad(kVisible).Clip(kVisible);
+    list.SetDefaultClip(kNoClip);
+    list.Quad(kVisible);
+    REQUIRE(list.Instances().size() == 3);
+    CHECK(list.Instances()[0].clip.x == kElsewhere.x);
+    CHECK(list.Instances()[1].clip.x == kVisible.x);
+    CHECK(list.Instances()[2].clip.x == kNoClip.x);
+
+    list.SetDefaultClip(kElsewhere);
+    list.Clear();
+    list.Quad(kVisible);
+    CHECK(list.Instances()[0].clip.x == kNoClip.x);
+}
+
 TEST_CASE("DrawList: every corner keeps its own style when packed")
 {
     uint32_t packed = 0;
-    packed          = PackCornerStyle(packed, Corner::TopLeft, CornerStyle::Cut);
-    packed          = PackCornerStyle(packed, Corner::TopRight, CornerStyle::Rounded);
-    packed          = PackCornerStyle(packed, Corner::BottomRight, CornerStyle::Square);
-    packed          = PackCornerStyle(packed, Corner::BottomLeft, CornerStyle::Cut);
+    packed = PackCornerStyle(packed, Corner::TopLeft, CornerStyle::Cut);
+    packed = PackCornerStyle(packed, Corner::TopRight, CornerStyle::Rounded);
+    packed = PackCornerStyle(packed, Corner::BottomRight, CornerStyle::Square);
+    packed = PackCornerStyle(packed, Corner::BottomLeft, CornerStyle::Cut);
     // Overwriting one corner leaves the others alone.
     packed = PackCornerStyle(packed, Corner::TopLeft, CornerStyle::Rounded);
 
