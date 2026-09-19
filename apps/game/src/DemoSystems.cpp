@@ -40,10 +40,8 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx)
         return;
     if (ctx.input->IsKeyPressed(Assisi::Window::Key::Space))
     {
-        Assisi::Core::Log::Info("InputDemo: space in world '{}' (active={}).", ctx.world.name,
-                                ctx.isActiveWorld);
+        Assisi::Core::Log::Info("InputDemo: space in world '{}' (active={}).", ctx.world.name, ctx.isActiveWorld);
     }
-
 }
 
 void BouncerSpawnSystem(Assisi::App::SystemContext &ctx)
@@ -60,7 +58,7 @@ void BouncerSpawnSystem(Assisi::App::SystemContext &ctx)
         // Above the pile, and nudged off-centre per press so a held key makes a
         // heap rather than a tower of coincident bodies fighting each other.
         const float spread = static_cast<float>(ctx.simTick % 7u) * 0.25f - 0.75f;
-        at.position        = {spread, 8.f, spread * 0.5f};
+        at.position = {spread, 8.f, spread * 0.5f};
 
         const std::optional<Assisi::ECS::InstanceId> spawned =
             Assisi::App::SpawnBlueprint(ctx.world, "blueprints/Bouncer.abp", at);
@@ -83,7 +81,7 @@ void CaptureCursorSystem(Assisi::App::SystemContext &ctx)
         return;
     }
 
-    ctx.input->SetMouseCaptured(true);
+    ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
     Assisi::Core::Log::Info("CaptureCursor: '{}' takes the mouse.", ctx.world.levelPath);
 }
 
@@ -100,14 +98,14 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx)
     {
         if (ctx.input->IsKeyPressed(Assisi::Window::Key::Escape))
         {
-            ctx.input->SetMouseCaptured(false);
+            ctx.input->SetInputMode(Assisi::Window::InputMode::GameAndUi);
         }
         return;
     }
 
     if (ctx.input->IsMouseButtonPressed(Assisi::Window::MouseButton::Left))
     {
-        ctx.input->SetMouseCaptured(true);
+        ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
     }
 }
 

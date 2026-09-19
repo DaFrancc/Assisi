@@ -28,6 +28,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -77,13 +78,13 @@ class InputContext
     // -------------------------------------------------------------------------
 
     /// @brief True while the key is held down.
-    [[nodiscard]] bool IsKeyDown(Key key) const;
+    [[nodiscard]] bool IsKeyDown(Key key, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief True in the frame the key went down.
-    [[nodiscard]] bool IsKeyPressed(Key key) const;
+    [[nodiscard]] bool IsKeyPressed(Key key, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief True in the frame the key went up.
-    [[nodiscard]] bool IsKeyReleased(Key key) const;
+    [[nodiscard]] bool IsKeyReleased(Key key, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief In the frame the key went down, which tap of a quick run that
     /// press was: 1 for a single press, 2 for a double tap, and so on without
@@ -95,13 +96,13 @@ class InputContext
     // -------------------------------------------------------------------------
 
     /// @brief True while the mouse button is held down.
-    [[nodiscard]] bool IsMouseButtonDown(MouseButton button) const;
+    [[nodiscard]] bool IsMouseButtonDown(MouseButton button, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief True in the frame the button went down.
-    [[nodiscard]] bool IsMouseButtonPressed(MouseButton button) const;
+    [[nodiscard]] bool IsMouseButtonPressed(MouseButton button, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief True in the frame the button went up.
-    [[nodiscard]] bool IsMouseButtonReleased(MouseButton button) const;
+    [[nodiscard]] bool IsMouseButtonReleased(MouseButton button, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief TapCount for a mouse button: 2 in the frame of a double click.
     [[nodiscard]] uint32_t ClickCount(MouseButton button) const;
@@ -132,19 +133,57 @@ class InputContext
     [[nodiscard]] float ScrollDelta() const { return _frameScroll; }
 
     // -------------------------------------------------------------------------
-    // Cursor mode
+    // Consumption
     // -------------------------------------------------------------------------
 
-    /// @brief Hides and locks the cursor to the window (FPS-style).
-    ///
-    /// While captured, MouseDelta() returns raw movement with no screen-edge
-    /// clamping. Call again with false to restore normal cursor behaviour.
-    void SetMouseCaptured(bool captured);
+    /// @brief Hides @p key from every query that does not ask past consumption,
+    /// from now until the frame after it is released, so the press that worked
+    /// a menu is not still down for gameplay the next frame.
+    void ConsumeKey(Key key);
+    void ConsumeMouseButton(MouseButton button);
+    /// @brief Consumes every key held, pressed or released this frame.
+    void ConsumeKeyboard();
+    /// @brief Consumes every button held, pressed or released this frame, and
+    /// the frame's movement and scroll. The position stays readable.
+    void ConsumeMouse();
+    void ConsumeAll();
 
-    /// @brief Returns true if the cursor is currently captured.
-    [[nodiscard]] bool IsMouseCaptured() const { return _mouseCaptured; }
+    // -------------------------------------------------------------------------
+    // Input mode
+    // -------------------------------------------------------------------------
+
+    /// @brief The game's own mode, in force while nothing is pushed over it.
+    ///
+    /// Game captures and hides the cursor; MouseDelta() is then raw movement
+    /// with no screen-edge clamping.
+    void SetInputMode(InputMode mode);
+
+    /// @brief Puts @p mode over the game's own until the handle is popped. The
+    /// newest mode still pushed is the one in force.
+    [[nodiscard]] InputModeHandle PushInputMode(InputMode mode);
+
+    /// @brief Takes off the mode @p handle names, wherever it is in the stack.
+    /// A handle already popped, or a null one, does nothing.
+    void PopInputMode(InputModeHandle handle);
+
+    /// @brief The mode in force.
+    [[nodiscard]] InputMode GetInputMode() const;
+
+    /// @brief Whether the cursor is captured, which is whether the game has
+    /// both the mouse and the keyboard.
+    [[nodiscard]] bool IsMouseCaptured() const { return GetInputMode() == InputMode::Game; }
 
   private:
+    /// Captures or frees the window's cursor to match the mode in force.
+    void ApplyCursorMode();
+
+    /// A pushed mode, and the id its handle carries.
+    struct PushedMode
+    {
+        uint32_t id = 0;
+        InputMode mode = InputMode::Game;
+    };
+
     /// One slot per GLFW key code, up to GLFW_KEY_LAST.
     static constexpr std::size_t kKeyCount = 349;
     /// One slot per GLFW mouse button, up to GLFW_MOUSE_BUTTON_LAST.
@@ -168,17 +207,23 @@ class InputContext
         std::array<bool, Count> down{};
         std::array<bool, Count> pressed{};
         std::array<bool, Count> released{};
+        std::array<bool, Count> consumed{}; ///< hidden until the frame after release
 
         /// @return whether the action was a press of an input that was up.
         bool Apply(std::size_t index, KeyAction action);
         /// Counts a press at @p time, continuing the run when @p continues.
         void Tap(std::size_t index, double time, bool continues);
         void Latch();
+        /// Consumes every input held, pressed or released this frame.
+        void ConsumeActive();
+        /// Whether @p flags holds for @p value, counting consumed input as @p counting says.
+        [[nodiscard]] bool Reads(const std::array<bool, Count> &flags, int32_t value, ConsumedInput counting) const;
     };
 
     Switches<kKeyCount> _keys;
     Switches<kButtonCount> _buttons;
     std::array<glm::vec2, kButtonCount> _lastClickPosition{};
+    std::vector<PushedMode> _pushedModes;
     NativeWindowHandle *_window = nullptr;
     double _multiTapSeconds = kDefaultMultiTapSeconds;
     glm::vec2 _livePosition{0.f, 0.f};
@@ -186,7 +231,8 @@ class InputContext
     glm::vec2 _frameDelta{0.f, 0.f};
     float _scrollSince = 0.f;
     float _frameScroll = 0.f;
-    bool _mouseCaptured = false;
+    uint32_t _nextModeId = 1;
+    InputMode _gameMode = InputMode::GameAndUi;
 };
 
 } // namespace Assisi::Window

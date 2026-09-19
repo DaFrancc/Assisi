@@ -66,13 +66,13 @@ struct ActionBinding
     [[nodiscard]] static ActionBinding FromMouseButton(MouseButton b) noexcept { return {b}; }
 
     /// @brief True while the bound input is held this frame.
-    [[nodiscard]] bool IsDown(const InputContext &ctx) const noexcept;
+    [[nodiscard]] bool IsDown(const InputContext &ctx, ConsumedInput consumed = ConsumedInput::Skip) const noexcept;
 
     /// @brief True on the first frame the bound input transitions from up to down.
-    [[nodiscard]] bool IsPressed(const InputContext &ctx) const noexcept;
+    [[nodiscard]] bool IsPressed(const InputContext &ctx, ConsumedInput consumed = ConsumedInput::Skip) const noexcept;
 
     /// @brief True on the first frame the bound input transitions from down to up.
-    [[nodiscard]] bool IsReleased(const InputContext &ctx) const noexcept;
+    [[nodiscard]] bool IsReleased(const InputContext &ctx, ConsumedInput consumed = ConsumedInput::Skip) const noexcept;
 
     /// @brief The bound input's tap count this frame (see InputContext::TapCount).
     [[nodiscard]] uint32_t TapCount(const InputContext &ctx) const noexcept;
@@ -112,13 +112,16 @@ class ActionMap
     // -------------------------------------------------------------------------
 
     /// @brief True while any bound input for the action is held.
-    [[nodiscard]] bool IsActionDown(std::string_view action, const InputContext &input) const;
+    [[nodiscard]] bool IsActionDown(std::string_view action, const InputContext &input,
+                                    ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief True on the first frame any bound input for the action is pressed.
-    [[nodiscard]] bool IsActionPressed(std::string_view action, const InputContext &input) const;
+    [[nodiscard]] bool IsActionPressed(std::string_view action, const InputContext &input,
+                                       ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief True on the first frame any bound input for the action is released.
-    [[nodiscard]] bool IsActionReleased(std::string_view action, const InputContext &input) const;
+    [[nodiscard]] bool IsActionReleased(std::string_view action, const InputContext &input,
+                                        ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief The longest run of quick taps among the action's inputs pressed
     /// this frame: 2 for a double tap, and so on. Zero when none was pressed.

@@ -182,6 +182,46 @@ void NodeTree::SetBehaviour(NodeId id, uint32_t behaviour)
     }
 }
 
+void NodeTree::SetFocusable(NodeId id, bool focusable)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->focusable = focusable;
+    }
+}
+
+void NodeTree::SetEnabled(NodeId id, bool enabled)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->enabled = enabled;
+    }
+}
+
+void NodeTree::SetBlocksPointer(NodeId id, bool blocks)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->blocksPointer = blocks;
+    }
+}
+
+void NodeTree::SetTakesKeyboard(NodeId id, bool takes)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->takesKeyboard = takes;
+    }
+}
+
+void NodeTree::SetNavOverride(NodeId id, NavDirection direction, NodeId target)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->navOverride[static_cast<std::size_t>(direction)] = target;
+    }
+}
+
 NodeId NodeTree::Find(std::string_view name) const
 {
     for (uint32_t index = 0; index < _slots.size(); ++index)

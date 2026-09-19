@@ -43,6 +43,20 @@ TEST_CASE("ActionMap: an action's tap count is its quickest-tapped input's")
     CHECK(map.ActionTapCount("Dash", input) == 0);
 }
 
+TEST_CASE("ActionMap: an action whose key was consumed is held only to whoever asks past consumption")
+{
+    ActionMap map;
+    map.Bind("UiDown", Key::Down);
+    InputContext input;
+    input.OnKey(Key::Down, KeyAction::Press, 0.0);
+    input.Poll();
+    input.ConsumeKey(Key::Down);
+
+    CHECK_FALSE(map.IsActionDown("UiDown", input));
+    CHECK(map.IsActionDown("UiDown", input, ConsumedInput::Include));
+    CHECK_FALSE(map.IsActionDown("Unbound", input, ConsumedInput::Include));
+}
+
 TEST_CASE("ActionMap: key name <-> enum round-trips")
 {
     CHECK(ActionMap::KeyName(Key::W) == "W");
@@ -107,7 +121,7 @@ TEST_CASE("ActionMap: a second Apply replaces the actions it names and leaves th
     // clear MoveForward (an override naming one action would wipe every other).
     ActionMap map;
     InputBindings shipped;
-    shipped.actions[ShortString("Jump")]        = {ShortString("Space")};
+    shipped.actions[ShortString("Jump")] = {ShortString("Space")};
     shipped.actions[ShortString("MoveForward")] = {ShortString("W"), ShortString("UpArrow")};
     map.Apply(shipped);
 

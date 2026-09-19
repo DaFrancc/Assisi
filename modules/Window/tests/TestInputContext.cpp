@@ -223,6 +223,128 @@ TEST_CASE("InputContext: a double click counts only when the cursor has barely m
     CHECK(input.ClickCount(MouseButton::Left) == 1);
 }
 
+TEST_CASE("InputContext: a consumed key stays hidden until the frame after its release")
+{
+    InputContext input;
+    input.OnKey(Key::Enter, KeyAction::Press, 0.0);
+    input.Poll();
+    input.ConsumeKey(Key::Enter);
+    CHECK_FALSE(input.IsKeyPressed(Key::Enter));
+    CHECK_FALSE(input.IsKeyDown(Key::Enter));
+    CHECK(input.TapCount(Key::Enter) == 0);
+
+    input.Poll(); // still held, nobody consumes it again
+    CHECK_FALSE(input.IsKeyDown(Key::Enter));
+
+    input.OnKey(Key::Enter, KeyAction::Release, 0.0);
+    input.Poll();
+    CHECK_FALSE(input.IsKeyReleased(Key::Enter));
+
+    input.Poll();
+    input.OnKey(Key::Enter, KeyAction::Press, kSlow);
+    input.Poll();
+    CHECK(input.IsKeyPressed(Key::Enter));
+    CHECK(input.IsKeyDown(Key::Enter));
+}
+
+TEST_CASE("InputContext: a consumed input still reads as held to whoever asks past consumption")
+{
+    InputContext input;
+    input.OnKey(Key::Down, KeyAction::Press, 0.0);
+    input.OnMouseButton(MouseButton::Left, KeyAction::Press, 0.0);
+    input.Poll();
+    input.ConsumeKey(Key::Down);
+    input.ConsumeMouseButton(MouseButton::Left);
+
+    CHECK_FALSE(input.IsKeyDown(Key::Down));
+    CHECK(input.IsKeyDown(Key::Down, ConsumedInput::Include));
+    CHECK_FALSE(input.IsMouseButtonDown(MouseButton::Left));
+    CHECK(input.IsMouseButtonDown(MouseButton::Left, ConsumedInput::Include));
+    CHECK(input.ClickCount(MouseButton::Left) == 0);
+}
+
+TEST_CASE("InputContext: consuming the mouse hides its buttons, movement and scroll, and leaves the keyboard")
+{
+    InputContext input;
+    input.OnCursorPosition(0.0, 0.0);
+    input.Poll();
+    input.OnCursorPosition(10.0, 5.0);
+    input.OnScroll(1.0);
+    input.OnMouseButton(MouseButton::Right, KeyAction::Press, 0.0);
+    input.OnKey(Key::W, KeyAction::Press, 0.0);
+    input.Poll();
+
+    input.ConsumeMouse();
+    CHECK(input.MouseDelta() == glm::vec2(0.f, 0.f));
+    CHECK(input.ScrollDelta() == 0.f);
+    CHECK_FALSE(input.IsMouseButtonPressed(MouseButton::Right));
+    CHECK(input.MousePosition() == glm::vec2(10.f, 5.f)); // where it is is not an action
+    CHECK(input.IsKeyPressed(Key::W));
+
+    input.ConsumeKeyboard();
+    CHECK_FALSE(input.IsKeyPressed(Key::W));
+}
+
+TEST_CASE("InputContext: consuming everything hides every input of the frame, but not the next frame's presses")
+{
+    InputContext input;
+    input.OnKey(Key::Space, KeyAction::Press, 0.0);
+    input.OnMouseButton(MouseButton::Left, KeyAction::Press, 0.0);
+    input.Poll();
+    input.ConsumeAll();
+    CHECK_FALSE(input.IsKeyPressed(Key::Space));
+    CHECK_FALSE(input.IsMouseButtonPressed(MouseButton::Left));
+
+    input.OnKey(Key::E, KeyAction::Press, 0.0);
+    input.Poll();
+    CHECK(input.IsKeyPressed(Key::E));
+    CHECK_FALSE(input.IsKeyDown(Key::Space));
+}
+
+TEST_CASE("InputContext: the input mode starts with the cursor free and the game given the keyboard")
+{
+    const InputContext input;
+    CHECK(input.GetInputMode() == InputMode::GameAndUi);
+    CHECK_FALSE(input.IsMouseCaptured());
+}
+
+TEST_CASE("InputContext: a pushed mode covers the game's own, which comes back when it is popped")
+{
+    InputContext input;
+    input.SetInputMode(InputMode::Game);
+    CHECK(input.IsMouseCaptured());
+
+    const InputModeHandle menu = input.PushInputMode(InputMode::Ui);
+    CHECK(input.GetInputMode() == InputMode::Ui);
+    CHECK_FALSE(input.IsMouseCaptured());
+
+    // The game changing its mind under a menu is remembered, not applied.
+    input.SetInputMode(InputMode::GameAndUi);
+    input.SetInputMode(InputMode::Game);
+    CHECK(input.GetInputMode() == InputMode::Ui);
+
+    input.PopInputMode(menu);
+    CHECK(input.GetInputMode() == InputMode::Game);
+}
+
+TEST_CASE("InputContext: modes may be popped in any order, and the newest one still standing is in force")
+{
+    InputContext input;
+    const InputModeHandle first = input.PushInputMode(InputMode::Ui);
+    const InputModeHandle second = input.PushInputMode(InputMode::Game);
+
+    input.PopInputMode(first);
+    CHECK(input.GetInputMode() == InputMode::Game);
+
+    input.PopInputMode(first); // already gone: nothing happens
+    CHECK(input.GetInputMode() == InputMode::Game);
+
+    input.PopInputMode(second);
+    CHECK(input.GetInputMode() == InputMode::GameAndUi);
+    input.PopInputMode(InputModeHandle{});
+    CHECK(input.GetInputMode() == InputMode::GameAndUi);
+}
+
 TEST_CASE("InputContext: each key keeps its own run")
 {
     InputContext input;

@@ -92,24 +92,16 @@ bool GameApp::MountContent()
 
 void GameApp::OnStart()
 {
-    // The shipped bindings, then whatever the player rebound over the top.
-    // Windowed only: a headless process has no devices, so an action map would
-    // be answering questions nobody asks.
-    if (HasPresentation())
-    {
-        LoadActionMap(_actions, GetOptions().bindings);
-    }
-
     // What a travel needs to turn a level file into a running world. Captured by
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
-    _worlds.SetServices({.cache    = &_assetCache,
+    _worlds.SetServices({.cache = &_assetCache,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
-                         .jobs     = &Jobs(),
-                         .events   = &GetEvents(),
-                         .input    = HasPresentation() ? &GetInput() : nullptr,
-                         .actions  = &_actions,
-                         .ui       = GetUi()});
+                         .jobs = &Jobs(),
+                         .events = &GetEvents(),
+                         .input = HasPresentation() ? &GetInput() : nullptr,
+                         .actions = &GetActions(),
+                         .ui = GetUi()});
 
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
@@ -206,15 +198,15 @@ SystemContext GameApp::WorldStartContext(World &world)
 {
     // Everything a per-frame phase gets, except dt and the tick: a one-shot runs
     // outside any frame, so there is no elapsed time and no tick it belongs to.
-    return {.world         = world,
-            .dt            = 0.f,
-            .simTick       = 0,
-            .input         = HasPresentation() ? &GetInput() : nullptr,
-            .actions       = &_actions,
-            .events        = GetEvents(),
+    return {.world = world,
+            .dt = 0.f,
+            .simTick = 0,
+            .input = HasPresentation() ? &GetInput() : nullptr,
+            .actions = &GetActions(),
+            .events = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
-            .worldManager  = &_worlds,
-            .ui            = GetUi()};
+            .worldManager = &_worlds,
+            .ui = GetUi()};
 }
 
 void GameApp::StepWorlds(float dt)
@@ -231,8 +223,8 @@ void GameApp::StepWorlds(float dt)
             // step actually did. The phase decides which side of the step a
             // system lands on; ordering within a phase cannot substitute for it.
             world.systems.Run(SystemPhase::FixedUpdate,
-                              {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &_actions,
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                              {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
+                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
@@ -247,8 +239,8 @@ void GameApp::StepWorlds(float dt)
             }
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
-                              {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &_actions,
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                              {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
+                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
         });
 }
 
@@ -328,7 +320,7 @@ void GameApp::OnUpdate(float dt)
             {
                 if (world.state != WorldState::Loading)
                 {
-                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/false);
                 }
             });
     }
@@ -355,13 +347,17 @@ void GameApp::OnUpdate(float dt)
                 return;
             }
 
-            const SystemContext ctx{world,        dt,
-                                    GetSimTick(), HasPresentation() ? &GetInput() : nullptr,
-                                    &_actions,    GetEvents(),
-                                    /*isActiveWorld=*/ &world == _worlds.Active(),
-                                    &_worlds,     GetUi()};
-            world.systems.Run(SystemPhase::PreUpdate,  ctx);
-            world.systems.Run(SystemPhase::Update,     ctx);
+            const SystemContext ctx{world,
+                                    dt,
+                                    GetSimTick(),
+                                    HasPresentation() ? &GetInput() : nullptr,
+                                    &GetActions(),
+                                    GetEvents(),
+                                    /*isActiveWorld=*/&world == _worlds.Active(),
+                                    &_worlds,
+                                    GetUi()};
+            world.systems.Run(SystemPhase::PreUpdate, ctx);
+            world.systems.Run(SystemPhase::Update, ctx);
             world.systems.Run(SystemPhase::PostUpdate, ctx);
         });
 }
@@ -391,8 +387,8 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     _world->propagationTick = Runtime::PropagateTransforms(_world->scene, _world->propagationTick);
 
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const Runtime::Transform &pose   = view ? view->pose : _fallbackPose;
-    const Runtime::Camera    &camera = view ? view->camera : _fallbackCamera;
+    const Runtime::Transform &pose = view ? view->pose : _fallbackPose;
+    const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
 
     // The game's own render systems, through the world's registry. After
     // propagation and before the scene draw, so the matrices they are handed are

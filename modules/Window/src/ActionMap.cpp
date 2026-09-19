@@ -28,80 +28,80 @@ struct KeyEntry
 };
 
 static constexpr std::array kKeyTable{
-    KeyEntry{"Space",        Key::Space},
-    KeyEntry{"Apostrophe",   Key::Apostrophe},
-    KeyEntry{"Comma",        Key::Comma},
-    KeyEntry{"Minus",        Key::Minus},
-    KeyEntry{"Period",       Key::Period},
-    KeyEntry{"Slash",        Key::Slash},
-    KeyEntry{"Num0",         Key::Num0},
-    KeyEntry{"Num1",         Key::Num1},
-    KeyEntry{"Num2",         Key::Num2},
-    KeyEntry{"Num3",         Key::Num3},
-    KeyEntry{"Num4",         Key::Num4},
-    KeyEntry{"Num5",         Key::Num5},
-    KeyEntry{"Num6",         Key::Num6},
-    KeyEntry{"Num7",         Key::Num7},
-    KeyEntry{"Num8",         Key::Num8},
-    KeyEntry{"Num9",         Key::Num9},
-    KeyEntry{"Semicolon",    Key::Semicolon},
-    KeyEntry{"Equal",        Key::Equal},
-    KeyEntry{"A",            Key::A},
-    KeyEntry{"B",            Key::B},
-    KeyEntry{"C",            Key::C},
-    KeyEntry{"D",            Key::D},
-    KeyEntry{"E",            Key::E},
-    KeyEntry{"F",            Key::F},
-    KeyEntry{"G",            Key::G},
-    KeyEntry{"H",            Key::H},
-    KeyEntry{"I",            Key::I},
-    KeyEntry{"J",            Key::J},
-    KeyEntry{"K",            Key::K},
-    KeyEntry{"L",            Key::L},
-    KeyEntry{"M",            Key::M},
-    KeyEntry{"N",            Key::N},
-    KeyEntry{"O",            Key::O},
-    KeyEntry{"P",            Key::P},
-    KeyEntry{"Q",            Key::Q},
-    KeyEntry{"R",            Key::R},
-    KeyEntry{"S",            Key::S},
-    KeyEntry{"T",            Key::T},
-    KeyEntry{"U",            Key::U},
-    KeyEntry{"V",            Key::V},
-    KeyEntry{"W",            Key::W},
-    KeyEntry{"X",            Key::X},
-    KeyEntry{"Y",            Key::Y},
-    KeyEntry{"Z",            Key::Z},
-    KeyEntry{"Escape",       Key::Escape},
-    KeyEntry{"Enter",        Key::Enter},
-    KeyEntry{"Tab",          Key::Tab},
-    KeyEntry{"Backspace",    Key::Backspace},
-    KeyEntry{"Insert",       Key::Insert},
-    KeyEntry{"Delete",       Key::Delete},
+    KeyEntry{"Space", Key::Space},
+    KeyEntry{"Apostrophe", Key::Apostrophe},
+    KeyEntry{"Comma", Key::Comma},
+    KeyEntry{"Minus", Key::Minus},
+    KeyEntry{"Period", Key::Period},
+    KeyEntry{"Slash", Key::Slash},
+    KeyEntry{"Num0", Key::Num0},
+    KeyEntry{"Num1", Key::Num1},
+    KeyEntry{"Num2", Key::Num2},
+    KeyEntry{"Num3", Key::Num3},
+    KeyEntry{"Num4", Key::Num4},
+    KeyEntry{"Num5", Key::Num5},
+    KeyEntry{"Num6", Key::Num6},
+    KeyEntry{"Num7", Key::Num7},
+    KeyEntry{"Num8", Key::Num8},
+    KeyEntry{"Num9", Key::Num9},
+    KeyEntry{"Semicolon", Key::Semicolon},
+    KeyEntry{"Equal", Key::Equal},
+    KeyEntry{"A", Key::A},
+    KeyEntry{"B", Key::B},
+    KeyEntry{"C", Key::C},
+    KeyEntry{"D", Key::D},
+    KeyEntry{"E", Key::E},
+    KeyEntry{"F", Key::F},
+    KeyEntry{"G", Key::G},
+    KeyEntry{"H", Key::H},
+    KeyEntry{"I", Key::I},
+    KeyEntry{"J", Key::J},
+    KeyEntry{"K", Key::K},
+    KeyEntry{"L", Key::L},
+    KeyEntry{"M", Key::M},
+    KeyEntry{"N", Key::N},
+    KeyEntry{"O", Key::O},
+    KeyEntry{"P", Key::P},
+    KeyEntry{"Q", Key::Q},
+    KeyEntry{"R", Key::R},
+    KeyEntry{"S", Key::S},
+    KeyEntry{"T", Key::T},
+    KeyEntry{"U", Key::U},
+    KeyEntry{"V", Key::V},
+    KeyEntry{"W", Key::W},
+    KeyEntry{"X", Key::X},
+    KeyEntry{"Y", Key::Y},
+    KeyEntry{"Z", Key::Z},
+    KeyEntry{"Escape", Key::Escape},
+    KeyEntry{"Enter", Key::Enter},
+    KeyEntry{"Tab", Key::Tab},
+    KeyEntry{"Backspace", Key::Backspace},
+    KeyEntry{"Insert", Key::Insert},
+    KeyEntry{"Delete", Key::Delete},
     // The arrows carry the suffix because a binding name space covers keys and
     // mouse buttons together, and bare Left/Right are both.
-    KeyEntry{"RightArrow",   Key::Right},
-    KeyEntry{"LeftArrow",    Key::Left},
-    KeyEntry{"DownArrow",    Key::Down},
-    KeyEntry{"UpArrow",      Key::Up},
-    KeyEntry{"F1",           Key::F1},
-    KeyEntry{"F2",           Key::F2},
-    KeyEntry{"F3",           Key::F3},
-    KeyEntry{"F4",           Key::F4},
-    KeyEntry{"F5",           Key::F5},
-    KeyEntry{"F6",           Key::F6},
-    KeyEntry{"F7",           Key::F7},
-    KeyEntry{"F8",           Key::F8},
-    KeyEntry{"F9",           Key::F9},
-    KeyEntry{"F10",          Key::F10},
-    KeyEntry{"F11",          Key::F11},
-    KeyEntry{"F12",          Key::F12},
-    KeyEntry{"LeftShift",    Key::LeftShift},
-    KeyEntry{"LeftControl",  Key::LeftControl},
-    KeyEntry{"LeftAlt",      Key::LeftAlt},
-    KeyEntry{"RightShift",   Key::RightShift},
+    KeyEntry{"RightArrow", Key::Right},
+    KeyEntry{"LeftArrow", Key::Left},
+    KeyEntry{"DownArrow", Key::Down},
+    KeyEntry{"UpArrow", Key::Up},
+    KeyEntry{"F1", Key::F1},
+    KeyEntry{"F2", Key::F2},
+    KeyEntry{"F3", Key::F3},
+    KeyEntry{"F4", Key::F4},
+    KeyEntry{"F5", Key::F5},
+    KeyEntry{"F6", Key::F6},
+    KeyEntry{"F7", Key::F7},
+    KeyEntry{"F8", Key::F8},
+    KeyEntry{"F9", Key::F9},
+    KeyEntry{"F10", Key::F10},
+    KeyEntry{"F11", Key::F11},
+    KeyEntry{"F12", Key::F12},
+    KeyEntry{"LeftShift", Key::LeftShift},
+    KeyEntry{"LeftControl", Key::LeftControl},
+    KeyEntry{"LeftAlt", Key::LeftAlt},
+    KeyEntry{"RightShift", Key::RightShift},
     KeyEntry{"RightControl", Key::RightControl},
-    KeyEntry{"RightAlt",     Key::RightAlt},
+    KeyEntry{"RightAlt", Key::RightAlt},
 };
 
 struct ButtonEntry
@@ -111,8 +111,8 @@ struct ButtonEntry
 };
 
 static constexpr std::array kButtonTable{
-    ButtonEntry{"LeftMouse",   MouseButton::Left},
-    ButtonEntry{"RightMouse",  MouseButton::Right},
+    ButtonEntry{"LeftMouse", MouseButton::Left},
+    ButtonEntry{"RightMouse", MouseButton::Right},
     ButtonEntry{"MiddleMouse", MouseButton::Middle},
 };
 
@@ -122,44 +122,44 @@ static constexpr std::array kButtonTable{
 // ActionBinding
 // ---------------------------------------------------------------------------
 
-bool ActionBinding::IsDown(const InputContext &ctx) const noexcept
+bool ActionBinding::IsDown(const InputContext &ctx, ConsumedInput consumed) const noexcept
 {
     return std::visit(
         [&](auto v)
         {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, Key>)
-                return ctx.IsKeyDown(v);
+                return ctx.IsKeyDown(v, consumed);
             else
-                return ctx.IsMouseButtonDown(v);
+                return ctx.IsMouseButtonDown(v, consumed);
         },
         input);
 }
 
-bool ActionBinding::IsPressed(const InputContext &ctx) const noexcept
+bool ActionBinding::IsPressed(const InputContext &ctx, ConsumedInput consumed) const noexcept
 {
     return std::visit(
         [&](auto v)
         {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, Key>)
-                return ctx.IsKeyPressed(v);
+                return ctx.IsKeyPressed(v, consumed);
             else
-                return ctx.IsMouseButtonPressed(v);
+                return ctx.IsMouseButtonPressed(v, consumed);
         },
         input);
 }
 
-bool ActionBinding::IsReleased(const InputContext &ctx) const noexcept
+bool ActionBinding::IsReleased(const InputContext &ctx, ConsumedInput consumed) const noexcept
 {
     return std::visit(
         [&](auto v)
         {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, Key>)
-                return ctx.IsKeyReleased(v);
+                return ctx.IsKeyReleased(v, consumed);
             else
-                return ctx.IsMouseButtonReleased(v);
+                return ctx.IsMouseButtonReleased(v, consumed);
         },
         input);
 }
@@ -219,30 +219,34 @@ void ActionMap::Clear()
 // Query
 // ---------------------------------------------------------------------------
 
-bool ActionMap::IsActionDown(std::string_view action, const InputContext &input) const
+bool ActionMap::IsActionDown(std::string_view action, const InputContext &input, ConsumedInput consumed) const
 {
     const auto it = _actions.find(action);
     if (it == _actions.end())
+    {
         return false;
-    return std::ranges::any_of(it->second, [&](const ActionBinding &b) { return b.IsDown(input); });
+    }
+    return std::ranges::any_of(it->second, [&](const ActionBinding &b) { return b.IsDown(input, consumed); });
 }
 
-bool ActionMap::IsActionPressed(std::string_view action, const InputContext &input) const
+bool ActionMap::IsActionPressed(std::string_view action, const InputContext &input, ConsumedInput consumed) const
 {
     const auto it = _actions.find(action);
     if (it == _actions.end())
+    {
         return false;
-    return std::ranges::any_of(it->second,
-                               [&](const ActionBinding &b) { return b.IsPressed(input); });
+    }
+    return std::ranges::any_of(it->second, [&](const ActionBinding &b) { return b.IsPressed(input, consumed); });
 }
 
-bool ActionMap::IsActionReleased(std::string_view action, const InputContext &input) const
+bool ActionMap::IsActionReleased(std::string_view action, const InputContext &input, ConsumedInput consumed) const
 {
     const auto it = _actions.find(action);
     if (it == _actions.end())
+    {
         return false;
-    return std::ranges::any_of(it->second,
-                               [&](const ActionBinding &b) { return b.IsReleased(input); });
+    }
+    return std::ranges::any_of(it->second, [&](const ActionBinding &b) { return b.IsReleased(input, consumed); });
 }
 
 uint32_t ActionMap::ActionTapCount(std::string_view action, const InputContext &input) const
@@ -282,8 +286,7 @@ void ActionMap::Apply(const InputBindings &bindings)
             const std::optional<ActionBinding> binding = BindingFromName(name.View());
             if (!binding)
             {
-                Core::Log::Warn("ActionMap: unknown input name '{}' in action '{}' - skipped.", name.View(),
-                                action);
+                Core::Log::Warn("ActionMap: unknown input name '{}' in action '{}' - skipped.", name.View(), action);
                 continue;
             }
             _actions[std::string(action)].push_back(*binding);
@@ -296,8 +299,7 @@ InputBindings ActionMap::ToBindings() const
     InputBindings bindings;
     for (const auto &[name, actionBindings] : _actions)
     {
-        std::vector<Assisi::Core::ShortString> &names =
-            bindings.actions[Assisi::Core::ShortString(name)];
+        std::vector<Assisi::Core::ShortString> &names = bindings.actions[Assisi::Core::ShortString(name)];
         for (const ActionBinding &binding : actionBindings)
         {
             names.emplace_back(BindingName(binding));

@@ -31,6 +31,7 @@ add_executable(Assisi-App-Tests
   TestSceneCamera.cpp
   TestStartupScene.cpp
   TestSystemRegistry.cpp
+  TestUiInputBridge.cpp
   TestWorld.cpp
   TestWorldStart.cpp
 )

@@ -2,16 +2,27 @@
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Mondrian/Draw.hpp>
+#include <Assisi/Mondrian/HitTest.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 
 #include <Assisi/Core/Assert.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
 #include <string_view>
 
 namespace Assisi::Mondrian
 {
 namespace
 {
+
+/// The ring around the focused node while keys were used last: its thickness,
+/// and the space between it and the node, in logical pixels.
+constexpr float kFocusRingWidth = 3.f;
+constexpr float kFocusRingGap = 3.f;
+constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.f};
 
 // The sample screen shown while no real screen exists: a panel centred on the
 // screen with a picture and title, a wrapped paragraph and a row of buttons,
@@ -73,7 +84,7 @@ void AddButton(NodeTree &tree, NodeId row, std::string_view label, const Style &
     Style style = look;
     style.padding = kButtonPadding;
     style.textSize = kButtonSize;
-    AddText(tree, row, label, style, label);
+    tree.SetFocusable(AddText(tree, row, label, style, label), true);
 }
 
 /// Builds the sample screen under @p tree's root, returning its picture.
@@ -94,6 +105,7 @@ NodeId BuildSampleScreen(NodeTree &tree)
     panel.cornerRadius = kPanelRadius;
     panel.cornerStyle = CornerStyle::Rounded;
     const NodeId panelId = Add(tree, tree.Root(), "panel", panel);
+    tree.SetBlocksPointer(panelId, true);
 
     Style header;
     header.sizing = {Sizing::Grow(), Sizing::Fit()};
@@ -163,10 +175,178 @@ void Ui::SetPlaceholderTexture(TextureId texture)
     _tree.SetImage(_picture, texture, kWholeTexture);
 }
 
-void Ui::ProcessInput()
+InputResult Ui::ProcessInput(const UiInput &input)
 {
     ASSISI_ASSERT(_nextStep == FrameStep::AwaitingInput, "Ui::ProcessInput called twice without a Sync between");
     _nextStep = FrameStep::AwaitingSync;
+
+    InputResult result;
+    Interaction &now = _interaction;
+    now.activated = {};
+    now.backPressed = false;
+
+    // A focused node that has gone, hidden or been disabled hands focus on, so
+    // the keys still have somewhere to act. Not before the first layout, which
+    // has placed nothing yet: focus set ahead of it would be lost.
+    const bool laidOut = _layout.scale > 0.f;
+    if (laidOut && now.focused && !CanFocus(_tree, _layout, now.focused))
+    {
+        now.focused = FirstFocusable(_tree, _layout);
+    }
+
+    const bool moved = input.pointer.x != _lastPointer.x || input.pointer.y != _lastPointer.y;
+    _lastPointer = input.pointer;
+    if (input.grant == InputGrant::Nothing || input.pointerClaimed)
+    {
+        now.hovered = {};
+        now.pressed = {};
+    }
+    else
+    {
+        const NodeId hit = HitTest(_tree, _layout, input.pointer);
+        now.hovered = CanFocus(_tree, _layout, hit) ? hit : NodeId{};
+        if (moved || input.primaryPressed)
+        {
+            now.device = InputDevice::Pointer;
+        }
+        if (_hoverFocuses && moved && now.hovered)
+        {
+            now.focused = now.hovered;
+        }
+        if (input.primaryPressed)
+        {
+            result.pointerUsed = static_cast<bool>(hit);
+            now.pressed = now.hovered;
+            // A click on the game takes focus off the UI, so keys it held go back.
+            if (now.hovered || input.grant == InputGrant::Pointer)
+            {
+                now.focused = now.hovered;
+            }
+        }
+        if (input.primaryReleased && now.pressed)
+        {
+            result.pointerUsed = true;
+            if (now.pressed == now.hovered)
+            {
+                now.activated = now.pressed;
+            }
+            now.pressed = {};
+        }
+    }
+
+    const Node *focused = _tree.Get(now.focused);
+    const bool keys = input.grant == InputGrant::Everything ||
+                      (input.grant == InputGrant::Pointer && focused != nullptr && focused->takesKeyboard);
+    if (!keys || input.keyboardClaimed)
+    {
+        _repeating = UiAction::Count;
+        return result;
+    }
+    result.keyboardTaken = true;
+    if (std::ranges::any_of(input.actionPressed, [](bool pressed) { return pressed; }))
+    {
+        now.device = InputDevice::Keys;
+    }
+    if (input.actionPressed[static_cast<std::size_t>(UiAction::Accept)] && now.focused)
+    {
+        now.activated = now.focused;
+    }
+    now.backPressed = input.actionPressed[static_cast<std::size_t>(UiAction::Back)];
+    Navigate(input);
+    return result;
+}
+
+void Ui::Navigate(const UiInput &input)
+{
+    constexpr std::array kMoves{UiAction::Up,    UiAction::Down, UiAction::Left,
+                                UiAction::Right, UiAction::Next, UiAction::Previous};
+    const auto at = [](UiAction action) { return static_cast<std::size_t>(action); };
+
+    if (_repeating != UiAction::Count && !input.actionDown[at(_repeating)])
+    {
+        _repeating = UiAction::Count;
+    }
+    for (const UiAction action : kMoves)
+    {
+        if (input.actionPressed[at(action)])
+        {
+            Move(action);
+            _repeating = action;
+            _repeatAt = input.time + kNavRepeatDelaySeconds;
+        }
+    }
+    if (_repeating != UiAction::Count && !input.actionPressed[at(_repeating)] && input.time >= _repeatAt)
+    {
+        Move(_repeating);
+        _repeatAt += kNavRepeatIntervalSeconds;
+    }
+}
+
+void Ui::Move(UiAction action)
+{
+    NodeId &focused = _interaction.focused;
+    if (!focused)
+    {
+        focused = FirstFocusable(_tree, _layout);
+    }
+    else
+    {
+        NodeId next;
+        switch (action)
+        {
+        case UiAction::Next:
+            next = NextFocusable(_tree, _layout, focused, TabOrder::Forward);
+            break;
+        case UiAction::Previous:
+            next = NextFocusable(_tree, _layout, focused, TabOrder::Backward);
+            break;
+        case UiAction::Up:
+            next = Neighbour(_tree, _layout, focused, NavDirection::Up, _navWrap);
+            break;
+        case UiAction::Down:
+            next = Neighbour(_tree, _layout, focused, NavDirection::Down, _navWrap);
+            break;
+        case UiAction::Left:
+            next = Neighbour(_tree, _layout, focused, NavDirection::Left, _navWrap);
+            break;
+        case UiAction::Right:
+            next = Neighbour(_tree, _layout, focused, NavDirection::Right, _navWrap);
+            break;
+        case UiAction::Accept:
+        case UiAction::Back:
+        case UiAction::Count:
+            break;
+        }
+        if (next)
+        {
+            focused = next;
+        }
+    }
+    ScrollIntoView(_tree, _layout, focused);
+}
+
+void Ui::DrawFocusRing()
+{
+    const LayoutNode *node = _layout.Get(_interaction.focused);
+    const Node *focused = _tree.Get(_interaction.focused);
+    if (_interaction.device != InputDevice::Keys || node == nullptr || focused == nullptr)
+    {
+        return;
+    }
+    const float scale = _layout.scale;
+    const float width = std::max(kMinBorderDevicePixels, std::round(kFocusRingWidth * scale));
+    const float gap = std::round(kFocusRingGap * scale);
+    const Rect ring{.x = node->rect.x - gap - width,
+                    .y = node->rect.y - gap - width,
+                    .width = node->rect.width + (2.f * (gap + width)),
+                    .height = node->rect.height + (2.f * (gap + width))};
+    const float radius = focused->style.cornerRadius > 0.f ? (focused->style.cornerRadius * scale) + gap + width : 0.f;
+    _drawList.SetDefaultClip(node->clip);
+    _drawList.Quad(ring)
+        .Fill({0.f, 0.f, 0.f, 0.f})
+        .Border(width, kFocusRingColor)
+        .Corners(radius, focused->style.cornerStyle);
+    _drawList.SetDefaultClip(kNoClip);
 }
 
 void Ui::Sync(Extent viewport)
@@ -180,6 +360,7 @@ void Ui::Sync(Extent viewport)
     {
         ComputeLayout(_tree, viewport, scale, _font, _layout);
         DrawTree(_tree, _layout, _drawList, _fontAtlas);
+        DrawFocusRing();
     }
     _drawList.Finalize();
 }

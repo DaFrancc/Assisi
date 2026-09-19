@@ -8,6 +8,7 @@
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/App/PerfCapture.hpp>
+#include <Assisi/App/UiInputBridge.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
@@ -17,14 +18,15 @@
 #include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
+#include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <span>
+#include <string>
 
 namespace Assisi::App
 {
@@ -53,7 +55,7 @@ namespace Assisi::App
 ///   - OnShutdown()              — called after the loop exits
 class Application
 {
-public:
+  public:
     Application();
     virtual ~Application();
 
@@ -133,7 +135,7 @@ public:
     /// because it finished.
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
-protected:
+  protected:
     /// @brief Refuse the launch: close the app and make Run exit with failure.
     ///
     /// For OnStart to call once it has logged what is wrong. Every app that can
@@ -149,9 +151,9 @@ protected:
     /// and install the readers over it. False, logged, refuses the launch.
     [[nodiscard]] virtual bool MountContent();
 
-    virtual void OnStart()               = 0;
+    virtual void OnStart() = 0;
     virtual void OnFixedUpdate(float dt) = 0;
-    virtual void OnUpdate(float dt)      = 0;
+    virtual void OnUpdate(float dt) = 0;
     /// Not pure: a headless app never receives this call and should not have to
     /// write an empty override to say so.
     virtual void OnRender(Render::RenderFrame & /*frame*/) {}
@@ -175,7 +177,7 @@ protected:
     /// here: an application that draws no UI does not link one, which is what
     /// keeps a shipped game free of the editor's.
     virtual void OnRenderUi(Render::RenderFrame & /*frame*/) {}
-    virtual void OnShutdown()               {}
+    virtual void OnShutdown() {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
     /// @brief Called after the anti-aliasing mode/MSAA sample count changes
@@ -206,7 +208,17 @@ protected:
     /// @warning Both assert in a headless process, which has neither. Guard with
     /// IsHeadless() (or HasPresentation()) in code that runs in both modes.
     Window::WindowContext &GetWindow() const;
-    Window::InputContext  &GetInput() const;
+    Window::InputContext &GetInput() const;
+
+    /// @brief The named actions, bound from the shipped file and the player's
+    /// options at bring-up. Empty in a headless process, which has no devices.
+    Window::ActionMap &GetActions() { return _actions; }
+    const Window::ActionMap &GetActions() const { return _actions; }
+
+    /// @brief What something drawn over the game UI has taken this frame, which
+    /// neither the UI nor the game then sees. Asked once a frame, after the
+    /// input poll; nothing is drawn over it unless an app says so.
+    [[nodiscard]] virtual InputClaim ClaimedOverUi() const { return {}; }
 
     /// @brief The game UI, or null in a headless process, which has no window to
     /// show it in. Unlike GetInput this does not assert: null is how code that
@@ -254,21 +266,21 @@ protected:
     void SetMainThreadTaskBudget(uint32_t perFrame) { _mainThreadTaskBudget = perFrame; }
     [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
 
-    void      RequestClose();
+    void RequestClose();
 
     /// @brief Feed one frame to the running capture, and close the app once it
     /// has the frames it asked for.
     void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
-    int32_t   GetFps()             const { return _fps; }
+    int32_t GetFps() const { return _fps; }
 
     /// @brief Averaged CPU main-thread work per frame, in milliseconds —
     /// excluding the FPS-limit pacing sleep and time spent blocked on the GPU.
     /// Compare against GetGpuFrameMs() to see which side is the bottleneck.
-    double    GetCpuFrameMs()      const { return _cpuFrameMs; }
+    double GetCpuFrameMs() const { return _cpuFrameMs; }
 
     /// @brief Averaged GPU execution time per frame, in milliseconds, from a
     /// timer query spanning the whole command list.
-    double    GetGpuFrameMs()      const { return _gpuFrameMs; }
+    double GetGpuFrameMs() const { return _gpuFrameMs; }
 
     /// @brief The FramebufferInfo OnRender()'s `frame` is (or will be, at the
     /// next OnRender()) compatible with. Build scene pipelines against this,
@@ -324,7 +336,7 @@ protected:
     }
     static constexpr int32_t FrameHistory() { return kFrameHistory; }
 
-private:
+  private:
     /// Everything a dedicated server needs: assets, config, options, jobs.
     [[nodiscard]] bool InitializeCore();
     /// Everything only a windowed process needs: window, renderer, debug UI,
@@ -334,6 +346,9 @@ private:
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
+    /// F4 puts the sample screen in the menu mode and takes it out again, until
+    /// screens can ask for a mode themselves.
+    void ToggleSampleMenu();
     [[nodiscard]] bool ShouldClose() const;
 
     /// Declared first so the capture runtime is up before anything else exists —
@@ -346,7 +361,8 @@ private:
     OptionsConfig _options;
 
     std::unique_ptr<Window::WindowContext> _window;
-    std::unique_ptr<Window::InputContext>  _input;
+    std::unique_ptr<Window::InputContext> _input;
+    Window::ActionMap _actions;
 
     /// The UI's font. Declared before the UI, which points at it, so it is
     /// destroyed after.
@@ -361,6 +377,12 @@ private:
     Render::Texture _uiFontAtlas;
     /// ShowsGameUi's answer for the current frame.
     bool _uiShown = false;
+    /// Seconds the UI has run, for timing held directions. Its own clock rather
+    /// than the frame's clamped step, so a long frame still counts in full.
+    double _uiTime = 0.0;
+    /// The menu mode F4 puts the sample screen in until real screens can ask
+    /// for it; null while it is off.
+    Window::InputModeHandle _sampleMenuMode;
 
     // Declared before the subsystems (post-process, and the derived app's caches)
     // so it is destroyed last: workers join only after everything that might have
@@ -402,7 +424,7 @@ private:
     /// Resolution a capture asked to render at, 0 when it did not ask. Applied
     /// in InitializePresentation rather than at SetPerfCapture, because
     /// Initialize() reloads _config from the game config in between.
-    int32_t _captureWidth  = 0;
+    int32_t _captureWidth = 0;
     int32_t _captureHeight = 0;
 
     /// Whether the capture asked for per-pass timers. Off by default because
@@ -442,9 +464,9 @@ private:
     // ImGui::PlotLines() wants. _frameSampleCount saturates at kFrameHistory so
     // the stats ignore the zero-filled slots before the buffer first fills.
     static constexpr int32_t kFrameHistory = 360;
-    std::array<float, kFrameHistory>  _cpuHistory{};
-    std::array<float, kFrameHistory>  _gpuHistory{};
-    std::array<float, kFrameHistory>  _frameTimeHistory{}; // full frame delta, for 1%-low etc.
+    std::array<float, kFrameHistory> _cpuHistory{};
+    std::array<float, kFrameHistory> _gpuHistory{};
+    std::array<float, kFrameHistory> _frameTimeHistory{}; // full frame delta, for 1%-low etc.
     int32_t _frameHistoryOffset = 0;
     int32_t _frameSampleCount = 0;
 
@@ -453,7 +475,7 @@ private:
     /// scheduled syscall, never a walk of anything.
     void PumpChiaraCounters();
 
-public:
+  public:
     /// @brief What the last capture written to disk did, and whether one is
     /// being written right now.
     ///
@@ -467,11 +489,11 @@ public:
         /// Why it failed. Empty when it succeeded, and when none has run.
         std::string error;
         double windowSeconds = 0.0;
-        std::uint64_t bytesWritten  = 0;
+        std::uint64_t bytesWritten = 0;
         std::uint64_t eventsWritten = 0;
         /// Args written with no enclosing scope to attach them to; they are
         /// dropped, and a count that is not zero means the trace is incomplete.
-        std::uint64_t orphanedArgs  = 0;
+        std::uint64_t orphanedArgs = 0;
         bool success = false;
         /// A dump is in flight. Asking for another until it finishes does
         /// nothing, so a caller offering the choice should not offer it now.
@@ -501,8 +523,7 @@ public:
     /// @brief Ends the session and closes its file. Harmless if none is running.
     void StopChiaraSession();
 
-private:
-
+  private:
     /// Running Jolt allocation totals as of the previous frame, so the counters
     /// can report a per-frame rate rather than an ever-climbing total.
     uint64_t _lastJoltAllocCount = 0;

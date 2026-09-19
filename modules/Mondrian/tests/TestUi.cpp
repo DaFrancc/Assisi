@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -34,13 +35,81 @@ bool VisibleWithin(const Rect &rect, Extent viewport)
            rect.y + rect.height <= static_cast<float>(viewport.height);
 }
 
-/// Runs one whole frame and returns what it drew.
+/// Runs one whole frame with no input and returns what it drew.
 const DrawList &Frame(Ui &ui, Extent viewport)
 {
-    ui.ProcessInput();
+    ui.ProcessInput({});
     ui.Sync(viewport);
     return ui.GetDrawList();
 }
+
+/// The centre of @p name's rect as the last frame placed it.
+Point CentreOf(const Ui &ui, std::string_view name)
+{
+    const LayoutNode *node = ui.GetLayout().Get(ui.Tree().Find(name));
+    REQUIRE(node != nullptr);
+    return {.x = node->rect.x + (node->rect.width / 2.f), .y = node->rect.y + (node->rect.height / 2.f)};
+}
+
+/// Input with the pointer at @p pointer, given what @p grant says.
+UiInput PointerAt(Point pointer, InputGrant grant = InputGrant::Everything)
+{
+    UiInput input;
+    input.pointer = pointer;
+    input.grant = grant;
+    return input;
+}
+
+UiInput Pressing(Point pointer, InputGrant grant = InputGrant::Everything)
+{
+    UiInput input = PointerAt(pointer, grant);
+    input.primaryDown = true;
+    input.primaryPressed = true;
+    return input;
+}
+
+UiInput Releasing(Point pointer, InputGrant grant = InputGrant::Everything)
+{
+    UiInput input = PointerAt(pointer, grant);
+    input.primaryReleased = true;
+    return input;
+}
+
+/// Input pressing @p action at @p time, with the pointer where @p pointer is.
+UiInput Action(UiAction action, double time = 0.0, InputGrant grant = InputGrant::Everything)
+{
+    UiInput input;
+    input.time = time;
+    input.grant = grant;
+    input.actionPressed[static_cast<std::size_t>(action)] = true;
+    input.actionDown[static_cast<std::size_t>(action)] = true;
+    return input;
+}
+
+UiInput Holding(UiAction action, double time)
+{
+    UiInput input = Action(action, time);
+    input.actionPressed = {};
+    return input;
+}
+
+/// A UI with the sample screen laid out once, so input has something to hit.
+struct Screen
+{
+    Ui ui;
+
+    Screen() { Frame(ui, kLandscape); }
+
+    InputResult Step(const UiInput &input)
+    {
+        const InputResult result = ui.ProcessInput(input);
+        ui.Sync(kLandscape);
+        return result;
+    }
+
+    NodeId Named(std::string_view name) const { return ui.Tree().Find(name); }
+    const Interaction &Now() const { return ui.GetInteraction(); }
+};
 
 bool IsKind(const QuadInstance &quad, QuadKind kind)
 {
@@ -142,6 +211,234 @@ TEST_CASE("Mondrian: a zero-sized viewport draws nothing and does not assert")
     CHECK(Frame(ui, Extent{0, 0}).Instances().empty());
 }
 
+TEST_CASE("Mondrian: input before any layout hits nothing and does not assert")
+{
+    Ui ui;
+    const InputResult result = ui.ProcessInput(Pressing({.x = 640.f, .y = 360.f}));
+    CHECK_FALSE(result.pointerUsed);
+    CHECK_FALSE(ui.GetInteraction().pressed);
+}
+
+TEST_CASE("Mondrian: a press and release on one button activates it, and the press is the UI's")
+{
+    Screen screen;
+    const Point resume = CentreOf(screen.ui, "Resume");
+    const InputResult pressed = screen.Step(Pressing(resume));
+    CHECK(pressed.pointerUsed);
+    CHECK(screen.Now().pressed == screen.Named("Resume"));
+    CHECK_FALSE(screen.Now().activated);
+
+    const InputResult released = screen.Step(Releasing(resume));
+    CHECK(released.pointerUsed);
+    CHECK(screen.Now().activated == screen.Named("Resume"));
+    CHECK_FALSE(screen.Now().pressed);
+
+    screen.Step(PointerAt(resume));
+    CHECK_FALSE(screen.Now().activated); // for one frame only
+}
+
+TEST_CASE("Mondrian: a press keeps its button while the pointer leaves, and a release elsewhere does nothing")
+{
+    Screen screen;
+    screen.Step(Pressing(CentreOf(screen.ui, "Resume")));
+
+    UiInput held = PointerAt(CentreOf(screen.ui, "Quit"));
+    held.primaryDown = true;
+    screen.Step(held);
+    CHECK(screen.Now().pressed == screen.Named("Resume"));
+    CHECK(screen.Now().hovered == screen.Named("Quit"));
+
+    screen.Step(Releasing(CentreOf(screen.ui, "Quit")));
+    CHECK_FALSE(screen.Now().activated);
+}
+
+TEST_CASE("Mondrian: a press on the panel is the UI's, and one beside it is the game's")
+{
+    Screen screen;
+    const LayoutNode *panel = screen.ui.GetLayout().Get(screen.Named("panel"));
+    REQUIRE(panel != nullptr);
+    const Point inside{.x = panel->rect.x + 4.f, .y = panel->rect.y + 4.f};
+
+    CHECK(screen.Step(Pressing(inside, InputGrant::Pointer)).pointerUsed);
+    CHECK_FALSE(screen.Now().pressed); // stopped, but nothing to press
+    screen.Step(Releasing(inside, InputGrant::Pointer));
+
+    CHECK_FALSE(screen.Step(Pressing({.x = 1.f, .y = 1.f}, InputGrant::Pointer)).pointerUsed);
+}
+
+TEST_CASE("Mondrian: a click on the game clears focus when the game has the keyboard")
+{
+    Screen screen;
+    const Point quit = CentreOf(screen.ui, "Quit");
+    screen.Step(Pressing(quit, InputGrant::Pointer));
+    screen.Step(Releasing(quit, InputGrant::Pointer));
+    CHECK(screen.Now().focused == screen.Named("Quit"));
+
+    screen.Step(Pressing({.x = 1.f, .y = 1.f}, InputGrant::Pointer));
+    CHECK_FALSE(screen.Now().focused);
+}
+
+TEST_CASE("Mondrian: a pointer claimed from above hovers nothing and drops a press in progress")
+{
+    Screen screen;
+    const Point resume = CentreOf(screen.ui, "Resume");
+    screen.Step(Pressing(resume));
+    REQUIRE(screen.Now().pressed == screen.Named("Resume"));
+
+    UiInput claimed = PointerAt(resume);
+    claimed.primaryDown = true;
+    claimed.pointerClaimed = true;
+    const InputResult result = screen.Step(claimed);
+    CHECK_FALSE(result.pointerUsed);
+    CHECK_FALSE(screen.Now().hovered);
+    CHECK_FALSE(screen.Now().pressed);
+}
+
+TEST_CASE("Mondrian: given nothing, the UI reacts to nothing")
+{
+    Screen screen;
+    const InputResult result = screen.Step(Pressing(CentreOf(screen.ui, "Resume"), InputGrant::Nothing));
+    CHECK_FALSE(result.pointerUsed);
+    CHECK_FALSE(screen.Now().hovered);
+    CHECK_FALSE(screen.Now().pressed);
+}
+
+TEST_CASE("Mondrian: with everything, the first move lands on the first button, then moves across and accepts")
+{
+    Screen screen;
+    screen.Step(Action(UiAction::Accept));
+    CHECK_FALSE(screen.Now().activated); // nothing focused yet
+
+    screen.Step(Action(UiAction::Right));
+    CHECK(screen.Now().device == InputDevice::Keys);
+    CHECK(screen.Now().focused == screen.Named("Quit"));
+
+    screen.Step(Action(UiAction::Right));
+    CHECK(screen.Now().focused == screen.Named("Resume"));
+
+    screen.Step(Action(UiAction::Accept));
+    CHECK(screen.Now().activated == screen.Named("Resume"));
+
+    const InputResult back = screen.Step(Action(UiAction::Back));
+    CHECK(screen.Now().backPressed);
+    CHECK(back.keyboardTaken);
+
+    screen.Step(Action(UiAction::Right));
+    CHECK(screen.Now().focused == screen.Named("Quit")); // wrapped
+
+    screen.ui.SetNavWrap(NavWrap::Stop);
+    screen.Step(Action(UiAction::Left));
+    CHECK(screen.Now().focused == screen.Named("Quit"));
+}
+
+TEST_CASE("Mondrian: with only the pointer, the keys are the game's")
+{
+    Screen screen;
+    const InputResult result = screen.Step(Action(UiAction::Right, 0.0, InputGrant::Pointer));
+    CHECK_FALSE(result.keyboardTaken);
+    CHECK_FALSE(screen.Now().focused);
+    CHECK(screen.Now().device == InputDevice::Pointer);
+}
+
+TEST_CASE("Mondrian: a focused node that takes the keyboard has it even while the game has it")
+{
+    Screen screen;
+    const NodeId resume = screen.Named("Resume");
+    screen.ui.Tree().SetTakesKeyboard(resume, true);
+    screen.ui.SetFocus(resume);
+
+    const InputResult result = screen.Step(Action(UiAction::Accept, 0.0, InputGrant::Pointer));
+    CHECK(result.keyboardTaken);
+    CHECK(screen.Now().activated == resume);
+
+    UiInput claimed = Action(UiAction::Accept, 0.0, InputGrant::Pointer);
+    claimed.keyboardClaimed = true;
+    CHECK_FALSE(screen.Step(claimed).keyboardTaken);
+}
+
+TEST_CASE("Mondrian: a held direction moves once, then repeats after a delay at an interval")
+{
+    Screen screen;
+    screen.Step(Action(UiAction::Right, 0.0)); // focus arrives on Quit
+    const auto focused = [&screen] { return screen.Now().focused; };
+    const NodeId start = focused();
+
+    screen.Step(Holding(UiAction::Right, kNavRepeatDelaySeconds / 2.0));
+    CHECK(focused() == start);
+
+    screen.Step(Holding(UiAction::Right, kNavRepeatDelaySeconds));
+    CHECK(focused() != start);
+    const NodeId repeated = focused();
+
+    screen.Step(Holding(UiAction::Right, kNavRepeatDelaySeconds + (kNavRepeatIntervalSeconds / 2.0)));
+    CHECK(focused() == repeated);
+    screen.Step(Holding(UiAction::Right, kNavRepeatDelaySeconds + kNavRepeatIntervalSeconds));
+    CHECK(focused() != repeated);
+
+    UiInput released;
+    released.grant = InputGrant::Everything;
+    released.time = 10.0;
+    const NodeId stopped = focused();
+    screen.Step(released);
+    screen.Step(Holding(UiAction::Right, 20.0)); // held again without a press: no repeat carried over
+    CHECK(focused() == stopped);
+}
+
+TEST_CASE("Mondrian: hovering focuses only when the developer asks, and never while keys were used last")
+{
+    Screen screen;
+    const Point quit = CentreOf(screen.ui, "Quit");
+    screen.Step(PointerAt(quit));
+    CHECK(screen.Now().hovered == screen.Named("Quit"));
+    CHECK_FALSE(screen.Now().focused);
+
+    screen.ui.SetHoverFocuses(true);
+    screen.Step(PointerAt({.x = quit.x + 1.f, .y = quit.y}));
+    CHECK(screen.Now().focused == screen.Named("Quit"));
+
+    UiInput keys = Action(UiAction::Right);
+    keys.pointer = {.x = quit.x + 1.f, .y = quit.y};
+    screen.Step(keys);
+    CHECK(screen.Now().focused == screen.Named("Resume"));
+
+    screen.Step(PointerAt({.x = quit.x + 1.f, .y = quit.y})); // still over Quit, but it did not move
+    CHECK(screen.Now().device == InputDevice::Keys);
+    CHECK(screen.Now().focused == screen.Named("Resume"));
+
+    screen.Step(PointerAt(quit));
+    CHECK(screen.Now().device == InputDevice::Pointer);
+    CHECK(screen.Now().focused == screen.Named("Quit"));
+}
+
+TEST_CASE("Mondrian: focus set before the first layout survives it")
+{
+    Ui ui;
+    ui.SetFocus(ui.Tree().Find("Resume"));
+    Frame(ui, kLandscape);
+    Frame(ui, kLandscape);
+    CHECK(ui.GetInteraction().focused == ui.Tree().Find("Resume"));
+}
+
+TEST_CASE("Mondrian: focus on a node that is gone falls back to the first that can take it")
+{
+    Screen screen;
+    screen.ui.SetFocus(screen.Named("Resume"));
+    screen.ui.Tree().Destroy(screen.Named("Resume"));
+    screen.Step(PointerAt({}));
+    CHECK(screen.Now().focused == screen.Named("Quit"));
+}
+
+TEST_CASE("Mondrian: the focus ring shows while keys were used last, and not while pointing")
+{
+    Screen screen;
+    screen.Step(Action(UiAction::Next));
+    const std::size_t withRing = screen.ui.GetDrawList().Instances().size();
+
+    screen.Step(PointerAt({.x = 5.f, .y = 5.f}));
+    const std::size_t withoutRing = screen.ui.GetDrawList().Instances().size();
+    CHECK(withRing == withoutRing + 1);
+}
+
 #ifndef NDEBUG
 TEST_CASE("Mondrian: the two frame steps must alternate, input first")
 {
@@ -156,14 +453,14 @@ TEST_CASE("Mondrian: the two frame steps must alternate, input first")
     SUBCASE("input twice without a sync asserts")
     {
         Ui ui;
-        ui.ProcessInput();
-        CHECK_THROWS_AS(ui.ProcessInput(), Assisi::Core::ContractViolation);
+        ui.ProcessInput({});
+        CHECK_THROWS_AS(ui.ProcessInput({}), Assisi::Core::ContractViolation);
     }
 
     SUBCASE("sync twice without input asserts")
     {
         Ui ui;
-        ui.ProcessInput();
+        ui.ProcessInput({});
         ui.Sync(kLandscape);
         CHECK_THROWS_AS(ui.Sync(kLandscape), Assisi::Core::ContractViolation);
     }
