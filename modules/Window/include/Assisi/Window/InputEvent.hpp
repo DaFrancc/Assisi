@@ -29,6 +29,32 @@ enum class KeyAction : int32_t
     Count
 };
 
+/// @brief Who input goes to, and whether the cursor is free to reach the UI.
+enum class InputMode : uint8_t
+{
+    Game,      ///< the cursor captured and hidden; everything goes to the game
+    Ui,        ///< the cursor free; everything goes to the UI and the game sees nothing
+    GameAndUi, ///< the cursor free; it works the UI, and the keyboard drives the game
+    Count
+};
+
+/// @brief One mode pushed over the game's own, for taking it off again.
+struct InputModeHandle
+{
+    uint32_t id = 0; ///< zero names no mode
+
+    bool operator==(const InputModeHandle &) const = default;
+    [[nodiscard]] explicit operator bool() const { return id != 0; }
+};
+
+/// @brief Whether a query counts input something has already consumed.
+enum class ConsumedInput : uint8_t
+{
+    Skip,    ///< consumed input reads as untouched: what gameplay asks for
+    Include, ///< consumed input reads as it happened: what the consumer itself asks for
+    Count
+};
+
 /// @brief The modifier keys held, and the lock states on, when an event happened.
 struct Modifiers
 {

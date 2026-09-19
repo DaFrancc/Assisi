@@ -12,6 +12,8 @@
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -34,12 +36,27 @@ struct NodeId
     [[nodiscard]] explicit operator bool() const { return index != kNullIndex; }
 };
 
+/// @brief The four ways focus moves on the screen.
+enum class NavDirection : uint8_t
+{
+    Up,
+    Down,
+    Left,
+    Right,
+    Count
+};
+
+inline constexpr std::size_t kNavDirectionCount = static_cast<std::size_t>(NavDirection::Count);
+
 /// @brief One slot: a box with optional text or image.
 struct Node
 {
     Style style;
     std::string text;
     std::string name;
+    /// Where focus goes from here in each direction, overriding the nearest
+    /// node there; null to take the nearest.
+    std::array<NodeId, kNavDirectionCount> navOverride{};
     Rect imageUv{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
     Point scrollOffset; ///< logical pixels scrolled into the content, per axis
     NodeId parent;
@@ -51,6 +68,10 @@ struct Node
     bool alive = false;
     bool visible = true;
     bool hasImage = false;
+    bool focusable = false;     ///< takes focus, hover and presses; stops the pointer
+    bool enabled = true;        ///< a disabled focusable node still stops the pointer, and does nothing else
+    bool blocksPointer = false; ///< stops the pointer without taking focus
+    bool takesKeyboard = false; ///< while focused, has the keyboard even when the game has it
 };
 
 class NodeTree
@@ -76,6 +97,16 @@ class NodeTree
     void ClearImage(NodeId id);
     void SetScrollOffset(NodeId id, Point offset);
     void SetBehaviour(NodeId id, uint32_t behaviour);
+    void SetFocusable(NodeId id, bool focusable);
+    void SetEnabled(NodeId id, bool enabled);
+    /// @brief Whether a press on @p id is the UI's even though it does nothing,
+    /// so it never reaches the game: a panel's background, or an invisible node
+    /// over the whole screen.
+    void SetBlocksPointer(NodeId id, bool blocks);
+    void SetTakesKeyboard(NodeId id, bool takes);
+    /// @brief Sends focus moving @p direction from @p id to @p target; a null
+    /// target takes the override off.
+    void SetNavOverride(NodeId id, NavDirection direction, NodeId target);
 
     /// @brief The first live node named @p name, or a null id. A scan: look a
     /// name up once and keep the id.

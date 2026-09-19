@@ -3,7 +3,9 @@ add_executable(Assisi-Mondrian-Tests
   TestDraw.cpp
   TestDrawList.cpp
   TestFont.cpp
+  TestHitTest.cpp
   TestLayout.cpp
+  TestNavigation.cpp
   TestNodeTree.cpp
   TestText.cpp
   TestUi.cpp

@@ -3,14 +3,15 @@
 
 // --- Platform timer (must come before other Windows headers) ----------------
 #ifdef _WIN32
-#    include <windows.h>
-#    include <timeapi.h>
-#    pragma comment(lib, "winmm.lib")
+#include <timeapi.h>
+#include <windows.h>
+#pragma comment(lib, "winmm.lib")
 #endif
 
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/CrashReport.hpp>
+#include <Assisi/App/InputSetup.hpp>
 #include <Assisi/Core/Diagnostics.hpp>
 
 #include <Assisi/Chiara/Profile.hpp>
@@ -18,8 +19,8 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Core/Platform.hpp>
+#include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -64,11 +65,10 @@ void Application::HandleFramebufferResize(int32_t width, int32_t height)
     ConfigurePostProcess();
 }
 
-
 #ifdef _WIN32
 struct TimerResolutionScope
 {
-    TimerResolutionScope()  { timeBeginPeriod(1); }
+    TimerResolutionScope() { timeBeginPeriod(1); }
     ~TimerResolutionScope() { timeEndPeriod(1); }
     TimerResolutionScope(const TimerResolutionScope &) = delete;
     TimerResolutionScope &operator=(const TimerResolutionScope &) = delete;
@@ -174,7 +174,7 @@ bool Application::InitializeCore()
         return false;
     }
 
-    _config  = AppConfig::Load();
+    _config = AppConfig::Load();
     _options = OptionsConfig::LoadFromJson();
     if (!_captureOptionsPath.empty())
     {
@@ -196,7 +196,7 @@ bool Application::InitializeCore()
     if (_perfCapture)
     {
         _options.frameSync = FrameSyncMode::FpsLimit;
-        _options.fpsLimit  = -1;
+        _options.fpsLimit = -1;
     }
 
     // Retention runs here rather than in the constructor because it is the game
@@ -212,9 +212,9 @@ bool Application::InitializeCore()
     // yet, so a run that does crash ends with keepDumps + 1 on disk until the
     // next launch trims it. Overshooting by one beats doing directory work with
     // a corrupt heap.
-    const std::filesystem::path &userRoot   = Core::AssetSystem::GetUserRoot();
-    const std::string logName    = std::format("assisi-{}.log", Core::LaunchStamp());
-    const std::string crashName  = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    const std::filesystem::path &userRoot = Core::AssetSystem::GetUserRoot();
+    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
     Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
 
@@ -240,7 +240,7 @@ bool Application::InitializePresentation()
     // 1440p and 1080p from the same committed config.
     if (_captureWidth > 0 && _captureHeight > 0)
     {
-        _config.width  = _captureWidth;
+        _config.width = _captureWidth;
         _config.height = _captureHeight;
     }
 
@@ -249,9 +249,9 @@ bool Application::InitializePresentation()
     const std::string title(_config.title.View());
 
     Window::WindowConfiguration winCfg;
-    winCfg.Width  = _config.width;
+    winCfg.Width = _config.width;
     winCfg.Height = _config.height;
-    winCfg.Title  = title.c_str();
+    winCfg.Title = title.c_str();
     // Undecorated for a capture, so the framebuffer is exactly the size asked
     // for: 1440p on a 1440p display does not fit once a title bar is added, and
     // a report labelled 1440p that rendered 2560x1400 is quoting a workload
@@ -282,6 +282,10 @@ bool Application::InitializePresentation()
     _input = std::make_unique<Window::InputContext>(*_window);
     _input->SetMultiTapInterval(_options.MultiTapSeconds(_config));
 
+    // The shipped bindings, then whatever the player rebound over the top.
+    // Windowed only: a headless process has no devices to bind.
+    LoadActionMap(_actions, _options.bindings);
+
     if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
         if (!_postProcess.Initialize({.device = vulkanContext->GetDevice(),
@@ -303,12 +307,13 @@ bool Application::InitializePresentation()
             return false;
         }
         _ui = std::make_unique<Mondrian::Ui>();
+        _ui->SetHoverFocuses(_config.uiHoverFocuses);
         // The window outlives the UI: both belong to this Application, and the
         // UI is torn down first.
         Window::WindowContext *window = _window.get();
-        _ui->SetClipboard(Mondrian::Clipboard{.read = [window] { return window->GetClipboardText(); },
-                                              .write = [window](std::string_view text)
-                                              { window->SetClipboardText(text); }});
+        _ui->SetClipboard(
+            Mondrian::Clipboard{.read = [window] { return window->GetClipboardText(); },
+                                .write = [window](std::string_view text) { window->SetClipboardText(text); }});
         Mondrian::Engine::UploadPlaceholderTexture(_uiPlaceholderTexture, vulkanContext->GetDevice());
         _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
 
@@ -322,7 +327,7 @@ bool Application::InitializePresentation()
         else if (_uiFont = std::move(*font);
                  Mondrian::Engine::UploadFontAtlas(_uiFontAtlas, vulkanContext->GetDevice(), _uiFont))
         {
-            _ui->SetFont(&_uiFont,_uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
+            _ui->SetFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
         }
 
         // A capture is exactly the case the per-pass render-pass splits are
@@ -343,14 +348,30 @@ bool Application::InitializePresentation()
 Window::WindowContext &Application::GetWindow() const
 {
     ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process - there is no window. Guard with "
-                  "IsHeadless()/HasPresentation().");
+                                      "IsHeadless()/HasPresentation().");
     return *_window;
+}
+
+void Application::ToggleSampleMenu()
+{
+    if (!_input->IsKeyPressed(Window::Key::F4))
+    {
+        return;
+    }
+    _input->ConsumeKey(Window::Key::F4);
+    if (_sampleMenuMode)
+    {
+        _input->PopInputMode(_sampleMenuMode);
+        _sampleMenuMode = {};
+        return;
+    }
+    _sampleMenuMode = _input->PushInputMode(Window::InputMode::Ui);
 }
 
 Window::InputContext &Application::GetInput() const
 {
     ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process - there are no input devices. Guard with "
-                  "IsHeadless()/HasPresentation().");
+                                     "IsHeadless()/HasPresentation().");
     return *_input;
 }
 
@@ -368,7 +389,7 @@ Application::~Application()
     {
         _uiPass.Shutdown();
         _uiPlaceholderTexture = Render::Texture{};
-        _uiFontAtlas          = Render::Texture{};
+        _uiFontAtlas = Render::Texture{};
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -412,19 +433,18 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     // early capture ran vsync-locked to the display and reported frame times
     // taken while the GPU sat idle between presents. They are applied after
     // those loads instead.
-    _captureWidth         = config.width;
-    _captureHeight        = config.height;
+    _captureWidth = config.width;
+    _captureHeight = config.height;
     _capturePerPassTiming = config.perPassTiming;
-    _captureImagePath     = config.imagePath;
-    _captureOptionsPath   = config.optionsPath;
+    _captureImagePath = config.imagePath;
+    _captureOptionsPath = config.optionsPath;
 }
 
-void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
-                                     Render::Vulkan::VulkanContext *context)
+void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context)
 {
     PerfSample sample;
-    sample.cpuMs        = cpuMs;
-    sample.gpuMs        = gpuMs;
+    sample.cpuMs = cpuMs;
+    sample.gpuMs = gpuMs;
     sample.frameDeltaMs = rawDt * 1000.0;
 
     // Polled every frame rather than once: the clock guard's whole job is to
@@ -432,10 +452,10 @@ void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt,
     // could not. Poll() returns the background worker's latest published sample
     // and never touches the driver, so this costs a copy.
     const Render::GpuTelemetrySample &telemetry = _captureTelemetry.Poll();
-    sample.telemetryValid                       = telemetry.valid;
-    sample.coreClockMhz                         = telemetry.coreClockMhz;
-    sample.temperatureC                         = telemetry.temperatureC;
-    sample.telemetrySequence                    = telemetry.sequence;
+    sample.telemetryValid = telemetry.valid;
+    sample.coreClockMhz = telemetry.coreClockMhz;
+    sample.temperatureC = telemetry.temperatureC;
+    sample.telemetrySequence = telemetry.sequence;
 
     _perfCapture->AddSample(sample);
 
@@ -510,7 +530,7 @@ void SleepUntil(Clock::time_point target)
     if (remainingSec > marginSec)
     {
         const double requestSec = remainingSec - marginSec;
-        const Clock::time_point before     = Clock::now();
+        const Clock::time_point before = Clock::now();
         std::this_thread::sleep_for(Seconds(requestSec));
         const double overshootSec = std::max(0.0, Seconds(Clock::now() - before).count() - requestSec);
 
@@ -543,14 +563,14 @@ void Application::Run()
 
     OnStart();
 
-    Clock::time_point prevTime       = Clock::now();
+    Clock::time_point prevTime = Clock::now();
     Clock::time_point nextRenderTime = Clock::now();
-    double accumulator    = 0.0;
+    double accumulator = 0.0;
 
-    double fpsAccum       = 0.0;
-    int32_t fpsFrameCount  = 0;
-    double cpuMsAccum     = 0.0;
-    double gpuMsAccum     = 0.0;
+    double fpsAccum = 0.0;
+    int32_t fpsFrameCount = 0;
+    double cpuMsAccum = 0.0;
+    double gpuMsAccum = 0.0;
 
     // Headless pacing target: the next fixed tick. A windowed process paces on
     // frames (vsync or the FPS cap); a server has no frames, so without this it
@@ -630,15 +650,15 @@ void Application::Run()
             }
         }
 
-        const Clock::time_point now   = Clock::now();
+        const Clock::time_point now = Clock::now();
         const double rawDt = Seconds(now - prevTime).count();
-        const double dt    = std::min(rawDt, 0.25);
-        prevTime                      = now;
+        const double dt = std::min(rawDt, 0.25);
+        prevTime = now;
 
         // Per-phase stopwatches for the slow-frame diagnostic below. Cheap
         // (steady_clock reads), and only reported when a frame actually spikes.
         const auto phaseMs = [](Clock::time_point from, Clock::time_point to)
-                             { return Seconds(to - from).count() * 1000.0; };
+        { return Seconds(to - from).count() * 1000.0; };
 
         const Clock::time_point inputStart = Clock::now();
         {
@@ -658,7 +678,15 @@ void Application::Run()
                 if (_uiShown)
                 {
                     ASSISI_PROFILE_SCOPE("ui-input");
-                    _ui->ProcessInput();
+                    _uiTime += rawDt;
+                    ToggleSampleMenu();
+
+                    const InputClaim claim = ClaimedOverUi();
+                    const Mondrian::Point pointer = ToDevicePixels(_input->MousePosition(), _window->GetWindowSize(),
+                                                                   _window->GetFramebufferSize());
+                    const Mondrian::InputResult used =
+                        _ui->ProcessInput(GatherUiInput(*_input, _actions, _uiTime, pointer, claim));
+                    ApplyUiResult(*_input, used, claim);
                 }
             }
         }
@@ -732,8 +760,7 @@ void Application::Run()
         // SetVSync() no-ops when already in the requested state, so this is a cheap
         // compare every frame and only recreates when the user actually changed it.
         // Applies the persisted option on the first iteration too.
-        Render::Vulkan::VulkanContext *vulkanContext =
-            _headless ? nullptr : Render::RenderSystem::GetVulkanContext();
+        Render::Vulkan::VulkanContext *vulkanContext = _headless ? nullptr : Render::RenderSystem::GetVulkanContext();
         if (vulkanContext)
         {
             // Scoped so it cannot show as a blank gap between two slices. Normally
@@ -769,7 +796,7 @@ void Application::Run()
         // bound. The pacing sleep happens above `now`, outside the window this
         // measures, so it needs no correction here.
         const double gpuWaitMs = vulkanContext ? vulkanContext->GetLastGpuWaitMs() : 0.0;
-        const double cpuMs     = std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - gpuWaitMs);
+        const double cpuMs = std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - gpuWaitMs);
         const double gpuMs = vulkanContext ? static_cast<double>(vulkanContext->GetLastGpuFrameTimeMs()) : 0.0;
 
         // Slow-frame diagnostic. A spike is only actionable if you know which phase
@@ -778,13 +805,13 @@ void Application::Run()
         // phases are all small but the frame is long, the main thread was not doing
         // work, it was descheduled (the streaming/physics pools oversubscribing the
         // CPU). That distinction picks the fix, so it is reported explicitly.
-        const double inputMs  = phaseMs(inputStart, inputEnd);
-        const double fixedMs  = phaseMs(inputEnd, fixedEnd);
-        const double drainMs  = phaseMs(fixedEnd, drainEnd);
+        const double inputMs = phaseMs(inputStart, inputEnd);
+        const double fixedMs = phaseMs(inputEnd, fixedEnd);
+        const double drainMs = phaseMs(fixedEnd, drainEnd);
         const double updateMs = phaseMs(drainEnd, updateEnd);
         const double uiSyncMs = phaseMs(updateEnd, uiSyncEnd);
         const double renderMs = phaseMs(renderStart, renderEnd);
-        const double flushMs  = phaseMs(renderEnd, flushEnd);
+        const double flushMs = phaseMs(renderEnd, flushEnd);
 
         // The render bracket contains the GPU wait (every accumulation site sits
         // inside RenderFrame's callees) but cpuMs already had it subtracted, so
@@ -792,7 +819,7 @@ void Application::Run()
         // Under VSync, where that wait is most of the frame, the figure would sit
         // pinned at zero and hide exactly the descheduling it exists to reveal.
         const double renderCpuMs = std::max(0.0, renderMs - gpuWaitMs);
-        const double accounted   = inputMs + fixedMs + drainMs + updateMs + uiSyncMs + renderCpuMs + flushMs;
+        const double accounted = inputMs + fixedMs + drainMs + updateMs + uiSyncMs + renderCpuMs + flushMs;
 
         // Deliberately not clamped. A persistently negative value means the
         // accounting itself is wrong — a phase double-counted, or a new one added
@@ -822,8 +849,8 @@ void Application::Run()
         // visible; the numeric readout uses the smoothed averages below. The full
         // frame delta (rawDt, including any vsync/pacing wait) drives the 1%-low
         // and min/max stats — that's the pacing the player actually feels.
-        _cpuHistory[static_cast<std::size_t>(_frameHistoryOffset)]       = static_cast<float>(cpuMs);
-        _gpuHistory[static_cast<std::size_t>(_frameHistoryOffset)]       = static_cast<float>(gpuMs);
+        _cpuHistory[static_cast<std::size_t>(_frameHistoryOffset)] = static_cast<float>(cpuMs);
+        _gpuHistory[static_cast<std::size_t>(_frameHistoryOffset)] = static_cast<float>(gpuMs);
         _frameTimeHistory[static_cast<std::size_t>(_frameHistoryOffset)] = static_cast<float>(rawDt * 1000.0);
         _frameHistoryOffset = (_frameHistoryOffset + 1) % kFrameHistory;
         if (_frameSampleCount < kFrameHistory)
@@ -842,12 +869,12 @@ void Application::Run()
         ++fpsFrameCount;
         if (fpsAccum >= 0.5)
         {
-            _fps          = static_cast<int32_t>(static_cast<double>(fpsFrameCount) / fpsAccum);
-            _cpuFrameMs   = cpuMsAccum / fpsFrameCount;
-            _gpuFrameMs   = gpuMsAccum / fpsFrameCount;
-            fpsAccum      = 0.0;
-            cpuMsAccum    = 0.0;
-            gpuMsAccum    = 0.0;
+            _fps = static_cast<int32_t>(static_cast<double>(fpsFrameCount) / fpsAccum);
+            _cpuFrameMs = cpuMsAccum / fpsFrameCount;
+            _gpuFrameMs = gpuMsAccum / fpsFrameCount;
+            fpsAccum = 0.0;
+            cpuMsAccum = 0.0;
+            gpuMsAccum = 0.0;
             fpsFrameCount = 0;
         }
     }
@@ -947,10 +974,8 @@ void Application::PumpChiaraCounters()
     // header on every block. Churn is the perf-relevant signal anyway: a frame
     // that allocates is a frame that will pay to free.
     const Physics::JoltAllocationStats jolt = Physics::GetJoltAllocationStats();
-    ASSISI_PROFILE_COUNTER("physics/alloc-count-per-frame",
-                           static_cast<double>(jolt.count - _lastJoltAllocCount));
-    ASSISI_PROFILE_COUNTER("physics/alloc-bytes-per-frame",
-                           static_cast<double>(jolt.bytes - _lastJoltAllocBytes));
+    ASSISI_PROFILE_COUNTER("physics/alloc-count-per-frame", static_cast<double>(jolt.count - _lastJoltAllocCount));
+    ASSISI_PROFILE_COUNTER("physics/alloc-bytes-per-frame", static_cast<double>(jolt.bytes - _lastJoltAllocBytes));
     _lastJoltAllocCount = jolt.count;
     _lastJoltAllocBytes = jolt.bytes;
 }

@@ -55,6 +55,12 @@ template <std::size_t Count> void InputContext::Switches<Count>::Tap(std::size_t
 
 template <std::size_t Count> void InputContext::Switches<Count>::Latch()
 {
+    // Consumption lasts through the frame an input is released in: one that was
+    // up as the frame ending closed is free again from this one.
+    for (std::size_t index = 0; index < Count; ++index)
+    {
+        consumed[index] = consumed[index] && down[index];
+    }
     down = live;
     pressed = pressedSince;
     released = releasedSince;
@@ -124,13 +130,13 @@ void InputContext::SetMultiTapInterval(double seconds)
 uint32_t InputContext::TapCount(Key key) const
 {
     const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(key), kKeyCount);
-    return index ? _keys.taps[*index] : 0;
+    return index && !_keys.consumed[*index] ? _keys.taps[*index] : 0;
 }
 
 uint32_t InputContext::ClickCount(MouseButton button) const
 {
     const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(button), kButtonCount);
-    return index ? _buttons.taps[*index] : 0;
+    return index && !_buttons.consumed[*index] ? _buttons.taps[*index] : 0;
 }
 
 void InputContext::OnCursorPosition(double x, double y)
@@ -143,45 +149,118 @@ void InputContext::OnScroll(double yOffset)
     _scrollSince += static_cast<float>(yOffset);
 }
 
-bool InputContext::IsKeyDown(Key key) const
+template <std::size_t Count> void InputContext::Switches<Count>::ConsumeActive()
 {
-    return IsSet(_keys.down, static_cast<int32_t>(key));
+    for (std::size_t index = 0; index < Count; ++index)
+    {
+        consumed[index] = consumed[index] || down[index] || pressed[index] || released[index];
+    }
 }
 
-bool InputContext::IsKeyPressed(Key key) const
+template <std::size_t Count>
+bool InputContext::Switches<Count>::Reads(const std::array<bool, Count> &flags, int32_t value,
+                                          ConsumedInput counting) const
 {
-    return IsSet(_keys.pressed, static_cast<int32_t>(key));
+    return IsSet(flags, value) && (counting == ConsumedInput::Include || !IsSet(consumed, value));
 }
 
-bool InputContext::IsKeyReleased(Key key) const
+bool InputContext::IsKeyDown(Key key, ConsumedInput consumed) const
 {
-    return IsSet(_keys.released, static_cast<int32_t>(key));
+    return _keys.Reads(_keys.down, static_cast<int32_t>(key), consumed);
 }
 
-bool InputContext::IsMouseButtonDown(MouseButton button) const
+bool InputContext::IsKeyPressed(Key key, ConsumedInput consumed) const
 {
-    return IsSet(_buttons.down, static_cast<int32_t>(button));
+    return _keys.Reads(_keys.pressed, static_cast<int32_t>(key), consumed);
 }
 
-bool InputContext::IsMouseButtonPressed(MouseButton button) const
+bool InputContext::IsKeyReleased(Key key, ConsumedInput consumed) const
 {
-    return IsSet(_buttons.pressed, static_cast<int32_t>(button));
+    return _keys.Reads(_keys.released, static_cast<int32_t>(key), consumed);
 }
 
-bool InputContext::IsMouseButtonReleased(MouseButton button) const
+bool InputContext::IsMouseButtonDown(MouseButton button, ConsumedInput consumed) const
 {
-    return IsSet(_buttons.released, static_cast<int32_t>(button));
+    return _buttons.Reads(_buttons.down, static_cast<int32_t>(button), consumed);
 }
 
-void InputContext::SetMouseCaptured(bool captured)
+bool InputContext::IsMouseButtonPressed(MouseButton button, ConsumedInput consumed) const
 {
-    _mouseCaptured = captured;
+    return _buttons.Reads(_buttons.pressed, static_cast<int32_t>(button), consumed);
+}
+
+bool InputContext::IsMouseButtonReleased(MouseButton button, ConsumedInput consumed) const
+{
+    return _buttons.Reads(_buttons.released, static_cast<int32_t>(button), consumed);
+}
+
+void InputContext::ConsumeKey(Key key)
+{
+    if (const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(key), kKeyCount))
+    {
+        _keys.consumed[*index] = true;
+    }
+}
+
+void InputContext::ConsumeMouseButton(MouseButton button)
+{
+    if (const std::optional<std::size_t> index = IndexOf(static_cast<int32_t>(button), kButtonCount))
+    {
+        _buttons.consumed[*index] = true;
+    }
+}
+
+void InputContext::ConsumeKeyboard()
+{
+    _keys.ConsumeActive();
+}
+
+void InputContext::ConsumeMouse()
+{
+    _buttons.ConsumeActive();
+    _frameDelta = {0.f, 0.f};
+    _frameScroll = 0.f;
+}
+
+void InputContext::ConsumeAll()
+{
+    ConsumeKeyboard();
+    ConsumeMouse();
+}
+
+void InputContext::SetInputMode(InputMode mode)
+{
+    _gameMode = mode;
+    ApplyCursorMode();
+}
+
+InputModeHandle InputContext::PushInputMode(InputMode mode)
+{
+    const InputModeHandle handle{.id = _nextModeId++};
+    _pushedModes.push_back({.id = handle.id, .mode = mode});
+    ApplyCursorMode();
+    return handle;
+}
+
+void InputContext::PopInputMode(InputModeHandle handle)
+{
+    std::erase_if(_pushedModes, [handle](const PushedMode &pushed) { return pushed.id == handle.id; });
+    ApplyCursorMode();
+}
+
+InputMode InputContext::GetInputMode() const
+{
+    return _pushedModes.empty() ? _gameMode : _pushedModes.back().mode;
+}
+
+void InputContext::ApplyCursorMode()
+{
     if (_window == nullptr)
     {
         return;
     }
 
-    if (!captured)
+    if (!IsMouseCaptured())
     {
         glfwSetInputMode(_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);

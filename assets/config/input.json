@@ -12,6 +12,13 @@
     "MoveRight":    ["D", "RightArrow"],
     "MoveUp":       ["Space"],
     "Select":       ["LeftMouse"],
-    "Sprint":       ["LeftShift"]
+    "Sprint":       ["LeftShift"],
+    "UiAccept":     ["Enter"],
+    "UiBack":       ["Escape"],
+    "UiDown":       ["DownArrow"],
+    "UiLeft":       ["LeftArrow"],
+    "UiNext":       ["Tab"],
+    "UiRight":      ["RightArrow"],
+    "UiUp":         ["UpArrow"]
   }
 }

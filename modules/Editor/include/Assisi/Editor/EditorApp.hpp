@@ -30,17 +30,17 @@
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
-#include <Assisi/Editor/Overlay/OverlayRenderer.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
-#include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Editor/Overlay/OverlayRenderer.hpp>
+#include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #if defined(ASSISI_NETWORKING)
-#    include <Assisi/NetSync/NetSession.hpp>
+#include <Assisi/NetSync/NetSession.hpp>
 #endif
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
@@ -51,22 +51,22 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
-#include <Assisi/Editor/SourceAssets.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
+#include <Assisi/Editor/SourceAssets.hpp>
 #include <Assisi/Editor/ThumbnailCache.hpp>
 
 #include <nvrhi/nvrhi.h>
 
 #include <array>
-#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -202,7 +202,7 @@ struct BoundBaseline
 
 class EditorApp : public Assisi::App::Application
 {
-public:
+  public:
     explicit EditorApp(EditorConfig config = {});
 
     /// Out of line: `_options` is a unique_ptr to a type only forward-declared
@@ -243,6 +243,9 @@ public:
     /// The game's UI belongs to the game being played, so it shows from Play
     /// until Stop, paused included, and never over a level being edited.
     [[nodiscard]] bool ShowsGameUi() const override { return _playState != PlayState::Editing; }
+    /// The editor's panels draw over the game's UI, so what they want is theirs:
+    /// the pointer while it is over one, the keyboard while a field is typed in.
+    [[nodiscard]] Assisi::App::InputClaim ClaimedOverUi() const override;
     /// The editor owns its UI layer entirely: this opens the ImGui frame, draws
     /// every panel into it, and submits it. Application drives no UI toolkit of
     /// its own, which is what keeps one out of a game's link.
@@ -258,7 +261,7 @@ public:
     /// not the same function.
     void DrawPanels();
 
-private:
+  private:
     // --- Setup ---
     void SetupCamera();
     void SetupScene();
@@ -289,8 +292,7 @@ private:
     /// @return false while editing, or when no active camera is in the scene — in
     ///         which case @p pose and @p camera are untouched and the editor's own
     ///         view is the fallback.
-    [[nodiscard]] bool PlayViewCamera(Assisi::Runtime::Transform &pose,
-                                      Assisi::Runtime::Camera &camera) const;
+    [[nodiscard]] bool PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const;
 
     /// @brief Lends the cursor to the editor mid-session and gives it back: F8
     /// toggles, and clicking the game — but not a panel — ends the loan.
@@ -300,14 +302,14 @@ private:
     /// every step would undo a release a step after it happened.
     void HandlePlayMouseCapture();
 
-    /// True while the editor has borrowed the cursor from a live session (F8).
-    /// Distinct from "the cursor is free": a game may have released it itself for
-    /// a menu, and that is not the editor's to take back.
-    bool _playCursorLent = false;
+    /// Ends the editor's loan of the cursor, if it has one.
+    void EndCursorLoan();
 
-    /// What the session had when the loan began, restored when it ends — so a
-    /// game that was not holding the cursor does not acquire one.
-    bool _captureBeforeLend = false;
+    /// The mode the editor pushed over a live session to borrow the cursor (F8),
+    /// null when it has none. Pushed rather than set, so the loan ending gives
+    /// back whatever the game had — a game that had freed the cursor for a menu
+    /// keeps it free.
+    Assisi::Window::InputModeHandle _cursorLoan;
 
     /// @brief Where the viewport is looking from, whichever camera that is.
     ///
@@ -374,13 +376,13 @@ private:
     /// @}
 
     void DrawDiagnosticsWindow();
-    void DrawChiaraWindow();  // performance capture (F9); empty in builds without profiling
+    void DrawChiaraWindow(); // performance capture (F9); empty in builds without profiling
     void DrawLevelsWindow();
     void DrawBlueprintsWindow();
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
-    void DrawMaterialEditor();   // reflection-driven `.amat` property editor
+    void DrawMaterialEditor();    // reflection-driven `.amat` property editor
     void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7)
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump
@@ -409,7 +411,7 @@ private:
     /// so IsSceneDirty() reports it. The list is not entity data and so leaves no
     /// trace in the undo history the dirty marker otherwise reads.
     void MarkSystemsEdited();
-    void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity
+    void DrawTransformGizmo(); // ImGuizmo manipulator over the selected entity
     /// @brief Draws the manipulator and applies whatever it produced this frame.
     /// Returns whether the handles are held.
     ///
@@ -418,29 +420,28 @@ private:
     /// entity, a missing Transform — and every such return is "not held", which is all
     /// the caller needs to close the drag.
     [[nodiscard]] bool DrawTransformGizmoHandles();
-    void DrawInstanceGizmo();     // …and over a selected blueprint instance, which moves as one
+    void DrawInstanceGizmo(); // …and over a selected blueprint instance, which moves as one
     /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
     /// and syncs any physics body to it. The tail of a gizmo drag, factored out
     /// because a multi-selection runs it once per entity.
-    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
-                               const glm::mat4 &world);
+    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld, const glm::mat4 &world);
     // --- Networking ---------------------------------------------------------
     // Compiled out entirely without networking. The editor is fully usable
     // without it — what disappears is the multiplayer panel, hosting, joining,
     // and play-in-editor *clients*. Plain play-in-editor is not networking and
     // stays.
 #if defined(ASSISI_NETWORKING)
-    void DrawNetworkWindow();     // negotiated level + live net stats
-    void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"
+    void DrawNetworkWindow();    // negotiated level + live net stats
+    void DrawHostUnsavedModal(); // "save and host / host last-saved / cancel"
     /// @brief The two host-side authoring warnings: a level with nothing marked
     /// Replicated, and dynamic bodies that will run as cosmetic local physics.
     /// Both describe a gap between what was marked and what clients will see.
     void DrawHostAuthoringWarnings();
-    void ShutdownNetSession();    // tear down and forget; safe to call with no session
+    void ShutdownNetSession();     // tear down and forget; safe to call with no session
     void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
-    void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
-    void SmoothNetView();         // once per frame, AFTER the physics writeback: interpolation + correction smoothing
-#endif // ASSISI_NETWORKING
+    void TickNetSession();         // end of the fixed step: snapshots (host) or input (client)
+    void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing
+#endif                             // ASSISI_NETWORKING
 
     // --- Networked play -----------------------------------------------------
     // The rule the rest falls out of: **a network session exists only inside a
@@ -681,8 +682,7 @@ private:
     /// of an EditHistory AssetDelta. Updates the open panel if it is that asset,
     /// and pushes the value to the renderer either way, so undoing an edit to a
     /// material you have since closed still changes what you see.
-    void ApplyAssetState(std::string_view typeName, const Assisi::Core::AssetPath &path,
-                         const nlohmann::json &state);
+    void ApplyAssetState(std::string_view typeName, const Assisi::Core::AssetPath &path, const nlohmann::json &state);
 
     /// @brief Close the open material-edit gesture, pushing one transaction for
     /// the whole of it. No-op when nothing is open or the value did not move.
@@ -773,8 +773,8 @@ private:
     /// button writing into `materialOverrides[slot]`. @p fieldOffset is the offset
     /// of the materialOverrides vector within the MeshRenderer. Returns true if a
     /// row was edited (the caller re-resolves).
-    bool EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
-                           const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset);
+    bool EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc, const Assisi::Core::Reflect::ComponentMeta &meta,
+                           std::size_t fieldOffset);
     /// @brief Draws the path input for an AssetId field (@p inputId is the ImGui
     /// id): display = the id's resolved virtual path, typing a path re-resolves
     /// the id via the database. Returns true and writes @p id when edited. The
@@ -1413,7 +1413,6 @@ private:
     // default profile at world creation, run only while Playing — and are never
     // mixed in here.
     Assisi::App::SystemRegistry _systems;
-    Assisi::Window::ActionMap _actions;
 
     // --- Game hooks ---
     EditorConfig _editorConfig;
@@ -1430,9 +1429,9 @@ private:
     // `_scene`/`_physics` are the active world's, cached so panels can reach them
     // directly.
     Assisi::App::WorldManager _worlds;
-    Assisi::App::World *_world   = nullptr;                ///< The active world.
-    Assisi::ECS::Scene *_scene   = nullptr;                ///< == &_world->scene.
-    Assisi::Physics::PhysicsWorld *_physics = nullptr;     ///< == &_world->physics.
+    Assisi::App::World *_world = nullptr;              ///< The active world.
+    Assisi::ECS::Scene *_scene = nullptr;              ///< == &_world->scene.
+    Assisi::Physics::PhysicsWorld *_physics = nullptr; ///< == &_world->physics.
 
     // --- Networked play ---
     // `_netIntent` is the role this play session was entered for; `_joinPhase`
@@ -1463,8 +1462,8 @@ private:
     /// Seconds spent waiting for a host's ServerHello. A join that never gets
     /// one would otherwise sit in Play forever with an empty world and no
     /// explanation.
-    float _joinElapsed         = 0.f;
-    static constexpr float kJoinTimeoutSeconds  = 10.f;
+    float _joinElapsed = 0.f;
+    static constexpr float kJoinTimeoutSeconds = 10.f;
     /// Marshalled to OnUpdate: BuildJoinedWorld frees and re-resolves GPU
     /// assets, which must not happen from the fixed step mid-frame.
     bool _pendingJoinBuild = false;
@@ -1473,17 +1472,17 @@ private:
     bool _pendingStopPlay = false;
     /// The unsaved-edits host prompt: a modal, not a warning, because the
     /// consequence surfaces minutes later on someone else's screen.
-    bool _hostPromptOpen  = false;
+    bool _hostPromptOpen = false;
     bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
     // Correction-rate sampling for the Network panel. Rates rather than totals:
     // a total that keeps climbing only says the session is still running, which
     // is already visible. Sampled over a second so a frame-rate stutter does not
     // read as a bandwidth spike.
-    float _netSampleSeconds         = 0.f;
-    std::uint64_t _lastCorrectionBytes      = 0;
-    std::uint64_t _lastCorrectionsApplied   = 0;
+    float _netSampleSeconds = 0.f;
+    std::uint64_t _lastCorrectionBytes = 0;
+    std::uint64_t _lastCorrectionsApplied = 0;
     float _correctionBytesPerSecond = 0.f;
-    float _correctionsPerSecond     = 0.f;
+    float _correctionsPerSecond = 0.f;
 
     /// The mirrored world's structure revision this editor last resolved assets
     /// against. Mirrors arrive with authored asset ids and null GPU pointers;
@@ -1556,7 +1555,7 @@ private:
     std::string _staleResolveTarget;
     Assisi::Geometry::MaterialDiff _staleResolveDiff;
     bool _staleResolveRequestOpen = false;
-    std::vector<std::string>        _staleResolveQueue;
+    std::vector<std::string> _staleResolveQueue;
 
     // Smoke test for ImGui texture display — loaded once in SetupScene. Owns its
     // texture (not routed through _assetCache, which LoadLevel Clears).
@@ -1569,10 +1568,10 @@ private:
     Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.
-    float _yaw   = 0.f;
+    float _yaw = 0.f;
     float _pitch = 0.f;
 
-    static constexpr float kMoveSpeed        = 8.f;
+    static constexpr float kMoveSpeed = 8.f;
     static constexpr float kMouseSensitivity = 0.1f;
 
     // --- Selection ---
@@ -1613,7 +1612,7 @@ private:
     {
         Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
         std::string component;
-        std::string field;         ///< Empty resets the whole component's claim.
+        std::string field; ///< Empty resets the whole component's claim.
     };
     std::optional<PendingOverrideReset> _pendingOverrideReset;
 
@@ -1656,7 +1655,7 @@ private:
     // skips the release whenever the Inspector early-returns on an empty selection,
     // stranding the body Static while its descriptor still says dynamic.
     bool _physicsFreezeRequested = false;
-    Assisi::ECS::Entity _frozenBodyEntity       = Assisi::ECS::NullEntity;
+    Assisi::ECS::Entity _frozenBodyEntity = Assisi::ECS::NullEntity;
     /// World that owns _frozenBodyEntity, by name rather than pointer: the viewed
     /// world can change (or be destroyed) between freeze and release, and the
     /// thaw must reach the body it actually froze, not whatever is on screen now.
@@ -1682,7 +1681,7 @@ private:
     // survives the call that fills it.
     std::vector<LineVertex> _lightPickOutline;
 
-    std::vector<Assisi::ECS::Entity>        _colliderEntities;
+    std::vector<Assisi::ECS::Entity> _colliderEntities;
 
     // --- Entity list ---
     // Requests the Entities list scroll to this entity's row next time it draws
@@ -1690,8 +1689,8 @@ private:
     Assisi::ECS::Entity _scrollToEntity = Assisi::ECS::NullEntity;
 
     // --- Transform gizmo ---
-    GizmoOp _gizmoOp        = GizmoOp::Translate;
-    bool _gizmoLocalSpace = false;    // false = world axes
+    GizmoOp _gizmoOp = GizmoOp::Translate;
+    bool _gizmoLocalSpace = false; // false = world axes
     // The drag in progress: which entities it grabbed and whether it is still going,
     // so its release edge can be read from outside DrawTransformGizmoHandles and its
     // early returns. The gizmo force-commits its (shared) Transform gestures on that
@@ -1793,15 +1792,14 @@ private:
     // edit, and the next elapsed time at which to (re-)log it. Diagnostic for the
     // reported "UI stops responding until a new window opens" freeze.
     static constexpr float kImGuiWedgeThreshold = 3.f;
-    float _imguiWedgeSeconds    = 0.f;
+    float _imguiWedgeSeconds = 0.f;
     float _imguiWedgeNextReport = kImGuiWedgeThreshold;
 
     // --- Inspector: component delete confirmation ---
     // The inspector's X button arms a two-step confirm for one component at a
     // time. Scoped to an entity so switching selection cancels a pending confirm
     // rather than deleting from the new one.
-    Assisi::Core::Reflect::ComponentId _pendingDeleteComponent =
-        Assisi::Core::Reflect::kInvalidComponentId;
+    Assisi::Core::Reflect::ComponentId _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
     Assisi::ECS::Entity _pendingDeleteEntity = Assisi::ECS::NullEntity;
 
     // --- Overlays and debug panels ---
@@ -1818,7 +1816,7 @@ private:
     /// The F11 options overlay. Held by pointer so its telemetry buffers and the
     /// GpuTelemetry header stay out of this one.
     std::unique_ptr<EditorOptionsPanel> _options;
-    bool _showChiara  = false; ///< F9 performance-capture panel.
+    bool _showChiara = false; ///< F9 performance-capture panel.
 
     // F11 "Editor overlays" checkbox: per-frame visibility of the selection
     // outline, entity icons, and collider wireframes, for decluttering the view
@@ -1874,7 +1872,7 @@ private:
     // An eased move that reframes the camera on an object. While active it owns the
     // camera transform: UpdateCamera advances it and skips fly control. Manual look
     // input cancels it. Always kCameraFocusDuration, whatever the travel distance.
-    bool _cameraFocusActive  = false;
+    bool _cameraFocusActive = false;
     float _cameraFocusElapsed = 0.f;
     glm::vec3 _cameraFocusStartPos{0.f};
     glm::vec3 _cameraFocusEndPos{0.f};
@@ -1902,9 +1900,9 @@ private:
     // EntityRef field instead of changing the selection. The target is pinned by
     // (entity, component meta, field offset) rather than a raw pointer, so a pool
     // reallocation between arming and picking can't dangle it.
-    bool _eyedropperArmed       = false;
-    Assisi::ECS::Entity _eyedropperEntity      = Assisi::ECS::NullEntity;
-    const Assisi::Core::Reflect::ComponentMeta *_eyedropperMeta        = nullptr;
+    bool _eyedropperArmed = false;
+    Assisi::ECS::Entity _eyedropperEntity = Assisi::ECS::NullEntity;
+    const Assisi::Core::Reflect::ComponentMeta *_eyedropperMeta = nullptr;
     std::size_t _eyedropperFieldOffset = 0;
 
     // --- Asset browser ---
@@ -1934,22 +1932,22 @@ private:
         Textures,  ///< Images only — a material's texture channel.
     };
 
-    bool _assetBrowserOpen        = false;
+    bool _assetBrowserOpen = false;
     AssetBrowserTarget _assetBrowserTarget = AssetBrowserTarget::ComponentField;
     AssetBrowserFilter _assetBrowserFilter = AssetBrowserFilter::All;
-    Assisi::ECS::Entity _assetBrowserEntity      = Assisi::ECS::NullEntity;
-    const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
+    Assisi::ECS::Entity _assetBrowserEntity = Assisi::ECS::NullEntity;
+    const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta = nullptr;
     std::size_t _assetBrowserFieldOffset = 0;
     /// @brief -1 when the target field is a scalar asset field; >= 0 when it is
     /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot).
-    int32_t _assetBrowserVectorSlot  = -1;
+    int32_t _assetBrowserVectorSlot = -1;
     /// @brief Which material a MaterialField pick was armed for. The browser
     /// stays open across frames, and the panel can be pointed at a different
     /// `.amat` in between — without this, the pick would land at the same field
     /// offset in whatever material happened to be open. The component path pins
     /// its target by entity for the same reason.
     Assisi::Core::AssetPath _assetBrowserMaterialPath;
-    std::string _assetBrowserDir;                                 ///< Current dir, relative to the asset root ("" = root).
+    std::string _assetBrowserDir; ///< Current dir, relative to the asset root ("" = root).
 
     // Cached listing of _assetBrowserDir — re-read only on navigation / open /
     // Refresh (see _assetBrowserDirty), never per frame.
@@ -1957,9 +1955,9 @@ private:
     std::vector<std::string> _assetBrowserImages;
     std::vector<std::string> _assetBrowserMeshes;    ///< .glb/.gltf files (no thumbnail; shown as cube tiles).
     std::vector<std::string> _assetBrowserMaterials; ///< .amat files (shown as material-sphere tiles).
-    bool _assetBrowserDirty     = true;
+    bool _assetBrowserDirty = true;
     bool _assetBrowserReadError = false;
-    float _assetBrowserThumbSize = 256.f;                    ///< Tile size in px; adjustable via the zoom buttons.
+    float _assetBrowserThumbSize = 256.f; ///< Tile size in px; adjustable via the zoom buttons.
 
     // Textures loaded to thumbnail the browser's image entries. Separate from
     // _assetCache so a level load (which Clears that) doesn't drop thumbnails.
@@ -1981,8 +1979,8 @@ private:
     /// path, not a per-frame one.
     std::vector<Assisi::Core::AssetPath> _materialList;
     bool _materialListDirty = true;
-    Assisi::Geometry::MaterialData _materialEditorData;    ///< Working copy; the panel's widgets write this.
-    Assisi::Geometry::MaterialData _materialEditorSaved;   ///< Last state written to disk; Revert restores it.
+    Assisi::Geometry::MaterialData _materialEditorData;  ///< Working copy; the panel's widgets write this.
+    Assisi::Geometry::MaterialData _materialEditorSaved; ///< Last state written to disk; Revert restores it.
     /// Rename box contents. Held separately from the path so a half-typed name is
     /// not a rename — the move happens when the button is pressed, not per key.
     char _materialEditorNameBuf[128] = {};
@@ -2008,7 +2006,7 @@ private:
     /// the browser's own target is overwritten the next time it opens.
     Assisi::ECS::Entity _materialPreviewEntity = Assisi::ECS::NullEntity;
     std::size_t _materialPreviewFieldOffset = 0;
-    int32_t _materialPreviewSlot = -1;   ///< -1 when the panel was not opened from a slot.
+    int32_t _materialPreviewSlot = -1; ///< -1 when the panel was not opened from a slot.
     /// The slot list exactly as it was before the preview overwrote it. Stored
     /// whole rather than as one entry: the list is sparse (short means "mesh
     /// default"), so restoring one element cannot undo a resize.

@@ -62,11 +62,11 @@ struct GameLaunch
 /// @brief The game application. See the file comment.
 class GameApp : public Application
 {
-public:
+  public:
     explicit GameApp(GameLaunch launch);
     ~GameApp() override;
 
-protected:
+  protected:
     /// Opens the content package and installs the readers over it: the asset
     /// source, the level document reader and the config reader. A package that
     /// is missing or unreadable refuses the launch and names its path.
@@ -92,7 +92,7 @@ protected:
     /// @brief Every resident world, for a game that keeps more than one.
     [[nodiscard]] WorldManager &Worlds() { return _worlds; }
 
-private:
+  private:
     /// Brings up the asset cache and the scene renderer. Windowed runs only —
     /// there is no device in a headless process and nothing to draw with it.
     ///
@@ -125,8 +125,6 @@ private:
     Runtime::SceneRenderer _sceneRenderer;
 
     WorldManager _worlds;
-
-    Window::ActionMap _actions;
 
     /// Where the game looks from when the scene nominates no camera. A level
     /// that has not composed one renders from the origin rather than not at all,

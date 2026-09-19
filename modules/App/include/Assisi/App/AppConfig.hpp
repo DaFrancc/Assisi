@@ -101,6 +101,10 @@ struct AppConfig
     /// multiTapSeconds. Off holds every player to the standard.
     AFIELD() bool playerSetsMultiTap = true;
 
+    /// @brief Whether the pointer moving over a UI node focuses it, so the keys
+    /// act on what is pointed at. Off leaves focus where the keys or a click put it.
+    AFIELD() bool uiHoverFocuses = false;
+
     /// @brief The OS window title.
     ///
     /// Sixty-four bytes rather than thirty-two: a title is product branding, it

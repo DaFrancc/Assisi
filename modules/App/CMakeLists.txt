@@ -18,6 +18,7 @@ target_sources(Assisi-App
     "include/Assisi/App/MotionSystems.hpp"
     "include/Assisi/App/SystemCatalog.hpp"
     "include/Assisi/App/SystemRegistry.hpp"
+    "include/Assisi/App/UiInputBridge.hpp"
     "include/Assisi/App/World.hpp"
   PRIVATE
     "src/AppConfig.cpp"
@@ -40,6 +41,7 @@ target_sources(Assisi-App
     "src/PhysicsSystems.cpp"
     "src/SystemCatalog.cpp"
     "src/SystemRegistry.cpp"
+    "src/UiInputBridge.cpp"
     "src/World.cpp"
 )
 

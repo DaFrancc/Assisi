@@ -10,31 +10,31 @@
 #include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
-#include <Assisi/ECS/BlueprintMember.hpp>
-#include <Assisi/ECS/TransformPose.hpp>
-#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Editor/EditorChiaraPanel.hpp>
 #include <Assisi/Editor/TextureFile.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
-#include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #if defined(ASSISI_NETWORKING)
-#    include <Assisi/NetSync/NetComponents.hpp>
-#    include <Assisi/NetSync/NetworkConfig.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Window/InputBindings.hpp>
@@ -90,19 +90,18 @@ EditorApp::~EditorApp()
 void EditorApp::DrawOptionsWindow()
 {
     const FrameStatsView stats = GetFrameStats();
-    const bool applyDisplay =
-        _options->Draw({.input              = GetInput(),
-                        .renderer           = _sceneRenderer,
-                        .options            = GetOptions(),
-                        .showEditorOverlays = _showEditorOverlays,
-                        .fps                = GetFps(),
-                        .cpuFrameMs         = GetCpuFrameMs(),
-                        .gpuFrameMs         = GetGpuFrameMs(),
-                        .cpuMs              = stats.cpuMs,
-                        .gpuMs              = stats.gpuMs,
-                        .frameDeltaMs       = stats.frameDeltaMs,
-                        .offset             = stats.offset,
-                        .sampleCount        = stats.sampleCount});
+    const bool applyDisplay = _options->Draw({.input = GetInput(),
+                                              .renderer = _sceneRenderer,
+                                              .options = GetOptions(),
+                                              .showEditorOverlays = _showEditorOverlays,
+                                              .fps = GetFps(),
+                                              .cpuFrameMs = GetCpuFrameMs(),
+                                              .gpuFrameMs = GetGpuFrameMs(),
+                                              .cpuMs = stats.cpuMs,
+                                              .gpuMs = stats.gpuMs,
+                                              .frameDeltaMs = stats.frameDeltaMs,
+                                              .offset = stats.offset,
+                                              .sampleCount = stats.sampleCount});
     if (applyDisplay)
     {
         ApplyDisplayOptions();
@@ -136,10 +135,10 @@ void EditorApp::SetupCamera()
     const glm::vec3 forward = glm::normalize(-camPos);
 
     _pitch = glm::degrees(glm::asin(forward.y));
-    _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
+    _yaw = glm::degrees(glm::atan(forward.z, forward.x));
 
     const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
-    const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
+    const glm::vec3 up = glm::normalize(glm::cross(right, forward));
 
     _cameraTransform.position = camPos;
     _cameraTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
@@ -178,22 +177,18 @@ void EditorApp::HandlePlayMouseCapture()
     Assisi::Window::InputContext &input = GetInput();
 
     // F8 lends the cursor to the editor and gives it back — it does not decide
-    // whether the *game* wants it. What the game had is remembered and restored,
-    // so a session that had deliberately let go of the cursor (a menu is open)
-    // still has it free afterwards. Toggling capture directly would hand that
-    // player a captured cursor in the middle of their menu.
+    // whether the *game* wants it. The loan is a mode pushed over the game's, so
+    // ending it gives back whatever the game has by then. Setting the game's mode
+    // directly would hand a player a captured cursor in the middle of their menu.
     if (input.IsKeyPressed(Assisi::Window::Key::F8) && !ImGuiWantsTextInput())
     {
-        if (_playCursorLent)
+        if (_cursorLoan)
         {
-            input.SetMouseCaptured(_captureBeforeLend);
-            _playCursorLent = false;
+            EndCursorLoan();
         }
         else
         {
-            _captureBeforeLend = input.IsMouseCaptured();
-            input.SetMouseCaptured(false);
-            _playCursorLent = true;
+            _cursorLoan = input.PushInputMode(Assisi::Window::InputMode::GameAndUi);
         }
         return;
     }
@@ -203,11 +198,21 @@ void EditorApp::HandlePlayMouseCapture()
     // cursor for a menu must keep it, or every click on that menu would swallow
     // the pointer. And not when the click was meant for a panel — that is somebody
     // pressing a button.
-    if (_playCursorLent && !ImGuiWantsMouse() && _actions.IsActionPressed("Select", input))
+    if (_cursorLoan && !ImGuiWantsMouse() && GetActions().IsActionPressed("Select", input))
     {
-        input.SetMouseCaptured(_captureBeforeLend);
-        _playCursorLent = false;
+        EndCursorLoan();
     }
+}
+
+Assisi::App::InputClaim EditorApp::ClaimedOverUi() const
+{
+    return {.pointer = ImGuiWantsMouse(), .keyboard = ImGuiWantsTextInput()};
+}
+
+void EditorApp::EndCursorLoan()
+{
+    GetInput().PopInputMode(_cursorLoan);
+    _cursorLoan = {};
 }
 
 void EditorApp::ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
@@ -219,7 +224,7 @@ void EditorApp::ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Ca
     {
         return;
     }
-    pose   = _cameraTransform;
+    pose = _cameraTransform;
     camera = _camera;
 }
 
@@ -247,7 +252,7 @@ bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime
         return false;
     }
 
-    pose   = view->pose;
+    pose = view->pose;
     camera = view->camera;
     return true;
 }
@@ -272,7 +277,7 @@ void EditorApp::AdoptLevelCamera()
     // below. Copying the level camera's matrix in would be overwritten anyway.
     _cameraTransform.position = view->pose.position;
     _cameraTransform.rotation = view->pose.rotation;
-    _camera                   = view->camera;
+    _camera = view->camera;
     // The editor's own camera is never the level's, so it must not be left
     // marked active — two active cameras is a state nothing else expects.
     _camera.isActive = false;
@@ -286,11 +291,6 @@ void EditorApp::AdoptLevelCamera()
 
 void EditorApp::OnStart()
 {
-    // The shipped bindings, then whatever the player rebound over the top — the
-    // same two layers in the same order the game applies, stated once in App so
-    // the two cannot drift.
-    Assisi::App::LoadActionMap(_actions, GetOptions().bindings);
-
     // Before any session can exist: quantization is inside the handshake hash, so
     // it has to be settled before the first hello is written.
 #if defined(ASSISI_NETWORKING)
@@ -299,13 +299,13 @@ void EditorApp::OnStart()
 
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
-    _worlds.SetServices({.cache    = &_assetCache,
+    _worlds.SetServices({.cache = &_assetCache,
                          .renderer = &_sceneRenderer,
-                         .jobs     = &Jobs(),
-                         .events   = &GetEvents(),
-                         .input    = &GetInput(),
-                         .actions  = &_actions,
-                         .ui       = GetUi()});
+                         .jobs = &Jobs(),
+                         .events = &GetEvents(),
+                         .input = &GetInput(),
+                         .actions = &GetActions(),
+                         .ui = GetUi()});
 
     // Editor travel is the game's path, so it honours the game's policy: a level
     // that waits for its assets in the shipped game waits here too, or testing a
@@ -340,10 +340,10 @@ void EditorApp::OnStart()
     _world = &_worlds.Create("Main");
     _worlds.SetActive(*_world);
     _worlds.SetEdited(*_world);
-    _world->state    = Assisi::App::WorldState::Active;
+    _world->state = Assisi::App::WorldState::Active;
     _world->simulate = false; // starts Editing; SetPlayState owns this from here on
-    _scene           = &_world->scene;
-    _physics         = &_world->physics;
+    _scene = &_world->scene;
+    _physics = &_world->physics;
 
     // Empty system list: Create() installs nothing and a world built in memory
     // names no systems. A startup level opened below applies whatever it asks for.
@@ -376,7 +376,8 @@ void EditorApp::OnStart()
     {
         if (!Assisi::Core::AssetSystem::Exists(_editorConfig.startupLevel))
         {
-            Assisi::Core::Log::Warn("Startup level '{}' not found under the asset root; ignoring.", _editorConfig.startupLevel);
+            Assisi::Core::Log::Warn("Startup level '{}' not found under the asset root; ignoring.",
+                                    _editorConfig.startupLevel);
         }
         else if (!LoadLevelFromPath(_editorConfig.startupLevel))
         {
@@ -410,7 +411,7 @@ void EditorApp::OnStart()
     if (!_editorConfig.autoJoinEndpoint.empty())
     {
         std::string address = "127.0.0.1";
-        std::uint16_t port    = static_cast<std::uint16_t>(_netPort);
+        std::uint16_t port = static_cast<std::uint16_t>(_netPort);
         const std::string_view endpoint = _editorConfig.autoJoinEndpoint;
         if (const std::size_t colon = endpoint.rfind(':'); colon != std::string_view::npos)
         {
@@ -434,20 +435,19 @@ void EditorApp::OnStart()
     _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
                       [this](Assisi::App::SystemContext &) { HandleEntityPicking(); });
 
-    _systems.Register(Assisi::App::SystemPhase::Update, "CameraController",
-                      [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
-    .After("EntityPicking");
+    _systems
+        .Register(Assisi::App::SystemPhase::Update, "CameraController",
+                  [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
+        .After("EntityPicking");
 
     _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
                       [this](Assisi::App::SystemContext &ctx)
-        {
-            for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
-            {
-                SelectEntity(e.entity,
-                             e.additive ? SelectMode::Toggle : SelectMode::Replace);
-            }
-        });
-
+                      {
+                          for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
+                          {
+                              SelectEntity(e.entity, e.additive ? SelectMode::Toggle : SelectMode::Replace);
+                          }
+                      });
 }
 
 void EditorApp::ReimportAssets()
@@ -456,8 +456,8 @@ void EditorApp::ReimportAssets()
     // asset tree with the editor that spawned it, and two processes minting ids
     // into the same directory is a race whose loser silently gets a different id
     // for the same file.
-    const Assisi::Core::RebuildMode mode = IsRestrictedViewer() ? Assisi::Core::RebuildMode::ReadOnly
-                                                                : Assisi::Core::RebuildMode::Reconcile;
+    const Assisi::Core::RebuildMode mode =
+        IsRestrictedViewer() ? Assisi::Core::RebuildMode::ReadOnly : Assisi::Core::RebuildMode::Reconcile;
     const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild(mode);
     if (!result)
     {
@@ -509,8 +509,7 @@ void EditorApp::ReimportAssets()
         {
             const std::optional<std::string> meshPath = _assetDatabase.PathFor(mrc.mesh);
             if (meshPath && _staleMeshes.contains(*meshPath) &&
-                std::find(_staleResolveQueue.begin(), _staleResolveQueue.end(), *meshPath) ==
-                _staleResolveQueue.end())
+                std::find(_staleResolveQueue.begin(), _staleResolveQueue.end(), *meshPath) == _staleResolveQueue.end())
             {
                 _staleResolveQueue.push_back(*meshPath);
             }
@@ -532,29 +531,29 @@ bool EditorApp::ReconcileMeshMaterials()
 {
     // Case-insensitive glTF-extension test on the virtual path.
     const auto isGltf = [](std::string_view path)
-                        {
-                            const auto endsWith = [path](std::string_view suffix)
-                                                  {
-                                                      if (path.size() < suffix.size())
-                                                          return false;
-                                                      const std::string_view tail = path.substr(path.size() - suffix.size());
-                                                      for (std::size_t i = 0; i < suffix.size(); ++i)
-                                                          if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
-                                                              return false;
-                                                      return true;
-                                                  };
-                            return endsWith(".gltf") || endsWith(".glb");
-                        };
+    {
+        const auto endsWith = [path](std::string_view suffix)
+        {
+            if (path.size() < suffix.size())
+                return false;
+            const std::string_view tail = path.substr(path.size() - suffix.size());
+            for (std::size_t i = 0; i < suffix.size(); ++i)
+                if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
+                    return false;
+            return true;
+        };
+        return endsWith(".gltf") || endsWith(".glb");
+    };
 
     // Texture channels in the written `.amat`s resolve through the database, the
     // same map the asset cache uses, so an exploded material references the same
     // texture GUIDs the mesh would have imported.
     const auto resolveTextureId = [this](std::string_view vpath) -> Assisi::Core::AssetId
-                                  { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
+    { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
     // Existing `.amat` files, by their GUID, so the reconciler can load and
     // compare them against the fresh material table.
     const auto resolveMaterialPath = [this](const Assisi::Core::AssetId &id) -> std::string
-                                     { return _assetDatabase.PathFor(id).value_or(std::string{}); };
+    { return _assetDatabase.PathFor(id).value_or(std::string{}); };
 
     _staleMeshes.clear();
     bool changed = false;
@@ -637,7 +636,7 @@ std::string ResolveMaterialPathWith(const Assisi::Core::AssetDatabase &db, const
 void EditorApp::OpenStaleResolution(const std::string &vpath)
 {
     _staleResolveTarget = vpath;
-    _staleResolveDiff   = Assisi::Geometry::DiffGltfMaterials(
+    _staleResolveDiff = Assisi::Geometry::DiffGltfMaterials(
         vpath, [this](std::string_view p) { return ResolveTextureIdWith(_assetDatabase, p); },
         [this](const Assisi::Core::AssetId &id) { return ResolveMaterialPathWith(_assetDatabase, id); });
     _staleResolveRequestOpen = true;
@@ -797,13 +796,13 @@ void EditorApp::DrawStaleResolutionModal()
 
     if (ImGui::Button("Regenerate from source"))
     {
-        ApplyStaleResolution(/*regenerate=*/ true);
+        ApplyStaleResolution(/*regenerate=*/true);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Keep my materials"))
     {
-        ApplyStaleResolution(/*regenerate=*/ false);
+        ApplyStaleResolution(/*regenerate=*/false);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -866,8 +865,7 @@ void EditorApp::SetupScene()
     // no pipelines and loads nothing under assets/editor/**.
     if (_editorConfig.enableEditorVisuals)
     {
-        _overlaysBuilt = _overlays.Initialize(device, GetOverlayFramebufferInfo(),
-                                              static_cast<uint32_t>(fbSize.Width),
+        _overlaysBuilt = _overlays.Initialize(device, GetOverlayFramebufferInfo(), static_cast<uint32_t>(fbSize.Width),
                                               static_cast<uint32_t>(fbSize.Height));
     }
 
@@ -875,7 +873,7 @@ void EditorApp::SetupScene()
     // Application because the editor is what draws a UI: an application that
     // overrides no UI hook links no toolkit at all.
     Assisi::Debug::DebugUI::Initialize(GetWindow(), *Assisi::Render::RenderSystem::GetVulkanContext(),
-                                       /*persistLayout=*/ !IsRestrictedViewer());
+                                       /*persistLayout=*/!IsRestrictedViewer());
     _debugUiBrought = true;
 
     _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
@@ -892,7 +890,7 @@ void EditorApp::SetupScene()
     _thumbnailCache.Initialize(device, &Jobs());
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Linear for the same reason as the thumbnails: ImGui, not the mesh shader.
-            Assisi::Editor::LoadTextureFile(_helloTexture, device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
+        Assisi::Editor::LoadTextureFile(_helloTexture, device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
         !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/hello.png for the ImGui image test.");
@@ -939,8 +937,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // The resolver is required: a parented body's pose comes back in world
         // space while its Transform is an offset from its parent, so without it
         // every parented body drifts by its parent's transform once per frame.
-        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha(),
-                                        Assisi::App::ParentWorldResolver(*_scene));
+        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha(), Assisi::App::ParentWorldResolver(*_scene));
     }
 
     // Must stay between the writeback above and Render()'s propagation: a bodied
@@ -1014,7 +1011,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
     Assisi::Runtime::Transform playPose;
-    Assisi::Runtime::Camera    playCamera;
+    Assisi::Runtime::Camera playCamera;
     if (PlayViewCamera(playPose, playCamera))
     {
         _sceneRenderer.Render(frame, *_scene, playPose, playCamera, _world->propagationTick);
@@ -1033,7 +1030,7 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     // Through the same camera the scene was drawn with, or an overlay would be
     // projected from somewhere the viewport is not looking from.
     Assisi::Runtime::Transform playPose;
-    Assisi::Runtime::Camera    playCamera;
+    Assisi::Runtime::Camera playCamera;
     if (PlayViewCamera(playPose, playCamera))
     {
         _overlays.Render(frame, *_scene, playPose, playCamera, _sceneRenderer);
@@ -1083,8 +1080,8 @@ void EditorApp::OnFixedUpdate(float dt)
                     return;
 
                 world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                                  {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
-                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                                  {world, dt, GetSimTick(), &GetInput(), &GetActions(), GetEvents(),
+                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
 
                 {
                     // Jolt's whole step, including its internal job dispatch:
@@ -1105,8 +1102,8 @@ void EditorApp::OnFixedUpdate(float dt)
                 // a frame that runs several steps runs this for every one of
                 // them rather than only the last.
                 world.systems.Run(Assisi::App::SystemPhase::PostFixedUpdate,
-                                  {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
-                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                                  {world, dt, GetSimTick(), &GetInput(), &GetActions(), GetEvents(),
+                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
             });
     }
 
@@ -1131,8 +1128,7 @@ void EditorApp::OnUpdate(float dt)
     auto &input = GetInput();
 
     // What a player presses to get the cursor back, which is what stops a session.
-    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsTextInput() &&
-        _playState != PlayState::Editing)
+    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsTextInput() && _playState != PlayState::Editing)
     {
         StopPlay();
     }
@@ -1159,8 +1155,7 @@ void EditorApp::OnUpdate(float dt)
     // edits text there instead. Same safe mutation point as the undo above.
     if (Assisi::Editor::EditHistory *history = ActiveHistory();
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
-        _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) &&
-        ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
         DeleteSelection();
     }
@@ -1271,9 +1266,9 @@ void EditorApp::OnUpdate(float dt)
     // frame time from the world being played; a foreground load has nothing to
     // protect and gets the generous one. A no-op on an empty queue.
     if (_worlds.HasPendingLoad())
-        _assetCache.PumpPublishes(/*timeBudgetMs=*/ 2.0, /*byteBudget=*/ 16ull << 20);
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/2.0, /*byteBudget=*/16ull << 20);
     else
-        _assetCache.PumpPublishes(/*timeBudgetMs=*/ 10.0, /*byteBudget=*/ 128ull << 20);
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/10.0, /*byteBudget=*/128ull << 20);
 
     // Swap billboard placeholders for the real mesh/material as each finishes
     // streaming. A UI-requested level load is marshalled via Jobs().RunOnMain (see
@@ -1282,7 +1277,8 @@ void EditorApp::OnUpdate(float dt)
     // Every resident world is upgraded, not only the visible one, or a world you
     // are not looking at keeps its placeholders forever. A world still Loading is
     // skipped: a worker owns its scene until promotion.
-    _worlds.ForEach([this](Assisi::App::World &world)
+    _worlds.ForEach(
+        [this](Assisi::App::World &world)
         {
             if (world.state == Assisi::App::WorldState::Loading)
                 return;
@@ -1326,8 +1322,7 @@ void EditorApp::OnUpdate(float dt)
         _worlds.ForEach(
             [this](Assisi::App::World &world)
             {
-                if (world.simulate && world.state == Assisi::App::WorldState::Active &&
-                    &world != _world)
+                if (world.simulate && world.state == Assisi::App::WorldState::Active && &world != _world)
                 {
                     Assisi::App::SyncUnrenderedWorld(world);
                 }
@@ -1337,8 +1332,8 @@ void EditorApp::OnUpdate(float dt)
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
     const Assisi::App::SystemContext editorCtx{
-        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/ true, &_worlds, GetUi()};
-    _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
+        *_world, dt, GetSimTick(), &input, &GetActions(), GetEvents(), /*isActiveWorld=*/true, &_worlds, GetUi()};
+    _systems.Run(Assisi::App::SystemPhase::Update, editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
     // Game logic ticks only while Playing, after the editor's own systems, in every
@@ -1355,11 +1350,17 @@ void EditorApp::OnUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                     return;
 
-                const Assisi::App::SystemContext ctx{
-                    world,   dt, GetSimTick(), &input, &_actions, GetEvents(),
-                    /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()};
-                world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
-                world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
+                const Assisi::App::SystemContext ctx{world,
+                                                     dt,
+                                                     GetSimTick(),
+                                                     &input,
+                                                     &GetActions(),
+                                                     GetEvents(),
+                                                     /*isActiveWorld=*/&world == _worlds.Active(),
+                                                     &_worlds,
+                                                     GetUi()};
+                world.systems.Run(Assisi::App::SystemPhase::PreUpdate, ctx);
+                world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
             });
     }
@@ -1369,15 +1370,15 @@ Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &worl
 {
     // Everything a per-frame phase gets, matching the game. dt and the tick are
     // zero: a one-shot runs outside any frame.
-    return {.world         = world,
-            .dt            = 0.f,
-            .simTick       = 0,
-            .input         = &GetInput(),
-            .actions       = &_actions,
-            .events        = GetEvents(),
+    return {.world = world,
+            .dt = 0.f,
+            .simTick = 0,
+            .input = &GetInput(),
+            .actions = &GetActions(),
+            .events = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
-            .worldManager  = &_worlds,
-            .ui            = GetUi()};
+            .worldManager = &_worlds,
+            .ui = GetUi()};
 }
 
 void EditorApp::InstallQueuedSystems()
@@ -1389,8 +1390,7 @@ void EditorApp::InstallQueuedSystems()
     // Loading worlds included, harmlessly: their scene belongs to a worker until
     // promotion, but the system registry is main-thread only, and promotion runs
     // ApplySystems, which clears the queue anyway.
-    _worlds.ForEach([this](Assisi::App::World &world)
-                    { Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
+    _worlds.ForEach([this](Assisi::App::World &world) { Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 void EditorApp::FlushDeferred()
@@ -1401,7 +1401,8 @@ void EditorApp::FlushDeferred()
     // Query. Every resident world, or a background world's destroys pile up until
     // it is next shown and then land all at once. A world still Loading is skipped:
     // its scene belongs to a worker until promotion.
-    _worlds.ForEach([](Assisi::App::World &world)
+    _worlds.ForEach(
+        [](Assisi::App::World &world)
         {
             if (world.state != Assisi::App::WorldState::Loading)
                 world.scene.FlushDestroyed();
@@ -1421,7 +1422,7 @@ void EditorApp::InstallHistoryHooks(Assisi::Editor::EditHistory &history)
 Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
-           { ApplyEditRebind(entity, id, present); };
+    { ApplyEditRebind(entity, id, present); };
 }
 
 // **Keep this definition here, not in EditorNet.cpp.** Everything it does is
@@ -1462,7 +1463,10 @@ bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
 #endif
 }
 
-bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const { return IsEditable() && !IsMirrored(entity); }
+bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const
+{
+    return IsEditable() && !IsMirrored(entity);
+}
 
 std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
 {
@@ -1479,10 +1483,9 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
             {
                 const Assisi::Runtime::BlueprintResult definition =
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
-                const std::string memberPath =
-                    definition && tag->memberIndex < (*definition)->members.size()
-                        ? (*definition)->members[tag->memberIndex].name
-                        : std::format("#{}", tag->memberIndex);
+                const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
+                                                   ? (*definition)->members[tag->memberIndex].name
+                                                   : std::format("#{}", tag->memberIndex);
 
                 return std::format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
             }
@@ -1545,8 +1548,7 @@ bool EditorApp::IsSceneDirty()
     if (InBlueprintMode())
     {
         return _blueprintSystemsEdited ||
-               (_blueprintHistory.has_value() &&
-                _blueprintHistory->CurrentStateToken() != _blueprintSavedToken);
+               (_blueprintHistory.has_value() && _blueprintHistory->CurrentStateToken() != _blueprintSavedToken);
     }
     return _systemsEdited || (_history.has_value() && _history->CurrentStateToken() != _savedStateToken);
 }
@@ -1618,8 +1620,7 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
         // ACOMP(transient) and so never in the payload either way.
         if (present)
         {
-            (void)_physics->RebuildEntityPhysics(*_scene, entity,
-                                                 Assisi::App::ParentWorldResolver(*_scene));
+            (void)_physics->RebuildEntityPhysics(*_scene, entity, Assisi::App::ParentWorldResolver(*_scene));
         }
         else
         {
@@ -1738,8 +1739,7 @@ void EditorApp::DrawHistoryWindow()
     Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history == nullptr)
     {
-        ImGui::TextDisabled(_playState == PlayState::Playing ? "(history is off while playing)"
-                                                             : "(no history)");
+        ImGui::TextDisabled(_playState == PlayState::Playing ? "(history is off while playing)" : "(no history)");
         ImGui::End();
         return;
     }
@@ -1773,7 +1773,8 @@ void EditorApp::DrawHistoryWindow()
         ImGui::PushID(static_cast<int>(i));
         const bool isCurrent = (i + 1 == undoLabels.size());
         if (ImGui::Selectable(undoLabels[i].c_str(), isCurrent) && !isCurrent)
-            _pendingHistorySteps = static_cast<int32_t>(i + 1) - static_cast<int32_t>(undoLabels.size()); // undo down to i
+            _pendingHistorySteps =
+                static_cast<int32_t>(i + 1) - static_cast<int32_t>(undoLabels.size()); // undo down to i
         ImGui::PopID();
     }
 
@@ -1843,43 +1844,97 @@ void EditorApp::DrawPanels()
     // editor sun is a control whose only possible use is a mistake.
     const bool blueprintMode = InBlueprintMode();
 
-    { ASSISI_PROFILE_SCOPE("panel/options");      DrawOptionsWindow(); }
+    {
+        ASSISI_PROFILE_SCOPE("panel/options");
+        DrawOptionsWindow();
+    }
     if (!blueprintMode)
     {
-        { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
-        { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
-        { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
+        {
+            ASSISI_PROFILE_SCOPE("panel/diagnostics");
+            DrawDiagnosticsWindow();
+        }
+        {
+            ASSISI_PROFILE_SCOPE("panel/chiara");
+            DrawChiaraWindow();
+        }
+        {
+            ASSISI_PROFILE_SCOPE("panel/game-control");
+            DrawGameControlWindow();
+        }
 #if defined(ASSISI_NETWORKING)
-        { ASSISI_PROFILE_SCOPE("panel/network");      DrawNetworkWindow(); }
+        {
+            ASSISI_PROFILE_SCOPE("panel/network");
+            DrawNetworkWindow();
+        }
 #endif
     }
-    { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
+    {
+        ASSISI_PROFILE_SCOPE("panel/entity-list");
+        DrawEntityListWindow();
+    }
+    {
+        ASSISI_PROFILE_SCOPE("panel/history");
+        DrawHistoryWindow();
+    }
     if (!blueprintMode)
     {
-        { ASSISI_PROFILE_SCOPE("panel/levels");     DrawLevelsWindow(); }
+        {
+            ASSISI_PROFILE_SCOPE("panel/levels");
+            DrawLevelsWindow();
+        }
     }
     // Both modes: nesting is what a blueprint editor is for, and an instance placed
     // in one is an `instances` entry in its file exactly as it is in a level's.
-    { ASSISI_PROFILE_SCOPE("panel/blueprints"); DrawBlueprintsWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/blueprint-mode"); DrawBlueprintEditorWindow(); }
+    {
+        ASSISI_PROFILE_SCOPE("panel/blueprints");
+        DrawBlueprintsWindow();
+    }
+    {
+        ASSISI_PROFILE_SCOPE("panel/blueprint-mode");
+        DrawBlueprintEditorWindow();
+    }
     // Both modes: a blueprint carries its own required-system list, saved by the
     // same path, so the panel is as much about what is in front of you here as it
     // is about a level.
-    { ASSISI_PROFILE_SCOPE("panel/systems");      DrawRequiredSystemsWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/inspector");    DrawInspector(); }
+    {
+        ASSISI_PROFILE_SCOPE("panel/systems");
+        DrawRequiredSystemsWindow();
+    }
+    {
+        ASSISI_PROFILE_SCOPE("panel/inspector");
+        DrawInspector();
+    }
     if (!blueprintMode)
     {
-        { ASSISI_PROFILE_SCOPE("panel/hello-image"); DrawHelloImageWindow(); }
+        {
+            ASSISI_PROFILE_SCOPE("panel/hello-image");
+            DrawHelloImageWindow();
+        }
     }
-    { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
-    { ASSISI_PROFILE_SCOPE("panel/material");      DrawMaterialEditor(); }
-    { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
-    { ASSISI_PROFILE_SCOPE("panel/save-confirm-modal"); DrawSaveConfirmModal(); }
+    {
+        ASSISI_PROFILE_SCOPE("panel/asset-browser");
+        DrawAssetBrowser();
+    }
+    {
+        ASSISI_PROFILE_SCOPE("panel/material");
+        DrawMaterialEditor();
+    }
+    {
+        ASSISI_PROFILE_SCOPE("panel/stale-modal");
+        DrawStaleResolutionModal();
+    }
+    {
+        ASSISI_PROFILE_SCOPE("panel/save-confirm-modal");
+        DrawSaveConfirmModal();
+    }
 #if defined(ASSISI_NETWORKING)
     if (!blueprintMode)
     {
-        { ASSISI_PROFILE_SCOPE("panel/host-modal"); DrawHostUnsavedModal(); }
+        {
+            ASSISI_PROFILE_SCOPE("panel/host-modal");
+            DrawHostUnsavedModal();
+        }
     }
 #endif
 
@@ -1949,7 +2004,7 @@ void EditorApp::LogImGuiWedgeDiagnostics()
     // field being edited is wedged, not in use. Log enough internal state to name
     // the widget and whatever freed it.
     const ImGuiIO &io = ImGui::GetIO();
-    const ImGuiContext &g  = *ImGui::GetCurrentContext();
+    const ImGuiContext &g = *ImGui::GetCurrentContext();
 
     const bool anyMouseDown = io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2];
     // Class 1: a widget holds ActiveId with no button down and no text edit, so
@@ -1963,8 +2018,7 @@ void EditorApp::LogImGuiWedgeDiagnostics()
     // no mouse position, and alt-tabbing away would read as a wedge. While focused
     // the glfw backend re-polls the cursor as a fallback every frame, so this
     // firing at all means something upstream is genuinely stuck.
-    const bool wedgedMousePos =
-        !ImGui::IsMousePosValid() && !GetInput().IsMouseCaptured() && GetWindow().IsFocused();
+    const bool wedgedMousePos = !ImGui::IsMousePosValid() && !GetInput().IsMouseCaptured() && GetWindow().IsFocused();
     const bool suspicious = wedgedActiveId || wedgedMousePos;
 
     if (!suspicious)
@@ -1974,7 +2028,7 @@ void EditorApp::LogImGuiWedgeDiagnostics()
             Assisi::Core::Log::Warn("ImGui watchdog: wedge cleared after {:.1f}s (ActiveId now 0x{:08X}).",
                                     _imguiWedgeSeconds, g.ActiveId);
         }
-        _imguiWedgeSeconds    = 0.f;
+        _imguiWedgeSeconds = 0.f;
         _imguiWedgeNextReport = kImGuiWedgeThreshold;
         return;
     }
@@ -1990,11 +2044,11 @@ void EditorApp::LogImGuiWedgeDiagnostics()
         "hovered='{}' nav='{}' modal='{}' popups={} wantMouse={} wantKb={} mouse=({:.0f},{:.0f}) captured={} "
         "focused={}",
         wedgedActiveId ? (wedgedMousePos ? "activeId+mousePos" : "activeId") : "mousePos", g.ActiveId,
-        g.ActiveIdWindow ? g.ActiveIdWindow->Name : "<none>", static_cast<int>(g.ActiveIdSource),
-        _imguiWedgeSeconds, g.HoveredWindow ? g.HoveredWindow->Name : "<none>",
-        g.NavWindow ? g.NavWindow->Name : "<none>", modal ? modal->Name : "<none>", g.OpenPopupStack.Size,
-        io.WantCaptureMouse, io.WantCaptureKeyboard, static_cast<double>(io.MousePos.x),
-        static_cast<double>(io.MousePos.y), GetInput().IsMouseCaptured(), GetWindow().IsFocused());
+        g.ActiveIdWindow ? g.ActiveIdWindow->Name : "<none>", static_cast<int>(g.ActiveIdSource), _imguiWedgeSeconds,
+        g.HoveredWindow ? g.HoveredWindow->Name : "<none>", g.NavWindow ? g.NavWindow->Name : "<none>",
+        modal ? modal->Name : "<none>", g.OpenPopupStack.Size, io.WantCaptureMouse, io.WantCaptureKeyboard,
+        static_cast<double>(io.MousePos.x), static_cast<double>(io.MousePos.y), GetInput().IsMouseCaptured(),
+        GetWindow().IsFocused());
 }
 
 } // namespace Assisi::Editor
