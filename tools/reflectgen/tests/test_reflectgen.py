@@ -974,42 +974,54 @@ class BitmaskTest(unittest.TestCase):
         "#include <cstdint>\n"
         "namespace N {\n"
         "AENUM()\nenum class Channel : uint8_t { World, Character, Trigger, Count };\n"
-        "ACOMP()\nstruct Body { AFIELD(bitmask = Channel) uint32_t collidesWith = 0; };\n"
+        "ACOMP()\nstruct Body { AFIELD() Assisi::Core::Bitmask<Channel> collidesWith{}; };\n"
         "}\n"
     )
 
     def test_bitmask_field_carries_the_enums_constants(self):
         field = _parse_source(self._SRC)[0].fields[0]
-        self.assertIsNone(field.enum_info)  # the field's own type is an integer
+        self.assertIsNone(field.enum_info)  # the field holds a set, not one enumerator
         self.assertIsNotNone(field.bitmask_info)
         self.assertEqual(field.bitmask_info.constants,
                          [("World", 0), ("Character", 1), ("Trigger", 2)])
 
-    def test_bitmask_emits_constants_without_an_enum_size(self):
+    def test_every_bitmask_spelling_is_recognised(self):
+        for spelling in ("Bitmask<Channel>", "Core::Bitmask<Channel>", "Assisi::Core::Bitmask< Channel >"):
+            with self.subTest(spelling=spelling):
+                src = self._SRC.replace("Assisi::Core::Bitmask<Channel>", spelling)
+                self.assertIsNotNone(_parse_source(src)[0].fields[0].bitmask_info)
+
+    def test_bitmask_emits_its_bits_as_a_uint32_without_an_enum_size(self):
         cpp = reflectgen.generate_cpp(_parse_source(self._SRC), "N/Body.hpp")
         self.assertIn('{ "Trigger", 2 }', cpp)
         self.assertIn("FieldType::UInt32", cpp)
+        self.assertIn("collidesWith.bits", cpp)
         # enumSize is what separates "holds one of these" from "holds a set of
         # these"; a bitmask that emitted one would be read back as an enum.
         self.assertNotIn(".enumSize", cpp)
 
-    def test_bitmask_on_a_signed_field_is_rejected(self):
-        src = self._SRC.replace("uint32_t collidesWith", "int32_t collidesWith")
-        with self.assertRaises(ValueError):
-            _parse_source(src)
-
     def test_bitmask_naming_an_unknown_enum_is_rejected(self):
-        src = self._SRC.replace("bitmask = Channel", "bitmask = NoSuchEnum")
-        with self.assertRaises(ValueError):
+        src = self._SRC.replace("Bitmask<Channel>", "Bitmask<NoSuchEnum>")
+        with self.assertRaises(ValueError) as caught:
             _parse_source(src)
+        self.assertIn("NoSuchEnum", str(caught.exception))
 
     def test_enumerator_too_large_for_the_field_is_rejected(self):
         src = ("#include <cstdint>\nnamespace N {\n"
                "AENUM()\nenum class E : uint32_t { A = 0, B = 32 };\n"
-               "ACOMP()\nstruct C { AFIELD(bitmask = E) uint32_t m = 0; };\n}\n")
-        # Bit 32 does not exist in a 32-bit field; shifting into it is undefined.
+               "ACOMP()\nstruct C { AFIELD() Bitmask<E> m{}; };\n}\n")
+        # Bit 32 does not exist in a 32-bit mask; shifting into it is undefined.
         with self.assertRaises(ValueError):
             _parse_source(src)
+
+    def test_the_bitmask_key_is_refused_in_favour_of_the_type(self):
+        # The key made an annotation string the only thing saying what an
+        # integer's bits mean; the type says it where the compiler can see it.
+        src = self._SRC.replace("AFIELD() Assisi::Core::Bitmask<Channel> collidesWith{}",
+                                "AFIELD(bitmask = Channel) uint32_t collidesWith = 0")
+        with self.assertRaises(ValueError) as caught:
+            _parse_source(src)
+        self.assertIn("Bitmask<Channel>", str(caught.exception))
 
     def _enum_size(self, underlying_decl: str):
         """Parse `enum class E <underlying_decl> { A, B }` and return its EnumInfo."""
@@ -1738,6 +1750,35 @@ class EmptyRegistrationUnitTest(unittest.TestCase):
         self.assertNotIn("--message-handlers", text)
 
 
+class QuotedCppValueTest(unittest.TestCase):
+    """A value naming something in C++ is bare; quoting one is refused.
+
+    Quotes mean "a string C++ cannot check", so a quoted field name, enumerator
+    or number would say the opposite of what it is.
+    """
+
+    def _refused(self, afield: str):
+        src = ("namespace N {\n"
+               "AENUM()\nenum class Mode : uint8_t { Low, High };\n"
+               "ACOMP()\nstruct C {\n"
+               "    AFIELD(radioBroadcast) Mode mode = Mode::Low;\n"
+               f"    AFIELD({afield}) float f = 1.0f;\n"
+               "};\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            _parse_source(src)
+        return str(caught.exception)
+
+    def test_a_quoted_number_is_refused(self):
+        self.assertIn("quoted", self._refused('min = "0"'))
+
+    def test_a_quoted_radio_value_is_refused(self):
+        for spec in ('source = "mode", value = High, behavior = grey',
+                     'source = mode, value = "High", behavior = grey',
+                     'source = mode, value = High, behavior = "grey"'):
+            with self.subTest(spec=spec):
+                self.assertIn("quoted", self._refused("radioListen = { %s }" % spec))
+
+
 class SystemTest(unittest.TestCase):
     """ASYSTEM: the grammar, and the three whole-tree checks.
 
@@ -1750,7 +1791,7 @@ class SystemTest(unittest.TestCase):
     SOURCE = (
         "namespace Game {\n"
         "ASYSTEM(FixedUpdate, name = \"Bounce\") void BounceSystem(SystemContext &ctx);\n"
-        "ASYSTEM(Update, name = \"Spin\", after = Bounce, activeWorldOnly)\n"
+        "ASYSTEM(Update, name = \"Spin\", after = \"Bounce\", activeWorldOnly)\n"
         "void SpinDemoSystem(SystemContext &ctx);\n"
         "}\n")
 
@@ -1765,6 +1806,22 @@ class SystemTest(unittest.TestCase):
         self.assertEqual(found["Spin"].after, ["Bounce"])
         self.assertTrue(found["Spin"].active_world_only)
         self.assertEqual(found["Spin"].fqn, "::Game::SpinDemoSystem")
+
+    def test_a_quoted_reference_reaches_the_definition_unquoted(self):
+        found = self._systems("ASYSTEM(Update, name = \"Tick\", after = \"Bounce\", before = \"Draw\")\n"
+                              "void TickSystem(SystemContext &ctx);\n")
+        self.assertEqual(found[0].after, ["Bounce"])
+        self.assertEqual(found[0].before, ["Draw"])
+
+    def test_a_bare_system_name_is_refused_with_the_quoted_spelling(self):
+        # A system name is a string a level file writes, not a C++ symbol, so a
+        # bare one reads as a reference to something the compiler could check.
+        for key in ("name", "after", "before"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError) as caught:
+                    self._systems("ASYSTEM(Update, name = \"Tick\", %s = Bounce)\n"
+                                  "void TickSystem(SystemContext &ctx);\n" % key)
+                self.assertIn('%s = "Bounce"' % key, str(caught.exception))
 
     def test_a_system_without_a_name_is_refused(self):
         # The name is what a level file says, so deriving it from the function
@@ -1829,7 +1886,7 @@ class SystemTest(unittest.TestCase):
     def test_an_after_naming_nothing_is_a_build_error(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "A.hpp"
-            path.write_text("ASYSTEM(Update, name = \"Tick\", after = Ghost) void TickSystem(SystemContext &ctx);\n",
+            path.write_text("ASYSTEM(Update, name = \"Tick\", after = \"Ghost\") void TickSystem(SystemContext &ctx);\n",
                             encoding="utf-8")
             with self.assertRaises(ValueError) as caught:
                 reflectgen.check_systems([path])
@@ -1838,8 +1895,8 @@ class SystemTest(unittest.TestCase):
     def test_an_ordering_cycle_is_a_build_error(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "A.hpp"
-            path.write_text("ASYSTEM(Update, name = \"A\", after = B) void ASystem(SystemContext &ctx);\n"
-                            "ASYSTEM(Update, name = \"B\", after = A) void BSystem(SystemContext &ctx);\n",
+            path.write_text("ASYSTEM(Update, name = \"A\", after = \"B\") void ASystem(SystemContext &ctx);\n"
+                            "ASYSTEM(Update, name = \"B\", after = \"A\") void BSystem(SystemContext &ctx);\n",
                             encoding="utf-8")
             with self.assertRaises(ValueError) as caught:
                 reflectgen.check_systems([path])

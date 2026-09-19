@@ -37,7 +37,7 @@ constexpr int32_t kSleepSteps = 300;
 
 ECS::Entity Spawn(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, glm::vec3 halfExtents,
                   bool isStatic, Physics::CollisionChannel channel,
-                  std::uint32_t collides = Physics::AllChannels)
+                  Core::Bitmask<Physics::CollisionChannel> collides = Physics::AllChannels)
 {
     const ECS::Entity entity = scene.Create();
     ECS::Transform *transform = scene.Add<ECS::Transform>(entity);
@@ -136,7 +136,7 @@ TEST_CASE("A trigger only reports the channels its mask admits")
     ECS::Scene scene;
     Physics::PhysicsWorld world;
 
-    const std::uint32_t charactersOnly = 1u << static_cast<std::uint32_t>(Physics::CollisionChannel::Character);
+    const auto charactersOnly = Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Character);
     (void)Spawn(scene, world, {0.f, 2.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ true,
                 Physics::CollisionChannel::Trigger, charactersOnly);
 

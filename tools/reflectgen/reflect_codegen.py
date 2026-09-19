@@ -138,8 +138,9 @@ def _validate_bounds(f: FieldInfo, tc: Optional[TypeCodegen],
 
 def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
     """The codegen for a field. An AENUM enum synthesizes one that writes its
-    underlying integer and reads either that or an enumerator name; every other
-    type comes from the TYPES table. Returns None for an unsupported type — the
+    underlying integer and reads either that or an enumerator name, and a
+    Core::Bitmask one that reads and writes its bits; every other type comes from
+    the TYPES table. Returns None for an unsupported type — the
     signal _check_unsupported turns into a hard error."""
     if f.enum_info is not None:
         # Doubled braces: this text goes through .format() with the field name and
@@ -152,6 +153,12 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
             'std::int64_t _n = static_cast<std::int64_t>({a}); '
             'if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "{f}", _names, _n)) return false; '
             '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
+    if f.bitmask_info is not None:
+        # A Core::Bitmask is its uint32_t, in memory and on disk alike.
+        return TypeCodegen(
+            'UInt32',
+            '{a}.bits',
+            'if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", {a}.bits)) return false;')
     if f.container is not None:
         # One expression either way, whatever the element type or the depth: the
         # templates in ContainerJson.hpp resolve it from the member's own type, so

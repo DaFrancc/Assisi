@@ -33,13 +33,14 @@ constexpr float kStep = 1.f / 60.f;
 /// Enough steps for a body dropped a couple of metres to land and settle.
 constexpr int32_t kSettleSteps = 240;
 
-std::uint32_t Without(Physics::CollisionChannel channel)
+Core::Bitmask<Physics::CollisionChannel> Without(Physics::CollisionChannel channel)
 {
-    return Physics::AllChannels & ~(1u << static_cast<std::uint32_t>(channel));
+    return Physics::AllChannels.Without(channel);
 }
 
 ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, glm::vec3 halfExtents,
-                     bool isStatic, Physics::CollisionChannel channel, std::uint32_t collides)
+                     bool isStatic, Physics::CollisionChannel channel,
+                     Core::Bitmask<Physics::CollisionChannel> collides)
 {
     const ECS::Entity entity = scene.Create();
     ECS::Transform *transform = scene.Add<ECS::Transform>(entity);
@@ -60,7 +61,7 @@ ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 
 /// A wide static floor whose top is at y = 0.
 ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world,
                        Physics::CollisionChannel channel  = Physics::CollisionChannel::World,
-                       std::uint32_t             collides = Physics::AllChannels)
+                       Core::Bitmask<Physics::CollisionChannel> collides = Physics::AllChannels)
 {
     return SpawnBox(scene, world, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, channel,
                     collides);
