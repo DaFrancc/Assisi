@@ -222,6 +222,14 @@ void NodeTree::SetNavOverride(NodeId id, NavDirection direction, NodeId target)
     }
 }
 
+void NodeTree::SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> push)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->onActivate = std::move(push);
+    }
+}
+
 NodeId NodeTree::Find(std::string_view name) const
 {
     for (uint32_t index = 0; index < _slots.size(); ++index)

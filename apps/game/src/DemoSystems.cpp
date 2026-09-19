@@ -7,6 +7,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -83,6 +84,29 @@ void CaptureCursorSystem(Assisi::App::SystemContext &ctx)
 
     ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
     Assisi::Core::Log::Info("CaptureCursor: '{}' takes the mouse.", ctx.world.levelPath);
+}
+
+void SampleMenuSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.ui == nullptr)
+    {
+        return;
+    }
+    Assisi::Mondrian::Ui &ui = *ctx.ui;
+    ui.OnActivate(ui.Tree().Find("Resume"), ResumeClicked{});
+    ui.OnActivate(ui.Tree().Find("Quit"), QuitClicked{});
+}
+
+void SampleMenuLogSystem(Assisi::App::SystemContext &ctx)
+{
+    for ([[maybe_unused]] const ResumeClicked &event : ctx.events.Read<ResumeClicked>())
+    {
+        Assisi::Core::Log::Info("SampleMenu: Resume clicked.");
+    }
+    for ([[maybe_unused]] const QuitClicked &event : ctx.events.Read<QuitClicked>())
+    {
+        Assisi::Core::Log::Info("SampleMenu: Quit clicked.");
+    }
 }
 
 void CursorToggleSystem(Assisi::App::SystemContext &ctx)

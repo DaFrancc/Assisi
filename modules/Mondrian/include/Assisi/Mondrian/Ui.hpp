@@ -41,6 +41,18 @@ class Ui
     /// @brief Hover, presses and focus as the last ProcessInput left them.
     [[nodiscard]] const Interaction &GetInteraction() const { return _interaction; }
 
+    /// @brief Where the UI pushes its events: each bound node's when it is
+    /// clicked or accepted, and UiBack. Until set, nothing is pushed.
+    void SetEvents(Core::EventQueue *events) { _events = events; }
+
+    /// @brief Makes @p node push a copy of @p event each time it is clicked or
+    /// accepted, replacing whatever it pushed before. Game code reads it with
+    /// EventQueue::Read<E>() in any phase after the UI's input step.
+    template <typename E> void OnActivate(NodeId node, E event)
+    {
+        _tree.SetOnActivate(node, [event](Core::EventQueue &events) { events.Push(event); });
+    }
+
     /// @brief Moves focus to @p id, or clears it with a null id.
     void SetFocus(NodeId id) { _interaction.focused = id; }
 
@@ -99,6 +111,10 @@ class Ui
         Count
     };
 
+    /// Moves hover, presses and focus for @p input.
+    InputResult Interact(const UiInput &input);
+    /// Pushes the events this frame's interaction calls for.
+    void Announce();
     /// Moves focus for @p action, one of the directions or Tab order.
     void Move(UiAction action);
     /// Moves focus for the directions pressed this frame, and again for one
@@ -112,6 +128,7 @@ class Ui
     DrawList _drawList;
     Interaction _interaction;
     const Font *_font = nullptr;
+    Core::EventQueue *_events = nullptr;
     double _repeatAt = 0.0; ///< when the held direction next moves focus
     NodeId _picture;
     Point _lastPointer;

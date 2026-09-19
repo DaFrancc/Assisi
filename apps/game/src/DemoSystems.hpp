@@ -83,4 +83,22 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx);
 ASYSTEM(Update, name = "PrettyTravel", activeWorldOnly)
 void PrettyTravelSystem(Assisi::App::SystemContext &ctx);
 
+/// What the sample screen's buttons push when clicked or accepted.
+struct ResumeClicked
+{
+};
+struct QuitClicked
+{
+};
+
+/// Binds the sample screen's Resume and Quit to the events above, so a level
+/// can show a click reaching game code before screens exist. Null-checks the UI:
+/// a headless host has none.
+ASYSTEM(Loaded, name = "SampleMenu", activeWorldOnly)
+void SampleMenuSystem(Assisi::App::SystemContext &ctx);
+
+/// Logs the sample screen's events: the reading half of SampleMenu.
+ASYSTEM(Update, name = "SampleMenuLog", activeWorldOnly)
+void SampleMenuLogSystem(Assisi::App::SystemContext &ctx);
+
 } // namespace Game

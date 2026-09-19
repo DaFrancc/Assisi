@@ -12,9 +12,12 @@
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 
+#include <Assisi/Core/EventQueue.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <span>
 #include <string>
@@ -54,6 +57,9 @@ struct Node
     Style style;
     std::string text;
     std::string name;
+    /// Pushes this node's event when it is clicked or accepted; empty for none.
+    /// Set through Ui::OnActivate, which is what knows the event's type.
+    std::function<void(Core::EventQueue &)> onActivate;
     /// Where focus goes from here in each direction, overriding the nearest
     /// node there; null to take the nearest.
     std::array<NodeId, kNavDirectionCount> navOverride{};
@@ -107,6 +113,8 @@ class NodeTree
     /// @brief Sends focus moving @p direction from @p id to @p target; a null
     /// target takes the override off.
     void SetNavOverride(NodeId id, NavDirection direction, NodeId target);
+    /// @brief What @p id does when clicked or accepted, replacing what it did.
+    void SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> push);
 
     /// @brief The first live node named @p name, or a null id. A scan: look a
     /// name up once and keep the id.

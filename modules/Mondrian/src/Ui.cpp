@@ -180,6 +180,29 @@ InputResult Ui::ProcessInput(const UiInput &input)
     ASSISI_ASSERT(_nextStep == FrameStep::AwaitingInput, "Ui::ProcessInput called twice without a Sync between");
     _nextStep = FrameStep::AwaitingSync;
 
+    const InputResult result = Interact(input);
+    Announce();
+    return result;
+}
+
+void Ui::Announce()
+{
+    if (_events == nullptr)
+    {
+        return;
+    }
+    if (const Node *activated = _tree.Get(_interaction.activated); activated != nullptr && activated->onActivate)
+    {
+        activated->onActivate(*_events);
+    }
+    if (_interaction.backPressed)
+    {
+        _events->Push(UiBack{});
+    }
+}
+
+InputResult Ui::Interact(const UiInput &input)
+{
     InputResult result;
     Interaction &now = _interaction;
     now.activated = {};

@@ -499,7 +499,9 @@
     "CaptureCursor",
     "CursorToggle",
     "InputDemo",
-    "PrettyTravel"
+    "PrettyTravel",
+    "SampleMenu",
+    "SampleMenuLog"
   ],
   "version": 2
 }
