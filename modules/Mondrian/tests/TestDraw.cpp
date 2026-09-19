@@ -39,7 +39,7 @@ DrawList Draw(const NodeTree &tree, const Font &font, Extent viewport = kReferen
     LayoutResult layout;
     ComputeLayout(tree, viewport, scale, &font, layout);
     DrawList list;
-    DrawTree(tree, layout, list, kAtlas);
+    DrawTree(tree, layout, list, kAtlas, Interaction{});
     return list;
 }
 
@@ -123,7 +123,7 @@ TEST_CASE("Draw: text draws from the font atlas inside its node, clipped with it
 {
     NodeTree tree;
     Style listStyle = Filled(100.f, 30.f, 0.4f);
-    listStyle.scroll = {false, true};
+    listStyle.enabledScrollBars = {false, true};
     listStyle.direction = Direction::Column;
     const NodeId list = tree.Create(tree.Root());
     tree.SetStyle(list, listStyle);

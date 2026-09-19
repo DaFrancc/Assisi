@@ -207,7 +207,7 @@ void EditorApp::UpdateCamera(float dt)
 
     if (!imguiWantsMouse)
     {
-        const float scroll = input.ScrollDelta();
+        const float scroll = input.ScrollDelta().y;
         if (scroll != 0.f)
             _camera.fovDegrees = glm::clamp(_camera.fovDegrees - (scroll * 5.f), 10.f, 120.f);
     }

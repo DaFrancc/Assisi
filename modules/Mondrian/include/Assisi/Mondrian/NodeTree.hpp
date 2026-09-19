@@ -10,7 +10,9 @@
 /// given one does nothing and every read returns empty. Main thread only.
 
 #include <Assisi/Mondrian/DrawList.hpp>
+#include <Assisi/Mondrian/NodeId.hpp>
 #include <Assisi/Mondrian/Style.hpp>
+#include <Assisi/Mondrian/Widget.hpp>
 
 #include <Assisi/Core/EventQueue.hpp>
 
@@ -26,18 +28,6 @@
 
 namespace Assisi::Mondrian
 {
-
-/// @brief A node, by slot and generation.
-struct NodeId
-{
-    static constexpr uint32_t kNullIndex = std::numeric_limits<uint32_t>::max();
-
-    uint32_t index = kNullIndex;
-    uint32_t generation = 0;
-
-    bool operator==(const NodeId &) const = default;
-    [[nodiscard]] explicit operator bool() const { return index != kNullIndex; }
-};
 
 /// @brief The four ways focus moves on the screen.
 enum class NavDirection : uint8_t
@@ -60,11 +50,23 @@ struct Node
     /// Pushes this node's event when it is clicked or accepted; empty for none.
     /// Set through Ui::OnActivate, which is what knows the event's type.
     std::function<void(Core::EventQueue &)> onActivate;
+    /// Pushes this node's event when its value changes; empty for none. Set
+    /// through Ui::OnChange, which is what knows the event's type.
+    std::function<void(Core::EventQueue &, const WidgetValue &)> onChange;
+    /// What the control on this node holds; nothing on a node that is none.
+    WidgetValue value;
+    /// What a slider's ends mean; unused on everything else.
+    SliderRange range;
+    /// How many positions a stepped control has; zero on everything else.
+    int32_t steps = 0;
     /// Where focus goes from here in each direction, overriding the nearest
     /// node there; null to take the nearest.
     std::array<NodeId, kNavDirectionCount> navOverride{};
     Rect imageUv{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
     Point scrollOffset; ///< logical pixels scrolled into the content, per axis
+    /// Where the scrolling is headed, which the offset reaches at once unless
+    /// the style asks it to take its time.
+    Point scrollTarget;
     NodeId parent;
     NodeId firstChild;
     NodeId nextSibling;
@@ -78,6 +80,12 @@ struct Node
     bool enabled = true;        ///< a disabled focusable node still stops the pointer, and does nothing else
     bool blocksPointer = false; ///< stops the pointer without taking focus
     bool takesKeyboard = false; ///< while focused, has the keyboard even when the game has it
+    /// Which scroll bar is being dragged, while one is.
+    ScrollGrab scrollGrab = ScrollGrab::None;
+    /// Whether a slider carries a button at each end.
+    SliderButtons sliderButtons = SliderButtons::Hidden;
+    /// Whether a slider's held press began on its track rather than a button.
+    bool slidingTrack = false;
 };
 
 class NodeTree
@@ -96,6 +104,8 @@ class NodeTree
     void Destroy(NodeId id);
 
     void SetText(NodeId id, std::string_view text);
+    /// @brief What Find looks @p id up by, replacing the name it was made with.
+    void SetName(NodeId id, std::string_view name);
     void SetVisible(NodeId id, bool visible);
     void SetStyle(NodeId id, const Style &style);
     /// @brief Draws @p texture over @p uv across the node, over its background.
@@ -115,6 +125,30 @@ class NodeTree
     void SetNavOverride(NodeId id, NavDirection direction, NodeId target);
     /// @brief What @p id does when clicked or accepted, replacing what it did.
     void SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> push);
+    /// @brief What @p id does when its value changes, replacing what it did.
+    void SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const WidgetValue &)> push);
+    /// @brief What the control on @p id holds.
+    void SetValue(NodeId id, WidgetValue value);
+    /// @brief How many positions the stepped control on @p id has.
+    void SetSteps(NodeId id, int32_t steps);
+    /// @brief What the ends of the slider on @p id mean.
+    void SetRange(NodeId id, SliderRange range);
+    /// @brief Whether the slider on @p id carries a button at each end.
+    void SetSliderButtons(NodeId id, SliderButtons buttons);
+
+    /// @brief The kinds of control this tree's nodes may name. Every tree has
+    /// the built-ins; a game registers its own beside them.
+    [[nodiscard]] WidgetRegistry &Widgets() { return _widgets; }
+    [[nodiscard]] const WidgetRegistry &Widgets() const { return _widgets; }
+    /// @brief The type @p id's behaviour names, or null when it is no control.
+    [[nodiscard]] const WidgetType *WidgetOf(NodeId id) const;
+
+    /// @brief @p id for a control to change, or null when it names none.
+    ///
+    /// What a control's input callback is given, so it can move its own value
+    /// or scroll offset. The links between nodes are the tree's own: change
+    /// those through the calls above, which keep them consistent.
+    [[nodiscard]] Node *Editable(NodeId id) { return GetMutable(id); }
 
     /// @brief The first live node named @p name, or a null id. A scan: look a
     /// name up once and keep the id.
@@ -134,6 +168,7 @@ class NodeTree
     Node *GetMutable(NodeId id);
     void Unlink(NodeId id);
 
+    WidgetRegistry _widgets;
     std::vector<Node> _slots;
     std::vector<uint32_t> _free;
     NodeId _root;

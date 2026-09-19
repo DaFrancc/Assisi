@@ -149,7 +149,7 @@ TEST_CASE("Navigation: scrolling into view moves each scrolling ancestor just fa
     Scene scene;
     Style scroller = FloatingBox(0.f, 0.f, 100.f, 100.f);
     scroller.direction = Direction::Column;
-    scroller.scroll = {false, true};
+    scroller.enabledScrollBars = {false, true};
     const NodeId list = scene.tree.Create(scene.tree.Root());
     scene.tree.SetStyle(list, scroller);
     const NodeId first = scene.Add(list, Box(100.f, 80.f));

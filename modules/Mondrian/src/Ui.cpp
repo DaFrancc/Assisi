@@ -24,6 +24,41 @@ constexpr float kFocusRingWidth = 3.f;
 constexpr float kFocusRingGap = 3.f;
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.f};
 
+/// The actions that move focus, which a focused control may take instead.
+constexpr std::array kMoveActions{UiAction::Up,    UiAction::Down, UiAction::Left,
+                                  UiAction::Right, UiAction::Next, UiAction::Previous};
+
+/// One gesture at @p pointer, with nothing else to say.
+WidgetEvent PointerGesture(WidgetGesture gesture, Point pointer)
+{
+    WidgetEvent event;
+    event.gesture = gesture;
+    event.pointer = pointer;
+    return event;
+}
+
+WidgetEvent DragGesture(Point pointer, Point delta)
+{
+    WidgetEvent event = PointerGesture(WidgetGesture::Drag, pointer);
+    event.pointerDelta = delta;
+    return event;
+}
+
+WidgetEvent WheelGesture(Point pointer, Point wheel)
+{
+    WidgetEvent event = PointerGesture(WidgetGesture::Wheel, pointer);
+    event.wheel = wheel;
+    return event;
+}
+
+WidgetEvent ActionGesture(UiAction action)
+{
+    WidgetEvent event;
+    event.gesture = WidgetGesture::Action;
+    event.action = action;
+    return event;
+}
+
 // The sample screen shown while no real screen exists: a panel centred on the
 // screen with a picture and title, a wrapped paragraph and a row of buttons,
 // and a badge floating over its corner. It exercises every kind of sizing, so a
@@ -49,6 +84,14 @@ constexpr float kBodySize = 24.f;
 constexpr float kButtonSize = 28.f;
 constexpr float kButtonRadius = 10.f;
 constexpr Padding kButtonPadding{.left = 28.f, .top = 10.f, .right = 28.f, .bottom = 10.f};
+constexpr SliderRange kSampleSliderRange{.min = 0.f, .max = 100.f, .step = 5.f};
+constexpr float kSampleSliderStart = 60.f;
+constexpr SliderRange kSampleStepRange{.min = 0.f, .max = 3.f, .step = 1.f};
+constexpr int32_t kSampleSliderSteps = 4;
+constexpr int32_t kSampleSliderStep = 1;
+constexpr float kSampleListHeight = 150.f;
+constexpr float kSampleScrollSmoothing = 0.12f;
+constexpr Math::Color4<Math::ColorSpace::Srgb> kListColor{0.06f, 0.07f, 0.09f, 1.f};
 constexpr float kBadgeSize = 20.f;
 constexpr float kBadgeRadius = 16.f;
 constexpr Padding kBadgePadding{.left = 14.f, .top = 4.f, .right = 14.f, .bottom = 4.f};
@@ -84,7 +127,9 @@ void AddButton(NodeTree &tree, NodeId row, std::string_view label, const Style &
     Style style = look;
     style.padding = kButtonPadding;
     style.textSize = kButtonSize;
-    tree.SetFocusable(AddText(tree, row, label, style, label), true);
+    const NodeId id = AddText(tree, row, label, style, label);
+    tree.SetFocusable(id, true);
+    tree.SetBehaviour(id, static_cast<uint32_t>(BuiltinWidget::Button));
 }
 
 /// Builds the sample screen under @p tree's root, returning its picture.
@@ -166,8 +211,217 @@ NodeId BuildSampleScreen(NodeTree &tree)
 
 } // namespace
 
-Ui::Ui() : _picture(BuildSampleScreen(_tree))
+Ui::Ui()
 {
+    // Before the screen, so the nodes it makes can name the built-ins.
+    RegisterBuiltinWidgets(_tree.Widgets());
+    _picture = BuildSampleScreen(_tree);
+    AddSampleControls();
+}
+
+void Ui::AddSampleControls()
+{
+    const NodeId panel = _tree.Find("panel");
+
+    Style row;
+    row.sizing = {Sizing::Grow(), Sizing::Fit()};
+    row.gap = kPanelGap;
+    row.childAlign = {Alignment::Start, Alignment::Center};
+    const NodeId controls = Add(_tree, panel, "controls", row);
+    AddToggle(controls, true);
+    const ContinuousSliderId volume = AddContinuousSlider(controls, kSampleSliderRange, kSampleSliderStart);
+    SetButtons(volume, SliderButtons::Shown);
+    AddSteppedSlider(controls, kSampleStepRange, kSampleSliderSteps, kSampleSliderStep);
+
+    Style list;
+    list.sizing = {Sizing::Grow(), Sizing::Fixed(kSampleListHeight)};
+    list.direction = Direction::Column;
+    list.background = kListColor;
+    list.cornerRadius = kButtonRadius;
+    list.cornerStyle = CornerStyle::Rounded;
+    list.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
+    list.scrollSmoothing = kSampleScrollSmoothing;
+    const NodeId scroller = AddScroll(panel, list, {false, true});
+    _tree.SetName(scroller, "list");
+
+    Style entry;
+    entry.sizing = {Sizing::Grow(), Sizing::Fit()};
+    entry.padding = kButtonPadding;
+    entry.textSize = kButtonSize;
+    for (const std::string_view label : {"One", "Two", "Three", "Four", "Five"})
+    {
+        const NodeId id = AddText(_tree, scroller, label, entry, label);
+        _tree.SetFocusable(id, true);
+        _tree.SetBehaviour(id, static_cast<uint32_t>(BuiltinWidget::Button));
+    }
+}
+
+ButtonId Ui::AddButton(NodeId parent, std::string_view label)
+{
+    const NodeId node = _tree.Create(parent, label);
+    _tree.SetText(node, label);
+    _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::Button));
+    _tree.SetFocusable(node, true);
+    return {.node = node};
+}
+
+ToggleId Ui::AddToggle(NodeId parent, bool on)
+{
+    const NodeId node = _tree.Create(parent);
+    _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::Toggle));
+    _tree.SetFocusable(node, true);
+    _tree.SetValue(node, on);
+    return {.node = node};
+}
+
+ContinuousSliderId Ui::AddContinuousSlider(NodeId parent, SliderRange range, float value)
+{
+    const NodeId node = _tree.Create(parent);
+    _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::ContinuousSlider));
+    _tree.SetFocusable(node, true);
+    _tree.SetRange(node, range);
+    _tree.SetValue(node, std::clamp(value, range.min, range.max));
+    return {.node = node};
+}
+
+SteppedSliderId Ui::AddSteppedSlider(NodeId parent, SliderRange range, int32_t steps, int32_t step)
+{
+    const NodeId node = _tree.Create(parent);
+    _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::SteppedSlider));
+    _tree.SetFocusable(node, true);
+    _tree.SetRange(node, range);
+    _tree.SetSteps(node, std::max(1, steps));
+    _tree.SetValue(node, std::clamp(step, 0, std::max(0, steps - 1)));
+    return {.node = node};
+}
+
+void Ui::SetRange(ContinuousSliderId slider, SliderRange range)
+{
+    _tree.SetRange(slider.node, range);
+    SetValue(slider, GetValue(slider));
+}
+
+void Ui::SetRange(SteppedSliderId slider, SliderRange range)
+{
+    _tree.SetRange(slider.node, range);
+}
+
+void Ui::SetButtons(ContinuousSliderId slider, SliderButtons buttons)
+{
+    _tree.SetSliderButtons(slider.node, buttons);
+}
+
+void Ui::SetButtons(SteppedSliderId slider, SliderButtons buttons)
+{
+    _tree.SetSliderButtons(slider.node, buttons);
+}
+
+SliderRange Ui::GetRange(ContinuousSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? node->range : SliderRange{};
+}
+
+SliderRange Ui::GetRange(SteppedSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? node->range : SliderRange{};
+}
+
+float Ui::GetFraction(ContinuousSliderId slider) const
+{
+    const SliderRange range = GetRange(slider);
+    const float span = range.max - range.min;
+    return span > 0.f ? std::clamp((GetValue(slider) - range.min) / span, 0.f, 1.f) : 0.f;
+}
+
+float Ui::GetFraction(SteppedSliderId slider) const
+{
+    const int32_t steps = GetSteps(slider);
+    return steps > 1 ? static_cast<float>(GetValue(slider)) / static_cast<float>(steps - 1) : 0.f;
+}
+
+int32_t Ui::GetSteps(SteppedSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? node->steps : 0;
+}
+
+float Ui::GetStepValue(SteppedSliderId slider, int32_t step) const
+{
+    const SliderRange range = GetRange(slider);
+    const int32_t steps = GetSteps(slider);
+    if (steps <= 1)
+    {
+        return range.min;
+    }
+    const float part = static_cast<float>(std::clamp(step, 0, steps - 1)) / static_cast<float>(steps - 1);
+    return range.min + (part * (range.max - range.min));
+}
+
+float Ui::GetValue(ContinuousSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? Held<float>(node->value) : 0.f;
+}
+
+int32_t Ui::GetValue(SteppedSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? Held<int32_t>(node->value) : 0;
+}
+
+Rect Ui::GetThumbRect(ContinuousSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? SliderThumbRect(*node, _layout.Get(slider.node), _layout.scale, GetFraction(slider))
+                           : Rect{};
+}
+
+Rect Ui::GetThumbRect(SteppedSliderId slider) const
+{
+    const Node *node = _tree.Get(slider.node);
+    return node != nullptr ? SliderThumbRect(*node, _layout.Get(slider.node), _layout.scale, GetFraction(slider))
+                           : Rect{};
+}
+
+NodeId Ui::AddScroll(NodeId parent, const Style &style, std::array<bool, kAxisCount> axes)
+{
+    const NodeId node = _tree.Create(parent);
+    Style scrolling = style;
+    scrolling.enabledScrollBars = axes;
+    _tree.SetStyle(node, scrolling);
+    _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::Scroll));
+    // Its own background is what a drag scrolls, and a press on it is the UI's
+    // rather than the game's.
+    _tree.SetBlocksPointer(node, true);
+    return node;
+}
+
+void Ui::SetValue(ContinuousSliderId slider, float value)
+{
+    const SliderRange range = GetRange(slider);
+    if (_interaction.pressed != slider.node)
+    {
+        _tree.SetValue(slider.node, std::clamp(value, range.min, range.max));
+    }
+}
+
+void Ui::SetValue(ToggleId toggle, bool on)
+{
+    if (_interaction.pressed != toggle.node)
+    {
+        _tree.SetValue(toggle.node, on);
+    }
+}
+
+void Ui::SetValue(SteppedSliderId slider, int32_t step)
+{
+    const Node *node = _tree.Get(slider.node);
+    if (node != nullptr && _interaction.pressed != slider.node)
+    {
+        _tree.SetValue(slider.node, std::clamp(step, 0, std::max(0, node->steps - 1)));
+    }
 }
 
 void Ui::SetPlaceholderTexture(TextureId texture)
@@ -181,6 +435,12 @@ InputResult Ui::ProcessInput(const UiInput &input)
     _nextStep = FrameStep::AwaitingSync;
 
     const InputResult result = Interact(input);
+    AdvanceScrolling(std::max(0.0, input.time - _lastTime));
+    _lastTime = input.time;
+    if (_interaction.activated)
+    {
+        Dispatch(_interaction.activated, PointerGesture(WidgetGesture::Activate, _lastPointer));
+    }
     Announce();
     return result;
 }
@@ -189,16 +449,89 @@ void Ui::Announce()
 {
     if (_events == nullptr)
     {
+        _changed.clear();
         return;
     }
     if (const Node *activated = _tree.Get(_interaction.activated); activated != nullptr && activated->onActivate)
     {
         activated->onActivate(*_events);
     }
+    for (const NodeId id : _changed)
+    {
+        if (const Node *node = _tree.Get(id); node != nullptr && node->onChange)
+        {
+            node->onChange(*_events, node->value);
+        }
+    }
+    _changed.clear();
     if (_interaction.backPressed)
     {
         _events->Push(UiBack{});
     }
+}
+
+void Ui::AdvanceScrolling(double seconds)
+{
+    // Within half a logical pixel is arrived: the rest would creep for frames
+    // nobody can see, and layout snaps to whole pixels anyway.
+    constexpr float kSettled = 0.5f;
+
+    for (uint32_t index = 0; index < _tree.Slots().size(); ++index)
+    {
+        const NodeId id = _tree.IdOf(index);
+        Node *node = _tree.Editable(id);
+        if (node == nullptr || node->style.scrollSmoothing <= 0.f)
+        {
+            continue;
+        }
+        const float part = std::min(1.f, static_cast<float>(seconds) / node->style.scrollSmoothing);
+        const auto approach = [part](float offset, float target)
+        { return std::abs(target - offset) <= kSettled ? target : offset + ((target - offset) * part); };
+
+        node->scrollOffset.x = approach(node->scrollOffset.x, node->scrollTarget.x);
+        node->scrollOffset.y = approach(node->scrollOffset.y, node->scrollTarget.y);
+    }
+}
+
+WidgetResponse Ui::Dispatch(NodeId id, const WidgetEvent &event)
+{
+    const WidgetType *widget = _tree.WidgetOf(id);
+    const LayoutNode *placed = _layout.Get(id);
+    Node *node = _tree.Editable(id);
+    if (widget == nullptr || widget->input == nullptr || placed == nullptr || node == nullptr)
+    {
+        return WidgetResponse::Ignored;
+    }
+
+    const WidgetView view{.node = node,
+                          .layout = placed,
+                          .context = widget->context,
+                          .scale = _layout.scale,
+                          .id = id,
+                          .focused = _interaction.focused == id,
+                          .pressed = _interaction.pressed == id,
+                          .hovered = _interaction.hovered == id};
+    const WidgetResponse response = widget->input(view, *node, event);
+    if (response == WidgetResponse::Changed && std::ranges::find(_changed, id) == _changed.end())
+    {
+        _changed.push_back(id);
+    }
+    return response;
+}
+
+bool Ui::DispatchWheel(NodeId hit, const UiInput &input)
+{
+    const WidgetEvent event = WheelGesture(input.pointer, input.wheel);
+    // Up the tree from whatever the pointer is over: a wheel over a button
+    // inside a list scrolls the list, as it does everywhere else.
+    for (NodeId id = hit; id; id = _tree.Get(id)->parent)
+    {
+        if (Dispatch(id, event) != WidgetResponse::Ignored)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 InputResult Ui::Interact(const UiInput &input)
@@ -217,7 +550,8 @@ InputResult Ui::Interact(const UiInput &input)
         now.focused = FirstFocusable(_tree, _layout);
     }
 
-    const bool moved = input.pointer.x != _lastPointer.x || input.pointer.y != _lastPointer.y;
+    const Point delta{.x = input.pointer.x - _lastPointer.x, .y = input.pointer.y - _lastPointer.y};
+    const bool moved = delta.x != 0.f || delta.y != 0.f;
     _lastPointer = input.pointer;
     if (input.grant == InputGrant::Nothing || input.pointerClaimed)
     {
@@ -240,20 +574,38 @@ InputResult Ui::Interact(const UiInput &input)
         {
             result.pointerUsed = static_cast<bool>(hit);
             now.pressed = now.hovered;
+            // A control that takes no focus still keeps the pointer while it is
+            // held: a scroll container is dragged, not focused.
+            if (!now.pressed && _tree.WidgetOf(hit) != nullptr)
+            {
+                now.pressed = hit;
+            }
             // A click on the game takes focus off the UI, so keys it held go back.
             if (now.hovered || input.grant == InputGrant::Pointer)
             {
                 now.focused = now.hovered;
             }
+            Dispatch(now.pressed, PointerGesture(WidgetGesture::Press, input.pointer));
+        }
+        // The press is kept while the pointer wanders, so a slider still follows
+        // a cursor that has left it.
+        if (input.primaryDown && !input.primaryPressed && moved && now.pressed)
+        {
+            Dispatch(now.pressed, DragGesture(input.pointer, delta));
         }
         if (input.primaryReleased && now.pressed)
         {
             result.pointerUsed = true;
+            Dispatch(now.pressed, PointerGesture(WidgetGesture::Release, input.pointer));
             if (now.pressed == now.hovered)
             {
                 now.activated = now.pressed;
             }
             now.pressed = {};
+        }
+        if (input.wheel.x != 0.f || input.wheel.y != 0.f)
+        {
+            result.wheelUsed = DispatchWheel(hit, input);
         }
     }
 
@@ -279,29 +631,46 @@ InputResult Ui::Interact(const UiInput &input)
     return result;
 }
 
-void Ui::Navigate(const UiInput &input)
+std::array<bool, kUiActionCount> Ui::FiredActions(const UiInput &input)
 {
-    constexpr std::array kMoves{UiAction::Up,    UiAction::Down, UiAction::Left,
-                                UiAction::Right, UiAction::Next, UiAction::Previous};
     const auto at = [](UiAction action) { return static_cast<std::size_t>(action); };
+    std::array<bool, kUiActionCount> fired = input.actionPressed;
 
     if (_repeating != UiAction::Count && !input.actionDown[at(_repeating)])
     {
         _repeating = UiAction::Count;
     }
-    for (const UiAction action : kMoves)
+    for (const UiAction action : kMoveActions)
     {
         if (input.actionPressed[at(action)])
         {
-            Move(action);
             _repeating = action;
             _repeatAt = input.time + kNavRepeatDelaySeconds;
         }
     }
     if (_repeating != UiAction::Count && !input.actionPressed[at(_repeating)] && input.time >= _repeatAt)
     {
-        Move(_repeating);
+        fired[at(_repeating)] = true;
         _repeatAt += kNavRepeatIntervalSeconds;
+    }
+    return fired;
+}
+
+void Ui::Navigate(const UiInput &input)
+{
+    const std::array<bool, kUiActionCount> fired = FiredActions(input);
+    for (const UiAction action : kMoveActions)
+    {
+        if (!fired[static_cast<std::size_t>(action)])
+        {
+            continue;
+        }
+        // The focused control has first claim on a direction: a slider steps on
+        // Left and Right rather than handing focus to whatever sits beside it.
+        if (Dispatch(_interaction.focused, ActionGesture(action)) == WidgetResponse::Ignored)
+        {
+            Move(action);
+        }
     }
 }
 
@@ -382,7 +751,7 @@ void Ui::Sync(Extent viewport)
     if (scale > 0.f)
     {
         ComputeLayout(_tree, viewport, scale, _font, _layout);
-        DrawTree(_tree, _layout, _drawList, _fontAtlas);
+        DrawTree(_tree, _layout, _drawList, _fontAtlas, _interaction);
         DrawFocusRing();
     }
     _drawList.Finalize();

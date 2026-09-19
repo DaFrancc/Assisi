@@ -202,7 +202,7 @@ TEST_CASE("Layout: an overflowing row shrinks its widest children first, never b
     {
         Scene scene;
         Style rowStyle = Box(Sizing::Fixed(100.f), Sizing::Fit());
-        rowStyle.scroll = {true, false};
+        rowStyle.enabledScrollBars = {true, false};
         const NodeId row = scene.Add(scene.tree.Root(), rowStyle);
         const NodeId wide = scene.AddText(row, "AA AA");
         scene.AddText(row, "AA");
@@ -310,7 +310,7 @@ TEST_CASE("Layout: a scroll offset moves children, clips them, and stops at the 
 {
     Scene scene;
     Style listStyle = Box(Sizing::Fixed(100.f), Sizing::Fixed(100.f), Direction::Column);
-    listStyle.scroll = {false, true};
+    listStyle.enabledScrollBars = {false, true};
     const NodeId list = scene.Add(scene.tree.Root(), listStyle);
     const NodeId first = scene.Add(list, Box(Sizing::Fixed(80.f), Sizing::Fixed(80.f)));
     const NodeId second = scene.Add(list, Box(Sizing::Fixed(80.f), Sizing::Fixed(80.f)));

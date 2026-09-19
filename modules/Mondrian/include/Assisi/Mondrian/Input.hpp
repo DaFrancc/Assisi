@@ -11,6 +11,7 @@
 
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
+#include <Assisi/Mondrian/Widget.hpp>
 
 #include <array>
 #include <cstddef>
@@ -18,22 +19,6 @@
 
 namespace Assisi::Mondrian
 {
-
-/// @brief What the keyboard, or later a gamepad, asks of the UI.
-enum class UiAction : uint8_t
-{
-    Up,
-    Down,
-    Left,
-    Right,
-    Accept,
-    Back,
-    Next,     ///< Tab order forward
-    Previous, ///< Tab order backward
-    Count
-};
-
-inline constexpr std::size_t kUiActionCount = static_cast<std::size_t>(UiAction::Count);
 
 /// @brief How much of the input the host gives the UI this frame.
 enum class InputGrant : uint8_t
@@ -60,6 +45,9 @@ struct UiInput
     Point pointer;     ///< device pixels, the space layout places nodes in
     std::array<bool, kUiActionCount> actionPressed{};
     std::array<bool, kUiActionCount> actionDown{};
+    /// Notches scrolled this frame: y away from the player, x sideways, which a
+    /// tilting wheel, a trackpad, or the host's Shift and wheel together send.
+    Point wheel;
     InputGrant grant = InputGrant::Nothing;
     bool primaryDown = false;
     bool primaryPressed = false;
@@ -73,6 +61,7 @@ struct InputResult
 {
     bool pointerUsed = false;   ///< the primary button's press or release was the UI's
     bool keyboardTaken = false; ///< the UI read the keyboard this frame
+    bool wheelUsed = false;     ///< a control scrolled on this frame's wheel
 };
 
 /// @brief Where the pointer and focus are, as of the last ProcessInput.

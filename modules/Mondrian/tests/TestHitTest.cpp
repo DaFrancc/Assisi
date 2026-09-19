@@ -103,7 +103,7 @@ TEST_CASE("HitTest: a floating child escapes its scrolling parent's clip unless 
 {
     Scene scene;
     Style scroller = FloatingBox(0.f, 0.f, 100.f, 100.f);
-    scroller.scroll = {true, true};
+    scroller.enabledScrollBars = {true, true};
     const NodeId parent = scene.Add(scene.tree.Root(), scroller);
     Style outside = FloatingBox(150.f, 0.f, 50.f, 50.f);
     const NodeId child = scene.AddFocusable(parent, outside);
@@ -121,7 +121,7 @@ TEST_CASE("HitTest: content scrolled out of view is not hit, and is once scrolle
     Scene scene;
     Style scroller = FloatingBox(0.f, 0.f, 100.f, 100.f);
     scroller.direction = Direction::Column;
-    scroller.scroll = {false, true};
+    scroller.enabledScrollBars = {false, true};
     const NodeId list = scene.Add(scene.tree.Root(), scroller);
     const NodeId first = scene.AddFocusable(list, Box(100.f, 80.f));
     const NodeId second = scene.AddFocusable(list, Box(100.f, 80.f));
