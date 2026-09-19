@@ -269,7 +269,7 @@ TEST_CASE("A fresh install pins neither the window size nor the bindings")
 TEST_CASE("A chosen window size and a rebound action survive a write and a read")
 {
     OptionsConfig written;
-    written.width  = 1920;
+    written.width = 1920;
     written.height = 1080;
     written.bindings.actions[Assisi::Core::ShortString("Jump")] = {Assisi::Core::ShortString("F")};
 
@@ -281,6 +281,23 @@ TEST_CASE("A chosen window size and a rebound action survive a write and a read"
     CHECK(*read.height == 1080);
     REQUIRE(read.bindings.actions.size() == 1);
     CHECK(read.bindings.actions.at(Assisi::Core::ShortString("Jump")).front().View() == "F");
+}
+
+TEST_CASE("A chosen tap interval survives a write and a read, and is used only when the game allows it")
+{
+    constexpr double kPlayerChoice = 0.45;
+    OptionsConfig written;
+    written.multiTapSeconds = kPlayerChoice;
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    REQUIRE(read.multiTapSeconds.has_value());
+    CHECK(*read.multiTapSeconds == kPlayerChoice);
+
+    AppConfig game;
+    CHECK(read.MultiTapSeconds(game) == kPlayerChoice);
+    CHECK(OptionsConfig{}.MultiTapSeconds(game) == game.multiTapSeconds);
+
+    game.playerSetsMultiTap = false;
+    CHECK(read.MultiTapSeconds(game) == game.multiTapSeconds);
 }
 
 TEST_CASE("What the player changed survives a restart")

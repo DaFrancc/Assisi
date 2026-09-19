@@ -2,6 +2,7 @@ add_executable(Assisi-Window-Tests
   main.cpp
   TestActionMap.cpp
   TestInputBindings.cpp
+  TestInputContext.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Window-Tests)

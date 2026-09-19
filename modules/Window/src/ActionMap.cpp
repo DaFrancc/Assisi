@@ -164,6 +164,20 @@ bool ActionBinding::IsReleased(const InputContext &ctx) const noexcept
         input);
 }
 
+uint32_t ActionBinding::TapCount(const InputContext &ctx) const noexcept
+{
+    return std::visit(
+        [&](auto v)
+        {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, Key>)
+                return ctx.TapCount(v);
+            else
+                return ctx.ClickCount(v);
+        },
+        input);
+}
+
 // ---------------------------------------------------------------------------
 // ActionMap — static data
 // ---------------------------------------------------------------------------
@@ -229,6 +243,21 @@ bool ActionMap::IsActionReleased(std::string_view action, const InputContext &in
         return false;
     return std::ranges::any_of(it->second,
                                [&](const ActionBinding &b) { return b.IsReleased(input); });
+}
+
+uint32_t ActionMap::ActionTapCount(std::string_view action, const InputContext &input) const
+{
+    const auto it = _actions.find(action);
+    if (it == _actions.end())
+    {
+        return 0;
+    }
+    uint32_t longest = 0;
+    for (const ActionBinding &binding : it->second)
+    {
+        longest = std::max(longest, binding.TapCount(input));
+    }
+    return longest;
 }
 
 // ---------------------------------------------------------------------------

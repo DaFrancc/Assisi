@@ -13,6 +13,7 @@
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Math/Color.hpp>
+#include <Assisi/Window/InputEvent.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -51,14 +52,18 @@ struct AppConfig
 {
     AFIELD() double physicsHz = 60.0;
 
-    AFIELD() Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> clearColor{0.15f, 0.15f, 0.18f, 1.f};
+    /// @brief The longest gap between presses that still continues a double
+    /// tap (or a longer run), in seconds: the game's standard.
+    AFIELD() double multiTapSeconds = Window::kDefaultMultiTapSeconds;
+
+    AFIELD() Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> clearColor { 0.15f, 0.15f, 0.18f, 1.f };
 
     /// @brief The window size a fresh install starts at.
     ///
     /// A default, not the answer: a player's chosen resolution is stored under
     /// the user root and applied over this, so a patch that changes what ships
     /// does not undo what they picked.
-    AFIELD() int32_t width  = 1280;
+    AFIELD() int32_t width = 1280;
     AFIELD() int32_t height = 720;
 
     /// @brief How many past runs' logs to keep.
@@ -92,13 +97,17 @@ struct AppConfig
     /// that takes the screen down belongs in a Loaded system whichever this says.
     AFIELD() SimulateFrom simulateFrom = SimulateFrom::Begin;
 
+    /// @brief Whether a player's own tap interval, from their options, replaces
+    /// multiTapSeconds. Off holds every player to the standard.
+    AFIELD() bool playerSetsMultiTap = true;
+
     /// @brief The OS window title.
     ///
     /// Sixty-four bytes rather than thirty-two: a title is product branding, it
     /// runs long ("Studio — Game Name (Early Access)"), and an inline string
     /// truncates on assignment without telling anyone. The wider capacity puts
     /// the cut out of reach instead of leaving a silent one halfway through.
-    AFIELD() Assisi::Core::TrivialString<64> title{"Assisi Game"};
+    AFIELD() Assisi::Core::TrivialString<64> title { "Assisi Game" };
 
     /// @brief The scene the game opens at boot — a virtual path or an asset GUID.
     ///
@@ -112,7 +121,7 @@ struct AppConfig
     /// on assignment in silence. A cut one does not resolve, so it surfaces as
     /// the startup refusal naming the truncated text rather than as a game that
     /// opens the wrong scene.
-    AFIELD() Assisi::Core::TrivialString<64> startupScene{};
+    AFIELD() Assisi::Core::TrivialString<64> startupScene {};
 
     /// @brief Parse @p text as a game config document.
     ///

@@ -41,6 +41,131 @@ void WindowContext::InstallCallbacks()
     glfwSetFramebufferSizeCallback(_nativeWindowHandle, FramebufferSizeTrampoline);
     glfwSetScrollCallback(_nativeWindowHandle, ScrollTrampoline);
     glfwSetWindowRefreshCallback(_nativeWindowHandle, WindowRefreshTrampoline);
+    glfwSetKeyCallback(_nativeWindowHandle, KeyTrampoline);
+    glfwSetCharCallback(_nativeWindowHandle, CharacterTrampoline);
+    glfwSetMouseButtonCallback(_nativeWindowHandle, MouseButtonTrampoline);
+    glfwSetCursorPosCallback(_nativeWindowHandle, CursorPositionTrampoline);
+}
+
+namespace
+{
+
+static_assert(static_cast<int>(KeyAction::Release) == GLFW_RELEASE);
+static_assert(static_cast<int>(KeyAction::Press) == GLFW_PRESS);
+static_assert(static_cast<int>(KeyAction::Repeat) == GLFW_REPEAT);
+
+Modifiers DecodeModifiers(int mods)
+{
+    return Modifiers{.shift = (mods & GLFW_MOD_SHIFT) != 0,
+                     .control = (mods & GLFW_MOD_CONTROL) != 0,
+                     .alt = (mods & GLFW_MOD_ALT) != 0,
+                     .super = (mods & GLFW_MOD_SUPER) != 0,
+                     .capsLock = (mods & GLFW_MOD_CAPS_LOCK) != 0,
+                     .numLock = (mods & GLFW_MOD_NUM_LOCK) != 0};
+}
+
+WindowContext *Owner(GLFWwindow *window)
+{
+    return static_cast<WindowContext *>(glfwGetWindowUserPointer(window));
+}
+
+} // namespace
+
+void WindowContext::KeyTrampoline(GLFWwindow *window, int key, int scancode, int action, int mods)
+{
+    WindowContext *self = Owner(window);
+    if (self == nullptr || key == GLFW_KEY_UNKNOWN)
+    {
+        return;
+    }
+    const KeyEvent event{.time = glfwGetTime(),
+                         .key = static_cast<Key>(key),
+                         .scancode = scancode,
+                         .action = static_cast<KeyAction>(action),
+                         .modifiers = DecodeModifiers(mods)};
+    for (const auto &callback : self->_keyCallbacks)
+    {
+        callback(event);
+    }
+}
+
+void WindowContext::CharacterTrampoline(GLFWwindow *window, unsigned int codepoint)
+{
+    if (WindowContext *self = Owner(window))
+    {
+        for (const auto &callback : self->_characterCallbacks)
+        {
+            callback(static_cast<char32_t>(codepoint));
+        }
+    }
+}
+
+void WindowContext::MouseButtonTrampoline(GLFWwindow *window, int button, int action, int mods)
+{
+    if (WindowContext *self = Owner(window))
+    {
+        const MouseButtonEvent event{.time = glfwGetTime(),
+                                     .button = static_cast<MouseButton>(button),
+                                     .action = static_cast<KeyAction>(action),
+                                     .modifiers = DecodeModifiers(mods)};
+        for (const auto &callback : self->_mouseButtonCallbacks)
+        {
+            callback(event);
+        }
+    }
+}
+
+void WindowContext::CursorPositionTrampoline(GLFWwindow *window, double x, double y)
+{
+    if (WindowContext *self = Owner(window))
+    {
+        for (const auto &callback : self->_cursorPositionCallbacks)
+        {
+            callback(x, y);
+        }
+    }
+}
+
+void WindowContext::OnKey(std::function<void(const KeyEvent &)> callback)
+{
+    _keyCallbacks.push_back(std::move(callback));
+}
+
+void WindowContext::OnCharacter(std::function<void(char32_t)> callback)
+{
+    _characterCallbacks.push_back(std::move(callback));
+}
+
+void WindowContext::OnMouseButton(std::function<void(const MouseButtonEvent &)> callback)
+{
+    _mouseButtonCallbacks.push_back(std::move(callback));
+}
+
+void WindowContext::OnCursorPosition(std::function<void(double, double)> callback)
+{
+    _cursorPositionCallbacks.push_back(std::move(callback));
+}
+
+std::string WindowContext::GetClipboardText() const
+{
+    if (_nativeWindowHandle == nullptr)
+    {
+        return {};
+    }
+    // Null when the clipboard holds nothing that converts to text.
+    const char *text = glfwGetClipboardString(_nativeWindowHandle);
+    return text != nullptr ? std::string(text) : std::string{};
+}
+
+void WindowContext::SetClipboardText(std::string_view text) const
+{
+    if (_nativeWindowHandle == nullptr)
+    {
+        return;
+    }
+    // GLFW takes a terminated string, which a view need not be.
+    const std::string terminated(text);
+    glfwSetClipboardString(_nativeWindowHandle, terminated.c_str());
 }
 
 void WindowContext::FramebufferSizeTrampoline(GLFWwindow *window, int width, int height)
@@ -95,10 +220,12 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-    _isValid(other._isValid),
-    _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
-    _scrollCallbacks(std::move(other._scrollCallbacks)),
-    _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
+      _isValid(other._isValid), _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
+      _scrollCallbacks(std::move(other._scrollCallbacks)),
+      _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks)), _keyCallbacks(std::move(other._keyCallbacks)),
+      _characterCallbacks(std::move(other._characterCallbacks)),
+      _mouseButtonCallbacks(std::move(other._mouseButtonCallbacks)),
+      _cursorPositionCallbacks(std::move(other._cursorPositionCallbacks))
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
@@ -126,6 +253,10 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
         _framebufferSizeCallbacks = std::move(other._framebufferSizeCallbacks);
         _scrollCallbacks = std::move(other._scrollCallbacks);
         _windowRefreshCallbacks = std::move(other._windowRefreshCallbacks);
+        _keyCallbacks = std::move(other._keyCallbacks);
+        _characterCallbacks = std::move(other._characterCallbacks);
+        _mouseButtonCallbacks = std::move(other._mouseButtonCallbacks);
+        _cursorPositionCallbacks = std::move(other._cursorPositionCallbacks);
 
         other._nativeWindowHandle = nullptr;
         other._isValid = false;

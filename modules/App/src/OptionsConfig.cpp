@@ -285,6 +285,12 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             }
         }
 
+        // Present means chosen, as with the window size.
+        if (json.contains("controls") && json.at("controls").contains("multiTapSeconds"))
+        {
+            cfg.multiTapSeconds = json.at("controls").at("multiTapSeconds").get<double>();
+        }
+
         if (json.contains("input"))
         {
             // Through the registry rather than by hand: the bindings are a
@@ -491,6 +497,11 @@ nlohmann::json FullJson(const OptionsConfig &options)
     if (options.height)
     {
         json["window"]["height"] = *options.height;
+    }
+
+    if (options.multiTapSeconds)
+    {
+        json["controls"]["multiTapSeconds"] = *options.multiTapSeconds;
     }
 
     // Same: nothing rebound is nothing to write.

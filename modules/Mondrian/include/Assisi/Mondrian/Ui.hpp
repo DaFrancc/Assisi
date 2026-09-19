@@ -10,12 +10,14 @@
 /// previous one's. Each step expects the other to have run in between; calling
 /// either twice in a row is a bug in the host loop and asserts.
 
+#include <Assisi/Mondrian/Clipboard.hpp>
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/Layout.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 
 #include <cstdint>
+#include <utility>
 
 namespace Assisi::Mondrian
 {
@@ -57,6 +59,11 @@ class Ui
     /// registers one and hands it over. Until then the picture is white.
     void SetPlaceholderTexture(TextureId texture);
 
+    /// @brief How the UI reaches the system clipboard. Until set, it reads as
+    /// empty and writes go nowhere.
+    void SetClipboard(Clipboard clipboard) { _clipboard = std::move(clipboard); }
+    [[nodiscard]] const Clipboard &GetClipboard() const { return _clipboard; }
+
     /// @brief The player's UI size, multiplying the scale the viewport gives.
     void SetUserScale(float scale) { _userScale = scale; }
     [[nodiscard]] float GetUserScale() const { return _userScale; }
@@ -71,6 +78,7 @@ class Ui
     };
 
     NodeTree _tree;
+    Clipboard _clipboard;
     LayoutResult _layout;
     DrawList _drawList;
     const Font *_font = nullptr;

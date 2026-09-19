@@ -280,6 +280,7 @@ bool Application::InitializePresentation()
     }
 
     _input = std::make_unique<Window::InputContext>(*_window);
+    _input->SetMultiTapInterval(_options.MultiTapSeconds(_config));
 
     if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -302,6 +303,12 @@ bool Application::InitializePresentation()
             return false;
         }
         _ui = std::make_unique<Mondrian::Ui>();
+        // The window outlives the UI: both belong to this Application, and the
+        // UI is torn down first.
+        Window::WindowContext *window = _window.get();
+        _ui->SetClipboard(Mondrian::Clipboard{.read = [window] { return window->GetClipboardText(); },
+                                              .write = [window](std::string_view text)
+                                              { window->SetClipboardText(text); }});
         Mondrian::Engine::UploadPlaceholderTexture(_uiPlaceholderTexture, vulkanContext->GetDevice());
         _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
 
