@@ -26,6 +26,10 @@ inline constexpr float kUnbounded = std::numeric_limits<float>::max();
 /// Text size a style starts with, in logical pixels.
 inline constexpr float kDefaultTextSize = 24.f;
 
+/// How short a scroll bar's thumb may draw before it stops shrinking, in
+/// logical pixels: enough to see, and enough to take hold of.
+inline constexpr float kDefaultScrollBarMinLength = 24.f;
+
 /// @brief The two directions a size is resolved in, and what arrays of per-axis
 /// values are indexed by.
 enum class Axis : uint8_t
@@ -92,6 +96,24 @@ struct Padding
     [[nodiscard]] static constexpr Padding All(float length) { return {length, length, length, length}; }
 };
 
+/// @brief When a scrolling node shows the bar that says where in its content it
+/// is, and which a player may drag.
+enum class ScrollBarVisibility : uint8_t
+{
+    Never,
+    WhenNeeded, ///< only while some of the content is out of sight
+    Always,
+    Count
+};
+
+/// @brief How the content keeps up with a scroll bar being dragged.
+enum class ScrollBarDrag : uint8_t
+{
+    FollowsPointer, ///< the content is where the thumb is, so the hand moving it never leads
+    Smoothed,       ///< the content glides after the thumb, as the rest of the scrolling does
+    Count
+};
+
 /// @brief What a floating node is placed against.
 enum class FloatAnchor : uint8_t
 {
@@ -132,9 +154,17 @@ struct Style
     Direction direction = Direction::Row;
     std::array<Alignment, kAxisCount> childAlign{Alignment::Start, Alignment::Start};
     TextAlign textAlign = TextAlign::Left;
-    /// Scrolling on an axis lets children overflow on it rather than shrink, and
-    /// clips them to the node.
-    std::array<bool, kAxisCount> scroll{false, false};
+    /// How long a scrolling node takes to reach where it was sent, in seconds.
+    /// Zero arrives at once; a small fraction glides instead of jumping.
+    float scrollSmoothing = 0.f;
+    /// The shortest its scroll bar's thumb draws, in logical pixels, so a long
+    /// list keeps something to see and to grab.
+    float scrollBarMinLength = kDefaultScrollBarMinLength;
+    /// Scrolling on an axis lets children overflow on it rather than shrink,
+    /// clips them to the node, and gives it a bar on that axis.
+    std::array<bool, kAxisCount> enabledScrollBars{false, false};
+    ScrollBarVisibility scrollBarVisibility = ScrollBarVisibility::Never;
+    ScrollBarDrag scrollBarDrag = ScrollBarDrag::FollowsPointer;
 };
 
 } // namespace Assisi::Mondrian

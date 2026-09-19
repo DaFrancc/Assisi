@@ -36,6 +36,21 @@ class HitTester
             return {};
         }
         const Node &node = _slots[index];
+        const LayoutNode &placed = _layout.nodes[index];
+        // What a control draws over its own content — a scroll bar — is the
+        // control's to be pressed, before anything underneath it.
+        if (const WidgetType *widget = _tree.Widgets().Get(node.behaviour);
+            widget != nullptr && widget->claims != nullptr)
+        {
+            const NodeId id = _tree.IdOf(index);
+            const WidgetView view{
+                .node = &node, .layout = &placed, .context = widget->context, .scale = _layout.scale, .id = id};
+            if (widget->claims(view, _point) && Contains(placed.clip, _point))
+            {
+                return id;
+            }
+        }
+
         for (const bool floating : {true, false})
         {
             NodeId found;
@@ -57,9 +72,8 @@ class HitTester
             }
         }
 
-        const LayoutNode &result = _layout.nodes[index];
         const bool stops = node.focusable || node.blocksPointer;
-        if (stops && Contains(result.rect, _point) && Contains(result.clip, _point))
+        if (stops && Contains(placed.rect, _point) && Contains(placed.clip, _point))
         {
             return _tree.IdOf(index);
         }

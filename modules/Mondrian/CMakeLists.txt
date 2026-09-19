@@ -17,11 +17,13 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Input.hpp"
     "include/Assisi/Mondrian/Layout.hpp"
     "include/Assisi/Mondrian/Navigation.hpp"
+    "include/Assisi/Mondrian/NodeId.hpp"
     "include/Assisi/Mondrian/NodeTree.hpp"
     "include/Assisi/Mondrian/Style.hpp"
     "include/Assisi/Mondrian/Text.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
     "include/Assisi/Mondrian/Utf8.hpp"
+    "include/Assisi/Mondrian/Widget.hpp"
   PRIVATE
     "src/Draw.cpp"
     "src/DrawList.cpp"
@@ -34,6 +36,8 @@ target_sources(Assisi-Mondrian
     "src/Text.cpp"
     "src/Ui.cpp"
     "src/Utf8.cpp"
+    "src/Widget.cpp"
+    "src/Widgets.cpp"
 )
 
 target_include_directories(Assisi-Mondrian

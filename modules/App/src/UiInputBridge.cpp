@@ -47,6 +47,13 @@ Mondrian::UiInput GatherUiInput(const Window::InputContext &input, const Window:
         gathered.actionPressed[action] = actions.IsActionPressed(kUiActionNames[action], input, kAll);
         gathered.actionDown[action] = actions.IsActionDown(kUiActionNames[action], input, kAll);
     }
+    // Shift and the wheel is how a mouse without a sideways wheel scrolls
+    // sideways, which is what players expect from every other application.
+    const glm::vec2 scrolled = input.ScrollDelta();
+    const bool sideways =
+        input.IsKeyDown(Window::Key::LeftShift, kAll) || input.IsKeyDown(Window::Key::RightShift, kAll);
+    gathered.wheel = sideways ? Mondrian::Point{.x = scrolled.x + scrolled.y, .y = 0.f}
+                              : Mondrian::Point{.x = scrolled.x, .y = scrolled.y};
     gathered.primaryDown = input.IsMouseButtonDown(kPrimary, kAll);
     gathered.primaryPressed = input.IsMouseButtonPressed(kPrimary, kAll);
     gathered.primaryReleased = input.IsMouseButtonReleased(kPrimary, kAll);
@@ -79,6 +86,10 @@ void ApplyUiResult(Window::InputContext &input, const Mondrian::InputResult &res
         if (result.keyboardTaken)
         {
             input.ConsumeKeyboard();
+        }
+        if (result.wheelUsed)
+        {
+            input.ConsumeScroll();
         }
         return;
     case Mondrian::InputGrant::Nothing:

@@ -132,6 +132,14 @@ void NodeTree::SetText(NodeId id, std::string_view text)
     }
 }
 
+void NodeTree::SetName(NodeId id, std::string_view name)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->name = name;
+    }
+}
+
 void NodeTree::SetVisible(NodeId id, bool visible)
 {
     if (Node *node = GetMutable(id))
@@ -228,6 +236,52 @@ void NodeTree::SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> 
     {
         node->onActivate = std::move(push);
     }
+}
+
+void NodeTree::SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const WidgetValue &)> push)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->onChange = std::move(push);
+    }
+}
+
+void NodeTree::SetValue(NodeId id, WidgetValue value)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->value = std::move(value);
+    }
+}
+
+void NodeTree::SetSteps(NodeId id, int32_t steps)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->steps = steps;
+    }
+}
+
+void NodeTree::SetRange(NodeId id, SliderRange range)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->range = range;
+    }
+}
+
+void NodeTree::SetSliderButtons(NodeId id, SliderButtons buttons)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->sliderButtons = buttons;
+    }
+}
+
+const WidgetType *NodeTree::WidgetOf(NodeId id) const
+{
+    const Node *node = Get(id);
+    return node != nullptr ? _widgets.Get(node->behaviour) : nullptr;
 }
 
 NodeId NodeTree::Find(std::string_view name) const

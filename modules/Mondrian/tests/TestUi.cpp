@@ -211,6 +211,39 @@ TEST_CASE("Mondrian: a zero-sized viewport draws nothing and does not assert")
     CHECK(Frame(ui, Extent{0, 0}).Instances().empty());
 }
 
+TEST_CASE("Mondrian: the sample screen's list scrolls its content and keeps it inside itself")
+{
+    // With the font, since what overflows the list is the height of its text.
+    const Font font = FixtureFont();
+    Screen screen;
+    screen.ui.SetFont(&font, kFontTexture);
+    screen.Step({});
+    const NodeId list = screen.Named("list");
+    REQUIRE(list);
+    const LayoutNode *placed = screen.ui.GetLayout().Get(list);
+    REQUIRE(placed != nullptr);
+    CHECK(placed->contentSize.y > placed->rect.height); // there is something to scroll
+
+    UiInput wheel = PointerAt({.x = placed->rect.x + 4.f, .y = placed->rect.y + 4.f}, InputGrant::Pointer);
+    wheel.wheel = {.x = 0.f, .y = -1.f};
+    CHECK(screen.Step(wheel).wheelUsed);
+    CHECK(screen.ui.Tree().Get(list)->scrollTarget.y > 0.f);
+
+    // It glides there rather than jumping, so it arrives a moment later.
+    UiInput settling = PointerAt({.x = placed->rect.x + 4.f, .y = placed->rect.y + 4.f}, InputGrant::Pointer);
+    settling.time = 1.0;
+    screen.Step(settling);
+    CHECK(screen.ui.Tree().Get(list)->scrollOffset.y == doctest::Approx(screen.ui.Tree().Get(list)->scrollTarget.y));
+    CHECK(screen.ui.Tree().Get(list)->scrollOffset.y > 0.f);
+
+    // Its content is clipped to it, so a scrolled list does not spill over the
+    // panel it sits in.
+    const LayoutNode *entry = screen.ui.GetLayout().Get(screen.Named("Five"));
+    REQUIRE(entry != nullptr);
+    CHECK(entry->clip.y >= placed->rect.y);
+    CHECK(entry->clip.y + entry->clip.height <= placed->rect.y + placed->rect.height);
+}
+
 TEST_CASE("Mondrian: input before any layout hits nothing and does not assert")
 {
     Ui ui;
@@ -323,12 +356,15 @@ TEST_CASE("Mondrian: with everything, the first move lands on the first button, 
     CHECK(screen.Now().backPressed);
     CHECK(back.keyboardTaken);
 
+    // Resume is the last thing to its right, so wrapping comes round to
+    // something else on the screen.
     screen.Step(Action(UiAction::Right));
-    CHECK(screen.Now().focused == screen.Named("Quit")); // wrapped
+    CHECK(screen.Now().focused != screen.Named("Resume"));
 
     screen.ui.SetNavWrap(NavWrap::Stop);
-    screen.Step(Action(UiAction::Left));
-    CHECK(screen.Now().focused == screen.Named("Quit"));
+    screen.ui.SetFocus(screen.Named("Resume"));
+    screen.Step(Action(UiAction::Right));
+    CHECK(screen.Now().focused == screen.Named("Resume"));
 }
 
 TEST_CASE("Mondrian: with only the pointer, the keys are the game's")

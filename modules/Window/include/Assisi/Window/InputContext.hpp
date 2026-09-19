@@ -71,7 +71,9 @@ class InputContext
     void OnMouseButton(MouseButton button, KeyAction action, double time);
     /// @brief The cursor moved to (@p x, @p y), in window coordinates.
     void OnCursorPosition(double x, double y);
-    void OnScroll(double yOffset);
+    /// @brief The wheel turned, or a trackpad scrolled: @p xOffset sideways and
+    /// @p yOffset away from the player, both in notches.
+    void OnScroll(double xOffset, double yOffset);
 
     // -------------------------------------------------------------------------
     // Keyboard
@@ -130,7 +132,9 @@ class InputContext
     [[nodiscard]] glm::vec2 MouseDelta() const { return _frameDelta; }
 
     /// @brief Scroll wheel movement during the frame (positive = up).
-    [[nodiscard]] float ScrollDelta() const { return _frameScroll; }
+    /// @brief Scrolling during the frame, in notches: y away from the player,
+    /// x sideways, which a tilting wheel or a trackpad sends.
+    [[nodiscard]] glm::vec2 ScrollDelta() const { return _frameScroll; }
 
     // -------------------------------------------------------------------------
     // Consumption
@@ -146,6 +150,9 @@ class InputContext
     /// @brief Consumes every button held, pressed or released this frame, and
     /// the frame's movement and scroll. The position stays readable.
     void ConsumeMouse();
+    /// @brief Consumes the frame's scrolling alone, for a UI that scrolled on
+    /// the wheel and took nothing else.
+    void ConsumeScroll();
     void ConsumeAll();
 
     // -------------------------------------------------------------------------
@@ -229,8 +236,8 @@ class InputContext
     glm::vec2 _livePosition{0.f, 0.f};
     glm::vec2 _framePosition{0.f, 0.f};
     glm::vec2 _frameDelta{0.f, 0.f};
-    float _scrollSince = 0.f;
-    float _frameScroll = 0.f;
+    glm::vec2 _scrollSince{0.f, 0.f};
+    glm::vec2 _frameScroll{0.f, 0.f};
     uint32_t _nextModeId = 1;
     InputMode _gameMode = InputMode::GameAndUi;
 };

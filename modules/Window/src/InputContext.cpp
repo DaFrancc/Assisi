@@ -78,7 +78,7 @@ InputContext::InputContext(WindowContext &window) : _window(window.NativeHandle(
     window.OnMouseButton([this](const MouseButtonEvent &event)
                          { OnMouseButton(event.button, event.action, event.time); });
     window.OnCursorPosition([this](double x, double y) { OnCursorPosition(x, y); });
-    window.OnScroll([this](double /*xOffset*/, double yOffset) { OnScroll(yOffset); });
+    window.OnScroll([this](double xOffset, double yOffset) { OnScroll(xOffset, yOffset); });
 
     // The cursor reports only when it moves, so start from where it is, and make
     // that the first frame's so its delta is zero.
@@ -96,7 +96,7 @@ void InputContext::Poll()
     _frameDelta = _livePosition - _framePosition;
     _framePosition = _livePosition;
     _frameScroll = _scrollSince;
-    _scrollSince = 0.f;
+    _scrollSince = {0.f, 0.f};
 }
 
 void InputContext::OnKey(Key key, KeyAction action, double time)
@@ -144,9 +144,9 @@ void InputContext::OnCursorPosition(double x, double y)
     _livePosition = {static_cast<float>(x), static_cast<float>(y)};
 }
 
-void InputContext::OnScroll(double yOffset)
+void InputContext::OnScroll(double xOffset, double yOffset)
 {
-    _scrollSince += static_cast<float>(yOffset);
+    _scrollSince += glm::vec2(static_cast<float>(xOffset), static_cast<float>(yOffset));
 }
 
 template <std::size_t Count> void InputContext::Switches<Count>::ConsumeActive()
@@ -219,7 +219,12 @@ void InputContext::ConsumeMouse()
 {
     _buttons.ConsumeActive();
     _frameDelta = {0.f, 0.f};
-    _frameScroll = 0.f;
+    ConsumeScroll();
+}
+
+void InputContext::ConsumeScroll()
+{
+    _frameScroll = {0.f, 0.f};
 }
 
 void InputContext::ConsumeAll()

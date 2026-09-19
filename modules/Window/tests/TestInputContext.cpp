@@ -131,13 +131,13 @@ TEST_CASE("InputContext: the cursor's delta is its movement between frames")
 TEST_CASE("InputContext: scrolling sums within a frame and resets after it")
 {
     InputContext input;
-    input.OnScroll(1.0);
-    input.OnScroll(2.0);
+    input.OnScroll(0.0, 1.0);
+    input.OnScroll(-1.0, 2.0);
     input.Poll();
-    CHECK(input.ScrollDelta() == 3.f);
+    CHECK(input.ScrollDelta() == glm::vec2(-1.f, 3.f));
 
     input.Poll();
-    CHECK(input.ScrollDelta() == 0.f);
+    CHECK(input.ScrollDelta() == glm::vec2(0.f, 0.f));
 }
 
 TEST_CASE("InputContext: quick presses count up a run of taps, reported in the frame of each press")
@@ -269,14 +269,14 @@ TEST_CASE("InputContext: consuming the mouse hides its buttons, movement and scr
     input.OnCursorPosition(0.0, 0.0);
     input.Poll();
     input.OnCursorPosition(10.0, 5.0);
-    input.OnScroll(1.0);
+    input.OnScroll(0.0, 1.0);
     input.OnMouseButton(MouseButton::Right, KeyAction::Press, 0.0);
     input.OnKey(Key::W, KeyAction::Press, 0.0);
     input.Poll();
 
     input.ConsumeMouse();
     CHECK(input.MouseDelta() == glm::vec2(0.f, 0.f));
-    CHECK(input.ScrollDelta() == 0.f);
+    CHECK(input.ScrollDelta() == glm::vec2(0.f, 0.f));
     CHECK_FALSE(input.IsMouseButtonPressed(MouseButton::Right));
     CHECK(input.MousePosition() == glm::vec2(10.f, 5.f)); // where it is is not an action
     CHECK(input.IsKeyPressed(Key::W));

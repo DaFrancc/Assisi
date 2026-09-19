@@ -18,9 +18,12 @@ class Drawer
 {
   public:
     Drawer(const NodeTree &tree, const LayoutResult &layout, DrawList &list, TextureId fontAtlas)
-        : _slots(tree.Slots()), _layout(layout), _list(list), _fontAtlas(fontAtlas)
+        : _tree(tree), _slots(tree.Slots()), _layout(layout), _list(list), _fontAtlas(fontAtlas)
     {
     }
+
+    /// Which node is pressed, hovered or focused, for the controls that show it.
+    void SetInteraction(const Interaction &interaction) { _interaction = &interaction; }
 
     /// @p index, then its in-flow children, then its floating ones.
     void DrawNode(uint32_t index)
@@ -62,6 +65,23 @@ class Drawer
             DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, origin, style.textColor);
         }
 
+        // The control's own parts — a slider's thumb, a toggle's knob — over the
+        // node they are on and under whatever it contains.
+        if (const WidgetType *widget = _tree.Widgets().Get(node.behaviour);
+            widget != nullptr && widget->draw != nullptr)
+        {
+            const NodeId id = _tree.IdOf(index);
+            widget->draw(WidgetView{.node = &node,
+                                    .layout = &result,
+                                    .context = widget->context,
+                                    .scale = scale,
+                                    .id = id,
+                                    .focused = _interaction != nullptr && _interaction->focused == id,
+                                    .pressed = _interaction != nullptr && _interaction->pressed == id,
+                                    .hovered = _interaction != nullptr && _interaction->hovered == id},
+                         _list);
+        }
+
         for (const bool floating : {false, true})
         {
             for (NodeId child = node.firstChild; child; child = _slots[child.index].nextSibling)
@@ -75,19 +95,24 @@ class Drawer
     }
 
   private:
+    const NodeTree &_tree;
     std::span<const Node> _slots;
     const LayoutResult &_layout;
     DrawList &_list;
+    const Interaction *_interaction = nullptr;
     TextureId _fontAtlas;
 };
 
 } // namespace
 
-void DrawTree(const NodeTree &tree, const LayoutResult &layout, DrawList &list, TextureId fontAtlas)
+void DrawTree(const NodeTree &tree, const LayoutResult &layout, DrawList &list, TextureId fontAtlas,
+              const Interaction &interaction)
 {
     if (tree.Root().index < layout.nodes.size())
     {
-        Drawer(tree, layout, list, fontAtlas).DrawNode(tree.Root().index);
+        Drawer drawer(tree, layout, list, fontAtlas);
+        drawer.SetInteraction(interaction);
+        drawer.DrawNode(tree.Root().index);
     }
     list.SetDefaultClip(kNoClip);
 }

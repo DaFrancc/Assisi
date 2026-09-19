@@ -106,7 +106,8 @@ class Layouter
 {
   public:
     Layouter(const NodeTree &tree, LayoutResult &out, const Font *font, Extent viewport)
-        : _slots(tree.Slots()), _out(out), _font(font), _root(tree.Root()), _viewport(viewport), _scale(out.scale)
+        : _slots(tree.Slots()), _widgets(&tree.Widgets()), _out(out), _font(font), _root(tree.Root()),
+          _viewport(viewport), _scale(out.scale)
     {
     }
 
@@ -196,7 +197,16 @@ class Layouter
         float content = 0.f;
         float minContent = 0.f;
 
-        if (result.text != LayoutNode::kNoText)
+        const WidgetType *widget = _widgets->Get(node.behaviour);
+        if (widget != nullptr && widget->measure != nullptr)
+        {
+            // A control's own size comes before whatever its text or children
+            // would have asked for: a slider is as long as a slider, not as its
+            // label.
+            content = Scaled(Component(widget->measure(node, widget->context), axis));
+            minContent = content;
+        }
+        else if (result.text != LayoutNode::kNoText)
         {
             if (axis == Axis::X)
             {
@@ -275,7 +285,7 @@ class Layouter
         const float length = Length(Result(index).rect, axis);
         const float space = length - Scaled(PaddingAround(style.padding, axis));
         const bool main = IsMainAxis(style.direction, axis);
-        const bool scrolls = style.scroll[At(axis)];
+        const bool scrolls = style.enabledScrollBars[At(axis)];
 
         float used = 0.f;
         uint32_t count = 0;
@@ -531,14 +541,14 @@ class Layouter
         {
             Component(origin, axis) = Position(rect, axis) + Scaled(PaddingBefore(style.padding, axis));
             Component(space, axis) = Length(rect, axis) - Scaled(PaddingAround(style.padding, axis));
-            if (style.scroll[At(axis)])
+            if (style.enabledScrollBars[At(axis)])
             {
                 const float furthest = std::max(0.f, Component(result.contentSize, axis) - Length(rect, axis));
                 Component(scroll, axis) = std::clamp(Scaled(Component(Slot(index).scrollOffset, axis)), 0.f, furthest);
             }
         }
 
-        const bool clips = style.scroll[At(Axis::X)] || style.scroll[At(Axis::Y)];
+        const bool clips = style.enabledScrollBars[At(Axis::X)] || style.enabledScrollBars[At(Axis::Y)];
         const Rect childClip = clips ? Intersect(result.clip, rect) : result.clip;
         const Rect parentClip = Intersect(result.clip, rect);
 
@@ -585,6 +595,7 @@ class Layouter
 
     std::vector<ShapedText> _shaped; ///< by text index
     std::span<const Node> _slots;
+    const WidgetRegistry *_widgets = nullptr;
     LayoutResult &_out;
     const Font *_font;
     NodeId _root;

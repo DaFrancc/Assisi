@@ -76,6 +76,39 @@ TEST_CASE("UiInputBridge: the UI sees its actions, a held one even after it cons
     CHECK_FALSE(gathered.keyboardClaimed);
 }
 
+TEST_CASE("UiInputBridge: the wheel reaches the UI, and leaves the game only when a control took it")
+{
+    const Window::ActionMap actions = UiActions();
+    Window::InputContext input;
+    input.SetInputMode(InputMode::GameAndUi);
+    input.OnScroll(0.0, 1.0);
+    input.OnMouseButton(MouseButton::Left, KeyAction::Press, 0.0);
+    input.Poll();
+
+    CHECK(App::GatherUiInput(input, actions, 0.0, {}, {}).wheel.y == doctest::Approx(1.f));
+
+    App::ApplyUiResult(input, {}, {});
+    CHECK(input.ScrollDelta().y == doctest::Approx(1.f));
+
+    App::ApplyUiResult(input, {.pointerUsed = false, .keyboardTaken = false, .wheelUsed = true}, {});
+    CHECK(input.ScrollDelta().y == doctest::Approx(0.f));
+    CHECK(input.IsMouseButtonPressed(MouseButton::Left)); // a wheel the UI used is not a click
+}
+
+TEST_CASE("UiInputBridge: Shift and the wheel together scroll sideways")
+{
+    const Window::ActionMap actions = UiActions();
+    Window::InputContext input;
+    input.SetInputMode(InputMode::GameAndUi);
+    input.OnKey(Key::LeftShift, KeyAction::Press, 0.0);
+    input.OnScroll(0.0, 1.0);
+    input.Poll();
+
+    const Mondrian::UiInput gathered = App::GatherUiInput(input, actions, 0.0, {}, {});
+    CHECK(gathered.wheel.x == doctest::Approx(1.f));
+    CHECK(gathered.wheel.y == doctest::Approx(0.f));
+}
+
 TEST_CASE("UiInputBridge: while the UI has everything, the game sees nothing")
 {
     const Window::ActionMap actions = UiActions();

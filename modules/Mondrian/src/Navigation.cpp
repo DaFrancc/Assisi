@@ -208,7 +208,7 @@ void ScrollIntoView(NodeTree &tree, const LayoutResult &layout, NodeId id)
         // How far the content moves on @p axis, in device pixels.
         const auto scroll = [&](Axis axis) -> float
         {
-            if (!scroller->style.scroll[static_cast<std::size_t>(axis)])
+            if (!scroller->style.enabledScrollBars[static_cast<std::size_t>(axis)])
             {
                 return 0.f;
             }
