@@ -24,6 +24,8 @@ std::string_view ToString(CookedKind kind) noexcept
         return "shader";
     case CookedKind::Verbatim:
         return "verbatim";
+    case CookedKind::Font:
+        return "font";
     default:
         ASSISI_ASSERT(false, "ToString reached a CookedKind with no name");
         Log::Error("CookedBlob: no name for this kind");

@@ -31,12 +31,16 @@ target_sources(Assisi-Cook-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Geometry-Generated>
+  $<TARGET_OBJECTS:Assisi-Mondrian-Generated>
 )
 
 # Where the fixture asset tree lives, so a test can point an asset root at it
 # without guessing the build layout.
 target_compile_definitions(Assisi-Cook-Tests PRIVATE
   ASSISI_COOK_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+  # A real font for the font cook, read from where the game's lives rather than
+  # kept as a second copy in the fixtures.
+  ASSISI_COOK_TEST_FONT="${CMAKE_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf"
 )
 
 add_test(NAME Cook COMMAND Assisi-Cook-Tests)

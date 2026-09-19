@@ -595,7 +595,9 @@ mode and lives outside the ECS. Every windowed `Application` owns one and drives
 frame: input right after the input poll, and layout plus the draw list right before rendering. Systems
 reach it as `ctx.ui`, which is null on a headless server. The core (`Assisi::Mondrian`) links only Core,
 so layout, focus and parsing are tested without a window or GPU; the engine layer
-(`Assisi::MondrianEngine`) is what draws its output. Dear ImGui stays the editor's and debug UI's.
+(`Assisi::MondrianEngine`) is what draws its output. Text is drawn from signed-distance glyph atlases
+the cook rasterises from a `.afont` description with FreeType (`Assisi::FontImport`); the game reads
+the cooked atlas and links no FreeType. Dear ImGui stays the editor's and debug UI's.
 
 ### App
 App is the framework that ties the lower modules together. `Application` is the base class you derive

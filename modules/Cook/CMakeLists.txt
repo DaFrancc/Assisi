@@ -27,6 +27,8 @@ target_link_libraries(Assisi-Cook
     Assisi::GeometryImport
     # Image: decode, mip generation and block compression.
     Assisi::ImageImport
+    # Fonts: the rasteriser that turns a font description into an atlas.
+    Assisi::FontImport
     # Runtime: the level loader, because cooking a level means loading it the
     # way the engine does rather than writing a second reader for the format.
     Assisi::Runtime

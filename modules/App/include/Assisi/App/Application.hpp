@@ -348,12 +348,17 @@ private:
     std::unique_ptr<Window::WindowContext> _window;
     std::unique_ptr<Window::InputContext>  _input;
 
+    /// The UI's font. Declared before the UI, which points at it, so it is
+    /// destroyed after.
+    Mondrian::Font _uiFont;
+
     /// The game UI and the pass that draws it. Created with the window, so a
     /// headless process has neither. Driven by Run, not by the ECS: it has to
     /// run with no world loaded, and before the fixed update reads input.
     std::unique_ptr<Mondrian::Ui> _ui;
     Mondrian::Engine::QuadPass _uiPass;
     Render::Texture _uiPlaceholderTexture;
+    Render::Texture _uiFontAtlas;
     /// ShowsGameUi's answer for the current frame.
     bool _uiShown = false;
 

@@ -10,6 +10,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -53,6 +54,7 @@ GameApp::~GameApp()
     {
         (void)Runtime::SceneSerializer::SetDocumentReader({});
         (void)Core::SetConfigReader({});
+        (void)Mondrian::SetFontReader({});
     }
 }
 
@@ -83,6 +85,8 @@ bool GameApp::MountContent()
                                                       { return Runtime::ReadCookedDocument(provider, vpath); });
     (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)
                                 { return Core::ReadCookedConfig(provider, vpath, type, instance); });
+    (void)Mondrian::SetFontReader([&provider](std::string_view vpath)
+                                  { return Mondrian::ReadCookedFont(provider, vpath); });
     return true;
 }
 

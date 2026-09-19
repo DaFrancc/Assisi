@@ -27,6 +27,7 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Image/Compress.hpp>
+#include <Assisi/Mondrian/Font.hpp>
 
 using Assisi::Cook::Claim;
 using Assisi::Cook::CookReport;
@@ -120,7 +121,16 @@ TEST_CASE("Each asset kind is claimed by the cooker that owns it")
     CHECK(ClaimFor("textures/checker.png") == Claim::Output);
     CHECK(ClaimFor("textures/moon.jpg") == Claim::Output);
     CHECK(ClaimFor("shaders/mesh.vert.spv") == Claim::Output);
-    CHECK(ClaimFor("editor/JetBrainsMono/Regular.ttf") == Claim::Output);
+    CHECK(ClaimFor("fonts/Inter-Regular.afont") == Claim::Output);
+}
+
+TEST_CASE("Font files and their licences are claimed and produce nothing of their own")
+{
+    // A font's glyphs reach the cooked tree through the description that names
+    // it, so neither the font file nor the licence beside it ships.
+    CHECK(ClaimFor("fonts/Inter-Regular.ttf") == Claim::SourceOnly);
+    CHECK(ClaimFor("fonts/Other.otf") == Claim::SourceOnly);
+    CHECK(ClaimFor("fonts/OFL.txt") == Claim::SourceOnly);
 }
 
 TEST_CASE("Shader sources are claimed and produce nothing")
@@ -402,4 +412,79 @@ TEST_CASE("Changing the texture tier re-cooks the textures and nothing else")
     constexpr std::size_t kFixtureTextures = 1;
     CHECK(fast->cooked == kFixtureTextures);
     CHECK(fast->skipped == best->cooked - kFixtureTextures);
+}
+
+namespace
+{
+
+/// A copy of the fixture tree with a font description and its font file added,
+/// both with sidecars so they have ids to cook under.
+void AddFont(const std::filesystem::path &root)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    std::filesystem::create_directories(root / "fonts", code);
+    std::filesystem::copy_file(ASSISI_COOK_TEST_FONT, root / "fonts" / "Test.ttf", code);
+
+    std::ofstream(root / "fonts" / "Test.afont")
+        << R"({ "version": 1, "type": "FontDescription", "source": "fonts/Test.ttf",)"
+        << R"( "ranges": [32, 126], "pixelSize": 24, "spread": 4 })";
+    std::ofstream(root / "fonts" / "Test.afont.aast")
+        << R"({ "guid": "5b0e3c2a-6f1d-4e8a-9c7b-2d4f6a8e0c13", "type": "AssetSidecar", "version": 1 })";
+    std::ofstream(root / "fonts" / "Test.ttf.aast")
+        << R"({ "guid": "9a1c7e5f-3b2d-4c6e-8f0a-1e3d5b7c9a24", "type": "AssetSidecar", "version": 1 })";
+}
+
+/// The manifest entry for @p vpath, or null.
+const Assisi::Cook::ManifestEntry *EntryFor(const CookReport &report, std::string_view vpath)
+{
+    for (const Assisi::Cook::ManifestEntry &entry : report.entries)
+    {
+        if (entry.vpath == vpath)
+        {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("A font description cooks to a font the runtime reads, and its font file does not ship")
+{
+    const ScratchDir source("font-src");
+    const ScratchDir out("font-out");
+    AddFont(source.Path());
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(report.has_value(), Explain(report));
+
+    CHECK(EntryFor(*report, "fonts/Test.ttf") == nullptr);
+    const Assisi::Cook::ManifestEntry *font = EntryFor(*report, "fonts/Test.afont");
+    REQUIRE(font != nullptr);
+
+    std::ifstream in(out.Path() / (font->guid + ".cooked"), std::ios::binary);
+    const std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    const std::expected<Assisi::Mondrian::Font, Assisi::Mondrian::CookedFontError> read =
+        Assisi::Mondrian::ReadCookedFont(std::as_bytes(std::span{chars}));
+    REQUIRE(read.has_value());
+    CHECK(read->GlyphFor('A').has_value());
+}
+
+TEST_CASE("Changing a font file re-cooks the description that names it")
+{
+    const ScratchDir source("font-dep-src");
+    const ScratchDir out("font-dep-out");
+    AddFont(source.Path());
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+
+    // Trailing bytes after the last table: still the same font to FreeType, and
+    // a different file to the cache key.
+    std::ofstream(source.Path() / "fonts" / "Test.ttf", std::ios::binary | std::ios::app) << '\0';
+
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 1);
 }

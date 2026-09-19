@@ -85,6 +85,7 @@ target_link_libraries(Assisi-Editor
     # author edits, which a game never links.
     Assisi::GeometryImport
     Assisi::ImageImport
+    Assisi::FontImport
   PRIVATE
     # The transform gizmo (EditorGizmo.cpp) only; not part of the public API.
     imguizmo::imguizmo

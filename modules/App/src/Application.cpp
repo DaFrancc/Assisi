@@ -21,6 +21,7 @@
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Core/Platform.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
@@ -75,6 +76,9 @@ struct TimerResolutionScope
 #endif
 
 // ---------------------------------------------------------------------------
+
+/// The font the game UI writes in.
+constexpr const char *kUiFontPath = "fonts/Inter-Regular.afont";
 
 // Ceiling applied before the game config is available. High enough that it can never
 // trim below a configured keepLogs/keepDumps, low enough to bound a directory
@@ -301,6 +305,19 @@ bool Application::InitializePresentation()
         Mondrian::Engine::UploadPlaceholderTexture(_uiPlaceholderTexture, vulkanContext->GetDevice());
         _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
 
+        // A game with no font still runs, with no text: the UI is not what a
+        // missing font should take down.
+        if (std::expected<Mondrian::Font, Mondrian::FontLoadError> font = Mondrian::LoadFont(kUiFontPath); !font)
+        {
+            Core::Log::Error("UI: the font '{}' did not load ({}); the UI draws no text.", kUiFontPath,
+                             Mondrian::ToString(font.error()));
+        }
+        else if (_uiFont = std::move(*font);
+                 Mondrian::Engine::UploadFontAtlas(_uiFontAtlas, vulkanContext->GetDevice(), _uiFont))
+        {
+            _ui->SetPlaceholderFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
+        }
+
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
         // of the run is to find out where the time went. An interactive run
@@ -344,6 +361,7 @@ Application::~Application()
     {
         _uiPass.Shutdown();
         _uiPlaceholderTexture = Render::Texture{};
+        _uiFontAtlas          = Render::Texture{};
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }

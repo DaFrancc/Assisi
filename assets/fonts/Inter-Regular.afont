@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "type": "FontDescription",
+  "source": "fonts/Inter-Regular.ttf",
+  "ranges": [32, 126, 160, 255],
+  "pixelSize": 48,
+  "spread": 8
+}

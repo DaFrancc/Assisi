@@ -1,6 +1,7 @@
 add_executable(Assisi-Mondrian-Tests
   main.cpp
   TestDrawList.cpp
+  TestFont.cpp
   TestUi.cpp
 )
 

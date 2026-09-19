@@ -8,9 +8,14 @@ Assisi_apply_defaults(Assisi-Mondrian)
 target_sources(Assisi-Mondrian
   PUBLIC
     "include/Assisi/Mondrian/DrawList.hpp"
+    "include/Assisi/Mondrian/Font.hpp"
+    "include/Assisi/Mondrian/FontDescription.hpp"
+    "include/Assisi/Mondrian/FontReader.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
   PRIVATE
     "src/DrawList.cpp"
+    "src/Font.cpp"
+    "src/FontReader.cpp"
     "src/Ui.cpp"
 )
 
@@ -26,6 +31,12 @@ target_link_libraries(Assisi-Mondrian
 
 add_library(Assisi::Mondrian ALIAS Assisi-Mondrian)
 
+assisi_reflect(
+  TARGET Assisi-Mondrian
+  HEADERS
+    include/Assisi/Mondrian/FontDescription.hpp
+)
+
 # The boundary above, held by the configure rather than by review: an edge from
 # the core to any of these fails before anything compiles.
 include("${CMAKE_SOURCE_DIR}/cmake/AssisiLinkGuard.cmake")
@@ -39,6 +50,7 @@ assisi_assert_link_excludes(Assisi-Mondrian
 )
 
 add_subdirectory(engine)
+add_subdirectory(import)
 
 if (ASSISI_BUILD_TESTS)
   add_subdirectory(tests)
