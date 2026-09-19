@@ -980,10 +980,11 @@ void Application::RenderFrame()
         // The last unscoped thing inside `render` — small, but an unnamed gap
         // between two slices is exactly what sends you looking in the wrong place.
         ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
-        // The configured clear colour is an sRGB colour, and the scene target
-        // holds radiance, so it is decoded on the way in — same treatment any
-        // sRGB texture gets. The tone map puts it back where it was.
-        const glm::vec3 clearLinear = glm::pow(glm::vec3(_config.clearColor), glm::vec3(2.2f));
+        // The scene target holds radiance, so the sRGB clear colour is decoded on
+        // the way in — same treatment any sRGB texture gets. The tone map puts it
+        // back where it was.
+        const Assisi::Math::Color4<Assisi::Math::ColorSpace::Linear> clearLinear =
+            Assisi::Math::ToLinear(_config.clearColor);
         sceneFrame.commandList->clearTextureFloat(
             sceneFrame.colorTexture, nvrhi::AllSubresources,
             nvrhi::Color(clearLinear.r, clearLinear.g, clearLinear.b, _config.clearColor.a));

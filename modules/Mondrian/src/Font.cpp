@@ -4,6 +4,7 @@
 #include <Assisi/Core/CookedBlob.hpp>
 
 #include <algorithm>
+#include <utility>
 
 namespace Assisi::Mondrian
 {
@@ -102,6 +103,17 @@ std::optional<uint32_t> Font::GlyphFor(uint32_t codepoint) const
         return std::nullopt;
     }
     return found->glyph;
+}
+
+float Font::Kerning(uint32_t left, uint32_t right) const
+{
+    const auto found = std::ranges::lower_bound(kerning, std::pair{left, right}, std::ranges::less{},
+                                                [](const KerningPair &pair) { return std::pair{pair.left, pair.right}; });
+    if (found == kerning.end() || found->left != left || found->right != right)
+    {
+        return 0.f;
+    }
+    return found->adjust;
 }
 
 std::string_view ToString(CookedFontError error) noexcept

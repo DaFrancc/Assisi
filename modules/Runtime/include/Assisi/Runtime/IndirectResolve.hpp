@@ -23,7 +23,7 @@ struct AmbientOverride
     /// still read in that case, because a scene with no sky has nothing else to
     /// be lit by and these are what it had before.
     bool active = false;
-    Assisi::Math::Color3 color{1.0f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> color{1.0f};
     float intensity = Render::kDefaultAmbientIntensity;
 };
 

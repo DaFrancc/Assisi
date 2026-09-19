@@ -26,6 +26,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 #include <Assisi/Image/Compress.hpp>
 #include <Assisi/Mondrian/Font.hpp>
 
@@ -412,6 +413,49 @@ TEST_CASE("Changing the texture tier re-cooks the textures and nothing else")
     constexpr std::size_t kFixtureTextures = 1;
     CHECK(fast->cooked == kFixtureTextures);
     CHECK(fast->skipped == best->cooked - kFixtureTextures);
+}
+
+namespace
+{
+
+/// A reflected type registered by the test, so the build's set of layouts
+/// changes without any source file changing.
+struct LayoutProbe
+{
+    float value = 0.f;
+};
+
+} // namespace
+
+TEST_CASE("A change to any reflected type's layout re-cooks the reflected documents")
+{
+    // A document's source can stay byte-identical while the type it names gains,
+    // loses or retypes a field, which changes the bytes it cooks to. Left out of
+    // the cache key, the stale blob is kept and the game refuses it at load.
+    const ScratchDir out("reflected-layout");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> before =
+        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path(), Assisi::Image::CompressQuality::Fast);
+    REQUIRE_MESSAGE(before.has_value(), Explain(before));
+
+    namespace Reflect = Assisi::Core::Reflect;
+    Reflect::AssetTypeRegistry::Instance().Register(Reflect::AssetTypeMeta{
+        "CookTestLayoutProbe",
+        typeid(LayoutProbe),
+        {Reflect::FieldMeta{.name = "value", .type = Reflect::FieldType::Float, .offset = 0}},
+        {},
+        {},
+        {},
+        {}});
+
+    const std::expected<CookReport, Assisi::Cook::CookError> after =
+        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path(), Assisi::Image::CompressQuality::Fast);
+    REQUIRE_MESSAGE(after.has_value(), Explain(after));
+
+    // The fixture holds exactly one reflected document, its material.
+    constexpr std::size_t kFixtureReflected = 1;
+    CHECK(after->cooked == kFixtureReflected);
+    CHECK(after->skipped == before->cooked - kFixtureReflected);
 }
 
 namespace

@@ -74,6 +74,20 @@ public:
     [[nodiscard]] std::string_view Name() const override { return "reflected"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Reflected; }
 
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        // Every reflected type's layout: a field added, removed or retyped changes
+        // what a document cooks to while its source stays the same. Sorted, so the
+        // registration order static initialisation happens to pick cannot move it.
+        std::vector<std::uint64_t> layouts;
+        for (const Core::Reflect::AssetTypeMeta &meta : Core::Reflect::AssetTypeRegistry::Instance().All())
+        {
+            layouts.push_back(Core::Reflect::AssetLayoutHash(meta));
+        }
+        std::ranges::sort(layouts);
+        return Core::ContentHash64(std::as_bytes(std::span{layouts}));
+    }
+
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
         static constexpr std::array kExtensions{std::string_view{".amat"}, std::string_view{".json"}};

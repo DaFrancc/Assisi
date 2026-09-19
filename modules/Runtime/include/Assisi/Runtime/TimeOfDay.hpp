@@ -163,13 +163,13 @@ struct Moon
     /// Real moonlight is nearer 2.5e-6, which is unplayably dark; this is a
     /// compromise and is meant to be one.
     AFIELD(min = 0) float intensity = 0.02f;
-    AFIELD() Assisi::Math::Color3 color{0.75f, 0.85f, 1.0f};
+    AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>color{0.75f, 0.85f, 1.0f};
 
     AFIELD(min = 0.05, max = 30.0) float sizeDegrees = 0.5f;
 
     /// A tint over the albedo photograph. White leaves the photograph's own
     /// colour, which is why it is the default.
-    AFIELD() Assisi::Math::Color3 diskColor{1.0f, 1.0f, 1.0f};
+    AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>diskColor{1.0f, 1.0f, 1.0f};
     AFIELD(min = 0.0, max = 200.0) float diskIntensity = 2.0f;
 
     /// How much of the air's reddening a low moon takes, from none to all of it.

@@ -72,12 +72,12 @@ struct MaterialData
     // The min/max are editor clamps, not load-time validation: an importer may
     // still deliver an out-of-range value, and the renderer's math is what has
     // to survive that. They exist so an author cannot *create* one by dragging.
-    AFIELD() Assisi::Math::Color4 BaseColorFactor{1.f, 1.f, 1.f, 1.f};
+    AFIELD() Assisi::Math::Color4<Assisi::Math::ColorSpace::Linear>BaseColorFactor{1.f, 1.f, 1.f, 1.f};
     AFIELD(min = 0, max = 1) float MetallicFactor = 1.f;
     AFIELD(min = 0, max = 1) float RoughnessFactor = 1.f;
     AFIELD(min = 0) float NormalScale = 1.f;
     AFIELD(min = 0, max = 1) float OcclusionStrength = 1.f;
-    AFIELD() Assisi::Math::Color3 EmissiveFactor{0.f, 0.f, 0.f};
+    AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>EmissiveFactor{0.f, 0.f, 0.f};
 
     // --- Factors (OpenPBR base layer) ---
     // Defaults reproduce the pre-OpenPBR shading exactly: weights 1,
@@ -85,7 +85,7 @@ struct MaterialData
     // that never sets them renders unchanged.
     AFIELD(min = 0, max = 1) float BaseWeight = 1.f;                  ///< OpenPBR base_weight.
     AFIELD(min = 0, max = 1) float SpecularWeight = 1.f;              ///< OpenPBR specular_weight.
-    AFIELD() Assisi::Math::Color3 SpecularColor{1.f, 1.f, 1.f};       ///< OpenPBR specular_color; the F82 edge tint on metals.
+    AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>SpecularColor{1.f, 1.f, 1.f};       ///< OpenPBR specular_color; the F82 edge tint on metals.
     /// OpenPBR specular_ior. Bounded to the spec's [1, 3]: below 1 inverts the
     /// Fresnel the F0 derivation assumes, and no dielectric this model covers
     /// reaches 3.

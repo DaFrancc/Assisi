@@ -11,12 +11,16 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Font.hpp"
     "include/Assisi/Mondrian/FontDescription.hpp"
     "include/Assisi/Mondrian/FontReader.hpp"
+    "include/Assisi/Mondrian/Text.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
+    "include/Assisi/Mondrian/Utf8.hpp"
   PRIVATE
     "src/DrawList.cpp"
     "src/Font.cpp"
     "src/FontReader.cpp"
+    "src/Text.cpp"
     "src/Ui.cpp"
+    "src/Utf8.cpp"
 )
 
 target_include_directories(Assisi-Mondrian
@@ -27,6 +31,7 @@ target_include_directories(Assisi-Mondrian
 target_link_libraries(Assisi-Mondrian
   PUBLIC
     Assisi::Core
+    Assisi::Math
 )
 
 add_library(Assisi::Mondrian ALIAS Assisi-Mondrian)

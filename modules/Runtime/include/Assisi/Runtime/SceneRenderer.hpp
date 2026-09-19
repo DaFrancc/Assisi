@@ -215,7 +215,7 @@ public:
     /// cannot see.
     ///
     /// It overrides rather than adds, and it stays pinned until ClearAmbient().
-    void SetAmbient(const Assisi::Math::Color3 &color, float intensity)
+    void SetAmbient(const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>&color, float intensity)
     {
         _ambient = AmbientOverride{.active = true, .color = color, .intensity = intensity};
     }
@@ -225,7 +225,7 @@ public:
     void ClearAmbient() { _ambient = AmbientOverride{}; }
 
     [[nodiscard]] bool AmbientOverridden() const { return _ambient.active; }
-    [[nodiscard]] Assisi::Math::Color3 AmbientColor() const { return _ambient.color; }
+    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>AmbientColor() const { return _ambient.color; }
     [[nodiscard]] float AmbientIntensity() const { return _ambient.intensity; }
 
     /// @brief Whether the sky is reflected, and how finely. Applied on the next

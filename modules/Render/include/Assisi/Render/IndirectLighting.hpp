@@ -55,10 +55,10 @@ inline constexpr float kDefaultAmbientIntensity = 0.03f;
 struct IndirectConstants
 {
     /// Radiance reaching a surface facing straight up.
-    Assisi::Math::Color3 skyRadiance{0.0f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> skyRadiance{0.0f};
     float skyPadding = 0.0f;
     /// The same for one facing straight down.
-    Assisi::Math::Color3 groundRadiance{0.0f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> groundRadiance{0.0f};
     float groundPadding = 0.0f;
 
     /// One while a prefiltered environment answers the specular half, and zero
@@ -85,7 +85,7 @@ static_assert(sizeof(IndirectConstants) == 48 && offsetof(IndirectConstants, gro
 /// component alone selects between the two halves; the saturate is what stops a
 /// normal that is not quite unit length from extrapolating past a hemisphere and
 /// producing a negative radiance.
-[[nodiscard]] inline Assisi::Math::Color3 EvaluateIndirect(const IndirectConstants &constants,
+[[nodiscard]] inline Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> EvaluateIndirect(const IndirectConstants &constants,
                                                            const glm::vec3 &normal)
 {
     const float upward = std::clamp(normal.y * 0.5f + 0.5f, 0.0f, 1.0f);
@@ -114,7 +114,7 @@ public:
     /// interface open later.
     ///
     /// @param normal  Unit vector, world space; up is +Y.
-    [[nodiscard]] virtual Assisi::Math::Color3 Radiance(const glm::vec3 &worldPosition,
+    [[nodiscard]] virtual Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> Radiance(const glm::vec3 &worldPosition,
                                                         const glm::vec3 &normal) const = 0;
 
     /// @brief The same answer as the shader's per-frame constants.
@@ -138,7 +138,7 @@ public:
     ///
     /// @param reflection  Unit vector, world space.
     /// @param roughness   Perceptual roughness.
-    [[nodiscard]] virtual std::optional<Assisi::Math::Color3> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
+    [[nodiscard]] virtual std::optional<Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
                                                                                const glm::vec3 & /*reflection*/,
                                                                                float /*roughness*/) const
     {
@@ -155,12 +155,12 @@ public:
 class UniformIndirect final : public IndirectLighting
 {
 public:
-    UniformIndirect(const Assisi::Math::Color3 &color, float intensity)
+    UniformIndirect(const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &color, float intensity)
         : _radiance(SanitizedSkyChannels(color * intensity, glm::vec3(0.0f)))
     {
     }
 
-    [[nodiscard]] Assisi::Math::Color3 Radiance(const glm::vec3 & /*worldPosition*/,
+    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> Radiance(const glm::vec3 & /*worldPosition*/,
                                                 const glm::vec3 & /*normal*/) const override
     {
         return _radiance;
@@ -172,7 +172,7 @@ public:
     }
 
 private:
-    Assisi::Math::Color3 _radiance;
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> _radiance;
 };
 
 /// @brief Sky above, ground below, interpolated by which way the surface faces.
@@ -187,13 +187,13 @@ private:
 class HemisphereIndirect final : public IndirectLighting
 {
 public:
-    HemisphereIndirect(const Assisi::Math::Color3 &skyRadiance, const Assisi::Math::Color3 &groundRadiance)
+    HemisphereIndirect(const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &skyRadiance, const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &groundRadiance)
         : _sky(SanitizedSkyChannels(skyRadiance, glm::vec3(0.0f))),
         _ground(SanitizedSkyChannels(groundRadiance, glm::vec3(0.0f)))
     {
     }
 
-    [[nodiscard]] Assisi::Math::Color3 Radiance(const glm::vec3 & /*worldPosition*/,
+    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> Radiance(const glm::vec3 & /*worldPosition*/,
                                                 const glm::vec3 &normal) const override
     {
         return EvaluateIndirect(ShaderConstants(), normal);
@@ -205,8 +205,8 @@ public:
     }
 
 private:
-    Assisi::Math::Color3 _sky;
-    Assisi::Math::Color3 _ground;
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> _sky;
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> _ground;
 };
 
 /// @brief The hemisphere's diffuse, and the sky itself as the thing a glossy
@@ -223,14 +223,14 @@ class SkyProbeIndirect final : public IndirectLighting
 public:
     /// @param environment  The sky the probe was baked from, disks already gone.
     /// @param maxLod       The baked cube's last mip.
-    SkyProbeIndirect(const Assisi::Math::Color3 &skyRadiance, const Assisi::Math::Color3 &groundRadiance,
+    SkyProbeIndirect(const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &skyRadiance, const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &groundRadiance,
                      const SkyProbeInputs &environment, float maxLod)
         : _hemisphere(skyRadiance, groundRadiance), _environment(environment),
         _maxLod(std::isfinite(maxLod) ? std::max(maxLod, 0.0f) : 0.0f)
     {
     }
 
-    [[nodiscard]] Assisi::Math::Color3 Radiance(const glm::vec3 &worldPosition, const glm::vec3 &normal) const override
+    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> Radiance(const glm::vec3 &worldPosition, const glm::vec3 &normal) const override
     {
         return _hemisphere.Radiance(worldPosition, normal);
     }
@@ -243,13 +243,13 @@ public:
         return constants;
     }
 
-    [[nodiscard]] std::optional<Assisi::Math::Color3> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
+    [[nodiscard]] std::optional<Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
                                                                        const glm::vec3 &reflection,
                                                                        float roughness) const override
     {
         const SkyProbeInputs &sky = _environment;
         const auto radiance = [&sky](const glm::vec3 &d) { return SkyRadiance(d, sky.sun, sky.moon, sky.settings); };
-        return Assisi::Math::Color3(PrefilterGgx(radiance, reflection, roughness, kMaxPrefilterSampleCount));
+        return Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(PrefilterGgx(radiance, reflection, roughness, kMaxPrefilterSampleCount));
     }
 
 private:
@@ -261,8 +261,8 @@ private:
 /// @brief What the sky sends down, and what its ground half sends back up.
 struct SkyAmbient
 {
-    Assisi::Math::Color3 sky{0.0f};
-    Assisi::Math::Color3 ground{0.0f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> sky{0.0f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> ground{0.0f};
 };
 
 /// @brief How many directions each hemispherical mean is taken over.

@@ -2,7 +2,8 @@
 #pragma once
 
 /// @file Color.hpp
-/// @brief Linear-RGB colour types — a vector in memory, its own type to an editor.
+/// @brief Colour types — a vector in memory, a colour in a named space to the
+/// compiler and the editor.
 ///
 /// Color3/Color4 are layout- and codec-identical to glm::vec3/glm::vec4: the
 /// same floats in the same order, and reflection serializes them through the
@@ -12,36 +13,108 @@
 /// drag boxes for a direction, decided by the field's type rather than by a hint
 /// that could be attached to any vector by mistake.
 ///
-/// Colours here are **linear**, never sRGB. The conversion is a property of a
-/// texture channel or a display transform, not of a value in memory, so nothing
-/// in this header encodes or decodes a transfer function.
+/// The space is part of the type, so the same floats in two spaces are two
+/// types the compiler keeps apart: passing an sRGB colour where a linear one is
+/// expected does not build, and crossing is an explicit ToLinear or ToSrgb.
+/// Lighting and materials are linear, where numbers are proportional to light;
+/// the UI is sRGB, where numbers are what a colour picker shows.
 ///
 /// Derived from the glm type rather than wrapping one so that `.x`, the swizzles,
 /// and every arithmetic operator keep working, and a Color passes anywhere its
-/// vector is expected. Only one class in the hierarchy declares data members, so
-/// the types stay standard-layout and offsetof stays valid — which reflection
-/// depends on.
+/// vector is expected. glm's operators return plain vectors, which convert into
+/// either space, so arithmetic is where the compiler stops checking. Only one
+/// class in the hierarchy declares data members, so the types stay
+/// standard-layout and offsetof stays valid — which reflection depends on.
 
 #include <Assisi/Math/GLM.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 
 namespace Assisi::Math
 {
 
-/// @brief Linear RGB.
+/// @brief What a colour's numbers measure.
+enum class ColorSpace : uint8_t
+{
+    Linear, ///< proportional to light; what lighting and blending maths needs
+    Srgb,   ///< proportional to perceived brightness; what pickers and hex codes use
+    Count
+};
+
+/// @brief RGB in @p Space.
+template <ColorSpace Space>
 struct Color3 : glm::vec3
 {
     using glm::vec3::vec3;
     constexpr Color3(const glm::vec3 &v) : glm::vec3(v) {}
+
+    // Without this a colour in the other space would convert through its base
+    // vector into the constructor above.
+    template <ColorSpace Other>
+        requires(Other != Space)
+    Color3(const Color3<Other> &) = delete;
 };
 
-/// @brief Linear RGB with alpha. Alpha is coverage, and is never premultiplied.
+/// @brief RGB with alpha, in @p Space. Alpha is coverage in either space, and is
+/// never premultiplied.
+template <ColorSpace Space>
 struct Color4 : glm::vec4
 {
     using glm::vec4::vec4;
     constexpr Color4(const glm::vec4 &v) : glm::vec4(v) {}
+
+    template <ColorSpace Other>
+        requires(Other != Space)
+    Color4(const Color4<Other> &) = delete;
 };
+
+/// @name The sRGB transfer function
+/// @{
+/// At or below these a channel is on the curve's straight segment.
+inline constexpr float kSrgbEncodedThreshold = 0.04045f;
+inline constexpr float kSrgbLinearThreshold  = 0.0031308f;
+/// The straight segment's slope, and the curved segment's offset, scale and power.
+inline constexpr float kSrgbSlope  = 12.92f;
+inline constexpr float kSrgbOffset = 0.055f;
+inline constexpr float kSrgbScale  = 1.055f;
+inline constexpr float kSrgbGamma  = 2.4f;
+/// @}
+
+/// @brief One sRGB channel as linear.
+[[nodiscard]] inline float SrgbToLinear(float channel)
+{
+    return channel <= kSrgbEncodedThreshold ? channel / kSrgbSlope
+                                            : std::pow((channel + kSrgbOffset) / kSrgbScale, kSrgbGamma);
+}
+
+/// @brief One linear channel as sRGB.
+[[nodiscard]] inline float LinearToSrgb(float channel)
+{
+    return channel <= kSrgbLinearThreshold ? channel * kSrgbSlope
+                                           : kSrgbScale * std::pow(channel, 1.f / kSrgbGamma) - kSrgbOffset;
+}
+
+[[nodiscard]] inline Color3<ColorSpace::Linear> ToLinear(const Color3<ColorSpace::Srgb> &color)
+{
+    return glm::vec3(SrgbToLinear(color.r), SrgbToLinear(color.g), SrgbToLinear(color.b));
+}
+
+[[nodiscard]] inline Color4<ColorSpace::Linear> ToLinear(const Color4<ColorSpace::Srgb> &color)
+{
+    return glm::vec4(SrgbToLinear(color.r), SrgbToLinear(color.g), SrgbToLinear(color.b), color.a);
+}
+
+[[nodiscard]] inline Color3<ColorSpace::Srgb> ToSrgb(const Color3<ColorSpace::Linear> &color)
+{
+    return glm::vec3(LinearToSrgb(color.r), LinearToSrgb(color.g), LinearToSrgb(color.b));
+}
+
+[[nodiscard]] inline Color4<ColorSpace::Srgb> ToSrgb(const Color4<ColorSpace::Linear> &color)
+{
+    return glm::vec4(LinearToSrgb(color.r), LinearToSrgb(color.g), LinearToSrgb(color.b), color.a);
+}
 
 /// @name Colour temperature
 ///
@@ -110,7 +183,9 @@ inline constexpr float kMaxTemperatureKelvin = 25000.0f;
     return peak > 0.0f ? positive / peak : glm::vec3(1.0f);
 }
 
-static_assert(sizeof(Color3) == sizeof(glm::vec3), "Color3 must stay layout-identical to its vector.");
-static_assert(sizeof(Color4) == sizeof(glm::vec4), "Color4 must stay layout-identical to its vector.");
+static_assert(sizeof(Color3<ColorSpace::Linear>) == sizeof(glm::vec3), "Color3 must stay layout-identical to its vector.");
+static_assert(sizeof(Color3<ColorSpace::Srgb>) == sizeof(glm::vec3), "Color3 must stay layout-identical to its vector.");
+static_assert(sizeof(Color4<ColorSpace::Linear>) == sizeof(glm::vec4), "Color4 must stay layout-identical to its vector.");
+static_assert(sizeof(Color4<ColorSpace::Srgb>) == sizeof(glm::vec4), "Color4 must stay layout-identical to its vector.");
 
 } /* namespace Assisi::Math */

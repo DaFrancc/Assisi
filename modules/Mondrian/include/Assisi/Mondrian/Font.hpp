@@ -84,6 +84,10 @@ struct Font
 
     /// @brief The glyph index the font maps @p codepoint to, when it has one.
     [[nodiscard]] std::optional<uint32_t> GlyphFor(uint32_t codepoint) const;
+
+    /// @brief The pen adjustment between glyphs @p left and @p right, in that
+    /// order; zero when the font has none for the pair.
+    [[nodiscard]] float Kerning(uint32_t left, uint32_t right) const;
 };
 
 /// @brief Version of the font payload's layout, separate from the blob envelope's.

@@ -37,7 +37,7 @@ public:
     /// one and hands it over. Until then the strip samples white.
     void SetPlaceholderTexture(TextureId texture) { _placeholderTexture = texture; }
 
-    /// @brief The font the placeholder writes a sample word in, and the texture
+    /// @brief The font the placeholder sets a sample paragraph in, and the texture
     /// its atlas was registered as. The font must outlive the Ui or be replaced
     /// first. Until one is set the placeholder writes no text.
     void SetPlaceholderFont(const Font *font, TextureId atlas)

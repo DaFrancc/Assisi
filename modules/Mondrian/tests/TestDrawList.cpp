@@ -20,8 +20,8 @@ constexpr TextureId kTextureB{2};
 
 TEST_CASE("DrawList: the builder sets each property on the quad it made, and only that one")
 {
-    constexpr Color kFill{.r = 0.1f, .g = 0.2f, .b = 0.3f, .a = 0.4f};
-    constexpr Color kEdge{.r = 0.5f, .g = 0.6f, .b = 0.7f, .a = 0.8f};
+    constexpr Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> kFill{0.1f, 0.2f, 0.3f, 0.4f};
+    constexpr Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> kEdge{0.5f, 0.6f, 0.7f, 0.8f};
     constexpr Rect kUv{.x = 0.25f, .y = 0.5f, .width = 0.25f, .height = 0.5f};
     constexpr float kBorder = 3.f;
     constexpr float kRadius = 6.f;
@@ -155,7 +155,7 @@ TEST_CASE("DrawList: a finalized list refuses changes")
     DrawList list;
     QuadBuilder quad = list.Quad(kVisible);
     list.Finalize();
-    CHECK_THROWS_AS(quad.Fill(Color{}), Assisi::Core::ContractViolation);
+    CHECK_THROWS_AS(quad.Fill(Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{}), Assisi::Core::ContractViolation);
     CHECK_THROWS_AS(list.Quad(kVisible), Assisi::Core::ContractViolation);
 }
 #endif

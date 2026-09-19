@@ -79,7 +79,7 @@ struct DirectionalLight
 
     /// Linear-RGB colour, under SunColorExpression::Rgb.
     AFIELD(radioListen = {source = colorExpression, value = Rgb, behavior = grey})
-    Assisi::Math::Color3 color{1.f, 1.f, 1.f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>color{1.f, 1.f, 1.f};
 
     /// Colour temperature, under SunColorExpression::Temperature. Low is warm:
     /// about 2800 K for tungsten, 5800 for daylight, 6500 for an overcast sky,
@@ -110,7 +110,7 @@ struct DirectionalLight
 ACOMP()
 struct PointLight
 {
-    AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f };
+    AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>color { 1.f, 1.f, 1.f };
     AFIELD() float intensity = 1.f;                  ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius = 10.f;             ///< Maximum influence range in world units; never negative.
     AFIELD(radioBroadcast) bool castsShadows = true; ///< Whether this light renders shadow maps (six faces).
@@ -134,7 +134,7 @@ struct PointLight
 ACOMP()
 struct SpotLight
 {
-    AFIELD() Assisi::Math::Color3 color { 1.f, 1.f, 1.f }; ///< Linear-RGB colour.
+    AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>color { 1.f, 1.f, 1.f }; ///< Linear-RGB colour.
     AFIELD() float intensity = 1.f;                        ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius = 10.f;                   ///< Maximum influence range in world units; never negative.
     /// Half-angle of the full-brightness cone (degrees), capped by the cutoff it

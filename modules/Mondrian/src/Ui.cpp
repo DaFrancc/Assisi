@@ -1,12 +1,15 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Mondrian/Ui.hpp>
 
+#include <Assisi/Mondrian/Text.hpp>
+
 #include <Assisi/Core/Assert.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string_view>
 
 namespace Assisi::Mondrian
@@ -44,59 +47,32 @@ constexpr float kBorderFraction = 0.08f;
 /// rounded right-hand corners.
 constexpr float kClipKeepFraction = 0.6f;
 
-constexpr Color kTileColor{.r = 0.9f, .g = 0.2f, .b = 0.1f, .a = 1.f};
-constexpr Color kBorderColor{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
-constexpr Color kUntinted{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
+constexpr Math::Color4<Math::ColorSpace::Srgb> kTileColor{0.9f, 0.2f, 0.1f, 1.f};
+constexpr Math::Color4<Math::ColorSpace::Srgb> kBorderColor{1.f, 1.f, 1.f, 1.f};
+constexpr Math::Color4<Math::ColorSpace::Srgb> kUntinted{1.f, 1.f, 1.f, 1.f};
 constexpr Rect kWholeTexture{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
 
-/// The word the placeholder writes below the strip, once at each size, so a
-/// capture shows at a glance whether one atlas stays crisp small and large.
-/// ASCII, so every font the placeholder is given can draw it.
-constexpr std::string_view kSampleWord = "Assisi";
+/// The paragraph the placeholder sets below the strip, spelled in bytes so the
+/// source file's encoding cannot change it. Accented Latin, a no-break space
+/// and a forced break, so a capture shows wrapping, alignment and non-ASCII
+/// text at a glance. It reads: "Mondrian sets text in lines, breaking at
+/// spaces and aligning each one.", then on a new line "Crème brûlée, jalapeño,
+/// naïve café, Straße, smørrebrød: 100 km." (a hex escape runs on through any
+/// hex digit, hence the splits before an e or d).
+constexpr std::string_view kSampleParagraph =
+    "Mondrian sets text in lines, breaking at spaces and aligning each one.\n"
+    "Cr\xC3\xA8me br\xC3\xBBl\xC3\xA9"
+    "e, jalape\xC3\xB1o, na\xC3\xAFve caf\xC3\xA9, Stra\xC3\x9F"
+    "e, sm\xC3\xB8rrebr\xC3\xB8"
+    "d: 100\xC2\xA0km.";
 
-/// Text sizes as fractions of the viewport's shorter side, each double the
-/// last, so a row is the one above it scaled.
-constexpr std::array kTextFractions{0.025f, 0.05f, 0.1f};
+/// Text sizes as fractions of the viewport's shorter side, the second double
+/// the first. Each is set once in every alignment, side by side.
+constexpr std::array kTextFractions{0.02f, 0.04f};
 
-constexpr Color kTextColor{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
+constexpr std::size_t kColumnCount = static_cast<std::size_t>(TextAlign::Count);
 
-/// Where the next glyph goes: the pen's left edge and the line's baseline.
-struct Pen
-{
-    float x        = 0.f;
-    float baseline = 0.f;
-};
-
-/// Writes kSampleWord in @p font at @p pen, @p size pixels high. A pen walk and
-/// nothing more: no kerning, no wrapping, one glyph per byte of ASCII.
-void WriteSample(DrawList &list, const Font &font, TextureId atlas, Pen pen, float size)
-{
-    const float scale = size / font.pixelSize;
-    const float atlasWidth  = static_cast<float>(font.atlasWidth);
-    const float atlasHeight = static_cast<float>(font.atlasHeight);
-    for (const char letter : kSampleWord)
-    {
-        const std::optional<uint32_t> index = font.GlyphFor(static_cast<unsigned char>(letter));
-        const Glyph *glyph                  = index ? font.FindGlyph(*index) : nullptr;
-        if (glyph == nullptr)
-        {
-            continue;
-        }
-        if (glyph->width > 0 && glyph->height > 0)
-        {
-            const Rect rect{.x      = pen.x + static_cast<float>(glyph->bearingX) * scale,
-                            .y      = pen.baseline - static_cast<float>(glyph->bearingY) * scale,
-                            .width  = static_cast<float>(glyph->width) * scale,
-                            .height = static_cast<float>(glyph->height) * scale};
-            const Rect uv{.x      = static_cast<float>(glyph->x) / atlasWidth,
-                          .y      = static_cast<float>(glyph->y) / atlasHeight,
-                          .width  = static_cast<float>(glyph->width) / atlasWidth,
-                          .height = static_cast<float>(glyph->height) / atlasHeight};
-            list.Quad(rect).Fill(kTextColor).Texture(atlas, uv).Kind(QuadKind::Glyph);
-        }
-        pen.x += glyph->advance * scale;
-    }
-}
+constexpr Math::Color4<Math::ColorSpace::Srgb> kTextColor{1.f, 1.f, 1.f, 1.f};
 
 } // namespace
 
@@ -138,15 +114,25 @@ void Ui::Sync(Extent viewport)
 
     if (_placeholderFont != nullptr && _placeholderFont->pixelSize > 0.f && shorter > 0.f)
     {
-        const Font &font = *_placeholderFont;
-        Pen pen{.x = margin, .baseline = margin + side};
+        const Font &font         = *_placeholderFont;
+        const ShapedText shaped  = Shape(kSampleParagraph, font);
+        const float columnCount  = static_cast<float>(kColumnCount);
+        const float columnWidth  = (static_cast<float>(viewport.width) - 2.f * margin - (columnCount - 1.f) * gap) /
+                                  columnCount;
+        float top = std::round(margin + side + gap);
         for (const float fraction : kTextFractions)
         {
-            const float size  = shorter * fraction;
-            const float scale = size / font.pixelSize;
-            pen.baseline += gap + font.ascender * scale;
-            WriteSample(_drawList, font, _placeholderFontAtlas, pen, size);
-            pen.baseline -= font.descender * scale;
+            float blockHeight = 0.f;
+            for (std::size_t column = 0; column < kColumnCount; ++column)
+            {
+                const TextLayout layout = LayoutText(shaped, font, shorter * fraction, columnWidth,
+                                                     static_cast<TextAlign>(column));
+                const Point origin{.x = std::round(margin + static_cast<float>(column) * (columnWidth + gap)),
+                                   .y = top};
+                DrawGlyphs(_drawList, layout, _placeholderFontAtlas, origin, kTextColor);
+                blockHeight = std::max(blockHeight, layout.height);
+            }
+            top += std::round(blockHeight + gap);
         }
     }
 

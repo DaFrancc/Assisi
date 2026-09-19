@@ -51,7 +51,7 @@ struct AppConfig
 {
     AFIELD() double physicsHz = 60.0;
 
-    AFIELD() Assisi::Math::Color4 clearColor{0.15f, 0.15f, 0.18f, 1.f};
+    AFIELD() Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> clearColor{0.15f, 0.15f, 0.18f, 1.f};
 
     /// @brief The window size a fresh install starts at.
     ///

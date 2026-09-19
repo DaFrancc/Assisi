@@ -141,27 +141,6 @@ TYPES: dict[str, TypeCodegen] = {
         'Vec4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
         '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
-    # Math::Color3 / Color4 — linear RGB(A). Deliberately the same JSON as their
-    # vectors (a flat float array, same order), so a field that changes between
-    # the two loads every file written under the other spelling and re-saves
-    # byte-identically. Only the FieldType differs, which is what lets an editor
-    # offer a colour picker. Both spellings accepted, like ECS::Entity's.
-    'Math::Color3': TypeCodegen(
-        'Color3',
-        '{{ {a}.x, {a}.y, {a}.z }}',
-        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
-    'Assisi::Math::Color3': TypeCodegen(
-        'Color3',
-        '{{ {a}.x, {a}.y, {a}.z }}',
-        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
-    'Math::Color4': TypeCodegen(
-        'Color4',
-        '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
-        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
-    'Assisi::Math::Color4': TypeCodegen(
-        'Color4',
-        '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
-        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
     'glm::quat': TypeCodegen(
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',
@@ -274,6 +253,38 @@ TYPES: dict[str, TypeCodegen] = {
     'Core::Reflect::ComponentMask':        _COMPONENT_MASK,
     'Assisi::Core::Reflect::ComponentMask': _COMPONENT_MASK,
 }
+
+
+def _colour_spellings() -> dict[str, TypeCodegen]:
+    """Math::Color3<Space> / Color4<Space>, under every qualification of the
+    template and of its ColorSpace argument, without spaces.
+
+    Deliberately the same JSON as their vectors (a flat float array, same order),
+    so a field that changes between the two, or between spaces, loads every file
+    written under the other spelling and re-saves byte-identically. Only the
+    FieldType differs, which is what lets an editor offer the right picker.
+    """
+    template_prefixes = ('Math::', 'Assisi::Math::')
+    space_prefixes = ('', 'Math::', 'Assisi::Math::')
+    components = {3: 'x, y, z', 4: 'x, y, z, w'}
+    spellings = {}
+    for size, names in components.items():
+        accessors = ', '.join('{a}.' + n.strip() for n in names.split(','))
+        unpack = ', '.join(f'_v[{i}]' for i in range(size))
+        for space in ('Linear', 'Srgb'):
+            codegen = TypeCodegen(
+                f'{space}Color{size}',
+                f'{{{{ {accessors} }}}}',
+                f'{{{{ float _v[{size}] = {{{{ {accessors} }}}}; '
+                f'if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{{f}}", {size}, _v)) return false; '
+                f'{{a}} = {{{{ {unpack} }}}}; }}}}')
+            for template_prefix in template_prefixes:
+                for space_prefix in space_prefixes:
+                    spellings[f'{template_prefix}Color{size}<{space_prefix}ColorSpace::{space}>'] = codegen
+    return spellings
+
+
+TYPES.update(_colour_spellings())
 
 # Field types whose codegen calls the Core AssetId JSON helpers; a generated file
 # with any such field must include the helper header.
