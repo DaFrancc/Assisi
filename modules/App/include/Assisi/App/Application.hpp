@@ -12,6 +12,8 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Mondrian/Engine/QuadPass.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -202,6 +204,11 @@ protected:
     Window::WindowContext &GetWindow() const;
     Window::InputContext  &GetInput() const;
 
+    /// @brief The game UI, or null in a headless process, which has no window to
+    /// show it in. Unlike GetInput this does not assert: null is how code that
+    /// runs in both modes learns there is no UI.
+    [[nodiscard]] Mondrian::Ui *GetUi() const { return _ui.get(); }
+
     /// @brief Whether the window/renderer half of the engine was brought up.
     /// False in a headless process, and false before Initialize().
     [[nodiscard]] bool HasPresentation() const { return _presentationInitialized; }
@@ -336,6 +343,12 @@ private:
 
     std::unique_ptr<Window::WindowContext> _window;
     std::unique_ptr<Window::InputContext>  _input;
+
+    /// The game UI and the pass that draws it. Created with the window, so a
+    /// headless process has neither. Driven by Run, not by the ECS: it has to
+    /// run with no world loaded, and before the fixed update reads input.
+    std::unique_ptr<Mondrian::Ui> _ui;
+    Mondrian::Engine::QuadPass _uiPass;
 
     // Declared before the subsystems (post-process, and the derived app's caches)
     // so it is destroyed last: workers join only after everything that might have

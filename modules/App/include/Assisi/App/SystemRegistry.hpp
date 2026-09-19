@@ -56,6 +56,11 @@ class InputContext;
 class ActionMap;
 } // namespace Assisi::Window
 
+namespace Assisi::Mondrian
+{
+class Ui;
+} // namespace Assisi::Mondrian
+
 namespace Assisi::App
 {
 
@@ -104,6 +109,10 @@ struct SystemContext
     /// which the host applies at its next frame safe point. Null in hosts that
     /// run systems without a manager (tests).
     WorldManager *worldManager = nullptr;
+
+    /// The game UI. Null in headless hosts for the same reason `input` is: there
+    /// is no window to draw it in or take input from.
+    Mondrian::Ui *ui = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).

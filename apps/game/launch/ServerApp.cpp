@@ -376,8 +376,9 @@ void ServerApp::InstallQueuedSystems()
 
 Assisi::App::SystemContext ServerApp::WorldStartContext()
 {
-    // No window, so no input and no action map, as this host passes to every
-    // other phase. dt and the tick are zero: a one-shot runs outside any frame.
+    // No window, so no input, no action map and no UI, as this host passes to
+    // every other phase. dt and the tick are zero: a one-shot runs outside any
+    // frame.
     return {.world         = _world,
             .dt            = 0.f,
             .simTick       = 0,
@@ -385,7 +386,8 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
             .actions       = nullptr,
             .events        = GetEvents(),
             .isActiveWorld = true,
-            .worldManager  = nullptr};
+            .worldManager  = nullptr,
+            .ui            = nullptr};
 }
 
 void ServerApp::OnShutdown()

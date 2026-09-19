@@ -335,6 +335,7 @@ public:
         Core::EventQueue *events = nullptr;
         Window::InputContext *input = nullptr;
         Window::ActionMap *actions = nullptr;
+        Mondrian::Ui *ui = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
 

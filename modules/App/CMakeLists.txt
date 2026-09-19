@@ -48,11 +48,11 @@ target_include_directories(Assisi-App
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
-# Assisi::Debug is deliberately absent, and so is any UI toolkit. Application
-# drives the frame but draws no UI of its own: OnRenderUi hands the last slot in
-# the frame to whoever overrode it, and that subclass links what it draws with.
-# An application that overrides nothing therefore contains no UI code at all,
-# which is what lets the Game executable ship without the editor's.
+# Assisi::Debug is deliberately absent, and so is any debug UI toolkit.
+# Application owns the game UI, Mondrian, and draws it before the capture point;
+# OnRenderUi hands the last slot in the frame to whoever overrode it, and that
+# subclass links what it draws with. That is what lets the Game executable ship
+# without the editor's UI.
 target_link_libraries(Assisi-App
   PUBLIC
     Assisi::Core
@@ -61,6 +61,7 @@ target_link_libraries(Assisi-App
     Assisi::ECS
     Assisi::Runtime
     Assisi::Physics
+    Assisi::MondrianEngine
     Assisi::Deps
   PRIVATE
     nlohmann_json::nlohmann_json

@@ -290,6 +290,15 @@ bool Application::InitializePresentation()
         }
         ConfigurePostProcess();
 
+        // Built against the swapchain, which the UI draws onto after the post
+        // chain has finished with it.
+        if (!_uiPass.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo()))
+        {
+            Core::Log::Fatal("Failed to initialize the UI pass.");
+            return false;
+        }
+        _ui = std::make_unique<Mondrian::Ui>();
+
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
         // of the run is to find out where the time went. An interactive run
@@ -331,6 +340,7 @@ Application::~Application()
     // this only orders the releases: our own resources first, then the device last.
     if (_presentationInitialized)
     {
+        _uiPass.Shutdown();
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -613,6 +623,11 @@ void Application::Run()
             {
                 Window::WindowContext::PollEvents();
                 _input->Poll();
+
+                // Before the fixed update, so the UI takes what it consumes
+                // before any system can read it.
+                ASSISI_PROFILE_SCOPE("ui-input");
+                _ui->ProcessInput();
             }
         }
         const Clock::time_point inputEnd = Clock::now();
@@ -667,6 +682,17 @@ void Application::Run()
             OnUpdate(static_cast<float>(dt));
         }
         const Clock::time_point updateEnd = Clock::now();
+
+        // After OnUpdate and directly before the render, so what the UI shows is
+        // this frame's state rather than the last one's.
+        if (!_headless)
+        {
+            ASSISI_PROFILE_SCOPE("ui-sync");
+            const Window::WindowSize size = _window->GetFramebufferSize();
+            _ui->Sync({.width = static_cast<uint32_t>(std::max(size.Width, 0)),
+                       .height = static_cast<uint32_t>(std::max(size.Height, 0))});
+        }
+        const Clock::time_point uiSyncEnd = Clock::now();
 
         // Reconcile the swapchain's present mode with the frame-sync option HERE,
         // between frames — never inside RenderFrame(), which recreates the
@@ -724,6 +750,7 @@ void Application::Run()
         const double fixedMs  = phaseMs(inputEnd, fixedEnd);
         const double drainMs  = phaseMs(fixedEnd, drainEnd);
         const double updateMs = phaseMs(drainEnd, updateEnd);
+        const double uiSyncMs = phaseMs(updateEnd, uiSyncEnd);
         const double renderMs = phaseMs(renderStart, renderEnd);
         const double flushMs  = phaseMs(renderEnd, flushEnd);
 
@@ -733,7 +760,7 @@ void Application::Run()
         // Under VSync, where that wait is most of the frame, the figure would sit
         // pinned at zero and hide exactly the descheduling it exists to reveal.
         const double renderCpuMs = std::max(0.0, renderMs - gpuWaitMs);
-        const double accounted   = inputMs + fixedMs + drainMs + updateMs + renderCpuMs + flushMs;
+        const double accounted   = inputMs + fixedMs + drainMs + updateMs + uiSyncMs + renderCpuMs + flushMs;
 
         // Deliberately not clamped. A persistently negative value means the
         // accounting itself is wrong — a phase double-counted, or a new one added
@@ -974,6 +1001,16 @@ void Application::RenderFrame()
         // Whatever is left: the overlay resolve, and FXAA or the final copy.
         ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process-output");
         _postProcess.RunAfterOverlays(frame->commandList, *frame);
+    }
+
+    // The game UI is part of the finished frame, so it draws before the capture
+    // below. A redraw from the window-refresh callback lands here without a Sync
+    // and shows the last one's list, which is still current. Null only if that
+    // callback fires during bring-up, before the UI exists.
+    if (_ui)
+    {
+        ASSISI_PROFILE_GPU_PASS(frame->commandList, "game-ui");
+        _uiPass.Draw(*frame, _ui->GetDrawList());
     }
 
     // The finished frame, before the debug UI draws over it.
