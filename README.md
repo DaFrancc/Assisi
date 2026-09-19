@@ -28,7 +28,10 @@ do not already have it on `PATH`, [Make](https://www.gnu.org/software/make/), an
 </details>
 
 <details>
-<summary><b>Installing those on Arch</b></summary>
+<summary><b>Installing those on Linux</b></summary>
+
+<details>
+<summary><b>Arch</b></summary>
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja ccache python \
@@ -65,7 +68,7 @@ sudo pacman -S clang
 </details>
 
 <details>
-<summary><b>Installing those on Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)</b></summary>
+<summary><b>Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)</b></summary>
 
 ```bash
 sudo dnf install gcc-c++ make git cmake ninja-build ccache python3 pkgconf-pkg-config \
@@ -117,7 +120,7 @@ sudo dnf install clang
 </details>
 
 <details>
-<summary><b>Installing those on Debian and Ubuntu — untested</b></summary>
+<summary><b>Debian and Ubuntu — untested</b></summary>
 
 Nobody has built the engine on a Debian-based distribution yet. What follows is a translation of the
 two lists above, not a tested recipe; corrections are welcome.
@@ -179,6 +182,8 @@ copy instead of compiling its own bundled amalgamation. Both work. The system co
 the first build but leaves the resulting binary with a runtime dependency on that shared library; pass
 `-DCMAKE_DISABLE_FIND_PACKAGE_simdjson=TRUE` to force the self-contained build regardless of what is
 installed.
+
+</details>
 
 </details>
 
