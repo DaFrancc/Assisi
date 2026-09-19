@@ -439,6 +439,92 @@ TEST_CASE("Mondrian: the focus ring shows while keys were used last, and not whi
     CHECK(withRing == withoutRing + 1);
 }
 
+namespace
+{
+
+struct ResumeClicked
+{
+};
+
+struct QuitClicked
+{
+    int32_t code = 0;
+};
+
+} // namespace
+
+TEST_CASE("Mondrian: a click on a bound button pushes its event once")
+{
+    Screen screen;
+    Assisi::Core::EventQueue events;
+    screen.ui.SetEvents(&events);
+    screen.ui.OnActivate(screen.Named("Resume"), ResumeClicked{});
+
+    const Point resume = CentreOf(screen.ui, "Resume");
+    screen.Step(Pressing(resume, InputGrant::Pointer));
+    CHECK(events.Read<ResumeClicked>().empty()); // a press alone is not a click
+
+    screen.Step(Releasing(resume, InputGrant::Pointer));
+    CHECK(events.Read<ResumeClicked>().size() == 1);
+
+    screen.Step(PointerAt(resume, InputGrant::Pointer));
+    CHECK(events.Read<ResumeClicked>().size() == 1); // nothing more without another click
+}
+
+TEST_CASE("Mondrian: accepting a focused button pushes the event it carries")
+{
+    Screen screen;
+    Assisi::Core::EventQueue events;
+    screen.ui.SetEvents(&events);
+    constexpr int32_t kCode = 7;
+    screen.ui.OnActivate(screen.Named("Quit"), QuitClicked{.code = kCode});
+
+    screen.Step(Action(UiAction::Next)); // focus lands on Quit
+    screen.Step(Action(UiAction::Accept));
+
+    REQUIRE(events.Read<QuitClicked>().size() == 1);
+    CHECK(events.Read<QuitClicked>()[0].code == kCode);
+    CHECK(events.Read<ResumeClicked>().empty());
+}
+
+TEST_CASE("Mondrian: binding a button again replaces what it pushes")
+{
+    Screen screen;
+    Assisi::Core::EventQueue events;
+    screen.ui.SetEvents(&events);
+    screen.ui.OnActivate(screen.Named("Resume"), ResumeClicked{});
+    screen.ui.OnActivate(screen.Named("Resume"), QuitClicked{});
+
+    const Point resume = CentreOf(screen.ui, "Resume");
+    screen.Step(Pressing(resume));
+    screen.Step(Releasing(resume));
+    CHECK(events.Read<ResumeClicked>().empty());
+    CHECK(events.Read<QuitClicked>().size() == 1);
+}
+
+TEST_CASE("Mondrian: Back pushes UiBack only while the UI has the keys")
+{
+    Screen screen;
+    Assisi::Core::EventQueue events;
+    screen.ui.SetEvents(&events);
+
+    screen.Step(Action(UiAction::Back, 0.0, InputGrant::Pointer));
+    CHECK(events.Read<UiBack>().empty());
+
+    screen.Step(Action(UiAction::Back));
+    CHECK(events.Read<UiBack>().size() == 1);
+}
+
+TEST_CASE("Mondrian: with no event queue, activating a bound button does nothing and does not assert")
+{
+    Screen screen;
+    screen.ui.OnActivate(screen.Named("Resume"), ResumeClicked{});
+    const Point resume = CentreOf(screen.ui, "Resume");
+    screen.Step(Pressing(resume));
+    CHECK_NOTHROW(screen.Step(Releasing(resume)));
+    CHECK(screen.Now().activated == screen.Named("Resume"));
+}
+
 #ifndef NDEBUG
 TEST_CASE("Mondrian: the two frame steps must alternate, input first")
 {

@@ -308,6 +308,7 @@ bool Application::InitializePresentation()
         }
         _ui = std::make_unique<Mondrian::Ui>();
         _ui->SetHoverFocuses(_config.uiHoverFocuses);
+        _ui->SetEvents(&_events);
         // The window outlives the UI: both belong to this Application, and the
         // UI is torn down first.
         Window::WindowContext *window = _window.get();

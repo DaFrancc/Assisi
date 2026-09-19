@@ -86,6 +86,11 @@ struct Interaction
     bool backPressed = false;
 };
 
+/// @brief Pushed when the Back action is pressed while the UI has the keys.
+struct UiBack
+{
+};
+
 /// Seconds a direction is held before it repeats, and between repeats after.
 inline constexpr double kNavRepeatDelaySeconds = 0.4;
 inline constexpr double kNavRepeatIntervalSeconds = 0.1;
