@@ -23,8 +23,8 @@ QuadBuilder &QuadBuilder::Fill(const Math::Color4<Math::ColorSpace::Srgb> &color
 QuadBuilder &QuadBuilder::Border(float width, const Math::Color4<Math::ColorSpace::Srgb> &color)
 {
     QuadInstance &instance = Instance();
-    instance.borderWidth   = width;
-    instance.borderColor   = color;
+    instance.borderWidth = width;
+    instance.borderColor = color;
     return *this;
 }
 
@@ -39,7 +39,7 @@ QuadBuilder &QuadBuilder::Corners(float radius, CornerStyle style)
 
 QuadBuilder &QuadBuilder::CornerAt(Corner corner, float radius, CornerStyle style)
 {
-    QuadInstance &instance                                  = Instance();
+    QuadInstance &instance = Instance();
     instance.cornerRadius[static_cast<std::size_t>(corner)] = radius;
     instance.cornerStyles = PackCornerStyle(instance.cornerStyles, corner, style);
     return *this;
@@ -53,9 +53,9 @@ QuadBuilder &QuadBuilder::Clip(const Rect &clip)
 
 QuadBuilder &QuadBuilder::Texture(TextureId texture, const Rect &uv)
 {
-    QuadInstance &instance            = Instance();
-    instance.uv                       = uv;
-    instance.kind                     = static_cast<uint32_t>(QuadKind::Image);
+    QuadInstance &instance = Instance();
+    instance.uv = uv;
+    instance.kind = static_cast<uint32_t>(QuadKind::Image);
     _list->_bindings[_index].texture = texture;
     return *this;
 }
@@ -83,7 +83,7 @@ QuadBuilder &QuadBuilder::Mask(MaskId mask)
 QuadBuilder DrawList::Quad(const Rect &rect)
 {
     ASSISI_ASSERT(!_finalized, "a quad added to a finalized DrawList");
-    _instances.push_back(QuadInstance{.rect = rect});
+    _instances.push_back(QuadInstance{.rect = rect, .clip = _defaultClip});
     _bindings.push_back(Binding{});
     return QuadBuilder(*this, _instances.size() - 1);
 }
@@ -96,9 +96,9 @@ bool CanBeSeen(const QuadInstance &quad)
 {
     const Rect &rect = quad.rect;
     const Rect &clip = quad.clip;
-    const float left   = std::max(rect.x, clip.x);
-    const float top    = std::max(rect.y, clip.y);
-    const float right  = std::min(rect.x + rect.width, clip.x + clip.width);
+    const float left = std::max(rect.x, clip.x);
+    const float top = std::max(rect.y, clip.y);
+    const float right = std::min(rect.x + rect.width, clip.x + clip.width);
     const float bottom = std::min(rect.y + rect.height, clip.y + clip.height);
     return right > left && bottom > top;
 }
@@ -118,7 +118,7 @@ void DrawList::Finalize()
             continue;
         }
         _instances[kept] = _instances[i];
-        _bindings[kept]  = _bindings[i];
+        _bindings[kept] = _bindings[i];
         ++kept;
     }
     _instances.resize(kept);
@@ -141,9 +141,9 @@ void DrawList::Finalize()
         }
         _entries.push_back(DrawEntry{.firstInstance = static_cast<uint32_t>(i),
                                      .instanceCount = 1,
-                                     .texture       = binding.texture,
-                                     .material      = binding.material,
-                                     .mask          = binding.mask});
+                                     .texture = binding.texture,
+                                     .material = binding.material,
+                                     .mask = binding.mask});
     }
 
     _finalized = true;
@@ -154,6 +154,7 @@ void DrawList::Clear()
     _instances.clear();
     _bindings.clear();
     _entries.clear();
+    _defaultClip = kNoClip;
     _finalized = false;
 }
 

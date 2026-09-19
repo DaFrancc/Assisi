@@ -27,9 +27,9 @@ namespace Assisi::Mondrian
 /// @brief A rectangle in window pixels, origin top-left, y down.
 struct Rect
 {
-    float x      = 0.f;
-    float y      = 0.f;
-    float width  = 0.f;
+    float x = 0.f;
+    float y = 0.f;
+    float width = 0.f;
     float height = 0.f;
 };
 
@@ -43,7 +43,7 @@ struct Point
 /// @brief The size of the surface the UI lays out against, in pixels.
 struct Extent
 {
-    uint32_t width  = 0;
+    uint32_t width = 0;
     uint32_t height = 0;
 };
 
@@ -130,9 +130,9 @@ static_assert(static_cast<uint32_t>(Corner::Count) * kCornerStyleBits <= 32u);
 /// than any window, and still small enough that the shader's arithmetic on it
 /// stays exact.
 inline constexpr float kNoClipHalfExtent = 1.0e6f;
-inline constexpr Rect kNoClip{.x      = -kNoClipHalfExtent,
-                              .y      = -kNoClipHalfExtent,
-                              .width  = 2.f * kNoClipHalfExtent,
+inline constexpr Rect kNoClip{.x = -kNoClipHalfExtent,
+                              .y = -kNoClipHalfExtent,
+                              .width = 2.f * kNoClipHalfExtent,
                               .height = 2.f * kNoClipHalfExtent};
 
 /// @brief One quad as the shader reads it.
@@ -148,9 +148,9 @@ struct QuadInstance
     Math::Color4<Math::ColorSpace::Srgb> color{1.f, 1.f, 1.f, 1.f};
     Math::Color4<Math::ColorSpace::Srgb> borderColor{0.f, 0.f, 0.f, 0.f};
     std::array<float, static_cast<std::size_t>(Corner::Count)> cornerRadius{};
-    float borderWidth       = 0.f;
-    uint32_t cornerStyles   = 0; ///< one CornerStyle per corner, packed by PackCornerStyle
-    uint32_t kind           = static_cast<uint32_t>(QuadKind::Solid);
+    float borderWidth = 0.f;
+    uint32_t cornerStyles = 0; ///< one CornerStyle per corner, packed by PackCornerStyle
+    uint32_t kind = static_cast<uint32_t>(QuadKind::Solid);
     uint32_t transformIndex = kIdentityTransform; ///< reserved; always identity for now
 };
 
@@ -191,9 +191,9 @@ struct DrawEntry
 {
     uint32_t firstInstance = 0;
     uint32_t instanceCount = 0;
-    TextureId texture      = kWhiteTexture;
-    MaterialId material    = kNoMaterial;
-    MaskId mask            = kNoMask;
+    TextureId texture = kWhiteTexture;
+    MaterialId material = kNoMaterial;
+    MaskId mask = kNoMask;
 };
 
 class DrawList;
@@ -203,7 +203,7 @@ class DrawList;
 /// list stops accepting changes once finalized.
 class QuadBuilder
 {
-public:
+  public:
     QuadBuilder &Fill(const Math::Color4<Math::ColorSpace::Srgb> &color);
     QuadBuilder &Border(float width, const Math::Color4<Math::ColorSpace::Srgb> &color);
     /// @brief The same radius and style on all four corners.
@@ -217,7 +217,7 @@ public:
     QuadBuilder &Material(MaterialId material);
     QuadBuilder &Mask(MaskId mask);
 
-private:
+  private:
     friend class DrawList;
     QuadBuilder(DrawList &list, std::size_t index) : _list(&list), _index(index) {}
 
@@ -233,7 +233,7 @@ private:
 /// rest into draws. The engine draws only a finalized list.
 class DrawList
 {
-public:
+  public:
     /// @brief Adds a quad covering @p rect: opaque white, square, unclipped,
     /// untextured. Must not be called once finalized.
     QuadBuilder Quad(const Rect &rect);
@@ -242,28 +242,33 @@ public:
     /// groups consecutive quads that share a texture, material and mask.
     void Finalize();
 
-    /// @brief Empties the list and makes it accept quads again.
+    /// @brief Empties the list and makes it accept quads again, unclipped.
     void Clear();
+
+    /// @brief The clip every quad added from now on starts with, until changed
+    /// or cleared. Clip() on a quad still replaces it.
+    void SetDefaultClip(const Rect &clip) { _defaultClip = clip; }
 
     [[nodiscard]] bool IsFinalized() const { return _finalized; }
     [[nodiscard]] std::span<const QuadInstance> Instances() const { return _instances; }
     [[nodiscard]] std::span<const DrawEntry> Entries() const { return _entries; }
 
-private:
+  private:
     friend class QuadBuilder;
 
     /// What a quad is drawn with, kept beside the instance rather than in it:
     /// the shader never reads these, the grouping does.
     struct Binding
     {
-        TextureId texture   = kWhiteTexture;
+        TextureId texture = kWhiteTexture;
         MaterialId material = kNoMaterial;
-        MaskId mask         = kNoMask;
+        MaskId mask = kNoMask;
     };
 
     std::vector<QuadInstance> _instances;
     std::vector<Binding> _bindings;
     std::vector<DrawEntry> _entries;
+    Rect _defaultClip = kNoClip;
     bool _finalized = false;
 };
 
