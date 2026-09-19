@@ -1754,7 +1754,7 @@ private:
     // The lighting the blueprint editor works by. The sun is an entity (so the
     // gizmo and inspector reach it like anything else); ambient is a renderer knob,
     // since there is no such component and nothing about it belongs in a file.
-    Assisi::Math::Color3 _blueprintAmbientColor{1.f, 1.f, 1.f};
+    Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> _blueprintAmbientColor{1.f, 1.f, 1.f};
     float _blueprintAmbient = 0.25f;
     // Deferred, for the same reason level loads are: opening resolves assets and
     // touches GPU state, and a panel runs mid-frame.

@@ -1,6 +1,7 @@
 add_executable(Assisi-Math-Tests
   main.cpp
   TestAngles.cpp
+  TestColor.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Math-Tests)

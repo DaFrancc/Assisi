@@ -110,6 +110,17 @@ TEST_CASE("Font: glyphs are found by glyph index and characters through the cmap
     CHECK_FALSE(font.GlyphFor(66).has_value());
 }
 
+TEST_CASE("Font: kerning is looked up by the ordered pair")
+{
+    Font font = SampleFont();
+    CHECK(font.Kerning(36, 70) == -1.5f);
+    CHECK(font.Kerning(70, 36) == 0.f);
+    CHECK(font.Kerning(36, 36) == 0.f);
+
+    font.kerning.clear();
+    CHECK(font.Kerning(36, 70) == 0.f);
+}
+
 TEST_CASE("Font: every prefix of a cooked font is refused as truncated")
 {
     const std::vector<std::byte> bytes = Encode(SampleFont());

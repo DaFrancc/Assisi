@@ -201,14 +201,14 @@ class CodegenTest(unittest.TestCase):
         # broken implementation.
         comps = _parse_source(
             "namespace N {\nACOMP()\nstruct C {\n"
-            "  AFIELD() Assisi::Math::Color3 tint;\n"
-            "  AFIELD() Assisi::Math::Color4 albedo;\n"
+            "  AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> tint;\n"
+            "  AFIELD() Assisi::Math::Color4<Assisi::Math::ColorSpace::Linear> albedo;\n"
             "  AFIELD() glm::vec3 dir;\n"
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
-        self.assertIn('"tint", .type = Assisi::Core::Reflect::FieldType::Color3', cpp)
-        self.assertIn('"albedo", .type = Assisi::Core::Reflect::FieldType::Color4', cpp)
+        self.assertIn('"tint", .type = Assisi::Core::Reflect::FieldType::LinearColor3', cpp)
+        self.assertIn('"albedo", .type = Assisi::Core::Reflect::FieldType::LinearColor4', cpp)
         self.assertIn('"dir", .type = Assisi::Core::Reflect::FieldType::Vec3', cpp)
         # Same array shape as the vector it shadows: three components for Color3,
         # four for Color4, read back through the same float-array helper.
@@ -216,18 +216,47 @@ class CodegenTest(unittest.TestCase):
         self.assertIn("{ c.albedo.x, c.albedo.y, c.albedo.z, c.albedo.w }", cpp)
         self.assertIn('ReadFloatArray(j, _comp, "tint", 3, _v)', cpp)
         self.assertIn('ReadFloatArray(j, _comp, "albedo", 4, _v)', cpp)
+        self.assertIn("comp.albedo = { _v[0], _v[1], _v[2], _v[3] };", cpp)
 
-    def test_unqualified_colour_spelling_is_accepted(self):
-        # Both spellings, as for ECS::Entity: a header inside Assisi:: writes the
-        # short one, and an unrecognised type is a hard generation error rather
-        # than a silently unserialized field.
+    def test_colour_space_is_its_own_field_type(self):
+        # The same floats in another space are another FieldType, so an editor
+        # offers a display-value picker for an sRGB colour and an HDR one for light.
         comps = _parse_source(
             "namespace N {\nACOMP()\nstruct C {\n"
-            "  AFIELD() Math::Color3 tint;\n"
+            "  AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Srgb> tint;\n"
+            "  AFIELD() Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> fill;\n"
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
-        self.assertIn('"tint", .type = Assisi::Core::Reflect::FieldType::Color3', cpp)
+        self.assertIn('"tint", .type = Assisi::Core::Reflect::FieldType::SrgbColor3', cpp)
+        self.assertIn('"fill", .type = Assisi::Core::Reflect::FieldType::SrgbColor4', cpp)
+        self.assertIn('ReadFloatArray(j, _comp, "fill", 4, _v)', cpp)
+
+    def test_shorter_colour_spellings_are_accepted(self):
+        # Every qualification a header can write, as for ECS::Entity: one inside
+        # Assisi:: writes the short ones, and an unrecognised type is a hard
+        # generation error rather than a silently unserialized field.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Math::Color3<Math::ColorSpace::Linear> a;\n"
+            "  AFIELD() Math::Color4<ColorSpace::Srgb> b;\n"
+            "  AFIELD() Assisi::Math::Color3<Math::ColorSpace::Srgb> c;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"a", .type = Assisi::Core::Reflect::FieldType::LinearColor3', cpp)
+        self.assertIn('"b", .type = Assisi::Core::Reflect::FieldType::SrgbColor4', cpp)
+        self.assertIn('"c", .type = Assisi::Core::Reflect::FieldType::SrgbColor3', cpp)
+
+    def test_colour_without_a_space_is_refused(self):
+        # The space is the point of the type; a bare Color4 is not a spelling.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Math::Color4 albedo;\n"
+            "};\n}\n"
+        )
+        with self.assertRaises(Exception):
+            reflectgen.generate_cpp(comps, "N/C.hpp")
 
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(

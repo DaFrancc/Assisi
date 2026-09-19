@@ -14,13 +14,13 @@ QuadInstance &QuadBuilder::Instance()
     return _list->_instances[_index];
 }
 
-QuadBuilder &QuadBuilder::Fill(const Color &color)
+QuadBuilder &QuadBuilder::Fill(const Math::Color4<Math::ColorSpace::Srgb> &color)
 {
     Instance().color = color;
     return *this;
 }
 
-QuadBuilder &QuadBuilder::Border(float width, const Color &color)
+QuadBuilder &QuadBuilder::Border(float width, const Math::Color4<Math::ColorSpace::Srgb> &color)
 {
     QuadInstance &instance = Instance();
     instance.borderWidth   = width;

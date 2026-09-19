@@ -407,10 +407,12 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::Vec4:
         WriteFloats(writer, address, kVec4Floats);
         return true;
-    case FieldType::Color3:
+    case FieldType::LinearColor3:
+    case FieldType::SrgbColor3:
         WriteFloats(writer, address, kVec3Floats);
         return true;
-    case FieldType::Color4:
+    case FieldType::LinearColor4:
+    case FieldType::SrgbColor4:
         WriteFloats(writer, address, kVec4Floats);
         return true;
     case FieldType::Quat:
@@ -555,10 +557,12 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     case FieldType::Vec4:
         ReadFloats(reader, address, kVec4Floats);
         return true;
-    case FieldType::Color3:
+    case FieldType::LinearColor3:
+    case FieldType::SrgbColor3:
         ReadFloats(reader, address, kVec3Floats);
         return true;
-    case FieldType::Color4:
+    case FieldType::LinearColor4:
+    case FieldType::SrgbColor4:
         ReadFloats(reader, address, kVec4Floats);
         return true;
     case FieldType::Quat:
@@ -682,8 +686,11 @@ const char *FieldTypeName(FieldType type)
     // Distinct from "vec3"/"vec4" on purpose. The bytes are identical, but the
     // name is hashed, so a field that changes between a vector and a colour is a
     // protocol change two builds must agree on rather than a silent reinterpret.
-    case FieldType::Color3: return "color3";
-    case FieldType::Color4: return "color4";
+    // The same holds between the two colour spaces.
+    case FieldType::LinearColor3: return "color3";
+    case FieldType::LinearColor4: return "color4";
+    case FieldType::SrgbColor3: return "srgbcolor3";
+    case FieldType::SrgbColor4: return "srgbcolor4";
     case FieldType::Quat: return "quat";
     case FieldType::Mat4: return "mat4";
     case FieldType::Enum: return "enum";

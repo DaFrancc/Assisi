@@ -9,6 +9,11 @@
 /// the engine layer is the only thing that knows how it reaches the screen. The
 /// instance struct is nonetheless laid out exactly as the shader reads it, so
 /// the engine uploads it without translating.
+///
+/// Colours are sRGB, the values a colour picker shows, with straight alpha. The
+/// shader premultiplies, so authored colours read the way they are written.
+
+#include <Assisi/Math/Color.hpp>
 
 #include <array>
 #include <cstddef>
@@ -28,14 +33,11 @@ struct Rect
     float height = 0.f;
 };
 
-/// @brief A display-space colour with straight (not premultiplied) alpha. The
-/// shader premultiplies, so authored colours read the way they are written.
-struct Color
+/// @brief A position in window pixels, origin top-left, y down.
+struct Point
 {
-    float r = 0.f;
-    float g = 0.f;
-    float b = 0.f;
-    float a = 1.f;
+    float x = 0.f;
+    float y = 0.f;
 };
 
 /// @brief The size of the surface the UI lays out against, in pixels.
@@ -143,8 +145,8 @@ struct QuadInstance
     Rect rect;
     Rect uv{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
     Rect clip = kNoClip;
-    Color color{.r = 1.f, .g = 1.f, .b = 1.f, .a = 1.f};
-    Color borderColor{.r = 0.f, .g = 0.f, .b = 0.f, .a = 0.f};
+    Math::Color4<Math::ColorSpace::Srgb> color{1.f, 1.f, 1.f, 1.f};
+    Math::Color4<Math::ColorSpace::Srgb> borderColor{0.f, 0.f, 0.f, 0.f};
     std::array<float, static_cast<std::size_t>(Corner::Count)> cornerRadius{};
     float borderWidth       = 0.f;
     uint32_t cornerStyles   = 0; ///< one CornerStyle per corner, packed by PackCornerStyle
@@ -202,8 +204,8 @@ class DrawList;
 class QuadBuilder
 {
 public:
-    QuadBuilder &Fill(const Color &color);
-    QuadBuilder &Border(float width, const Color &color);
+    QuadBuilder &Fill(const Math::Color4<Math::ColorSpace::Srgb> &color);
+    QuadBuilder &Border(float width, const Math::Color4<Math::ColorSpace::Srgb> &color);
     /// @brief The same radius and style on all four corners.
     QuadBuilder &Corners(float radius, CornerStyle style);
     QuadBuilder &CornerAt(Corner corner, float radius, CornerStyle style);

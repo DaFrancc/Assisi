@@ -50,13 +50,13 @@ enum class FieldType : std::uint8_t
     /// String would truncate it. Appended rather than inserted, so no existing
     /// value shifts.
     EntityName,
-    /// Math::Color3 / Math::Color4 — linear RGB(A). Identical to Vec3/Vec4 in
-    /// memory and in every codec; separate types so an editor offers a colour
+    /// Math::Color3 / Math::Color4 in ColorSpace::Linear. Identical to Vec3/Vec4
+    /// in memory and in every codec; separate types so an editor offers a colour
     /// picker for a colour and drag boxes for a direction, without a per-field
     /// hint that could be attached to the wrong vector. Appended rather than
     /// inserted, so no existing value shifts.
-    Color3,
-    Color4,
+    LinearColor3,
+    LinearColor4,
     Unknown,
     /// The narrow integers, appended after Unknown rather than beside their
     /// wider siblings so no existing value shifts. Reading these back at the
@@ -74,6 +74,11 @@ enum class FieldType : std::uint8_t
     /// `container` for the same reason. Encoding sorts by key whatever order the
     /// container itself iterates in.
     Map,
+    /// Math::Color3 / Math::Color4 in ColorSpace::Srgb. The same bytes as their
+    /// linear siblings; separate so an editor picks them in display values rather
+    /// than as light. Appended rather than inserted, so no existing value shifts.
+    SrgbColor3,
+    SrgbColor4,
     /// Number of field types, for a table indexed by FieldType.
     ///
     /// Safe to move, unlike every enumerator above it: nothing serializes this and

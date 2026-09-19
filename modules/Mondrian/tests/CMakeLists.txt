@@ -2,7 +2,9 @@ add_executable(Assisi-Mondrian-Tests
   main.cpp
   TestDrawList.cpp
   TestFont.cpp
+  TestText.cpp
   TestUi.cpp
+  TestUtf8.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Mondrian-Tests)

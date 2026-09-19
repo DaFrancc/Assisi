@@ -364,9 +364,9 @@ TEST_CASE("SceneSerializer: the time of day round-trips, and the jump counter do
 
     Moon moon;
     moon.intensity = 0.05f;
-    moon.color = Assisi::Math::Color3(0.2f, 0.3f, 0.4f);
+    moon.color = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(0.2f, 0.3f, 0.4f);
     moon.sizeDegrees = 1.75f;
-    moon.diskColor = Assisi::Math::Color3(0.9f, 0.8f, 0.7f);
+    moon.diskColor = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(0.9f, 0.8f, 0.7f);
     moon.diskIntensity = 5.5f;
     moon.cycleDays = 7.5f;
     moon.phaseAtEpoch = 0.625f;

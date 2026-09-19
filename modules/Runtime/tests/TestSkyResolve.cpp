@@ -254,7 +254,7 @@ TEST_CASE("A sun's colour can be written as RGB or as a temperature")
 
     DirectionalLight light;
     light.colorExpression = SunColorExpression::Rgb;
-    light.color = Assisi::Math::Color3(0.25f, 0.5f, 1.f);
+    light.color = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(0.25f, 0.5f, 1.f);
     light.temperatureKelvin = 2800.f;
 
     // Under Rgb the temperature is not read, and under Temperature the colour is
@@ -286,7 +286,7 @@ TEST_CASE("A temperature-authored sun reaches the sky and the world alike")
                                                        .tintedBySky = false,
                                                        .colorExpression =
                                                            Assisi::Runtime::SunColorExpression::Temperature,
-                                                       .color = Assisi::Math::Color3(1.f, 1.f, 1.f),
+                                                       .color = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(1.f, 1.f, 1.f),
                                                        .temperatureKelvin = 3000.f,
                                                        .intensity = 1.f,
                                                        .castsShadows = true});
@@ -649,7 +649,7 @@ TEST_CASE("Moonlight keeps the moon's own colour, and reddens on top of it")
     Moon moon;
     moon.phaseAtEpoch = 0.5f;
     // Unmistakably green, so nothing else in the sky could have produced it.
-    moon.color = Assisi::Math::Color3(0.2f, 1.0f, 0.3f);
+    moon.color = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(0.2f, 1.0f, 0.3f);
     // The physics, full strength: this case is about the reddening existing at
     // all, and the tint that softens it has a case of its own below.
     moon.atmosphericTint = 1.f;

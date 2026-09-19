@@ -66,11 +66,11 @@ Moon Sanitized(Moon moon)
 {
     const Moon defaults;
     moon.intensity = ClampFiniteClock(moon.intensity, 0.f, Render::kMaxSkyChannel, defaults.intensity);
-    moon.color = Assisi::Math::Color3(Render::SanitizedSkyChannels(glm::vec3(moon.color), glm::vec3(defaults.color)));
+    moon.color = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(Render::SanitizedSkyChannels(glm::vec3(moon.color), glm::vec3(defaults.color)));
     moon.sizeDegrees = ClampFiniteClock(moon.sizeDegrees, Render::kMinSunSizeDegrees, Render::kMaxSunSizeDegrees,
                                         defaults.sizeDegrees);
     moon.diskColor =
-        Assisi::Math::Color3(Render::SanitizedSkyChannels(glm::vec3(moon.diskColor), glm::vec3(defaults.diskColor)));
+        Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(Render::SanitizedSkyChannels(glm::vec3(moon.diskColor), glm::vec3(defaults.diskColor)));
     moon.diskIntensity = ClampFiniteClock(moon.diskIntensity, Render::kMinSunDiskIntensity,
                                           Render::kMaxSunDiskIntensity, defaults.diskIntensity);
     moon.atmosphericTint = ClampFiniteClock(moon.atmosphericTint, 0.f, 1.f, defaults.atmosphericTint);

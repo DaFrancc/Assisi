@@ -422,14 +422,22 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     // Colours are linear and may exceed 1 (an emissive factor is a radiance
     // multiplier, not a display colour), so the picker runs in float/HDR mode
     // — the default 8-bit mode would quantize the value and clamp the range.
-    case FieldType::Color3:
+    case FieldType::LinearColor3:
         edited = ImGui::ColorEdit3(field.name.c_str(), static_cast<float *>(fp),
                                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
         break;
-    case FieldType::Color4:
+    case FieldType::LinearColor4:
         edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
                                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
                                    ImGuiColorEditFlags_AlphaPreviewHalf);
+        break;
+    // sRGB colours are display values, which the picker's own 0-1 range is.
+    case FieldType::SrgbColor3:
+        edited = ImGui::ColorEdit3(field.name.c_str(), static_cast<float *>(fp), ImGuiColorEditFlags_Float);
+        break;
+    case FieldType::SrgbColor4:
+        edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
+                                   ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaPreviewHalf);
         break;
     case FieldType::Quat:
     {

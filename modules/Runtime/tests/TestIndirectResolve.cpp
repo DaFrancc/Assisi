@@ -8,6 +8,7 @@
 #include <Assisi/Runtime/IndirectResolve.hpp>
 
 using Assisi::Math::Color3;
+using Assisi::Math::ColorSpace;
 using Assisi::Render::AmbientFromSky;
 using Assisi::Render::EvaluateIndirect;
 using Assisi::Render::kDefaultAmbientIntensity;
@@ -32,17 +33,17 @@ SkyResolution SunnyDay()
     return sky;
 }
 
-float Luminance(const Color3 &linear)
+float Luminance(const Color3<ColorSpace::Linear> &linear)
 {
     return glm::dot(linear, glm::vec3(0.2126f, 0.7152f, 0.0722f));
 }
 
-Color3 FacingUp(const Assisi::Render::IndirectConstants &constants)
+Color3<ColorSpace::Linear> FacingUp(const Assisi::Render::IndirectConstants &constants)
 {
     return EvaluateIndirect(constants, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-Color3 FacingDown(const Assisi::Render::IndirectConstants &constants)
+Color3<ColorSpace::Linear> FacingDown(const Assisi::Render::IndirectConstants &constants)
 {
     return EvaluateIndirect(constants, glm::vec3(0.0f, -1.0f, 0.0f));
 }
@@ -54,8 +55,8 @@ TEST_CASE("A scene with no sky keeps the flat term it had before there was one")
     {
         SkyResolution sky;
         sky.status = status;
-        const Color3 up = FacingUp(ResolveIndirect(sky, AmbientOverride{}));
-        const Color3 down = FacingDown(ResolveIndirect(sky, AmbientOverride{}));
+        const Color3<ColorSpace::Linear> up = FacingUp(ResolveIndirect(sky, AmbientOverride{}));
+        const Color3<ColorSpace::Linear> down = FacingDown(ResolveIndirect(sky, AmbientOverride{}));
 
         CHECK(up.r == doctest::Approx(kDefaultAmbientIntensity));
         CHECK(up.g == doctest::Approx(kDefaultAmbientIntensity));
@@ -70,7 +71,7 @@ TEST_CASE("Two suns are not a sky, so nothing under them is lit by one")
 {
     SkyResolution sky;
     sky.status = SkyStatus::MultipleDirectionalLights;
-    const Color3 up = FacingUp(ResolveIndirect(sky, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> up = FacingUp(ResolveIndirect(sky, AmbientOverride{}));
     CHECK(up.b == doctest::Approx(kDefaultAmbientIntensity));
 }
 
@@ -80,11 +81,11 @@ TEST_CASE("A scene with a sky is lit by it, above and below")
     const Assisi::Render::IndirectConstants constants = ResolveIndirect(sky, AmbientOverride{});
     const SkyAmbient expected = AmbientFromSky(sky.sun, sky.settings);
 
-    const Color3 up = FacingUp(constants);
+    const Color3<ColorSpace::Linear> up = FacingUp(constants);
     CHECK(up.r == doctest::Approx(expected.sky.r));
     CHECK(up.b == doctest::Approx(expected.sky.b));
 
-    const Color3 down = FacingDown(constants);
+    const Color3<ColorSpace::Linear> down = FacingDown(constants);
     CHECK(down.b == doctest::Approx(expected.ground.b));
 
     // The whole point: a shadowed surface under a clear sky is lit by it, and
@@ -100,9 +101,9 @@ TEST_CASE("A pinned ambient answers instead of the sky, not on top of it")
 {
     // An interior has a sky over the building and is not lit by it. Whoever says
     // what the indirect term is has answered the question.
-    const AmbientOverride indoors{.active = true, .color = Color3(0.5f, 0.4f, 0.35f), .intensity = 0.2f};
-    const Color3 up = FacingUp(ResolveIndirect(SunnyDay(), indoors));
-    const Color3 down = FacingDown(ResolveIndirect(SunnyDay(), indoors));
+    const AmbientOverride indoors{.active = true, .color = Color3<ColorSpace::Linear>(0.5f, 0.4f, 0.35f), .intensity = 0.2f};
+    const Color3<ColorSpace::Linear> up = FacingUp(ResolveIndirect(SunnyDay(), indoors));
+    const Color3<ColorSpace::Linear> down = FacingDown(ResolveIndirect(SunnyDay(), indoors));
 
     CHECK(up.r == doctest::Approx(0.1f));
     CHECK(up.g == doctest::Approx(0.08f));
@@ -114,8 +115,8 @@ TEST_CASE("An override that is not active leaves its colour unread")
 {
     // The struct carries a colour whether or not it is pinned; a scene with a sky
     // must not quietly be lit by the one nobody turned on.
-    const AmbientOverride idle{.active = false, .color = Color3(1.0f, 0.0f, 0.0f), .intensity = 5.0f};
-    const Color3 up = FacingUp(ResolveIndirect(SunnyDay(), idle));
+    const AmbientOverride idle{.active = false, .color = Color3<ColorSpace::Linear>(1.0f, 0.0f, 0.0f), .intensity = 5.0f};
+    const Color3<ColorSpace::Linear> up = FacingUp(ResolveIndirect(SunnyDay(), idle));
     CHECK(up.b > up.r);
 }
 
@@ -130,12 +131,12 @@ TEST_CASE("A minimum ambient floors the night without touching the day")
                        .color = glm::vec3(1.0f),
                        .intensity = 1.0f};
 
-    const Color3 unlitUp = FacingUp(ResolveIndirect(night, AmbientOverride{}));
-    const Color3 unlitDown = FacingDown(ResolveIndirect(night, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> unlitUp = FacingUp(ResolveIndirect(night, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> unlitDown = FacingDown(ResolveIndirect(night, AmbientOverride{}));
 
     night.minimumAmbient = glm::vec3(0.35f, 0.45f, 0.7f) * 0.05f;
-    const Color3 flooredUp = FacingUp(ResolveIndirect(night, AmbientOverride{}));
-    const Color3 flooredDown = FacingDown(ResolveIndirect(night, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> flooredUp = FacingUp(ResolveIndirect(night, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> flooredDown = FacingDown(ResolveIndirect(night, AmbientOverride{}));
 
     CHECK(Luminance(flooredUp) > Luminance(unlitUp));
     // Both halves, because "the world is at least partly lit" is about the world
@@ -147,9 +148,9 @@ TEST_CASE("A minimum ambient floors the night without touching the day")
     // so a level that sets a floor is unchanged at noon. This is what makes it
     // safe to leave on rather than something to schedule against the clock.
     SkyResolution day = SunnyDay();
-    const Color3 beforeUp = FacingUp(ResolveIndirect(day, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> beforeUp = FacingUp(ResolveIndirect(day, AmbientOverride{}));
     day.minimumAmbient = glm::vec3(0.35f, 0.45f, 0.7f) * 0.05f;
-    const Color3 afterUp = FacingUp(ResolveIndirect(day, AmbientOverride{}));
+    const Color3<ColorSpace::Linear> afterUp = FacingUp(ResolveIndirect(day, AmbientOverride{}));
     CHECK(afterUp.r == doctest::Approx(beforeUp.r));
     CHECK(afterUp.g == doctest::Approx(beforeUp.g));
     CHECK(afterUp.b == doctest::Approx(beforeUp.b));
@@ -166,8 +167,8 @@ TEST_CASE("A pinned ambient still outranks the floor")
                        .intensity = 1.0f};
     night.minimumAmbient = glm::vec3(0.f, 1.0f, 0.f);
 
-    const AmbientOverride pinned{.active = true, .color = Color3(1.0f, 0.0f, 0.0f), .intensity = 0.5f};
-    const Color3 up = FacingUp(ResolveIndirect(night, pinned));
+    const AmbientOverride pinned{.active = true, .color = Color3<ColorSpace::Linear>(1.0f, 0.0f, 0.0f), .intensity = 0.5f};
+    const Color3<ColorSpace::Linear> up = FacingUp(ResolveIndirect(night, pinned));
     CHECK(up.r > up.g);
 }
 
@@ -204,7 +205,7 @@ TEST_CASE("A probe is the sky's, so nothing but a sky turns it on")
     // term says is not there.
     const SpecularProbe ready{.ready = true, .maxLod = 4.0f};
 
-    const AmbientOverride indoors{.active = true, .color = Color3(0.5f), .intensity = 0.2f};
+    const AmbientOverride indoors{.active = true, .color = Color3<ColorSpace::Linear>(0.5f), .intensity = 0.2f};
     CHECK(ResolveIndirect(SunnyDay(), indoors, ready).specularEnvironment == 0.0f);
 
     for (const SkyStatus status :

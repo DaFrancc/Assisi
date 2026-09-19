@@ -16,6 +16,7 @@
 
 using namespace Assisi::Render;
 using Assisi::Math::Color3;
+using Assisi::Math::ColorSpace;
 
 namespace
 {
@@ -46,12 +47,12 @@ std::vector<glm::vec3> Normals()
     return normals;
 }
 
-float Luminance(const Color3 &linear)
+float Luminance(const Color3<ColorSpace::Linear> &linear)
 {
     return glm::dot(linear, glm::vec3(0.2126f, 0.7152f, 0.0722f));
 }
 
-bool AllFinite(const Color3 &v)
+bool AllFinite(const Color3<ColorSpace::Linear> &v)
 {
     return std::isfinite(v.r) && std::isfinite(v.g) && std::isfinite(v.b);
 }
@@ -64,13 +65,13 @@ SkySun SunAt(float elevationDegrees)
 
 TEST_CASE("A uniform provider answers the same everywhere and in every direction")
 {
-    const UniformIndirect provider(Color3(0.4f, 0.6f, 1.0f), 0.5f);
-    const Color3 expected(0.2f, 0.3f, 0.5f);
+    const UniformIndirect provider(Color3<ColorSpace::Linear>(0.4f, 0.6f, 1.0f), 0.5f);
+    const Color3<ColorSpace::Linear> expected(0.2f, 0.3f, 0.5f);
 
     for (const glm::vec3 &normal : Normals())
     {
-        const Color3 here = provider.Radiance(glm::vec3(0.0f), normal);
-        const Color3 elsewhere = provider.Radiance(glm::vec3(1000.0f, -20.0f, 7.0f), normal);
+        const Color3<ColorSpace::Linear> here = provider.Radiance(glm::vec3(0.0f), normal);
+        const Color3<ColorSpace::Linear> elsewhere = provider.Radiance(glm::vec3(1000.0f, -20.0f, 7.0f), normal);
         CHECK(here.r == doctest::Approx(expected.r));
         CHECK(here.g == doctest::Approx(expected.g));
         CHECK(here.b == doctest::Approx(expected.b));
@@ -80,20 +81,20 @@ TEST_CASE("A uniform provider answers the same everywhere and in every direction
 
 TEST_CASE("A hemisphere provider gives the sky to a surface facing up and the ground to one facing down")
 {
-    const Color3 sky(0.20f, 0.35f, 0.70f);
-    const Color3 ground(0.09f, 0.08f, 0.06f);
+    const Color3<ColorSpace::Linear> sky(0.20f, 0.35f, 0.70f);
+    const Color3<ColorSpace::Linear> ground(0.09f, 0.08f, 0.06f);
     const HemisphereIndirect provider(sky, ground);
 
-    const Color3 up = provider.Radiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const Color3<ColorSpace::Linear> up = provider.Radiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     CHECK(up.b == doctest::Approx(sky.b));
     CHECK(up.r == doctest::Approx(sky.r));
 
-    const Color3 down = provider.Radiance(glm::vec3(0.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+    const Color3<ColorSpace::Linear> down = provider.Radiance(glm::vec3(0.0f), glm::vec3(0.0f, -1.0f, 0.0f));
     CHECK(down.b == doctest::Approx(ground.b));
     CHECK(down.r == doctest::Approx(ground.r));
 
     // A wall sees half of each, which is the whole content of the gradient.
-    const Color3 sideways = provider.Radiance(glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    const Color3<ColorSpace::Linear> sideways = provider.Radiance(glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     CHECK(sideways.b == doctest::Approx(0.5f * (sky.b + ground.b)));
 
     // And the gradient is monotonic: tilting a surface skyward never darkens it.
@@ -111,16 +112,16 @@ TEST_CASE("Both halves of the seam agree: the CPU query and the shader's constan
     // The invariant that keeps mesh.frag's IndirectRadiance() and this side one
     // thing rather than two. A provider that answered them differently would
     // light the editor's queries and the screen from different worlds.
-    const UniformIndirect uniform(Color3(1.0f, 0.9f, 0.8f), 0.03f);
-    const HemisphereIndirect hemisphere(Color3(0.2f, 0.35f, 0.7f), Color3(0.09f, 0.08f, 0.06f));
+    const UniformIndirect uniform(Color3<ColorSpace::Linear>(1.0f, 0.9f, 0.8f), 0.03f);
+    const HemisphereIndirect hemisphere(Color3<ColorSpace::Linear>(0.2f, 0.35f, 0.7f), Color3<ColorSpace::Linear>(0.09f, 0.08f, 0.06f));
     const IndirectLighting *const providers[] = {&uniform, &hemisphere};
 
     for (const IndirectLighting *const provider : providers)
     {
         for (const glm::vec3 &normal : Normals())
         {
-            const Color3 queried = provider->Radiance(glm::vec3(3.0f, 1.0f, -2.0f), normal);
-            const Color3 shaded = EvaluateIndirect(provider->ShaderConstants(), normal);
+            const Color3<ColorSpace::Linear> queried = provider->Radiance(glm::vec3(3.0f, 1.0f, -2.0f), normal);
+            const Color3<ColorSpace::Linear> shaded = EvaluateIndirect(provider->ShaderConstants(), normal);
             CHECK(queried.r == doctest::Approx(shaded.r));
             CHECK(queried.g == doctest::Approx(shaded.g));
             CHECK(queried.b == doctest::Approx(shaded.b));
@@ -133,8 +134,8 @@ TEST_CASE("A provider without an environment leaves the shader on the diffuse-on
     // What makes switching the probe off a baseline rather than an
     // approximation of one: these providers write zero into the specular lane,
     // and mesh.frag takes the expression it had before the lane existed.
-    const UniformIndirect uniform(Color3(1.0f, 0.9f, 0.8f), 0.03f);
-    const HemisphereIndirect hemisphere(Color3(0.2f, 0.35f, 0.7f), Color3(0.09f, 0.08f, 0.06f));
+    const UniformIndirect uniform(Color3<ColorSpace::Linear>(1.0f, 0.9f, 0.8f), 0.03f);
+    const HemisphereIndirect hemisphere(Color3<ColorSpace::Linear>(0.2f, 0.35f, 0.7f), Color3<ColorSpace::Linear>(0.09f, 0.08f, 0.06f));
     const IndirectLighting *const providers[] = {&uniform, &hemisphere};
 
     for (const IndirectLighting *const provider : providers)
@@ -149,21 +150,21 @@ TEST_CASE("A provider without an environment leaves the shader on the diffuse-on
 TEST_CASE("The sky probe keeps the hemisphere's diffuse and reflects the sky itself")
 {
     const SkyProbeInputs environment = MakeSkyProbeInputs(SunAt(35.0f), SkyMoon{}, SkySettings{});
-    const Color3 sky(0.2f, 0.35f, 0.7f);
-    const Color3 ground(0.09f, 0.08f, 0.06f);
+    const Color3<ColorSpace::Linear> sky(0.2f, 0.35f, 0.7f);
+    const Color3<ColorSpace::Linear> ground(0.09f, 0.08f, 0.06f);
     const SkyProbeIndirect probe(sky, ground, environment, 4.0f);
     const HemisphereIndirect hemisphere(sky, ground);
 
     for (const glm::vec3 &normal : Normals())
     {
-        const Color3 diffuse = probe.Radiance(glm::vec3(0.0f), normal);
-        const Color3 expected = hemisphere.Radiance(glm::vec3(0.0f), normal);
+        const Color3<ColorSpace::Linear> diffuse = probe.Radiance(glm::vec3(0.0f), normal);
+        const Color3<ColorSpace::Linear> expected = hemisphere.Radiance(glm::vec3(0.0f), normal);
         CHECK(diffuse.r == doctest::Approx(expected.r));
         CHECK(diffuse.b == doctest::Approx(expected.b));
 
         // A mirror reflects exactly the direction it faces, and a direction
         // of this sky, not an average of it.
-        const std::optional<Color3> mirror = probe.SpecularRadiance(glm::vec3(0.0f), normal, 0.0f);
+        const std::optional<Color3<ColorSpace::Linear>> mirror = probe.SpecularRadiance(glm::vec3(0.0f), normal, 0.0f);
         REQUIRE(mirror.has_value());
         const glm::vec3 direct =
             SkyRadiance(normal, environment.sun, environment.moon, environment.settings);
@@ -184,22 +185,22 @@ TEST_CASE("The sky probe reflects the zenith and the horizon differently")
     // the horizon reflects the bright band there, and one facing up the deeper
     // zenith, where the hemisphere hands both the same average.
     const SkyProbeInputs environment = MakeSkyProbeInputs(SunAt(40.0f), SkyMoon{}, SkySettings{});
-    const SkyProbeIndirect probe(Color3(0.2f), Color3(0.1f), environment, 4.0f);
+    const SkyProbeIndirect probe(Color3<ColorSpace::Linear>(0.2f), Color3<ColorSpace::Linear>(0.1f), environment, 4.0f);
 
-    const Color3 zenith = *probe.SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.3f);
-    const Color3 horizon = *probe.SpecularRadiance(glm::vec3(0.0f), Dir(3.0f, 180.0f), 0.3f);
+    const Color3<ColorSpace::Linear> zenith = *probe.SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.3f);
+    const Color3<ColorSpace::Linear> horizon = *probe.SpecularRadiance(glm::vec3(0.0f), Dir(3.0f, 180.0f), 0.3f);
     CHECK(Luminance(horizon) > Luminance(zenith));
     CHECK(zenith.b > zenith.r);
 }
 
 TEST_CASE("A normal that is not unit length cannot drive the term negative")
 {
-    const IndirectConstants constants{.skyRadiance = Color3(0.2f, 0.35f, 0.7f),
-                                      .groundRadiance = Color3(0.09f, 0.08f, 0.06f)};
+    const IndirectConstants constants{.skyRadiance = Color3<ColorSpace::Linear>(0.2f, 0.35f, 0.7f),
+                                      .groundRadiance = Color3<ColorSpace::Linear>(0.09f, 0.08f, 0.06f)};
 
     for (const glm::vec3 &scaled : {glm::vec3(0.0f, 8.0f, 0.0f), glm::vec3(0.0f, -8.0f, 0.0f)})
     {
-        const Color3 radiance = EvaluateIndirect(constants, scaled);
+        const Color3<ColorSpace::Linear> radiance = EvaluateIndirect(constants, scaled);
         CHECK(AllFinite(radiance));
         CHECK(radiance.r >= 0.0f);
         CHECK(radiance.g >= 0.0f);
@@ -210,13 +211,13 @@ TEST_CASE("A normal that is not unit length cannot drive the term negative")
 TEST_CASE("A garbage provider input becomes darkness rather than a NaN on every surface")
 {
     const float nan = std::numeric_limits<float>::quiet_NaN();
-    const UniformIndirect uniform(Color3(nan, -1.0f, 2.0f), 1.0f);
+    const UniformIndirect uniform(Color3<ColorSpace::Linear>(nan, -1.0f, 2.0f), 1.0f);
     CHECK(AllFinite(uniform.Radiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f))));
 
-    const HemisphereIndirect hemisphere(Color3(nan), Color3(0.0f, -3.0f, nan));
+    const HemisphereIndirect hemisphere(Color3<ColorSpace::Linear>(nan), Color3<ColorSpace::Linear>(0.0f, -3.0f, nan));
     for (const glm::vec3 &normal : Normals())
     {
-        const Color3 radiance = hemisphere.Radiance(glm::vec3(0.0f), normal);
+        const Color3<ColorSpace::Linear> radiance = hemisphere.Radiance(glm::vec3(0.0f), normal);
         CHECK(AllFinite(radiance));
         CHECK(radiance.r >= 0.0f);
     }

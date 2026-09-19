@@ -97,8 +97,8 @@ constexpr TextureId kFontTexture{9};
 constexpr uint32_t kFontAtlasSide = 32;
 constexpr float kFontPixelSize    = 32.f;
 
-/// Three glyphs, enough for "Assisi": index order differs from codepoint order,
-/// as in a real font.
+/// A few letters, a space and a missing glyph: whatever the placeholder writes,
+/// every character draws as something.
 Font SampleFont()
 {
     Font font;
@@ -110,12 +110,14 @@ Font SampleFont()
     font.atlasHeight = kFontAtlasSide;
     font.atlas.assign(static_cast<std::size_t>(kFontAtlasSide) * kFontAtlasSide, 0);
     font.glyphs = {
+        Glyph{.advance = 18.f, .index = 0, .x = 17, .y = 0, .width = 8, .height = 10, .bearingX = 1, .bearingY = 23},
         Glyph{.advance = 20.f, .index = 10, .x = 0, .y = 0, .width = 8, .height = 10, .bearingX = 1, .bearingY = 23},
         Glyph{.advance = 16.f, .index = 20, .x = 8, .y = 0, .width = 6, .height = 8, .bearingX = 1, .bearingY = 17},
         Glyph{.advance = 8.f, .index = 30, .x = 14, .y = 0, .width = 3, .height = 10, .bearingX = 2, .bearingY = 23},
+        Glyph{.advance = 8.f, .index = 40},
     };
-    font.cmap = {CmapEntry{.codepoint = 'A', .glyph = 10}, CmapEntry{.codepoint = 'i', .glyph = 30},
-                 CmapEntry{.codepoint = 's', .glyph = 20}};
+    font.cmap = {CmapEntry{.codepoint = ' ', .glyph = 40}, CmapEntry{.codepoint = 'A', .glyph = 10},
+                 CmapEntry{.codepoint = 'i', .glyph = 30}, CmapEntry{.codepoint = 's', .glyph = 20}};
     return font;
 }
 
@@ -133,64 +135,39 @@ std::vector<QuadInstance> GlyphQuads(const DrawList &list)
     return quads;
 }
 
-/// Letters in the sample word, and rows it is drawn at.
-constexpr std::size_t kWordLetters = 6;
-constexpr std::size_t kTextRows    = 3;
+/// The bottom of the placeholder's tile row: its margin plus a tile, as
+/// fractions of the viewport's shorter side.
+constexpr float kTileRowBottomFraction = 0.15f;
 
 } // namespace
 
-TEST_CASE("Mondrian: with a font, the placeholder writes a word at three sizes from one atlas")
+TEST_CASE("Mondrian: with a font, the placeholder writes text below the tiles, inside the viewport, from its atlas")
 {
     const Font font = SampleFont();
-    Ui ui;
-    ui.SetPlaceholderFont(&font, kFontTexture);
-    const DrawList &drawn = Frame(ui, kLandscape);
-
-    const std::vector<QuadInstance> glyphs = GlyphQuads(drawn);
-    REQUIRE(glyphs.size() == kWordLetters * kTextRows);
-    for (const QuadInstance &quad : glyphs)
+    for (const Extent viewport : {kLandscape, kPortrait})
     {
-        CHECK(VisibleWithin(quad.rect, kLandscape));
+        CAPTURE(viewport.width);
+        Ui ui;
+        ui.SetPlaceholderFont(&font, kFontTexture);
+        const DrawList &drawn = Frame(ui, viewport);
+
+        const std::vector<QuadInstance> glyphs = GlyphQuads(drawn);
+        REQUIRE_FALSE(glyphs.empty());
+        const float tileRowBottom =
+            static_cast<float>(std::min(viewport.width, viewport.height)) * kTileRowBottomFraction;
+        for (const QuadInstance &quad : glyphs)
+        {
+            CHECK(VisibleWithin(quad.rect, viewport));
+            CHECK(quad.rect.y > tileRowBottom);
+        }
+        CHECK(std::ranges::all_of(drawn.Entries(),
+                                  [&drawn](const DrawEntry &entry)
+                                  {
+                                      const QuadInstance &first = drawn.Instances()[entry.firstInstance];
+                                      return first.kind != static_cast<uint32_t>(QuadKind::Glyph) ||
+                                             entry.texture == kFontTexture;
+                                  }));
     }
-    CHECK(std::ranges::all_of(drawn.Entries(),
-                              [&drawn](const DrawEntry &entry)
-                              {
-                                  const QuadInstance &first = drawn.Instances()[entry.firstInstance];
-                                  return first.kind != static_cast<uint32_t>(QuadKind::Glyph) ||
-                                         entry.texture == kFontTexture;
-                              }));
-
-    // The first letter samples exactly its glyph's texels.
-    const Glyph &a = font.glyphs[0];
-    CHECK(glyphs[0].uv.x == doctest::Approx(static_cast<float>(a.x) / kFontAtlasSide));
-    CHECK(glyphs[0].uv.width == doctest::Approx(static_cast<float>(a.width) / kFontAtlasSide));
-    CHECK(glyphs[0].uv.height == doctest::Approx(static_cast<float>(a.height) / kFontAtlasSide));
-
-    // Each row is twice the size of the one before it, from the same texels.
-    const float small  = glyphs[0].rect.width;
-    const float medium = glyphs[kWordLetters].rect.width;
-    const float large  = glyphs[2 * kWordLetters].rect.width;
-    CHECK(medium == doctest::Approx(2.f * small));
-    CHECK(large == doctest::Approx(2.f * medium));
-    CHECK(glyphs[2 * kWordLetters].uv.width == doctest::Approx(glyphs[0].uv.width));
-
-    // The pen advances: each letter starts right of the one before it.
-    for (std::size_t i = 1; i < kWordLetters; ++i)
-    {
-        CHECK(glyphs[i].rect.x > glyphs[i - 1].rect.x);
-    }
-}
-
-TEST_CASE("Mondrian: a glyph with no image moves the pen and draws nothing")
-{
-    Font font                = SampleFont();
-    font.glyphs[2].width     = 0; // 'i'
-    font.glyphs[2].height    = 0;
-    Ui ui;
-    ui.SetPlaceholderFont(&font, kFontTexture);
-
-    constexpr std::size_t kLettersWithImages = 4; // "Assisi" less its two i's
-    CHECK(GlyphQuads(Frame(ui, kLandscape)).size() == kLettersWithImages * kTextRows);
 }
 
 TEST_CASE("Mondrian: without a font, the placeholder writes no text")
