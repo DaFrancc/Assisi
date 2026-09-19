@@ -23,6 +23,7 @@
 - [Game settings](game-settings.md)
 - [Build types](build-types.md)
 - [Packaging your game](packaging.md)
+- [Building for every Linux distribution](steam-runtime.md)
 
 # Going further
 

@@ -39,7 +39,7 @@ Physics::Pose At(glm::vec3 position)
 /// A unit box with an entity, so a hit has something to name.
 ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, bool isStatic,
                      Physics::CollisionChannel channel  = Physics::CollisionChannel::World,
-                     std::uint32_t             collides = Physics::AllChannels)
+                     Core::Bitmask<Physics::CollisionChannel> collides = Physics::AllChannels)
 {
     const ECS::Entity entity = scene.Create();
     ECS::Transform *transform = scene.Add<ECS::Transform>(entity);
@@ -141,8 +141,7 @@ TEST_CASE("A query and a body must each admit the other's channel")
     REQUIRE(world.CastRay({0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, seeing, ECS::NullEntity).has_value());
 
     // The query refusing the body's channel.
-    const std::uint32_t withoutWorld =
-        Physics::AllChannels & ~(1u << static_cast<std::uint32_t>(Physics::CollisionChannel::World));
+    const auto withoutWorld = Physics::AllChannels.Without(Physics::CollisionChannel::World);
     const Physics::CollisionFilter blind{withoutWorld, Physics::CollisionChannel::Visibility};
     CHECK_FALSE(world.CastRay({0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, blind, ECS::NullEntity).has_value());
 }
@@ -155,8 +154,7 @@ TEST_CASE("A body refusing the query's channel is not found either")
     ECS::Scene scene;
     Physics::PhysicsWorld world;
 
-    const std::uint32_t unseen =
-        Physics::AllChannels & ~(1u << static_cast<std::uint32_t>(Physics::CollisionChannel::Visibility));
+    const auto unseen = Physics::AllChannels.Without(Physics::CollisionChannel::Visibility);
     (void)SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true, Physics::CollisionChannel::World,
                    unseen);
 

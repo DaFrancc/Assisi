@@ -20,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -126,6 +127,18 @@ struct Transaction
     Assisi::ECS::Entity selectionBefore = Assisi::ECS::NullEntity;
     Assisi::ECS::Entity selectionAfter  = Assisi::ECS::NullEntity;
     std::uint64_t seq             = 0;            ///< Unique sequence, assigned on Push (dirty tracking).
+
+    /// @brief Appends one command, built in place in `cmds`.
+    ///
+    /// Use this rather than pushing an EditCommand: a pushed temporary is a
+    /// variant moved into the vector, and GCC 14 misreads that move as reading
+    /// the uninitialized members of the alternatives it does not hold, which
+    /// -Werror turns into a failed build.
+    template <typename Command>
+    void Add(Command command)
+    {
+        cmds.emplace_back(std::in_place_type<Command>, std::move(command));
+    }
 };
 
 /// @brief A linear undo/redo stack over one Scene.

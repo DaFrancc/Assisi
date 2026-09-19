@@ -13,7 +13,8 @@ a game with the engine.
 # Quick start
 
 **You need:** Windows or Linux, a Vulkan-capable GPU, a C++ compiler (MSVC 2022+, GCC or Clang), CMake
-3.28+, Ninja, Make, ccache and Python 3.
+3.28+, Ninja, Make, ccache and Python 3. On Linux, podman or docker as well if you want release builds
+that run on other distributions (optional; see *Building for every Linux distribution* below).
 
 <details>
 <summary><b>Installing those on Windows</b></summary>
@@ -171,6 +172,7 @@ Install the equivalents of the package groups below — they are the whole list.
 | Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
 | Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
 | Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
+| podman or docker | **Optional**, only for the Steam Runtime build (`make gs-steamrt…`), which builds release games that run on any distro with glibc 2.31+. Nothing else uses it. |
 
 Optionally, installing `simdjson` (Arch) or `simdjson-devel` (Fedora) makes fastgltf link the system
 copy instead of compiling its own bundled amalgamation. Both work. The system copy trims a little off
@@ -288,6 +290,12 @@ make gcc-debug-chiara # (alias: gd-c)
 make gdg     # gcc-debug-game
 make gdgkp   # gcc-debug-game-cook-pack
 
+# Optional, Linux: gcc-ship built inside Valve's Steam Runtime SDK container, for
+# a game that runs on any distro with glibc 2.31+ (see "Building for every Linux
+# distribution" below).
+make gs-steamrt-game-cook-pack
+make gs-steamrt-test   # the game tests in the SDK, then a boot on a bare Debian 11
+
 # Or use cmake directly
 cmake --preset msvc-debug
 cmake --build --preset msvc-debug
@@ -313,6 +321,66 @@ mirror the build presets:
 ctest --preset gcc-dev        # build first, then run all suites
 ctest --preset gcc-dev -R ECS # a single suite
 ```
+
+</details>
+
+<details>
+<summary><b>Building for every Linux distribution (the Steam Runtime build)</b></summary>
+
+A Linux program runs on the glibc it was built against or newer, never older. A game built bare on a
+current distro (`make gsgkp`) therefore refuses to start on Ubuntu LTS, Debian stable, or anything else
+older than the build machine, and running it through Steam does not change that: Steam uses the host's
+glibc whenever it is newer than its runtime's.
+
+For a release, build inside Valve's Steam Linux Runtime 3 ("sniper") SDK instead. It is Debian 11 with
+glibc 2.31 and GCC 14, the environment Steam runs native Linux games in, and the game it builds starts
+on any x86-64 distro with glibc 2.31 or newer (Ubuntu 20.04+, Debian 11+, Fedora 32+, SteamOS 3, …).
+The container is only the build machine: the result is an ordinary executable, and players need
+nothing extra.
+
+| | Bare | Steam Runtime |
+|---|---|---|
+| Command | `make gsgkp` | `make gs-steamrt-game-cook-pack` |
+| Runs on | the build machine's glibc or newer | glibc 2.31 or newer |
+| Needs | the packages above | the packages above, plus podman or docker |
+| Disk | — | about 5 GB (4.3 GB of images, ~1 GB build tree and ccache) |
+| Output | `out/build/gcc-ship/apps/game/` | `out/build/gcc-ship-steamrt/apps/game/` |
+
+**It is optional.** No other target, preset or test starts a container or needs podman or docker.
+
+**Dependencies.** podman (preferred, rootless) or docker, usable as your own user without `sudo`:
+
+```bash
+sudo pacman -S podman              # Arch
+sudo dnf install podman            # Fedora and RHEL-based (Fedora Workstation has it already)
+sudo apt install podman uidmap     # Debian and Ubuntu
+```
+
+With docker, your user must be in the `docker` group and the daemon running. Everything else — the
+compiler, a CMake new enough for the engine, Ninja, Python, ccache, and GLFW's headers — comes from the
+SDK image, and the build shares `out/_deps-src` with every other preset.
+
+**Targets:**
+
+```bash
+make gs-steamrt-game-cook-pack  # build, cook and pack; any step combination works, e.g. gs-steamrt-cook-pack
+make gs-steamrt                 # build only
+make gs-steamrt-test            # the game tests in the SDK, then a headless boot on a bare Debian 11
+make steamrt-fetch              # download and prepare the images without building
+make steamrt-remove             # delete the images and the container's ccache
+make clean-gcc-ship-steamrt     # delete the build tree
+```
+
+The first run downloads the SDK (about 3.9 GB, pinned by digest) and builds a small image on top of it
+from `scripts/steamrt/Containerfile` that adds a newer CMake. Later runs reuse both, and the build is
+incremental like any other: the build tree and the ccache (`out/steamrt-home/`) stay on the host. The
+container runs as your own user with the repository mounted at its own path, so nothing it writes is
+owned by root.
+
+Inside the container the build is the `gcc-ship-steamrt` preset, which can only be configured there.
+It sets a glibc ceiling of 2.31 that `GameNeedsOnlySystemLibraries` enforces on the built game.
+`scripts/steamrt.py` does the container work; [the book](https://dafrancc.github.io/Assisi/) has a
+chapter on it, including troubleshooting.
 
 </details>
 

@@ -765,7 +765,7 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     WorldManager worlds;
     World &world = worlds.Create("Ordered");
 
-    // Named the wrong way round on purpose. Follower declares `after = Counter`,
+    // Named the wrong way round on purpose. Follower declares `after = "Counter"`,
     // so the file cannot reorder them.
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Follower", "Counter"}, "(test)"));
 
@@ -783,7 +783,7 @@ TEST_CASE("A render system's after/before survives the install")
     World &world = worlds.Create("RenderOrdered");
 
     // Named the wrong way round, as the Update pair above is: DrawLate declares
-    // `after = DrawEarly`, so the list cannot reorder them. Render systems install
+    // `after = "DrawEarly"`, so the list cannot reorder them. Render systems install
     // through RegisterRender rather than Register, which is a second path the
     // constraint has to survive.
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"DrawLate", "DrawEarly"}, "(test)"));

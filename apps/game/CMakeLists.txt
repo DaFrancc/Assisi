@@ -479,6 +479,10 @@ if (ASSISI_BUILD_TESTS)
   # linked in, and the networking crypto is a static libsodium. The Vulkan loader
   # and the windowing libraries are not in the list because they are opened at
   # run time rather than linked, and they come with the graphics driver.
+  #
+  # libpthread and libdl are glibc too. Before 2.34 they are separate libraries
+  # a threaded program links, and every later glibc still ships them, empty, so
+  # a game built against an older one still starts.
   if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(_dependency_checker "${CMAKE_SOURCE_DIR}/scripts/check-dependencies.py")
     set(_dependency_readelf "readelf")
@@ -488,39 +492,64 @@ if (ASSISI_BUILD_TESTS)
     set(_system_libraries
       --allow libc.so.6
       --allow libm.so.6
+      --allow libpthread.so.0
+      --allow libdl.so.2
       --allow ld-linux-x86-64.so.2
     )
+
+    # The ceiling goes on this check only. The control below is about the library
+    # list, and a ceiling there would let it fail for the wrong reason.
+    set(_glibc_ceiling "")
+    if (ASSISI_GLIBC_CEILING)
+      set(_glibc_ceiling --max-glibc "${ASSISI_GLIBC_CEILING}")
+    endif()
 
     add_test(NAME GameNeedsOnlySystemLibraries
       COMMAND Python3::Interpreter "${_dependency_checker}"
               --binary "$<TARGET_FILE:Assisi-Game>"
               --readelf "${_dependency_readelf}"
               ${_system_libraries}
+              ${_glibc_ceiling}
     )
     set_tests_properties(GameNeedsOnlySystemLibraries PROPERTIES
       FIXTURES_REQUIRED GameBinary
       LABELS game
       SKIP_RETURN_CODE ${_symbol_scan_skip_code})
 
-    # The positive control: the editor links the C++ runtime as a shared library,
-    # so the check must refuse it. If it ever passes, the checker has stopped
-    # reading the dynamic section and the test above passes for the wrong reason.
-    add_test(NAME GameEditorNeedsDevelopmentLibraries
+    # The positive control: the same game against a list that leaves out libc,
+    # which every dynamically linked Linux program needs, so the check must
+    # refuse it. If it ever passes, the checker has stopped reading the dynamic
+    # section and the test above passes for the wrong reason. The game rather than
+    # the editor, because whether the editor links the C++ runtime shared depends
+    # on the toolchain: the Steam Runtime's GCC links it statically by default.
+    add_test(NAME GameDependencyCheckSeesLibc
       COMMAND Python3::Interpreter "${_dependency_checker}"
-              --binary "$<TARGET_FILE:Assisi-GameEditor>"
+              --binary "$<TARGET_FILE:Assisi-Game>"
               --readelf "${_dependency_readelf}"
-              ${_system_libraries}
+              --allow libm.so.6
+              --allow libpthread.so.0
+              --allow libdl.so.2
+              --allow ld-linux-x86-64.so.2
     )
-    set_tests_properties(GameEditorNeedsDevelopmentLibraries PROPERTIES
+    set_tests_properties(GameDependencyCheckSeesLibc PROPERTIES
+      FIXTURES_REQUIRED GameBinary
+      LABELS game
       WILL_FAIL TRUE
       SKIP_RETURN_CODE ${_symbol_scan_skip_code})
   endif()
 
-  # Registered beside the scans it underwrites rather than in a directory of its
-  # own: the scanner exists for them, and a matcher that silently stopped
-  # matching would make all three pass.
+  # Registered beside the scans they underwrite rather than in a directory of
+  # their own: the scanners exist for them, and a matcher that silently stopped
+  # matching would make every one of them pass.
   add_test(NAME check-symbols
     COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_symbols.py")
+  add_test(NAME check-dependencies
+    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_dependencies.py")
+
+  # The Steam Runtime helper, with podman and docker faked: it starts no
+  # container, so it runs on every machine.
+  add_test(NAME steamrt
+    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_steamrt.py")
 endif()
 
 # The source asset tree is the only one. Nothing is staged beside the executable,

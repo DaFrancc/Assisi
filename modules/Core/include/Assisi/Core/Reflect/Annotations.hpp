@@ -17,6 +17,14 @@
 ///   AFIELD(norep)                -- saved to disk, never sent over the network
 ///   AFIELD(min=0.0, max=100.0)   -- editor clamp hints
 ///
+/// A value that names something in C++ — a number, a type, a field, an
+/// enumerator, or one of these macros' own keywords — is written bare. Only a
+/// string C++ cannot check is quoted, which today means a system name in
+/// ASYSTEM. reflectgen refuses the other form in both directions.
+///
+/// A field holding a set of an AENUM's enumerators is a Core::Bitmask<E>, not
+/// an annotated integer; reflectgen reads the enum from the type.
+///
 /// ── Replication: five gates, three mechanisms ───────────────────────────────
 ///
 /// A field value crosses the wire only if it passes *all* of these. Each lives
@@ -171,9 +179,9 @@
 
 /// ASYSTEM(phase, ...) — marks a declaration as a system a file may name.
 ///
-///   ASYSTEM(FixedUpdate)                           void BounceSystem(SystemContext &ctx);
-///   ASYSTEM(Update, activeWorldOnly)               void InputDemoSystem(SystemContext &ctx);
-///   ASYSTEM(Update, name = "Spin", after = Bounce) void SpinDemoSystem(SystemContext &ctx);
+///   ASYSTEM(FixedUpdate, name = "Bounce")                void BounceSystem(SystemContext &ctx);
+///   ASYSTEM(Update, name = "InputDemo", activeWorldOnly) void InputDemoSystem(SystemContext &ctx);
+///   ASYSTEM(Update, name = "Spin", after = "Bounce")     void SpinDemoSystem(SystemContext &ctx);
 ///
 /// A system is `(phase, name, function, ordering, scope)`, and data can supply
 /// only the name — so the rest lives on the function, three lines above the code
@@ -184,7 +192,9 @@
 /// Phase is mandatory and positional; everything after it is a flag or a
 /// `key = value`, which is the AMSG grammar, so there is one thing to learn
 /// rather than two. Recognised: `name`, `after`, `before`, and the
-/// `activeWorldOnly` flag. `after`/`before` may be repeated.
+/// `activeWorldOnly` flag. `after`/`before` may be repeated. All three keys hold
+/// a system name, so all three are quoted — `after` names the string the other
+/// system declared, not its function.
 ///
 /// **`name` is mandatory**, and is deliberately not derived from the function.
 /// It is what a level file says, which makes it part of the content format:

@@ -164,6 +164,14 @@ sudo apt install nvidia-driver
 
 Reboot after installing an NVIDIA driver.
 
+### Optional: podman, for release builds on Linux
+
+To release a Linux game that runs on other people's distributions, you build it
+inside Valve's Steam Runtime, which needs **podman** (or docker). You don't need
+it to follow this book or to make a game, so you can skip it until you're ready
+to release. [Building for every Linux distribution](steam-runtime.md) covers it,
+including how to install podman.
+
 <details>
 <summary>What are all those Linux packages for?</summary>
 

@@ -296,10 +296,10 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     }
     case FieldType::UInt32:
     {
-        // An unsigned field carrying enumerators is a bitmask — a set of them, one
-        // bit per enumerator at its own value — rather than a number anyone would
-        // want to type. AFIELD(bitmask = ...) is what puts them here; an enum field
-        // holding exactly one of them is told apart by its non-zero enumSize.
+        // An unsigned field carrying enumerators is a Core::Bitmask — a set of
+        // them, one bit per enumerator at its own value — rather than a number
+        // anyone would want to type. An enum field holding exactly one of them is
+        // told apart by its non-zero enumSize.
         if (!field.enumConstants.empty() && field.enumSize == 0)
         {
             uint32_t &mask = *static_cast<uint32_t *>(fp);

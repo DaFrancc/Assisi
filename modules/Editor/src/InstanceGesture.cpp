@@ -76,7 +76,7 @@ void InstanceGesture::EndFrame(Assisi::ECS::Scene &scene, const Rt::InstanceTabl
         {
             Transaction txn;
             txn.label = label;
-            txn.cmds.push_back(InstanceDelta{.instanceId = _instanceId, .before = _row, .after = *now});
+            txn.Add(InstanceDelta{.instanceId = _instanceId, .before = _row, .after = *now});
 
             const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
             for (const auto &[member, before] : _poses)
@@ -85,7 +85,7 @@ void InstanceGesture::EndFrame(Assisi::ECS::Scene &scene, const Rt::InstanceTabl
                     continue;
                 std::optional<nlohmann::json> after = history->CaptureComponent(member, transformId);
                 if (after != std::optional<nlohmann::json>{before})
-                    txn.cmds.push_back(ComponentDelta{member, transformId, before, after});
+                    txn.Add(ComponentDelta{member, transformId, before, after});
             }
 
             // Only if something actually moved — a click without a drag is not an

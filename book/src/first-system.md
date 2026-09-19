@@ -170,19 +170,20 @@ at any frame rate.
 You can add more options after the name:
 
 ```cpp
-ASYSTEM(Update, name = "Shoot", after = Aim, activeWorldOnly)
+ASYSTEM(Update, name = "Shoot", after = "Aim", activeWorldOnly)
 void ShootSystem(Assisi::App::SystemContext &ctx);
 ```
 
-- **`after = Aim`** / **`before = Aim`** make this system run after (or before)
-  the system named `Aim` in the same phase. Without these, don't assume any order
-  between systems.
+- **`after = "Aim"`** / **`before = "Aim"`** make this system run after (or
+  before) the system named `Aim` in the same phase. Without these, don't assume
+  any order between systems. The name is quoted, like `name` itself: it's the
+  system's name, not a C++ function, and a bare one won't build.
 
   To order a system against several others, write `after =` or `before =` once
   for each:
 
   ```cpp
-  ASYSTEM(Update, name = "Shoot", after = Aim, after = Reload, before = Recoil)
+  ASYSTEM(Update, name = "Shoot", after = "Aim", after = "Reload", before = "Recoil")
   void ShootSystem(Assisi::App::SystemContext &ctx);
   ```
 

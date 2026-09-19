@@ -113,6 +113,24 @@
     },
 
     {
+      "name": "gcc-ship-steamrt",
+      "inherits": "gcc-ship",
+      "description": "gcc-ship built inside the Steam Runtime SDK container (make gs-steamrt), for a game that runs on glibc 2.31+",
+      "condition": {
+        "type": "allOf",
+        "conditions": [
+          { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+          { "type": "equals", "lhs": "$env{ASSISI_STEAMRT_SDK}", "rhs": "1" }
+        ]
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc-14",
+        "CMAKE_CXX_COMPILER": "g++-14",
+        "ASSISI_GLIBC_CEILING": "2.31"
+      }
+    },
+
+    {
       "name": "clang-debug",
       "inherits": "base",
       "description": "Linux + Clang + Debug (unoptimized, full symbols)",
@@ -273,6 +291,7 @@
     { "name": "gcc-debug",   "configurePreset": "gcc-debug"   },
     { "name": "gcc-dev",     "configurePreset": "gcc-dev"     },
     { "name": "gcc-ship",    "configurePreset": "gcc-ship"    },
+    { "name": "gcc-ship-steamrt", "configurePreset": "gcc-ship-steamrt" },
 
     { "name": "clang-debug", "configurePreset": "clang-debug" },
     { "name": "clang-dev",   "configurePreset": "clang-dev"   },
@@ -322,6 +341,7 @@
     { "name": "gcc-debug",   "inherits": "test-base", "configurePreset": "gcc-debug"   },
     { "name": "gcc-dev",     "inherits": "test-base", "configurePreset": "gcc-dev"     },
     { "name": "gcc-ship",    "inherits": "test-base", "configurePreset": "gcc-ship"    },
+    { "name": "gcc-ship-steamrt", "inherits": "test-base", "configurePreset": "gcc-ship-steamrt" },
 
     { "name": "clang-debug", "inherits": "test-base", "configurePreset": "clang-debug" },
     { "name": "clang-dev",   "inherits": "test-base", "configurePreset": "clang-dev"   },

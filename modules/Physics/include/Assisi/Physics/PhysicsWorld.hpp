@@ -55,8 +55,7 @@ struct Pose
 /// cast decides what it may hit by the same two-way rule a collision does.
 struct CollisionFilter
 {
-    /// One bit per CollisionChannel, at that enumerator's value.
-    std::uint32_t collidesWith = AllChannels;
+    Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
 
     CollisionChannel channel = CollisionChannel::World;
 
@@ -68,7 +67,7 @@ struct CollisionFilter
     /// the character walk into an invisible wall.
     [[nodiscard]] CollisionFilter Without(CollisionChannel excluded) const
     {
-        return CollisionFilter{collidesWith & ~(1u << static_cast<std::uint32_t>(excluded)), channel};
+        return CollisionFilter{collidesWith.Without(excluded), channel};
     }
 };
 
