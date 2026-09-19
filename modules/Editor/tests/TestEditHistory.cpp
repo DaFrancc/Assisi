@@ -103,9 +103,9 @@ TEST_CASE("EditHistory: an asset edit replays through the apply hook, both ways"
 
     Transaction txn;
     txn.label = "Edit crate";
-    txn.cmds.push_back(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
-                                  nlohmann::json{{"RoughnessFactor", 0.25}},
-                                  nlohmann::json{{"RoughnessFactor", 0.75}}});
+    txn.Add(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
+                       nlohmann::json{{"RoughnessFactor", 0.25}},
+                       nlohmann::json{{"RoughnessFactor", 0.75}}});
     hist.Push(std::move(txn));
 
     REQUIRE(log.empty()); // pushing is not applying
@@ -131,8 +131,8 @@ TEST_CASE("EditHistory: an asset edit with no apply hook installed is a safe no-
 
     Transaction txn;
     txn.label = "Edit crate";
-    txn.cmds.push_back(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
-                                  nlohmann::json::object(), nlohmann::json::object()});
+    txn.Add(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
+                       nlohmann::json::object(), nlohmann::json::object()});
     hist.Push(std::move(txn));
 
     hist.Undo();
@@ -159,7 +159,7 @@ TEST_CASE("EditHistory: field-edit transaction undoes and redoes a value")
     txn.label           = "Move";
     txn.selectionBefore = e;
     txn.selectionAfter  = e;
-    txn.cmds.push_back(ComponentDelta{e, tid, before, after});
+    txn.Add(ComponentDelta{e, tid, before, after});
     hist.Push(std::move(txn));
 
     REQUIRE(hist.CanUndo());
@@ -194,7 +194,7 @@ TEST_CASE("EditHistory: add-component transaction toggles presence")
     EditHistory hist(scene);
     Transaction txn;
     txn.label = "Add Camera";
-    txn.cmds.push_back(ComponentDelta{e, cid, before, after});
+    txn.Add(ComponentDelta{e, cid, before, after});
     hist.Push(std::move(txn));
 
     hist.Undo();
@@ -223,7 +223,7 @@ TEST_CASE("EditHistory: remove-component transaction toggles presence the other 
     EditHistory hist(scene);
     Transaction txn;
     txn.label = "Remove Camera";
-    txn.cmds.push_back(ComponentDelta{e, cid, before, after});
+    txn.Add(ComponentDelta{e, cid, before, after});
     hist.Push(std::move(txn));
 
     hist.Undo(); // brings it back
@@ -246,7 +246,7 @@ TEST_CASE("EditHistory: entity-create transaction destroys on undo and revives e
     txn.label           = "Create Entity";
     txn.selectionBefore = NullEntity;
     txn.selectionAfter  = e;
-    txn.cmds.push_back(EntityDelta{e, std::nullopt, snap}); // before absent, after present
+    txn.Add(EntityDelta{e, std::nullopt, snap}); // before absent, after present
     hist.Push(std::move(txn));
 
     // Undo the create → the entity is destroyed.
@@ -288,8 +288,8 @@ TEST_CASE("EditHistory: subtree-delete revives entities and resolves the Parent 
     txn.label           = "Delete Subtree";
     txn.selectionBefore = child;
     txn.selectionAfter  = NullEntity;
-    txn.cmds.push_back(EntityDelta{parent, parentSnap, std::nullopt});
-    txn.cmds.push_back(EntityDelta{child, childSnap, std::nullopt});
+    txn.Add(EntityDelta{parent, parentSnap, std::nullopt});
+    txn.Add(EntityDelta{child, childSnap, std::nullopt});
     hist.Push(std::move(txn));
 
     // Undo → both entities revive at their exact handles; the child's Parent ref
@@ -324,7 +324,7 @@ TEST_CASE("EditHistory: a new commit clears the redo stack")
     const auto push = [&](const char *label) {
                           Transaction txn;
                           txn.label = label;
-                          txn.cmds.push_back(ComponentDelta{e, tid, j, j}); // no-op values, still a command
+                          txn.Add(ComponentDelta{e, tid, j, j}); // no-op values, still a command
                           hist.Push(std::move(txn));
                       };
 
@@ -350,7 +350,7 @@ TEST_CASE("EditHistory: the depth cap drops the oldest transactions")
     {
         Transaction txn;
         txn.label = "edit";
-        txn.cmds.push_back(ComponentDelta{e, tid, j, j});
+        txn.Add(ComponentDelta{e, tid, j, j});
         hist.Push(std::move(txn));
     }
     CHECK(hist.UndoDepth() == EditHistory::kMaxDepth);
@@ -381,7 +381,7 @@ TEST_CASE("EditHistory: the rebind hook fires during apply and only during apply
 
     Transaction txn;
     txn.label = "Move";
-    txn.cmds.push_back(ComponentDelta{e, tid, before, after});
+    txn.Add(ComponentDelta{e, tid, before, after});
     hist.Push(std::move(txn));
 
     CHECK(log.calls.empty()); // Push must not apply anything
@@ -492,7 +492,7 @@ TEST_CASE("EditHistory: capture is suppressed while applying")
     scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
     const auto after = CaptureComponent(scene, e, tid);
     Transaction txn;
-    txn.cmds.push_back(ComponentDelta{e, tid, before, after});
+    txn.Add(ComponentDelta{e, tid, before, after});
     hist.Push(std::move(txn));
 
     hist.Undo();
@@ -569,7 +569,7 @@ TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cy
     Transaction txn;
     txn.selectionBefore = a;
     txn.selectionAfter  = a;
-    txn.cmds.push_back(ComponentDelta{a, tid, before, after});
+    txn.Add(ComponentDelta{a, tid, before, after});
     hist.Push(std::move(txn));
 
     // --- Play: snapshot, then let "physics" scramble the transforms. ---
@@ -619,7 +619,7 @@ TEST_CASE("EditHistory: labels and the dirty-state token track the stack")
                           txn.label = label;
                           // distinct before/after so the transaction isn't a no-op
                           auto after = j;
-                          txn.cmds.push_back(ComponentDelta{e, tid, j, after});
+                          txn.Add(ComponentDelta{e, tid, j, after});
                           hist.Push(std::move(txn));
                       };
 
@@ -662,7 +662,7 @@ TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round
     txn.selectionBefore = parent;
     txn.selectionAfter  = NullEntity;
     for (Entity e : {parent, child})
-        txn.cmds.push_back(EntityDelta{e, hist.CaptureEntityComponents(e), std::nullopt});
+        txn.Add(EntityDelta{e, hist.CaptureEntityComponents(e), std::nullopt});
 
     // Perform the delete the transaction describes, then record it.
     scene.Destroy(parent);
@@ -781,7 +781,7 @@ TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component
     EditHistory hist(scene, hook);
     Transaction txn;
     txn.label = "Delete Entity";
-    txn.cmds.push_back(EntityDelta{e, snap, std::nullopt});
+    txn.Add(EntityDelta{e, snap, std::nullopt});
     hist.Push(std::move(txn));
 
     hist.Undo(); // revive + restore components, firing the hook per component
@@ -810,7 +810,7 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
                       {
                           Transaction txn;
                           txn.label = label;
-                          txn.cmds.push_back(ComponentDelta{target, tid, now, now});
+                          txn.Add(ComponentDelta{target, tid, now, now});
                           hist.Push(std::move(txn));
                       };
 
@@ -876,7 +876,7 @@ TEST_CASE("EditHistory: handles from another Scene never truncate this stack")
     {
         Transaction txn;
         txn.label = label;
-        txn.cmds.push_back(ComponentDelta{kept, tid, now, now});
+        txn.Add(ComponentDelta{kept, tid, now, now});
         hist.Push(std::move(txn));
     }
     REQUIRE(hist.UndoDepth() == 3);

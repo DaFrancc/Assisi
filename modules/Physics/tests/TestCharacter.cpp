@@ -166,8 +166,7 @@ TEST_CASE("A character whose mask excludes World walks through the wall")
     (void)SpawnBox(scene, world, {3.f, 1.f, 0.f}, {1.f, 1.f, 5.f});
 
     Physics::CharacterDescriptor descriptor{};
-    descriptor.collidesWith =
-        Physics::AllChannels & ~(1u << static_cast<std::uint32_t>(Physics::CollisionChannel::World));
+    descriptor.collidesWith = Physics::AllChannels.Without(Physics::CollisionChannel::World);
     descriptor.gravityScale = 0.f; // nothing left to stand on once World is out
 
     const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);

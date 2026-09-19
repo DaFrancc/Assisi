@@ -43,7 +43,7 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx);
 /// the entity is local-only — it replicates nowhere and the server never learns
 /// of it. Watching a Bouncer reach a client means pressing this on the
 /// authority.
-ASYSTEM(Update, name = "BouncerSpawn", after = SpinDemo, activeWorldOnly)
+ASYSTEM(Update, name = "BouncerSpawn", after = "SpinDemo", activeWorldOnly)
 void BouncerSpawnSystem(Assisi::App::SystemContext &ctx);
 
 /// Takes the cursor when the level is up, so a first-person level is playable

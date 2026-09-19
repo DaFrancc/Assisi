@@ -471,7 +471,7 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
         txn.label           = EditLabel("Create Entity", entity);
         txn.selectionBefore = previousSelection;
         txn.selectionAfter  = entity;
-        txn.cmds.push_back(Assisi::Editor::EntityDelta{entity, std::nullopt, history->CaptureEntityComponents(entity)});
+        txn.Add(Assisi::Editor::EntityDelta{entity, std::nullopt, history->CaptureEntityComponents(entity)});
         history->Push(std::move(txn));
     }
     return entity;
@@ -706,7 +706,7 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = Assisi::ECS::NullEntity;
         for (const Assisi::ECS::Entity e : doomed)
-            txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
+            txn.Add(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
     // Tear down each entity's simulated object, then queue the entity for

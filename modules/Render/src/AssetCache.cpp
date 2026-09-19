@@ -821,7 +821,7 @@ void AssetCache::OnMaterialLoaded(Core::AssetId id, std::uint64_t epoch, Materia
                                                .material   = std::move(bundle)});
 }
 
-void AssetCache::PublishMesh(PendingPublish publish)
+void AssetCache::PublishMesh(PendingPublish &publish)
 {
     _meshLoading.erase(publish.id);
     _slotMaterials[publish.id] = std::move(publish.mesh.slotMaterials);
@@ -846,14 +846,15 @@ void AssetCache::PublishMesh(PendingPublish publish)
     buffer.SetId(_nextMeshId++);
 }
 
-void AssetCache::PublishMaterial(PendingPublish publish)
+void AssetCache::PublishMaterial(PendingPublish &publish)
 {
     _materialLoading.erase(publish.id);
 
     // A load kicked before the editor took this material over. Its payload is the
     // stored contents, which are older than the live edits — publishing it would
-    // silently revert whatever has not been saved yet. The decoded textures go
-    // out of scope here; the recorded upload list is simply not submitted.
+    // silently revert whatever has not been saved yet. The decoded textures are
+    // freed when the pump drops the publish; the recorded upload list is simply
+    // not submitted.
     if (_authoredMaterials.contains(publish.id))
     {
         return;
@@ -1115,13 +1116,18 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
                 break;
         }
 
-        PendingPublish publish = std::move(_pendingPublishes.front());
-        _pendingPublishes.pop_front();
+        // Published in place and popped after, rather than moved out first: nothing
+        // a publish does touches the queue, and GCC 14 misreads the implicit move of
+        // a PendingPublish as reading uninitialized AssetIds.
+        PendingPublish &publish = _pendingPublishes.front();
 
         // A Clear() between the decode continuation and this pump supersedes it; the
         // loading marker was already dropped by Clear, so just skip it.
         if (publish.epoch != _loadEpoch.load(std::memory_order_relaxed))
+        {
+            _pendingPublishes.pop_front();
             continue;
+        }
 
         const std::size_t publishBytes = publish.byteSize;
         if (publish.isMaterial)
@@ -1133,7 +1139,7 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
             ASSISI_PROFILE_ARG_STR("asset", Describe(publish.id));
             ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
 
-            PublishMaterial(std::move(publish));
+            PublishMaterial(publish);
             ++matCount;
         }
         else
@@ -1142,9 +1148,10 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
             ASSISI_PROFILE_ARG_STR("asset", Describe(publish.id));
             ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
 
-            PublishMesh(std::move(publish));
+            PublishMesh(publish);
             ++meshCount;
         }
+        _pendingPublishes.pop_front();
         bytes += publishBytes;
         any = true;
     }

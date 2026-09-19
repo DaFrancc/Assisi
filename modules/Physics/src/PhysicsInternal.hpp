@@ -119,7 +119,7 @@ static_assert(static_cast<std::uint32_t>(BodyMotion::Count) <= MotionMask + 1u,
 inline JPH::ObjectLayer PackLayer(CollisionFilter filter, BodyMotion motion)
 {
     const std::uint32_t channel = static_cast<std::uint32_t>(filter.channel) & ChannelMask;
-    const std::uint32_t mask    = filter.collidesWith & MaskMask;
+    const std::uint32_t mask    = filter.collidesWith.bits & MaskMask;
     const std::uint32_t packed  = (channel << ChannelShift) | (mask << MaskShift) |
                                   ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
     return static_cast<JPH::ObjectLayer>(packed);
@@ -262,7 +262,8 @@ class FilterLayerFilter final : public JPH::ObjectLayerFilter
 {
 public:
     explicit FilterLayerFilter(CollisionFilter filter)
-        : _mask(filter.collidesWith), _channelBit(1u << static_cast<std::uint32_t>(filter.channel))
+        : _mask(filter.collidesWith.bits),
+          _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
     {
     }
 

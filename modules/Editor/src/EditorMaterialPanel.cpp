@@ -150,8 +150,8 @@ void EditorApp::CommitMaterialGesture()
 
     Assisi::Editor::Transaction txn;
     txn.label = "Edit " + StemOf(_materialEditorPath.View());
-    txn.cmds.push_back(Assisi::Editor::AssetDelta{_materialEditorPath, "MaterialData",
-                                                  std::move(_materialGestureBefore), std::move(after)});
+    txn.Add(Assisi::Editor::AssetDelta{_materialEditorPath, "MaterialData",
+                                       std::move(_materialGestureBefore), std::move(after)});
     history->Push(std::move(txn));
     _materialGestureBefore = nlohmann::json{};
 }
