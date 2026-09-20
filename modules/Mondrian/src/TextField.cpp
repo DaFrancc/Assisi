@@ -453,7 +453,9 @@ uint32_t LineEnds(const WidgetView &view, const Node &node, bool end, bool whole
 /// Which character of @p node's text the pointer is over.
 uint32_t CharacterUnder(const WidgetView &view, Point pointer)
 {
-    if (view.text == nullptr)
+    // What is laid out on an empty field is its placeholder, which the caret
+    // has nothing to do with: there is only one place for it to go.
+    if (view.text == nullptr || view.node->text.empty())
     {
         return 0;
     }

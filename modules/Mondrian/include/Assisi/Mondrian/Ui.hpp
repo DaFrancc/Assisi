@@ -165,6 +165,12 @@ class Ui
     /// Every one is allowed until it is turned off.
     void SetAbility(TextFieldId field, TextAbility ability, bool allowed);
 
+    /// @brief What @p field shows while it is empty: what to type there, or an
+    /// example of it, in fainter ink. Never part of the text — it is not
+    /// returned by GetText, cannot be selected, and goes the moment anything
+    /// is typed.
+    void SetPlaceholder(TextFieldId field, std::string_view text);
+
     /// @brief Whether @p field shows what it holds or stands in marks for it.
     /// Masking a field also stops copy and cut, which can be turned back on
     /// afterwards for a field where seeing the text is the only worry.

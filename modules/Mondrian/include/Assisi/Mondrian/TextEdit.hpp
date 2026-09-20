@@ -141,6 +141,10 @@ inline constexpr uint32_t kUnlimitedLength = std::numeric_limits<uint32_t>::max(
 /// leftwards puts the caret before the anchor.
 struct TextEdit
 {
+    /// What the field shows while it holds nothing: what to type, or an
+    /// example of it. Never part of the text, so it is not returned, not
+    /// selected, and not carried to the clipboard.
+    std::string placeholder;
     /// What the text must look like to be acceptable; null for no pattern,
     /// which is a field that accepts anything. Shared, because a pattern is
     /// read-only once compiled and several fields may want the same one.

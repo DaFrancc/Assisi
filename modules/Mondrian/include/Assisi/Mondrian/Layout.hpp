@@ -43,6 +43,9 @@ struct LayoutNode
     /// How far a single line of text is shifted left to keep its caret in
     /// sight, in device pixels. Zero for everything that is not a field.
     float textScroll = 0.f;
+    /// Whether what was laid out is the field's placeholder rather than its
+    /// text, which is drawn fainter to say it is not there yet.
+    bool placeholder = false;
     uint32_t text = kNoText; ///< index into LayoutResult::texts
     uint32_t generation = 0;
     bool placed = false; ///< false for a free slot and a hidden subtree

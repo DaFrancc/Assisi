@@ -12,6 +12,11 @@ namespace
 /// An image draws its texture's own colours.
 constexpr Math::Color4<Math::ColorSpace::Srgb> kUntinted{1.f, 1.f, 1.f, 1.f};
 
+/// How much of its colour a field's placeholder keeps: faint enough to read as
+/// a prompt rather than as text, and solid enough to read at all. The field's
+/// own, until themes decide it.
+constexpr float kPlaceholderOpacity = 0.45f;
+
 /// Draws one laid-out tree. A class only so the recursion shares what every
 /// node reads.
 class Drawer
@@ -67,8 +72,14 @@ class Drawer
         }
         if (result.text != LayoutNode::kNoText)
         {
-            DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, TextOrigin(result, style, scale),
-                       style.textColor);
+            // A placeholder is faint, so that words standing in for text a
+            // reader has not typed are not mistaken for words they have.
+            Math::Color4<Math::ColorSpace::Srgb> ink = style.textColor;
+            if (result.placeholder)
+            {
+                ink.a *= kPlaceholderOpacity;
+            }
+            DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, TextOrigin(result, style, scale), ink);
         }
 
         // The control's own parts — a slider's thumb, a toggle's knob, a

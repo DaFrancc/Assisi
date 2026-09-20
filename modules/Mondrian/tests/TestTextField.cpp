@@ -495,6 +495,88 @@ uint32_t LineCount(const Field &field)
 
 } // namespace
 
+TEST_CASE("TextField: a placeholder stands in while the field is empty and goes when it is not")
+{
+    Field field;
+    field.ui.SetPlaceholder(field.field, "your name");
+    field.Step({});
+
+    const LayoutNode *empty = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(empty != nullptr);
+    CHECK(empty->placeholder);
+    CHECK(field.Text().empty()); // shown, but not held
+
+    field.Type("a");
+    CHECK(field.Text() == "a");
+    CHECK_FALSE(field.ui.GetLayout().Get(field.field.node)->placeholder);
+
+    // And comes back when the field is emptied again.
+    field.Step(Press(EditKey::Backspace));
+    CHECK(field.ui.GetLayout().Get(field.field.node)->placeholder);
+}
+
+TEST_CASE("TextField: a placeholder is drawn fainter than the text it stands in for")
+{
+    Field field;
+    field.ui.SetPlaceholder(field.field, "AAAA");
+    field.Step({});
+
+    // The sample screen has text of its own, so take only the glyphs standing
+    // inside this field's box.
+    const auto glyphAlpha = [&field]
+    {
+        const Rect box = field.Box();
+        for (const QuadInstance &quad : field.ui.GetDrawList().Instances())
+        {
+            const bool inside = quad.rect.x >= box.x && quad.rect.x <= box.x + box.width && quad.rect.y >= box.y &&
+                                quad.rect.y <= box.y + box.height;
+            if (quad.kind == static_cast<uint32_t>(QuadKind::Glyph) && inside)
+            {
+                return quad.color.a;
+            }
+        }
+        return 0.f;
+    };
+    const float ghost = glyphAlpha();
+    REQUIRE(ghost > 0.f);
+
+    field.ui.SetPlaceholder(field.field, {});
+    field.Type("AAAA");
+    CHECK(glyphAlpha() > ghost);
+}
+
+TEST_CASE("TextField: a click on a placeholder leaves the caret where it must be")
+{
+    Field field;
+    field.ui.SetPlaceholder(field.field, "a long prompt to click into");
+    field.Step({});
+
+    const Rect box = field.Box();
+    UiInput press = PointerAt({.x = box.x + (box.width / 2.f), .y = box.y + (box.height / 2.f)});
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+
+    // There is nowhere else for it to go: the words under the pointer are not
+    // the field's to put a caret in.
+    CHECK(field.Edit().caret == 0);
+    CHECK_FALSE(field.Edit().HasSelection());
+}
+
+TEST_CASE("TextField: a masked field shows its placeholder plainly, having nothing to hide yet")
+{
+    Field field;
+    field.ui.SetPlaceholder(field.field, "password");
+    field.ui.SetMask(field.field, TextMask::Dots);
+    field.Step({});
+
+    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(placed != nullptr);
+    REQUIRE(placed->placeholder);
+    // Eight characters of prompt, not eight marks of nothing.
+    CHECK(field.ui.GetLayout().texts[placed->text].glyphs.size() == CharacterCount("password"));
+}
+
 TEST_CASE("TextField: a field of many lines grows with its text until it is told not to")
 {
     constexpr uint32_t kLines = 2;

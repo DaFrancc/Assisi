@@ -310,8 +310,10 @@ void Ui::AddSampleControls()
     fields.childAlign = {Alignment::Start, Alignment::Center};
     const NodeId fieldRow = Add(_tree, panel, "fields", fields);
     const TextFieldId name = AddTextField(fieldRow, TextLines::Single);
+    SetPlaceholder(name, "your name");
     SetText(name, "type here");
     const TextFieldId secret = AddTextField(fieldRow, TextLines::Single);
+    SetPlaceholder(secret, "password");
     SetText(secret, "hunter2");
     SetMask(secret, TextMask::Dots);
 
@@ -319,16 +321,21 @@ void Ui::AddSampleControls()
     notes.childAlign = {Alignment::Start, Alignment::Start};
     const NodeId noteRow = Add(_tree, panel, "notes", notes);
 
+    // Their prompts say which is which, so emptying one does not lose the only
+    // thing telling them apart.
     const TextFieldId growing = AddTextField(noteRow, TextLines::Multi);
     SetHeight(growing, TextHeight::Unbounded, 0);
+    SetPlaceholder(growing, kSampleGrowing);
     SetText(growing, kSampleGrowing);
 
     const TextFieldId upTo = AddTextField(noteRow, TextLines::Multi);
     SetHeight(upTo, TextHeight::UpTo, kSampleNoteLines);
+    SetPlaceholder(upTo, kSampleUpTo);
     SetText(upTo, kSampleUpTo);
 
     const TextFieldId exactly = AddTextField(noteRow, TextLines::Multi);
     SetHeight(exactly, TextHeight::Exactly, kSampleNoteLines);
+    SetPlaceholder(exactly, kSampleExactly);
     SetText(exactly, kSampleExactly);
 
     Style list;
@@ -446,6 +453,14 @@ void Ui::SetAbility(TextFieldId field, TextAbility ability, bool allowed)
     if (Node *node = _tree.Editable(field.node))
     {
         node->edit.abilities[static_cast<std::size_t>(ability)] = allowed;
+    }
+}
+
+void Ui::SetPlaceholder(TextFieldId field, std::string_view text)
+{
+    if (Node *node = _tree.Editable(field.node))
+    {
+        node->edit.placeholder = text;
     }
 }
 

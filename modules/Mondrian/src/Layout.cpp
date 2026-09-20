@@ -181,9 +181,16 @@ class Layouter
         const bool field = node.edit.editing == TextEditing::Editable;
         if ((!node.text.empty() || field) && _font != nullptr && _font->pixelSize > 0.f && textSize > 0.f)
         {
+            // An empty field stands its placeholder in for the text it has
+            // none of, so the words are laid out and drawn by everything that
+            // already handles text. Nothing else reads it: the caret has no
+            // text to sit in, and what the field holds is still nothing.
+            result.placeholder = field && node.text.empty() && !node.edit.placeholder.empty();
+            const std::string_view source = result.placeholder ? std::string_view{node.edit.placeholder}
+                                                               : ShownText(node.text, node.edit.mask, _marks);
             result.text = static_cast<uint32_t>(_out.texts.size());
             _out.texts.emplace_back();
-            _shaped.push_back(Shape(ShownText(node.text, node.edit.mask, _marks), *_font));
+            _shaped.push_back(Shape(source, *_font));
         }
         ForEachChild(index, [this](uint32_t child) { Prepare(child); });
     }
