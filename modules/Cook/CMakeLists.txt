@@ -29,6 +29,10 @@ target_link_libraries(Assisi-Cook
     Assisi::ImageImport
     # Fonts: the rasteriser that turns a font description into an atlas.
     Assisi::FontImport
+    # Screens: the markup parser and the compiler that turns a screen file into
+    # the node table a game loads. The compile lives there rather than here
+    # because the editor runs it in process and links no cooker.
+    Assisi::MondrianImport
     # Runtime: the level loader, because cooking a level means loading it the
     # way the engine does rather than writing a second reader for the format.
     Assisi::Runtime

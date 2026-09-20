@@ -23,6 +23,7 @@ different problems for a reader to debug.
 import re
 from typing import NamedTuple, Optional
 
+import reflect_events
 from reflect_parser import FieldInfo, ComponentInfo, MessageInfo, MAX_CONTAINER_DEPTH
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
                            _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
@@ -793,10 +794,12 @@ static const bool _reflectgen_system_{system.function} = []() -> bool
 
 
 def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
-                 handlers: Optional[list] = None, systems: Optional[list] = None) -> str:
+                 handlers: Optional[list] = None, systems: Optional[list] = None,
+                 events: Optional[list] = None) -> str:
     messages = messages or []
     handlers = handlers or []
     systems  = systems or []
+    events   = events or []
 
     # Default-deny is enforced here (not only in main) so every path that emits
     # code — the CLI and direct callers such as the golden tests — refuses an
@@ -897,6 +900,10 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
     if systems:
         includes.append('#include <Assisi/App/SystemCatalog.hpp>')
+    if events:
+        includes.append('#include <Assisi/Core/EventCatalog.hpp>')
+        # The default-constructibility guard each registration carries.
+        includes.append('#include <type_traits>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -1059,6 +1066,9 @@ static const bool {var_name} = []() -> bool
 
     for system in systems:
         blocks.append('\n' + gen_system_registration(system))
+
+    for event in events:
+        blocks.append('\n' + reflect_events.gen_event_registration(event))
 
     blocks.append(offsetof_pop)
 

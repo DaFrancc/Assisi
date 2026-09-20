@@ -28,3 +28,38 @@ target_compile_definitions(Assisi-FontImport-Tests PRIVATE
 add_test(NAME FontImport COMMAND Assisi-FontImport-Tests)
 
 set_target_properties(Assisi-FontImport-Tests PROPERTIES FOLDER "tests")
+
+# The markup parser and the screen compiler. Its own binary rather than cases in
+# the one above: nothing it covers touches a font, and it links no rasteriser.
+#
+# It builds its own EventCatalog per case rather than linking the generated
+# registrations, so what an `on_click` resolves against is what the case says it
+# is and not whatever this binary happens to have linked.
+add_executable(Assisi-MondrianImport-Tests
+  main.cpp
+  TestMarkup.cpp
+  TestScreenCompiler.cpp
+)
+
+Assisi_apply_test_defaults(Assisi-MondrianImport-Tests)
+
+target_include_directories(Assisi-MondrianImport-Tests SYSTEM PRIVATE
+  "${doctest_SOURCE_DIR}"
+)
+
+target_link_libraries(Assisi-MondrianImport-Tests
+  PRIVATE
+    Assisi::MondrianImport
+    Assisi::TestSupport
+)
+
+# The screen the game ships, read in place rather than copied into a fixture.
+# Without this the first thing to notice a mistake in it would be a cook, which
+# no test runs.
+target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
+  ASSISI_PAUSE_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Pause.amdn"
+)
+
+add_test(NAME MondrianImport COMMAND Assisi-MondrianImport-Tests)
+
+set_target_properties(Assisi-MondrianImport-Tests PROPERTIES FOLDER "tests")

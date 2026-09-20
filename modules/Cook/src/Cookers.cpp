@@ -7,6 +7,7 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/CookedPayload.hpp>
+#include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
@@ -20,6 +21,8 @@
 #include <Assisi/Image/Decode.hpp>
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
+#include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -70,7 +73,7 @@ std::expected<std::vector<std::byte>, CookError> ReadSource(std::string_view vpa
 /// this build knows how to walk.
 class ReflectedCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "reflected"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Reflected; }
 
@@ -94,8 +97,8 @@ public:
         return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
     {
         const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
         if (!text)
@@ -106,7 +109,7 @@ public:
         // The envelope names the type; the registry says whether this build has
         // it. A document naming a type nothing registered is a file the engine
         // could not load either, so it fails here rather than shipping.
-        const nlohmann::json document = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
+        const nlohmann::json document = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
         if (document.is_discarded() || !document.is_object())
         {
             return std::unexpected(Failure(vpath, "is not a JSON object"));
@@ -121,13 +124,13 @@ public:
         const Core::Reflect::AssetTypeMeta *meta = Core::Reflect::AssetTypeRegistry::Instance().Find(typeName);
         if (meta == nullptr)
         {
-            return std::unexpected(Failure(vpath, std::format("names type '{}', which this build does not have",
-                                                              typeName)));
+            return std::unexpected(
+                Failure(vpath, std::format("names type '{}', which this build does not have", typeName)));
         }
         if (!meta->construct || !meta->destroy || !meta->deserialize)
         {
-            return std::unexpected(Failure(vpath, std::format("type '{}' has no construct/deserialize hooks",
-                                                              typeName)));
+            return std::unexpected(
+                Failure(vpath, std::format("type '{}' has no construct/deserialize hooks", typeName)));
         }
 
         // The caller knows the type only by that name, so the instance has to come
@@ -172,7 +175,7 @@ public:
 /// opinion about what a level is.
 class SceneCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "scene"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Scene; }
 
@@ -184,8 +187,8 @@ public:
         return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &context) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &context) const override
     {
         if (context.database == nullptr)
         {
@@ -193,16 +196,14 @@ public:
         }
         const Core::AssetDatabase &database = *context.database;
         const Runtime::BlueprintIdOf idOf = [&database](std::string_view source)
-                                            {
-                                                return database.IdFor(source).value_or(Core::AssetId{});
-                                            };
+        { return database.IdFor(source).value_or(Core::AssetId{}); };
 
         ECS::Scene scene;
         Runtime::InstanceTable instances;
         Runtime::LevelHeader header;
 
         Runtime::LoadOptions options;
-        options.header    = &header;
+        options.header = &header;
         options.instances = &instances;
 
         const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromFile(scene, vpath, options);
@@ -227,14 +228,11 @@ public:
 /// import runs at load.
 class MeshCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
 
-    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
-    {
-        return Geometry::kMeshPayloadVersion;
-    }
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Geometry::kMeshPayloadVersion; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -265,8 +263,8 @@ public:
         return {sibling};
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId id, const CookContext &context) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
+                                                                        const CookContext &context) const override
     {
         if (context.database == nullptr)
         {
@@ -275,11 +273,10 @@ public:
 
         const Core::AssetDatabase &database = *context.database;
         const Geometry::AssetIdResolver resolve = [&database](std::string_view texturePath) -> Core::AssetId
-                                                  {
-                                                      const std::optional<Core::AssetId> found =
-                                                          database.IdFor(texturePath);
-                                                      return found.has_value() ? *found : Core::AssetId{};
-                                                  };
+        {
+            const std::optional<Core::AssetId> found = database.IdFor(texturePath);
+            return found.has_value() ? *found : Core::AssetId{};
+        };
 
         std::expected<Geometry::MeshData, Geometry::MeshImportError> mesh = Geometry::ImportMesh(vpath, resolve);
         if (!mesh)
@@ -327,7 +324,7 @@ public:
 /// what it is for.
 class TextureCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "texture"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Texture; }
 
@@ -347,8 +344,8 @@ public:
         return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId id, const CookContext &context) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
+                                                                        const CookContext &context) const override
     {
         if (context.roles == nullptr)
         {
@@ -361,10 +358,10 @@ public:
             const auto [first, second] = context.roles->Conflict(id);
             if (!first.empty())
             {
-                return std::unexpected(Failure(
-                                           vpath, std::format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
-                                                              "blob, so copy the file if both are wanted",
-                                                              first, second)));
+                return std::unexpected(
+                    Failure(vpath, std::format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
+                                               "blob, so copy the file if both are wanted",
+                                               first, second)));
             }
         }
 
@@ -403,7 +400,7 @@ public:
 /// SPIR-V, copied; GLSL, claimed and dropped.
 class ShaderCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "shader"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Shader; }
 
@@ -458,8 +455,8 @@ public:
         return HasExtension(vpath, ".spv") ? Core::DerivedAssetId(vpath) : Core::AssetId{};
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
     {
         const std::expected<std::vector<std::byte>, CookError> spirv = ReadSource(vpath);
         if (!spirv)
@@ -483,7 +480,7 @@ public:
 /// reach the cooked tree through the description.
 class FontCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "font"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Font; }
 
@@ -531,8 +528,8 @@ public:
         return {std::string{description->source.View()}};
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
     {
         const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
         if (!text)
@@ -567,6 +564,53 @@ public:
     }
 };
 
+// ── Screens ───────────────────────────────────────────────────────────────────
+
+/// `.amdn` markup, compiled to the flat node table a screen loads from, so the
+/// game reads no source text and links no parser.
+///
+/// Every name the file writes is checked here, against this build's own tables
+/// and against the events it linked. `Assisi-Cook-Tool` links `Assisi-GameLib`
+/// and every generated registration, so the catalog a screen is checked against
+/// is the one the game will have.
+class ScreenCooker final : public Cooker
+{
+  public:
+    [[nodiscard]] std::string_view Name() const override { return "screen"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Screen; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        return Mondrian::kScreenPayloadVersion;
+    }
+
+    [[nodiscard]] Claim Claims(std::string_view vpath) const override
+    {
+        return HasExtension(vpath, ".amdn") ? Claim::Output : Claim::None;
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+
+        const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
+            Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance());
+        if (!cooked)
+        {
+            // Line and column first, so the message reads as a compiler's does
+            // and an editor can jump to it.
+            return std::unexpected(Failure(
+                vpath, std::format("{}:{}: {}", cooked.error().line, cooked.error().column, cooked.error().message)));
+        }
+        return *cooked;
+    }
+};
+
 // ── Everything else that is still content ─────────────────────────────────────
 
 /// Animated WebP: bytes with no transformation to apply, wrapped in the
@@ -577,7 +621,7 @@ public:
 /// build failure — into a silent copy.
 class VerbatimCooker final : public Cooker
 {
-public:
+  public:
     [[nodiscard]] std::string_view Name() const override { return "verbatim"; }
     [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Verbatim; }
 
@@ -587,8 +631,8 @@ public:
         return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
-    [[nodiscard]] std::expected<std::vector<std::byte>, CookError>
-    Cook(std::string_view vpath, Core::AssetId, const CookContext &) const override
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
     {
         const std::expected<std::vector<std::byte>, CookError> source = ReadSource(vpath);
         if (!source)
@@ -615,7 +659,7 @@ bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel
 
     Binding fresh;
     fresh.material = std::string{material};
-    fresh.channel  = channel;
+    fresh.channel = channel;
 
     const auto [slot, inserted] = _bindings.try_emplace(texture, std::move(fresh));
     if (inserted || slot->second.channel == channel)
@@ -661,6 +705,7 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<TextureCooker>());
     cookers.push_back(std::make_unique<ShaderCooker>());
     cookers.push_back(std::make_unique<FontCooker>());
+    cookers.push_back(std::make_unique<ScreenCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
     return cookers;
 }

@@ -67,6 +67,7 @@ from blueprint_views import (  # noqa: F401
     render_instance_views,
 )
 import reflect_codegen  # noqa: F401
+import reflect_events  # noqa: F401
 from reflect_codegen import (  # noqa: F401
     gen_message_forward,
     gen_message_traits,
@@ -292,6 +293,7 @@ def check_message_handlers(headers) -> str:
         lines.append(f'  {fqn} -> (no handler)')
 
     lines.extend(check_systems(headers))
+    lines.extend(reflect_events.check_events(headers))
     return '\n'.join(lines) + '\n'
 
 
@@ -483,9 +485,10 @@ def main():
         try:
             components, messages, handlers = parse_header_full(header)
             systems = parse_header_systems(header)
+            events = reflect_events.parse_header_events(header)
             _check_unsupported(components, header.name)
 
-            if not components and not messages and not handlers and not systems:
+            if not components and not messages and not handlers and not systems and not events:
                 # Still write the file, empty. The build declares this path as an
                 # output, so producing nothing turns a header that legitimately
                 # registers nothing — a handler-only header, say — into a missing
@@ -511,8 +514,10 @@ def main():
                 print(f'  found: {handler.name} (handler for {handler.message})')
             for system in systems:
                 print(f'  found: {system.name} (system, {system.phase})')
+            for event in events:
+                print(f'  found: {event.catalog_name} (event)')
 
-            cpp = generate_cpp(components, include_path, messages, handlers, systems)
+            cpp = generate_cpp(components, include_path, messages, handlers, systems, events)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False

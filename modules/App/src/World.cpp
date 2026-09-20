@@ -3,7 +3,10 @@
 
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Mondrian/ScreenLoader.hpp>
+#include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -69,6 +72,31 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
         QueueSystemInstall(world, world.screenStack.back().systems, context);
     }
     return *world.screenStack.back().screen;
+}
+
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath)
+{
+    const std::expected<Mondrian::ScreenDocument, Mondrian::ScreenReadError> document =
+        Mondrian::LoadScreenDocument(vpath);
+    if (!document)
+    {
+        Core::Log::Error("World: the screen '{}' did not load ({}).", vpath, Mondrian::ToString(document.error()));
+        return nullptr;
+    }
+
+    // The catalog the generated registrations filled, which is the one the cook
+    // checked this file against. Reached for here rather than inside Mondrian,
+    // which knows nothing of game types and should not start.
+    std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
+        Mondrian::InstantiateScreen(ui, *document, Core::EventCatalog::Instance());
+    if (!loaded)
+    {
+        Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,
+                         Mondrian::ToString(loaded.error()));
+        return nullptr;
+    }
+
+    return &AddScreen(world, std::move(loaded->screen), loaded->systems);
 }
 
 void RemoveScreen(World &world, Mondrian::Screen &screen)

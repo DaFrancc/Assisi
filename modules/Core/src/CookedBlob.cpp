@@ -26,6 +26,8 @@ std::string_view ToString(CookedKind kind) noexcept
         return "verbatim";
     case CookedKind::Font:
         return "font";
+    case CookedKind::Screen:
+        return "screen";
     default:
         ASSISI_ASSERT(false, "ToString reached a CookedKind with no name");
         Log::Error("CookedBlob: no name for this kind");
@@ -76,7 +78,7 @@ std::expected<CookedKind, CookedBlobError> ReadCookedHeader(BitReader &reader)
     }
 
     const std::uint32_t version = reader.ReadBits(8);
-    const std::uint32_t kind    = reader.ReadBits(8);
+    const std::uint32_t kind = reader.ReadBits(8);
     if (reader.Failed())
     {
         return std::unexpected(CookedBlobError::Truncated);

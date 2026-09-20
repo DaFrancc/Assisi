@@ -367,6 +367,8 @@ assisi_assert_link_excludes(Assisi-Game
     Assisi::ImageImport
     Assisi-FontImport
     Assisi::FontImport
+    Assisi-MondrianImport
+    Assisi::MondrianImport
     freetype
     Freetype::Freetype
     fastgltf::fastgltf
