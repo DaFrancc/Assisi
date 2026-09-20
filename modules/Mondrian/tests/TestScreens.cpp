@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <string_view>
+#include <vector>
 
 using namespace Assisi::Mondrian;
 
@@ -25,31 +27,65 @@ constexpr Color kSecondColor{0.f, 1.f, 0.f, 1.f};
 /// A button big enough to aim at, floating so it sits at a known place.
 constexpr float kButtonSide = 200.f;
 
-/// Runs one frame and returns what it drew.
-const DrawList &Frame(Ui &ui)
+/// The shapes the tests use, spelled once. A menu covers what it opened over
+/// and stops the world; a dialog interrupts without hiding it; a HUD is looked
+/// at and nothing else, which is the default; a locked screen has the keys and
+/// will not give them back to Back.
+constexpr ScreenTraits kMenu{
+    .input = ScreenInput::ConsumeInput, .beneath = ScreenBeneath::HidesBeneath, .pause = ScreenPause::Pause};
+constexpr ScreenTraits kDialog{
+    .input = ScreenInput::ConsumeInput, .beneath = ScreenBeneath::NoHide, .pause = ScreenPause::Pause};
+constexpr ScreenTraits kHud{};
+constexpr ScreenTraits kLocked{
+    .input = ScreenInput::LockedConsumeInput, .beneath = ScreenBeneath::NoHide, .pause = ScreenPause::Pause};
+
+/// A UI and the screens a test made, destroyed before it so no screen outlives
+/// the UI it registered with. Declaration order is the guarantee: members go in
+/// reverse, so `owned` empties first.
+struct Stage
 {
-    ui.ProcessInput({});
-    ui.Sync(kViewport);
-    return ui.GetDrawList();
-}
+    Assisi::Core::EventQueue events;
+    Ui ui{events};
+    std::vector<std::unique_ptr<Screen>> owned;
 
-/// A screen of @p kind at @p sortKey whose root is filled with @p color and
-/// which carries one button called @p button.
-Screen *Build(Ui &ui, ScreenKind kind, int32_t sortKey, std::string_view name, const Color &color,
-              std::string_view button)
+    /// A screen behaving as @p traits say, at @p sortKey, its root filled with
+    /// @p color so its quads can be told from another's.
+    Screen &Add(ScreenTraits traits, int32_t sortKey, std::string_view name, const Color &color)
+    {
+        owned.push_back(std::make_unique<Screen>(ui, traits, sortKey, std::string{name}));
+        Screen &screen = *owned.back();
+
+        Style root;
+        root.background = color;
+        screen.Tree().SetStyle(screen.Root(), root);
+        return screen;
+    }
+
+    /// Destroys @p screen, as a world does when it goes.
+    void Drop(Screen &screen)
+    {
+        std::erase_if(owned, [&screen](const std::unique_ptr<Screen> &held) { return held.get() == &screen; });
+    }
+
+    /// Runs one frame and returns what it drew.
+    const DrawList &Frame()
+    {
+        ui.ProcessInput({});
+        ui.Sync(kViewport);
+        return ui.GetDrawList();
+    }
+};
+
+/// One button on @p screen, floated to a fixed place so every screen's button
+/// lands on the same pixels and a press could have gone to either.
+NodeId Aim(Screen &screen, std::string_view label)
 {
-    Screen *screen = ui.CreateScreen(kind, sortKey, name);
-
-    Style root;
-    root.background = color;
-    screen->Tree().SetStyle(screen->Root(), root);
-
     Style style;
     style.floating.enabled = true;
     style.sizing = {Sizing::Fixed(kButtonSide), Sizing::Fixed(kButtonSide)};
-    const ButtonId id = screen->AddButton(screen->Root(), button);
-    screen->Tree().SetStyle(id.node, style);
-    return screen;
+    const ButtonId id = screen.AddButton(screen.Root(), label);
+    screen.Tree().SetStyle(id.node, style);
+    return id.node;
 }
 
 /// The centre of @p name on @p screen, as the last frame placed it.
@@ -102,8 +138,9 @@ bool DrawsColor(const DrawList &drawn, const Color &color)
 /// of the list when there is none.
 std::size_t FirstIndexOf(const DrawList &drawn, const Color &color)
 {
-    const auto quads = drawn.Instances();
-    const auto at = std::ranges::find_if(quads, [&color](const QuadInstance &quad) { return quad.color == color; });
+    const std::span<const QuadInstance> quads = drawn.Instances();
+    const std::span<const QuadInstance>::iterator at =
+        std::ranges::find_if(quads, [&color](const QuadInstance &quad) { return quad.color == color; });
     return static_cast<std::size_t>(std::ranges::distance(quads.begin(), at));
 }
 
@@ -111,109 +148,142 @@ std::size_t FirstIndexOf(const DrawList &drawn, const Color &color)
 
 TEST_CASE("Screens: a new screen is hidden, and showing it gives it the keys")
 {
-    Ui ui;
-    CHECK_FALSE(ui.TakesInput());
+    Stage stage;
+    CHECK_FALSE(stage.ui.TakesInput());
 
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kFirstColor, "Resume");
-    CHECK_FALSE(menu->IsShown());
-    CHECK(ui.InputScreen() == nullptr);
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kFirstColor);
+    Aim(menu, "Resume");
+    CHECK_FALSE(menu.IsShown());
+    CHECK(stage.ui.InputScreen() == nullptr);
 
-    ui.Show(*menu);
-    CHECK(menu->IsShown());
-    CHECK(ui.InputScreen() == menu);
-    CHECK(ui.TakesInput());
+    menu.Show();
+    CHECK(menu.IsShown());
+    CHECK(stage.ui.InputScreen() == &menu);
+    CHECK(stage.ui.TakesInput());
 
-    ui.Hide(*menu);
-    CHECK_FALSE(menu->IsShown());
-    CHECK(ui.InputScreen() == nullptr);
-    CHECK_FALSE(ui.TakesInput());
+    menu.Hide();
+    CHECK_FALSE(menu.IsShown());
+    CHECK(stage.ui.InputScreen() == nullptr);
+    CHECK_FALSE(stage.ui.TakesInput());
 }
 
-TEST_CASE("Screens: only the topmost screen that takes input is hit")
+TEST_CASE("Screens: only the topmost screen that consumes input is hit")
 {
-    Ui ui;
-    Screen *under = Build(ui, ScreenKind::Stacked, kSortMenu, "under", kFirstColor, "Under");
-    // A popup, so what it covers stays drawn and laid out: both buttons are
+    Stage stage;
+    Screen &under = stage.Add(kMenu, kSortMenu, "under", kFirstColor);
+    Aim(under, "Under");
+    // A dialog, so what it covers stays drawn and laid out: both buttons are
     // floated to the same place and the press could land on either.
-    Screen *over = Build(ui, ScreenKind::Popup, kSortPopup, "over", kSecondColor, "Over");
-    ui.Show(*under);
-    ui.Show(*over);
-    Frame(ui);
-    REQUIRE(ui.InputScreen() == over);
-    REQUIRE(under->GetLayout().Get(under->Find("Under")) != nullptr);
+    Screen &over = stage.Add(kDialog, kSortPopup, "over", kSecondColor);
+    Aim(over, "Over");
+    under.Show();
+    over.Show();
+    stage.Frame();
+    REQUIRE(stage.ui.InputScreen() == &over);
+    REQUIRE(under.GetLayout().Get(under.Find("Under")) != nullptr);
 
-    const Point where = CentreOf(*over, "Over");
-    REQUIRE(where.x == CentreOf(*under, "Under").x);
-    REQUIRE(where.y == CentreOf(*under, "Under").y);
+    const Point where = CentreOf(over, "Over");
+    REQUIRE(where.x == CentreOf(under, "Under").x);
+    REQUIRE(where.y == CentreOf(under, "Under").y);
 
-    ui.ProcessInput(Pressing(where));
-    ui.Sync(kViewport);
-    CHECK(ui.GetInteraction().pressed == over->Find("Over"));
+    stage.ui.ProcessInput(Pressing(where));
+    stage.ui.Sync(kViewport);
+    CHECK(stage.ui.GetInteraction().pressed == over.Find("Over"));
 
-    ui.ProcessInput(Releasing(where));
-    ui.Sync(kViewport);
-    CHECK(ui.GetInteraction().activated == over->Find("Over"));
+    stage.ui.ProcessInput(Releasing(where));
+    stage.ui.Sync(kViewport);
+    CHECK(stage.ui.GetInteraction().activated == over.Find("Over"));
 }
 
 TEST_CASE("Screens: a screen remembers its focus and has it back when it returns")
 {
-    Ui ui;
-    Screen *pause = Build(ui, ScreenKind::Stacked, kSortMenu, "pause", kFirstColor, "Resume");
-    Screen *settings = Build(ui, ScreenKind::Stacked, kSortMenu, "settings", kSecondColor, "Back");
-    ui.Show(*pause);
-    Frame(ui);
+    Stage stage;
+    Screen &pause = stage.Add(kMenu, kSortMenu, "pause", kFirstColor);
+    Aim(pause, "Resume");
+    Screen &settings = stage.Add(kMenu, kSortMenu, "settings", kSecondColor);
+    Aim(settings, "Back");
+    pause.Show();
+    stage.Frame();
 
-    const NodeId resume = pause->Find("Resume");
-    ui.SetFocus(*pause, resume);
-    Frame(ui);
-    REQUIRE(ui.GetInteraction().focused == resume);
+    const NodeId resume = pause.Find("Resume");
+    stage.ui.SetFocus(pause, resume);
+    stage.Frame();
+    REQUIRE(stage.ui.GetInteraction().focused == resume);
 
     // Opening a screen over it hands the keys on, and the ids of the screen
     // left behind go with them.
-    ui.Show(*settings);
-    Frame(ui);
-    CHECK(ui.InputScreen() == settings);
-    CHECK(ui.GetInteraction().focused != resume);
+    settings.Show();
+    stage.Frame();
+    CHECK(stage.ui.InputScreen() == &settings);
+    CHECK(stage.ui.GetInteraction().focused != resume);
 
     // Popping comes back to the pause menu, not past it, with focus where the
     // player left it.
-    CHECK(ui.Back());
-    Frame(ui);
-    CHECK_FALSE(settings->IsShown());
-    CHECK(pause->IsShown());
-    CHECK(ui.InputScreen() == pause);
-    CHECK(ui.GetInteraction().focused == resume);
+    CHECK(stage.ui.Back());
+    stage.Frame();
+    CHECK_FALSE(settings.IsShown());
+    CHECK(pause.IsShown());
+    CHECK(stage.ui.InputScreen() == &pause);
+    CHECK(stage.ui.GetInteraction().focused == resume);
 }
 
-TEST_CASE("Screens: Back closes only a screen whose kind says so")
+TEST_CASE("Screens: Back closes only a screen whose traits say so")
 {
-    Ui ui;
-    Screen *hud = Build(ui, ScreenKind::Persistent, kSortHud, "hud", kFirstColor, "Health");
-    ui.Show(*hud);
-    Frame(ui);
+    Stage stage;
+    Screen &hud = stage.Add(kHud, kSortHud, "hud", kFirstColor);
+    Aim(hud, "Health");
+    hud.Show();
+    stage.Frame();
 
-    // A HUD takes no input, so there is nothing for Back to close.
-    CHECK_FALSE(ui.Back());
-    CHECK(hud->IsShown());
+    // A HUD consumes nothing, so there is nothing for Back to close.
+    CHECK_FALSE(stage.ui.Back());
+    CHECK(hud.IsShown());
 
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kSecondColor, "Resume");
-    ui.Show(*menu);
-    Frame(ui);
-    CHECK(ui.Back());
-    CHECK_FALSE(menu->IsShown());
-    CHECK(hud->IsShown()); // Back took the menu and stopped there
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kSecondColor);
+    Aim(menu, "Resume");
+    menu.Show();
+    stage.Frame();
+    CHECK(stage.ui.Back());
+    CHECK_FALSE(menu.IsShown());
+    CHECK(hud.IsShown()); // Back took the menu and stopped there
+}
+
+TEST_CASE("Screens: a locked screen has the keys and Back does not take them back")
+{
+    // A screen nobody may dismiss: a prompt that must be answered, a step of a
+    // wizard. It consumes input like a menu and ignores Back, so only code
+    // hides it.
+    Stage stage;
+    Screen &locked = stage.Add(kLocked, kSortMenu, "locked", kFirstColor);
+    Aim(locked, "OK");
+    locked.Show();
+    stage.Frame();
+
+    REQUIRE(stage.ui.InputScreen() == &locked);
+    CHECK(stage.ui.TakesInput());
+
+    CHECK_FALSE(stage.ui.Back());
+    CHECK(locked.IsShown());
+
+    // The Back key reaches it and changes nothing either.
+    stage.ui.ProcessInput(Action(UiAction::Back));
+    stage.ui.Sync(kViewport);
+    CHECK(locked.IsShown());
+
+    locked.Hide();
+    CHECK_FALSE(locked.IsShown());
 }
 
 TEST_CASE("Screens: the sort key decides draw order, and show order decides within a key")
 {
     SUBCASE("a higher sort key draws later however the screens were shown")
     {
-        Ui ui;
-        Screen *popup = Build(ui, ScreenKind::Popup, kSortPopup, "popup", kSecondColor, "OK");
-        Screen *hud = Build(ui, ScreenKind::Persistent, kSortHud, "hud", kFirstColor, "Health");
-        ui.Show(*popup); // shown first, but sorts above
-        ui.Show(*hud);
-        const DrawList &drawn = Frame(ui);
+        Stage stage;
+        Screen &popup = stage.Add(kDialog, kSortPopup, "popup", kSecondColor);
+        Screen &hud = stage.Add(kHud, kSortHud, "hud", kFirstColor);
+        popup.Show(); // shown first, but sorts above
+        hud.Show();
+        const DrawList &drawn = stage.Frame();
 
         REQUIRE(DrawsColor(drawn, kFirstColor));
         REQUIRE(DrawsColor(drawn, kSecondColor));
@@ -222,12 +292,12 @@ TEST_CASE("Screens: the sort key decides draw order, and show order decides with
 
     SUBCASE("sharing a key, the one shown later draws later")
     {
-        Ui ui;
-        Screen *first = Build(ui, ScreenKind::Popup, kSortPopup, "first", kFirstColor, "One");
-        Screen *second = Build(ui, ScreenKind::Popup, kSortPopup, "second", kSecondColor, "Two");
-        ui.Show(*first);
-        ui.Show(*second);
-        const DrawList &drawn = Frame(ui);
+        Stage stage;
+        Screen &first = stage.Add(kDialog, kSortPopup, "first", kFirstColor);
+        Screen &second = stage.Add(kDialog, kSortPopup, "second", kSecondColor);
+        first.Show();
+        second.Show();
+        const DrawList &drawn = stage.Frame();
 
         REQUIRE(DrawsColor(drawn, kSecondColor));
         CHECK(FirstIndexOf(drawn, kFirstColor) < FirstIndexOf(drawn, kSecondColor));
@@ -236,130 +306,215 @@ TEST_CASE("Screens: the sort key decides draw order, and show order decides with
 
 TEST_CASE("Screens: a screen that hides what is beneath it stops the rest being drawn")
 {
-    Ui ui;
-    Screen *hud = Build(ui, ScreenKind::Persistent, kSortHud, "hud", kFirstColor, "Health");
-    ui.Show(*hud);
-    REQUIRE(DrawsColor(Frame(ui), kFirstColor));
+    Stage stage;
+    Screen &hud = stage.Add(kHud, kSortHud, "hud", kFirstColor);
+    hud.Show();
+    REQUIRE(DrawsColor(stage.Frame(), kFirstColor));
 
-    // A stacked menu covers the screen, so what sorts below it is not drawn.
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kSecondColor, "Resume");
-    ui.Show(*menu);
-    const DrawList &covered = Frame(ui);
+    // A menu covers the screen, so what sorts below it is not drawn.
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kSecondColor);
+    menu.Show();
+    const DrawList &covered = stage.Frame();
     CHECK(DrawsColor(covered, kSecondColor));
     CHECK_FALSE(DrawsColor(covered, kFirstColor));
 
-    // A popup does not, so both it and what it interrupts stay in sight.
-    ui.Hide(*menu);
-    Screen *popup = Build(ui, ScreenKind::Popup, kSortPopup, "popup", kSecondColor, "OK");
-    ui.Show(*popup);
-    const DrawList &both = Frame(ui);
+    // A dialog does not, so both it and what it interrupts stay in sight.
+    menu.Hide();
+    Screen &popup = stage.Add(kDialog, kSortPopup, "popup", kSecondColor);
+    popup.Show();
+    const DrawList &both = stage.Frame();
     CHECK(DrawsColor(both, kFirstColor));
     CHECK(DrawsColor(both, kSecondColor));
 }
 
+TEST_CASE("Screens: what is hidden beneath is not laid out either")
+{
+    // Not drawn is the visible half; not laid out is the point. A screen nobody
+    // can see must not cost a layout pass every frame.
+    Stage stage;
+    Screen &hud = stage.Add(kHud, kSortHud, "hud", kFirstColor);
+    Aim(hud, "Health");
+    hud.Show();
+    stage.Frame();
+    REQUIRE(hud.GetLayout().Get(hud.Find("Health")) != nullptr);
+    const float laidOut = hud.GetLayout().scale;
+    REQUIRE(laidOut > 0.f);
+
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kSecondColor);
+    menu.Show();
+
+    // A viewport of a different size would change the scale of anything that
+    // was laid out; the covered screen keeps the scale it had.
+    stage.ui.ProcessInput({});
+    stage.ui.Sync({kViewport.width / 2, kViewport.height / 2});
+    CHECK(hud.GetLayout().scale == laidOut);
+    CHECK(menu.GetLayout().scale != laidOut);
+}
+
 TEST_CASE("Screens: what is shown decides whether the UI takes input and stops the world")
 {
-    Ui ui;
-    Screen *hud = Build(ui, ScreenKind::Persistent, kSortHud, "hud", kFirstColor, "Health");
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kSecondColor, "Resume");
+    Stage stage;
+    Screen &hud = stage.Add(kHud, kSortHud, "hud", kFirstColor);
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kSecondColor);
 
-    CHECK_FALSE(ui.TakesInput());
-    CHECK_FALSE(ui.PausesWorld());
+    CHECK_FALSE(stage.ui.TakesInput());
+    CHECK_FALSE(stage.ui.PausesWorld());
 
     // A HUD is looked at, not worked, and a game goes on running behind it.
-    ui.Show(*hud);
-    CHECK_FALSE(ui.TakesInput());
-    CHECK_FALSE(ui.PausesWorld());
+    hud.Show();
+    CHECK_FALSE(stage.ui.TakesInput());
+    CHECK_FALSE(stage.ui.PausesWorld());
 
-    ui.Show(*menu);
-    CHECK(ui.TakesInput());
-    CHECK(ui.PausesWorld());
+    menu.Show();
+    CHECK(stage.ui.TakesInput());
+    CHECK(stage.ui.PausesWorld());
 
-    ui.Hide(*menu);
-    CHECK_FALSE(ui.TakesInput());
-    CHECK_FALSE(ui.PausesWorld());
+    menu.Hide();
+    CHECK_FALSE(stage.ui.TakesInput());
+    CHECK_FALSE(stage.ui.PausesWorld());
+}
+
+TEST_CASE("Screens: consuming input and stopping the world are separate answers")
+{
+    // An inventory a player works while the world runs on around them — a
+    // combination the four kinds this replaced could not express.
+    Stage stage;
+    Screen &inventory =
+        stage.Add({.input = ScreenInput::ConsumeInput, .beneath = ScreenBeneath::NoHide, .pause = ScreenPause::Run},
+                  kSortMenu, "inventory", kFirstColor);
+    inventory.Show();
+
+    CHECK(stage.ui.TakesInput());
+    CHECK_FALSE(stage.ui.PausesWorld());
+
+    // And the other way: a letterbox that stops the world and is worked by
+    // nothing.
+    Screen &cutscene = stage.Add(
+        {.input = ScreenInput::NoConsume, .beneath = ScreenBeneath::HidesBeneath, .pause = ScreenPause::Pause},
+        kSortOverlay, "cutscene", kSecondColor);
+    inventory.Hide();
+    cutscene.Show();
+
+    CHECK_FALSE(stage.ui.TakesInput());
+    CHECK(stage.ui.PausesWorld());
 }
 
 TEST_CASE("Screens: showing another screen drops the hover and press the last one had")
 {
-    Ui ui;
-    Screen *first = Build(ui, ScreenKind::Stacked, kSortMenu, "first", kFirstColor, "One");
-    Screen *second = Build(ui, ScreenKind::Stacked, kSortMenu, "second", kSecondColor, "Two");
-    ui.Show(*first);
-    Frame(ui);
+    Stage stage;
+    Screen &first = stage.Add(kMenu, kSortMenu, "first", kFirstColor);
+    Aim(first, "One");
+    Screen &second = stage.Add(kMenu, kSortMenu, "second", kSecondColor);
+    Aim(second, "Two");
+    first.Show();
+    stage.Frame();
 
-    ui.ProcessInput(Pressing(CentreOf(*first, "One")));
-    ui.Sync(kViewport);
-    REQUIRE(ui.GetInteraction().pressed == first->Find("One"));
-    REQUIRE(ui.GetInteraction().hovered == first->Find("One"));
+    stage.ui.ProcessInput(Pressing(CentreOf(first, "One")));
+    stage.ui.Sync(kViewport);
+    REQUIRE(stage.ui.GetInteraction().pressed == first.Find("One"));
+    REQUIRE(stage.ui.GetInteraction().hovered == first.Find("One"));
 
     // The ids named slots in the first screen's tree; the same slots in the
     // second hold different nodes, so none of them may survive the handover.
-    ui.Show(*second);
-    CHECK_FALSE(ui.GetInteraction().pressed);
-    CHECK_FALSE(ui.GetInteraction().hovered);
-    CHECK_FALSE(ui.GetInteraction().activated);
+    second.Show();
+    CHECK_FALSE(stage.ui.GetInteraction().pressed);
+    CHECK_FALSE(stage.ui.GetInteraction().hovered);
+    CHECK_FALSE(stage.ui.GetInteraction().activated);
+}
+
+TEST_CASE("Screens: a button may close the screen it is on")
+{
+    // The half of a screen's behaviour that reaches nothing outside the UI, so
+    // it works with no event, no system, and nothing named in a level.
+    //
+    // It runs while the UI is announcing the frame's callbacks, and hiding a
+    // screen clears the very lists that announcing walks — which is why those
+    // are taken by copy first.
+    Stage stage;
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kFirstColor);
+    const NodeId resume = Aim(menu, "Resume");
+    menu.OnActivate(resume, [](Screen &self) { self.Hide(); });
+    menu.Show();
+    stage.Frame();
+
+    const Point where = CentreOf(menu, "Resume");
+    stage.ui.ProcessInput(Pressing(where));
+    stage.ui.Sync(kViewport);
+    REQUIRE(menu.IsShown());
+
+    stage.ui.ProcessInput(Releasing(where));
+    stage.ui.Sync(kViewport);
+    CHECK_FALSE(menu.IsShown());
+    CHECK(stage.ui.InputScreen() == nullptr);
+
+    // The frame after still runs.
+    CHECK_NOTHROW(stage.Frame());
 }
 
 TEST_CASE("Screens: destroying a screen hands the keys to whatever is left")
 {
-    Ui ui;
-    Screen *pause = Build(ui, ScreenKind::Stacked, kSortMenu, "pause", kFirstColor, "Resume");
-    Screen *settings = Build(ui, ScreenKind::Stacked, kSortMenu, "settings", kSecondColor, "Back");
-    ui.Show(*pause);
-    ui.Show(*settings);
-    Frame(ui);
-    REQUIRE(ui.InputScreen() == settings);
+    Stage stage;
+    Screen &pause = stage.Add(kMenu, kSortMenu, "pause", kFirstColor);
+    Aim(pause, "Resume");
+    Screen &settings = stage.Add(kMenu, kSortMenu, "settings", kSecondColor);
+    Aim(settings, "Back");
+    pause.Show();
+    settings.Show();
+    stage.Frame();
+    REQUIRE(stage.ui.InputScreen() == &settings);
 
-    ui.DestroyScreen(*settings);
-    CHECK(ui.FindScreen("settings") == nullptr);
-    CHECK(ui.InputScreen() == pause);
-    CHECK(ui.TakesInput());
+    stage.Drop(settings);
+    CHECK(stage.ui.InputScreen() == &pause);
+    CHECK(stage.ui.TakesInput());
 
     // The frame after still runs: nothing is left pointing into what is gone.
-    CHECK_NOTHROW(Frame(ui));
+    CHECK_NOTHROW(stage.Frame());
 }
 
-TEST_CASE("Screens: a screen is found by name, and only while it exists")
+TEST_CASE("Screens: a destroyed screen leaves the UI with nothing to draw")
 {
-    Ui ui;
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kFirstColor, "Resume");
-    CHECK(ui.FindScreen("menu") == menu);
-    CHECK(ui.FindScreen("nothing") == nullptr);
+    Stage stage;
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kFirstColor);
+    menu.Show();
+    REQUIRE_FALSE(stage.Frame().Instances().empty());
 
-    ui.DestroyScreen(*menu);
-    CHECK(ui.FindScreen("menu") == nullptr);
+    stage.Drop(menu);
+    CHECK(stage.Frame().Instances().empty());
+    CHECK(stage.ui.InputScreen() == nullptr);
+    CHECK_FALSE(stage.ui.TakesInput());
+    CHECK_FALSE(stage.ui.PausesWorld());
 }
 
 TEST_CASE("Screens: with nothing shown the UI draws nothing and takes no input")
 {
-    Ui ui;
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kFirstColor, "Resume");
-    const DrawList &empty = Frame(ui);
-    CHECK(empty.Instances().empty());
+    Stage stage;
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kFirstColor);
+    Aim(menu, "Resume");
+    CHECK(stage.Frame().Instances().empty());
 
-    const InputResult result = ui.ProcessInput(Pressing({.x = 100.f, .y = 100.f}));
-    ui.Sync(kViewport);
+    const InputResult result = stage.ui.ProcessInput(Pressing({.x = 100.f, .y = 100.f}));
+    stage.ui.Sync(kViewport);
     CHECK_FALSE(result.pointerUsed);
     CHECK_FALSE(result.keyboardTaken);
 
-    ui.Show(*menu);
-    CHECK_FALSE(Frame(ui).Instances().empty());
+    menu.Show();
+    CHECK_FALSE(stage.Frame().Instances().empty());
 }
 
 TEST_CASE("Screens: Accept reaches the screen with the keys, and Back closes it")
 {
-    Ui ui;
-    Screen *menu = Build(ui, ScreenKind::Stacked, kSortMenu, "menu", kFirstColor, "Resume");
-    ui.Show(*menu);
-    Frame(ui);
+    Stage stage;
+    Screen &menu = stage.Add(kMenu, kSortMenu, "menu", kFirstColor);
+    const NodeId resume = Aim(menu, "Resume");
+    menu.Show();
+    stage.Frame();
 
-    ui.SetFocus(*menu, menu->Find("Resume"));
-    ui.ProcessInput(Action(UiAction::Accept));
-    ui.Sync(kViewport);
-    CHECK(ui.GetInteraction().activated == menu->Find("Resume"));
+    stage.ui.SetFocus(menu, resume);
+    stage.ui.ProcessInput(Action(UiAction::Accept));
+    stage.ui.Sync(kViewport);
+    CHECK(stage.ui.GetInteraction().activated == resume);
 
-    ui.ProcessInput(Action(UiAction::Back));
-    ui.Sync(kViewport);
-    CHECK_FALSE(menu->IsShown());
+    stage.ui.ProcessInput(Action(UiAction::Back));
+    stage.ui.Sync(kViewport);
+    CHECK_FALSE(menu.IsShown());
 }

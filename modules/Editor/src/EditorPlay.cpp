@@ -146,8 +146,9 @@ void EditorApp::StartPlay(NetIntent intent)
     SetPlayState(PlayState::Playing);
 
     // The session takes the cursor as it starts, the way launching a game does.
-    // F8 hands it back without ending the session; Escape ends the session, which
-    // hands it back too.
+    // F8 hands it back without ending the session; F7 ends the session, which
+    // hands it back too. Escape belongs to the game — it is what a pause menu
+    // opens on — so it does neither.
     GetInput().SetInputMode(Assisi::Window::InputMode::Game);
 
     // The world begins here and nowhere earlier: opening a level for authoring
@@ -421,6 +422,13 @@ void EditorApp::StopPlay()
     {
         _world->systems.ClearOnceMarks();
         _world->start = Assisi::App::StartProgress::NotBegun;
+
+        // The screens the session built go with it, like the entities it spawned.
+        // A world outlives a play session here, which it never does in a game, so
+        // nothing else would take them: the next Run re-runs the one-shot systems
+        // that build them, and without this it would build a second set behind the
+        // first — with the first still showing whatever it was showing at Stop.
+        _world->screenStack.clear();
     }
 
     SetPlayState(PlayState::Editing);
@@ -784,18 +792,25 @@ void EditorApp::DrawGameControlWindow()
     // transition no-ops unless the current state allows it, so a keypress in the
     // wrong state does nothing. Gated on ImGuiWantsTextInput so they do not fire
     // while a text field has focus.
+    //
+    // Read including consumed input, because the editor is above the session
+    // rather than inside it. A game screen that takes the keyboard consumes
+    // every key for the frame, and the transport reading only unconsumed input
+    // would leave an author unable to stop a session from inside a menu that
+    // session had opened.
     if (!ImGuiWantsTextInput())
     {
+        using Assisi::Window::ConsumedInput;
         Assisi::Window::InputContext &input = GetInput();
-        if (input.IsKeyPressed(Assisi::Window::Key::F5))
+        if (input.IsKeyPressed(Assisi::Window::Key::F5, ConsumedInput::Include))
         {
             runOrResume();
         }
-        if (input.IsKeyPressed(Assisi::Window::Key::F6))
+        if (input.IsKeyPressed(Assisi::Window::Key::F6, ConsumedInput::Include))
         {
             PausePlay();
         }
-        if (input.IsKeyPressed(Assisi::Window::Key::F7))
+        if (input.IsKeyPressed(Assisi::Window::Key::F7, ConsumedInput::Include))
         {
             StopPlay();
         }

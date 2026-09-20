@@ -50,18 +50,26 @@ struct Field
     Assisi::Mondrian::Font font = FixtureFont();
     std::string clipboard;
     Assisi::Core::EventQueue events;
-    Ui ui;
+    /// After the queue, so the queue outlives it.
+    Ui ui{events};
+    /// After the Ui, so it is destroyed first: a screen may not outlive the UI
+    /// it registered with.
+    std::unique_ptr<Screen> held;
     Screen *screen = nullptr;
     TextFieldId field;
 
     explicit Field(TextLines lines = TextLines::Single)
     {
         ui.SetFont(&font, kFontTexture);
-        ui.SetEvents(&events);
         ui.SetClipboard(Clipboard{.read = [this] { return clipboard; },
                                   .write = [this](std::string_view text) { clipboard = text; }});
 
-        screen = ui.CreateScreen(ScreenKind::Stacked, kSortMenu, "field-screen");
+        held = std::make_unique<Screen>(ui,
+                                        ScreenTraits{.input = ScreenInput::ConsumeInput,
+                                                     .beneath = ScreenBeneath::HidesBeneath,
+                                                     .pause = ScreenPause::Pause},
+                                        kSortMenu, "field-screen");
+        screen = held.get();
         ui.Show(*screen);
 
         field = screen->AddTextField(screen->Root(), lines);

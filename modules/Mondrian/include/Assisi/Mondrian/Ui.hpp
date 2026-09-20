@@ -40,8 +40,14 @@ namespace Assisi::Mondrian
 class Ui
 {
   public:
-    /// @brief A UI holding no screens. A game makes the ones it needs.
-    Ui();
+    /// @brief A UI holding no screens, pushing what its screens announce into
+    /// @p events. A game makes the screens it needs.
+    ///
+    /// The queue is taken here rather than set afterwards so that there is no
+    /// moment where the UI has nowhere to push: a callback firing then would
+    /// have had to be skipped, and skipping one that only works the UI is a
+    /// button that quietly does nothing. @p events must outlive the UI.
+    explicit Ui(Core::EventQueue &events);
     ~Ui();
 
     Ui(const Ui &) = delete;
@@ -52,23 +58,6 @@ class Ui
     // -------------------------------------------------------------------------
     // Screens
     // -------------------------------------------------------------------------
-
-    /// @brief An empty screen of @p kind, drawn at @p sortKey, called @p name,
-    /// hidden until it is shown. The UI owns it; the pointer stands until the
-    /// screen is destroyed.
-    Screen *CreateScreen(ScreenKind kind, int32_t sortKey, std::string_view name = {});
-
-    /// @brief Destroys @p screen and every node on it.
-    ///
-    /// Every pointer to it dangles afterwards, so a screen a game means to show
-    /// again is hidden rather than destroyed: Hide keeps it and its nodes
-    /// exactly as they were.
-    void DestroyScreen(Screen &screen);
-
-    /// @brief The screen called @p name, or null. A scan over the screens,
-    /// which is what a system with nowhere to keep a pointer uses.
-    [[nodiscard]] Screen *FindScreen(std::string_view name);
-    [[nodiscard]] const Screen *FindScreen(std::string_view name) const;
 
     /// @brief Shows @p screen. A screen that takes input becomes the one the
     /// keys and the pointer reach, and the one already there keeps its focus
@@ -119,10 +108,6 @@ class Ui
     /// whichever screen has the keys.
     [[nodiscard]] const Interaction &GetInteraction() const { return _session.interaction; }
 
-    /// @brief Where the UI pushes each bound node's event when it is clicked,
-    /// accepted or changed. Until set, nothing is pushed.
-    void SetEvents(Core::EventQueue *events) { _events = events; }
-
     /// @brief Lay every shown screen out against @p viewport and rebuild the
     /// draw list from scratch. Must follow ProcessInput.
     void Sync(Extent viewport);
@@ -150,6 +135,12 @@ class Ui
         _fontAtlas = atlas;
     }
 
+    /// @brief The texture an image falls back to: what the engine registered
+    /// for the purpose, so game code can show something known-good where an
+    /// asset has not arrived. kWhiteTexture until the host sets one.
+    void SetPlaceholderTexture(TextureId texture) { _placeholderTexture = texture; }
+    [[nodiscard]] TextureId GetPlaceholderTexture() const { return _placeholderTexture; }
+
     /// @brief How the UI reaches the system clipboard. Until set, it reads as
     /// empty and writes go nowhere.
     void SetClipboard(Clipboard clipboard) { _clipboard = std::move(clipboard); }
@@ -160,6 +151,14 @@ class Ui
     [[nodiscard]] float GetUserScale() const { return _userScale; }
 
   private:
+    friend class Screen;
+
+    /// Takes @p screen into the set this UI shows and works, and lets it go
+    /// again. Called by the screen's own constructor and destructor, so what
+    /// owns the screen is what decides how long the UI holds it.
+    void Adopt(Screen &screen);
+    void Forget(Screen &screen);
+
     /// Which step the host loop owes next.
     enum class FrameStep : uint8_t
     {
@@ -240,7 +239,10 @@ class Ui
     void Navigate(Screen &screen, const UiInput &input);
     void DrawFocusRing(const Screen &screen);
 
-    std::vector<std::unique_ptr<Screen>> _screens;
+    /// Every screen that exists, in the order it was made. Not owned: a screen
+    /// puts itself here and takes itself away, and whatever owns it outlives
+    /// the entry.
+    std::vector<Screen *> _screens;
     Clipboard _clipboard;
     DrawList _drawList;
     /// Nodes on the input screen whose value moved this frame, announced once
@@ -251,14 +253,15 @@ class Ui
     InputSession _session;
     /// Which screen the session belongs to; null when none takes input.
     Screen *_inputScreen = nullptr;
+    Core::EventQueue &_events;
     const Font *_font = nullptr;
-    Core::EventQueue *_events = nullptr;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;
     double _lastTime = 0.0; ///< the previous frame's clock, for what moves over time
     Point _lastPointer;
     TextureId _fontAtlas = kWhiteTexture;
+    TextureId _placeholderTexture = kWhiteTexture;
     float _userScale = 1.f;
     FrameStep _nextStep = FrameStep::AwaitingInput;
     NavWrap _navWrap = NavWrap::Around;
@@ -266,6 +269,10 @@ class Ui
     /// Whether Back was pressed and nothing on the screen wanted it, acted on
     /// once the frame's events are out so a screen announces before it goes.
     bool _backFired = false;
+    /// Whether the frame's callbacks are running. A callback may show, hide or
+    /// pop a screen; it may not destroy one, because the tree it is being
+    /// announced from would go with it.
+    bool _announcing = false;
 };
 
 } // namespace Assisi::Mondrian

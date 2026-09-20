@@ -1,12 +1,17 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "PauseMenu.hpp"
 
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
+
+#include <array>
+#include <memory>
+#include <string>
 
 namespace Game
 {
@@ -35,9 +40,13 @@ constexpr Padding kButtonPadding{.left = 28.f, .top = 10.f, .right = 28.f, .bott
 
 } // namespace
 
-Assisi::Mondrian::Screen *BuildPauseMenu(Assisi::Mondrian::Ui &ui)
+std::unique_ptr<Assisi::Mondrian::Screen> BuildPauseMenu(Assisi::Mondrian::Ui &ui)
 {
-    Screen *screen = ui.CreateScreen(ScreenKind::Stacked, kSortMenu, kPauseScreenName);
+    std::unique_ptr<Screen> screen = std::make_unique<Screen>(ui,
+                                                              ScreenTraits{.input = ScreenInput::ConsumeInput,
+                                                                           .beneath = ScreenBeneath::HidesBeneath,
+                                                                           .pause = ScreenPause::Pause},
+                                                              kSortMenu, std::string{kPauseScreenName});
 
     // The root covers the viewport, so the scrim does too and a click anywhere
     // outside the panel is still the menu's rather than the game's.
@@ -79,7 +88,10 @@ Assisi::Mondrian::Screen *BuildPauseMenu(Assisi::Mondrian::Ui &ui)
     filled.cornerStyle = CornerStyle::Rounded;
     const ButtonId resume = screen->AddButton(buttonsId, "Resume");
     screen->Tree().SetStyle(resume.node, filled);
-    screen->OnActivate(resume.node, ResumeClicked{});
+    // Carried, not announced: closing the menu touches nothing but the UI, so
+    // it needs no event, no system, and nothing named in a level file. Resume
+    // works in any level that shows this screen.
+    screen->OnActivate(resume.node, [](Screen &self) { self.Hide(); });
 
     Style outlined;
     outlined.padding = kButtonPadding;
@@ -98,29 +110,36 @@ Assisi::Mondrian::Screen *BuildPauseMenu(Assisi::Mondrian::Ui &ui)
     return screen;
 }
 
+void PauseMenuScreenSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.ui == nullptr) // headless host: nothing to show it in
+    {
+        return;
+    }
+    // The opener is what this world needs installed to work the menu. The
+    // closer is not: Resume carries what it does, so it works whether or not
+    // anything below is running.
+    const std::array<std::string, 1> needs{"PauseMenu"};
+    Assisi::App::AddScreen(ctx.world, BuildPauseMenu(*ctx.ui), needs);
+}
+
 void PauseMenuSystem(Assisi::App::SystemContext &ctx)
 {
     if (ctx.ui == nullptr || ctx.input == nullptr) // headless host: no UI, no devices
     {
         return;
     }
-    Ui &ui = *ctx.ui;
 
-    Screen *pause = ui.FindScreen(kPauseScreenName);
+    Screen *const pause = Assisi::App::FindScreen(ctx.world, kPauseScreenName);
     if (pause == nullptr)
     {
-        pause = BuildPauseMenu(ui);
+        return; // this level did not ask for one
     }
 
     if (ctx.input->IsKeyPressed(Assisi::Window::Key::Escape))
     {
         ctx.input->ConsumeKey(Assisi::Window::Key::Escape);
-        ui.Show(*pause);
-    }
-
-    for ([[maybe_unused]] const ResumeClicked &event : ctx.events.Read<ResumeClicked>())
-    {
-        ui.Hide(*pause);
+        pause->Show();
     }
 }
 

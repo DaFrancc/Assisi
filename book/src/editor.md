@@ -102,7 +102,7 @@ A `*` in the window title means you have unsaved changes.
 |---|---|
 | **F5** | Play, or resume when paused |
 | **F6** | Pause |
-| **F7** or **Esc** | Stop |
+| **F7** | Stop |
 | **F8** | While playing, get the mouse cursor back without stopping |
 
 When you stop, the level goes back to exactly how it was before you pressed

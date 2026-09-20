@@ -121,29 +121,31 @@ WidgetEvent EditGesture(EditKey key, TextReach reach, TextStep step)
 
 } // namespace
 
-Ui::Ui() = default;
+Ui::Ui(Core::EventQueue &events) : _events(events)
+{
+}
 Ui::~Ui() = default;
 
 // -----------------------------------------------------------------------------
 // Screens
 // -----------------------------------------------------------------------------
 
-Screen *Ui::CreateScreen(ScreenKind kind, int32_t sortKey, std::string_view name)
+void Ui::Adopt(Screen &screen)
 {
-    _screens.push_back(std::make_unique<Screen>(*this, kind, sortKey, std::string{name}));
-    return _screens.back().get();
+    _screens.push_back(&screen);
 }
 
-void Ui::DestroyScreen(Screen &screen)
+void Ui::Forget(Screen &screen)
 {
-    const auto at = std::ranges::find_if(_screens, [&screen](const std::unique_ptr<Screen> &held)
-                                         { return held.get() == &screen; });
+    ASSISI_ASSERT(!_announcing, "a screen was destroyed from a callback the UI was announcing it through");
+
+    const std::vector<Screen *>::iterator at = std::ranges::find(_screens, &screen);
     if (at == _screens.end())
     {
         return;
     }
-    // Hidden first, so the session holding its node ids is handed on before the
-    // tree those ids name is freed.
+    // Hidden before it goes, so the session naming its nodes is handed on while
+    // the tree those ids name is still there.
     screen._shown = false;
     if (_inputScreen == &screen)
     {
@@ -154,18 +156,6 @@ void Ui::DestroyScreen(Screen &screen)
     }
     _screens.erase(at);
     RefreshInputScreen();
-}
-
-Screen *Ui::FindScreen(std::string_view name)
-{
-    return const_cast<Screen *>(std::as_const(*this).FindScreen(name));
-}
-
-const Screen *Ui::FindScreen(std::string_view name) const
-{
-    const auto at =
-        std::ranges::find_if(_screens, [name](const std::unique_ptr<Screen> &held) { return held->Name() == name; });
-    return at == _screens.end() ? nullptr : at->get();
 }
 
 bool Ui::Above(const Screen &screen, const Screen &other)
@@ -196,7 +186,9 @@ void Ui::Hide(Screen &screen)
 bool Ui::Back()
 {
     Screen *top = _inputScreen;
-    if (top == nullptr || !top->Traits().closesOnBack)
+    // A screen that locks the keys keeps them: only code hides it, so Back is
+    // not a way out of one.
+    if (top == nullptr || top->Traits().input != ScreenInput::ConsumeInput)
     {
         return false;
     }
@@ -207,15 +199,15 @@ bool Ui::Back()
 Screen *Ui::TopInputScreen()
 {
     Screen *top = nullptr;
-    for (const std::unique_ptr<Screen> &screen : _screens)
+    for (Screen *const screen : _screens)
     {
-        if (!screen->_shown || !screen->Traits().takesInput)
+        if (!screen->_shown || screen->Traits().input == ScreenInput::NoConsume)
         {
             continue;
         }
         if (top == nullptr || Above(*screen, *top))
         {
-            top = screen.get();
+            top = screen;
         }
     }
     return top;
@@ -255,17 +247,18 @@ void Ui::RefreshInputScreen()
 std::vector<Screen *> Ui::DrawOrder()
 {
     std::vector<Screen *> order;
-    for (const std::unique_ptr<Screen> &screen : _screens)
+    for (Screen *const screen : _screens)
     {
         if (screen->_shown)
         {
-            order.push_back(screen.get());
+            order.push_back(screen);
         }
     }
     std::ranges::sort(order, [](const Screen *a, const Screen *b) { return Above(*b, *a); });
 
-    const auto hider = std::ranges::find_if(order.rbegin(), order.rend(),
-                                            [](const Screen *screen) { return screen->Traits().hidesBeneath; });
+    const std::vector<Screen *>::reverse_iterator hider =
+        std::ranges::find_if(order.rbegin(), order.rend(), [](const Screen *screen)
+                             { return screen->Traits().beneath == ScreenBeneath::HidesBeneath; });
     if (hider != order.rend())
     {
         order.erase(order.begin(), hider.base() - 1);
@@ -280,8 +273,8 @@ bool Ui::TakesInput() const
 
 bool Ui::PausesWorld() const
 {
-    return std::ranges::any_of(_screens, [](const std::unique_ptr<Screen> &screen)
-                               { return screen->_shown && screen->Traits().pausesWorld; });
+    return std::ranges::any_of(_screens, [](const Screen *screen)
+                               { return screen->_shown && screen->Traits().pause == ScreenPause::Pause; });
 }
 
 void Ui::SetFocus(Screen &screen, NodeId id)
@@ -356,35 +349,45 @@ InputResult Ui::ProcessInput(const UiInput &input)
 
 void Ui::Announce(Screen *screen)
 {
-    if (_events == nullptr || screen == nullptr)
+    if (screen == nullptr)
     {
         _changed.clear();
         _submitted.clear();
         return;
     }
+    // Taken before any of them runs, because a callback may hide or pop its own
+    // screen and that clears these very lists. Walking the members instead
+    // would be walking a vector something else is emptying.
+    const NodeId activatedId = _session.interaction.activated;
+    const std::vector<NodeId> changed = std::exchange(_changed, {});
+    const std::vector<NodeId> submitted = std::exchange(_submitted, {});
+
+    // Destroying a screen from here is the one thing that cannot be made safe:
+    // the tree being announced from would go with it.
+    _announcing = true;
+
     const NodeTree &tree = screen->Tree();
-    if (const Node *activated = tree.Get(_session.interaction.activated); activated != nullptr && activated->onActivate)
+    if (const Node *activated = tree.Get(activatedId); activated != nullptr && activated->onActivate)
     {
-        activated->onActivate(*_events);
+        activated->onActivate(_events);
     }
-    for (const NodeId id : _changed)
+    for (const NodeId id : changed)
     {
         if (const Node *node = tree.Get(id); node != nullptr && node->onChange)
         {
-            node->onChange(*_events, *node);
+            node->onChange(_events, *node);
         }
     }
-    _changed.clear();
     // After the changes, so a field that was edited and then finished in one
     // frame announces what it holds before it announces that it is done.
-    for (const NodeId id : _submitted)
+    for (const NodeId id : submitted)
     {
         if (const Node *node = tree.Get(id); node != nullptr && node->onSubmit)
         {
-            node->onSubmit(*_events, *node);
+            node->onSubmit(_events, *node);
         }
     }
-    _submitted.clear();
+    _announcing = false;
 }
 
 void Ui::AdvanceScrolling(double seconds)
@@ -393,7 +396,7 @@ void Ui::AdvanceScrolling(double seconds)
     // nobody can see, and layout snaps to whole pixels anyway.
     constexpr float kSettled = 0.5f;
 
-    for (const std::unique_ptr<Screen> &screen : _screens)
+    for (Screen *const screen : _screens)
     {
         if (!screen->_shown)
         {

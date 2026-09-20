@@ -15,6 +15,10 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
+// Complete, not forward-declared: a World holds its screens by unique_ptr, so
+// its destructor needs to know how to destroy one. The edge runs App to
+// Mondrian and never back — Mondrian's own link guard refuses the reverse.
+#include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
@@ -128,6 +132,30 @@ struct World
     /// the level's.
     std::vector<std::string> systemNames;
 
+    /// A screen this world shows, and the systems it asked for when it was
+    /// added.
+    ///
+    /// The names are kept beside the screen rather than only queued, because a
+    /// re-apply clears the registry and has to be able to ask again what is
+    /// resident here — the same reason a blueprint's names are read back off
+    /// the instance table.
+    struct Screen
+    {
+        std::vector<std::string> systems;
+        std::unique_ptr<Mondrian::Screen> screen;
+    };
+
+    /// The screens this world owns, destroyed with it.
+    ///
+    /// Here rather than in the scene for the reason @ref instances is: a screen
+    /// is not entity data. Nothing queries it, nothing serialises it, nothing
+    /// replicates it; the world decides only how long it lasts. A screen that
+    /// outlived its world would be a menu for a level that has gone.
+    ///
+    /// Not the back-stack, which is the UI's and is ordered by sort key and
+    /// show order across every world. This is only what this world owns.
+    std::vector<Screen> screenStack;
+
     /// Systems a blueprint spawned into this world has asked for, waiting for the
     /// frame's safe point (App::QueueSystemInstall / App::DrainSystemInstalls).
     ///
@@ -205,6 +233,30 @@ struct World
     /// a headless host and for a test.
     class WorldManager *manager = nullptr;
 };
+
+/// @brief Gives @p screen to @p world and asks for the @p systems it needs,
+/// returning it for building on.
+///
+/// The screen is destroyed with the world, and the systems are queued for the
+/// frame's safe point exactly as a blueprint's are — so a screen works in a
+/// level whose file never mentions what drives it, and a level lists only what
+/// is particular to itself.
+///
+/// Only for the behaviour that reaches the world. What a screen does to itself
+/// — closing, opening a child — is carried on the node through
+/// Mondrian::Screen::OnActivate and needs nothing named here.
+Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
+                            std::span<const std::string> systems);
+
+/// @brief Destroys @p screen and takes its claim on the systems it asked for.
+/// Nothing is uninstalled: a system already running costs almost nothing idle,
+/// and the next load clears the registry anyway.
+void RemoveScreen(World &world, Mondrian::Screen &screen);
+
+/// @brief The screen on @p world called @p name, or null. A scan, which is what
+/// a system with nowhere to keep a pointer uses; anything touching the same
+/// nodes every frame keeps the pointer and the ids it writes to instead.
+[[nodiscard]] Mondrian::Screen *FindScreen(World &world, std::string_view name);
 
 /// @brief Owns every resident world and tracks the two roles the app cares
 /// about: which world is *active* and which is *edited*.

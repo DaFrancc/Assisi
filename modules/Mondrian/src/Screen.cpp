@@ -25,12 +25,36 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldBorder{0.34f, 0.38f, 0.48f,
 
 } // namespace
 
-Screen::Screen(Ui &ui, ScreenKind kind, int32_t sortKey, std::string name)
-    : _ui(ui), _name(std::move(name)), _sortKey(sortKey), _kind(kind)
+Screen::Screen(Ui &ui, ScreenTraits traits, int32_t sortKey, std::string name)
+    : _ui(ui), _name(std::move(name)), _sortKey(sortKey), _traits(traits)
 {
     // Before anything is built on it, so the nodes it makes can name the
     // built-ins: a widget registry is per tree, and so per screen.
     RegisterBuiltinWidgets(_tree.Widgets());
+    _ui.Adopt(*this);
+}
+
+Screen::~Screen()
+{
+    _ui.Forget(*this);
+}
+
+void Screen::Show()
+{
+    _ui.Show(*this);
+}
+
+void Screen::Hide()
+{
+    _ui.Hide(*this);
+}
+
+void Screen::OnActivate(NodeId node, std::function<void(Screen &)> act)
+{
+    // The queue is ignored: this is the half of a screen's behaviour that
+    // reaches nothing outside the UI, which is what lets it work in a level
+    // that names no systems.
+    _tree.SetOnActivate(node, [this, act = std::move(act)](Core::EventQueue &) { act(*this); });
 }
 
 bool Screen::Held(NodeId id) const

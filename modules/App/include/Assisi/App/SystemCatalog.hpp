@@ -76,7 +76,7 @@ struct SystemDefinition
 /// rides.
 class SystemCatalog
 {
-public:
+  public:
     static SystemCatalog &Instance();
 
     /// @brief Adds a definition. Called only by generated code.
@@ -93,8 +93,8 @@ public:
     /// the whole reason it is public: Install resolves atomically, but a caller
     /// that clears first has already thrown the old list away by the time
     /// Install can say no.
-    [[nodiscard]] bool Resolve(std::span<const std::string> names,
-                               std::vector<const SystemDefinition *> &out, std::string_view context) const;
+    [[nodiscard]] bool Resolve(std::span<const std::string> names, std::vector<const SystemDefinition *> &out,
+                               std::string_view context) const;
 
     /// @brief Register an already-resolved list into @p world, skipping any it
     /// already has. Cannot fail — every name was checked by Resolve.
@@ -118,7 +118,7 @@ public:
     ///         runs and looks nearly right.
     bool Install(World &world, std::span<const std::string> names, std::string_view context) const;
 
-private:
+  private:
     std::vector<SystemDefinition> _definitions;
 };
 
@@ -170,6 +170,18 @@ void DrainSystemInstalls(SystemContext ctx);
 /// worse answer than running the rest.
 [[nodiscard]] std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(
     const Runtime::InstanceTable &instances);
+
+/// @brief Everything resident in @p world requires — the blueprints placed in
+/// it and the screens it shows — which is what must be installed on top of the
+/// names the level's own file carries.
+///
+/// One interface rather than each caller remembering to ask every source. A
+/// screen declares what it needs for the same reason a blueprint does: a level
+/// that shows a pause menu does not also have to know the menu needs the
+/// system that opens it. Screens count one per screen rather than per distinct
+/// source, because a screen is built rather than instanced — two pause menus
+/// really are two claims on the system that opens them.
+[[nodiscard]] std::map<std::string, int32_t, std::less<>> RequiredSystemCounts(const World &world);
 
 /// @brief True when every system the level at @p virtualPath names is declared
 /// by this build. Logs each offender.

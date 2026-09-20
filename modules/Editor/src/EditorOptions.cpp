@@ -321,9 +321,9 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     {
         ImGui::BeginDisabled();
     }
-    changed |= ImGui::SliderFloat("Cascade Drift", &shadows.sun.cadence.driftTexels,
-                                  Assisi::Render::kMinCascadeDriftTexels, Assisi::Render::kMaxCascadeDriftTexels,
-                                  "%.2f texels");
+    changed |=
+        ImGui::SliderFloat("Cascade Drift", &shadows.sun.cadence.driftTexels, Assisi::Render::kMinCascadeDriftTexels,
+                           Assisi::Render::kMaxCascadeDriftTexels, "%.2f texels");
     ImGui::SetItemTooltip("How far a shadow edge may slide before its cascade is drawn again, in that cascade's "
                           "own texels. Zero keeps a cascade only while its fit is unchanged; half a texel is "
                           "inside the softness the cheapest filter already has.");
@@ -414,9 +414,9 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         changed = true;
     }
 
-    changed |= ImGui::SliderFloat("Source Radius##local", &shadows.local.sourceRadius,
-                                  Assisi::Render::kMinLocalSourceRadius, Assisi::Render::kMaxLocalSourceRadius,
-                                  "%.2f m");
+    changed |=
+        ImGui::SliderFloat("Source Radius##local", &shadows.local.sourceRadius, Assisi::Render::kMinLocalSourceRadius,
+                           Assisi::Render::kMaxLocalSourceRadius, "%.2f m");
     ImGui::SetItemTooltip("How large every spot and point light's emitter is taken to be when contact hardening "
                           "sizes its shadows. Zero is a point source, hard everywhere. Unread unless contact "
                           "hardening covers local lights.");
@@ -567,9 +567,9 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         // broken. Zero cascades for a long stretch is polar night, which is also
         // expected and also looks wrong.
         const Assisi::Runtime::SkyResolution &sky = frame.renderer.LastSky();
-        const char *body = sky.light.body == Assisi::Runtime::LightingBody::Sun     ? "Sun"
-                           : sky.light.body == Assisi::Runtime::LightingBody::Moon  ? "Moon"
-                                                                                    : "nothing";
+        const char *body = sky.light.body == Assisi::Runtime::LightingBody::Sun    ? "Sun"
+                           : sky.light.body == Assisi::Runtime::LightingBody::Moon ? "Moon"
+                                                                                   : "nothing";
         ImGui::Text("Lit by: %s  |  sun %.4f deg/frame at 60 Hz", body,
                     static_cast<double>(glm::degrees(sky.sunAngularVelocity)) / 60.0);
         ImGui::SetItemTooltip("How far the sun turns per frame at the current day length. Past about a "
@@ -749,8 +749,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
     bool applyDisplay = false;
 
     // The toggle lives here rather than in the engine, so nothing reserves F11 and a
-    // game can rebind or drop it.
-    if (frame.input.IsKeyPressed(Assisi::Window::Key::F11))
+    // game can rebind or drop it. Including consumed input, like the editor's other
+    // keys: a game screen holding the keyboard must not be able to hide the
+    // editor's own windows behind it.
+    if (frame.input.IsKeyPressed(Assisi::Window::Key::F11, Assisi::Window::ConsumedInput::Include))
     {
         _showOptions = !_showOptions;
     }
@@ -818,14 +820,14 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 const int32_t plotCount = _gpuTelemetryCount;
                 const int32_t plotOffset = _gpuTelemetryCount < kGpuHistory ? 0 : _gpuTelemetryOffset;
                 const auto bufMax = [plotCount](const std::array<float, kGpuHistory> &buf)
-                                    {
-                                        float m = 0.0f;
-                                        for (int32_t i = 0; i < plotCount; ++i)
-                                        {
-                                            m = std::max(m, buf[static_cast<std::size_t>(i)]);
-                                        }
-                                        return m;
-                                    };
+                {
+                    float m = 0.0f;
+                    for (int32_t i = 0; i < plotCount; ++i)
+                    {
+                        m = std::max(m, buf[static_cast<std::size_t>(i)]);
+                    }
+                    return m;
+                };
 
                 // One compact history plot per metric. `title` is drawn above the plot
                 // and carries the unit, which is why the y-axis label is empty; its
@@ -834,28 +836,28 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 const auto drawGpuPlot = [plotCount, plotOffset](const char *title,
                                                                  const std::array<float, kGpuHistory> &buf, float ymax,
                                                                  ImVec4 color)
-                                         {
-                                             ImPlotSpec spec;
-                                             spec.LineColor = color;
-                                             spec.FillColor = color;
-                                             spec.FillAlpha = 0.25f;
-                                             spec.LineWeight = 1.5f;
-                                             spec.Offset = plotOffset;
-                                             // NoInputs: the limits are re-locked every frame anyway, so pan and
-                                             // zoom would do nothing except make the x-axis look like a
-                                             // draggable control.
-                                             if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 100.0f),
-                                                                   ImPlotFlags_NoMenus | ImPlotFlags_NoLegend | ImPlotFlags_NoInputs))
-                                             {
-                                                 ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
-                                                                   ImPlotAxisFlags_NoHighlight);
-                                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, plotCount - 1, ImPlotCond_Always);
-                                                 ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(ymax), ImPlotCond_Always);
-                                                 ImPlot::PlotShaded(title, buf.data(), plotCount, 0.0, 1.0, 0.0, spec);
-                                                 ImPlot::PlotLine(title, buf.data(), plotCount, 1.0, 0.0, spec);
-                                                 ImPlot::EndPlot();
-                                             }
-                                         };
+                {
+                    ImPlotSpec spec;
+                    spec.LineColor = color;
+                    spec.FillColor = color;
+                    spec.FillAlpha = 0.25f;
+                    spec.LineWeight = 1.5f;
+                    spec.Offset = plotOffset;
+                    // NoInputs: the limits are re-locked every frame anyway, so pan and
+                    // zoom would do nothing except make the x-axis look like a
+                    // draggable control.
+                    if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 100.0f),
+                                          ImPlotFlags_NoMenus | ImPlotFlags_NoLegend | ImPlotFlags_NoInputs))
+                    {
+                        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
+                                          ImPlotAxisFlags_NoHighlight);
+                        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, plotCount - 1, ImPlotCond_Always);
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(ymax), ImPlotCond_Always);
+                        ImPlot::PlotShaded(title, buf.data(), plotCount, 0.0, 1.0, 0.0, spec);
+                        ImPlot::PlotLine(title, buf.data(), plotCount, 1.0, 0.0, spec);
+                        ImPlot::EndPlot();
+                    }
+                };
 
                 const float clockMax = std::max(bufMax(_gpuClockHistory) * 1.1f, 500.0f);
                 drawGpuPlot("GPU Clock (MHz)###gpuClock", _gpuClockHistory, clockMax,

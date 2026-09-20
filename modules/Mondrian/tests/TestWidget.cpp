@@ -59,13 +59,23 @@ WidgetResponse ProbeInput(const WidgetView &view, Node & /*node*/, const WidgetE
 struct Probe
 {
     Record record;
-    Ui ui;
+    Assisi::Core::EventQueue events;
+    /// After the queue, so the queue outlives it.
+    Ui ui{events};
+    /// After the Ui, so it is destroyed first: a screen may not outlive the UI
+    /// it registered with.
+    std::unique_ptr<Screen> held;
     Screen *screen = nullptr;
     NodeId node;
 
     Probe()
     {
-        screen = ui.CreateScreen(ScreenKind::Stacked, kSortMenu, "probe-screen");
+        held = std::make_unique<Screen>(ui,
+                                        ScreenTraits{.input = ScreenInput::ConsumeInput,
+                                                     .beneath = ScreenBeneath::HidesBeneath,
+                                                     .pause = ScreenPause::Pause},
+                                        kSortMenu, "probe-screen");
+        screen = held.get();
         ui.Show(*screen);
 
         const uint32_t type = screen->Tree().Widgets().Register(

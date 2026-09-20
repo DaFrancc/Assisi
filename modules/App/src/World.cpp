@@ -54,6 +54,36 @@ World *WorldManager::ProcessTravelRequest()
     return LoadLevel(path);
 }
 
+Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
+                            std::span<const std::string> systems)
+{
+    ASSISI_ASSERT(screen != nullptr, "a world was given a screen that is not there");
+
+    // Named in the install error if one of them is undeclared: the screen that
+    // asked is what a programmer has to go and fix.
+    const std::string context(screen->Name());
+    world.screenStack.push_back(World::Screen{.systems = std::vector<std::string>(systems.begin(), systems.end()),
+                                              .screen = std::move(screen)});
+    if (!world.screenStack.back().systems.empty())
+    {
+        QueueSystemInstall(world, world.screenStack.back().systems, context);
+    }
+    return *world.screenStack.back().screen;
+}
+
+void RemoveScreen(World &world, Mondrian::Screen &screen)
+{
+    std::erase_if(world.screenStack, [&screen](const World::Screen &held) { return held.screen.get() == &screen; });
+}
+
+Mondrian::Screen *FindScreen(World &world, std::string_view name)
+{
+    const std::vector<World::Screen>::iterator at =
+        std::ranges::find_if(world.screenStack, [name](const World::Screen &held)
+                             { return held.screen != nullptr && held.screen->Name() == name; });
+    return at == world.screenStack.end() ? nullptr : at->screen.get();
+}
+
 World &WorldManager::Create(std::string_view label)
 {
     // Not refusable: Create returns a reference, so there is no failure value.
@@ -88,7 +118,7 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // reinstated. Only App::SpawnBlueprint queued them, so a level *loaded* with
     // instances in it, or one placed in the editor, ran none of their behaviour.
     std::vector<std::string> required(names.begin(), names.end());
-    for (const auto &[name, count] : BlueprintSystemCounts(world.instances))
+    for (const auto &[name, count] : RequiredSystemCounts(world))
     {
         (void)count;
         if (std::find(required.begin(), required.end(), name) == required.end())
@@ -141,8 +171,8 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
     World *const outgoing = (_active == &incoming) ? nullptr : _active;
 
     incoming.levelPath = std::move(levelPath);
-    incoming.state     = WorldState::Active;
-    _active            = &incoming;
+    incoming.state = WorldState::Active;
+    _active = &incoming;
 
     // The one place a world stops being merely resident and becomes the one being
     // run, which is why starting it belongs here rather than at each caller:
@@ -157,15 +187,15 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
     {
         // dt and the tick are zero because no frame has run yet; everything else
         // is what any other phase would get.
-        BeginWorld({.world         = incoming,
-                    .dt            = 0.f,
-                    .simTick       = 0,
-                    .input         = _services.input,
-                    .actions       = _services.actions,
-                    .events        = *_services.events,
+        BeginWorld({.world = incoming,
+                    .dt = 0.f,
+                    .simTick = 0,
+                    .input = _services.input,
+                    .actions = _services.actions,
+                    .events = *_services.events,
                     .isActiveWorld = true,
-                    .worldManager  = this,
-                    .ui            = _services.ui},
+                    .worldManager = this,
+                    .ui = _services.ui},
                    _simulateFrom);
     }
     else
@@ -203,8 +233,7 @@ bool WorldManager::Destroy(std::string_view name)
     if (RefuseWhileIterating("Destroy"))
         return false;
 
-    const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w)
-                                         { return w->name == name; });
+    const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w) { return w->name == name; });
     if (it == _worlds.end())
     {
         Core::Log::Warn("WorldManager: Destroy('{}') - no such world.", name);
@@ -232,15 +261,13 @@ bool WorldManager::Destroy(std::string_view name)
 
 World *WorldManager::Find(std::string_view name)
 {
-    const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w)
-                                         { return w->name == name; });
+    const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w) { return w->name == name; });
     return it == _worlds.end() ? nullptr : it->get();
 }
 
 const World *WorldManager::Find(std::string_view name) const
 {
-    const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w)
-                                         { return w->name == name; });
+    const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w) { return w->name == name; });
     return it == _worlds.end() ? nullptr : it->get();
 }
 
@@ -256,7 +283,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     World *const outgoing = _active;
 
     World &incoming = Create("Level");
-    incoming.state  = WorldState::Loading;
+    incoming.state = WorldState::Loading;
 
     Runtime::LevelHeader header;
     Runtime::LevelResult loaded;
@@ -285,8 +312,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         // Which refusal it was, not just that there was one: absent, malformed,
         // and a version this build does not read are three different repairs and
         // read identically without it.
-        Core::Log::Error("Travel to '{}' failed ({}); staying in '{}'.", levelPath,
-                         Runtime::Describe(loaded.error()),
+        Core::Log::Error("Travel to '{}' failed ({}); staying in '{}'.", levelPath, Runtime::Describe(loaded.error()),
                          outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
         EraseWorld(incoming);
         return nullptr;
@@ -308,8 +334,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     }
 
     World *const result = SwapToActive(incoming, std::string(levelPath));
-    Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", result->name, levelPath,
-                    _worlds.size());
+    Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", result->name, levelPath, _worlds.size());
     return result;
 }
 
@@ -324,13 +349,13 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
 
     if (_pending)
     {
-        Core::Log::Warn("BeginLoadLevel('{}') ignored: a background load ('{}') is already pending.",
-                        levelPath, _pending->path);
+        Core::Log::Warn("BeginLoadLevel('{}') ignored: a background load ('{}') is already pending.", levelPath,
+                        _pending->path);
         return nullptr;
     }
 
     World &incoming = Create("Level");
-    incoming.state  = WorldState::Loading;
+    incoming.state = WorldState::Loading;
 
     const std::string path(levelPath);
 
@@ -342,19 +367,19 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         // async travel exists to avoid. Asset streaming (phase 2) still happens
         // across frames via PumpPendingLoad.
         Runtime::LevelHeader header;
-        const bool ok = Runtime::SceneSerializer::LoadFromFile(
-            incoming.scene, path, {.header = &header, .instances = &incoming.instances})
-                        .has_value();
+        const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path,
+                                                               {.header = &header, .instances = &incoming.instances})
+                            .has_value();
         if (ok)
         {
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
-            incoming.systemNames     = std::move(header.systems);
+            incoming.systemNames = std::move(header.systems);
         }
         deserProgress->store(1.f);
-        _pending                = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
+        _pending = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
         _pending->deserProgress = deserProgress;
-        _pending->workerDone    = true;
-        _pending->workerOk      = ok;
+        _pending->workerDone = true;
+        _pending->workerOk = ok;
         return &incoming;
     }
 
@@ -370,32 +395,32 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
     // ones per frame on the main thread. That cache is synchronised and hands out
     // shared ownership for exactly this reason — see Runtime::GetBlueprintDefinition.
     World *const w = &incoming;
-    Core::Task<bool> task = _services.jobs->Run(
-        Core::Pool::Worker,
-        [w, path, deserProgress]() -> bool
-        {
-            // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
-            // cost); building bodies is the cheap tail to 1.0.
-            Runtime::LevelHeader header;
-            const bool ok =
-                Runtime::SceneSerializer::LoadFromFile(
-                    w->scene, path,
-                    {.onProgress = [deserProgress](float f) { deserProgress->store(f * 0.9f); },
-                     .header     = &header,
-                     .instances  = &w->instances})
-                .has_value();
-            if (!ok)
-                return false;
-            w->propagationTick = BuildSceneBodies(w->scene, w->physics);
-            // Park the level's choice on the world itself; installing it is main-
-            // thread work (an installer may touch anything) and happens at
-            // promotion, after this task is joined.
-            w->systemNames = std::move(header.systems);
-            deserProgress->store(1.f);
-            return true;
-        });
+    Core::Task<bool> task =
+        _services.jobs->Run(Core::Pool::Worker,
+                            [w, path, deserProgress]() -> bool
+                            {
+                                // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
+                                // cost); building bodies is the cheap tail to 1.0.
+                                Runtime::LevelHeader header;
+                                const bool ok =
+                                    Runtime::SceneSerializer::LoadFromFile(
+                                        w->scene, path,
+                                        {.onProgress = [deserProgress](float f) { deserProgress->store(f * 0.9f); },
+                                         .header = &header,
+                                         .instances = &w->instances})
+                                        .has_value();
+                                if (!ok)
+                                    return false;
+                                w->propagationTick = BuildSceneBodies(w->scene, w->physics);
+                                // Park the level's choice on the world itself; installing it is main-
+                                // thread work (an installer may touch anything) and happens at
+                                // promotion, after this task is joined.
+                                w->systemNames = std::move(header.systems);
+                                deserProgress->store(1.f);
+                                return true;
+                            });
 
-    _pending                = PendingLoad{.world = &incoming, .task = std::move(task), .path = path};
+    _pending = PendingLoad{.world = &incoming, .task = std::move(task), .path = path};
     _pending->deserProgress = deserProgress;
     Core::Log::Info("Preload: '{}' loading in the background (world '{}').", path, incoming.name);
     return &incoming;
@@ -412,7 +437,7 @@ void WorldManager::PumpPendingLoad()
         if (!_pending->task.IsValid() || !_pending->task.IsComplete())
             return; // still deserializing on the worker
         _pending->workerDone = true;
-        _pending->workerOk   = _pending->task.Get();
+        _pending->workerOk = _pending->task.Get();
     }
 
     // A failed deserialize has nothing to stream — it is "ready" so Promote can
@@ -427,7 +452,7 @@ void WorldManager::PumpPendingLoad()
     if (_services.cache == nullptr)
     {
         _pending->assetProgress = 1.f;
-        _pending->ready         = true;
+        _pending->ready = true;
         return;
     }
 
@@ -439,14 +464,13 @@ void WorldManager::PumpPendingLoad()
     if (!_pending->resolveStarted)
     {
         Runtime::ResolveSceneAssets(world.scene, *_services.cache);
-        _pending->resolveStarted        = true;
+        _pending->resolveStarted = true;
         _pending->resolveInitialPending = _services.cache->PendingLoadCount();
-        world.streamingPending          = true;
+        world.streamingPending = true;
     }
     else
     {
-        App::UpgradeStreamingAssets(world.scene, *_services.cache,
-                                    world.streamingPending);
+        App::UpgradeStreamingAssets(world.scene, *_services.cache, world.streamingPending);
     }
 
     // Progress across the streams. Cache-wide count, but during a preload the
@@ -458,8 +482,7 @@ void WorldManager::PumpPendingLoad()
     }
     else
     {
-        const float landed = 1.f - static_cast<float>(pending) /
-                             static_cast<float>(_pending->resolveInitialPending);
+        const float landed = 1.f - static_cast<float>(pending) / static_cast<float>(_pending->resolveInitialPending);
         _pending->assetProgress = std::clamp(landed, 0.f, 1.f);
     }
 
@@ -509,9 +532,9 @@ World *WorldManager::PromotePendingLoad()
         PumpPendingLoad(); // latches workerDone/workerOk, and kicks off resolve
     }
 
-    const bool ok       = _pending->workerOk;
+    const bool ok = _pending->workerOk;
     World *const incoming = _pending->world;
-    const std::string path     = _pending->path;
+    const std::string path = _pending->path;
     const bool resolved = _pending->resolveStarted;
     _pending.reset();
 
@@ -549,8 +572,7 @@ World *WorldManager::PromotePendingLoad()
     }
 
     World *const result = SwapToActive(*incoming, path);
-    Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path,
-                    _worlds.size());
+    Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path, _worlds.size());
     return result;
 }
 
@@ -602,8 +624,7 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
 
     // Move the component data. This creates the destination entities, remaps
     // in-set EntityRefs, and destroys the source entities (deferred).
-    const std::vector<ECS::Entity> arrived =
-        Runtime::SceneSerializer::TransferEntities(src.scene, dst.scene, subtree);
+    const std::vector<ECS::Entity> arrived = Runtime::SceneSerializer::TransferEntities(src.scene, dst.scene, subtree);
     src.scene.FlushDestroyed();
 
     // Before the bodies below, and for the same reason App::BuildSceneBodies
@@ -623,8 +644,7 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
     // thing this call exists to carry across.
     for (const ECS::Entity e : arrived)
     {
-        if (dst.scene.Get<Physics::RigidBody>(e) == nullptr &&
-            dst.scene.Get<Physics::Character>(e) == nullptr)
+        if (dst.scene.Get<Physics::RigidBody>(e) == nullptr && dst.scene.Get<Physics::Character>(e) == nullptr)
         {
             (void)dst.physics.RebuildEntityPhysics(dst.scene, e, parentWorld);
         }
@@ -636,8 +656,8 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
 
     // arrived is parallel to subtree, and subtree[0] is the root (GatherSubtree is
     // root-first), so arrived[0] is the destination handle of the root.
-    Core::Log::Info("Migrate: moved {} entit{} from '{}' to '{}'.", arrived.size(),
-                    arrived.size() == 1 ? "y" : "ies", src.name, dst.name);
+    Core::Log::Info("Migrate: moved {} entit{} from '{}' to '{}'.", arrived.size(), arrived.size() == 1 ? "y" : "ies",
+                    src.name, dst.name);
     return arrived.empty() ? ECS::NullEntity : arrived.front();
 }
 
@@ -652,7 +672,7 @@ bool WorldManager::SweepAssetCache()
     // is resident for the whole session, so demanding literally one world would
     // mean the sweep never ran there.
     World *dormantEdited = nullptr;
-    World *live          = nullptr;
+    World *live = nullptr;
     for (const std::unique_ptr<World> &world : _worlds)
     {
         if (world.get() == _edited && world->state == WorldState::Dormant)
@@ -751,14 +771,14 @@ Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene)
     // parent, and Physics sits below the layer that owns the parent link — so the
     // answer is handed down rather than looked up there.
     return [&scene](ECS::Entity entity) -> const glm::mat4 *
-           {
-               const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
-               if (parent == nullptr || parent->parent == ECS::NullEntity)
-                   return nullptr;
+    {
+        const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
+        if (parent == nullptr || parent->parent == ECS::NullEntity)
+            return nullptr;
 
-               const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
-               return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
-           };
+        const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
+        return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
+    };
 }
 
 uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick)
