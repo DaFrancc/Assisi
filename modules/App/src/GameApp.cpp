@@ -211,10 +211,17 @@ SystemContext GameApp::WorldStartContext(World &world)
 
 void GameApp::StepWorlds(float dt)
 {
+    // The UI reports; the world is what carries it, so a system can see that it
+    // is paused rather than only noticing that it stopped being run.
+    if (World *const active = _worlds.Active(); active != nullptr)
+    {
+        active->paused = GetUi() != nullptr && GetUi()->PausesWorld();
+    }
+
     _worlds.ForEach(
         [this, dt](World &world)
         {
-            if (world.state != WorldState::Active || !world.simulate)
+            if (world.state != WorldState::Active || !world.simulate || world.paused)
             {
                 return;
             }
@@ -369,6 +376,11 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         return;
     }
 
+    // Not while the world is paused: the pose it stopped in is authoritative
+    // then, and the accumulator goes on filling and draining behind a paused
+    // world, so blending would sweep between the last two poses and shake a
+    // body that has stopped.
+    if (!_world->paused)
     {
         // Blend physics-driven Transforms between their last two fixed-step poses,
         // so bodies move at the display's refresh rate rather than the physics

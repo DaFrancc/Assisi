@@ -12,6 +12,7 @@
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/CrashReport.hpp>
 #include <Assisi/App/InputSetup.hpp>
+#include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Diagnostics.hpp>
 
 #include <Assisi/Chiara/Profile.hpp>
@@ -23,6 +24,7 @@
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
+#include <Assisi/Mondrian/SampleScreen.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
@@ -316,7 +318,10 @@ bool Application::InitializePresentation()
             Mondrian::Clipboard{.read = [window] { return window->GetClipboardText(); },
                                 .write = [window](std::string_view text) { window->SetClipboardText(text); }});
         Mondrian::Engine::UploadPlaceholderTexture(_uiPlaceholderTexture, vulkanContext->GetDevice());
-        _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
+        // Hidden until F4 asks for it. It belongs to the engine rather than to
+        // a game because it is what proves the UI draws at all, and the first
+        // thing to look at when something in it goes wrong.
+        _sampleScreen = Mondrian::AddSampleScreen(*_ui, _uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
 
         // A game with no font still runs, with no text: the UI is not what a
         // missing font should take down.
@@ -353,20 +358,35 @@ Window::WindowContext &Application::GetWindow() const
     return *_window;
 }
 
-void Application::ToggleSampleMenu()
+void Application::ToggleSampleScreen()
 {
-    if (!_input->IsKeyPressed(Window::Key::F4))
+    if (_sampleScreen == nullptr || !_input->IsKeyPressed(Window::Key::F4))
     {
         return;
     }
     _input->ConsumeKey(Window::Key::F4);
-    if (_sampleMenuMode)
+    if (_sampleScreen->IsShown())
     {
-        _input->PopInputMode(_sampleMenuMode);
-        _sampleMenuMode = {};
+        _ui->Hide(*_sampleScreen);
         return;
     }
-    _sampleMenuMode = _input->PushInputMode(Window::InputMode::Ui);
+    _ui->Show(*_sampleScreen);
+}
+
+void Application::SyncUiInputMode()
+{
+    const bool wanted = _uiShown && _ui != nullptr && _ui->TakesInput();
+    if (wanted == static_cast<bool>(_uiInputMode))
+    {
+        return;
+    }
+    if (wanted)
+    {
+        _uiInputMode = _input->PushInputMode(Window::InputMode::Ui);
+        return;
+    }
+    _input->PopInputMode(_uiInputMode);
+    _uiInputMode = {};
 }
 
 Window::InputContext &Application::GetInput() const
@@ -680,7 +700,7 @@ void Application::Run()
                 {
                     ASSISI_PROFILE_SCOPE("ui-input");
                     _uiTime += rawDt;
-                    ToggleSampleMenu();
+                    ToggleSampleScreen();
 
                     const InputClaim claim = ClaimedOverUi();
                     const Mondrian::Point pointer = ToDevicePixels(_input->MousePosition(), _window->GetWindowSize(),
@@ -761,6 +781,10 @@ void Application::Run()
             _ui->Sync({.width = static_cast<uint32_t>(std::max(size.Width, 0)),
                        .height = static_cast<uint32_t>(std::max(size.Height, 0))});
         }
+        if (!_headless)
+        {
+            SyncUiInputMode();
+        }
         const Clock::time_point uiSyncEnd = Clock::now();
 
         // Reconcile the swapchain's present mode with the frame-sync option HERE,
@@ -790,6 +814,12 @@ void Application::Run()
             RenderFrame();
         }
         const Clock::time_point renderEnd = Clock::now();
+        // Before the flush, which is what clears the frame's events. Once per
+        // frame however many systems asked, since the answer is the same.
+        if (!_events.Read<QuitRequested>().empty())
+        {
+            OnQuitRequested();
+        }
         {
             ASSISI_PROFILE_SCOPE("flush");
             _events.Flush();

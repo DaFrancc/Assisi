@@ -25,6 +25,8 @@ constexpr TextureId kFontTexture{9};
 
 /// Wide enough that the sample text in these cases fits without scrolling.
 constexpr float kFieldTestWidth = 600.f;
+/// Narrow enough that the fixture's text wraps to several lines.
+constexpr float kLinedTestWidth = 120.f;
 
 /// Text whose characters are not one byte each: "héllo", where the e acute is
 /// two bytes, and an emoji, which is four.
@@ -49,6 +51,7 @@ struct Field
     std::string clipboard;
     Assisi::Core::EventQueue events;
     Ui ui;
+    Screen *screen = nullptr;
     TextFieldId field;
 
     explicit Field(TextLines lines = TextLines::Single)
@@ -58,14 +61,28 @@ struct Field
         ui.SetClipboard(Clipboard{.read = [this] { return clipboard; },
                                   .write = [this](std::string_view text) { clipboard = text; }});
 
-        field = ui.AddTextField(ui.Tree().Root(), lines);
-        // Floating and fixed, so it sits at a known place whatever else the
-        // sample screen is doing, and is the last thing the pointer can hit.
-        Style style = ui.Tree().Get(field.node)->style;
+        screen = ui.CreateScreen(ScreenKind::Stacked, kSortMenu, "field-screen");
+        ui.Show(*screen);
+
+        field = screen->AddTextField(screen->Root(), lines);
+        // Floating and fixed, so it sits at a known place and is the last thing
+        // the pointer can hit.
+        Style style = screen->Tree().Get(field.node)->style;
         style.floating.enabled = true;
         style.sizing = {Sizing::Fixed(kFieldTestWidth), Sizing::Fit()};
-        ui.Tree().SetStyle(field.node, style);
-        ui.SetFocus(field.node);
+        screen->Tree().SetStyle(field.node, style);
+        ui.SetFocus(*screen, field.node);
+        Step({});
+    }
+
+    /// A field of many lines, narrow enough that its text wraps, held to
+    /// @p lines by @p height.
+    Field(TextHeight height, uint32_t lines) : Field(TextLines::Multi)
+    {
+        Style style = screen->Tree().Get(field.node)->style;
+        style.sizing = {Sizing::Fixed(kLinedTestWidth), Sizing::Fit()};
+        screen->Tree().SetStyle(field.node, style);
+        screen->SetHeight(field, height, lines);
         Step({});
     }
 
@@ -75,13 +92,13 @@ struct Field
         ui.Sync(kScreen);
     }
 
-    [[nodiscard]] std::string_view Text() const { return ui.GetText(field); }
+    [[nodiscard]] std::string_view Text() const { return screen->GetText(field); }
 
-    [[nodiscard]] const TextEdit &Edit() const { return ui.Tree().Get(field.node)->edit; }
+    [[nodiscard]] const TextEdit &Edit() const { return screen->Tree().Get(field.node)->edit; }
 
     [[nodiscard]] Rect Box() const
     {
-        const LayoutNode *placed = ui.GetLayout().Get(field.node);
+        const LayoutNode *placed = screen->GetLayout().Get(field.node);
         REQUIRE(placed != nullptr);
         return placed->rect;
     }
@@ -273,7 +290,7 @@ TEST_CASE("TextField: each ability turned off stops its own feature and nothing 
     {
         Field field;
         field.Type("abc");
-        field.ui.SetAbility(field.field, TextAbility::Copy, false);
+        field.screen->SetAbility(field.field, TextAbility::Copy, false);
         field.Step(Press(EditKey::SelectAll));
         field.Step(Press(EditKey::Copy));
         CHECK(field.clipboard.empty());
@@ -283,7 +300,7 @@ TEST_CASE("TextField: each ability turned off stops its own feature and nothing 
     {
         Field field;
         field.Type("abc");
-        field.ui.SetAbility(field.field, TextAbility::Cut, false);
+        field.screen->SetAbility(field.field, TextAbility::Cut, false);
         field.Step(Press(EditKey::SelectAll));
         field.Step(Press(EditKey::Cut));
         CHECK(field.clipboard.empty());
@@ -293,7 +310,7 @@ TEST_CASE("TextField: each ability turned off stops its own feature and nothing 
     {
         Field field;
         field.clipboard = "xyz";
-        field.ui.SetAbility(field.field, TextAbility::Paste, false);
+        field.screen->SetAbility(field.field, TextAbility::Paste, false);
         field.Step(Press(EditKey::Paste));
         CHECK(field.Text().empty());
     }
@@ -301,7 +318,7 @@ TEST_CASE("TextField: each ability turned off stops its own feature and nothing 
     {
         Field field;
         field.Type("abc");
-        field.ui.SetAbility(field.field, TextAbility::Select, false);
+        field.screen->SetAbility(field.field, TextAbility::Select, false);
         field.Step(Press(EditKey::SelectAll));
         CHECK_FALSE(field.Edit().HasSelection());
     }
@@ -311,7 +328,7 @@ TEST_CASE("TextField: a masked field shows marks, keeps its text, and stops copy
 {
     Field field;
     field.Type("secret");
-    field.ui.SetMask(field.field, TextMask::Dots);
+    field.screen->SetMask(field.field, TextMask::Dots);
     field.Step({});
 
     // The text is still the text; only what is shown has changed.
@@ -326,7 +343,7 @@ TEST_CASE("TextField: a masked field shows marks, keeps its text, and stops copy
     CHECK(field.clipboard.empty());
 
     // Turned off rather than forbidden.
-    field.ui.SetAbility(field.field, TextAbility::Copy, true);
+    field.screen->SetAbility(field.field, TextAbility::Copy, true);
     field.Step(Press(EditKey::Copy));
     CHECK(field.clipboard == "secret");
 }
@@ -335,7 +352,7 @@ TEST_CASE("TextField: a length limit counts characters, not the bytes they take"
 {
     Field field;
     constexpr uint32_t kLimit = 3;
-    field.ui.SetMaxLength(field.field, kLimit);
+    field.screen->SetMaxLength(field.field, kLimit);
 
     field.Type("\xC3\xA9");
     field.Type("\xC3\xA9");
@@ -350,7 +367,7 @@ TEST_CASE("TextField: a paste past the limit is cut to fit, on a character bound
 {
     Field field;
     constexpr uint32_t kLimit = 2;
-    field.ui.SetMaxLength(field.field, kLimit);
+    field.screen->SetMaxLength(field.field, kLimit);
     field.clipboard = "\xC3\xA9\xC3\xA9\xC3\xA9";
     field.Step(Press(EditKey::Paste));
     CHECK(field.Text() == "\xC3\xA9\xC3\xA9");
@@ -379,7 +396,7 @@ TEST_CASE("TextField: pasted text is cleaned of what a field cannot hold")
 TEST_CASE("TextField: Enter finishes a single line and pushes what it holds")
 {
     Field field;
-    field.ui.OnSubmit(field.field, [](std::string_view text) { return Submitted{std::string{text}}; });
+    field.screen->OnSubmit(field.field, [](std::string_view text) { return Submitted{std::string{text}}; });
     field.Type("done");
 
     field.Step(Press(UiAction::Accept));
@@ -391,7 +408,7 @@ TEST_CASE("TextField: Enter finishes a single line and pushes what it holds")
 TEST_CASE("TextField: Enter in a field of many lines puts a line break in")
 {
     Field field(TextLines::Multi);
-    field.ui.OnSubmit(field.field, [](std::string_view text) { return Submitted{std::string{text}}; });
+    field.screen->OnSubmit(field.field, [](std::string_view text) { return Submitted{std::string{text}}; });
     field.Type("a");
     field.Step(Press(UiAction::Accept));
     field.Type("b");
@@ -406,15 +423,15 @@ TEST_CASE("TextField: the caret is as tall as the line it stands on, not as tall
     // the text, so it must be shorter than the box that holds it.
     Field field;
     field.Type("AAAA");
-    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *placed = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(placed != nullptr);
     REQUIRE(placed->text != LayoutNode::kNoText);
 
-    const TextLayout &text = field.ui.GetLayout().texts[placed->text];
+    const TextLayout &text = field.screen->GetLayout().texts[placed->text];
     const Rect line = LineBox(text, 0);
     REQUIRE(line.height > 0.f);
 
-    const Rect caret = field.ui.GetCaretRect(field.field);
+    const Rect caret = field.screen->GetCaretRect(field.field);
     CHECK(caret.height == doctest::Approx(line.height));
     CHECK(caret.height < placed->rect.height); // shorter than the box's padding allows
     CHECK(caret.y >= placed->rect.y);
@@ -423,23 +440,23 @@ TEST_CASE("TextField: the caret is as tall as the line it stands on, not as tall
     // In a field of many lines it covers the line the caret is on rather than
     // all of them, and it moves down as the caret does.
     Field many(TextLines::Multi);
-    Style style = many.ui.Tree().Get(many.field.node)->style;
+    Style style = many.screen->Tree().Get(many.field.node)->style;
     style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
-    many.ui.Tree().SetStyle(many.field.node, style);
+    many.screen->Tree().SetStyle(many.field.node, style);
     many.Step({});
     many.Type("AAAA AAAA AAAA AAAA");
 
-    const LayoutNode *wrapped = many.ui.GetLayout().Get(many.field.node);
+    const LayoutNode *wrapped = many.screen->GetLayout().Get(many.field.node);
     REQUIRE(wrapped != nullptr);
-    REQUIRE(many.ui.GetLayout().texts[wrapped->text].lines.size() > 1);
+    REQUIRE(many.screen->GetLayout().texts[wrapped->text].lines.size() > 1);
 
-    const Rect onLast = many.ui.GetCaretRect(many.field);
+    const Rect onLast = many.screen->GetCaretRect(many.field);
     CHECK(onLast.height == doctest::Approx(line.height));
     CHECK(onLast.height < wrapped->rect.height);
 
     many.Step(Press(EditKey::LineStart));
     many.Step(Press(UiAction::Up));
-    const Rect onFirst = many.ui.GetCaretRect(many.field);
+    const Rect onFirst = many.screen->GetCaretRect(many.field);
     CHECK(onFirst.y < onLast.y);
     CHECK(onFirst.height == doctest::Approx(onLast.height));
 }
@@ -447,17 +464,17 @@ TEST_CASE("TextField: the caret is as tall as the line it stands on, not as tall
 TEST_CASE("TextField: a field of many lines wraps, and the caret moves between the lines")
 {
     Field field(TextLines::Multi);
-    Style style = field.ui.Tree().Get(field.field.node)->style;
+    Style style = field.screen->Tree().Get(field.field.node)->style;
     style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
-    field.ui.Tree().SetStyle(field.field.node, style);
+    field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
     const float oneLine = field.Box().height;
 
     field.Type("AAAA AAAA AAAA AAAA");
-    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *placed = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(placed != nullptr);
     REQUIRE(placed->text != LayoutNode::kNoText);
-    REQUIRE(field.ui.GetLayout().texts[placed->text].lines.size() > 1);
+    REQUIRE(field.screen->GetLayout().texts[placed->text].lines.size() > 1);
 
     // Unlike a single line, it grew downwards rather than scrolling sideways.
     CHECK(field.Box().height > oneLine);
@@ -473,24 +490,13 @@ namespace
 {
 
 /// A field of many lines, narrow enough that "AAAA " fills a line on its own.
-Field Lined(TextHeight height, uint32_t lines)
-{
-    Field field(TextLines::Multi);
-    Style style = field.ui.Tree().Get(field.field.node)->style;
-    style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
-    field.ui.Tree().SetStyle(field.field.node, style);
-    field.ui.SetHeight(field.field, height, lines);
-    field.Step({});
-    return field;
-}
-
 /// How many lines the field's text was laid out into.
 uint32_t LineCount(const Field &field)
 {
-    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *placed = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(placed != nullptr);
     REQUIRE(placed->text != LayoutNode::kNoText);
-    return static_cast<uint32_t>(field.ui.GetLayout().texts[placed->text].lines.size());
+    return static_cast<uint32_t>(field.screen->GetLayout().texts[placed->text].lines.size());
 }
 
 } // namespace
@@ -519,48 +525,48 @@ TEST_CASE("TextField: Back gets out of the field, and only then out of the scree
     field.Step(Press(UiAction::Back));
     CHECK_FALSE(field.ui.GetInteraction().focused);
     // Leaving the box did not also leave the menu it is on.
-    CHECK_FALSE(field.ui.GetInteraction().backPressed);
+    CHECK(field.screen->IsShown());
 
     // With nothing holding the keyboard, Back means what it always meant.
     field.Step(Press(UiAction::Back));
-    CHECK(field.ui.GetInteraction().backPressed);
+    CHECK_FALSE(field.screen->IsShown());
 }
 
 TEST_CASE("TextField: leaving a field settles what it holds")
 {
     Field field;
-    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
     field.Type("jim@");
-    REQUIRE(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+    REQUIRE(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
 
     field.Step(Press(UiAction::Back));
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Invalid);
 }
 
 TEST_CASE("TextField: a placeholder stands in while the field is empty and goes when it is not")
 {
     Field field;
-    field.ui.SetPlaceholder(field.field, "your name");
+    field.screen->SetPlaceholder(field.field, "your name");
     field.Step({});
 
-    const LayoutNode *empty = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *empty = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(empty != nullptr);
     CHECK(empty->placeholder);
     CHECK(field.Text().empty()); // shown, but not held
 
     field.Type("a");
     CHECK(field.Text() == "a");
-    CHECK_FALSE(field.ui.GetLayout().Get(field.field.node)->placeholder);
+    CHECK_FALSE(field.screen->GetLayout().Get(field.field.node)->placeholder);
 
     // And comes back when the field is emptied again.
     field.Step(Press(EditKey::Backspace));
-    CHECK(field.ui.GetLayout().Get(field.field.node)->placeholder);
+    CHECK(field.screen->GetLayout().Get(field.field.node)->placeholder);
 }
 
 TEST_CASE("TextField: a placeholder is drawn fainter than the text it stands in for")
 {
     Field field;
-    field.ui.SetPlaceholder(field.field, "AAAA");
+    field.screen->SetPlaceholder(field.field, "AAAA");
     field.Step({});
 
     // The sample screen has text of its own, so take only the glyphs standing
@@ -582,7 +588,7 @@ TEST_CASE("TextField: a placeholder is drawn fainter than the text it stands in 
     const float ghost = glyphAlpha();
     REQUIRE(ghost > 0.f);
 
-    field.ui.SetPlaceholder(field.field, {});
+    field.screen->SetPlaceholder(field.field, {});
     field.Type("AAAA");
     CHECK(glyphAlpha() > ghost);
 }
@@ -590,7 +596,7 @@ TEST_CASE("TextField: a placeholder is drawn fainter than the text it stands in 
 TEST_CASE("TextField: a click on a placeholder leaves the caret where it must be")
 {
     Field field;
-    field.ui.SetPlaceholder(field.field, "a long prompt to click into");
+    field.screen->SetPlaceholder(field.field, "a long prompt to click into");
     field.Step({});
 
     const Rect box = field.Box();
@@ -608,21 +614,21 @@ TEST_CASE("TextField: a click on a placeholder leaves the caret where it must be
 TEST_CASE("TextField: a masked field shows its placeholder plainly, having nothing to hide yet")
 {
     Field field;
-    field.ui.SetPlaceholder(field.field, "password");
-    field.ui.SetMask(field.field, TextMask::Dots);
+    field.screen->SetPlaceholder(field.field, "password");
+    field.screen->SetMask(field.field, TextMask::Dots);
     field.Step({});
 
-    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *placed = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(placed != nullptr);
     REQUIRE(placed->placeholder);
     // Eight characters of prompt, not eight marks of nothing.
-    CHECK(field.ui.GetLayout().texts[placed->text].glyphs.size() == CharacterCount("password"));
+    CHECK(field.screen->GetLayout().texts[placed->text].glyphs.size() == CharacterCount("password"));
 }
 
 TEST_CASE("TextField: a field of many lines grows with its text until it is told not to")
 {
     constexpr uint32_t kLines = 2;
-    Field field = Lined(TextHeight::UpTo, kLines);
+    Field field(TextHeight::UpTo, kLines);
     const float empty = field.Box().height;
 
     field.Type("AAAA ");
@@ -643,8 +649,8 @@ TEST_CASE("TextField: a field of many lines grows with its text until it is told
 TEST_CASE("TextField: a field of exactly so many lines is that tall while empty")
 {
     constexpr uint32_t kLines = 3;
-    Field tall = Lined(TextHeight::Exactly, kLines);
-    Field growing = Lined(TextHeight::UpTo, kLines);
+    Field tall(TextHeight::Exactly, kLines);
+    Field growing(TextHeight::UpTo, kLines);
 
     // Nothing typed into either: the fixed one already stands three lines tall.
     CHECK(tall.Box().height > growing.Box().height);
@@ -656,7 +662,7 @@ TEST_CASE("TextField: a field of exactly so many lines is that tall while empty"
 
 TEST_CASE("TextField: a field with no line limit goes on growing")
 {
-    Field field = Lined(TextHeight::Unbounded, 0);
+    Field field(TextHeight::Unbounded, 0);
     const float empty = field.Box().height;
     field.Type("AAAA AAAA AAAA AAAA AAAA ");
     CHECK(LineCount(field) > 3);
@@ -669,7 +675,7 @@ TEST_CASE("TextField: what would overflow the lines is refused however it arrive
 
     SUBCASE("typed")
     {
-        Field field = Lined(TextHeight::UpTo, kLines);
+        Field field(TextHeight::UpTo, kLines);
         field.Type("AAAA ");
         const std::string held{field.Text()};
         field.Type("AAAA ");
@@ -677,14 +683,14 @@ TEST_CASE("TextField: what would overflow the lines is refused however it arrive
     }
     SUBCASE("a line break")
     {
-        Field field = Lined(TextHeight::UpTo, kLines);
+        Field field(TextHeight::UpTo, kLines);
         field.Type("A");
         field.Step(Press(UiAction::Accept));
         CHECK(field.Text() == "A"); // Enter would have made a second line
     }
     SUBCASE("pasted")
     {
-        Field field = Lined(TextHeight::UpTo, kLines);
+        Field field(TextHeight::UpTo, kLines);
         field.clipboard = "AAAA AAAA AAAA";
         field.Step(Press(EditKey::Paste));
         CHECK(field.Text().empty());
@@ -695,8 +701,8 @@ TEST_CASE("TextField: the line limit and the length limit both hold, whichever c
 {
     // Wide text reaches the lines first, and the field is still well inside
     // the character count.
-    Field wide = Lined(TextHeight::UpTo, 1);
-    wide.ui.SetMaxLength(wide.field, 100);
+    Field wide(TextHeight::UpTo, 1);
+    wide.screen->SetMaxLength(wide.field, 100);
     wide.Type("AAAA ");
     const std::string held{wide.Text()};
     wide.Type("AAAA ");
@@ -704,8 +710,8 @@ TEST_CASE("TextField: the line limit and the length limit both hold, whichever c
     CHECK(CharacterCount(wide.Text()) < 100);
 
     // A short count reaches its limit long before the lines.
-    Field narrow = Lined(TextHeight::UpTo, 10);
-    narrow.ui.SetMaxLength(narrow.field, 3);
+    Field narrow(TextHeight::UpTo, 10);
+    narrow.screen->SetMaxLength(narrow.field, 3);
     narrow.Type("AAAAAA");
     CHECK(CharacterCount(narrow.Text()) == 3);
     CHECK(LineCount(narrow) == 1);
@@ -714,7 +720,7 @@ TEST_CASE("TextField: the line limit and the length limit both hold, whichever c
 TEST_CASE("TextField: changing the text pushes what it now holds")
 {
     Field field;
-    field.ui.OnChange(field.field, [](std::string_view text) { return Typed{std::string{text}}; });
+    field.screen->OnChange(field.field, [](std::string_view text) { return Typed{std::string{text}}; });
     field.Type("ab");
     REQUIRE(field.events.Read<Typed>().size() == 1);
     CHECK(field.events.Read<Typed>()[0].text == "ab");
@@ -858,7 +864,7 @@ TEST_CASE("TextField: with carrying turned off, a press on a selection just move
 {
     Field field;
     field.Type("foo bar");
-    field.ui.SetAbility(field.field, TextAbility::Drag, false);
+    field.screen->SetAbility(field.field, TextAbility::Drag, false);
     field.Step(Press(EditKey::SelectAll));
 
     const Rect box = field.Box();
@@ -894,7 +900,7 @@ TEST_CASE("TextField: a double click takes the word under it")
 TEST_CASE("TextField: a pattern that refuses keeps what it will not accept out")
 {
     Field field;
-    REQUIRE(field.ui.SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
 
     field.Type("4");
     field.Type("2");
@@ -912,52 +918,58 @@ TEST_CASE("TextField: a pattern that refuses keeps what it will not accept out")
 TEST_CASE("TextField: a pattern that marks as typed says so the moment it stops matching")
 {
     Field field;
-    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksAsTyped).has_value());
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksAsTyped).has_value());
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
 
     field.Type("jim@");
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Invalid);
 
     field.Type("example.com");
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Valid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Valid);
 }
 
 TEST_CASE("TextField: a pattern that marks on commit says nothing until Enter")
 {
     Field field;
-    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
 
     field.Type("jim@");
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
 
     field.Step(Press(UiAction::Accept));
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Invalid);
 
     field.Type("example.com");
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid); // not judged again until committed
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Invalid); // not judged again until committed
 
     field.Step(Press(UiAction::Accept));
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Valid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Valid);
 }
 
 TEST_CASE("TextField: leaving a field is finishing with it, so it is judged then too")
 {
     Field field;
-    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
     field.Type("jim@");
-    REQUIRE(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+    REQUIRE(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
+
+    // Somewhere for the tab order to go: with only the field on the screen,
+    // Next comes round to it and focus never leaves.
+    field.screen->AddButton(field.screen->Root(), "elsewhere");
+    field.Step({});
 
     // Focus moves to whatever is next in the tab order; the field hears about
     // it and settles what it holds.
     field.Step(Press(UiAction::Next));
     REQUIRE(field.ui.GetInteraction().focused != field.field.node);
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Invalid);
 }
 
 TEST_CASE("TextField: a pattern that will not compile is refused and leaves the field as it was")
 {
     Field field;
-    const std::expected<void, PatternError> set = field.ui.SetPattern(field.field, "[unclosed", TextCheck::Refuses);
+    const std::expected<void, PatternError> set =
+        field.screen->SetPattern(field.field, "[unclosed", TextCheck::Refuses);
     REQUIRE_FALSE(set.has_value());
     CHECK_FALSE(set.error().message.empty());
 
@@ -968,30 +980,30 @@ TEST_CASE("TextField: a pattern that will not compile is refused and leaves the 
 TEST_CASE("TextField: text set from code is taken as given, limit and pattern notwithstanding")
 {
     Field field;
-    field.ui.SetMaxLength(field.field, 2);
-    REQUIRE(field.ui.SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
+    field.screen->SetMaxLength(field.field, 2);
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
 
-    field.ui.SetText(field.field, "a longer answer");
+    field.screen->SetText(field.field, "a longer answer");
     CHECK(field.Text() == "a longer answer");
     CHECK(field.Edit().caret == CharacterCount(field.Text()));
 
     // Taken as given, but not pretended to be acceptable: text put in from
     // code is finished text, so the pattern has its say about it.
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
-    field.ui.SetText(field.field, "42");
-    CHECK(field.ui.GetValidity(field.field) == TextValidity::Valid);
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Invalid);
+    field.screen->SetText(field.field, "42");
+    CHECK(field.screen->GetValidity(field.field) == TextValidity::Valid);
 }
 
 TEST_CASE("TextField: a selectable label may be copied but not typed into")
 {
     Field field;
-    const NodeId label = field.ui.Tree().Create(field.ui.Tree().Root(), "label");
-    field.ui.Tree().SetText(label, "10.0.0.1");
-    field.ui.SetSelectable(label, true);
+    const NodeId label = field.screen->Tree().Create(field.screen->Tree().Root(), "label");
+    field.screen->Tree().SetText(label, "10.0.0.1");
+    field.screen->SetSelectable(label, true);
     // Laid out before it is focused: focus is checked against the last layout,
     // and a node that has not been placed yet cannot hold it.
     field.Step({});
-    field.ui.SetFocus(label);
+    field.ui.SetFocus(*field.screen, label);
     field.Step({});
 
     field.Step(Press(EditKey::SelectAll));
@@ -1001,7 +1013,7 @@ TEST_CASE("TextField: a selectable label may be copied but not typed into")
     UiInput typing = Keys();
     typing.typed = "x";
     field.Step(typing);
-    CHECK(field.ui.Tree().Get(label)->text == "10.0.0.1");
+    CHECK(field.screen->Tree().Get(label)->text == "10.0.0.1");
 }
 
 TEST_CASE("TextField: the pointer takes the text shape over a field, and keeps it through a drag")
@@ -1037,9 +1049,9 @@ TEST_CASE("TextField: a field does not grow with what is typed into it")
     Field field;
     // Sized by its parent rather than fixed, which is what a field in a row
     // gets and what made it grow with its text.
-    Style style = field.ui.Tree().Get(field.field.node)->style;
+    Style style = field.screen->Tree().Get(field.field.node)->style;
     style.sizing = {Sizing{.min = 80.f, .kind = SizingKind::Grow}, Sizing::Fit()};
-    field.ui.Tree().SetStyle(field.field.node, style);
+    field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
 
     const Rect empty = field.Box();
@@ -1053,13 +1065,13 @@ TEST_CASE("TextField: a field does not grow with what is typed into it")
 TEST_CASE("TextField: what runs past the ends of a field is clipped to it")
 {
     Field field;
-    Style style = field.ui.Tree().Get(field.field.node)->style;
+    Style style = field.screen->Tree().Get(field.field.node)->style;
     style.sizing = {Sizing::Fixed(80.f), Sizing::Fit()};
-    field.ui.Tree().SetStyle(field.field.node, style);
+    field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
     field.Type("AAAAAAAAAAAAAAAAAAAA");
 
-    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *placed = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(placed != nullptr);
     CHECK(placed->clip.x >= placed->rect.x);
     CHECK(placed->clip.x + placed->clip.width <= placed->rect.x + placed->rect.width);
@@ -1068,18 +1080,18 @@ TEST_CASE("TextField: what runs past the ends of a field is clipped to it")
 TEST_CASE("TextField: a long single line scrolls to keep the caret in sight")
 {
     Field field;
-    Style style = field.ui.Tree().Get(field.field.node)->style;
+    Style style = field.screen->Tree().Get(field.field.node)->style;
     style.sizing = {Sizing::Fixed(80.f), Sizing::Fit()};
-    field.ui.Tree().SetStyle(field.field.node, style);
+    field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
 
     field.Type("AAAAAAAAAAAAAAAA");
-    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    const LayoutNode *placed = field.screen->GetLayout().Get(field.field.node);
     REQUIRE(placed != nullptr);
     CHECK(placed->textScroll > 0.f);
 
     // And comes back when the caret does.
     field.Step(Press(EditKey::LineStart));
     field.Step({});
-    CHECK(field.ui.GetLayout().Get(field.field.node)->textScroll == doctest::Approx(0.f));
+    CHECK(field.screen->GetLayout().Get(field.field.node)->textScroll == doctest::Approx(0.f));
 }

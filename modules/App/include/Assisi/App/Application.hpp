@@ -177,6 +177,13 @@ class Application
     /// here: an application that draws no UI does not link one, which is what
     /// keeps a shipped game free of the editor's.
     virtual void OnRenderUi(Render::RenderFrame & /*frame*/) {}
+    /// @brief Called once in any frame a system pushed QuitRequested.
+    ///
+    /// Closing is what a shipped game means by it. An editor means something
+    /// else — the game asking to quit ends play, not the tool it is running in
+    /// — so it overrides this rather than inheriting a closed window.
+    virtual void OnQuitRequested() { RequestClose(); }
+
     virtual void OnShutdown() {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
@@ -346,9 +353,17 @@ class Application
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
-    /// F4 puts the sample screen in the menu mode and takes it out again, until
-    /// screens can ask for a mode themselves.
-    void ToggleSampleMenu();
+    /// F4 shows the sample screen and hides it again. The screen asks for the
+    /// menu mode by taking input; this only decides whether it is up.
+    void ToggleSampleScreen();
+    /// Puts the window in the menu mode while a screen is taking input, and
+    /// takes it out again when none is.
+    ///
+    /// After the sync rather than before it, so a screen shown by a system this
+    /// frame is already laid out when the mode it asks for arrives. The cursor
+    /// therefore follows the screens by one frame, which is the frame the
+    /// player spends looking at a menu that has only just appeared.
+    void SyncUiInputMode();
     [[nodiscard]] bool ShouldClose() const;
 
     /// Declared first so the capture runtime is up before anything else exists —
@@ -380,9 +395,10 @@ class Application
     /// Seconds the UI has run, for timing held directions. Its own clock rather
     /// than the frame's clamped step, so a long frame still counts in full.
     double _uiTime = 0.0;
-    /// The menu mode F4 puts the sample screen in until real screens can ask
-    /// for it; null while it is off.
-    Window::InputModeHandle _sampleMenuMode;
+    /// The menu mode held while a screen is taking input; null while none is.
+    Window::InputModeHandle _uiInputMode;
+    /// The screen F4 shows, which is one of everything the UI can draw.
+    Mondrian::Screen *_sampleScreen = nullptr;
 
     // Declared before the subsystems (post-process, and the derived app's caches)
     // so it is destroyed last: workers join only after everything that might have

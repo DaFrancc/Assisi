@@ -34,6 +34,7 @@
 /// Systems with no ordering relationship run in registration order.
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -66,6 +67,16 @@ namespace Assisi::App
 
 struct World;
 class WorldManager;
+
+/// @brief Pushed by a system that wants the application to end.
+///
+/// A system cannot reach the window or the application, and should not: what
+/// quitting means is the host's to decide. A game asks by pushing this; the
+/// editor answers it by leaving play, and a shipped game by closing.
+AEVENT()
+struct QuitRequested
+{
+};
 
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
 ///
@@ -159,7 +170,7 @@ enum class SystemPhase : std::uint8_t
     /// as @ref Begin.
     Loaded = 1,
 
-    PreUpdate   = 2, ///< After input is polled; before physics and game logic.
+    PreUpdate = 2,   ///< After input is polled; before physics and game logic.
     FixedUpdate = 3, ///< Fixed timestep, before the physics step; may run several times per frame.
 
     /// Fixed timestep, immediately **after** the physics step, once per step.
@@ -172,7 +183,7 @@ enum class SystemPhase : std::uint8_t
     /// latter.
     PostFixedUpdate = 4,
 
-    Update     = 5, ///< Once per render frame; main game logic.
+    Update = 5,     ///< Once per render frame; main game logic.
     PostUpdate = 6, ///< After game logic; transform propagation and cleanup.
     Count
 };
@@ -188,7 +199,7 @@ enum class SystemPhase : std::uint8_t
 /// are registered.
 class SystemRegistry
 {
-public:
+  public:
     /// @brief Fluent handle for chaining ordering constraints after registration.
     ///
     /// Type-erased over the context type: it captures where to append the
@@ -196,7 +207,7 @@ public:
     /// regardless of whether the system is a game or render system.
     class SystemHandle
     {
-public:
+      public:
         /// @brief This system runs after the named system within the same phase.
         SystemHandle &After(std::string_view name);
 
@@ -231,24 +242,22 @@ public:
             return *this;
         }
 
-private:
+      private:
         friend class SystemRegistry;
 
         /// Records a dependency: @p before selects the before-list over the after-list.
-        using AddDependency = std::function<void (bool before, std::string_view name)>;
+        using AddDependency = std::function<void(bool before, std::string_view name)>;
         /// Marks the entry active-world-only. Null for render-phase handles.
-        using SetActiveOnly = std::function<void ()>;
+        using SetActiveOnly = std::function<void()>;
         /// Appends one component id to the entry's activation gate.
-        using AddRequirement = std::function<void (Core::Reflect::ComponentId)>;
+        using AddRequirement = std::function<void(Core::Reflect::ComponentId)>;
 
         /// Non-template half of RequireAny, so the fold above stays a one-liner.
         void Require(Core::Reflect::ComponentId id);
 
-        SystemHandle(AddDependency addDependency, SetActiveOnly setActiveOnly,
-                     AddRequirement addRequirement)
-            : _addDependency(std::move(addDependency))
-            , _setActiveOnly(std::move(setActiveOnly))
-            , _addRequirement(std::move(addRequirement))
+        SystemHandle(AddDependency addDependency, SetActiveOnly setActiveOnly, AddRequirement addRequirement)
+            : _addDependency(std::move(addDependency)), _setActiveOnly(std::move(setActiveOnly)),
+              _addRequirement(std::move(addRequirement))
         {
         }
 
@@ -258,9 +267,7 @@ private:
     };
 
     /// @brief Register a game logic system for a non-Render phase.
-    SystemHandle Register(SystemPhase phase,
-                          std::string_view name,
-                          std::function<void(SystemContext &)> fn);
+    SystemHandle Register(SystemPhase phase, std::string_view name, std::function<void(SystemContext &)> fn);
 
     /// @brief Register a render system (runs in the Render phase, receives a RenderContext).
     SystemHandle RegisterRender(std::string_view name, std::function<void(RenderContext &)> fn);
@@ -340,19 +347,18 @@ private:
     /// fresh handles, which is the only supported order.
     void Clear();
 
-private:
+  private:
     /// @brief One phase's worth of systems taking context type @p Ctx, plus its
     /// cached execution order.  Game and render phases are the same machinery
     /// differing only in Ctx — this template is what collapses the duplication.
-    template <typename Ctx>
-    struct Phase
+    template <typename Ctx> struct Phase
     {
         struct Entry
         {
             std::string name;
             std::function<void(Ctx &)> fn;
-            std::vector<std::string>  after;
-            std::vector<std::string>  before;
+            std::vector<std::string> after;
+            std::vector<std::string> before;
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
             bool activeOnly = false;
@@ -380,7 +386,7 @@ private:
             const char *chiaraName = nullptr;
         };
 
-        std::vector<Entry>       entries;
+        std::vector<Entry> entries;
         std::vector<std::size_t> sorted; ///< Indices into @ref entries, in execution order.
         bool dirty = false;
     };
@@ -388,7 +394,7 @@ private:
     /// Number of game-logic phases (everything except Render).
     static constexpr std::size_t kGamePhaseCount = static_cast<std::size_t>(SystemPhase::Count);
 
-    static std::size_t      Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
+    static std::size_t Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
     static std::string_view PhaseName(std::size_t gamePhaseIndex);
 
     /// @brief The same phase name as a pointer with program lifetime, for the
@@ -400,13 +406,11 @@ private:
     /// @p supportsActiveOnly is false for the render phase, whose handles reject
     /// ActiveWorldOnly().
     template <typename Ctx>
-    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn,
-                     bool supportsActiveOnly);
+    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn, bool supportsActiveOnly);
 
     /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
     template <typename Entry>
-    static std::vector<std::size_t> TopoSort(const std::vector<Entry> &entries,
-                                             std::string_view phaseName);
+    static std::vector<std::size_t> TopoSort(const std::vector<Entry> &entries, std::string_view phaseName);
 
     /// @brief Re-sort @p phase if dirty, then run its systems in dependency order,
     /// omitting active-world-only entries when @p skipActiveOnly and entries whose
@@ -417,7 +421,7 @@ private:
                   bool skipActiveOnly);
 
     std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
-    Phase<RenderContext>                              _renderPhase;
+    Phase<RenderContext> _renderPhase;
 };
 
 } // namespace Assisi::App

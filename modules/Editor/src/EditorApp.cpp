@@ -928,8 +928,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // before Render() propagates world matrices, so bodies move at the display's
     // refresh rate rather than the physics rate. Only while simulating: paused or
     // stopped, physics must not stomp the Transforms, because an inspector edit or
-    // the frozen pose is authoritative then.
-    if (IsSimulating())
+    // the frozen pose is authoritative then. A game screen that pauses the world
+    // during play says the same thing from the other side.
+    if (IsSimulating() && (_world == nullptr || !_world->paused))
     {
         // Display rate over every physics-driven Transform, so it belongs in the
         // render breakdown rather than being lumped in with physics.
@@ -1063,6 +1064,15 @@ void EditorApp::OnFixedUpdate(float dt)
     //
     // A block rather than an early return: the session tick below runs in either
     // state, for the reason above it.
+    //
+    // The game UI's own pause is a different question from the editor's: a
+    // pause menu shown in play-in-editor stops the world exactly as it would in
+    // the shipped game, and the editor stays live around it.
+    if (Assisi::App::World *const active = _worlds.Active(); active != nullptr)
+    {
+        active->paused = GetUi() != nullptr && GetUi()->PausesWorld();
+    }
+
     if (IsSimulating())
     {
         // Every simulated world steps, each running its OWN FixedUpdate systems
@@ -1076,7 +1086,7 @@ void EditorApp::OnFixedUpdate(float dt)
         _worlds.ForEach(
             [this, dt](Assisi::App::World &world)
             {
-                if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+                if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
                 world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
