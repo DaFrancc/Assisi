@@ -86,6 +86,9 @@ target_link_libraries(Assisi-Editor
     Assisi::GeometryImport
     Assisi::ImageImport
     Assisi::FontImport
+    # Screens: the editor compiles a screen file in process and reads the bytes
+    # it just produced, so play-in-editor shows what a player would get.
+    Assisi::MondrianImport
   PRIVATE
     # The transform gizmo (EditorGizmo.cpp) only; not part of the public API.
     imguizmo::imguizmo

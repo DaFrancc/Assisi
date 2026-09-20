@@ -248,6 +248,19 @@ struct World
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems);
 
+/// @brief Loads the screen file at @p vpath into @p world, hidden, asking for
+/// the systems the file names.
+///
+/// The whole of what a screen written as a file costs a game: one call in place
+/// of a builder. The bytes come from wherever this executable installed its
+/// screen reader — a package in a shipped game, a compile in the editor — and
+/// the systems the file declares reach AddScreen without the level knowing them.
+///
+/// @return the screen, or null when it did not load, in which case the reason
+///         is logged. A world without it keeps running: a screen that failed to
+///         load is not what should take a game down.
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath);
+
 /// @brief Destroys @p screen and takes its claim on the systems it asked for.
 /// Nothing is uninstalled: a system already running costs almost nothing idle,
 /// and the next load clears the registry anyway.

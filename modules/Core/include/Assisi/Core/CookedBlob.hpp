@@ -49,6 +49,7 @@ enum class CookedKind : std::uint8_t
     Shader,    ///< SPIR-V, exactly as the compiler emitted it.
     Verbatim,  ///< Bytes with no cooker of their own — an animated WebP, a licence text.
     Font,      ///< A glyph atlas with its metrics and kerning.
+    Screen,    ///< A flat node table: one UI screen, with the markup compiled away.
     Count,
 };
 

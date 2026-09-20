@@ -1,0 +1,30 @@
+<!-- The pause menu. Escape shows it, Resume or Back closes it, Quit ends the
+     game. While it is up it takes the pointer and the keys, and the world
+     stops. -->
+<screen name="Pause" input="consume" beneath="hide" pause="true" sort="menu"
+        needs="PauseMenu"
+        align="center center" background="0 0 0 0.55" blocks_pointer="true">
+
+  <column name="panel" width="fixed 420" padding="32" gap="20"
+          background="#1a1c24f0" border_width="2" border_color="#575f7a"
+          corner_radius="16" corner_style="rounded" align="center start">
+
+    <text name="title" width="grow" text_size="48">Paused</text>
+
+    <row name="buttons" width="grow" gap="20" align="center center">
+
+      <!-- Resume closes the menu and reaches nothing outside the UI, so it
+           needs no event, no system and nothing named in a level. -->
+      <button name="resume" on_click="hide" focus="true"
+              padding="28 10 28 10" text_size="28" background="#e63319"
+              corner_radius="10" corner_style="rounded">Resume</button>
+
+      <!-- Quit leaves the UI, so it goes through an event a system answers. -->
+      <button name="quit" on_click="Assisi::App::QuitRequested"
+              padding="28 10 28 10" text_size="28"
+              border_width="2" border_color="#ffffff"
+              corner_radius="10" corner_style="rounded">Quit</button>
+
+    </row>
+  </column>
+</screen>

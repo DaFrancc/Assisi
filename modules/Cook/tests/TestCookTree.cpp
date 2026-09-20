@@ -64,7 +64,7 @@ std::string Explain(const std::expected<CookReport, Assisi::Cook::CookError> &re
 /// behind for the next run to find and skip against.
 class ScratchDir
 {
-public:
+  public:
     explicit ScratchDir(std::string_view name)
         : _path(std::filesystem::temp_directory_path() / ("assisi-cook-test-" + std::string{name}))
     {
@@ -79,14 +79,14 @@ public:
         std::filesystem::remove_all(_path, code);
     }
 
-    ScratchDir(const ScratchDir &)            = delete;
+    ScratchDir(const ScratchDir &) = delete;
     ScratchDir &operator=(const ScratchDir &) = delete;
-    ScratchDir(ScratchDir &&)                 = delete;
-    ScratchDir &operator=(ScratchDir &&)      = delete;
+    ScratchDir(ScratchDir &&) = delete;
+    ScratchDir &operator=(ScratchDir &&) = delete;
 
     [[nodiscard]] const std::filesystem::path &Path() const { return _path; }
 
-private:
+  private:
     std::filesystem::path _path;
 };
 
@@ -123,6 +123,7 @@ TEST_CASE("Each asset kind is claimed by the cooker that owns it")
     CHECK(ClaimFor("textures/moon.jpg") == Claim::Output);
     CHECK(ClaimFor("shaders/mesh.vert.spv") == Claim::Output);
     CHECK(ClaimFor("fonts/Inter-Regular.afont") == Claim::Output);
+    CHECK(ClaimFor("ui/Pause.amdn") == Claim::Output);
 }
 
 TEST_CASE("Font files and their licences are claimed and produce nothing of their own")
@@ -162,12 +163,10 @@ TEST_CASE("Cooking the fixture tree twice produces identical bytes")
     const ScratchDir first("determinism-a");
     const ScratchDir second("determinism-b");
 
-    const std::expected<CookReport, Assisi::Cook::CookError> one =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, first.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> one = CookTree(ASSISI_COOK_FIXTURE_ROOT, first.Path());
     REQUIRE_MESSAGE(one.has_value(), Explain(one));
 
-    const std::expected<CookReport, Assisi::Cook::CookError> two =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, second.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> two = CookTree(ASSISI_COOK_FIXTURE_ROOT, second.Path());
     REQUIRE(two.has_value());
 
     CHECK(ReadCookedTree(first.Path()) == ReadCookedTree(second.Path()));
@@ -179,14 +178,12 @@ TEST_CASE("A second cook over an unchanged tree cooks nothing")
     // run is what the second reads.
     const ScratchDir out("incremental");
 
-    const std::expected<CookReport, Assisi::Cook::CookError> first =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE_MESSAGE(first.has_value(), Explain(first));
     CHECK(first->cooked > 0);
     CHECK(first->skipped == 0);
 
-    const std::expected<CookReport, Assisi::Cook::CookError> second =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE(second.has_value());
     CHECK(second->cooked == 0);
     CHECK(second->skipped == first->cooked);
@@ -199,8 +196,7 @@ TEST_CASE("A deleted blob is re-cooked even though its key still matches")
     // believes it already wrote.
     const ScratchDir out("missing-blob");
 
-    const std::expected<CookReport, Assisi::Cook::CookError> first =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE(first.has_value());
     REQUIRE(first->cooked > 0);
 
@@ -208,8 +204,7 @@ TEST_CASE("A deleted blob is re-cooked even though its key still matches")
     std::filesystem::remove(out.Path() / (first->entries.front().guid + ".cooked"), code);
     REQUIRE_FALSE(code);
 
-    const std::expected<CookReport, Assisi::Cook::CookError> second =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE(second.has_value());
     CHECK(second->cooked == 1);
 }
@@ -218,8 +213,7 @@ TEST_CASE("The manifest names every asset that produced bytes")
 {
     const ScratchDir out("manifest");
 
-    const std::expected<CookReport, Assisi::Cook::CookError> report =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE(report.has_value());
 
     CHECK(report->entries.size() == report->cooked + report->skipped);
@@ -241,8 +235,7 @@ TEST_CASE("A shader with no sidecar still cooks, under its derived id")
     const ScratchDir out("no-sidecar-out");
 
     std::error_code code;
-    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(),
-                          std::filesystem::copy_options::recursive, code);
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
     REQUIRE_FALSE(code);
     std::filesystem::remove(source.Path() / "shaders" / "fullscreen.vert.spv.aast", code);
     REQUIRE_FALSE(code);
@@ -272,8 +265,7 @@ TEST_CASE("A shader source with no compiled output fails the cook")
     const ScratchDir out("no-spv-out");
 
     std::error_code code;
-    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(),
-                          std::filesystem::copy_options::recursive, code);
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
     REQUIRE_FALSE(code);
     std::filesystem::remove(source.Path() / "shaders" / "fullscreen.vert.spv", code);
     REQUIRE_FALSE(code);
@@ -296,8 +288,7 @@ TEST_CASE("A file no cooker claims fails the cook, naming the path")
 
     // A copy of the fixture, plus one file nothing handles.
     std::error_code code;
-    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(),
-                          std::filesystem::copy_options::recursive, code);
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
     REQUIRE_FALSE(code);
 
     {
@@ -315,6 +306,42 @@ TEST_CASE("A file no cooker claims fails the cook, naming the path")
     CHECK(report.error().reason.find("no cooker") != std::string::npos);
 }
 
+TEST_CASE("A screen naming an event nothing declares fails the cook, with the line and column")
+{
+    // What cooking a screen is *for*. The same check runs at load, but a load
+    // failure happens on a player's machine; this one happens on the machine
+    // that made the mistake, and says where in the file it is.
+    const ScratchDir source("screen-src");
+    const ScratchDir out("screen-out");
+
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    // Written here rather than kept in the fixture tree, because every other
+    // case cooks that tree whole and a file that fails by design would break
+    // all of them.
+    const std::filesystem::path screen = source.Path() / "ui" / "Misspelt.amdn";
+    {
+        std::ofstream markup(screen);
+        markup << "<screen name=\"Misspelt\">\n"
+                  "  <button\n"
+                  "          on_click=\"Game::NoSuchEvent\">Quit</button>\n"
+                  "</screen>\n";
+    }
+    {
+        std::ofstream sidecar(source.Path() / "ui" / "Misspelt.amdn.aast");
+        sidecar << R"({"guid":"b74e0c15-92af-4d63-8e10-5a7c3f0d29b8","type":"AssetSidecar","version":1})";
+    }
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Misspelt.amdn");
+    // The attribute is on line 3, which is what an editor jumps to.
+    CHECK(report.error().reason.starts_with("3:"));
+    CHECK(report.error().reason.find("Game::NoSuchEvent") != std::string::npos);
+}
+
 TEST_CASE("An ignored file is neither cooked nor a failure")
 {
     // .assisiignore is what says a file is not content. Without it honoured, the
@@ -324,8 +351,7 @@ TEST_CASE("An ignored file is neither cooked nor a failure")
     const ScratchDir out("ignored-out");
 
     std::error_code code;
-    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(),
-                          std::filesystem::copy_options::recursive, code);
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
     REQUIRE_FALSE(code);
 
     // The fixture's .assisiignore excludes *.zip.
@@ -346,8 +372,7 @@ TEST_CASE("Every cooked blob is named by its asset's GUID")
 {
     const ScratchDir out("naming");
 
-    const std::expected<CookReport, Assisi::Cook::CookError> report =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE(report.has_value());
 
     for (const Assisi::Cook::ManifestEntry &entry : report->entries)
@@ -363,8 +388,7 @@ TEST_CASE("A cooker's kind is the kind its blobs say they are")
     // as a scene and fail the load that trusted the list.
     const ScratchDir out("kinds");
 
-    const std::expected<CookReport, Assisi::Cook::CookError> report =
-        CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE_MESSAGE(report.has_value(), Explain(report));
     REQUIRE_FALSE(report->entries.empty());
 
@@ -439,14 +463,14 @@ TEST_CASE("A change to any reflected type's layout re-cooks the reflected docume
     REQUIRE_MESSAGE(before.has_value(), Explain(before));
 
     namespace Reflect = Assisi::Core::Reflect;
-    Reflect::AssetTypeRegistry::Instance().Register(Reflect::AssetTypeMeta{
-        "CookTestLayoutProbe",
-        typeid(LayoutProbe),
-        {Reflect::FieldMeta{.name = "value", .type = Reflect::FieldType::Float, .offset = 0}},
-        {},
-        {},
-        {},
-        {}});
+    Reflect::AssetTypeRegistry::Instance().Register(
+        Reflect::AssetTypeMeta{"CookTestLayoutProbe",
+                               typeid(LayoutProbe),
+                               {Reflect::FieldMeta{.name = "value", .type = Reflect::FieldType::Float, .offset = 0}},
+                               {},
+                               {},
+                               {},
+                               {}});
 
     const std::expected<CookReport, Assisi::Cook::CookError> after =
         CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path(), Assisi::Image::CompressQuality::Fast);

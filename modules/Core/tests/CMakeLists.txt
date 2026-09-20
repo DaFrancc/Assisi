@@ -28,6 +28,7 @@ add_executable(Assisi-Core-Tests
   TestCookedBlob.cpp
   TestCookedPayload.cpp
   TestDiagnostics.cpp
+  TestEventCatalog.cpp
   TestEventQueue.cpp
   TestFieldBounds.cpp
   TestJobSystem.cpp

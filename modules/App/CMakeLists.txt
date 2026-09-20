@@ -77,15 +77,20 @@ if (ASSISI_ENABLE_NETWORKING)
   target_link_libraries(Assisi-App PUBLIC Assisi::NetSync)
 endif()
 
-# The engine's own systems. A declaration in a scanned header *is* the
+# The engine's own systems and events. A declaration in a scanned header *is* the
 # registration — the generated OBJECT library is pulled fully into every final
 # link, so a level naming "Bounce" finds it without anyone calling a registrar.
+#
+# SystemRegistry.hpp is here for its AEVENT alone: QuitRequested is what a Quit
+# button in a screen file names, and an event declared in a header nothing scans
+# is an event no file can push.
 assisi_reflect(
   TARGET Assisi-App
   HEADERS
     include/Assisi/App/AppConfig.hpp
     include/Assisi/App/PhysicsSystems.hpp
     include/Assisi/App/MotionSystems.hpp
+    include/Assisi/App/SystemRegistry.hpp
 )
 
 add_library(Assisi::App ALIAS Assisi-App)

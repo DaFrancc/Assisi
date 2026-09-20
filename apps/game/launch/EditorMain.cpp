@@ -19,73 +19,81 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/PerfCapture.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ConfigReader.hpp>
+#include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
+#include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/ScreenBlob.hpp>
+#include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace
 {
-constexpr const char *kUsage =
-    "Usage: Assisi-GameEditor [options]\n"
-    "  -l, --load-level <lvl>  virtual path of a level to open at startup,\n"
-    "                          e.g. levels/Materials.alvl\n"
-    "  --no-editor-visuals     don't build the renderer's editor overlay passes\n"
-    "                          (selection outline, entity icons, wireframes) -\n"
-    "                          runs the render path a Game build gets\n"
-    "  --server                run headless: no window, renderer, input or debug\n"
-    "                          UI - just the fixed-step simulation (see ServerApp)\n"
-    "  --host [port]           --server + replicate to clients (default port 27015)\n"
-    "  --connect <addr[:port]> join a host and mirror its world. Headless by\n"
-    "                          default; with --pie-client it is a windowed editor\n"
-    "  --pie-client            play-in-editor client: a windowed editor that joins\n"
-    "                          --connect at startup and writes nothing the editor\n"
-    "                          that spawned it also owns. Launched by \"Host + N\"\n"
-    "  --spawn <n>             --host only: spawn n moving replicated entities\n"
-    "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
-    "                          until interrupted, the default)\n"
-    "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
-    "                          error, fatal (default trace; info in a shipping\n"
-    "                          build)\n"
-    "  --gpu-cull              start with the GPU-driven cull path on (off by\n"
-    "                          default; the CPU path is the reference)\n"
-    "  -h, --help              show this help and exit\n"
-    "\n"
-    " performance capture - run a scene, print medians, exit:\n"
-    "  --capture [frames]      measure this many frames and exit (default 600;\n"
-    "                          the protocol asks for at least 500). Snaps to the\n"
-    "                          level's active Camera, turns pacing off and\n"
-    "                          per-pass GPU timers on, and renders undecorated\n"
-    "                          so the framebuffer is exactly the size asked for\n"
-    "  --capture-warmup <n>    frames to discard first (default 120), covering\n"
-    "                          pipeline compilation and first-use uploads\n"
-    "  --capture-size <WxH>    resolution to render at, e.g. 2560x1440 or\n"
-    "                          1920x1080. Defaults to the configured window size\n"
-    "  --capture-out <path>    write the JSON report here as well as the log\n"
-    "  --capture-image <path>  write a PNG of the frame after the last measured\n"
-    "                          one, without the debug UI. Alone, it measures one\n"
-    "                          frame after the warm-up\n"
-    "  --capture-camera <ex,ey,ez,tx,ty,tz>\n"
-    "                          stand the camera at e looking at t, instead of the\n"
-    "                          level's active Camera\n"
-    "  --capture-options <path> run with this options file instead of the\n"
-    "                          user's options.json, which is left untouched\n"
-    "  --capture-passes        also time each pass separately. OFF by default:\n"
-    "                          per-pass timers force render-pass breaks, so a\n"
-    "                          run with them on measures a frame that differs\n"
-    "                          from the one that ships. Publish the default;\n"
-    "                          use this to find which pass moved\n"
-    "\n"
-    "  e.g. Assisi-GameEditor -l levels/PerfBlank.alvl --capture 600 \\\n"
-    "                         --capture-size 2560x1440 --capture-out blank-1440p.json\n";
+constexpr const char *kUsage = "Usage: Assisi-GameEditor [options]\n"
+                               "  -l, --load-level <lvl>  virtual path of a level to open at startup,\n"
+                               "                          e.g. levels/Materials.alvl\n"
+                               "  --no-editor-visuals     don't build the renderer's editor overlay passes\n"
+                               "                          (selection outline, entity icons, wireframes) -\n"
+                               "                          runs the render path a Game build gets\n"
+                               "  --server                run headless: no window, renderer, input or debug\n"
+                               "                          UI - just the fixed-step simulation (see ServerApp)\n"
+                               "  --host [port]           --server + replicate to clients (default port 27015)\n"
+                               "  --connect <addr[:port]> join a host and mirror its world. Headless by\n"
+                               "                          default; with --pie-client it is a windowed editor\n"
+                               "  --pie-client            play-in-editor client: a windowed editor that joins\n"
+                               "                          --connect at startup and writes nothing the editor\n"
+                               "                          that spawned it also owns. Launched by \"Host + N\"\n"
+                               "  --spawn <n>             --host only: spawn n moving replicated entities\n"
+                               "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
+                               "                          until interrupted, the default)\n"
+                               "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
+                               "                          error, fatal (default trace; info in a shipping\n"
+                               "                          build)\n"
+                               "  --gpu-cull              start with the GPU-driven cull path on (off by\n"
+                               "                          default; the CPU path is the reference)\n"
+                               "  -h, --help              show this help and exit\n"
+                               "\n"
+                               " performance capture - run a scene, print medians, exit:\n"
+                               "  --capture [frames]      measure this many frames and exit (default 600;\n"
+                               "                          the protocol asks for at least 500). Snaps to the\n"
+                               "                          level's active Camera, turns pacing off and\n"
+                               "                          per-pass GPU timers on, and renders undecorated\n"
+                               "                          so the framebuffer is exactly the size asked for\n"
+                               "  --capture-warmup <n>    frames to discard first (default 120), covering\n"
+                               "                          pipeline compilation and first-use uploads\n"
+                               "  --capture-size <WxH>    resolution to render at, e.g. 2560x1440 or\n"
+                               "                          1920x1080. Defaults to the configured window size\n"
+                               "  --capture-out <path>    write the JSON report here as well as the log\n"
+                               "  --capture-image <path>  write a PNG of the frame after the last measured\n"
+                               "                          one, without the debug UI. Alone, it measures one\n"
+                               "                          frame after the warm-up\n"
+                               "  --capture-camera <ex,ey,ez,tx,ty,tz>\n"
+                               "                          stand the camera at e looking at t, instead of the\n"
+                               "                          level's active Camera\n"
+                               "  --capture-options <path> run with this options file instead of the\n"
+                               "                          user's options.json, which is left untouched\n"
+                               "  --capture-passes        also time each pass separately. OFF by default:\n"
+                               "                          per-pass timers force render-pass breaks, so a\n"
+                               "                          run with them on measures a frame that differs\n"
+                               "                          from the one that ships. Publish the default;\n"
+                               "                          use this to find which pass moved\n"
+                               "\n"
+                               "  e.g. Assisi-GameEditor -l levels/PerfBlank.alvl --capture 600 \\\n"
+                               "                         --capture-size 2560x1440 --capture-out blank-1440p.json\n";
 
 /// The default frame count for --capture, which is the measurement protocol's
 /// own figure rather than a number picked here.
@@ -103,10 +111,10 @@ struct EditorArgs
     Game::ServerOptions serverOptions;
     std::string startupLevel;
     bool editorVisuals = true;
-    bool server        = false;
-    bool pieClient     = false;
-    bool gpuCulling    = false;
-    bool shouldExit    = false;
+    bool server = false;
+    bool pieClient = false;
+    bool gpuCulling = false;
+    bool shouldExit = false;
 };
 
 /// Reads the value that follows @p flag, reporting a missing one by name.
@@ -157,8 +165,7 @@ bool ParseCaptureArg(std::string_view arg, int32_t argc, char **argv, int32_t &i
     }
     if (arg == "--capture-warmup")
     {
-        ok = TakeValue(argc, argv, i, "--capture-warmup", value) &&
-             Game::ParsePositive(value, capture.warmupFrames);
+        ok = TakeValue(argc, argv, i, "--capture-warmup", value) && Game::ParsePositive(value, capture.warmupFrames);
         if (!ok && !value.empty())
         {
             ReportBadValue("--capture-warmup", value, "a positive integer");
@@ -242,7 +249,7 @@ bool ParseSessionArg(std::string_view arg, int32_t argc, char **argv, int32_t &i
     }
     if (arg == "--host")
     {
-        out.server             = true;
+        out.server = true;
         out.serverOptions.role = Game::ServerRole::Host;
         // The port is optional, so only consume the next argument when it does
         // not look like another flag.
@@ -316,8 +323,7 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
             return true;
         }
 
-        if (ParseCaptureArg(arg, argc, argv, i, out.capture, ok) ||
-            ParseSessionArg(arg, argc, argv, i, out, ok))
+        if (ParseCaptureArg(arg, argc, argv, i, out.capture, ok) || ParseSessionArg(arg, argc, argv, i, out, ok))
         {
             if (!ok)
             {
@@ -367,12 +373,43 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
         }
         else
         {
-            std::fprintf(stderr, "Unknown argument '%.*s'\n\n%s", static_cast<int>(arg.size()), arg.data(),
-                         kUsage);
+            std::fprintf(stderr, "Unknown argument '%.*s'\n\n%s", static_cast<int>(arg.size()), arg.data(), kUsage);
             return false;
         }
     }
     return true;
+}
+
+/// Compiles the screen file at @p vpath and reads the bytes back.
+///
+/// The compile and the read are the same two calls the cook makes, in the same
+/// order, which is what stops the editor from becoming a second, more forgiving
+/// way to load a screen.
+std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadError> CompileSourceScreen(
+    std::string_view vpath)
+{
+    const std::expected<std::string, Assisi::Core::AssetError> text = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(Assisi::Mondrian::ScreenReadError::Missing);
+    }
+
+    const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
+        Assisi::Mondrian::Import::CompileScreenText(*text, Assisi::Core::EventCatalog::Instance());
+    if (!cooked)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+                                 cooked.error().message);
+        return std::unexpected(Assisi::Mondrian::ScreenReadError::Invalid);
+    }
+
+    std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::CookedScreenError> document =
+        Assisi::Mondrian::ReadCookedScreen(*cooked);
+    if (!document)
+    {
+        return std::unexpected(Assisi::Mondrian::ScreenReadError::Invalid);
+    }
+    return std::move(*document);
 }
 
 } // namespace
@@ -386,6 +423,11 @@ int main(int argc, char **argv)
     (void)Assisi::Runtime::SceneSerializer::SetDocumentReader(&Assisi::Runtime::SceneSerializer::ReadTextDocument);
     (void)Assisi::Core::SetConfigReader(&Assisi::Core::ReadTextConfig);
     (void)Assisi::Mondrian::SetFontReader(&Assisi::Mondrian::Import::ReadSourceFont);
+    // Screens are the one asset the editor does not read a second way. It
+    // compiles the source to the same bytes the cook would write and reads
+    // those, so what an author sees is what a player gets, and a file that
+    // would fail the cook fails here too.
+    (void)Assisi::Mondrian::SetScreenReader(&CompileSourceScreen);
 
     EditorArgs args;
     args.capture.frames = 0; // 0 means "not a capture run"; --capture sets it
@@ -441,12 +483,12 @@ int main(int argc, char **argv)
     }
 
     args.capture.levelPath = args.startupLevel;
-    Assisi::Editor::EditorApp app({.startupLevel        = args.startupLevel,
-                                   .autoJoinEndpoint    = autoJoinEndpoint,
-                                   .restrictedViewer    = args.pieClient,
+    Assisi::Editor::EditorApp app({.startupLevel = args.startupLevel,
+                                   .autoJoinEndpoint = autoJoinEndpoint,
+                                   .restrictedViewer = args.pieClient,
                                    .enableEditorVisuals = args.editorVisuals,
-                                   .perfCapture         = args.capture,
-                                   .gpuCulling          = args.gpuCulling});
+                                   .perfCapture = args.capture,
+                                   .gpuCulling = args.gpuCulling});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

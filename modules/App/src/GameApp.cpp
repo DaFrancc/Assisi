@@ -11,6 +11,7 @@
 #include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
+#include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -55,6 +56,7 @@ GameApp::~GameApp()
         (void)Runtime::SceneSerializer::SetDocumentReader({});
         (void)Core::SetConfigReader({});
         (void)Mondrian::SetFontReader({});
+        (void)Mondrian::SetScreenReader({});
     }
 }
 
@@ -87,6 +89,10 @@ bool GameApp::MountContent()
                                 { return Core::ReadCookedConfig(provider, vpath, type, instance); });
     (void)Mondrian::SetFontReader([&provider](std::string_view vpath)
                                   { return Mondrian::ReadCookedFont(provider, vpath); });
+    // The cooked blob and nothing else. A game has no parser to fall back to,
+    // which is the point: the markup never reaches the shipped binary.
+    (void)Mondrian::SetScreenReader([&provider](std::string_view vpath)
+                                    { return Mondrian::ReadCookedScreen(provider, vpath); });
     return true;
 }
 
