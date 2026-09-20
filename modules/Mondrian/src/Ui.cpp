@@ -149,15 +149,13 @@ constexpr float kSampleSliderStart = 60.f;
 constexpr SliderRange kSampleStepRange{.min = 0.f, .max = 3.f, .step = 1.f};
 constexpr int32_t kSampleSliderSteps = 4;
 constexpr int32_t kSampleSliderStep = 1;
-/// Long enough to wrap in the panel, so the sample screen shows a field of
-/// many lines doing what one of a single line does not.
-/// The sample notes box grows to this many lines and is then full, which is
-/// what a box in a form does; a box meant to hold more goes in a scrolling node.
+/// One sample field of many lines for each way of being tall, side by side so
+/// that typing into them shows what the three do differently. Their text says
+/// which is which and stays short: the row is as tall as its tallest field.
 constexpr uint32_t kSampleNoteLines = 3;
-
-constexpr std::string_view kSampleNotes =
-    "A field of many lines wraps to its width and grows downwards as it fills. Enter puts a break in rather "
-    "than finishing, and the caret moves between lines.";
+constexpr std::string_view kSampleGrowing = "grows forever";
+constexpr std::string_view kSampleUpTo = "up to 3 lines";
+constexpr std::string_view kSampleExactly = "exactly 3 lines";
 
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldColor{0.04f, 0.05f, 0.07f, 1.f};
 constexpr float kFieldWidth = 220.f;
@@ -317,9 +315,21 @@ void Ui::AddSampleControls()
     SetText(secret, "hunter2");
     SetMask(secret, TextMask::Dots);
 
-    const TextFieldId notes = AddTextField(panel, TextLines::Multi);
-    SetHeight(notes, TextHeight::UpTo, kSampleNoteLines);
-    SetText(notes, kSampleNotes);
+    Style notes = fields;
+    notes.childAlign = {Alignment::Start, Alignment::Start};
+    const NodeId noteRow = Add(_tree, panel, "notes", notes);
+
+    const TextFieldId growing = AddTextField(noteRow, TextLines::Multi);
+    SetHeight(growing, TextHeight::Unbounded, 0);
+    SetText(growing, kSampleGrowing);
+
+    const TextFieldId upTo = AddTextField(noteRow, TextLines::Multi);
+    SetHeight(upTo, TextHeight::UpTo, kSampleNoteLines);
+    SetText(upTo, kSampleUpTo);
+
+    const TextFieldId exactly = AddTextField(noteRow, TextLines::Multi);
+    SetHeight(exactly, TextHeight::Exactly, kSampleNoteLines);
+    SetText(exactly, kSampleExactly);
 
     Style list;
     list.sizing = {Sizing::Grow(), Sizing::Fixed(kSampleListHeight)};
