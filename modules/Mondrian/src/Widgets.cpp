@@ -287,6 +287,8 @@ WidgetResponse SteppedSliderInput(const WidgetView &view, Node &node, const Widg
     case WidgetGesture::Activate:
         return WidgetResponse::Handled;
     case WidgetGesture::Wheel:
+    case WidgetGesture::Type:
+    case WidgetGesture::Edit:
     case WidgetGesture::Count:
         break;
     }
@@ -338,6 +340,8 @@ WidgetResponse ContinuousSliderInput(const WidgetView &view, Node &node, const W
     case WidgetGesture::Activate:
         return WidgetResponse::Handled;
     case WidgetGesture::Wheel:
+    case WidgetGesture::Type:
+    case WidgetGesture::Edit:
     case WidgetGesture::Count:
         break;
     }
@@ -571,6 +575,8 @@ WidgetResponse ScrollInput(const WidgetView &view, Node &node, const WidgetEvent
         return moved == WidgetResponse::Ignored ? WidgetResponse::Ignored : WidgetResponse::Handled;
     }
     case WidgetGesture::Activate:
+    case WidgetGesture::Type:
+    case WidgetGesture::Edit:
     case WidgetGesture::Count:
         break;
     }
@@ -590,6 +596,8 @@ WidgetResponse ButtonInput(const WidgetView & /*view*/, Node & /*node*/, const W
     case WidgetGesture::Drag:
     case WidgetGesture::Action:
     case WidgetGesture::Wheel:
+    case WidgetGesture::Type:
+    case WidgetGesture::Edit:
     case WidgetGesture::Count:
         break;
     }
@@ -629,8 +637,10 @@ void RegisterBuiltinWidgets(WidgetRegistry &registry)
         WidgetType{.measure = &MeasureSlider, .draw = &DrawSteppedSlider, .input = &SteppedSliderInput});
     const uint32_t scroll =
         registry.Register(WidgetType{.claims = &ScrollClaims, .draw = &DrawScroll, .input = &ScrollInput});
+    const uint32_t field = registry.Register(TextFieldWidget());
 
-    ASSISI_ASSERT(button == static_cast<uint32_t>(BuiltinWidget::Button) &&
+    ASSISI_ASSERT(field == static_cast<uint32_t>(BuiltinWidget::TextField) &&
+                      button == static_cast<uint32_t>(BuiltinWidget::Button) &&
                       toggle == static_cast<uint32_t>(BuiltinWidget::Toggle) &&
                       slider == static_cast<uint32_t>(BuiltinWidget::ContinuousSlider) &&
                       stepped == static_cast<uint32_t>(BuiltinWidget::SteppedSlider) &&

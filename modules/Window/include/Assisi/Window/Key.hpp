@@ -70,6 +70,10 @@ enum class Key : int
     Left = 263,
     Down = 264,
     Up = 265,
+    PageUp = 266,
+    PageDown = 267,
+    Home = 268,
+    End = 269,
 
     F1 = 290,
     F2 = 291,

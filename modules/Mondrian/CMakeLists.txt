@@ -19,8 +19,10 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Navigation.hpp"
     "include/Assisi/Mondrian/NodeId.hpp"
     "include/Assisi/Mondrian/NodeTree.hpp"
+    "include/Assisi/Mondrian/Pattern.hpp"
     "include/Assisi/Mondrian/Style.hpp"
     "include/Assisi/Mondrian/Text.hpp"
+    "include/Assisi/Mondrian/TextEdit.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
     "include/Assisi/Mondrian/Utf8.hpp"
     "include/Assisi/Mondrian/Widget.hpp"
@@ -33,7 +35,9 @@ target_sources(Assisi-Mondrian
     "src/Layout.cpp"
     "src/Navigation.cpp"
     "src/NodeTree.cpp"
+    "src/Pattern.cpp"
     "src/Text.cpp"
+    "src/TextField.cpp"
     "src/Ui.cpp"
     "src/Utf8.cpp"
     "src/Widget.cpp"
@@ -49,6 +53,10 @@ target_link_libraries(Assisi-Mondrian
   PUBLIC
     Assisi::Core
     Assisi::Math
+  PRIVATE
+    # Private, so <pcre2.h> stays out of every translation unit that includes a
+    # Mondrian header: only the text field's own compiles against it.
+    PCRE2::8BIT
 )
 
 add_library(Assisi::Mondrian ALIAS Assisi-Mondrian)

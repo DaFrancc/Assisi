@@ -109,6 +109,52 @@ struct TextLayout
 /// narrowest width it can wrap to without breaking a word.
 [[nodiscard]] float MeasureLongestWord(const ShapedText &shaped, const Font &font, float size);
 
+/// @brief Where a caret goes: its left edge within the block, and which of the
+/// layout's lines it is on.
+struct CaretPlace
+{
+    float x = 0.f;
+    uint32_t line = 0;
+};
+
+/// @brief Where the caret sits when it is @p character characters into
+/// @p shown, which must be the text @p layout was laid out from.
+///
+/// A caret past the end of the text lands after its last glyph. Counting in
+/// characters rather than bytes is what keeps it from landing inside one.
+[[nodiscard]] CaretPlace PlaceCaret(const TextLayout &layout, std::string_view shown, uint32_t character);
+
+/// @brief Which character of @p shown the point @p local falls on, measured
+/// from the block's top-left.
+///
+/// The nearest boundary between characters rather than the character under the
+/// point, so clicking a letter's right half puts the caret after it, as it does
+/// everywhere else.
+[[nodiscard]] uint32_t CharacterAt(const TextLayout &layout, std::string_view shown, Point local);
+
+/// @brief The box one line of @p layout covers, measured from the block's
+/// top-left: the whole line's width, and the height of the text on it rather
+/// than of whatever holds it.
+///
+/// Empty when @p line is past the end. What a caret is sized from, so it is as
+/// tall as the letters beside it.
+[[nodiscard]] Rect LineBox(const TextLayout &layout, uint32_t line);
+
+/// @brief A run of text, counted in characters: from @p first up to but not
+/// including @p last.
+struct TextRange
+{
+    uint32_t first = 0;
+    uint32_t last = 0;
+};
+
+/// @brief The box @p range covers on one line of @p layout, measured from the
+/// block's top-left.
+///
+/// Empty when the range does not reach @p line. What a selection highlight is
+/// drawn from, one line at a time.
+[[nodiscard]] Rect LineSelection(const TextLayout &layout, std::string_view shown, uint32_t line, TextRange range);
+
 /// @brief Adds a glyph quad to @p list for each drawn glyph of @p layout, with
 /// the block's top-left at @p origin.
 ///

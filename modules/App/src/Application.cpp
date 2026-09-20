@@ -688,6 +688,14 @@ void Application::Run()
                     const Mondrian::InputResult used =
                         _ui->ProcessInput(GatherUiInput(*_input, _actions, _uiTime, pointer, claim));
                     ApplyUiResult(*_input, used, claim);
+
+                    // Not while something over the UI has the pointer — the
+                    // editor's panels set their own shapes — and not while the
+                    // game has it captured, where the only shape is none.
+                    if (!claim.pointer && !_input->IsMouseCaptured())
+                    {
+                        _window->SetCursorShape(used.cursor);
+                    }
                 }
             }
         }

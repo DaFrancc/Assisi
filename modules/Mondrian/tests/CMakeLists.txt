@@ -7,7 +7,9 @@ add_executable(Assisi-Mondrian-Tests
   TestLayout.cpp
   TestNavigation.cpp
   TestNodeTree.cpp
+  TestPattern.cpp
   TestText.cpp
+  TestTextField.cpp
   TestUi.cpp
   TestUtf8.cpp
   TestWidget.cpp

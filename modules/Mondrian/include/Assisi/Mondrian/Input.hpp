@@ -16,6 +16,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace Assisi::Mondrian
 {
@@ -41,14 +42,25 @@ enum class InputDevice : uint8_t
 /// @brief One frame of input, as the host gathered it.
 struct UiInput
 {
+    /// What the keyboard produced this frame, UTF-8: what a layout, the
+    /// modifiers and any dead keys made of the keys pressed, which is what a
+    /// text field takes in. Not the same question as which keys are down.
+    std::string typed;
     double time = 0.0; ///< seconds, on any clock that only moves forward
     Point pointer;     ///< device pixels, the space layout places nodes in
     std::array<bool, kUiActionCount> actionPressed{};
     std::array<bool, kUiActionCount> actionDown{};
+    std::array<bool, kEditKeyCount> editPressed{};
+    std::array<bool, kEditKeyCount> editDown{};
     /// Notches scrolled this frame: y away from the player, x sideways, which a
     /// tilting wheel, a trackpad, or the host's Shift and wheel together send.
     Point wheel;
     InputGrant grant = InputGrant::Nothing;
+    /// Whether a movement carries the selection with it, and how far it goes:
+    /// the Shift and Control the host reads off the keyboard, in the terms the
+    /// UI thinks in.
+    TextReach reach = TextReach::Moves;
+    TextStep step = TextStep::Character;
     bool primaryDown = false;
     bool primaryPressed = false;
     bool primaryReleased = false;
@@ -59,6 +71,10 @@ struct UiInput
 /// @brief What the UI used, for the host to hide from the game.
 struct InputResult
 {
+    /// What the pointer should look like, from whatever it is over or has hold
+    /// of. Arrow whenever the UI has nothing to say, which includes every
+    /// frame the game has the pointer to itself.
+    Core::CursorShape cursor = Core::CursorShape::Arrow;
     bool pointerUsed = false;   ///< the primary button's press or release was the UI's
     bool keyboardTaken = false; ///< the UI read the keyboard this frame
     bool wheelUsed = false;     ///< a control scrolled on this frame's wheel
@@ -81,7 +97,17 @@ struct UiBack
 };
 
 /// Seconds a direction is held before it repeats, and between repeats after.
+/// The same for an editing key: a backspace held down erases at the rate a
+/// direction held down moves.
 inline constexpr double kNavRepeatDelaySeconds = 0.4;
 inline constexpr double kNavRepeatIntervalSeconds = 0.1;
+
+/// @brief The one key of its kind being held long enough to repeat, and when it
+/// next acts. Count for none.
+template <typename Key> struct KeyRepeat
+{
+    double at = 0.0;
+    Key key = Key::Count;
+};
 
 } // namespace Assisi::Mondrian

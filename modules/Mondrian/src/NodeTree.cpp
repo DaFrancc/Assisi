@@ -238,11 +238,27 @@ void NodeTree::SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> 
     }
 }
 
-void NodeTree::SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const WidgetValue &)> push)
+void NodeTree::SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push)
 {
     if (Node *node = GetMutable(id))
     {
         node->onChange = std::move(push);
+    }
+}
+
+void NodeTree::SetOnSubmit(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->onSubmit = std::move(push);
+    }
+}
+
+void NodeTree::SetTextEdit(NodeId id, const TextEdit &edit)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->edit = edit;
     }
 }
 

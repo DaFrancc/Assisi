@@ -36,10 +36,13 @@ struct LayoutNode
 {
     static constexpr uint32_t kNoText = std::numeric_limits<uint32_t>::max();
 
-    Rect rect;               ///< device pixels, edges whole
-    Rect clip = kNoClip;     ///< what the node's own quads are clipped to
-    Point contentSize;       ///< the extent of its content, which exceeds rect where it scrolls
-    Point minSize;           ///< the least it can shrink to without clipping its content
+    Rect rect;           ///< device pixels, edges whole
+    Rect clip = kNoClip; ///< what the node's own quads are clipped to
+    Point contentSize;   ///< the extent of its content, which exceeds rect where it scrolls
+    Point minSize;       ///< the least it can shrink to without clipping its content
+    /// How far a single line of text is shifted left to keep its caret in
+    /// sight, in device pixels. Zero for everything that is not a field.
+    float textScroll = 0.f;
     uint32_t text = kNoText; ///< index into LayoutResult::texts
     uint32_t generation = 0;
     bool placed = false; ///< false for a free slot and a hidden subtree
@@ -60,5 +63,13 @@ struct LayoutResult
 /// @brief Lays @p tree out in @p viewport at @p scale into @p out. Text is set in
 /// @p font; with no font, text takes no space and draws nothing.
 void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out);
+
+/// @brief Where @p placed's text begins, in device pixels: inside its padding,
+/// on whole pixels so the layout's own whole-pixel lines land on them, and
+/// shifted by however far a single line has scrolled.
+///
+/// Drawing and hit testing both go through this, which is what keeps a caret
+/// under the character it was clicked on.
+[[nodiscard]] Point TextOrigin(const LayoutNode &placed, const Style &style, float scale);
 
 } // namespace Assisi::Mondrian

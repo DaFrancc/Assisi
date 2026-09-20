@@ -1,0 +1,843 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include "TestFontFixture.hpp"
+
+#include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/TextEdit.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
+#include <Assisi/Mondrian/Utf8.hpp>
+
+#include <Assisi/Core/EventQueue.hpp>
+
+#include <doctest/doctest.h>
+
+#include <cstddef>
+#include <string>
+#include <string_view>
+
+using namespace Assisi::Mondrian;
+using Assisi::Mondrian::Testing::FixtureFont;
+
+namespace
+{
+
+constexpr Extent kScreen{1280, 720};
+constexpr TextureId kFontTexture{9};
+
+/// Wide enough that the sample text in these cases fits without scrolling.
+constexpr float kFieldTestWidth = 600.f;
+
+/// Text whose characters are not one byte each: "héllo", where the e acute is
+/// two bytes, and an emoji, which is four.
+constexpr std::string_view kAccented = "h\xC3\xA9llo";
+constexpr std::string_view kEmoji = "\xF0\x9F\x98\x80";
+
+/// What a field pushes when it changes, and when it is finished.
+struct Typed
+{
+    std::string text;
+};
+
+struct Submitted
+{
+    std::string text;
+};
+
+/// One field on screen, with a clipboard and an event queue of its own.
+struct Field
+{
+    Assisi::Mondrian::Font font = FixtureFont();
+    std::string clipboard;
+    Assisi::Core::EventQueue events;
+    Ui ui;
+    TextFieldId field;
+
+    explicit Field(TextLines lines = TextLines::Single)
+    {
+        ui.SetFont(&font, kFontTexture);
+        ui.SetEvents(&events);
+        ui.SetClipboard(Clipboard{.read = [this] { return clipboard; },
+                                  .write = [this](std::string_view text) { clipboard = text; }});
+
+        field = ui.AddTextField(ui.Tree().Root(), lines);
+        // Floating and fixed, so it sits at a known place whatever else the
+        // sample screen is doing, and is the last thing the pointer can hit.
+        Style style = ui.Tree().Get(field.node)->style;
+        style.floating.enabled = true;
+        style.sizing = {Sizing::Fixed(kFieldTestWidth), Sizing::Fit()};
+        ui.Tree().SetStyle(field.node, style);
+        ui.SetFocus(field.node);
+        Step({});
+    }
+
+    void Step(const UiInput &input)
+    {
+        ui.ProcessInput(input);
+        ui.Sync(kScreen);
+    }
+
+    [[nodiscard]] std::string_view Text() const { return ui.GetText(field); }
+
+    [[nodiscard]] const TextEdit &Edit() const { return ui.Tree().Get(field.node)->edit; }
+
+    [[nodiscard]] Rect Box() const
+    {
+        const LayoutNode *placed = ui.GetLayout().Get(field.node);
+        REQUIRE(placed != nullptr);
+        return placed->rect;
+    }
+
+    /// Types @p text into the field, as the keyboard would deliver it.
+    void Type(std::string_view text)
+    {
+        UiInput input;
+        input.grant = InputGrant::Everything;
+        input.typed = text;
+        Step(input);
+    }
+};
+
+UiInput Keys()
+{
+    UiInput input;
+    input.grant = InputGrant::Everything;
+    return input;
+}
+
+/// One press of @p key, with the modifiers @p reach and @p step stand for.
+UiInput Press(EditKey key, TextReach reach = TextReach::Moves, TextStep step = TextStep::Character)
+{
+    UiInput input = Keys();
+    input.editPressed[static_cast<std::size_t>(key)] = true;
+    input.editDown[static_cast<std::size_t>(key)] = true;
+    input.reach = reach;
+    input.step = step;
+    return input;
+}
+
+UiInput Press(UiAction action, TextReach reach = TextReach::Moves, TextStep step = TextStep::Character)
+{
+    UiInput input = Keys();
+    input.actionPressed[static_cast<std::size_t>(action)] = true;
+    input.actionDown[static_cast<std::size_t>(action)] = true;
+    input.reach = reach;
+    input.step = step;
+    return input;
+}
+
+UiInput PointerAt(Point pointer)
+{
+    UiInput input = Keys();
+    input.pointer = pointer;
+    return input;
+}
+
+/// The characters of @p text from @p first up to @p last, for saying what a
+/// selection holds.
+std::string_view Between(std::string_view text, uint32_t first, uint32_t last)
+{
+    const uint32_t from = CharacterOffset(text, first);
+    return text.substr(from, CharacterOffset(text, last) - from);
+}
+
+} // namespace
+
+TEST_CASE("TextField: typing puts characters in, whatever they are made of")
+{
+    Field field;
+    field.Type("h");
+    field.Type("\xC3\xA9"); // e acute, two bytes
+    CHECK(field.Text() == "h\xC3\xA9");
+    CHECK(field.Edit().caret == 2);
+}
+
+TEST_CASE("TextField: backspace takes a whole character, not a byte of one")
+{
+    Field field;
+    field.Type(kAccented);
+    REQUIRE(field.Text() == kAccented);
+
+    field.Step(Press(EditKey::Backspace));
+    field.Step(Press(EditKey::Backspace));
+    CHECK(field.Text() == "h\xC3\xA9l");
+
+    field.Step(Press(EditKey::Backspace));
+    CHECK(field.Text() == "h\xC3\xA9");
+
+    // The accented letter is two bytes and goes as one: what is left is the
+    // single byte before it, not half of it.
+    field.Step(Press(EditKey::Backspace));
+    CHECK(field.Text() == "h");
+}
+
+TEST_CASE("TextField: the caret steps over a multi-byte character in one move")
+{
+    Field field;
+    field.Type(kEmoji);
+    field.Type("b");
+    REQUIRE(field.Edit().caret == 2);
+
+    field.Step(Press(UiAction::Left));
+    field.Step(Press(UiAction::Left));
+    CHECK(field.Edit().caret == 0);
+
+    field.Step(Press(EditKey::Delete));
+    CHECK(field.Text() == "b"); // all four bytes of the emoji, and only those
+}
+
+TEST_CASE("TextField: Home and End reach the ends of the text")
+{
+    Field field;
+    field.Type("abc");
+    field.Step(Press(EditKey::LineStart));
+    CHECK(field.Edit().caret == 0);
+    field.Step(Press(EditKey::LineEnd));
+    CHECK(field.Edit().caret == 3);
+}
+
+TEST_CASE("TextField: Shift with a movement selects, and typing replaces what is selected")
+{
+    Field field;
+    field.Type("abcd");
+    field.Step(Press(UiAction::Left, TextReach::Extends));
+    field.Step(Press(UiAction::Left, TextReach::Extends));
+    CHECK(field.Edit().HasSelection());
+
+    field.Type("X");
+    CHECK(field.Text() == "abX");
+}
+
+TEST_CASE("TextField: a sideways key with a selection collapses it rather than moving from the caret")
+{
+    Field field;
+    field.Type("abcd");
+    field.Step(Press(EditKey::SelectAll));
+    field.Step(Press(UiAction::Left));
+    CHECK(field.Edit().caret == 0);
+    CHECK_FALSE(field.Edit().HasSelection());
+}
+
+TEST_CASE("TextField: control with a movement goes a word at a time")
+{
+    Field field;
+    field.Type("foo bar");
+    field.Step(Press(UiAction::Left, TextReach::Moves, TextStep::Word));
+    CHECK(field.Edit().caret == 4); // the start of "bar"
+
+    field.Type("X");
+    CHECK(field.Text() == "foo Xbar");
+}
+
+TEST_CASE("TextField: control with backspace takes the word before the caret")
+{
+    Field field;
+    field.Type("foo bar");
+    field.Step(Press(EditKey::Backspace, TextReach::Moves, TextStep::Word));
+    CHECK(field.Text() == "foo ");
+}
+
+TEST_CASE("TextField: select all takes everything, and delete then empties the field")
+{
+    Field field;
+    field.Type("abc");
+    field.Step(Press(EditKey::SelectAll));
+    CHECK(field.Edit().SelectionFirst() == 0);
+    CHECK(field.Edit().SelectionLast() == 3);
+
+    field.Step(Press(EditKey::Delete));
+    CHECK(field.Text().empty());
+}
+
+TEST_CASE("TextField: copy, cut and paste move text through the clipboard")
+{
+    Field field;
+    field.Type(kAccented);
+
+    field.Step(Press(EditKey::LineEnd));
+    field.Step(Press(UiAction::Left, TextReach::Extends));
+    field.Step(Press(UiAction::Left, TextReach::Extends));
+    field.Step(Press(EditKey::Copy));
+    CHECK(field.clipboard == "lo");
+    CHECK(field.Text() == kAccented); // copying changes nothing
+
+    field.Step(Press(EditKey::Cut));
+    CHECK(field.Text() == "h\xC3\xA9l");
+
+    field.Step(Press(EditKey::LineStart));
+    field.Step(Press(EditKey::Paste));
+    CHECK(field.Text() == "loh\xC3\xA9l");
+}
+
+TEST_CASE("TextField: each ability turned off stops its own feature and nothing else")
+{
+    SUBCASE("copy")
+    {
+        Field field;
+        field.Type("abc");
+        field.ui.SetAbility(field.field, TextAbility::Copy, false);
+        field.Step(Press(EditKey::SelectAll));
+        field.Step(Press(EditKey::Copy));
+        CHECK(field.clipboard.empty());
+        CHECK(field.Text() == "abc");
+    }
+    SUBCASE("cut")
+    {
+        Field field;
+        field.Type("abc");
+        field.ui.SetAbility(field.field, TextAbility::Cut, false);
+        field.Step(Press(EditKey::SelectAll));
+        field.Step(Press(EditKey::Cut));
+        CHECK(field.clipboard.empty());
+        CHECK(field.Text() == "abc");
+    }
+    SUBCASE("paste")
+    {
+        Field field;
+        field.clipboard = "xyz";
+        field.ui.SetAbility(field.field, TextAbility::Paste, false);
+        field.Step(Press(EditKey::Paste));
+        CHECK(field.Text().empty());
+    }
+    SUBCASE("select")
+    {
+        Field field;
+        field.Type("abc");
+        field.ui.SetAbility(field.field, TextAbility::Select, false);
+        field.Step(Press(EditKey::SelectAll));
+        CHECK_FALSE(field.Edit().HasSelection());
+    }
+}
+
+TEST_CASE("TextField: a masked field shows marks, keeps its text, and stops copying")
+{
+    Field field;
+    field.Type("secret");
+    field.ui.SetMask(field.field, TextMask::Dots);
+    field.Step({});
+
+    // The text is still the text; only what is shown has changed.
+    CHECK(field.Text() == "secret");
+
+    std::string marks;
+    CHECK(ShownText(field.Text(), TextMask::Dots, marks) != field.Text());
+    CHECK(CharacterCount(marks) == CharacterCount(field.Text()));
+
+    field.Step(Press(EditKey::SelectAll));
+    field.Step(Press(EditKey::Copy));
+    CHECK(field.clipboard.empty());
+
+    // Turned off rather than forbidden.
+    field.ui.SetAbility(field.field, TextAbility::Copy, true);
+    field.Step(Press(EditKey::Copy));
+    CHECK(field.clipboard == "secret");
+}
+
+TEST_CASE("TextField: a length limit counts characters, not the bytes they take")
+{
+    Field field;
+    constexpr uint32_t kLimit = 3;
+    field.ui.SetMaxLength(field.field, kLimit);
+
+    field.Type("\xC3\xA9");
+    field.Type("\xC3\xA9");
+    field.Type("\xC3\xA9");
+    CHECK(field.Text() == "\xC3\xA9\xC3\xA9\xC3\xA9"); // three characters, six bytes
+
+    field.Type("\xC3\xA9");
+    CHECK(CharacterCount(field.Text()) == kLimit); // and no more
+}
+
+TEST_CASE("TextField: a paste past the limit is cut to fit, on a character boundary")
+{
+    Field field;
+    constexpr uint32_t kLimit = 2;
+    field.ui.SetMaxLength(field.field, kLimit);
+    field.clipboard = "\xC3\xA9\xC3\xA9\xC3\xA9";
+    field.Step(Press(EditKey::Paste));
+    CHECK(field.Text() == "\xC3\xA9\xC3\xA9");
+}
+
+TEST_CASE("TextField: pasted text is cleaned of what a field cannot hold")
+{
+    SUBCASE("one line turns breaks into spaces and drops control characters")
+    {
+        Field field;
+        field.clipboard = "a\r\nb\x01"
+                          "c";
+        field.Step(Press(EditKey::Paste));
+        CHECK(field.Text() == "a bc");
+    }
+    SUBCASE("many lines keep the breaks")
+    {
+        Field field(TextLines::Multi);
+        field.clipboard = "a\r\nb\x01"
+                          "c";
+        field.Step(Press(EditKey::Paste));
+        CHECK(field.Text() == "a\nbc");
+    }
+}
+
+TEST_CASE("TextField: Enter finishes a single line and pushes what it holds")
+{
+    Field field;
+    field.ui.OnSubmit(field.field, [](std::string_view text) { return Submitted{std::string{text}}; });
+    field.Type("done");
+
+    field.Step(Press(UiAction::Accept));
+    REQUIRE(field.events.Read<Submitted>().size() == 1);
+    CHECK(field.events.Read<Submitted>()[0].text == "done");
+    CHECK(field.Text() == "done"); // Enter does not put a newline in a single line
+}
+
+TEST_CASE("TextField: Enter in a field of many lines puts a line break in")
+{
+    Field field(TextLines::Multi);
+    field.ui.OnSubmit(field.field, [](std::string_view text) { return Submitted{std::string{text}}; });
+    field.Type("a");
+    field.Step(Press(UiAction::Accept));
+    field.Type("b");
+
+    CHECK(field.Text() == "a\nb");
+    CHECK(field.events.Read<Submitted>().empty());
+}
+
+TEST_CASE("TextField: the caret is as tall as the line it stands on, not as tall as the box")
+{
+    // One line of text in a box with padding around it: the caret belongs to
+    // the text, so it must be shorter than the box that holds it.
+    Field field;
+    field.Type("AAAA");
+    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(placed != nullptr);
+    REQUIRE(placed->text != LayoutNode::kNoText);
+
+    const TextLayout &text = field.ui.GetLayout().texts[placed->text];
+    const Rect line = LineBox(text, 0);
+    REQUIRE(line.height > 0.f);
+
+    const Rect caret = field.ui.GetCaretRect(field.field);
+    CHECK(caret.height == doctest::Approx(line.height));
+    CHECK(caret.height < placed->rect.height); // shorter than the box's padding allows
+    CHECK(caret.y >= placed->rect.y);
+    CHECK(caret.y + caret.height <= placed->rect.y + placed->rect.height);
+
+    // In a field of many lines it covers the line the caret is on rather than
+    // all of them, and it moves down as the caret does.
+    Field many(TextLines::Multi);
+    Style style = many.ui.Tree().Get(many.field.node)->style;
+    style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
+    many.ui.Tree().SetStyle(many.field.node, style);
+    many.Step({});
+    many.Type("AAAA AAAA AAAA AAAA");
+
+    const LayoutNode *wrapped = many.ui.GetLayout().Get(many.field.node);
+    REQUIRE(wrapped != nullptr);
+    REQUIRE(many.ui.GetLayout().texts[wrapped->text].lines.size() > 1);
+
+    const Rect onLast = many.ui.GetCaretRect(many.field);
+    CHECK(onLast.height == doctest::Approx(line.height));
+    CHECK(onLast.height < wrapped->rect.height);
+
+    many.Step(Press(EditKey::LineStart));
+    many.Step(Press(UiAction::Up));
+    const Rect onFirst = many.ui.GetCaretRect(many.field);
+    CHECK(onFirst.y < onLast.y);
+    CHECK(onFirst.height == doctest::Approx(onLast.height));
+}
+
+TEST_CASE("TextField: a field of many lines wraps, and the caret moves between the lines")
+{
+    Field field(TextLines::Multi);
+    Style style = field.ui.Tree().Get(field.field.node)->style;
+    style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
+    field.ui.Tree().SetStyle(field.field.node, style);
+    field.Step({});
+    const float oneLine = field.Box().height;
+
+    field.Type("AAAA AAAA AAAA AAAA");
+    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(placed != nullptr);
+    REQUIRE(placed->text != LayoutNode::kNoText);
+    REQUIRE(field.ui.GetLayout().texts[placed->text].lines.size() > 1);
+
+    // Unlike a single line, it grew downwards rather than scrolling sideways.
+    CHECK(field.Box().height > oneLine);
+    CHECK(placed->textScroll == doctest::Approx(0.f));
+
+    // The caret is on the last line; Up takes it off the end of the text.
+    const uint32_t atEnd = field.Edit().caret;
+    field.Step(Press(UiAction::Up));
+    CHECK(field.Edit().caret < atEnd);
+}
+
+TEST_CASE("TextField: changing the text pushes what it now holds")
+{
+    Field field;
+    field.ui.OnChange(field.field, [](std::string_view text) { return Typed{std::string{text}}; });
+    field.Type("ab");
+    REQUIRE(field.events.Read<Typed>().size() == 1);
+    CHECK(field.events.Read<Typed>()[0].text == "ab");
+}
+
+TEST_CASE("TextField: a key held down goes on acting once the repeat comes round")
+{
+    Field field;
+    field.Type("abcd");
+
+    UiInput held = Press(EditKey::Backspace);
+    field.Step(held);
+    CHECK(field.Text() == "abc");
+
+    // Still down, but not pressed again, and not yet long enough.
+    held.editPressed[static_cast<std::size_t>(EditKey::Backspace)] = false;
+    held.time = kNavRepeatDelaySeconds / 2.0;
+    field.Step(held);
+    CHECK(field.Text() == "abc");
+
+    held.time = kNavRepeatDelaySeconds + kNavRepeatIntervalSeconds;
+    field.Step(held);
+    CHECK(field.Text() == "ab");
+}
+
+TEST_CASE("TextField: a press puts the caret where it landed, and a drag selects")
+{
+    Field field;
+    field.Type("AAAA");
+    const Rect box = field.Box();
+
+    // Inside the box, a little way along it: the exact character depends on the
+    // font, so what matters is that it is neither the first nor the last.
+    const Point middle{.x = box.x + (box.width / 2.f), .y = box.y + (box.height / 2.f)};
+    UiInput press = PointerAt(middle);
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+    CHECK(field.Edit().caret == CharacterCount(field.Text()));
+    CHECK_FALSE(field.Edit().HasSelection());
+
+    // Dragging back towards the start selects what it passes over.
+    UiInput drag = PointerAt({.x = box.x + 1.f, .y = middle.y});
+    drag.primaryDown = true;
+    field.Step(drag);
+    CHECK(field.Edit().HasSelection());
+    CHECK(field.Edit().caret == 0);
+}
+
+TEST_CASE("TextField: what is selected can be carried to somewhere else in the text")
+{
+    Field field;
+    field.Type("foo bar");
+    const Rect box = field.Box();
+    const float middle = box.y + (box.height / 2.f);
+
+    // Select "foo": to the start, then one word to the right with Shift.
+    field.Step(Press(EditKey::LineStart));
+    field.Step(Press(UiAction::Right, TextReach::Extends, TextStep::Word));
+    REQUIRE(field.Edit().SelectionFirst() == 0);
+    REQUIRE(Between(field.Text(), field.Edit().SelectionFirst(), field.Edit().SelectionLast()) == "foo ");
+
+    // Press on the selection: it stands rather than collapsing, so there is
+    // something left to carry.
+    UiInput hold = PointerAt({.x = box.x + 1.f, .y = middle});
+    hold.primaryDown = true;
+    hold.primaryPressed = true;
+    field.Step(hold);
+    CHECK(field.Edit().HasSelection());
+    CHECK(field.Edit().drag == TextDrag::Held);
+
+    // Carry it to the end and drop it there.
+    UiInput carry = PointerAt({.x = box.x + box.width - 1.f, .y = middle});
+    carry.primaryDown = true;
+    const InputResult carrying = field.ui.ProcessInput(carry);
+    field.ui.Sync(kScreen);
+    CHECK(field.Edit().drag == TextDrag::Moving);
+    // The pointer says what is happening: carrying text, not pointing into it.
+    CHECK(carrying.cursor == Assisi::Core::CursorShape::Move);
+
+    UiInput drop = PointerAt({.x = box.x + box.width - 1.f, .y = middle});
+    drop.primaryReleased = true;
+    field.Step(drop);
+
+    CHECK(field.Edit().drag == TextDrag::None);
+    CHECK(field.Text() == "barfoo ");
+    // And it is still selected where it landed, ready to be carried again.
+    CHECK(field.Edit().HasSelection());
+    CHECK(Between(field.Text(), field.Edit().SelectionFirst(), field.Edit().SelectionLast()) == "foo ");
+}
+
+TEST_CASE("TextField: a press on a selection that goes nowhere is an ordinary click")
+{
+    Field field;
+    field.Type("foo bar");
+    field.Step(Press(EditKey::SelectAll));
+    const Rect box = field.Box();
+    // On the first character, which is inside the selection. Further right
+    // would be past the end of the words and so outside it.
+    const Point inside{.x = box.x + 1.f, .y = box.y + (box.height / 2.f)};
+
+    UiInput press = PointerAt(inside);
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+    CHECK(field.Edit().HasSelection()); // still standing while it is held
+
+    UiInput release = PointerAt(inside);
+    release.primaryReleased = true;
+    field.Step(release);
+
+    CHECK_FALSE(field.Edit().HasSelection()); // and gone once it is let go
+    CHECK(field.Text() == "foo bar");
+}
+
+TEST_CASE("TextField: dropping a selection on itself changes nothing")
+{
+    Field field;
+    field.Type("foo bar");
+    field.Step(Press(EditKey::SelectAll));
+    const Rect box = field.Box();
+    const Point inside{.x = box.x + 1.f, .y = box.y + (box.height / 2.f)};
+
+    UiInput press = PointerAt(inside);
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+
+    // Barely moved, so the drop lands back inside what was lifted.
+    UiInput carry = PointerAt({.x = inside.x + 4.f, .y = inside.y});
+    carry.primaryDown = true;
+    field.Step(carry);
+
+    UiInput drop = PointerAt({.x = inside.x + 4.f, .y = inside.y});
+    drop.primaryReleased = true;
+    field.Step(drop);
+    CHECK(field.Text() == "foo bar");
+}
+
+TEST_CASE("TextField: with carrying turned off, a press on a selection just moves the caret")
+{
+    Field field;
+    field.Type("foo bar");
+    field.ui.SetAbility(field.field, TextAbility::Drag, false);
+    field.Step(Press(EditKey::SelectAll));
+
+    const Rect box = field.Box();
+    UiInput press = PointerAt({.x = box.x + 1.f, .y = box.y + (box.height / 2.f)});
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+
+    CHECK(field.Edit().drag == TextDrag::None);
+    CHECK_FALSE(field.Edit().HasSelection()); // collapsed at once, as a click does
+}
+
+TEST_CASE("TextField: a double click takes the word under it")
+{
+    Field field;
+    field.Type("foo bar");
+    const Rect box = field.Box();
+    const Point start{.x = box.x + 1.f, .y = box.y + (box.height / 2.f)};
+
+    UiInput press = PointerAt(start);
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+
+    UiInput again = press;
+    again.time = kNavRepeatIntervalSeconds;
+    field.Step(again);
+
+    CHECK(field.Edit().SelectionFirst() == 0);
+    CHECK(field.Edit().SelectionLast() == 3); // "foo", without the space
+}
+
+TEST_CASE("TextField: a pattern that refuses keeps what it will not accept out")
+{
+    Field field;
+    REQUIRE(field.ui.SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
+
+    field.Type("4");
+    field.Type("2");
+    CHECK(field.Text() == "42");
+
+    field.Type("x");
+    CHECK(field.Text() == "42"); // never enters
+
+    // And a field can always be emptied, whatever its pattern says of nothing.
+    field.Step(Press(EditKey::SelectAll));
+    field.Step(Press(EditKey::Delete));
+    CHECK(field.Text().empty());
+}
+
+TEST_CASE("TextField: a pattern that marks as typed says so the moment it stops matching")
+{
+    Field field;
+    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksAsTyped).has_value());
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+
+    field.Type("jim@");
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+
+    field.Type("example.com");
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Valid);
+}
+
+TEST_CASE("TextField: a pattern that marks on commit says nothing until Enter")
+{
+    Field field;
+    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+
+    field.Type("jim@");
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+
+    field.Step(Press(UiAction::Accept));
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+
+    field.Type("example.com");
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid); // not judged again until committed
+
+    field.Step(Press(UiAction::Accept));
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Valid);
+}
+
+TEST_CASE("TextField: leaving a field is finishing with it, so it is judged then too")
+{
+    Field field;
+    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    field.Type("jim@");
+    REQUIRE(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+
+    // Focus moves to whatever is next in the tab order; the field hears about
+    // it and settles what it holds.
+    field.Step(Press(UiAction::Next));
+    REQUIRE(field.ui.GetInteraction().focused != field.field.node);
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+}
+
+TEST_CASE("TextField: a pattern that will not compile is refused and leaves the field as it was")
+{
+    Field field;
+    const std::expected<void, PatternError> set = field.ui.SetPattern(field.field, "[unclosed", TextCheck::Refuses);
+    REQUIRE_FALSE(set.has_value());
+    CHECK_FALSE(set.error().message.empty());
+
+    field.Type("anything");
+    CHECK(field.Text() == "anything");
+}
+
+TEST_CASE("TextField: text set from code is taken as given, limit and pattern notwithstanding")
+{
+    Field field;
+    field.ui.SetMaxLength(field.field, 2);
+    REQUIRE(field.ui.SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
+
+    field.ui.SetText(field.field, "a longer answer");
+    CHECK(field.Text() == "a longer answer");
+    CHECK(field.Edit().caret == CharacterCount(field.Text()));
+
+    // Taken as given, but not pretended to be acceptable: text put in from
+    // code is finished text, so the pattern has its say about it.
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+    field.ui.SetText(field.field, "42");
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Valid);
+}
+
+TEST_CASE("TextField: a selectable label may be copied but not typed into")
+{
+    Field field;
+    const NodeId label = field.ui.Tree().Create(field.ui.Tree().Root(), "label");
+    field.ui.Tree().SetText(label, "10.0.0.1");
+    field.ui.SetSelectable(label, true);
+    // Laid out before it is focused: focus is checked against the last layout,
+    // and a node that has not been placed yet cannot hold it.
+    field.Step({});
+    field.ui.SetFocus(label);
+    field.Step({});
+
+    field.Step(Press(EditKey::SelectAll));
+    field.Step(Press(EditKey::Copy));
+    CHECK(field.clipboard == "10.0.0.1");
+
+    UiInput typing = Keys();
+    typing.typed = "x";
+    field.Step(typing);
+    CHECK(field.ui.Tree().Get(label)->text == "10.0.0.1");
+}
+
+TEST_CASE("TextField: the pointer takes the text shape over a field, and keeps it through a drag")
+{
+    Field field;
+    field.Type("AAAA");
+    const Rect box = field.Box();
+    const Point inside{.x = box.x + (box.width / 2.f), .y = box.y + (box.height / 2.f)};
+
+    // Away from the field, the UI has nothing to say about the pointer.
+    UiInput away = PointerAt({.x = box.x + box.width + 200.f, .y = inside.y});
+    CHECK(field.ui.ProcessInput(away).cursor == Assisi::Core::CursorShape::Arrow);
+    field.ui.Sync(kScreen);
+
+    UiInput over = PointerAt(inside);
+    CHECK(field.ui.ProcessInput(over).cursor == Assisi::Core::CursorShape::Text);
+    field.ui.Sync(kScreen);
+
+    // Held, and dragged off the box: what has hold of the pointer decides.
+    UiInput press = PointerAt(inside);
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+
+    UiInput drag = PointerAt({.x = box.x + box.width + 200.f, .y = inside.y});
+    drag.primaryDown = true;
+    CHECK(field.ui.ProcessInput(drag).cursor == Assisi::Core::CursorShape::Text);
+    field.ui.Sync(kScreen);
+}
+
+TEST_CASE("TextField: a field does not grow with what is typed into it")
+{
+    Field field;
+    // Sized by its parent rather than fixed, which is what a field in a row
+    // gets and what made it grow with its text.
+    Style style = field.ui.Tree().Get(field.field.node)->style;
+    style.sizing = {Sizing{.min = 80.f, .kind = SizingKind::Grow}, Sizing::Fit()};
+    field.ui.Tree().SetStyle(field.field.node, style);
+    field.Step({});
+
+    const Rect empty = field.Box();
+    field.Type("a line far longer than the box it is being typed into, and then some more");
+    const Rect filled = field.Box();
+
+    CHECK(filled.width == doctest::Approx(empty.width));
+    CHECK(filled.x == doctest::Approx(empty.x));
+}
+
+TEST_CASE("TextField: what runs past the ends of a field is clipped to it")
+{
+    Field field;
+    Style style = field.ui.Tree().Get(field.field.node)->style;
+    style.sizing = {Sizing::Fixed(80.f), Sizing::Fit()};
+    field.ui.Tree().SetStyle(field.field.node, style);
+    field.Step({});
+    field.Type("AAAAAAAAAAAAAAAAAAAA");
+
+    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(placed != nullptr);
+    CHECK(placed->clip.x >= placed->rect.x);
+    CHECK(placed->clip.x + placed->clip.width <= placed->rect.x + placed->rect.width);
+}
+
+TEST_CASE("TextField: a long single line scrolls to keep the caret in sight")
+{
+    Field field;
+    Style style = field.ui.Tree().Get(field.field.node)->style;
+    style.sizing = {Sizing::Fixed(80.f), Sizing::Fit()};
+    field.ui.Tree().SetStyle(field.field.node, style);
+    field.Step({});
+
+    field.Type("AAAAAAAAAAAAAAAA");
+    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(placed != nullptr);
+    CHECK(placed->textScroll > 0.f);
+
+    // And comes back when the caret does.
+    field.Step(Press(EditKey::LineStart));
+    field.Step({});
+    CHECK(field.ui.GetLayout().Get(field.field.node)->textScroll == doctest::Approx(0.f));
+}

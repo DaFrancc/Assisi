@@ -22,6 +22,9 @@
 
 #include <array>
 #include <cstdint>
+#include <expected>
+#include <functional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -141,6 +144,71 @@ class Ui
         BindChange<int32_t>(slider.node, std::move(recipe));
     }
 
+    // -------------------------------------------------------------------------
+    // Text fields
+    // -------------------------------------------------------------------------
+
+    /// @brief A field under @p parent that a player types into, holding one
+    /// line or many. Empty to begin with.
+    TextFieldId AddTextField(NodeId parent, TextLines lines);
+
+    /// @brief The text @p field holds. Valid until the field is next changed.
+    [[nodiscard]] std::string_view GetText(TextFieldId field) const;
+
+    /// @brief Replaces what @p field holds, putting the caret at the end.
+    ///
+    /// Taken as given: the filter and the length limit govern what a player
+    /// types, not what the game puts there.
+    void SetText(TextFieldId field, std::string_view text);
+
+    /// @brief Whether a player may select, copy, cut or paste in @p field.
+    /// Every one is allowed until it is turned off.
+    void SetAbility(TextFieldId field, TextAbility ability, bool allowed);
+
+    /// @brief Whether @p field shows what it holds or stands in marks for it.
+    /// Masking a field also stops copy and cut, which can be turned back on
+    /// afterwards for a field where seeing the text is the only worry.
+    void SetMask(TextFieldId field, TextMask mask);
+
+    /// @brief The most characters a player may put in @p field, counted as
+    /// they see them rather than in bytes.
+    void SetMaxLength(TextFieldId field, uint32_t characters);
+
+    /// @brief What @p field's text must look like, and when being told matters.
+    ///
+    /// Returns what went wrong with @p pattern, in which case the field keeps
+    /// the pattern it had. An empty pattern takes the rule off.
+    std::expected<void, PatternError> SetPattern(TextFieldId field, std::string_view pattern, TextCheck check);
+
+    /// @brief Whether @p field's text is acceptable, as of the last time its
+    /// pattern was consulted. Unchecked until then, and for a field with no
+    /// pattern.
+    [[nodiscard]] TextValidity GetValidity(TextFieldId field) const;
+
+    /// @brief Where @p field's caret stands, in device pixels, as of the last
+    /// Sync: as tall as the line it is on. What anything that has to follow
+    /// the caret is placed against.
+    [[nodiscard]] Rect GetCaretRect(TextFieldId field) const;
+
+    /// @brief Makes @p field push what @p recipe builds from its text, every
+    /// time that text changes. The recipe takes a std::string_view.
+    template <typename Recipe> void OnChange(TextFieldId field, Recipe recipe)
+    {
+        _tree.SetOnChange(field.node, TextPusher(std::move(recipe)));
+    }
+
+    /// @brief The same for the moment the text is finished rather than merely
+    /// changed: Enter in a single-line field.
+    template <typename Recipe> void OnSubmit(TextFieldId field, Recipe recipe)
+    {
+        _tree.SetOnSubmit(field.node, TextPusher(std::move(recipe)));
+    }
+
+    /// @brief Whether plain text on @p id may be selected and copied, which a
+    /// player wants for an address or an error code and nowhere else. Making
+    /// it selectable makes it focusable, since copying needs the keyboard.
+    void SetSelectable(NodeId id, bool selectable);
+
     /// @brief Moves focus to @p id, or clears it with a null id.
     void SetFocus(NodeId id) { _interaction.focused = id; }
 
@@ -214,8 +282,20 @@ class Ui
         static_assert(std::is_invocable_v<Recipe, T>,
                       "a control's OnChange recipe takes the value that control carries: a float for a "
                       "slider, a bool for a toggle");
-        _tree.SetOnChange(node, [recipe](Core::EventQueue &events, const WidgetValue &value)
-                          { events.Push(recipe(Held<T>(value))); });
+        _tree.SetOnChange(node, [recipe](Core::EventQueue &events, const Node &changed)
+                          { events.Push(recipe(Held<T>(changed.value))); });
+    }
+
+    /// What a field pushes from the text it holds. The text is the node's, so
+    /// the recipe is handed a view of it and builds its event there and then;
+    /// a recipe that keeps the view rather than copying from it outlives it.
+    template <typename Recipe>
+    [[nodiscard]] static std::function<void(Core::EventQueue &, const Node &)> TextPusher(Recipe recipe)
+    {
+        static_assert(std::is_invocable_v<Recipe, std::string_view>,
+                      "a text field's recipe takes the text it holds, as a std::string_view");
+        return [recipe](Core::EventQueue &events, const Node &node)
+        { events.Push(recipe(std::string_view{node.text})); };
     }
 
     /// Adds the sample screen's controls, which stand in until screens exist.
@@ -238,6 +318,18 @@ class Ui
     /// Which actions act this frame: those pressed, and the held one whose
     /// repeat has come round.
     std::array<bool, kUiActionCount> FiredActions(const UiInput &input);
+    /// The same for the editing keys.
+    std::array<bool, kEditKeyCount> FiredEdits(const UiInput &input);
+    /// Hands the focused control what was typed and which editing keys fired.
+    void Write(const UiInput &input);
+    /// How many presses in quick succession this one is, at @p time on @p node.
+    uint32_t CountClicks(NodeId node, double time);
+    /// The text @p placed was laid out with, or null when it has none.
+    [[nodiscard]] const TextLayout *TextOf(const LayoutNode &placed) const;
+    /// What the control @p widget sees of the node @p id this frame.
+    [[nodiscard]] WidgetView ViewOf(NodeId id, const WidgetType &widget) const;
+    /// What the pointer looks like over @p id, which the control decides.
+    [[nodiscard]] Core::CursorShape CursorOver(NodeId id, Point pointer) const;
     /// Moves focus for @p action, one of the directions or Tab order.
     void Move(UiAction action);
     /// Moves focus for the directions pressed this frame, and again for one
@@ -251,18 +343,24 @@ class Ui
     DrawList _drawList;
     /// Nodes whose value moved this frame, announced once each.
     std::vector<NodeId> _changed;
+    /// Nodes that finished this frame, announced after the changes.
+    std::vector<NodeId> _submitted;
     Interaction _interaction;
     const Font *_font = nullptr;
     Core::EventQueue *_events = nullptr;
 
-    double _repeatAt = 0.0; ///< when the held direction next moves focus
-    double _lastTime = 0.0; ///< the previous frame's clock, for what moves over time
+    KeyRepeat<UiAction> _repeatAction; ///< the direction held down
+    KeyRepeat<EditKey> _repeatEdit;    ///< the editing key held down
+    double _lastTime = 0.0;            ///< the previous frame's clock, for what moves over time
+    double _lastPressAt = 0.0;         ///< when the last press landed, for counting clicks
+    NodeId _lastPressed;               ///< what it landed on
+    NodeId _focusedLast;               ///< what had focus when the last frame ended
     NodeId _picture;
     Point _lastPointer;
+    uint32_t _clicks = 0; ///< presses in the run the last one belongs to
     TextureId _fontAtlas = kWhiteTexture;
     float _userScale = 1.f;
     FrameStep _nextStep = FrameStep::AwaitingInput;
-    UiAction _repeating = UiAction::Count; ///< the direction held, or Count for none
     NavWrap _navWrap = NavWrap::Around;
     bool _hoverFocuses = false;
 };
