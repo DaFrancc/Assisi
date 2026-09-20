@@ -9,20 +9,25 @@
 /// object.  It holds a shared reference to `GlfwLibrary` so GLFW cannot be
 /// terminated while any window is still alive.
 
+#include <array>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <Assisi/Core/CursorShape.hpp>
 #include <Assisi/Window/GlfwLibrary.hpp>
 #include <Assisi/Window/InputEvent.hpp>
 
 struct GLFWwindow;
+struct GLFWcursor;
 
 namespace Assisi::Window
 {
 using NativeWindowHandle = GLFWwindow;
+using NativeCursorHandle = GLFWcursor;
 
 /// @brief Width and height of a window or framebuffer, in pixels.
 struct WindowSize
@@ -162,6 +167,19 @@ class WindowContext
     /// @brief Puts @p text, UTF-8, on the system clipboard.
     void SetClipboardText(std::string_view text) const;
 
+    // -------------------------------------------------------------------------
+    // Cursor
+    // -------------------------------------------------------------------------
+
+    /// @brief What the pointer looks like over this window.
+    ///
+    /// Arrow gives the window back to the platform's own cursor rather than
+    /// installing one, which is also what a captured pointer needs: a window
+    /// that owns a cursor object has it painted back over a locked pointer
+    /// under some compositors. Shapes are made once, the first time each is
+    /// asked for, and a shape the platform lacks leaves the cursor as it was.
+    void SetCursorShape(Core::CursorShape shape);
+
   private:
     /// @brief Points the window's GLFW user pointer at this object and installs
     /// the GLFW callbacks that fan out to subscribers. Called on construction
@@ -169,6 +187,10 @@ class WindowContext
     /// chains to what is installed when it starts, so a callback installed
     /// later would cut it off. A move only re-seats the user pointer.
     void InstallCallbacks();
+
+    /// @brief Frees every cursor made so far. The window's own cursor is the
+    /// platform's again after this.
+    void DestroyCursors();
 
     // GLFW C-callback trampolines: recover the WindowContext from the user
     // pointer and dispatch to the subscriber lists.
@@ -196,5 +218,11 @@ class WindowContext
     std::vector<std::function<void(char32_t)>> _characterCallbacks;
     std::vector<std::function<void(const MouseButtonEvent &)>> _mouseButtonCallbacks;
     std::vector<std::function<void(double, double)>> _cursorPositionCallbacks;
+
+    /// The cursor objects made so far, by shape, and which one is installed.
+    /// Made on demand because most games ask for one or two of them, and each
+    /// costs a platform handle.
+    std::array<NativeCursorHandle *, Core::kCursorShapeCount> _cursors{};
+    Core::CursorShape _cursorShape = Core::CursorShape::Arrow;
 };
 } /* namespace Assisi::Window */

@@ -641,6 +641,39 @@ FetchContent_Declare(nlohmann_json
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# --- PCRE2 (the regular expressions a Mondrian text field validates against)
+# The 8-bit library alone, without its own tools or test suite. A field compiles
+# its pattern once and matches a short string against it, so what matters here
+# is not throughput but two things this library has and the standard one does
+# not: a partial match, which says whether half-typed text could still become
+# valid, and a match limit, which bounds a pattern that would otherwise
+# backtrack for the rest of the frame. Unicode support is what lets a pattern
+# count characters rather than bytes.
+set(PCRE2_BUILD_PCRE2_8   ON  CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_PCRE2_16  OFF CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_PCRE2_32  OFF CACHE BOOL "" FORCE)
+set(PCRE2_SUPPORT_UNICODE ON  CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_TESTS     OFF CACHE BOOL "" FORCE)
+set(PCRE2_STATIC_PIC      ON  CACHE BOOL "" FORCE)
+FetchContent_Declare(pcre2
+    GIT_REPOSITORY https://github.com/PCRE2Project/pcre2.git
+    GIT_TAG        pcre2-10.48
+    GIT_SHALLOW    TRUE
+    SYSTEM
+)
+FetchContent_MakeAvailable(pcre2)
+# PCRE2 names its in-tree targets after their linkage; the namespaced alias
+# comes only from its installed config, so provide one here (the same pattern as
+# FreeType below).
+if (NOT TARGET PCRE2::8BIT)
+    if (TARGET pcre2-8-static)
+        add_library(PCRE2::8BIT ALIAS pcre2-8-static)
+    elseif (TARGET pcre2-8-shared)
+        add_library(PCRE2::8BIT ALIAS pcre2-8-shared)
+    endif()
+endif()
+
 # --- doctest (unit-test framework; header-only, included as SYSTEM headers)
 if (ASSISI_BUILD_TESTS)
     # Point SOURCE_SUBDIR at a nonexistent path so MakeAvailable populates the

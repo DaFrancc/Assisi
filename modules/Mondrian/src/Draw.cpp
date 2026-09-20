@@ -57,29 +57,25 @@ class Drawer
                 .Texture(node.image, node.imageUv)
                 .Corners(radius, style.cornerStyle);
         }
+        const WidgetType *widget = _tree.Widgets().Get(node.behaviour);
+
+        // Behind the words: a selection highlight marks text rather than
+        // covering it.
+        if (widget != nullptr && widget->underlay != nullptr)
+        {
+            widget->underlay(ViewOf(index, result, *widget), _list);
+        }
         if (result.text != LayoutNode::kNoText)
         {
-            // Whole pixels, so the text layout's own whole-pixel lines land on them.
-            const Point origin{.x = std::round(result.rect.x + style.padding.left * scale),
-                               .y = std::round(result.rect.y + style.padding.top * scale)};
-            DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, origin, style.textColor);
+            DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, TextOrigin(result, style, scale),
+                       style.textColor);
         }
 
-        // The control's own parts — a slider's thumb, a toggle's knob — over the
-        // node they are on and under whatever it contains.
-        if (const WidgetType *widget = _tree.Widgets().Get(node.behaviour);
-            widget != nullptr && widget->draw != nullptr)
+        // The control's own parts — a slider's thumb, a toggle's knob, a
+        // caret — over the node they are on and under whatever it contains.
+        if (widget != nullptr && widget->draw != nullptr)
         {
-            const NodeId id = _tree.IdOf(index);
-            widget->draw(WidgetView{.node = &node,
-                                    .layout = &result,
-                                    .context = widget->context,
-                                    .scale = scale,
-                                    .id = id,
-                                    .focused = _interaction != nullptr && _interaction->focused == id,
-                                    .pressed = _interaction != nullptr && _interaction->pressed == id,
-                                    .hovered = _interaction != nullptr && _interaction->hovered == id},
-                         _list);
+            widget->draw(ViewOf(index, result, *widget), _list);
         }
 
         for (const bool floating : {false, true})
@@ -95,6 +91,23 @@ class Drawer
     }
 
   private:
+    /// What the control on @p index sees of its node this frame.
+    [[nodiscard]] WidgetView ViewOf(uint32_t index, const LayoutNode &result, const WidgetType &widget) const
+    {
+        const NodeId id = _tree.IdOf(index);
+        WidgetView view;
+        view.node = &_slots[index];
+        view.layout = &result;
+        view.text = result.text < _layout.texts.size() ? &_layout.texts[result.text] : nullptr;
+        view.context = widget.context;
+        view.scale = _layout.scale;
+        view.id = id;
+        view.focused = _interaction != nullptr && _interaction->focused == id;
+        view.pressed = _interaction != nullptr && _interaction->pressed == id;
+        view.hovered = _interaction != nullptr && _interaction->hovered == id;
+        return view;
+    }
+
     const NodeTree &_tree;
     std::span<const Node> _slots;
     const LayoutResult &_layout;

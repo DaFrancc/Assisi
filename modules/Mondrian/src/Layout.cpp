@@ -174,12 +174,16 @@ class Layouter
         result.placed = true;
         result.generation = node.generation;
 
+        // A field is shaped even while it is empty, so that it has a line to
+        // stand its caret on and a height that does not change on the first
+        // character typed.
         const float textSize = Scaled(node.style.textSize);
-        if (!node.text.empty() && _font != nullptr && _font->pixelSize > 0.f && textSize > 0.f)
+        const bool field = node.edit.editing == TextEditing::Editable;
+        if ((!node.text.empty() || field) && _font != nullptr && _font->pixelSize > 0.f && textSize > 0.f)
         {
             result.text = static_cast<uint32_t>(_out.texts.size());
             _out.texts.emplace_back();
-            _shaped.push_back(Shape(node.text, *_font));
+            _shaped.push_back(Shape(ShownText(node.text, node.edit.mask, _marks), *_font));
         }
         ForEachChild(index, [this](uint32_t child) { Prepare(child); });
     }
@@ -208,7 +212,16 @@ class Layouter
         }
         else if (result.text != LayoutNode::kNoText)
         {
-            if (axis == Axis::X)
+            if (axis == Axis::X && node.edit.editing == TextEditing::Editable)
+            {
+                // A field is as wide as it is given and no wider. Taking its
+                // width from what has been typed into it makes the box grow
+                // with every character, push its neighbours aside, and leave
+                // the screen; the text scrolls inside the box instead.
+                content = 0.f;
+                minContent = 0.f;
+            }
+            else if (axis == Axis::X)
             {
                 const ShapedText &shaped = _shaped[result.text];
                 const float size = Scaled(style.textSize);
@@ -494,14 +507,40 @@ class Layouter
             {
                 continue;
             }
-            const Style &style = Slot(index).style;
+            const Node &node = Slot(index);
+            const Style &style = node.style;
             const float space = result.rect.width - Scaled(PaddingAround(style.padding, Axis::X));
             // At least one pixel: a node squeezed to nothing still sets its text,
             // a glyph to a line.
             const float wrap = std::max(1.f, std::floor(space));
-            _out.texts[result.text] =
-                LayoutText(_shaped[result.text], *_font, Scaled(style.textSize), wrap, style.textAlign);
+            // A single line does not wrap however narrow its box is; it runs on
+            // and the box scrolls along it.
+            const bool oneLine = node.edit.editing != TextEditing::None && node.edit.lines == TextLines::Single;
+            _out.texts[result.text] = LayoutText(_shaped[result.text], *_font, Scaled(style.textSize),
+                                                 oneLine ? std::nullopt : std::optional<float>{wrap}, style.textAlign);
+            if (oneLine)
+            {
+                Result(index).textScroll = LineScroll(node, _out.texts[result.text], space);
+            }
         }
+    }
+
+    /// How far a single line is shifted left so that its caret is inside the
+    /// @p space its box has, in device pixels.
+    ///
+    /// It moves as little as it can: the line stays where it was unless the
+    /// caret has gone off one end, which is what stops the text sliding about
+    /// while someone is reading it.
+    [[nodiscard]] float LineScroll(const Node &node, const TextLayout &text, float space) const
+    {
+        std::string marks;
+        const std::string_view shown = ShownText(node.text, node.edit.mask, marks);
+        const float caret = PlaceCaret(text, shown, node.edit.caret).x;
+        // The caret sits at the right edge of the text it follows, so the line
+        // has to shift by its own width again to leave it somewhere to draw.
+        const float leftmost = std::min(caret, caret - space + Scaled(kCaretWidth));
+        const float kept = std::clamp(Scaled(node.edit.scrolled), leftmost, caret);
+        return std::clamp(kept, 0.f, std::max(0.f, text.width - space));
     }
 
     /// Top-down: positions children from this node's, and the clip each draws with.
@@ -510,6 +549,14 @@ class Layouter
         const Style &style = Slot(index).style;
         LayoutNode &result = Result(index);
         const Rect rect = result.rect;
+
+        // A field keeps its text to itself: the line inside it runs on past
+        // both ends, and what is off the end of the box must not be drawn over
+        // whatever sits beside it.
+        if (Slot(index).edit.editing == TextEditing::Editable)
+        {
+            result.clip = Intersect(result.clip, rect);
+        }
         const Axis main = style.direction == Direction::Row ? Axis::X : Axis::Y;
         const Axis cross = main == Axis::X ? Axis::Y : Axis::X;
 
@@ -594,6 +641,7 @@ class Layouter
     }
 
     std::vector<ShapedText> _shaped; ///< by text index
+    std::string _marks;              ///< scratch for the marks a masked field shows
     std::span<const Node> _slots;
     const WidgetRegistry *_widgets = nullptr;
     LayoutResult &_out;
@@ -610,6 +658,12 @@ float UiScale(Extent viewport, float userScale)
     const float fit = std::min(static_cast<float>(viewport.width) / kReferenceWidth,
                                static_cast<float>(viewport.height) / kReferenceHeight);
     return fit * userScale;
+}
+
+Point TextOrigin(const LayoutNode &placed, const Style &style, float scale)
+{
+    return {.x = std::round(placed.rect.x + (style.padding.left * scale)) - placed.textScroll,
+            .y = std::round(placed.rect.y + (style.padding.top * scale))};
 }
 
 const LayoutNode *LayoutResult::Get(NodeId id) const

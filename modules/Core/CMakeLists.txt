@@ -50,6 +50,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/ConfigReader.hpp"
     "include/Assisi/Core/ContentHash.hpp"
     "include/Assisi/Core/CookedBlob.hpp"
+    "include/Assisi/Core/CursorShape.hpp"
     "include/Assisi/Core/CookedPayload.hpp"
     "include/Assisi/Core/PakCodec.hpp"
     "include/Assisi/Core/PakFormat.hpp"

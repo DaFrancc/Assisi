@@ -4,6 +4,7 @@
 #include <Assisi/Mondrian/Draw.hpp>
 #include <Assisi/Mondrian/HitTest.hpp>
 #include <Assisi/Mondrian/Style.hpp>
+#include <Assisi/Mondrian/Utf8.hpp>
 
 #include <Assisi/Core/Assert.hpp>
 
@@ -11,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <span>
 #include <string_view>
 
 namespace Assisi::Mondrian
@@ -27,6 +29,44 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.
 /// The actions that move focus, which a focused control may take instead.
 constexpr std::array kMoveActions{UiAction::Up,    UiAction::Down, UiAction::Left,
                                   UiAction::Right, UiAction::Next, UiAction::Previous};
+
+/// The editing keys that go on acting while they are held. Erasing does;
+/// pasting twenty times because a finger rested on a key is nobody's intention.
+constexpr std::array kRepeatingEdits{EditKey::Backspace, EditKey::Delete};
+
+/// How long after a press another one on the same node still continues the run
+/// that makes a double click, in seconds.
+constexpr double kMultiClickSeconds = 0.4;
+
+/// Which of @p pressed act this frame: every one of them, and the one among
+/// @p repeatable still held whose repeat has come round. @p repeat carries
+/// which key that is from frame to frame.
+template <typename Key, std::size_t Count>
+std::array<bool, Count> FiredKeys(const std::array<bool, Count> &pressed, const std::array<bool, Count> &down,
+                                  std::span<const Key> repeatable, KeyRepeat<Key> &repeat, double time)
+{
+    const auto at = [](Key key) { return static_cast<std::size_t>(key); };
+    std::array<bool, Count> fired = pressed;
+
+    if (repeat.key != Key::Count && !down[at(repeat.key)])
+    {
+        repeat.key = Key::Count;
+    }
+    for (const Key key : repeatable)
+    {
+        if (pressed[at(key)])
+        {
+            repeat.key = key;
+            repeat.at = time + kNavRepeatDelaySeconds;
+        }
+    }
+    if (repeat.key != Key::Count && !pressed[at(repeat.key)] && time >= repeat.at)
+    {
+        fired[at(repeat.key)] = true;
+        repeat.at += kNavRepeatIntervalSeconds;
+    }
+    return fired;
+}
 
 /// One gesture at @p pointer, with nothing else to say.
 WidgetEvent PointerGesture(WidgetGesture gesture, Point pointer)
@@ -51,11 +91,31 @@ WidgetEvent WheelGesture(Point pointer, Point wheel)
     return event;
 }
 
-WidgetEvent ActionGesture(UiAction action)
+WidgetEvent ActionGesture(UiAction action, TextReach reach, TextStep step)
 {
     WidgetEvent event;
     event.gesture = WidgetGesture::Action;
     event.action = action;
+    event.reach = reach;
+    event.step = step;
+    return event;
+}
+
+WidgetEvent TypeGesture(std::string_view typed)
+{
+    WidgetEvent event;
+    event.gesture = WidgetGesture::Type;
+    event.typed = typed;
+    return event;
+}
+
+WidgetEvent EditGesture(EditKey key, TextReach reach, TextStep step)
+{
+    WidgetEvent event;
+    event.gesture = WidgetGesture::Edit;
+    event.key = key;
+    event.reach = reach;
+    event.step = step;
     return event;
 }
 
@@ -89,6 +149,15 @@ constexpr float kSampleSliderStart = 60.f;
 constexpr SliderRange kSampleStepRange{.min = 0.f, .max = 3.f, .step = 1.f};
 constexpr int32_t kSampleSliderSteps = 4;
 constexpr int32_t kSampleSliderStep = 1;
+/// Long enough to wrap in the panel, so the sample screen shows a field of
+/// many lines doing what one of a single line does not.
+constexpr std::string_view kSampleNotes =
+    "A field of many lines wraps to its width and grows downwards as it fills. Enter puts a break in rather "
+    "than finishing, and the caret moves between lines.";
+
+constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldColor{0.04f, 0.05f, 0.07f, 1.f};
+constexpr float kFieldWidth = 220.f;
+constexpr Padding kFieldPadding{.left = 10.f, .top = 6.f, .right = 10.f, .bottom = 6.f};
 constexpr float kSampleListHeight = 150.f;
 constexpr float kSampleScrollSmoothing = 0.12f;
 constexpr Math::Color4<Math::ColorSpace::Srgb> kListColor{0.06f, 0.07f, 0.09f, 1.f};
@@ -233,6 +302,20 @@ void Ui::AddSampleControls()
     SetButtons(volume, SliderButtons::Shown);
     AddSteppedSlider(controls, kSampleStepRange, kSampleSliderSteps, kSampleSliderStep);
 
+    Style fields;
+    fields.sizing = {Sizing::Grow(), Sizing::Fit()};
+    fields.gap = kPanelGap;
+    fields.childAlign = {Alignment::Start, Alignment::Center};
+    const NodeId fieldRow = Add(_tree, panel, "fields", fields);
+    const TextFieldId name = AddTextField(fieldRow, TextLines::Single);
+    SetText(name, "type here");
+    const TextFieldId secret = AddTextField(fieldRow, TextLines::Single);
+    SetText(secret, "hunter2");
+    SetMask(secret, TextMask::Dots);
+
+    const TextFieldId notes = AddTextField(panel, TextLines::Multi);
+    SetText(notes, kSampleNotes);
+
     Style list;
     list.sizing = {Sizing::Grow(), Sizing::Fixed(kSampleListHeight)};
     list.direction = Direction::Column;
@@ -293,6 +376,143 @@ SteppedSliderId Ui::AddSteppedSlider(NodeId parent, SliderRange range, int32_t s
     _tree.SetSteps(node, std::max(1, steps));
     _tree.SetValue(node, std::clamp(step, 0, std::max(0, steps - 1)));
     return {.node = node};
+}
+
+TextFieldId Ui::AddTextField(NodeId parent, TextLines lines)
+{
+    Style style;
+    style.sizing = {Sizing{.min = kFieldWidth, .kind = SizingKind::Grow}, Sizing::Fit()};
+    style.padding = kFieldPadding;
+    style.textSize = kButtonSize;
+    style.background = kFieldColor;
+    style.borderWidth = kPanelBorderWidth;
+    style.borderColor = kPanelBorder;
+    style.cornerRadius = kButtonRadius;
+    style.cornerStyle = CornerStyle::Rounded;
+
+    const NodeId node = _tree.Create(parent);
+    _tree.SetStyle(node, style);
+    _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::TextField));
+    _tree.SetFocusable(node, true);
+    // A focused field has the keyboard even where the game otherwise has it:
+    // typing into a box must not also drive the player's character.
+    _tree.SetTakesKeyboard(node, true);
+
+    TextEdit edit;
+    edit.editing = TextEditing::Editable;
+    edit.lines = lines;
+    _tree.SetTextEdit(node, edit);
+    return {.node = node};
+}
+
+std::string_view Ui::GetText(TextFieldId field) const
+{
+    const Node *node = _tree.Get(field.node);
+    return node != nullptr ? std::string_view{node->text} : std::string_view{};
+}
+
+void Ui::SetText(TextFieldId field, std::string_view text)
+{
+    Node *node = _tree.Editable(field.node);
+    if (node == nullptr)
+    {
+        return;
+    }
+    _tree.SetText(field.node, text);
+    node->edit.caret = CharacterCount(node->text);
+    node->edit.anchor = node->edit.caret;
+    // Text put in from code is finished text, so a field with a pattern says
+    // what it makes of it rather than reporting what the last text was worth.
+    CommitText(*node);
+}
+
+void Ui::SetAbility(TextFieldId field, TextAbility ability, bool allowed)
+{
+    if (Node *node = _tree.Editable(field.node))
+    {
+        node->edit.abilities[static_cast<std::size_t>(ability)] = allowed;
+    }
+}
+
+void Ui::SetMask(TextFieldId field, TextMask mask)
+{
+    Node *node = _tree.Editable(field.node);
+    if (node == nullptr)
+    {
+        return;
+    }
+    node->edit.mask = mask;
+    // Hiding the text and then letting it be copied out defeats the hiding.
+    // Turned off rather than forbidden: a field masked only against someone
+    // reading over a shoulder can have them back.
+    if (mask == TextMask::Dots)
+    {
+        SetAbility(field, TextAbility::Copy, false);
+        SetAbility(field, TextAbility::Cut, false);
+    }
+}
+
+void Ui::SetMaxLength(TextFieldId field, uint32_t characters)
+{
+    if (Node *node = _tree.Editable(field.node))
+    {
+        node->edit.maxLength = characters;
+    }
+}
+
+std::expected<void, PatternError> Ui::SetPattern(TextFieldId field, std::string_view pattern, TextCheck check)
+{
+    Node *node = _tree.Editable(field.node);
+    if (node == nullptr)
+    {
+        return {};
+    }
+    if (pattern.empty())
+    {
+        node->edit.pattern.reset();
+        node->edit.validity = TextValidity::Unchecked;
+        return {};
+    }
+
+    std::expected<std::shared_ptr<const Pattern>, PatternError> compiled = CompilePattern(pattern);
+    if (!compiled)
+    {
+        return std::unexpected(std::move(compiled.error()));
+    }
+    node->edit.pattern = *std::move(compiled);
+    node->edit.check = check;
+    node->edit.validity = TextValidity::Unchecked;
+    return {};
+}
+
+TextValidity Ui::GetValidity(TextFieldId field) const
+{
+    const Node *node = _tree.Get(field.node);
+    return node != nullptr ? node->edit.validity : TextValidity::Unchecked;
+}
+
+Rect Ui::GetCaretRect(TextFieldId field) const
+{
+    const Node *node = _tree.Get(field.node);
+    const LayoutNode *placed = _layout.Get(field.node);
+    if (node == nullptr || placed == nullptr)
+    {
+        return {};
+    }
+    return CaretRect(*node, placed, TextOf(*placed), _layout.scale);
+}
+
+void Ui::SetSelectable(NodeId id, bool selectable)
+{
+    Node *node = _tree.Editable(id);
+    if (node == nullptr)
+    {
+        return;
+    }
+    node->edit.editing = selectable ? TextEditing::Selectable : TextEditing::None;
+    _tree.SetBehaviour(id, selectable ? static_cast<uint32_t>(BuiltinWidget::TextField) : 0);
+    // Copying needs somewhere for Ctrl+C to land, and that is focus.
+    _tree.SetFocusable(id, selectable);
 }
 
 void Ui::SetRange(ContinuousSliderId slider, SliderRange range)
@@ -435,6 +655,19 @@ InputResult Ui::ProcessInput(const UiInput &input)
     _nextStep = FrameStep::AwaitingSync;
 
     const InputResult result = Interact(input);
+
+    // Leaving a field is as much a way of finishing with it as pressing Enter,
+    // so a field judged on commit is judged when focus goes elsewhere. Here
+    // rather than wherever focus moves, because it moves from several places.
+    if (_interaction.focused != _focusedLast)
+    {
+        if (Node *left = _tree.Editable(_focusedLast))
+        {
+            CommitText(*left);
+        }
+        _focusedLast = _interaction.focused;
+    }
+
     AdvanceScrolling(std::max(0.0, input.time - _lastTime));
     _lastTime = input.time;
     if (_interaction.activated)
@@ -450,6 +683,7 @@ void Ui::Announce()
     if (_events == nullptr)
     {
         _changed.clear();
+        _submitted.clear();
         return;
     }
     if (const Node *activated = _tree.Get(_interaction.activated); activated != nullptr && activated->onActivate)
@@ -460,10 +694,20 @@ void Ui::Announce()
     {
         if (const Node *node = _tree.Get(id); node != nullptr && node->onChange)
         {
-            node->onChange(*_events, node->value);
+            node->onChange(*_events, *node);
         }
     }
     _changed.clear();
+    // After the changes, so a field that was edited and then finished in one
+    // frame announces what it holds before it announces that it is done.
+    for (const NodeId id : _submitted)
+    {
+        if (const Node *node = _tree.Get(id); node != nullptr && node->onSubmit)
+        {
+            node->onSubmit(*_events, *node);
+        }
+    }
+    _submitted.clear();
     if (_interaction.backPressed)
     {
         _events->Push(UiBack{});
@@ -493,6 +737,38 @@ void Ui::AdvanceScrolling(double seconds)
     }
 }
 
+const TextLayout *Ui::TextOf(const LayoutNode &placed) const
+{
+    return placed.text < _layout.texts.size() ? &_layout.texts[placed.text] : nullptr;
+}
+
+WidgetView Ui::ViewOf(NodeId id, const WidgetType &widget) const
+{
+    const LayoutNode *placed = _layout.Get(id);
+    WidgetView view;
+    view.node = _tree.Get(id);
+    view.layout = placed;
+    view.text = placed != nullptr ? TextOf(*placed) : nullptr;
+    view.clipboard = &_clipboard;
+    view.context = widget.context;
+    view.scale = _layout.scale;
+    view.id = id;
+    view.focused = _interaction.focused == id;
+    view.pressed = _interaction.pressed == id;
+    view.hovered = _interaction.hovered == id;
+    return view;
+}
+
+Core::CursorShape Ui::CursorOver(NodeId id, Point pointer) const
+{
+    const WidgetType *widget = _tree.WidgetOf(id);
+    if (widget == nullptr || widget->cursor == nullptr || _layout.Get(id) == nullptr)
+    {
+        return Core::CursorShape::Arrow;
+    }
+    return widget->cursor(ViewOf(id, *widget), pointer);
+}
+
 WidgetResponse Ui::Dispatch(NodeId id, const WidgetEvent &event)
 {
     const WidgetType *widget = _tree.WidgetOf(id);
@@ -503,18 +779,14 @@ WidgetResponse Ui::Dispatch(NodeId id, const WidgetEvent &event)
         return WidgetResponse::Ignored;
     }
 
-    const WidgetView view{.node = node,
-                          .layout = placed,
-                          .context = widget->context,
-                          .scale = _layout.scale,
-                          .id = id,
-                          .focused = _interaction.focused == id,
-                          .pressed = _interaction.pressed == id,
-                          .hovered = _interaction.hovered == id};
-    const WidgetResponse response = widget->input(view, *node, event);
+    const WidgetResponse response = widget->input(ViewOf(id, *widget), *node, event);
     if (response == WidgetResponse::Changed && std::ranges::find(_changed, id) == _changed.end())
     {
         _changed.push_back(id);
+    }
+    if (response == WidgetResponse::Submitted && std::ranges::find(_submitted, id) == _submitted.end())
+    {
+        _submitted.push_back(id);
     }
     return response;
 }
@@ -585,7 +857,9 @@ InputResult Ui::Interact(const UiInput &input)
             {
                 now.focused = now.hovered;
             }
-            Dispatch(now.pressed, PointerGesture(WidgetGesture::Press, input.pointer));
+            WidgetEvent press = PointerGesture(WidgetGesture::Press, input.pointer);
+            press.clicks = CountClicks(now.pressed, input.time);
+            Dispatch(now.pressed, press);
         }
         // The press is kept while the pointer wanders, so a slider still follows
         // a cursor that has left it.
@@ -607,6 +881,11 @@ InputResult Ui::Interact(const UiInput &input)
         {
             result.wheelUsed = DispatchWheel(hit, input);
         }
+
+        // What has hold of the pointer decides its shape, so a field dragging
+        // a selection goes on saying so even where the pointer has wandered
+        // off the box.
+        result.cursor = CursorOver(now.pressed ? now.pressed : hit, input.pointer);
     }
 
     const Node *focused = _tree.Get(now.focused);
@@ -614,7 +893,8 @@ InputResult Ui::Interact(const UiInput &input)
                       (input.grant == InputGrant::Pointer && focused != nullptr && focused->takesKeyboard);
     if (!keys || input.keyboardClaimed)
     {
-        _repeating = UiAction::Count;
+        _repeatAction.key = UiAction::Count;
+        _repeatEdit.key = EditKey::Count;
         return result;
     }
     result.keyboardTaken = true;
@@ -622,38 +902,60 @@ InputResult Ui::Interact(const UiInput &input)
     {
         now.device = InputDevice::Keys;
     }
-    if (input.actionPressed[static_cast<std::size_t>(UiAction::Accept)] && now.focused)
+    // Accept and Back go to the focused control before they mean anything
+    // general, on the same footing as a direction: Enter in a field is a
+    // newline or a submission, not the click a button would read it as.
+    if (input.actionPressed[static_cast<std::size_t>(UiAction::Accept)] && now.focused &&
+        Dispatch(now.focused, ActionGesture(UiAction::Accept, input.reach, input.step)) == WidgetResponse::Ignored)
     {
         now.activated = now.focused;
     }
-    now.backPressed = input.actionPressed[static_cast<std::size_t>(UiAction::Back)];
+    if (input.actionPressed[static_cast<std::size_t>(UiAction::Back)])
+    {
+        now.backPressed =
+            Dispatch(now.focused, ActionGesture(UiAction::Back, input.reach, input.step)) == WidgetResponse::Ignored;
+    }
     Navigate(input);
+    Write(input);
     return result;
 }
 
 std::array<bool, kUiActionCount> Ui::FiredActions(const UiInput &input)
 {
-    const auto at = [](UiAction action) { return static_cast<std::size_t>(action); };
-    std::array<bool, kUiActionCount> fired = input.actionPressed;
+    return FiredKeys(input.actionPressed, input.actionDown, std::span<const UiAction>{kMoveActions}, _repeatAction,
+                     input.time);
+}
 
-    if (_repeating != UiAction::Count && !input.actionDown[at(_repeating)])
+std::array<bool, kEditKeyCount> Ui::FiredEdits(const UiInput &input)
+{
+    return FiredKeys(input.editPressed, input.editDown, std::span<const EditKey>{kRepeatingEdits}, _repeatEdit,
+                     input.time);
+}
+
+void Ui::Write(const UiInput &input)
+{
+    if (!input.typed.empty())
     {
-        _repeating = UiAction::Count;
+        Dispatch(_interaction.focused, TypeGesture(input.typed));
     }
-    for (const UiAction action : kMoveActions)
+
+    const std::array<bool, kEditKeyCount> fired = FiredEdits(input);
+    for (std::size_t index = 0; index < kEditKeyCount; ++index)
     {
-        if (input.actionPressed[at(action)])
+        if (fired[index])
         {
-            _repeating = action;
-            _repeatAt = input.time + kNavRepeatDelaySeconds;
+            Dispatch(_interaction.focused, EditGesture(static_cast<EditKey>(index), input.reach, input.step));
         }
     }
-    if (_repeating != UiAction::Count && !input.actionPressed[at(_repeating)] && input.time >= _repeatAt)
-    {
-        fired[at(_repeating)] = true;
-        _repeatAt += kNavRepeatIntervalSeconds;
-    }
-    return fired;
+}
+
+uint32_t Ui::CountClicks(NodeId node, double time)
+{
+    const bool continues = node == _lastPressed && time - _lastPressAt <= kMultiClickSeconds;
+    _clicks = continues ? _clicks + 1 : 1;
+    _lastPressed = node;
+    _lastPressAt = time;
+    return _clicks;
 }
 
 void Ui::Navigate(const UiInput &input)
@@ -666,8 +968,9 @@ void Ui::Navigate(const UiInput &input)
             continue;
         }
         // The focused control has first claim on a direction: a slider steps on
-        // Left and Right rather than handing focus to whatever sits beside it.
-        if (Dispatch(_interaction.focused, ActionGesture(action)) == WidgetResponse::Ignored)
+        // Left and Right rather than handing focus to whatever sits beside it,
+        // and a field moves its caret.
+        if (Dispatch(_interaction.focused, ActionGesture(action, input.reach, input.step)) == WidgetResponse::Ignored)
         {
             Move(action);
         }

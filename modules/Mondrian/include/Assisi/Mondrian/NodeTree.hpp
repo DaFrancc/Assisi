@@ -12,6 +12,7 @@
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/NodeId.hpp>
 #include <Assisi/Mondrian/Style.hpp>
+#include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
 #include <Assisi/Core/EventQueue.hpp>
@@ -51,8 +52,15 @@ struct Node
     /// Set through Ui::OnActivate, which is what knows the event's type.
     std::function<void(Core::EventQueue &)> onActivate;
     /// Pushes this node's event when its value changes; empty for none. Set
-    /// through Ui::OnChange, which is what knows the event's type.
-    std::function<void(Core::EventQueue &, const WidgetValue &)> onChange;
+    /// through Ui::OnChange, which is what knows the event's type. Given the
+    /// node rather than the value, because what a control holds is not always
+    /// one: a field holds text, which lives in the node.
+    std::function<void(Core::EventQueue &, const Node &)> onChange;
+    /// Pushes this node's event when what it holds is finished rather than
+    /// merely changed: Enter in a field. Empty for none.
+    std::function<void(Core::EventQueue &, const Node &)> onSubmit;
+    /// Where the caret is and what may be typed, on a node holding text.
+    TextEdit edit;
     /// What the control on this node holds; nothing on a node that is none.
     WidgetValue value;
     /// What a slider's ends mean; unused on everything else.
@@ -126,7 +134,11 @@ class NodeTree
     /// @brief What @p id does when clicked or accepted, replacing what it did.
     void SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> push);
     /// @brief What @p id does when its value changes, replacing what it did.
-    void SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const WidgetValue &)> push);
+    void SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push);
+    /// @brief What @p id does when what it holds is finished, replacing what it did.
+    void SetOnSubmit(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push);
+    /// @brief Where the caret is and what may be typed on @p id.
+    void SetTextEdit(NodeId id, const TextEdit &edit);
     /// @brief What the control on @p id holds.
     void SetValue(NodeId id, WidgetValue value);
     /// @brief How many positions the stepped control on @p id has.

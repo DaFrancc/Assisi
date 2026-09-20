@@ -28,6 +28,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -71,6 +73,10 @@ class InputContext
     void OnMouseButton(MouseButton button, KeyAction action, double time);
     /// @brief The cursor moved to (@p x, @p y), in window coordinates.
     void OnCursorPosition(double x, double y);
+    /// @brief The keyboard produced @p codepoint, which is what a key press
+    /// means once the layout, the modifiers and any dead keys have had their
+    /// say. A text field reads these; a key press is a different question.
+    void OnCharacter(char32_t codepoint);
     /// @brief The wheel turned, or a trackpad scrolled: @p xOffset sideways and
     /// @p yOffset away from the player, both in notches.
     void OnScroll(double xOffset, double yOffset);
@@ -87,6 +93,15 @@ class InputContext
 
     /// @brief True in the frame the key went up.
     [[nodiscard]] bool IsKeyReleased(Key key, ConsumedInput consumed = ConsumedInput::Skip) const;
+
+    /// @brief True in a frame the operating system repeated the held key,
+    /// which it does at the delay and rate the player has set for their own
+    /// keyboard. Never true in the frame of the first press.
+    ///
+    /// What text editing repeats on, so a held backspace erases at the speed
+    /// everything else on their machine does. Gameplay wants the held state
+    /// instead: a key repeating is still one key held down.
+    [[nodiscard]] bool IsKeyRepeated(Key key, ConsumedInput consumed = ConsumedInput::Skip) const;
 
     /// @brief In the frame the key went down, which tap of a quick run that
     /// press was: 1 for a single press, 2 for a double tap, and so on without
@@ -108,6 +123,13 @@ class InputContext
 
     /// @brief TapCount for a mouse button: 2 in the frame of a double click.
     [[nodiscard]] uint32_t ClickCount(MouseButton button) const;
+
+    /// @brief What the keyboard produced this frame, in the order it arrived.
+    /// Valid until the next Poll.
+    ///
+    /// Codepoints rather than bytes, which is what the window library reports
+    /// and what leaves the choice of encoding to whoever consumes them.
+    [[nodiscard]] std::u32string_view TypedCharacters() const { return _frameTyped; }
 
     // -------------------------------------------------------------------------
     // Tap timing
@@ -145,8 +167,12 @@ class InputContext
     /// a menu is not still down for gameplay the next frame.
     void ConsumeKey(Key key);
     void ConsumeMouseButton(MouseButton button);
-    /// @brief Consumes every key held, pressed or released this frame.
+    /// @brief Consumes every key held, pressed or released this frame, and the
+    /// text it typed.
     void ConsumeKeyboard();
+    /// @brief Consumes the frame's typed characters alone, for a UI that took
+    /// what was typed and left the keys themselves to the game.
+    void ConsumeText();
     /// @brief Consumes every button held, pressed or released this frame, and
     /// the frame's movement and scroll. The position stays readable.
     void ConsumeMouse();
@@ -211,9 +237,11 @@ class InputContext
         std::array<bool, Count> live{};
         std::array<bool, Count> pressedSince{};
         std::array<bool, Count> releasedSince{};
+        std::array<bool, Count> repeatedSince{};
         std::array<bool, Count> down{};
         std::array<bool, Count> pressed{};
         std::array<bool, Count> released{};
+        std::array<bool, Count> repeated{}; ///< the OS repeated a held key this frame
         std::array<bool, Count> consumed{}; ///< hidden until the frame after release
 
         /// @return whether the action was a press of an input that was up.
@@ -231,6 +259,8 @@ class InputContext
     Switches<kButtonCount> _buttons;
     std::array<glm::vec2, kButtonCount> _lastClickPosition{};
     std::vector<PushedMode> _pushedModes;
+    std::u32string _typedSince; ///< characters arrived since the last Poll
+    std::u32string _frameTyped; ///< what this frame typed
     NativeWindowHandle *_window = nullptr;
     double _multiTapSeconds = kDefaultMultiTapSeconds;
     glm::vec2 _livePosition{0.f, 0.f};

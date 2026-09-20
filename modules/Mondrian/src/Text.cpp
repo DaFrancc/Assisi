@@ -19,6 +19,30 @@ namespace
 /// Every font's glyph 0 is the one drawn for a character it lacks.
 constexpr uint32_t kMissingGlyph = 0;
 
+/// How far a line reaches above its baseline, in drawn pixels.
+float Ascent(const TextLayout &layout)
+{
+    return layout.font != nullptr ? layout.font->ascender * layout.scale : 0.f;
+}
+
+/// How tall one line's box is, top to bottom.
+float LineHeight(const TextLayout &layout)
+{
+    return layout.font != nullptr ? (layout.font->ascender - layout.font->descender) * layout.scale : 0.f;
+}
+
+/// The byte of @p shown just past everything on @p line: where the next line
+/// starts, or the end of the text for the last one.
+uint32_t AfterLine(const TextLayout &layout, std::string_view shown, uint32_t line)
+{
+    const uint32_t next = line + 1;
+    if (next < layout.lines.size() && layout.lines[next].count > 0)
+    {
+        return layout.glyphs[layout.lines[next].first].cluster;
+    }
+    return static_cast<uint32_t>(shown.size());
+}
+
 constexpr uint32_t kSpace = 0x20;
 constexpr uint32_t kNewline = 0x0A;
 
@@ -221,6 +245,112 @@ void DrawGlyphs(DrawList &list, const TextLayout &layout, TextureId atlas, Point
                       .height = static_cast<float>(glyph->height) / atlasHeight};
         list.Quad(rect).Fill(color).Texture(atlas, uv).Kind(QuadKind::Glyph);
     }
+}
+
+CaretPlace PlaceCaret(const TextLayout &layout, std::string_view shown, uint32_t character)
+{
+    const uint32_t offset = CharacterOffset(shown, character);
+
+    // The caret goes on the left edge of the glyph that starts at this byte.
+    // Whitespace at a line's end is laid out but has no width there, so a caret
+    // among it belongs to the following line, which is where typing continues.
+    for (uint32_t line = 0; line < layout.lines.size(); ++line)
+    {
+        const TextLine &row = layout.lines[line];
+        for (uint32_t index = row.first; index < row.first + row.count; ++index)
+        {
+            const PlacedGlyph &glyph = layout.glyphs[index];
+            if (glyph.cluster >= offset)
+            {
+                return {.x = glyph.x, .line = line};
+            }
+        }
+    }
+
+    // Past every glyph: the end of the last line, which is where the next
+    // character will go.
+    if (layout.lines.empty())
+    {
+        return {};
+    }
+    const TextLine &last = layout.lines.back();
+    return {.x = last.x + last.width, .line = static_cast<uint32_t>(layout.lines.size() - 1)};
+}
+
+uint32_t CharacterAt(const TextLayout &layout, std::string_view shown, Point local)
+{
+    if (layout.lines.empty())
+    {
+        return 0;
+    }
+
+    // The last line whose box has begun by this point: a click above the text
+    // lands on its first line, and one below it on its last.
+    uint32_t line = 0;
+    for (uint32_t index = 1; index < layout.lines.size(); ++index)
+    {
+        if (local.y >= layout.lines[index].baseline - Ascent(layout))
+        {
+            line = index;
+        }
+    }
+
+    const TextLine &row = layout.lines[line];
+    uint32_t nearest = 0;
+    float best = std::numeric_limits<float>::max();
+    const auto consider = [&](float x, uint32_t cluster)
+    {
+        const float distance = std::abs(local.x - x);
+        if (distance < best)
+        {
+            best = distance;
+            nearest = cluster;
+        }
+    };
+
+    for (uint32_t index = row.first; index < row.first + row.count; ++index)
+    {
+        const PlacedGlyph &glyph = layout.glyphs[index];
+        if (glyph.kind != GlyphClass::Newline)
+        {
+            consider(glyph.x, glyph.cluster);
+        }
+    }
+    // The far end of the line, so a click past the last word lands after it
+    // rather than before it.
+    consider(row.x + row.width, AfterLine(layout, shown, line));
+    return CharacterIndex(shown, nearest);
+}
+
+Rect LineBox(const TextLayout &layout, uint32_t line)
+{
+    if (line >= layout.lines.size())
+    {
+        return {};
+    }
+    const TextLine &row = layout.lines[line];
+    return {.x = row.x, .y = row.baseline - Ascent(layout), .width = row.width, .height = LineHeight(layout)};
+}
+
+Rect LineSelection(const TextLayout &layout, std::string_view shown, uint32_t line, TextRange range)
+{
+    if (line >= layout.lines.size() || range.first >= range.last)
+    {
+        return {};
+    }
+    const CaretPlace from = PlaceCaret(layout, shown, range.first);
+    const CaretPlace to = PlaceCaret(layout, shown, range.last);
+    if (line < from.line || line > to.line)
+    {
+        return {};
+    }
+
+    // A line in the middle of the selection is covered end to end; the first
+    // and last lines are cut where the selection starts and stops.
+    const Rect box = LineBox(layout, line);
+    const float left = line == from.line ? from.x : box.x;
+    const float right = line == to.line ? to.x : box.x + box.width;
+    return {.x = left, .y = box.y, .width = std::max(0.f, right - left), .height = box.height};
 }
 
 float MeasureLongestWord(const ShapedText &shaped, const Font &font, float size)

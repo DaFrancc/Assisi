@@ -6,6 +6,42 @@
 
 namespace Assisi::Window
 {
+namespace
+{
+
+/// The window library's name for @p shape. Arrow never reaches here: the
+/// default is no cursor object at all rather than an arrow-shaped one.
+int32_t GlfwCursorShape(Core::CursorShape shape)
+{
+    switch (shape)
+    {
+    case Core::CursorShape::Text:
+        return GLFW_IBEAM_CURSOR;
+    case Core::CursorShape::Hand:
+        return GLFW_POINTING_HAND_CURSOR;
+    case Core::CursorShape::Crosshair:
+        return GLFW_CROSSHAIR_CURSOR;
+    case Core::CursorShape::ResizeX:
+        return GLFW_RESIZE_EW_CURSOR;
+    case Core::CursorShape::ResizeY:
+        return GLFW_RESIZE_NS_CURSOR;
+    case Core::CursorShape::ResizeFall:
+        return GLFW_RESIZE_NWSE_CURSOR;
+    case Core::CursorShape::ResizeRise:
+        return GLFW_RESIZE_NESW_CURSOR;
+    case Core::CursorShape::Move:
+        return GLFW_RESIZE_ALL_CURSOR;
+    case Core::CursorShape::NotAllowed:
+        return GLFW_NOT_ALLOWED_CURSOR;
+    case Core::CursorShape::Arrow:
+    case Core::CursorShape::Count:
+        break;
+    }
+    return GLFW_ARROW_CURSOR;
+}
+
+} // namespace
+
 WindowContext::WindowContext(const WindowConfiguration &configuration) : _glfwLibrary(GlfwLibrary::Acquire())
 {
     if (!_glfwLibrary || !_glfwLibrary->IsValid())
@@ -146,6 +182,39 @@ void WindowContext::OnCursorPosition(std::function<void(double, double)> callbac
     _cursorPositionCallbacks.push_back(std::move(callback));
 }
 
+void WindowContext::SetCursorShape(Core::CursorShape shape)
+{
+    if (_nativeWindowHandle == nullptr || shape == _cursorShape || shape == Core::CursorShape::Count)
+    {
+        return;
+    }
+
+    // The default is the absence of a cursor object rather than an arrow-shaped
+    // one. A window that owns a cursor has it painted back over a pointer the
+    // game has locked, under compositors that repaint on their own schedule.
+    if (shape == Core::CursorShape::Arrow)
+    {
+        _cursorShape = shape;
+        glfwSetCursor(_nativeWindowHandle, nullptr);
+        return;
+    }
+
+    const std::size_t index = static_cast<std::size_t>(shape);
+    if (_cursors[index] == nullptr)
+    {
+        _cursors[index] = glfwCreateStandardCursor(GlfwCursorShape(shape));
+    }
+    if (_cursors[index] == nullptr)
+    {
+        // A shape this platform's cursor theme does not carry: leave the
+        // pointer as it was rather than dropping it back to the arrow, which
+        // would flicker as it moved on and off whatever asked for the shape.
+        return;
+    }
+    _cursorShape = shape;
+    glfwSetCursor(_nativeWindowHandle, _cursors[index]);
+}
+
 std::string WindowContext::GetClipboardText() const
 {
     if (_nativeWindowHandle == nullptr)
@@ -212,9 +281,22 @@ void WindowContext::OnWindowRefresh(std::function<void()> callback)
 
 WindowContext::~WindowContext()
 {
+    DestroyCursors();
     if (_nativeWindowHandle != nullptr)
     {
         glfwDestroyWindow(_nativeWindowHandle);
+    }
+}
+
+void WindowContext::DestroyCursors()
+{
+    for (NativeCursorHandle *&cursor : _cursors)
+    {
+        if (cursor != nullptr)
+        {
+            glfwDestroyCursor(cursor);
+            cursor = nullptr;
+        }
     }
 }
 
@@ -225,10 +307,12 @@ WindowContext::WindowContext(WindowContext &&other) noexcept
       _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks)), _keyCallbacks(std::move(other._keyCallbacks)),
       _characterCallbacks(std::move(other._characterCallbacks)),
       _mouseButtonCallbacks(std::move(other._mouseButtonCallbacks)),
-      _cursorPositionCallbacks(std::move(other._cursorPositionCallbacks))
+      _cursorPositionCallbacks(std::move(other._cursorPositionCallbacks)), _cursors(other._cursors),
+      _cursorShape(other._cursorShape)
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
+    other._cursors.fill(nullptr);
 
     // The GLFW user pointer still points at 'other'; re-seat it on this object
     // so the callback trampolines dispatch to the moved-to subscriber lists.
@@ -242,6 +326,7 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
 {
     if (this != &other)
     {
+        DestroyCursors();
         if (_nativeWindowHandle != nullptr)
         {
             glfwDestroyWindow(_nativeWindowHandle);
@@ -250,6 +335,9 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
         _glfwLibrary = std::move(other._glfwLibrary);
         _nativeWindowHandle = other._nativeWindowHandle;
         _isValid = other._isValid;
+        _cursors = other._cursors;
+        _cursorShape = other._cursorShape;
+        other._cursors.fill(nullptr);
         _framebufferSizeCallbacks = std::move(other._framebufferSizeCallbacks);
         _scrollCallbacks = std::move(other._scrollCallbacks);
         _windowRefreshCallbacks = std::move(other._windowRefreshCallbacks);

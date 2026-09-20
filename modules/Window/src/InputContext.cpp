@@ -34,6 +34,13 @@ bool IsSet(const auto &flags, int32_t value)
 
 template <std::size_t Count> bool InputContext::Switches<Count>::Apply(std::size_t index, KeyAction action)
 {
+    // The platform repeating a held key is not a new press, but it is what
+    // text editing acts on, so it is kept apart rather than dropped.
+    if (action == KeyAction::Repeat)
+    {
+        repeatedSince[index] = true;
+    }
+
     // A press of a key already down, or a release of one already up, is no
     // edge: a repeat is the first, and a duplicate from the platform the other.
     const bool goesDown = action == KeyAction::Press || action == KeyAction::Repeat;
@@ -64,9 +71,11 @@ template <std::size_t Count> void InputContext::Switches<Count>::Latch()
     down = live;
     pressed = pressedSince;
     released = releasedSince;
+    repeated = repeatedSince;
     taps = tapsSince;
     pressedSince.fill(false);
     releasedSince.fill(false);
+    repeatedSince.fill(false);
     tapsSince.fill(0);
 }
 
@@ -79,6 +88,7 @@ InputContext::InputContext(WindowContext &window) : _window(window.NativeHandle(
                          { OnMouseButton(event.button, event.action, event.time); });
     window.OnCursorPosition([this](double x, double y) { OnCursorPosition(x, y); });
     window.OnScroll([this](double xOffset, double yOffset) { OnScroll(xOffset, yOffset); });
+    window.OnCharacter([this](char32_t codepoint) { OnCharacter(codepoint); });
 
     // The cursor reports only when it moves, so start from where it is, and make
     // that the first frame's so its delta is zero.
@@ -97,6 +107,8 @@ void InputContext::Poll()
     _framePosition = _livePosition;
     _frameScroll = _scrollSince;
     _scrollSince = {0.f, 0.f};
+    _frameTyped.swap(_typedSince);
+    _typedSince.clear();
 }
 
 void InputContext::OnKey(Key key, KeyAction action, double time)
@@ -149,6 +161,11 @@ void InputContext::OnScroll(double xOffset, double yOffset)
     _scrollSince += glm::vec2(static_cast<float>(xOffset), static_cast<float>(yOffset));
 }
 
+void InputContext::OnCharacter(char32_t codepoint)
+{
+    _typedSince.push_back(codepoint);
+}
+
 template <std::size_t Count> void InputContext::Switches<Count>::ConsumeActive()
 {
     for (std::size_t index = 0; index < Count; ++index)
@@ -177,6 +194,11 @@ bool InputContext::IsKeyPressed(Key key, ConsumedInput consumed) const
 bool InputContext::IsKeyReleased(Key key, ConsumedInput consumed) const
 {
     return _keys.Reads(_keys.released, static_cast<int32_t>(key), consumed);
+}
+
+bool InputContext::IsKeyRepeated(Key key, ConsumedInput consumed) const
+{
+    return _keys.Reads(_keys.repeated, static_cast<int32_t>(key), consumed);
 }
 
 bool InputContext::IsMouseButtonDown(MouseButton button, ConsumedInput consumed) const
@@ -213,6 +235,12 @@ void InputContext::ConsumeMouseButton(MouseButton button)
 void InputContext::ConsumeKeyboard()
 {
     _keys.ConsumeActive();
+    ConsumeText();
+}
+
+void InputContext::ConsumeText()
+{
+    _frameTyped.clear();
 }
 
 void InputContext::ConsumeMouse()

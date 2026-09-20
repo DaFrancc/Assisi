@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <string_view>
 
 using namespace Assisi::Window;
 
@@ -353,4 +354,93 @@ TEST_CASE("InputContext: each key keeps its own run")
     input.Poll();
     CHECK(input.TapCount(Key::A) == 1);
     CHECK(input.TapCount(Key::D) == 1);
+}
+
+TEST_CASE("InputContext: a key the system repeats reads as repeated, and never as pressed again")
+{
+    InputContext input;
+    input.OnKey(Key::Backspace, KeyAction::Press, 0.0);
+    input.Poll();
+    CHECK(input.IsKeyPressed(Key::Backspace));
+    CHECK_FALSE(input.IsKeyRepeated(Key::Backspace));
+
+    // The system repeats it at whatever rate the player has set; the key was
+    // never up, so this is no new press.
+    input.OnKey(Key::Backspace, KeyAction::Repeat, kQuick);
+    input.Poll();
+    CHECK(input.IsKeyRepeated(Key::Backspace));
+    CHECK_FALSE(input.IsKeyPressed(Key::Backspace));
+    CHECK(input.IsKeyDown(Key::Backspace));
+
+    // And it is gone the frame after, like every other edge.
+    input.Poll();
+    CHECK_FALSE(input.IsKeyRepeated(Key::Backspace));
+    CHECK(input.IsKeyDown(Key::Backspace));
+}
+
+TEST_CASE("InputContext: a consumed key's repeats are hidden with it")
+{
+    InputContext input;
+    input.OnKey(Key::Backspace, KeyAction::Press, 0.0);
+    input.Poll();
+    input.ConsumeKey(Key::Backspace);
+
+    input.OnKey(Key::Backspace, KeyAction::Repeat, kQuick);
+    input.Poll();
+    CHECK_FALSE(input.IsKeyRepeated(Key::Backspace));
+    CHECK(input.IsKeyRepeated(Key::Backspace, ConsumedInput::Include));
+}
+
+TEST_CASE("InputContext: the characters typed in a frame read back in it, and only in it")
+{
+    constexpr char32_t kEAcute = U'é';
+    constexpr char32_t kEmoji = U'\U0001F600';
+
+    InputContext input;
+    input.OnCharacter(U'h');
+    input.OnCharacter(kEAcute);
+    input.OnCharacter(kEmoji);
+
+    // Nothing arrives before the frame it belongs to opens.
+    CHECK(input.TypedCharacters().empty());
+
+    input.Poll();
+    CHECK(input.TypedCharacters() == std::u32string_view{U"hé\U0001F600"});
+
+    input.Poll();
+    CHECK(input.TypedCharacters().empty());
+}
+
+TEST_CASE("InputContext: typed characters are what a key's own press is not")
+{
+    // A key press says which key; a character says what it produced. Shift and
+    // a layout stand between them, so a field reads the second and not the first.
+    InputContext input;
+    input.OnKey(Key::A, KeyAction::Press, 0.0);
+    input.OnCharacter(U'A');
+    input.Poll();
+    CHECK(input.IsKeyPressed(Key::A));
+    CHECK(input.TypedCharacters() == std::u32string_view{U"A"});
+}
+
+TEST_CASE("InputContext: consumed text is hidden from the game without touching the keys")
+{
+    InputContext input;
+    input.OnKey(Key::A, KeyAction::Press, 0.0);
+    input.OnCharacter(U'a');
+    input.Poll();
+
+    input.ConsumeText();
+    CHECK(input.TypedCharacters().empty());
+    CHECK(input.IsKeyPressed(Key::A));
+}
+
+TEST_CASE("InputContext: consuming the keyboard takes the frame's typed text with it")
+{
+    InputContext input;
+    input.OnCharacter(U'a');
+    input.Poll();
+
+    input.ConsumeKeyboard();
+    CHECK(input.TypedCharacters().empty());
 }

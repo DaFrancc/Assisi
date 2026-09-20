@@ -189,12 +189,38 @@ TEST_CASE("Widget: the pointer moving while held reaches the type as a drag, wit
     CHECK(probe.record.gestures == std::vector{WidgetGesture::Drag});
 }
 
-TEST_CASE("Widget: accepting a focused widget activates it without a pointer")
+TEST_CASE("Widget: accepting a focused widget reaches it as an action before it becomes an activation")
 {
     Probe probe;
     probe.ui.SetFocus(probe.node);
+
+    // A control that takes Accept keeps it: a field puts a newline in rather
+    // than reading Enter as the click a button would.
+    probe.record.answer = WidgetResponse::Handled;
     probe.Step(Pressing(UiAction::Accept));
-    CHECK(probe.record.gestures == std::vector{WidgetGesture::Activate});
+    CHECK(probe.record.gestures == std::vector{WidgetGesture::Action});
+    CHECK(probe.record.actions == std::vector{UiAction::Accept});
+
+    // One that passes on Accept is activated by it, as a button is.
+    probe.record.gestures.clear();
+    probe.record.answer = WidgetResponse::Ignored;
+    probe.Step(Pressing(UiAction::Accept));
+    CHECK(probe.record.gestures == std::vector{WidgetGesture::Action, WidgetGesture::Activate});
+}
+
+TEST_CASE("Widget: a focused widget may take Back, and the UI hears about it only when none does")
+{
+    Probe probe;
+    probe.ui.SetFocus(probe.node);
+
+    probe.record.answer = WidgetResponse::Handled;
+    probe.Step(Pressing(UiAction::Back));
+    CHECK(probe.record.actions == std::vector{UiAction::Back});
+    CHECK_FALSE(probe.ui.GetInteraction().backPressed);
+
+    probe.record.answer = WidgetResponse::Ignored;
+    probe.Step(Pressing(UiAction::Back));
+    CHECK(probe.ui.GetInteraction().backPressed);
 }
 
 TEST_CASE("Widget: the wheel reaches the widget under the pointer")

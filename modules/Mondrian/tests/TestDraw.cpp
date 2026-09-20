@@ -169,6 +169,50 @@ TEST_CASE("Draw: an image fills its node with the texture it was given")
     CHECK(std::ranges::any_of(drawn.Entries(), [](const DrawEntry &entry) { return entry.texture == kPicture; }));
 }
 
+TEST_CASE("Draw: what a control paints behind the text comes before the glyphs it marks")
+{
+    NodeTree tree;
+    RegisterBuiltinWidgets(tree.Widgets());
+
+    constexpr float kFieldWidth = 200.f;
+    const NodeId field = tree.Create(tree.Root());
+    Style style;
+    style.sizing = {Sizing::Fixed(kFieldWidth), Sizing::Fit()};
+    tree.SetStyle(field, style);
+    tree.SetText(field, "AAA");
+    tree.SetBehaviour(field, static_cast<uint32_t>(BuiltinWidget::TextField));
+    tree.SetFocusable(field, true);
+
+    TextEdit edit;
+    edit.editing = TextEditing::Editable;
+    edit.anchor = 0;
+    edit.caret = 3; // all of it selected, so there is a highlight to find
+    tree.SetTextEdit(field, edit);
+
+    const Font font = FixtureFont();
+    LayoutResult layout;
+    ComputeLayout(tree, kReference, 1.f, &font, layout);
+    DrawList list;
+    Interaction interaction;
+    interaction.focused = field;
+    DrawTree(tree, layout, list, kAtlas, interaction);
+
+    const auto quads = list.Instances();
+    const auto glyph = std::ranges::find_if(quads, [](const QuadInstance &quad)
+                                            { return quad.kind == static_cast<uint32_t>(QuadKind::Glyph); });
+    REQUIRE(glyph != quads.end());
+
+    // The highlight is the quad drawn just before the first glyph: painted
+    // after them, it would cover the words it is meant to mark. It covers the
+    // three letters rather than the whole box, which is what tells it apart
+    // from the field's own background.
+    REQUIRE(glyph != quads.begin());
+    const QuadInstance &highlight = *(glyph - 1);
+    CHECK(highlight.kind != static_cast<uint32_t>(QuadKind::Glyph));
+    CHECK(highlight.rect.width > 0.f);
+    CHECK(highlight.rect.width < kFieldWidth);
+}
+
 TEST_CASE("Draw: a hidden node and everything under it draws nothing")
 {
     NodeTree tree;

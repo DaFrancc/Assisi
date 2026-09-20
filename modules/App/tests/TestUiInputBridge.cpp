@@ -3,7 +3,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 
 using namespace Assisi;
 using Window::InputMode;
@@ -163,4 +165,137 @@ TEST_CASE("UiInputBridge: what is claimed over the UI is hidden from the game to
 
     App::ApplyUiResult(input, {}, {.pointer = false, .keyboard = true});
     CHECK_FALSE(input.IsKeyPressed(Key::W));
+}
+
+TEST_CASE("UiInputBridge: what was typed reaches the UI as UTF-8")
+{
+    Window::InputContext input;
+    input.SetInputMode(InputMode::Ui);
+    input.OnCharacter(U'h');
+    input.OnCharacter(U'é');
+    input.Poll();
+
+    const Mondrian::UiInput gathered = App::GatherUiInput(input, UiActions(), 0.0, {}, {});
+    CHECK(gathered.typed == "h\xC3\xA9");
+}
+
+TEST_CASE("UiInputBridge: the editing keys reach the UI as the edits they stand for")
+{
+    struct Case
+    {
+        Key key;
+        Mondrian::EditKey edit;
+        bool control = false;
+    };
+    const Case cases[] = {
+        {.key = Key::Home, .edit = Mondrian::EditKey::LineStart},
+        {.key = Key::End, .edit = Mondrian::EditKey::LineEnd},
+        {.key = Key::Backspace, .edit = Mondrian::EditKey::Backspace},
+        {.key = Key::Delete, .edit = Mondrian::EditKey::Delete},
+        {.key = Key::A, .edit = Mondrian::EditKey::SelectAll, .control = true},
+        {.key = Key::C, .edit = Mondrian::EditKey::Copy, .control = true},
+        {.key = Key::X, .edit = Mondrian::EditKey::Cut, .control = true},
+        {.key = Key::V, .edit = Mondrian::EditKey::Paste, .control = true},
+    };
+
+    for (const Case &c : cases)
+    {
+        CAPTURE(static_cast<int32_t>(c.key));
+        Window::InputContext input;
+        input.SetInputMode(InputMode::Ui);
+        if (c.control)
+        {
+            input.OnKey(Key::LeftControl, KeyAction::Press, 0.0);
+        }
+        input.OnKey(c.key, KeyAction::Press, 0.0);
+        input.Poll();
+
+        const Mondrian::UiInput gathered = App::GatherUiInput(input, UiActions(), 0.0, {}, {});
+        for (std::size_t edit = 0; edit < Mondrian::kEditKeyCount; ++edit)
+        {
+            const bool wanted = edit == static_cast<std::size_t>(c.edit);
+            CHECK(gathered.editPressed[edit] == wanted);
+        }
+    }
+}
+
+TEST_CASE("UiInputBridge: Control turns an editing key into the same edit reaching a word")
+{
+    // Control says how far an edit goes; it must not stop the key meaning what
+    // it means. Ctrl+Delete is still Delete.
+    for (const Key key : {Key::Delete, Key::Backspace, Key::Home, Key::End})
+    {
+        CAPTURE(static_cast<int32_t>(key));
+        Window::InputContext input;
+        input.SetInputMode(InputMode::Ui);
+        input.OnKey(Key::LeftControl, KeyAction::Press, 0.0);
+        input.OnKey(key, KeyAction::Press, 0.0);
+        input.Poll();
+
+        const Mondrian::UiInput gathered = App::GatherUiInput(input, UiActions(), 0.0, {}, {});
+        CHECK(gathered.step == Mondrian::TextStep::Word);
+        const bool anyEdit = std::ranges::any_of(gathered.editPressed, [](bool pressed) { return pressed; });
+        CHECK(anyEdit);
+    }
+}
+
+TEST_CASE("UiInputBridge: a key the system repeats erases again, at the player's own rate")
+{
+    Window::InputContext input;
+    input.SetInputMode(InputMode::Ui);
+    input.OnKey(Key::Backspace, KeyAction::Press, 0.0);
+    input.Poll();
+    REQUIRE(App::GatherUiInput(input, UiActions(), 0.0, {}, {})
+                .editPressed[static_cast<std::size_t>(Mondrian::EditKey::Backspace)]);
+
+    input.OnKey(Key::Backspace, KeyAction::Repeat, 0.1);
+    input.Poll();
+    CHECK(App::GatherUiInput(input, UiActions(), 0.1, {}, {})
+              .editPressed[static_cast<std::size_t>(Mondrian::EditKey::Backspace)]);
+
+    // Held, but with no repeat from the system this frame: nothing fires.
+    input.Poll();
+    CHECK_FALSE(App::GatherUiInput(input, UiActions(), 0.2, {}, {})
+                    .editPressed[static_cast<std::size_t>(Mondrian::EditKey::Backspace)]);
+}
+
+TEST_CASE("UiInputBridge: a letter without Control is text rather than an edit")
+{
+    Window::InputContext input;
+    input.SetInputMode(InputMode::Ui);
+    input.OnKey(Key::C, KeyAction::Press, 0.0);
+    input.OnCharacter(U'c');
+    input.Poll();
+
+    const Mondrian::UiInput gathered = App::GatherUiInput(input, UiActions(), 0.0, {}, {});
+    CHECK(gathered.typed == "c");
+    CHECK_FALSE(gathered.editPressed[static_cast<std::size_t>(Mondrian::EditKey::Copy)]);
+}
+
+TEST_CASE("UiInputBridge: Shift extends a selection and Control moves by words")
+{
+    Window::InputContext input;
+    input.SetInputMode(InputMode::Ui);
+    input.Poll();
+    CHECK(App::GatherUiInput(input, UiActions(), 0.0, {}, {}).reach == Mondrian::TextReach::Moves);
+    CHECK(App::GatherUiInput(input, UiActions(), 0.0, {}, {}).step == Mondrian::TextStep::Character);
+
+    input.OnKey(Key::LeftShift, KeyAction::Press, 0.0);
+    input.OnKey(Key::RightControl, KeyAction::Press, 0.0);
+    input.Poll();
+
+    const Mondrian::UiInput gathered = App::GatherUiInput(input, UiActions(), 0.0, {}, {});
+    CHECK(gathered.reach == Mondrian::TextReach::Extends);
+    CHECK(gathered.step == Mondrian::TextStep::Word);
+}
+
+TEST_CASE("UiInputBridge: text the UI took is hidden from the game")
+{
+    Window::InputContext input;
+    input.SetInputMode(InputMode::GameAndUi);
+    input.OnCharacter(U'x');
+    input.Poll();
+
+    App::ApplyUiResult(input, {.keyboardTaken = true}, {});
+    CHECK(input.TypedCharacters().empty());
 }
