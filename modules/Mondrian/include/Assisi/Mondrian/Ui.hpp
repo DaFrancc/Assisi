@@ -174,6 +174,16 @@ class Ui
     /// they see them rather than in bytes.
     void SetMaxLength(TextFieldId field, uint32_t characters);
 
+    /// @brief How tall @p field is, in lines of its own text, on a field of
+    /// many lines. @p lines is ignored by Unbounded.
+    ///
+    /// A field held to a number of lines refuses what would overflow it rather
+    /// than scrolling; put it in a scrolling node to hold more than it shows.
+    /// A length limit and a line limit hold at once, so whichever the text
+    /// reaches first is the one that stops it: wide characters reach the lines,
+    /// narrow ones the count.
+    void SetHeight(TextFieldId field, TextHeight height, uint32_t lines);
+
     /// @brief What @p field's text must look like, and when being told matters.
     ///
     /// Returns what went wrong with @p pattern, in which case the field keeps

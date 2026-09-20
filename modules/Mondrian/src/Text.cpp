@@ -191,7 +191,7 @@ TextLayout LayoutText(const ShapedText &shaped, const Font &font, float size, st
         widest = std::max(widest, line.width);
     }
     layout.width = std::ceil(widest);
-    layout.height = std::ceil(static_cast<float>(layout.lines.size()) * font.lineHeight * layout.scale);
+    layout.height = BlockHeight(layout, static_cast<uint32_t>(layout.lines.size()));
 
     // Rounding down keeps a right-aligned line inside the box; each baseline is
     // rounded from its exact position so line spacing does not drift.
@@ -245,6 +245,15 @@ void DrawGlyphs(DrawList &list, const TextLayout &layout, TextureId atlas, Point
                       .height = static_cast<float>(glyph->height) / atlasHeight};
         list.Quad(rect).Fill(color).Texture(atlas, uv).Kind(QuadKind::Glyph);
     }
+}
+
+float BlockHeight(const TextLayout &layout, uint32_t lines)
+{
+    if (layout.font == nullptr)
+    {
+        return 0.f;
+    }
+    return std::ceil(static_cast<float>(lines) * layout.font->lineHeight * layout.scale);
 }
 
 CaretPlace PlaceCaret(const TextLayout &layout, std::string_view shown, uint32_t character)

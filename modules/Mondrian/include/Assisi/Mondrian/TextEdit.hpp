@@ -55,6 +55,19 @@ enum class TextLines : uint8_t
     Count
 };
 
+/// @brief How tall a field of many lines is, counted in lines of its own text.
+///
+/// A field never scrolls its own content: a box that has to hold more than it
+/// shows goes inside a scrolling node, which is where bars, the wheel and
+/// dragging already live. So a field either grows, or is full.
+enum class TextHeight : uint8_t
+{
+    Unbounded, ///< grows with what is in it, for as long as that goes on
+    UpTo,      ///< grows with what is in it until it reaches its lines, then is full
+    Exactly,   ///< always its lines tall, and full at that many
+    Count
+};
+
 /// @brief Whether a field shows what it holds.
 enum class TextMask : uint8_t
 {
@@ -142,6 +155,8 @@ struct TextEdit
     uint32_t maxLength = kUnlimitedLength;
     /// Where what is being dragged would land, while it is being dragged.
     uint32_t dropAt = 0;
+    /// How many lines UpTo and Exactly mean; unused while Unbounded.
+    uint32_t lineLimit = 0;
     std::array<bool, kTextAbilityCount> abilities{true, true, true, true, true};
     TextEditing editing = TextEditing::None;
     TextLines lines = TextLines::Single;
@@ -149,6 +164,7 @@ struct TextEdit
     TextCheck check = TextCheck::MarksOnCommit;
     TextValidity validity = TextValidity::Unchecked;
     TextDrag drag = TextDrag::None;
+    TextHeight height = TextHeight::Unbounded;
 
     [[nodiscard]] bool Can(TextAbility ability) const { return abilities[static_cast<std::size_t>(ability)]; }
 

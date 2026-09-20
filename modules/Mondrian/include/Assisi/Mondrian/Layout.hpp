@@ -64,6 +64,14 @@ struct LayoutResult
 /// @p font; with no font, text takes no space and draws nothing.
 void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out);
 
+/// @brief The width @p placed's text wraps to, in device pixels: what is left
+/// inside its padding, and never less than a pixel so that a node squeezed to
+/// nothing still sets its text a glyph to a line.
+///
+/// Anything asking what text would do in a node goes through this, so that the
+/// answer cannot differ from what layout itself used.
+[[nodiscard]] float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale);
+
 /// @brief Where @p placed's text begins, in device pixels: inside its padding,
 /// on whole pixels so the layout's own whole-pixel lines land on them, and
 /// shifted by however far a single line has scrolled.

@@ -151,6 +151,10 @@ constexpr int32_t kSampleSliderSteps = 4;
 constexpr int32_t kSampleSliderStep = 1;
 /// Long enough to wrap in the panel, so the sample screen shows a field of
 /// many lines doing what one of a single line does not.
+/// The sample notes box grows to this many lines and is then full, which is
+/// what a box in a form does; a box meant to hold more goes in a scrolling node.
+constexpr uint32_t kSampleNoteLines = 3;
+
 constexpr std::string_view kSampleNotes =
     "A field of many lines wraps to its width and grows downwards as it fills. Enter puts a break in rather "
     "than finishing, and the caret moves between lines.";
@@ -314,6 +318,7 @@ void Ui::AddSampleControls()
     SetMask(secret, TextMask::Dots);
 
     const TextFieldId notes = AddTextField(panel, TextLines::Multi);
+    SetHeight(notes, TextHeight::UpTo, kSampleNoteLines);
     SetText(notes, kSampleNotes);
 
     Style list;
@@ -457,6 +462,17 @@ void Ui::SetMaxLength(TextFieldId field, uint32_t characters)
     if (Node *node = _tree.Editable(field.node))
     {
         node->edit.maxLength = characters;
+    }
+}
+
+void Ui::SetHeight(TextFieldId field, TextHeight height, uint32_t lines)
+{
+    if (Node *node = _tree.Editable(field.node))
+    {
+        node->edit.height = height;
+        // A bounded field of no lines could never hold anything, which nobody
+        // means by it.
+        node->edit.lineLimit = std::max(1u, lines);
     }
 }
 

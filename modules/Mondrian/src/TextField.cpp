@@ -155,12 +155,47 @@ TextValidity Judge(const TextEdit &edit, std::string_view text)
     return MatchPattern(*edit.pattern, text) == PatternMatch::Yes ? TextValidity::Valid : TextValidity::Invalid;
 }
 
+/// How many lines @p candidate would take in the field @p view is on, at the
+/// width it has now.
+///
+/// Costs a shaping and a layout of the whole text, which is why it is asked
+/// only of a field that is held to a number of lines.
+uint32_t LinesOf(const WidgetView &view, std::string_view candidate)
+{
+    const TextLayout *text = view.text;
+    if (text == nullptr || text->font == nullptr || view.layout == nullptr)
+    {
+        return 0;
+    }
+    std::string marks;
+    const std::string_view shown = ShownText(candidate, view.node->edit.mask, marks);
+    const Font &font = *text->font;
+    const TextLayout laid =
+        LayoutText(Shape(shown, font), font, view.node->style.textSize * view.scale,
+                   TextWrapWidth(*view.layout, view.node->style, view.scale), view.node->style.textAlign);
+    return static_cast<uint32_t>(laid.lines.size());
+}
+
+/// Whether @p candidate has more lines than the field @p view is on will hold.
+///
+/// A field that is full refuses what would overflow it rather than scrolling:
+/// a box that has to hold more than it shows belongs inside a scrolling node.
+bool Overflows(const WidgetView &view, std::string_view candidate)
+{
+    const TextEdit &edit = view.node->edit;
+    if (edit.lines != TextLines::Multi || edit.height == TextHeight::Unbounded || edit.lineLimit == 0)
+    {
+        return false;
+    }
+    return LinesOf(view, candidate) > edit.lineLimit;
+}
+
 /// Replaces what is selected in @p node with @p insert, which may be empty, and
 /// leaves the caret after it.
 ///
 /// Refuses the whole edit when the field's pattern would not have it, which is
 /// why nothing here changes the node until the result is known.
-bool Replace(Node &node, std::string_view insert)
+bool Replace(const WidgetView &view, Node &node, std::string_view insert)
 {
     TextEdit &edit = node.edit;
     const TextRange gone{.first = edit.SelectionFirst(), .last = edit.SelectionLast()};
@@ -170,7 +205,7 @@ bool Replace(Node &node, std::string_view insert)
     std::string candidate;
     candidate.reserve(node.text.size() - (to - from) + insert.size());
     candidate.append(node.text, 0, from).append(insert).append(node.text, to);
-    if (candidate == node.text || Refuses(edit, candidate))
+    if (candidate == node.text || Refuses(edit, candidate) || Overflows(view, candidate))
     {
         return false;
     }
@@ -195,7 +230,7 @@ bool CanCarry(const TextEdit &edit)
 ///
 /// Dropping it on itself changes nothing, which is what a press and a small
 /// wobble of the hand amount to.
-bool MoveSelection(Node &node, uint32_t dropAt)
+bool MoveSelection(const WidgetView &view, Node &node, uint32_t dropAt)
 {
     TextEdit &edit = node.edit;
     const TextRange taken{.first = edit.SelectionFirst(), .last = edit.SelectionLast()};
@@ -215,7 +250,9 @@ bool MoveSelection(Node &node, uint32_t dropAt)
     const uint32_t landing = dropAt > taken.last ? dropAt - (taken.last - taken.first) : dropAt;
     candidate.insert(CharacterOffset(candidate, landing), carried);
 
-    if (candidate == node.text || Refuses(edit, candidate))
+    // Rearranging text can change where it wraps, so a move can cross the line
+    // limit even though it adds nothing.
+    if (candidate == node.text || Refuses(edit, candidate) || Overflows(view, candidate))
     {
         return false;
     }
@@ -437,7 +474,7 @@ WidgetResponse Copy(const WidgetView &view, Node &node, TextAbility ability)
     view.clipboard->Write(Selected(node));
     if (ability == TextAbility::Cut && edit.editing == TextEditing::Editable)
     {
-        return Replace(node, {}) ? WidgetResponse::Changed : WidgetResponse::Handled;
+        return Replace(view, node, {}) ? WidgetResponse::Changed : WidgetResponse::Handled;
     }
     return WidgetResponse::Handled;
 }
@@ -449,11 +486,12 @@ WidgetResponse Paste(const WidgetView &view, Node &node)
         return WidgetResponse::Handled;
     }
     const std::string pasted = view.clipboard->Read();
-    return Replace(node, Clean(node.edit, pasted, Keeping(node))) ? WidgetResponse::Changed : WidgetResponse::Handled;
+    return Replace(view, node, Clean(node.edit, pasted, Keeping(node))) ? WidgetResponse::Changed
+                                                                        : WidgetResponse::Handled;
 }
 
 /// Erases in @p direction, or the selection when there is one.
-WidgetResponse Erase(Node &node, const WidgetEvent &event, bool forward)
+WidgetResponse Erase(const WidgetView &view, Node &node, const WidgetEvent &event, bool forward)
 {
     TextEdit &edit = node.edit;
     if (edit.editing != TextEditing::Editable)
@@ -470,7 +508,7 @@ WidgetResponse Erase(Node &node, const WidgetEvent &event, bool forward)
                                                                     : (edit.caret > 0 ? edit.caret - 1 : 0));
         edit.anchor = to;
     }
-    return Replace(node, {}) ? WidgetResponse::Changed : WidgetResponse::Handled;
+    return Replace(view, node, {}) ? WidgetResponse::Changed : WidgetResponse::Handled;
 }
 
 /// Moves the caret sideways by a character or a word.
@@ -540,7 +578,7 @@ WidgetResponse ActionInput(const WidgetView &view, Node &node, const WidgetEvent
         }
         if (edit.lines == TextLines::Multi)
         {
-            return Replace(node, "\n") ? WidgetResponse::Changed : WidgetResponse::Handled;
+            return Replace(view, node, "\n") ? WidgetResponse::Changed : WidgetResponse::Handled;
         }
         // A single line is finished by Enter, which is also when a field that
         // waits until the end judges what it holds.
@@ -611,7 +649,7 @@ WidgetResponse FieldInput(const WidgetView &view, Node &node, const WidgetEvent 
         edit.drag = TextDrag::None;
         if (was == TextDrag::Moving)
         {
-            return MoveSelection(node, edit.dropAt) ? WidgetResponse::Changed : WidgetResponse::Handled;
+            return MoveSelection(view, node, edit.dropAt) ? WidgetResponse::Changed : WidgetResponse::Handled;
         }
         if (was == TextDrag::Held)
         {
@@ -636,7 +674,7 @@ WidgetResponse FieldInput(const WidgetView &view, Node &node, const WidgetEvent 
             return WidgetResponse::Ignored;
         }
         const std::string typed = Clean(edit, event.typed, Keeping(node));
-        return !typed.empty() && Replace(node, typed) ? WidgetResponse::Changed : WidgetResponse::Handled;
+        return !typed.empty() && Replace(view, node, typed) ? WidgetResponse::Changed : WidgetResponse::Handled;
     }
     case WidgetGesture::Wheel:
     case WidgetGesture::Count:
@@ -661,9 +699,9 @@ WidgetResponse EditInput(const WidgetView &view, Node &node, const WidgetEvent &
         return WidgetResponse::Handled;
     }
     case EditKey::Backspace:
-        return Erase(node, event, false);
+        return Erase(view, node, event, false);
     case EditKey::Delete:
-        return Erase(node, event, true);
+        return Erase(view, node, event, true);
     case EditKey::SelectAll:
         if (!edit.Can(TextAbility::Select))
         {

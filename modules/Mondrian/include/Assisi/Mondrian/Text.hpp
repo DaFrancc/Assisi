@@ -109,6 +109,13 @@ struct TextLayout
 /// narrowest width it can wrap to without breaking a word.
 [[nodiscard]] float MeasureLongestWord(const ShapedText &shaped, const Font &font, float size);
 
+/// @brief What a block of @p lines lines measures in @p layout, in device
+/// pixels: what LayoutText reports for text that many lines long.
+///
+/// For asking what text would take before it exists — how tall a field of
+/// three lines is while it holds one.
+[[nodiscard]] float BlockHeight(const TextLayout &layout, uint32_t lines);
+
 /// @brief Where a caret goes: its left edge within the block, and which of the
 /// layout's lines it is on.
 struct CaretPlace

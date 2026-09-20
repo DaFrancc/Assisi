@@ -469,6 +469,124 @@ TEST_CASE("TextField: a field of many lines wraps, and the caret moves between t
     CHECK(field.Edit().caret < atEnd);
 }
 
+namespace
+{
+
+/// A field of many lines, narrow enough that "AAAA " fills a line on its own.
+Field Lined(TextHeight height, uint32_t lines)
+{
+    Field field(TextLines::Multi);
+    Style style = field.ui.Tree().Get(field.field.node)->style;
+    style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
+    field.ui.Tree().SetStyle(field.field.node, style);
+    field.ui.SetHeight(field.field, height, lines);
+    field.Step({});
+    return field;
+}
+
+/// How many lines the field's text was laid out into.
+uint32_t LineCount(const Field &field)
+{
+    const LayoutNode *placed = field.ui.GetLayout().Get(field.field.node);
+    REQUIRE(placed != nullptr);
+    REQUIRE(placed->text != LayoutNode::kNoText);
+    return static_cast<uint32_t>(field.ui.GetLayout().texts[placed->text].lines.size());
+}
+
+} // namespace
+
+TEST_CASE("TextField: a field of many lines grows with its text until it is told not to")
+{
+    constexpr uint32_t kLines = 2;
+    Field field = Lined(TextHeight::UpTo, kLines);
+    const float empty = field.Box().height;
+
+    field.Type("AAAA ");
+    const float one = field.Box().height;
+    CHECK(one == doctest::Approx(empty)); // one line still
+
+    field.Type("AAAA ");
+    REQUIRE(LineCount(field) == kLines);
+    const float two = field.Box().height;
+    CHECK(two > one); // grew to the second
+
+    // Full: a third line is refused, and the box does not grow.
+    field.Type("AAAA ");
+    CHECK(LineCount(field) == kLines);
+    CHECK(field.Box().height == doctest::Approx(two));
+}
+
+TEST_CASE("TextField: a field of exactly so many lines is that tall while empty")
+{
+    constexpr uint32_t kLines = 3;
+    Field tall = Lined(TextHeight::Exactly, kLines);
+    Field growing = Lined(TextHeight::UpTo, kLines);
+
+    // Nothing typed into either: the fixed one already stands three lines tall.
+    CHECK(tall.Box().height > growing.Box().height);
+
+    const float before = tall.Box().height;
+    tall.Type("AAAA AAAA ");
+    CHECK(tall.Box().height == doctest::Approx(before)); // and does not move
+}
+
+TEST_CASE("TextField: a field with no line limit goes on growing")
+{
+    Field field = Lined(TextHeight::Unbounded, 0);
+    const float empty = field.Box().height;
+    field.Type("AAAA AAAA AAAA AAAA AAAA ");
+    CHECK(LineCount(field) > 3);
+    CHECK(field.Box().height > empty);
+}
+
+TEST_CASE("TextField: what would overflow the lines is refused however it arrives")
+{
+    constexpr uint32_t kLines = 1;
+
+    SUBCASE("typed")
+    {
+        Field field = Lined(TextHeight::UpTo, kLines);
+        field.Type("AAAA ");
+        const std::string held{field.Text()};
+        field.Type("AAAA ");
+        CHECK(field.Text() == held);
+    }
+    SUBCASE("a line break")
+    {
+        Field field = Lined(TextHeight::UpTo, kLines);
+        field.Type("A");
+        field.Step(Press(UiAction::Accept));
+        CHECK(field.Text() == "A"); // Enter would have made a second line
+    }
+    SUBCASE("pasted")
+    {
+        Field field = Lined(TextHeight::UpTo, kLines);
+        field.clipboard = "AAAA AAAA AAAA";
+        field.Step(Press(EditKey::Paste));
+        CHECK(field.Text().empty());
+    }
+}
+
+TEST_CASE("TextField: the line limit and the length limit both hold, whichever comes first")
+{
+    // Wide text reaches the lines first, and the field is still well inside
+    // the character count.
+    Field wide = Lined(TextHeight::UpTo, 1);
+    wide.ui.SetMaxLength(wide.field, 100);
+    wide.Type("AAAA ");
+    const std::string held{wide.Text()};
+    wide.Type("AAAA ");
+    CHECK(wide.Text() == held);
+    CHECK(CharacterCount(wide.Text()) < 100);
+
+    // A short count reaches its limit long before the lines.
+    Field narrow = Lined(TextHeight::UpTo, 10);
+    narrow.ui.SetMaxLength(narrow.field, 3);
+    narrow.Type("AAAAAA");
+    CHECK(CharacterCount(narrow.Text()) == 3);
+    CHECK(LineCount(narrow) == 1);
+}
+
 TEST_CASE("TextField: changing the text pushes what it now holds")
 {
     Field field;

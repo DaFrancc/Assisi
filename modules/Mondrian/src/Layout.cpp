@@ -230,7 +230,7 @@ class Layouter
             }
             else
             {
-                content = _out.texts[result.text].height;
+                content = FieldHeight(node, _out.texts[result.text]);
                 minContent = content;
             }
         }
@@ -509,10 +509,7 @@ class Layouter
             }
             const Node &node = Slot(index);
             const Style &style = node.style;
-            const float space = result.rect.width - Scaled(PaddingAround(style.padding, Axis::X));
-            // At least one pixel: a node squeezed to nothing still sets its text,
-            // a glyph to a line.
-            const float wrap = std::max(1.f, std::floor(space));
+            const float wrap = TextWrapWidth(result, style, _scale);
             // A single line does not wrap however narrow its box is; it runs on
             // and the box scrolls along it.
             const bool oneLine = node.edit.editing != TextEditing::None && node.edit.lines == TextLines::Single;
@@ -520,9 +517,32 @@ class Layouter
                                                  oneLine ? std::nullopt : std::optional<float>{wrap}, style.textAlign);
             if (oneLine)
             {
-                Result(index).textScroll = LineScroll(node, _out.texts[result.text], space);
+                Result(index).textScroll = LineScroll(
+                    node, _out.texts[result.text], result.rect.width - Scaled(PaddingAround(style.padding, Axis::X)));
             }
         }
+    }
+
+    /// How tall @p node's text makes it, in device pixels.
+    ///
+    /// A field of many lines may be held to a number of them, so that a box in
+    /// a form keeps its size however much is typed into it. Everything else is
+    /// as tall as its text.
+    [[nodiscard]] static float FieldHeight(const Node &node, const TextLayout &text)
+    {
+        const TextEdit &edit = node.edit;
+        const uint32_t showing = static_cast<uint32_t>(text.lines.size());
+        switch (edit.height)
+        {
+        case TextHeight::UpTo:
+            return BlockHeight(text, std::min(showing, edit.lineLimit));
+        case TextHeight::Exactly:
+            return BlockHeight(text, edit.lineLimit);
+        case TextHeight::Unbounded:
+        case TextHeight::Count:
+            break;
+        }
+        return text.height;
     }
 
     /// How far a single line is shifted left so that its caret is inside the
@@ -658,6 +678,12 @@ float UiScale(Extent viewport, float userScale)
     const float fit = std::min(static_cast<float>(viewport.width) / kReferenceWidth,
                                static_cast<float>(viewport.height) / kReferenceHeight);
     return fit * userScale;
+}
+
+float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale)
+{
+    const float space = placed.rect.width - ((style.padding.left + style.padding.right) * scale);
+    return std::max(1.f, std::floor(space));
 }
 
 Point TextOrigin(const LayoutNode &placed, const Style &style, float scale)
