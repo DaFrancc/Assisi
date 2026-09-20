@@ -19,9 +19,13 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include <array>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -58,8 +62,7 @@ void WriteLevel(const std::filesystem::path &root, const char *name, const std::
 /// queue a starting world needs, which is what the hosts install.
 void InstallServices(WorldManager &worlds, Assisi::Core::EventQueue &events)
 {
-    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = nullptr,
-                        .events = &events});
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = nullptr, .events = &events});
 }
 
 std::uint32_t Runs(const World &world, const char *system)
@@ -102,8 +105,8 @@ TEST_CASE("Begin does not fire a second time, however often the world is settled
     World *const world = worlds.LoadLevel("levels/A.alvl");
     REQUIRE(world != nullptr);
 
-    SettleWorld(StartContext(*world), /*assetsPending=*/ false);
-    SettleWorld(StartContext(*world), /*assetsPending=*/ false);
+    SettleWorld(StartContext(*world), /*assetsPending=*/false);
+    SettleWorld(StartContext(*world), /*assetsPending=*/false);
     CHECK(Runs(*world, "Started") == 1u);
 
     std::filesystem::remove_all(root);
@@ -123,11 +126,11 @@ TEST_CASE("A world settles once its assets stop pending, and not before")
     REQUIRE(world != nullptr);
 
     // Still streaming: nothing settles, and the phase has not been spent.
-    SettleWorld(StartContext(*world), /*assetsPending=*/ true);
+    SettleWorld(StartContext(*world), /*assetsPending=*/true);
     CHECK(Runs(*world, "Settled") == 0u);
     CHECK(world->start == StartProgress::Begun);
 
-    SettleWorld(StartContext(*world), /*assetsPending=*/ false);
+    SettleWorld(StartContext(*world), /*assetsPending=*/false);
     CHECK(Runs(*world, "Settled") == 1u);
     CHECK(world->start == StartProgress::Loaded);
 
@@ -154,7 +157,7 @@ TEST_CASE("The simulate-from policy decides when the clock starts, not which pha
     CHECK(world->state == WorldState::Active);
     CHECK_FALSE(world->simulate); // begun, and deliberately not ticking
 
-    SettleWorld(StartContext(*world), /*assetsPending=*/ false);
+    SettleWorld(StartContext(*world), /*assetsPending=*/false);
     CHECK(Runs(*world, "Settled") == 1u);
     CHECK(world->simulate); // released by the settle
 
@@ -233,6 +236,120 @@ TEST_CASE("A blueprint's systems begin at the drain that installs them")
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("A screen brings the systems it declared, and takes its claim when it goes")
+{
+    // The screen half of what a blueprint does: a level that shows a pause menu
+    // does not also have to know the menu needs the system that opens it. The
+    // level below names nothing at all.
+    const std::filesystem::path root = MountTestRoot();
+    WriteLevel(root, "A.alvl", {});
+    RunCounts::Instance().Reset();
+
+    Assisi::Core::EventQueue events;
+    WorldManager worlds;
+    InstallServices(worlds, events);
+
+    World *const world = worlds.LoadLevel("levels/A.alvl");
+    REQUIRE(world != nullptr);
+    REQUIRE_FALSE(world->systems.Has("StartedLate"));
+
+    Assisi::Mondrian::Ui ui{events};
+    const std::array<std::string, 1> needs{"StartedLate"};
+    Assisi::Mondrian::Screen &screen =
+        AddScreen(*world,
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, Assisi::Mondrian::ScreenTraits{},
+                                                             Assisi::Mondrian::kSortMenu, std::string{"pause"}),
+                  needs);
+
+    // Queued, not installed on the spot: registering mid-walk would mutate what
+    // is being iterated, so it lands at the frame's safe point.
+    CHECK_FALSE(world->systems.Has("StartedLate"));
+    DrainSystemInstalls(StartContext(*world));
+    CHECK(world->systems.Has("StartedLate"));
+
+    // It is counted as required, so a re-apply that names nothing keeps it.
+    CHECK(RequiredSystemCounts(*world).contains("StartedLate"));
+    REQUIRE(worlds.ApplySystems(*world, {}, "levels/A.alvl"));
+    CHECK(world->systems.Has("StartedLate"));
+
+    // The level never claimed it: that belongs to the screen, and writing it
+    // into the file would have the level keep claiming it after the screen went.
+    CHECK(world->systemNames.empty());
+
+    RemoveScreen(*world, screen);
+    CHECK_FALSE(RequiredSystemCounts(*world).contains("StartedLate"));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("A world's screens are destroyed with it")
+{
+    // A pause menu is for the world it paused. Nothing has to remember to take
+    // it away, which is what a screen outliving its world would need.
+    Assisi::Core::EventQueue events;
+    Assisi::Mondrian::Ui ui{events};
+    {
+        WorldManager worlds;
+        World &world = worlds.Create("Doomed");
+        AddScreen(world,
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, Assisi::Mondrian::ScreenTraits{},
+                                                             Assisi::Mondrian::kSortMenu, std::string{"hud"}),
+                  {});
+        REQUIRE(FindScreen(world, "hud") != nullptr);
+        REQUIRE_FALSE(ui.GetDrawList().IsFinalized());
+    }
+
+    // The worlds are gone; the UI is not, and has nothing left to draw.
+    ui.ProcessInput({});
+    ui.Sync({1280, 720});
+    CHECK(ui.GetDrawList().Instances().empty());
+}
+
+TEST_CASE("A world's one-shot systems can build its screens again after its marks are cleared")
+{
+    // What the editor does between play sessions: a world it keeps across runs
+    // has its start progress and once-marks reset so the Loaded phase runs
+    // afresh. The screens that phase built have to be cleared with it, or the
+    // next run builds a second set behind the first — and the first is still
+    // showing whatever it was showing when the session stopped.
+    const std::filesystem::path root = MountTestRoot();
+    WriteLevel(root, "A.alvl", {});
+    RunCounts::Instance().Reset();
+
+    Assisi::Core::EventQueue events;
+    WorldManager worlds;
+    InstallServices(worlds, events);
+
+    World *const world = worlds.LoadLevel("levels/A.alvl");
+    REQUIRE(world != nullptr);
+
+    Assisi::Mondrian::Ui ui{events};
+    const auto build = [&ui, world]
+    {
+        AddScreen(*world,
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, Assisi::Mondrian::ScreenTraits{},
+                                                             Assisi::Mondrian::kSortMenu, std::string{"pause"}),
+                  {});
+    };
+
+    build();
+    REQUIRE(world->screenStack.size() == 1);
+
+    // Stopping a session: the marks are cleared so the phase may run again, and
+    // the screens it made go with the session.
+    world->systems.ClearOnceMarks();
+    world->start = StartProgress::NotBegun;
+    world->screenStack.clear();
+    CHECK(Assisi::App::FindScreen(*world, "pause") == nullptr);
+
+    // Running again builds one, not a second.
+    build();
+    CHECK(world->screenStack.size() == 1);
+    CHECK(Assisi::App::FindScreen(*world, "pause") != nullptr);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("A world that never begins runs no one-shot systems")
 {
     // The editor's authored world, in miniature: resident and Active, but never
@@ -241,7 +358,7 @@ TEST_CASE("A world that never begins runs no one-shot systems")
 
     WorldManager worlds;
     World &world = worlds.Create("Authored");
-    world.state  = WorldState::Active;
+    world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Started"}, "levels/Authored.alvl"));
 
     CHECK(world.start == StartProgress::NotBegun);
@@ -249,7 +366,7 @@ TEST_CASE("A world that never begins runs no one-shot systems")
 
     // Settling one that never began does nothing either — the guard is the
     // progress, not the asset flag.
-    SettleWorld(StartContext(world), /*assetsPending=*/ false);
+    SettleWorld(StartContext(world), /*assetsPending=*/false);
     CHECK(Runs(world, "Started") == 0u);
     CHECK(world.start == StartProgress::NotBegun);
 }
@@ -263,7 +380,7 @@ TEST_CASE("Re-applying a world's systems lets it begin again")
     Assisi::Core::EventQueue events;
     WorldManager worlds;
     World &world = worlds.Create("Replayed");
-    world.state  = WorldState::Active;
+    world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Started"}, "levels/A.alvl"));
 
     BeginWorld(StartContext(world), SimulateFrom::Begin);
@@ -288,7 +405,7 @@ TEST_CASE("Clearing the run marks alone lets a world begin again")
 
     WorldManager worlds;
     World &world = worlds.Create("Remarked");
-    world.state  = WorldState::Active;
+    world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Started"}, "levels/A.alvl"));
 
     BeginWorld(StartContext(world), SimulateFrom::Begin);
@@ -308,9 +425,8 @@ TEST_CASE("One-shot systems honour their ordering")
 
     WorldManager worlds;
     World &world = worlds.Create("Ordered");
-    world.state  = WorldState::Active;
-    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"StartedLate", "Started"},
-                                "levels/Ordered.alvl"));
+    world.state = WorldState::Active;
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"StartedLate", "Started"}, "levels/Ordered.alvl"));
 
     BeginWorld(StartContext(world), SimulateFrom::Begin);
 

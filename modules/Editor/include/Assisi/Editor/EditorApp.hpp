@@ -243,6 +243,21 @@ class EditorApp : public Assisi::App::Application
     /// The game's UI belongs to the game being played, so it shows from Play
     /// until Stop, paused included, and never over a level being edited.
     [[nodiscard]] bool ShowsGameUi() const override { return _playState != PlayState::Editing; }
+
+    /// @brief The game asking to quit ends the session, not the editor.
+    ///
+    /// A Quit button means "leave this game", and in here the game is a session
+    /// inside a tool. Closing the editor would lose whatever the author had
+    /// open, on a button that promised something much smaller. Outside a
+    /// session nothing is running to ask, so the request is ignored rather than
+    /// answered by closing.
+    void OnQuitRequested() override
+    {
+        if (_playState != PlayState::Editing)
+        {
+            StopPlay();
+        }
+    }
     /// The editor's panels draw over the game's UI, so what they want is theirs:
     /// the pointer while it is over one, the keyboard while a field is typed in.
     [[nodiscard]] Assisi::App::InputClaim ClaimedOverUi() const override;

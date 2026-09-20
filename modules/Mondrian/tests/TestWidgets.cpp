@@ -37,20 +37,28 @@ struct StepPicked
 struct Panel
 {
     Assisi::Core::EventQueue events;
-    Ui ui;
+    /// After the queue, so the queue outlives it.
+    Ui ui{events};
+    /// After the Ui, so it is destroyed first: a screen may not outlive the UI
+    /// it registered with.
+    std::unique_ptr<Screen> held;
     Screen *screen = nullptr;
     NodeId row;
 
     Panel()
     {
-        screen = ui.CreateScreen(ScreenKind::Stacked, kSortMenu, "panel");
+        held = std::make_unique<Screen>(ui,
+                                        ScreenTraits{.input = ScreenInput::ConsumeInput,
+                                                     .beneath = ScreenBeneath::HidesBeneath,
+                                                     .pause = ScreenPause::Pause},
+                                        kSortMenu, "panel");
+        screen = held.get();
         ui.Show(*screen);
 
         Style style;
         style.floating.enabled = true;
         row = screen->Tree().Create(screen->Root(), "row");
         screen->Tree().SetStyle(row, style);
-        ui.SetEvents(&events);
         Step({});
     }
 

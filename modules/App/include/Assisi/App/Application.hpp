@@ -353,9 +353,6 @@ class Application
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
-    /// F4 shows the sample screen and hides it again. The screen asks for the
-    /// menu mode by taking input; this only decides whether it is up.
-    void ToggleSampleScreen();
     /// Puts the window in the menu mode while a screen is taking input, and
     /// takes it out again when none is.
     ///
@@ -398,7 +395,6 @@ class Application
     /// The menu mode held while a screen is taking input; null while none is.
     Window::InputModeHandle _uiInputMode;
     /// The screen F4 shows, which is one of everything the UI can draw.
-    Mondrian::Screen *_sampleScreen = nullptr;
 
     // Declared before the subsystems (post-process, and the derived app's caches)
     // so it is destroyed last: workers join only after everything that might have

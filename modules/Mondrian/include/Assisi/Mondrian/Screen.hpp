@@ -19,6 +19,7 @@
 #include <Assisi/Core/Assert.hpp>
 
 #include <array>
+#include <concepts>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -32,48 +33,58 @@ namespace Assisi::Mondrian
 
 class Ui;
 
-/// @brief What a screen is for, which is what decides how it behaves.
-enum class ScreenKind : uint8_t
+/// @brief What a screen does with the pointer and the keys.
+///
+/// Only the topmost screen that consumes them gets them, and while it does the
+/// game sees neither. Back is the one way a player hands them back without the
+/// game saying so, which is why it is answered here rather than on its own: a
+/// screen that consumes nothing has nothing for Back to return.
+enum class ScreenInput : uint8_t
 {
-    Persistent, ///< always beneath the rest and worked by nothing: a HUD
-    Stacked,    ///< a menu, on the back-stack, covering what it opened over
-    Popup,      ///< a dialog over what it interrupts, which stays in sight
-    Overlay,    ///< shown over everything and worked by nothing: a loading screen
+    NoConsume,          ///< the game reads them as though nothing were shown
+    LockedConsumeInput, ///< the screen has them until code hides it; Back does nothing
+    ConsumeInput,       ///< the screen has them until Back, which hides it
     Count
 };
 
-/// @brief What a kind decides. Four questions, answered once per kind rather
-/// than asked of each screen.
-struct ScreenTraits
+/// @brief Whether the screens below this one on its target are still drawn.
+///
+/// Answered among the screens sharing a target and nowhere else: a screen drawn
+/// onto a surface in the world hides nothing on the player's display, however
+/// it sorts.
+enum class ScreenBeneath : uint8_t
 {
-    bool takesInput;   ///< the pointer and the keys reach it, and not the game
-    bool closesOnBack; ///< Back hides it, and so it is part of the back-stack
-    bool hidesBeneath; ///< what sorts below it is not drawn at all
-    bool pausesWorld;  ///< the world stops while it is shown; the UI does not
+    NoHide,       ///< what is below is laid out and drawn as usual
+    HidesBeneath, ///< what is below cannot be seen, so it is neither laid out nor drawn
+    Count
 };
 
-/// @brief How @p kind behaves.
+/// @brief What happens to the world while a screen is shown.
 ///
-/// A kind that takes input also pauses the world: a screen the player is
-/// working is a screen they are not playing through, and letting the world run
-/// while they cannot reach it is the thing pausing exists to prevent.
-[[nodiscard]] constexpr ScreenTraits TraitsOf(ScreenKind kind)
+/// The UI runs either way — it is stepped by the application rather than by a
+/// world phase — so the menu that stopped the world is still worked while it is
+/// stopped.
+enum class ScreenPause : uint8_t
 {
-    switch (kind)
-    {
-    case ScreenKind::Persistent:
-        return {.takesInput = false, .closesOnBack = false, .hidesBeneath = false, .pausesWorld = false};
-    case ScreenKind::Stacked:
-        return {.takesInput = true, .closesOnBack = true, .hidesBeneath = true, .pausesWorld = true};
-    case ScreenKind::Popup:
-        return {.takesInput = true, .closesOnBack = true, .hidesBeneath = false, .pausesWorld = true};
-    case ScreenKind::Overlay:
-        return {.takesInput = false, .closesOnBack = false, .hidesBeneath = false, .pausesWorld = false};
-    case ScreenKind::Count:
-        break;
-    }
-    return {};
-}
+    Pause, ///< the world's fixed step is skipped, and its physics with it
+    Run,   ///< the world's fixed step runs as usual
+    Count
+};
+
+/// @brief What a screen does, as three answers rather than a name for one
+/// common set of them.
+///
+/// A menu is {ConsumeInput, HidesBeneath, Pause}; a HUD is the default; a
+/// dialog over live play is {ConsumeInput, NoHide, Run}. The combinations a
+/// name would not have reached are the point: an inventory that consumes input
+/// without stopping the world, a cutscene letterbox that hides what is beneath
+/// and consumes nothing.
+struct ScreenTraits
+{
+    ScreenInput input = ScreenInput::NoConsume;
+    ScreenBeneath beneath = ScreenBeneath::NoHide;
+    ScreenPause pause = ScreenPause::Run;
+};
 
 /// The gap between the layers the engine names, so a game can slot a screen of
 /// its own between two of them without renumbering anything.
@@ -88,21 +99,31 @@ inline constexpr int32_t kSortOverlay = 3 * kSortLayerSpacing;
 class Screen
 {
   public:
-    /// @brief An empty screen of @p kind, drawn at @p sortKey, called @p name.
-    /// Made by Ui::CreateScreen, which is what owns it.
-    Screen(Ui &ui, ScreenKind kind, int32_t sortKey, std::string name);
+    /// @brief An empty screen behaving as @p traits say, drawn at @p sortKey,
+    /// called @p name, hidden until it is shown.
+    ///
+    /// It joins @p ui here and leaves it when destroyed, so whatever owns the
+    /// screen decides how long it lasts and the UI is never told separately.
+    /// @p ui must outlive it, which a world's screens get for nothing: worlds
+    /// are destroyed before the UI they were drawn in.
+    Screen(Ui &ui, ScreenTraits traits, int32_t sortKey, std::string name);
 
     Screen(const Screen &) = delete;
     Screen &operator=(const Screen &) = delete;
     Screen(Screen &&) = delete;
     Screen &operator=(Screen &&) = delete;
-    ~Screen() = default;
+    ~Screen();
 
-    [[nodiscard]] ScreenKind Kind() const { return _kind; }
+    /// @brief Shows this screen, or hides it again keeping everything on it.
+    ///
+    /// Safe from a node's own callback: a button may hide the screen it is on.
+    void Show();
+    void Hide();
+
+    [[nodiscard]] ScreenTraits Traits() const { return _traits; }
     [[nodiscard]] int32_t SortKey() const { return _sortKey; }
     [[nodiscard]] std::string_view Name() const { return _name; }
     [[nodiscard]] bool IsShown() const { return _shown; }
-    [[nodiscard]] ScreenTraits Traits() const { return TraitsOf(_kind); }
 
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
@@ -118,10 +139,27 @@ class Screen
     /// @brief Makes @p node push a copy of @p event each time it is clicked or
     /// accepted, replacing whatever it pushed before. Game code reads it with
     /// EventQueue::Read<E>() in any phase after the UI's input step.
-    template <typename E> void OnActivate(NodeId node, E event)
+    ///
+    /// For what reaches the world — quitting, loading, respawning — which the
+    /// UI cannot do itself and a system must answer.
+    template <typename E>
+        requires(!std::invocable<E, Screen &>)
+    void OnActivate(NodeId node, E event)
     {
         _tree.SetOnActivate(node, [event](Core::EventQueue &events) { events.Push(event); });
     }
+
+    /// @brief Makes @p node run @p act on this screen each time it is clicked
+    /// or accepted, replacing whatever it did before.
+    ///
+    /// For what touches only the UI — closing this screen, opening another —
+    /// which needs no event, no system, and so nothing named in a level. A
+    /// screen wired this way works wherever it is shown.
+    ///
+    /// Showing, hiding and popping from inside @p act are safe: the UI walks a
+    /// copy of what it is announcing. Destroying a screen is not, and asserts —
+    /// the tree being announced from would go with it.
+    void OnActivate(NodeId node, std::function<void(Screen &)> act);
 
     /// @brief A node under @p parent styled by @p style, called @p name.
     NodeId Add(NodeId parent, const Style &style, std::string_view name = {});
@@ -337,7 +375,7 @@ class Screen
     /// takes them back.
     NodeId _focused;
     int32_t _sortKey = kSortMenu;
-    ScreenKind _kind = ScreenKind::Stacked;
+    ScreenTraits _traits;
     bool _shown = false;
 };
 

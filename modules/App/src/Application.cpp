@@ -308,9 +308,8 @@ bool Application::InitializePresentation()
             Core::Log::Fatal("Failed to initialize the UI pass.");
             return false;
         }
-        _ui = std::make_unique<Mondrian::Ui>();
+        _ui = std::make_unique<Mondrian::Ui>(_events);
         _ui->SetHoverFocuses(_config.uiHoverFocuses);
-        _ui->SetEvents(&_events);
         // The window outlives the UI: both belong to this Application, and the
         // UI is torn down first.
         Window::WindowContext *window = _window.get();
@@ -318,10 +317,10 @@ bool Application::InitializePresentation()
             Mondrian::Clipboard{.read = [window] { return window->GetClipboardText(); },
                                 .write = [window](std::string_view text) { window->SetClipboardText(text); }});
         Mondrian::Engine::UploadPlaceholderTexture(_uiPlaceholderTexture, vulkanContext->GetDevice());
-        // Hidden until F4 asks for it. It belongs to the engine rather than to
-        // a game because it is what proves the UI draws at all, and the first
-        // thing to look at when something in it goes wrong.
-        _sampleScreen = Mondrian::AddSampleScreen(*_ui, _uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
+        // Handed to the UI rather than kept here: game code has no route to the
+        // pass that registered it, and an image whose asset has not arrived
+        // wants exactly this texture.
+        _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
 
         // A game with no font still runs, with no text: the UI is not what a
         // missing font should take down.
@@ -356,21 +355,6 @@ Window::WindowContext &Application::GetWindow() const
     ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process - there is no window. Guard with "
                                       "IsHeadless()/HasPresentation().");
     return *_window;
-}
-
-void Application::ToggleSampleScreen()
-{
-    if (_sampleScreen == nullptr || !_input->IsKeyPressed(Window::Key::F4))
-    {
-        return;
-    }
-    _input->ConsumeKey(Window::Key::F4);
-    if (_sampleScreen->IsShown())
-    {
-        _ui->Hide(*_sampleScreen);
-        return;
-    }
-    _ui->Show(*_sampleScreen);
 }
 
 void Application::SyncUiInputMode()
@@ -700,7 +684,6 @@ void Application::Run()
                 {
                     ASSISI_PROFILE_SCOPE("ui-input");
                     _uiTime += rawDt;
-                    ToggleSampleScreen();
 
                     const InputClaim claim = ClaimedOverUi();
                     const Mondrian::Point pointer = ToDevicePixels(_input->MousePosition(), _window->GetWindowSize(),

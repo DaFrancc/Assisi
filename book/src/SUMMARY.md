@@ -14,6 +14,7 @@
 - [Your own components](your-own-components.md)
 - [Input](input.md)
 - [Events](events.md)
+- [User interface](user-interface.md)
 - [Physics](physics.md)
 - [Levels and blueprints](levels-and-blueprints.md)
 - [The editor](editor.md)

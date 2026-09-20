@@ -48,8 +48,10 @@ struct Node
     Style style;
     std::string text;
     std::string name;
-    /// Pushes this node's event when it is clicked or accepted; empty for none.
-    /// Set through Ui::OnActivate, which is what knows the event's type.
+    /// What this node does when it is clicked or accepted; empty for none. Set
+    /// through Screen::OnActivate, which is what knows whether it pushes an
+    /// event or acts on the screen — one that acts on the screen ignores the
+    /// queue it is handed.
     std::function<void(Core::EventQueue &)> onActivate;
     /// Pushes this node's event when its value changes; empty for none. Set
     /// through Ui::OnChange, which is what knows the event's type. Given the

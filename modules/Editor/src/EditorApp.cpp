@@ -180,7 +180,12 @@ void EditorApp::HandlePlayMouseCapture()
     // whether the *game* wants it. The loan is a mode pushed over the game's, so
     // ending it gives back whatever the game has by then. Setting the game's mode
     // directly would hand a player a captured cursor in the middle of their menu.
-    if (input.IsKeyPressed(Assisi::Window::Key::F8) && !ImGuiWantsTextInput())
+    //
+    // Including consumed input, because this is the editor's key and not the
+    // game's: a screen that takes the keyboard consumes every key for the frame,
+    // and the one key that fetches the cursor back must not be reachable only
+    // while the session happens not to want it.
+    if (input.IsKeyPressed(Assisi::Window::Key::F8, Assisi::Window::ConsumedInput::Include) && !ImGuiWantsTextInput())
     {
         if (_cursorLoan)
         {
@@ -1137,12 +1142,10 @@ void EditorApp::OnUpdate(float dt)
 {
     auto &input = GetInput();
 
-    // What a player presses to get the cursor back, which is what stops a session.
-    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsTextInput() && _playState != PlayState::Editing)
-    {
-        StopPlay();
-    }
-
+    // Escape does not stop play: it belongs to the game, which opens its pause
+    // menu with it. The editor read it first, so a menu bound to Escape could
+    // never be opened in play-in-editor — the session ended instead. F7 stops,
+    // and is what the Game panel has always advertised.
     HandlePlayMouseCapture();
 
     if (!_scene)
@@ -1721,8 +1724,10 @@ void EditorApp::DrawChiaraWindow()
 {
     // F9 toggles it, alongside F11's graphics overlay. The key lives here rather
     // than in the engine so it stays the app's to rebind or drop; Chiara owns no
-    // input of its own.
-    if (GetInput().IsKeyPressed(Assisi::Window::Key::F9))
+    // input of its own. Including consumed input, like the editor's other keys:
+    // a game screen holding the keyboard must not be able to hide the editor's
+    // own windows behind it.
+    if (GetInput().IsKeyPressed(Assisi::Window::Key::F9, Assisi::Window::ConsumedInput::Include))
     {
         _showChiara = !_showChiara;
     }

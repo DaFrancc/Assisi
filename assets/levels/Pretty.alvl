@@ -253,6 +253,28 @@
   ],
   "instances": [
     {
+      "name": "BaseGameplay",
+      "source": "blueprints/BaseGameplay.abp",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
       "name": "Player",
       "source": "blueprints/Player.abp",
       "transform": {
@@ -279,7 +301,6 @@
     "Bounce",
     "CaptureCursor",
     "CursorToggle",
-    "PauseMenu",
     "TimeOfDay"
   ],
   "version": 2

@@ -87,9 +87,9 @@ panel. It lists the systems the level runs. Type `Spin` in its **Add System**
 box, press **Enter**, then **Save** the level in the **Levels** panel.
 
 Press **F5** (or **Run** in the **Game** panel) to play: everything without
-physics starts spinning, which may include the camera and the lights. **F7** or
-**Esc** stops. The next chapter fixes the "everything" part, so that only the
-objects you choose spin.
+physics starts spinning, which may include the camera and the lights. **F7**
+stops. The next chapter fixes the "everything" part, so that only the objects
+you choose spin.
 
 If `Spin` doesn't appear in the Add System box, the build didn't pick up the
 system. Check that the header is under `apps/game/src/` and that you rebuilt.

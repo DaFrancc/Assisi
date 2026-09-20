@@ -12,6 +12,9 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 
+#include <memory>
+#include <string_view>
+
 namespace Assisi::Mondrian
 {
 class Screen;
@@ -25,23 +28,34 @@ namespace Game
 /// nowhere to keep a pointer finds it again.
 inline constexpr std::string_view kPauseScreenName = "Pause";
 
-/// What Resume pushes. Quit pushes App::QuitRequested, which the host answers.
-struct ResumeClicked
-{
-};
-
-/// @brief Builds the pause menu into @p ui and returns it, hidden.
-Assisi::Mondrian::Screen *BuildPauseMenu(Assisi::Mondrian::Ui &ui);
-
-/// Shows the pause menu on Escape and hides it again on Resume.
+/// @brief The pause menu, hidden, owned by the caller.
 ///
-/// It builds the menu the first time it runs and finds it by name after that:
-/// a system is a free function with nowhere to keep a pointer. Escape closing
-/// the menu is not read here — the UI has the keys while a screen takes input,
-/// so Back pops the screen before the game ever sees the key.
+/// Resume and Back close it and need nothing installed. Quit pushes
+/// App::QuitRequested, which the host answers — that one leaves the UI, so it
+/// goes through an event and a system reads it.
+[[nodiscard]] std::unique_ptr<Assisi::Mondrian::Screen> BuildPauseMenu(Assisi::Mondrian::Ui &ui);
+
+/// Gives the world a pause menu, and asks for the system that opens it.
 ///
-/// `activeWorldOnly`, and it null-checks the UI and input: a headless host has
-/// neither.
+/// Named by the BaseGameplay blueprint rather than by each level: a level that
+/// places that blueprint is a level that has a pause menu, and a main menu
+/// leaves it out. The screen is destroyed with the world it paused.
+///
+/// Not `activeWorldOnly`: a world builds its own screen as it loads, whether or
+/// not it is the one on screen when it does.
+ASYSTEM(Loaded, name = "PauseMenuScreen")
+void PauseMenuScreenSystem(Assisi::App::SystemContext &ctx);
+
+/// Shows the pause menu on Escape.
+///
+/// Only the opening: closing is carried on the Resume button and answered by
+/// Back, neither of which reaches the world. Escape is not read for closing
+/// either — the UI has the keys while the menu is up, so Back pops the screen
+/// before the game ever sees that press.
+///
+/// Declared by the screen above, so a level that shows the menu installs this
+/// without naming it. `activeWorldOnly`: only the world on screen is paused by
+/// the player's Escape.
 ASYSTEM(Update, name = "PauseMenu", activeWorldOnly)
 void PauseMenuSystem(Assisi::App::SystemContext &ctx);
 

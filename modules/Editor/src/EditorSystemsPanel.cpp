@@ -2,7 +2,7 @@
 
 /// @file EditorSystemsPanel.cpp
 /// @brief The Systems panel: which systems the edited file requires, which it
-///        inherits from the blueprints placed in it, and which are running.
+///        inherits from what is placed or shown in it, and which are running.
 ///
 /// Three things sit in one panel because an author reaches for them together.
 ///
@@ -17,8 +17,8 @@
 /// effect can be seen by its absence, and a file that remembered that would be a
 /// file missing behaviour nobody asked it to drop.
 
-#include <Assisi/Editor/EditorApp.hpp>
 #include "ImGuiQueries.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
@@ -51,7 +51,7 @@ constexpr std::size_t kMaxSuggestions = 8;
 /// is not corrupt, it was authored against a build that had the system.
 constexpr ImVec4 kUndeclaredColor{0.9f, 0.8f, 0.3f, 1.f};
 
-/// Inherited from a blueprint and not asked for by this file.
+/// Inherited from something placed or shown here, and not asked for by this file.
 constexpr ImVec4 kInheritedColor{0.4f, 0.85f, 0.45f, 1.f};
 constexpr const char *kInheritedGlyph = "\xef\x84\x91"; // U+F111, a filled circle
 
@@ -83,36 +83,37 @@ struct SystemRow
     /// Borrowed from the catalog, the file's own list, or the blueprint tally —
     /// all of which outlive the frame this is drawn in.
     const std::string *name;
-    /// How many distinct blueprint files placed in this world name it, directly
-    /// or through their own nested instances.
-    int32_t blueprintCount;
+    /// How many things resident in this world name it: each distinct blueprint
+    /// file placed here, directly or through its own nested instances, and each
+    /// screen the level shows.
+    int32_t inheritedCount;
     /// The edited file asks for this itself, rather than only inheriting it.
     bool inLevel;
     /// This build declares it. False for a name only some other build had.
     bool declared;
     /// The X is live: this file asks for the system itself, and no session is
-    /// running. True even when blueprints also require it — removing it there
-    /// drops only *this file's* claim, and the row stays behind as inherited.
-    /// False for a row nothing but a blueprint asks for: there is nothing of the
-    /// file's to take away, and the next spawn would reinstate it regardless.
+    /// running. True even when something placed here also requires it — removing
+    /// it there drops only *this file's* claim, and the row stays behind as
+    /// inherited. False for a row nothing but that content asks for: there is
+    /// nothing of the file's to take away, and the next load would reinstate it.
     bool removable;
 };
 
-/// @brief How many distinct blueprint files placed in @p instances require each
-/// system, keyed by system name.
+/// How many things in this level require each system, keyed by system name:
+/// the blueprints placed in it and the screens it shows.
 ///
-/// Counts **files, not instances**: ten crates of one blueprint are one
-/// blueprint's worth of requirement, which is what an author means by "required
-/// by 2 blueprints". Only authored rows count, so a spawn made during play does
-/// not change what the file is said to need.
+/// Blueprints count **files, not instances**: ten crates of one blueprint are
+/// one blueprint's worth of requirement, which is what an author means by
+/// "required by 2 blueprints". Only authored rows count, so a spawn made during
+/// play does not change what the file is said to need. A blueprint's systems
+/// are already the whole nested closure, so a file that instances another
+/// contributes that one's systems too without any recursion here.
 ///
-/// `BlueprintDefinition::systems` is already the whole nested closure, so a file
-/// that instances another contributes that one's systems too without this having
-/// to recurse.
-// What the blueprints in this level require. Shared with WorldManager::ApplySystems,
-// which installs exactly this set on top of the level's own names — the panel and
-// the installer have to agree, or a row reads "required" while nothing runs it.
-using Assisi::App::BlueprintSystemCounts;
+/// Shared with WorldManager::ApplySystems, which installs exactly this set on
+/// top of the level's own names: the panel and the installer have to agree, or
+/// a row reads "required" while nothing runs it, or an author drops a name the
+/// file still needs.
+using Assisi::App::RequiredSystemCounts;
 
 /// @brief Whether the edited file's own list names @p name.
 bool Requires(const std::vector<std::string> &required, std::string_view name)
@@ -120,7 +121,7 @@ bool Requires(const std::vector<std::string> &required, std::string_view name)
     return std::find(required.begin(), required.end(), name) != required.end();
 }
 
-/// @brief How many placed blueprints require @p name. Zero for one nothing does.
+/// @brief How many things resident here require @p name. Zero for one nothing does.
 int32_t InheritedCount(const std::map<std::string, int32_t, std::less<>> &inherited, std::string_view name)
 {
     const auto found = inherited.find(name);
@@ -136,13 +137,13 @@ int32_t InheritedCount(const std::map<std::string, int32_t, std::less<>> &inheri
 SystemRow MakeSystemRow(const std::string &name, const std::vector<std::string> &required,
                         const std::map<std::string, int32_t, std::less<>> &inherited, bool listEditable)
 {
-    const int32_t count  = InheritedCount(inherited, name);
+    const int32_t count = InheritedCount(inherited, name);
     const bool inFile = Requires(required, name);
-    return SystemRow{.name           = &name,
-                     .blueprintCount = count,
-                     .inLevel        = inFile,
-                     .declared       = Assisi::App::SystemCatalog::Instance().Find(name) != nullptr,
-                     .removable      = listEditable && inFile};
+    return SystemRow{.name = &name,
+                     .inheritedCount = count,
+                     .inLevel = inFile,
+                     .declared = Assisi::App::SystemCatalog::Instance().Find(name) != nullptr,
+                     .removable = listEditable && inFile};
 }
 
 /// @brief The list as it should be drawn: every system the edited file asks for
@@ -157,8 +158,7 @@ SystemRow MakeSystemRow(const std::string &name, const std::vector<std::string> 
 /// none of the three may be touched while the result is alive.
 std::vector<SystemRow> BuildSystemRows(std::span<const Assisi::App::SystemDefinition> catalog,
                                        const std::vector<std::string> &required,
-                                       const std::map<std::string, int32_t, std::less<>> &inherited,
-                                       bool listEditable)
+                                       const std::map<std::string, int32_t, std::less<>> &inherited, bool listEditable)
 {
     std::vector<SystemRow> rows;
     rows.reserve(required.size() + inherited.size());
@@ -202,7 +202,7 @@ void DrawSystemRow(Assisi::App::SystemRegistry &systems, const SystemRow &row, c
     // An undeclared name has no entry to silence, so its tick is dead.
     ImGui::TableSetColumnIndex(0);
     const bool wasEnabled = systems.IsEnabled(name);
-    bool enabled    = wasEnabled;
+    bool enabled = wasEnabled;
     ImGui::BeginDisabled(!row.declared);
     if (ImGui::Checkbox("##enabled", &enabled))
         systems.SetEnabled(name, enabled);
@@ -222,13 +222,13 @@ void DrawSystemRow(Assisi::App::SystemRegistry &systems, const SystemRow &row, c
     else if (ImGui::IsItemHovered())
     {
         // Three different rows reach this: one the file alone asks for, one it
-        // asks for alongside a blueprint (removable — the blueprints go on
-        // requiring it, and the row stays, inherited), and one only a blueprint
-        // asks for, where there is nothing of the file's to remove.
+        // asks for alongside content placed here (removable — that content goes
+        // on requiring it, and the row stays, inherited), and one only that
+        // content asks for, where there is nothing of the file's to remove.
         if (!row.inLevel)
-            ImGui::SetTooltip("Required by a blueprint placed here, not by this file.");
-        else if (row.blueprintCount > 0)
-            ImGui::SetTooltip("Remove from this file's required systems. Blueprints here still need it.");
+            ImGui::SetTooltip("Required by something placed here, not by this file.");
+        else if (row.inheritedCount > 0)
+            ImGui::SetTooltip("Remove from this file's required systems. What is placed here still needs it.");
         else
             ImGui::SetTooltip("Remove from this file's required systems");
     }
@@ -240,14 +240,16 @@ void DrawSystemRow(Assisi::App::SystemRegistry &systems, const SystemRow &row, c
         ImGui::TextColored(kUndeclaredColor, "%s (not declared by this build)", name.c_str());
 
     // Nothing inherited it: the ordinary case, and the one that should stay quiet.
-    if (row.blueprintCount == 0)
+    if (row.inheritedCount == 0)
     {
         ImGui::PopID();
         return;
     }
 
     ImGui::TableSetColumnIndex(3);
-    const char *const plural = row.blueprintCount == 1 ? "blueprint" : "blueprints";
+    // "thing" rather than "blueprint": a screen the level shows asks for its
+    // systems the same way, and the count does not say which kind asked.
+    const char *const plural = row.inheritedCount == 1 ? "thing placed here" : "things placed here";
 
     // Scaled for this one glyph and popped straight after, so an oversized row
     // height cannot leak into the rows below.
@@ -264,12 +266,11 @@ void DrawSystemRow(Assisi::App::SystemRegistry &systems, const SystemRow &row, c
     {
         if (row.inLevel)
         {
-            ImGui::SetTooltip("This system is required by %s and %d %s.", selfNoun, row.blueprintCount,
-                              plural);
+            ImGui::SetTooltip("This system is required by %s and %d %s.", selfNoun, row.inheritedCount, plural);
         }
         else
         {
-            ImGui::SetTooltip("This system is required by %d %s.", row.blueprintCount, plural);
+            ImGui::SetTooltip("This system is required by %d %s.", row.inheritedCount, plural);
         }
     }
 
@@ -319,7 +320,7 @@ void EditorApp::RemoveRequiredSystem(const std::string &name)
     // A blueprint placed here still needs it, so the file's claim is all that was
     // dropped: the row stays, now inherited, and the system goes on running. Muting
     // it would stop behaviour those blueprints are relying on.
-    if (InheritedCount(BlueprintSystemCounts(_world->instances), name) > 0)
+    if (InheritedCount(RequiredSystemCounts(*_world), name) > 0)
         return;
 
     // Muted rather than unregistered, so the removal is visible immediately. Taking
@@ -350,10 +351,9 @@ void EditorApp::DrawRequiredSystemsWindow()
     // stays live throughout — see DrawSystemRow.
     const bool listEditable = IsEditable() && _playState == PlayState::Editing;
 
-    const std::span<const Assisi::App::SystemDefinition> catalog =
-        Assisi::App::SystemCatalog::Instance().All();
+    const std::span<const Assisi::App::SystemDefinition> catalog = Assisi::App::SystemCatalog::Instance().All();
     const std::vector<std::string> &required = _world->systemNames;
-    const std::map<std::string, int32_t, std::less<>> inherited = BlueprintSystemCounts(_world->instances);
+    const std::map<std::string, int32_t, std::less<>> inherited = RequiredSystemCounts(*_world);
 
     // --- The search field ----------------------------------------------------
 
@@ -394,7 +394,7 @@ void EditorApp::DrawRequiredSystemsWindow()
     else if (entered)
     {
         AddRequiredSystem(std::string(hits[static_cast<std::size_t>(_addSystemSelected)].name));
-        _addSystemBuf[0]   = '\0';
+        _addSystemBuf[0] = '\0';
         _addSystemSelected = 0;
         // -1 re-focuses the previous widget, the field itself, so a second system
         // can be added without clicking back into it.
@@ -409,7 +409,7 @@ void EditorApp::DrawRequiredSystemsWindow()
             if (ImGui::Selectable(label.c_str(), static_cast<int32_t>(i) == _addSystemSelected))
             {
                 AddRequiredSystem(label);
-                _addSystemBuf[0]   = '\0';
+                _addSystemBuf[0] = '\0';
                 _addSystemSelected = 0;
             }
             ImGui::PopID();

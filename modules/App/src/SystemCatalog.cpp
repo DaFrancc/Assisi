@@ -99,9 +99,8 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
         // what the branch is for. The ordering constraints apply to both, and
         // reflectgen has already refused an `after` naming nothing.
         SystemRegistry::SystemHandle handle =
-            definition->isRender
-            ? world.systems.RegisterRender(definition->name, definition->runRender)
-            : world.systems.Register(definition->phase, definition->name, definition->run);
+            definition->isRender ? world.systems.RegisterRender(definition->name, definition->runRender)
+                                 : world.systems.Register(definition->phase, definition->name, definition->run);
 
         for (const std::string &target : definition->after)
         {
@@ -220,6 +219,19 @@ std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(const Runtime:
             continue; // Unreadable, and whatever placed it has already said so.
         }
         for (const std::string &name : (*definition)->systems)
+        {
+            ++counts[name];
+        }
+    }
+    return counts;
+}
+
+std::map<std::string, int32_t, std::less<>> RequiredSystemCounts(const World &world)
+{
+    std::map<std::string, int32_t, std::less<>> counts = BlueprintSystemCounts(world.instances);
+    for (const World::Screen &held : world.screenStack)
+    {
+        for (const std::string &name : held.systems)
         {
             ++counts[name];
         }
