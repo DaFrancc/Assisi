@@ -778,6 +778,12 @@ void Ui::AdvanceScrolling(double seconds)
     }
 }
 
+bool Ui::Editing() const
+{
+    const Node *focused = _tree.Get(_interaction.focused);
+    return focused != nullptr && focused->takesKeyboard;
+}
+
 const TextLayout *Ui::TextOf(const LayoutNode &placed) const
 {
     return placed.text < _layout.texts.size() ? &_layout.texts[placed.text] : nullptr;
@@ -898,6 +904,14 @@ InputResult Ui::Interact(const UiInput &input)
             {
                 now.focused = now.hovered;
             }
+            else if (Editing())
+            {
+                // A press anywhere but on the field being typed into ends the
+                // typing. A button keeps its focus through the same press,
+                // because focus on a button is only a mark of where the keys
+                // are, not a claim on them.
+                now.focused = {};
+            }
             WidgetEvent press = PointerGesture(WidgetGesture::Press, input.pointer);
             press.clicks = CountClicks(now.pressed, input.time);
             Dispatch(now.pressed, press);
@@ -953,8 +967,17 @@ InputResult Ui::Interact(const UiInput &input)
     }
     if (input.actionPressed[static_cast<std::size_t>(UiAction::Back)])
     {
-        now.backPressed =
-            Dispatch(now.focused, ActionGesture(UiAction::Back, input.reach, input.step)) == WidgetResponse::Ignored;
+        const bool editing = Editing();
+        if (Dispatch(now.focused, ActionGesture(UiAction::Back, input.reach, input.step)) == WidgetResponse::Ignored)
+        {
+            // Back gets out of the field first and closes the screen second, so
+            // that leaving a box does not also leave the menu it is on.
+            now.backPressed = !editing;
+            if (editing)
+            {
+                now.focused = {};
+            }
+        }
     }
     Navigate(input);
     Write(input);

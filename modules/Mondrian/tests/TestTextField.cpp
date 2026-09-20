@@ -495,6 +495,48 @@ uint32_t LineCount(const Field &field)
 
 } // namespace
 
+TEST_CASE("TextField: a press anywhere but on the field being typed into ends the typing")
+{
+    Field field;
+    field.Type("abc");
+    REQUIRE(field.ui.GetInteraction().focused == field.field.node);
+
+    const Rect box = field.Box();
+    UiInput press = PointerAt({.x = box.x + box.width + 200.f, .y = box.y + box.height + 200.f});
+    press.primaryDown = true;
+    press.primaryPressed = true;
+    field.Step(press);
+
+    CHECK_FALSE(field.ui.GetInteraction().focused);
+    CHECK(field.Text() == "abc"); // what was typed stays typed
+}
+
+TEST_CASE("TextField: Back gets out of the field, and only then out of the screen")
+{
+    Field field;
+    REQUIRE(field.ui.GetInteraction().focused == field.field.node);
+
+    field.Step(Press(UiAction::Back));
+    CHECK_FALSE(field.ui.GetInteraction().focused);
+    // Leaving the box did not also leave the menu it is on.
+    CHECK_FALSE(field.ui.GetInteraction().backPressed);
+
+    // With nothing holding the keyboard, Back means what it always meant.
+    field.Step(Press(UiAction::Back));
+    CHECK(field.ui.GetInteraction().backPressed);
+}
+
+TEST_CASE("TextField: leaving a field settles what it holds")
+{
+    Field field;
+    REQUIRE(field.ui.SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    field.Type("jim@");
+    REQUIRE(field.ui.GetValidity(field.field) == TextValidity::Unchecked);
+
+    field.Step(Press(UiAction::Back));
+    CHECK(field.ui.GetValidity(field.field) == TextValidity::Invalid);
+}
+
 TEST_CASE("TextField: a placeholder stands in while the field is empty and goes when it is not")
 {
     Field field;

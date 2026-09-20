@@ -340,6 +340,10 @@ class Ui
     void Write(const UiInput &input);
     /// How many presses in quick succession this one is, at @p time on @p node.
     uint32_t CountClicks(NodeId node, double time);
+    /// Whether what has focus is holding the keyboard for itself — a field
+    /// being typed into rather than a button waiting to be pressed. Such a
+    /// control lets go when the player presses anywhere else, or presses Back.
+    [[nodiscard]] bool Editing() const;
     /// The text @p placed was laid out with, or null when it has none.
     [[nodiscard]] const TextLayout *TextOf(const LayoutNode &placed) const;
     /// What the control @p widget sees of the node @p id this frame.
