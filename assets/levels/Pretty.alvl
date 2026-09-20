@@ -277,6 +277,9 @@
   ],
   "systems": [
     "Bounce",
+    "CaptureCursor",
+    "CursorToggle",
+    "PauseMenu",
     "TimeOfDay"
   ],
   "version": 2

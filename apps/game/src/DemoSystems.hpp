@@ -24,7 +24,10 @@ namespace Game
 
 /// Spins every non-physics entity about Y. Physics-driven entities are excluded
 /// so this never fights Jolt for the same pose.
-ASYSTEM(Update, name = "SpinDemo") void SpinDemoSystem(Assisi::App::SystemContext &ctx);
+///
+/// FixedUpdate, because it animates the world: that is the phase a paused world
+/// stops running, so opening the pause menu visibly stops the spinning.
+ASYSTEM(FixedUpdate, name = "SpinDemo") void SpinDemoSystem(Assisi::App::SystemContext &ctx);
 
 /// Reports the space bar. `activeWorldOnly`, so with two worlds simulating only
 /// the active one reacts — the "one InputContext, N worlds" rule made visible.
@@ -62,13 +65,12 @@ void BouncerSpawnSystem(Assisi::App::SystemContext &ctx);
 ASYSTEM(Loaded, name = "CaptureCursor", activeWorldOnly)
 void CaptureCursorSystem(Assisi::App::SystemContext &ctx);
 
-/// Escape hands the cursor back; a click in the window takes it again.
+/// A click in the window takes the cursor back after a menu has handed it out.
 ///
 /// The running half of CaptureCursor, and a level that names one wants both.
-/// Which key is listened for depends on which state the cursor is in, so the two
-/// can never fight: while it is held, only Escape is read, and while it is free,
-/// only the click. Escape does not quit — that is what closing the window is
-/// for, and quitting is the one response a player cannot undo.
+/// Escape is not read here: it opens the pause menu, which is what hands the
+/// cursor over, and the menu gives it back on Resume. Two things listening for
+/// the same key would fight over it.
 ///
 /// `activeWorldOnly`, and it null-checks input regardless: a headless host has
 /// no window, so this is inert there even when a level names it.
@@ -82,23 +84,5 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx);
 /// headless host has no devices, and a host with no manager cannot travel.
 ASYSTEM(Update, name = "PrettyTravel", activeWorldOnly)
 void PrettyTravelSystem(Assisi::App::SystemContext &ctx);
-
-/// What the sample screen's buttons push when clicked or accepted.
-struct ResumeClicked
-{
-};
-struct QuitClicked
-{
-};
-
-/// Binds the sample screen's Resume and Quit to the events above, so a level
-/// can show a click reaching game code before screens exist. Null-checks the UI:
-/// a headless host has none.
-ASYSTEM(Loaded, name = "SampleMenu", activeWorldOnly)
-void SampleMenuSystem(Assisi::App::SystemContext &ctx);
-
-/// Logs the sample screen's events: the reading half of SampleMenu.
-ASYSTEM(Update, name = "SampleMenuLog", activeWorldOnly)
-void SampleMenuLogSystem(Assisi::App::SystemContext &ctx);
 
 } // namespace Game

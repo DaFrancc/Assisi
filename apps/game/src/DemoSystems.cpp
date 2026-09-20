@@ -86,29 +86,6 @@ void CaptureCursorSystem(Assisi::App::SystemContext &ctx)
     Assisi::Core::Log::Info("CaptureCursor: '{}' takes the mouse.", ctx.world.levelPath);
 }
 
-void SampleMenuSystem(Assisi::App::SystemContext &ctx)
-{
-    if (ctx.ui == nullptr)
-    {
-        return;
-    }
-    Assisi::Mondrian::Ui &ui = *ctx.ui;
-    ui.OnActivate(ui.Tree().Find("Resume"), ResumeClicked{});
-    ui.OnActivate(ui.Tree().Find("Quit"), QuitClicked{});
-}
-
-void SampleMenuLogSystem(Assisi::App::SystemContext &ctx)
-{
-    for ([[maybe_unused]] const ResumeClicked &event : ctx.events.Read<ResumeClicked>())
-    {
-        Assisi::Core::Log::Info("SampleMenu: Resume clicked.");
-    }
-    for ([[maybe_unused]] const QuitClicked &event : ctx.events.Read<QuitClicked>())
-    {
-        Assisi::Core::Log::Info("SampleMenu: Quit clicked.");
-    }
-}
-
 void CursorToggleSystem(Assisi::App::SystemContext &ctx)
 {
     if (ctx.input == nullptr) // headless host: no window, no cursor to move
@@ -116,14 +93,10 @@ void CursorToggleSystem(Assisi::App::SystemContext &ctx)
         return;
     }
 
-    // One state, one key. Reading both every frame would let a click that
-    // recaptured the cursor be seen again as a click in the captured state.
-    if (ctx.input->IsMouseCaptured())
+    // Only while the cursor is free, and never while a screen has it: a click
+    // meant for a menu button must not also recapture the pointer.
+    if (ctx.input->IsMouseCaptured() || (ctx.ui != nullptr && ctx.ui->TakesInput()))
     {
-        if (ctx.input->IsKeyPressed(Assisi::Window::Key::Escape))
-        {
-            ctx.input->SetInputMode(Assisi::Window::InputMode::GameAndUi);
-        }
         return;
     }
 

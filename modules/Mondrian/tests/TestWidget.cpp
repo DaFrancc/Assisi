@@ -60,18 +60,22 @@ struct Probe
 {
     Record record;
     Ui ui;
+    Screen *screen = nullptr;
     NodeId node;
 
     Probe()
     {
-        const uint32_t type = ui.Tree().Widgets().Register(
+        screen = ui.CreateScreen(ScreenKind::Stacked, kSortMenu, "probe-screen");
+        ui.Show(*screen);
+
+        const uint32_t type = screen->Tree().Widgets().Register(
             WidgetType{.measure = &ProbeMeasure, .draw = &ProbeDraw, .input = &ProbeInput, .context = &record});
         Style style;
         style.floating.enabled = true;
-        node = ui.Tree().Create(ui.Tree().Root(), "probe");
-        ui.Tree().SetStyle(node, style);
-        ui.Tree().SetBehaviour(node, type);
-        ui.Tree().SetFocusable(node, true);
+        node = screen->Tree().Create(screen->Root(), "probe");
+        screen->Tree().SetStyle(node, style);
+        screen->Tree().SetBehaviour(node, type);
+        screen->Tree().SetFocusable(node, true);
         Step({});
     }
 
@@ -85,7 +89,7 @@ struct Probe
     /// The probe's centre, where the pointer lands on it.
     [[nodiscard]] Point Centre() const
     {
-        const LayoutNode *placed = ui.GetLayout().Get(ui.Tree().Find("probe"));
+        const LayoutNode *placed = screen->GetLayout().Get(screen->Find("probe"));
         REQUIRE(placed != nullptr);
         return {.x = placed->rect.x + (placed->rect.width / 2.f), .y = placed->rect.y + (placed->rect.height / 2.f)};
     }
@@ -140,7 +144,7 @@ bool Has(const std::vector<WidgetGesture> &gestures, WidgetGesture gesture)
 TEST_CASE("Widget: a type's measure decides the size of the node it is on")
 {
     Probe probe;
-    const LayoutNode *node = probe.ui.GetLayout().Get(probe.node);
+    const LayoutNode *node = probe.screen->GetLayout().Get(probe.node);
     REQUIRE(node != nullptr);
     CHECK(node->rect.width == doctest::Approx(kProbeWidth));
     CHECK(node->rect.height == doctest::Approx(kProbeHeight));
@@ -153,7 +157,7 @@ TEST_CASE("Widget: a type's draw adds to the draw list over the node's own quads
     CHECK(probe.record.drawn > 0);
 
     const std::size_t withWidget = probe.ui.GetDrawList().Instances().size();
-    probe.ui.Tree().SetBehaviour(probe.node, 0);
+    probe.screen->Tree().SetBehaviour(probe.node, 0);
     probe.Step({});
     CHECK(probe.ui.GetDrawList().Instances().size() == withWidget - 1);
 }
@@ -192,7 +196,7 @@ TEST_CASE("Widget: the pointer moving while held reaches the type as a drag, wit
 TEST_CASE("Widget: accepting a focused widget reaches it as an action before it becomes an activation")
 {
     Probe probe;
-    probe.ui.SetFocus(probe.node);
+    probe.ui.SetFocus(*probe.screen, probe.node);
 
     // A control that takes Accept keeps it: a field puts a newline in rather
     // than reading Enter as the click a button would.
@@ -208,19 +212,19 @@ TEST_CASE("Widget: accepting a focused widget reaches it as an action before it 
     CHECK(probe.record.gestures == std::vector{WidgetGesture::Action, WidgetGesture::Activate});
 }
 
-TEST_CASE("Widget: a focused widget may take Back, and the UI hears about it only when none does")
+TEST_CASE("Widget: a focused widget may take Back, and the screen closes only when none does")
 {
     Probe probe;
-    probe.ui.SetFocus(probe.node);
+    probe.ui.SetFocus(*probe.screen, probe.node);
 
     probe.record.answer = WidgetResponse::Handled;
     probe.Step(Pressing(UiAction::Back));
     CHECK(probe.record.actions == std::vector{UiAction::Back});
-    CHECK_FALSE(probe.ui.GetInteraction().backPressed);
+    CHECK(probe.screen->IsShown());
 
     probe.record.answer = WidgetResponse::Ignored;
     probe.Step(Pressing(UiAction::Back));
-    CHECK(probe.ui.GetInteraction().backPressed);
+    CHECK_FALSE(probe.screen->IsShown());
 }
 
 TEST_CASE("Widget: the wheel reaches the widget under the pointer")
@@ -252,12 +256,12 @@ TEST_CASE("Widget: a direction the widget handles does not also move focus")
     style.floating.enabled = true;
     style.floating.offset = {.x = 600.f, .y = 0.f};
     style.sizing = {Sizing::Fixed(100.f), Sizing::Fixed(40.f)};
-    const NodeId neighbour = probe.ui.Tree().Create(probe.ui.Tree().Root(), "neighbour");
-    probe.ui.Tree().SetStyle(neighbour, style);
-    probe.ui.Tree().SetFocusable(neighbour, true);
+    const NodeId neighbour = probe.screen->Tree().Create(probe.screen->Tree().Root(), "neighbour");
+    probe.screen->Tree().SetStyle(neighbour, style);
+    probe.screen->Tree().SetFocusable(neighbour, true);
     probe.Step({});
 
-    probe.ui.SetFocus(probe.node);
+    probe.ui.SetFocus(*probe.screen, probe.node);
     probe.record.answer = WidgetResponse::Handled;
     probe.Step(Pressing(UiAction::Right));
     CHECK(probe.record.actions == std::vector{UiAction::Right});

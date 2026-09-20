@@ -88,12 +88,6 @@ struct Interaction
     NodeId focused;
     NodeId activated; ///< the node clicked or accepted this frame
     InputDevice device = InputDevice::Pointer;
-    bool backPressed = false;
-};
-
-/// @brief Pushed when the Back action is pressed while the UI has the keys.
-struct UiBack
-{
 };
 
 /// Seconds a direction is held before it repeats, and between repeats after.

@@ -89,13 +89,13 @@ enum class StartProgress : std::uint8_t
 /// components point into, and ECS::Scene is likewise pinned.
 struct World
 {
-    World()  = default;
+    World() = default;
     ~World() = default;
 
-    World(const World &)            = delete;
+    World(const World &) = delete;
     World &operator=(const World &) = delete;
-    World(World &&)                 = delete;
-    World &operator=(World &&)      = delete;
+    World(World &&) = delete;
+    World &operator=(World &&) = delete;
 
     ECS::Scene scene;
     Physics::PhysicsWorld physics;
@@ -170,6 +170,19 @@ struct World
     /// flag.
     bool simulate = false;
 
+    /// Held still while true: the fixed update skips this world, so neither its
+    /// FixedUpdate systems nor its physics run. The per-frame walk goes on —
+    /// the menu that paused the world has to stay workable, and the camera has
+    /// to keep drawing it — so what pausing stops is the simulation, which is
+    /// what the fixed step is. A system that animates the world and must stop
+    /// with it belongs in FixedUpdate for that reason.
+    ///
+    /// Separate from @ref simulate, which says whether this world ever ticks;
+    /// this says whether it is ticking now, and the host sets it on the active
+    /// world each frame from the screens the UI has up. The network clock keeps
+    /// counting either way, so nothing bursts to catch up on resuming.
+    bool paused = false;
+
     /// UpgradeStreamingAssets' per-scene "loads were in flight last tick" flag,
     /// which drives the one-tick tail that picks up the final resolve.
     bool streamingPending = false;
@@ -205,18 +218,18 @@ struct World
 /// is simply unset.
 class WorldManager
 {
-public:
+  public:
     WorldManager() = default;
 
     /// Waits out any in-flight background load before the worlds are destroyed —
     /// a worker must never be left writing into freed scene/physics.
     ~WorldManager();
 
-    WorldManager(const WorldManager &)            = delete;
+    WorldManager(const WorldManager &) = delete;
     WorldManager &operator=(const WorldManager &) = delete;
     // Every world it owns holds a `manager` back-pointer to it, so relocating one
     // dangles all of them.
-    WorldManager(WorldManager &&)            = delete;
+    WorldManager(WorldManager &&) = delete;
     WorldManager &operator=(WorldManager &&) = delete;
 
     /// @brief Creates a world and returns it. The name is generated from
@@ -256,8 +269,7 @@ public:
     /// `[[nodiscard]]`: silently discarding the result loads a level that runs
     /// none of its systems. Write the discard down where it is genuinely
     /// meaningless (an empty list).
-    [[nodiscard]] bool ApplySystems(World &world, std::span<const std::string> names,
-                                    std::string_view context);
+    [[nodiscard]] bool ApplySystems(World &world, std::span<const std::string> names, std::string_view context);
 
     /// @brief Destroys the named world.
     ///
@@ -319,7 +331,7 @@ public:
     /// assets resolved.
     struct Services
     {
-        Render::AssetCache *cache    = nullptr;
+        Render::AssetCache *cache = nullptr;
         Runtime::SceneRenderer *renderer = nullptr;
         /// The scheduler async travel loads on. Null → BeginLoadLevel falls back
         /// to a synchronous load (still correct, just hitches).
@@ -513,7 +525,7 @@ public:
     /// @return how many worlds were destroyed.
     std::size_t DestroyAllExcept(World &keep);
 
-private:
+  private:
     // A vector, not a map: worlds number in the handful, so the O(n) name lookup
     // is cheaper than hashing, and creation order gives deterministic iteration.
     // unique_ptr elements keep addresses stable across insert/erase, which the
@@ -544,9 +556,9 @@ private:
     struct PendingLoad
     {
         World *world = nullptr;
-        Core::Task<bool>       task;                 ///< Invalid in the sync path.
+        Core::Task<bool> task; ///< Invalid in the sync path.
         std::string path;
-        std::optional<bool>    syncResult = std::nullopt; ///< Set (only) by the sync fallback.
+        std::optional<bool> syncResult = std::nullopt; ///< Set (only) by the sync fallback.
 
         // Phase-1 (deserialize) progress in [0,1], written by the worker, read by
         // the UI thread. shared_ptr so the worker lambda owns a copy (outliving any
@@ -555,12 +567,12 @@ private:
 
         // Phase-2 (asset streaming) state, all main-thread only, advanced by
         // PumpPendingLoad once the worker is done.
-        bool workerDone     = false;        ///< Worker finished (or sync path); scene now safe to touch.
-        bool workerOk       = false;        ///< ...and it succeeded.
-        bool resolveStarted = false;        ///< ResolveSceneAssets has kicked off the streams.
+        bool workerDone = false;               ///< Worker finished (or sync path); scene now safe to touch.
+        bool workerOk = false;                 ///< ...and it succeeded.
+        bool resolveStarted = false;           ///< ResolveSceneAssets has kicked off the streams.
         std::size_t resolveInitialPending = 0; ///< Cache pending-count captured when resolve began.
-        float assetProgress  = 0.f;         ///< [0,1] fraction of the streams landed.
-        bool ready          = false;        ///< Deserialized AND assets resident (or a failed load).
+        float assetProgress = 0.f;             ///< [0,1] fraction of the streams landed.
+        bool ready = false;                    ///< Deserialized AND assets resident (or a failed load).
     };
     std::optional<PendingLoad> _pending;
 
