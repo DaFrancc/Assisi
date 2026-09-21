@@ -690,7 +690,14 @@ float UiScale(Extent viewport, float userScale)
 float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale)
 {
     const float space = placed.rect.width - ((style.padding.left + style.padding.right) * scale);
-    return std::max(1.f, std::floor(space));
+    // Rounded up, never down. A node that fits its text is sized from a width
+    // rounded up, and its box is then snapped to whole pixels wherever it
+    // landed; rounding the room left inside it down can take it back under the
+    // width the text was measured at, and a word with no space in it breaks
+    // mid-word rather than anywhere a reader would accept. A wrap width a
+    // fraction wider than the box costs a pixel of overflow, which the node
+    // already clips.
+    return std::max(1.f, std::ceil(space));
 }
 
 Point TextOrigin(const LayoutNode &placed, const Style &style, float scale)
