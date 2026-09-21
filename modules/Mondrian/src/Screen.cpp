@@ -25,6 +25,20 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldBorder{0.34f, 0.38f, 0.48f,
 
 } // namespace
 
+Style TextFieldStyle()
+{
+    Style style;
+    style.sizing = {Sizing{.min = kFieldWidth, .kind = SizingKind::Grow}, Sizing::Fit()};
+    style.padding = kFieldPadding;
+    style.textSize = kFieldTextSize;
+    style.background = kFieldColor;
+    style.borderWidth = kFieldBorderWidth;
+    style.borderColor = kFieldBorder;
+    style.cornerRadius = kFieldCornerRadius;
+    style.cornerStyle = CornerStyle::Rounded;
+    return style;
+}
+
 Screen::Screen(Ui &ui, ScreenTraits traits, int32_t sortKey, std::string name)
     : _ui(ui), _name(std::move(name)), _sortKey(sortKey), _traits(traits)
 {
@@ -135,18 +149,8 @@ NodeId Screen::AddScroll(NodeId parent, const Style &style, std::array<bool, kAx
 
 TextFieldId Screen::AddTextField(NodeId parent, TextLines lines)
 {
-    Style style;
-    style.sizing = {Sizing{.min = kFieldWidth, .kind = SizingKind::Grow}, Sizing::Fit()};
-    style.padding = kFieldPadding;
-    style.textSize = kFieldTextSize;
-    style.background = kFieldColor;
-    style.borderWidth = kFieldBorderWidth;
-    style.borderColor = kFieldBorder;
-    style.cornerRadius = kFieldCornerRadius;
-    style.cornerStyle = CornerStyle::Rounded;
-
     const NodeId node = _tree.Create(parent);
-    _tree.SetStyle(node, style);
+    _tree.SetStyle(node, TextFieldStyle());
     _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::TextField));
     _tree.SetFocusable(node, true);
     // A focused field has the keyboard even where the game otherwise has it:
@@ -253,10 +257,20 @@ std::expected<void, PatternError> Screen::SetPattern(TextFieldId field, std::str
     {
         return std::unexpected(std::move(compiled.error()));
     }
-    node->edit.pattern = *std::move(compiled);
+    SetPattern(field, *std::move(compiled), check);
+    return {};
+}
+
+void Screen::SetPattern(TextFieldId field, std::shared_ptr<const Pattern> pattern, TextCheck check)
+{
+    Node *node = _tree.Editable(field.node);
+    if (node == nullptr)
+    {
+        return;
+    }
+    node->edit.pattern = std::move(pattern);
     node->edit.check = check;
     node->edit.validity = TextValidity::Unchecked;
-    return {};
 }
 
 TextValidity Screen::GetValidity(TextFieldId field) const

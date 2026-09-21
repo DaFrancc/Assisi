@@ -2,7 +2,9 @@
   "systems": [
     "PauseMenuScreen",
     "SampleScreen",
-    "SampleScreenToggle"
+    "SampleScreenToggle",
+    "ControlsScreen",
+    "ControlsScreenToggle"
   ],
   "entities": [],
   "version": 2

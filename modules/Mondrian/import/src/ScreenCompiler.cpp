@@ -9,6 +9,9 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
 
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -40,12 +43,27 @@ struct ElementKind
     bool carriesChildren;
 };
 
-constexpr std::array<ElementKind, 4> kElements{{
+constexpr std::array<ElementKind, 9> kElements{{
     {"row", BuiltinWidget::None, Direction::Row, false, true},
     {"column", BuiltinWidget::None, Direction::Column, false, true},
     {"text", BuiltinWidget::None, Direction::Row, true, false},
     {"button", BuiltinWidget::Button, Direction::Row, true, false},
+    {"toggle", BuiltinWidget::Toggle, Direction::Row, false, false},
+    {"slider", BuiltinWidget::ContinuousSlider, Direction::Row, false, false},
+    {"stepped_slider", BuiltinWidget::SteppedSlider, Direction::Row, false, false},
+    // A column, because what a scroll usually holds is a list.
+    {"scroll", BuiltinWidget::Scroll, Direction::Column, false, true},
+    // Its text is what it starts holding, which is the one control whose text
+    // a player can then change.
+    {"text_field", BuiltinWidget::TextField, Direction::Row, true, false},
 }};
+
+/// How a file marks a value as an expression rather than the name of one.
+constexpr char kPatternDelimiter = '/';
+
+/// The shortest a delimited pattern can be: both delimiters. One slash alone is
+/// not an empty expression, it is half a pair.
+constexpr std::size_t kDelimitedPatternLength = 2;
 
 /// What applying one attribute did.
 enum class Applied : uint8_t
@@ -198,6 +216,117 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
     return Applied::Unknown;
 }
 
+/// What a continuous slider's ends mean, how far one press moves it, and where
+/// it starts.
+Applied ApplySliderAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+{
+    if (name == "min")
+    {
+        return Read(node.range.min, value, ParseFloat);
+    }
+    if (name == "max")
+    {
+        return Read(node.range.max, value, ParseFloat);
+    }
+    if (name == "step")
+    {
+        return Read(node.range.step, value, ParseFloat);
+    }
+    if (name == "value")
+    {
+        return Read(node.value, value, ParseFloat);
+    }
+    return Applied::Unknown;
+}
+
+/// The same for a stepped one, which has no step: it moves one position per
+/// press whatever its ends are, so `value` is which position it starts on.
+Applied ApplySteppedAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+{
+    if (name == "min")
+    {
+        return Read(node.range.min, value, ParseFloat);
+    }
+    if (name == "max")
+    {
+        return Read(node.range.max, value, ParseFloat);
+    }
+    if (name == "steps")
+    {
+        return Read(node.steps, value, ParseInt);
+    }
+    if (name == "value")
+    {
+        return Read(node.step, value, ParseInt);
+    }
+    return Applied::Unknown;
+}
+
+/// Everything a field carries beyond being one. `pattern` is missing on
+/// purpose: it is the one attribute whose value can fail to compile, so it is
+/// read where the line and column are still to hand.
+Applied ApplyFieldAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+{
+    if (name == "lines")
+    {
+        const std::optional<LinesValue> lines = ParseLines(value);
+        if (!lines)
+        {
+            return Applied::BadValue;
+        }
+        node.lines = lines->kind;
+        node.height = lines->height;
+        node.lineLimit = lines->lines;
+        return Applied::Yes;
+    }
+    if (name == "placeholder")
+    {
+        node.placeholder = value;
+        return Applied::Yes;
+    }
+    if (name == "mask")
+    {
+        return Read(node.mask, value, ParseTextMask);
+    }
+    if (name == "max_length")
+    {
+        return Read(node.maxLength, value, ParseUInt);
+    }
+    if (name == "check")
+    {
+        return Read(node.check, value, ParseTextCheck);
+    }
+    return Applied::Unknown;
+}
+
+/// The attributes that belong to one kind of control and to no other: the
+/// arguments its own call takes. Tried before the tables every node shares, so
+/// a control spells its own arguments its own way.
+Applied ApplyWidgetAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+{
+    switch (node.widget)
+    {
+    case BuiltinWidget::Toggle:
+        return name == "on" ? Read(node.on, value, ParseBool) : Applied::Unknown;
+    case BuiltinWidget::ContinuousSlider:
+        return ApplySliderAttribute(node, name, value);
+    case BuiltinWidget::SteppedSlider:
+        return ApplySteppedAttribute(node, name, value);
+    case BuiltinWidget::Scroll:
+        // Which axes scroll is a style field, so this writes the same place
+        // `scroll_bars` does — and the element refuses that spelling, so the
+        // two can never disagree on one node.
+        return name == "axes" ? Read(node.style.enabledScrollBars, value, ParseAxes) : Applied::Unknown;
+    case BuiltinWidget::TextField:
+        return ApplyFieldAttribute(node, name, value);
+    case BuiltinWidget::None:
+    case BuiltinWidget::Button:
+    case BuiltinWidget::Count:
+        break;
+    }
+    return Applied::Unknown;
+}
+
 /// Everything about a node that is not its style and not its behaviour.
 Applied ApplyNodeAttribute(ScreenNode &node, std::string_view name, std::string_view value)
 {
@@ -308,6 +437,102 @@ std::expected<void, MarkupError> ApplyAction(ScreenNode &node, const MarkupAttri
     return {};
 }
 
+/// The expression `pattern` names or spells, compiled once here to find out
+/// whether it would.
+///
+/// What the file carries is the expression and never the name, so nothing after
+/// the cook has a table to look one up in. A value that is neither a name nor
+/// delimited is refused rather than taken for an expression: a misspelt name
+/// would otherwise compile into a rule matching its own letters, which accepts
+/// nothing a player could type and looks like the field is simply broken.
+std::expected<void, MarkupError> ApplyPattern(ScreenNode &node, const MarkupAttribute &attribute)
+{
+    const std::string_view value = attribute.value;
+    if (value.empty())
+    {
+        node.pattern.clear();
+        return {};
+    }
+
+    std::string_view expression;
+    if (value.size() >= kDelimitedPatternLength && value.starts_with(kPatternDelimiter) &&
+        value.ends_with(kPatternDelimiter))
+    {
+        expression = value.substr(1, value.size() - kDelimitedPatternLength);
+    }
+    else if (const std::optional<std::string_view> named = LookUpPattern(value))
+    {
+        expression = *named;
+    }
+    else
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' names no pattern this build has, and is not " +
+                                                 "written between " + kPatternDelimiter +
+                                                 " as an expression of its own. The names are: " + KnownPatterns() +
+                                                 "."));
+    }
+
+    const std::expected<std::shared_ptr<const Pattern>, PatternError> compiled = CompilePattern(expression);
+    if (!compiled)
+    {
+        return std::unexpected(At(attribute, "the pattern " + compiled.error().message));
+    }
+    node.pattern = expression;
+    return {};
+}
+
+/// What a control's own call would have set before a file says anything.
+///
+/// A document is fully resolved and the loader applies its style whole, so
+/// whatever the node API gives a control has to be here — otherwise a field
+/// written in a file would be an invisible box where one built in code is not.
+void Seed(ScreenNode &node)
+{
+    switch (node.widget)
+    {
+    case BuiltinWidget::TextField:
+        node.style = TextFieldStyle();
+        // A focused field has the keyboard even where the game otherwise has
+        // it: typing into a box must not also drive the player's character.
+        node.takesKeyboard = true;
+        return;
+    case BuiltinWidget::Scroll:
+        // Its own background is what a drag scrolls, and a press on it is the
+        // UI's rather than the game's.
+        node.blocksPointer = true;
+        return;
+    case BuiltinWidget::None:
+    case BuiltinWidget::Button:
+    case BuiltinWidget::Toggle:
+    case BuiltinWidget::ContinuousSlider:
+    case BuiltinWidget::SteppedSlider:
+    case BuiltinWidget::Count:
+        return;
+    }
+}
+
+/// What an element has to say for itself, as against what it may say.
+std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node)
+{
+    if (node.widget != BuiltinWidget::ContinuousSlider)
+    {
+        return {};
+    }
+    // Left out, a slider would take a step sized for a 0-to-1 range whatever
+    // its own ends are: on 0 to 100 that is a thousand presses end to end.
+    if (element.Find("step") == nullptr)
+    {
+        return std::unexpected(At(element, "a slider says how far one press moves it, with step."));
+    }
+    // A step of none moves nothing, so the slider swallows the key and stays
+    // where it is.
+    if (node.range.step <= 0.f)
+    {
+        return std::unexpected(At(element, "a slider's step is what moves it, so it cannot be none."));
+    }
+    return {};
+}
+
 const ElementKind *FindElement(std::string_view name)
 {
     for (const ElementKind &kind : kElements)
@@ -360,11 +585,35 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
                 return std::unexpected(At(attribute, "the screen itself cannot be clicked; put on_click on a "
                                                      "control inside it."));
             }
+            if (node.widget != BuiltinWidget::Button)
+            {
+                return std::unexpected(At(attribute, "only a button is clicked. Every other control answers a "
+                                                     "press itself, and what it holds is read rather than "
+                                                     "announced."));
+            }
             if (const std::expected<void, MarkupError> action = ApplyAction(node, attribute, walk.catalog); !action)
             {
                 return std::unexpected(action.error());
             }
             continue;
+        }
+
+        if (attribute.name == "pattern" && node.widget == BuiltinWidget::TextField)
+        {
+            if (const std::expected<void, MarkupError> pattern = ApplyPattern(node, attribute); !pattern)
+            {
+                return std::unexpected(pattern.error());
+            }
+            continue;
+        }
+
+        // `scroll_bars` and `axes` write the same field, and a scroll spells it
+        // `axes` after the argument its own call takes. Two spellings for one
+        // thing is how a file comes to say two different things at once.
+        if (attribute.name == "scroll_bars" && node.widget == BuiltinWidget::Scroll)
+        {
+            return std::unexpected(At(attribute, "a scroll says which axes it scrolls with 'axes', not "
+                                                 "'scroll_bars'."));
         }
 
         if (attribute.name == "focus")
@@ -389,6 +638,10 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
 
         Applied applied =
             isRoot ? ApplyScreenAttribute(walk.document, attribute.name, attribute.value) : Applied::Unknown;
+        if (applied == Applied::Unknown)
+        {
+            applied = ApplyWidgetAttribute(node, attribute.name, attribute.value);
+        }
         if (applied == Applied::Unknown)
         {
             applied = ApplyNodeAttribute(node, attribute.name, attribute.value);
@@ -436,18 +689,21 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     if (!kind->carriesText && !element.text.empty())
     {
         return std::unexpected(At(element, "'" + element.name +
-                                               "' holds text, which only text and button "
-                                               "carry. Put the words in a <text>."));
+                                               "' holds text, which it does not carry. Put the "
+                                               "words in a <text>."));
     }
     if (!kind->carriesChildren && !element.children.empty())
     {
-        return std::unexpected(At(element, "'" + element.name + "' holds elements, and holds only text."));
+        return std::unexpected(At(element, "'" + element.name + "' holds elements, and holds none."));
     }
 
     ScreenNode node;
     node.parent = parent;
     node.widget = kind->widget;
     node.text = element.text;
+    // Seeded first, because a control's own look is what a file's attributes
+    // are written over.
+    Seed(node);
     node.style.direction = kind->direction;
 
     const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
@@ -456,6 +712,10 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, element, index); !attributes)
     {
         return std::unexpected(attributes.error());
+    }
+    if (const std::expected<void, MarkupError> required = Required(element, walk.document.nodes[index]); !required)
+    {
+        return std::unexpected(required.error());
     }
     return CompileChildren(walk, element, index);
 }

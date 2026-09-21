@@ -250,7 +250,7 @@ Change `beneath` to `show` and anything below it stays drawn.
 
 ## Laying it out
 
-Four elements so far:
+Nine elements, one per built-in control:
 
 | | |
 |---|---|
@@ -258,6 +258,13 @@ Four elements so far:
 | `row` | children left to right |
 | `text` | words |
 | `button` | a button, with its label as its text |
+| `toggle` | on or off |
+| `slider` | rests anywhere between its ends |
+| `stepped_slider` | rests only on whole positions |
+| `scroll` | scrolls its children rather than shrinking them |
+| `text_field` | a field, with its text as what it starts holding |
+
+The last five take arguments of their own — see [Controls](#controls) below.
 
 Size is per axis, with `width` and `height`:
 
@@ -290,6 +297,117 @@ background="0 0 0 0.55"
 
 All lengths are in logical pixels against a 1920×1080 screen; the engine scales
 them to the real one.
+
+## Controls
+
+Every attribute above works on a control too — a slider takes `width`, a field
+takes `background`. What follows is what each control needs *beyond* that: the
+arguments it is made with.
+
+### Toggle
+
+```xml
+<toggle name="fullscreen" on="true" />
+```
+
+### Sliders
+
+```xml
+<slider name="volume" min="0" max="100" step="5" value="60" />
+<stepped_slider name="quality" min="0" max="3" steps="4" value="1" />
+```
+
+| | |
+|---|---|
+| `min`, `max` | what its ends mean |
+| `step` | how far one key press moves it — **`slider` only, and required** |
+| `steps` | how many positions it has — `stepped_slider` only |
+| `value` | where it starts: a value on a `slider`, a position counted from zero on a `stepped_slider` |
+
+`step` is required on a `slider`, and cannot be zero. There's no sensible
+default: a tenth is a tenth of a `0`–`1` range and a thousandth of a `0`–`100`
+one, and zero would leave a slider that swallows the key and never moves.
+
+A `stepped_slider` has no `step`. It moves one position per press whatever its
+ends are, which is the only thing it could do and still let a player reach every
+position.
+
+### Scroll
+
+```xml
+<scroll name="list" axes="y" height="fixed 150" scroll_bar_visibility="when-needed">
+  <button>One</button>
+  <button>Two</button>
+</scroll>
+```
+
+`axes` is `x`, `y`, `xy` or `none`. Write it as `axes` here — `scroll_bars` sets
+the same thing on any other element, and a `scroll` refuses that spelling so one
+node can't say both.
+
+### Text field
+
+```xml
+<text_field name="player" lines="single" placeholder="your name" max_length="24" />
+<text_field name="secret" lines="single" mask="dots" />
+<text_field name="notes" lines="multi up-to 3" />
+```
+
+| | |
+|---|---|
+| `lines` | `single`, `multi`, `multi up-to N` or `multi exactly N` |
+| `placeholder` | what it shows while empty, in fainter ink |
+| `mask` | `none`, or `dots` for a password |
+| `max_length` | the most characters a player may type, counted as they see them |
+| `pattern` | what the text must look like |
+| `check` | when the pattern is consulted |
+
+A field's text content is what it starts holding:
+
+```xml
+<text_field name="player">type here</text_field>
+```
+
+`lines` carries both how many lines a field holds and how tall it is in them,
+because `height` already means the node's box on the Y axis. A field can have
+both, and they're different questions:
+
+```xml
+<text_field lines="multi up-to 3" width="grow" height="fit" />
+```
+
+A bounded field refuses what would overflow it rather than scrolling. Put it
+inside a `scroll` to hold more than it shows.
+
+### Patterns
+
+`pattern` takes a **name**, or an expression between slashes:
+
+```xml
+<text_field name="port" pattern="integer" check="refuse" />
+<text_field name="who" pattern="/[^@ ]+@[^@ ]+/" check="on-commit" />
+```
+
+The names built in are `alphabetic`, `alphanumeric`, `integer`, `real` and
+`email`. A name that isn't one of them **fails the cook** — it never falls back
+to being read as an expression, which is what the slashes are for. Without that
+rule a misspelt `emial` would quietly become a pattern matching the letters of
+its own name, and the field would reject everything a player typed.
+
+An expression that doesn't compile fails the cook too, with the file, line and
+column of the attribute holding it.
+
+`check` says when the pattern has its say:
+
+| | |
+|---|---|
+| `refuse` | an edit the pattern could never accept doesn't happen |
+| `on-change` | validity updates on every keystroke |
+| `on-commit` | judged on Enter, or when focus leaves — the default |
+
+`refuse` suits a pattern describing each character, like digits. It's wrong for
+one describing a whole finished value: `jim@` is not an address, and refusing it
+would stop anyone ever typing one.
 
 ## Where the screen lives
 
@@ -390,7 +508,6 @@ anything a file can say, C++ can say by calling `Screen::Add`, `AddText` and
 `AddButton` directly. Building a screen by hand is how you'd make one whose
 shape isn't known until it's built.
 
-The rest of the controls — toggles, sliders, scrolling containers and text
-fields — arrive in the markup next, along with templates for reusing a piece of
-a screen, themes for keeping colours out of the layout, and data bindings for
-showing what the world holds.
+Templates for reusing a piece of a screen arrive next, along with themes for
+keeping colours out of the layout, and data bindings for showing what the world
+holds.

@@ -2,10 +2,12 @@
 
 #include "MarkupValues.hpp"
 
+#include <Assisi/Mondrian/Pattern.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 
 #include <charconv>
 #include <span>
+#include <string>
 
 namespace Assisi::Mondrian::Import
 {
@@ -33,6 +35,28 @@ constexpr std::array<NamedEnum<ScrollBarDrag>, 2> kScrollBarDrags{
 
 constexpr std::array<NamedEnum<FloatAnchor>, 2> kFloatAnchors{
     {{"parent", FloatAnchor::Parent}, {"root", FloatAnchor::Root}}};
+
+constexpr std::array<NamedEnum<TextMask>, 2> kTextMasks{{{"none", TextMask::None}, {"dots", TextMask::Dots}}};
+
+constexpr std::array<NamedEnum<TextCheck>, 3> kTextChecks{
+    {{"refuse", TextCheck::Refuse}, {"on-change", TextCheck::OnChange}, {"on-commit", TextCheck::OnCommit}}};
+
+/// The patterns a file names rather than spells. A name is what an author
+/// writes for the rules every game wants; the expression behind it is what the
+/// file carries, so nothing downstream looks a name up.
+constexpr std::array<NamedEnum<std::string_view>, 5> kPatterns{{{"alphabetic", Patterns::kAlphabetic},
+                                                                {"alphanumeric", Patterns::kAlphanumeric},
+                                                                {"integer", Patterns::kInteger},
+                                                                {"real", Patterns::kReal},
+                                                                {"email", Patterns::kEmail}}};
+
+/// The words a field's height is written with, after how many lines it holds.
+constexpr std::string_view kUpToWord = "up-to";
+constexpr std::string_view kExactlyWord = "exactly";
+
+/// How many words `lines` has when it carries a height: the count, the word,
+/// and the number of lines.
+constexpr std::size_t kLinesWithHeight = 3;
 
 /// The layers the engine names, which is what a file writes instead of the
 /// numbers they happen to be.
@@ -332,6 +356,86 @@ std::optional<int32_t> ParseSortKey(std::string_view text)
         return layer;
     }
     return ParseInt(text);
+}
+
+std::optional<LinesValue> ParseLines(std::string_view text)
+{
+    const std::vector<std::string_view> words = SplitWords(text);
+    if (words.empty())
+    {
+        return std::nullopt;
+    }
+
+    LinesValue value;
+    if (words[0] == "single")
+    {
+        value.kind = TextLines::Single;
+    }
+    else if (words[0] == "multi")
+    {
+        value.kind = TextLines::Multi;
+    }
+    else
+    {
+        return std::nullopt;
+    }
+
+    if (words.size() == 1)
+    {
+        return value;
+    }
+    // A height is counted in lines, which a field holding one does not have.
+    if (value.kind == TextLines::Single || words.size() != kLinesWithHeight)
+    {
+        return std::nullopt;
+    }
+
+    if (words[1] == kUpToWord)
+    {
+        value.height = TextHeight::UpTo;
+    }
+    else if (words[1] == kExactlyWord)
+    {
+        value.height = TextHeight::Exactly;
+    }
+    else
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<uint32_t> lines = ParseUInt(words[2]);
+    if (!lines || *lines == 0)
+    {
+        return std::nullopt;
+    }
+    value.lines = *lines;
+    return value;
+}
+
+std::optional<TextMask> ParseTextMask(std::string_view text)
+{
+    return LookUpEnum(text, kTextMasks);
+}
+
+std::optional<TextCheck> ParseTextCheck(std::string_view text)
+{
+    return LookUpEnum(text, kTextChecks);
+}
+
+std::optional<std::string_view> LookUpPattern(std::string_view name)
+{
+    return LookUpEnum(name, kPatterns);
+}
+
+std::string KnownPatterns()
+{
+    std::string names;
+    for (const NamedEnum<std::string_view> &entry : kPatterns)
+    {
+        names += names.empty() ? "" : ", ";
+        names += entry.name;
+    }
+    return names;
 }
 
 std::optional<Alignment> ParseAlignment(std::string_view text)

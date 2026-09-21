@@ -45,8 +45,12 @@ enum class ScreenLoadError : uint8_t
     /// thing, so this is a stale package rather than a bad file.
     UnknownEvent,
 
-    /// A node names a control this build does not build from a document. The
-    /// element table and this switch grow together.
+    /// A field carries a pattern this build's compiler will not take. The cook
+    /// compiled it too, so this is a stale package rather than a bad file.
+    BadPattern,
+
+    /// A node names a control this build does not have. Same cause: a package
+    /// holding a control added after this build.
     UnsupportedWidget,
 
     /// A node carries something its place cannot hold — a control or an action

@@ -327,6 +327,19 @@ TEST_CASE("ScreenBlob: an enumerator this build does not have is refused")
         REQUIRE_FALSE(read.has_value());
         CHECK(read.error() == CookedScreenError::Invalid);
     }
+
+    SUBCASE("a field's own enumerator")
+    {
+        // The text field switches over these the way layout switches over a
+        // style's, so the same check has to reach them.
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        document.nodes[0].mask = static_cast<TextMask>(9);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
 }
 
 TEST_CASE("ScreenBlob: an event action with no name is refused")

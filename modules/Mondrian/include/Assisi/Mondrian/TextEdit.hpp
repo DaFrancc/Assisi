@@ -13,6 +13,7 @@
 /// marking a field wrong are different kindnesses.
 
 #include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
 #include <array>
@@ -97,13 +98,13 @@ enum class TextCheck : uint8_t
     /// Suits a pattern that describes each character — digits, say — and not
     /// one describing a whole finished value, which is never true partway
     /// through being typed.
-    Refuses,
+    Refuse,
     /// Every edit sets the field's validity, so it goes wrong the moment it
     /// stops matching and right again as soon as it matches.
-    MarksAsTyped,
+    OnChange,
     /// Enter, or focus leaving the field, sets its validity. An address can be
     /// typed in peace and judged once it is finished.
-    MarksOnCommit,
+    OnCommit,
     Count
 };
 
@@ -165,7 +166,7 @@ struct TextEdit
     TextEditing editing = TextEditing::None;
     TextLines lines = TextLines::Single;
     TextMask mask = TextMask::None;
-    TextCheck check = TextCheck::MarksOnCommit;
+    TextCheck check = TextCheck::OnCommit;
     TextValidity validity = TextValidity::Unchecked;
     TextDrag drag = TextDrag::None;
     TextHeight height = TextHeight::Unbounded;
@@ -193,6 +194,14 @@ struct TextEdit
 /// @brief The control that a node's TextEdit state belongs to: the caret, the
 /// selection, the editing keys and the clipboard.
 [[nodiscard]] WidgetType TextFieldWidget();
+
+/// @brief The look a field has until something restyles it.
+///
+/// Here rather than inside the call that makes a field, because a screen
+/// compiled from a file resolves every style before the loader runs and then
+/// hands the loader one to apply whole. Both routes read this, so a field
+/// written in a file and one built in code start the same.
+[[nodiscard]] Style TextFieldStyle();
 
 /// @brief Where the caret stands on @p node, in device pixels: as tall as the
 /// line it is on rather than as tall as the box, and placed against the text

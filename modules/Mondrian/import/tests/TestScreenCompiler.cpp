@@ -1,13 +1,18 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 
+#include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
+#include <Assisi/Mondrian/ScreenLoader.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstddef>
 #include <expected>
 #include <fstream>
@@ -58,6 +63,27 @@ constexpr std::string_view kPauseMenu = R"(<screen name="Pause" input="consume" 
 </screen>
 )";
 
+/// Every control the markup has, with every construction attribute written.
+/// One file rather than one per element: what this is for is the whole
+/// vocabulary holding together, and a screen that mixes them is what an author
+/// writes.
+constexpr std::string_view kEveryControl = R"(<screen name="Controls">
+  <column name="panel" gap="8">
+    <toggle name="fullscreen" on="true" />
+    <slider name="volume" min="0" max="100" step="5" value="60" />
+    <stepped_slider name="quality" min="0" max="3" steps="4" value="2" />
+    <scroll name="list" axes="y">
+      <button name="one" on_click="hide">One</button>
+    </scroll>
+    <text_field name="player" lines="single" placeholder="Name" max_length="24" />
+    <text_field name="secret" lines="single" mask="dots" />
+    <text_field name="notes" lines="multi up-to 3" />
+    <text_field name="port" pattern="/[0-9]+/" check="refuse">8080</text_field>
+    <text_field name="who" pattern="email" check="on-commit" />
+  </column>
+</screen>
+)";
+
 /// The reason @p result failed, or empty. Its own function because `*` binds
 /// tighter than `?:` inside doctest's message macro, so a ternary written at
 /// the call would be parsed as part of the stream expression.
@@ -85,6 +111,131 @@ MarkupError Refused(std::string_view text)
     const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
     REQUIRE_FALSE(document.has_value());
     return document.error();
+}
+
+/// The controls the shipped Controls.amdn holds, by the names it gives them.
+/// Its containers are left out: what they compile to is already covered, and
+/// what this case is about is the arguments a control is made with.
+constexpr std::array<std::string_view, 11> kComparedControls{
+    {"fullscreen", "volume", "quality", "player", "secret", "port", "who", "growing", "upTo", "exactly", "list"}};
+
+/// The look Controls.amdn gives its scrolling list, so the twin is compared
+/// against a node styled as the file styles it rather than against a bare one.
+Style ListStyle()
+{
+    Style style;
+    style.sizing = {Sizing::Grow(), Sizing::Fixed(150.f)};
+    style.direction = Direction::Column;
+    style.background = {0.0588235f, 0.0705882f, 0.0901961f, 1.f};
+    style.cornerRadius = 10.f;
+    style.cornerStyle = CornerStyle::Rounded;
+    style.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
+    style.scrollSmoothing = 0.12f;
+    return style;
+}
+
+/// Controls.amdn's controls, built through the node API with the arguments the
+/// file writes, under the names the file gives them.
+void BuildTwin(Screen &screen)
+{
+    const NodeId row = screen.Add(screen.Root(), Style{});
+
+    screen.Tree().SetName(screen.AddToggle(row, true).node, "fullscreen");
+    screen.Tree().SetName(
+        screen.AddContinuousSlider(row, SliderRange{.min = 0.f, .max = 100.f, .step = 5.f}, 60.f).node, "volume");
+    // No step: a stepped slider moves one position per press whatever its ends
+    // are, so the file has no way to say one and neither has this.
+    screen.Tree().SetName(screen.AddSteppedSlider(row, SliderRange{.min = 0.f, .max = 3.f}, 4, 1).node, "quality");
+
+    const TextFieldId player = screen.AddTextField(row, TextLines::Single);
+    screen.SetPlaceholder(player, "your name");
+    screen.SetMaxLength(player, 24);
+    screen.SetText(player, "type here");
+    screen.Tree().SetName(player.node, "player");
+
+    const TextFieldId secret = screen.AddTextField(row, TextLines::Single);
+    screen.SetPlaceholder(secret, "password");
+    screen.SetText(secret, "hunter2");
+    screen.SetMask(secret, TextMask::Dots);
+    screen.Tree().SetName(secret.node, "secret");
+
+    const TextFieldId port = screen.AddTextField(row, TextLines::Single);
+    screen.SetPlaceholder(port, "port");
+    REQUIRE(screen.SetPattern(port, Patterns::kInteger, TextCheck::Refuse).has_value());
+    screen.Tree().SetName(port.node, "port");
+
+    const TextFieldId who = screen.AddTextField(row, TextLines::Single);
+    screen.SetPlaceholder(who, "address");
+    REQUIRE(screen.SetPattern(who, "[^@ ]+@[^@ ]+", TextCheck::OnChange).has_value());
+    screen.Tree().SetName(who.node, "who");
+
+    const TextFieldId growing = screen.AddTextField(row, TextLines::Multi);
+    screen.SetPlaceholder(growing, "grows forever");
+    screen.Tree().SetName(growing.node, "growing");
+
+    const TextFieldId upTo = screen.AddTextField(row, TextLines::Multi);
+    screen.SetHeight(upTo, TextHeight::UpTo, 3);
+    screen.SetPlaceholder(upTo, "up to 3 lines");
+    screen.Tree().SetName(upTo.node, "upTo");
+
+    const TextFieldId exactly = screen.AddTextField(row, TextLines::Multi);
+    screen.SetHeight(exactly, TextHeight::Exactly, 3);
+    screen.SetPlaceholder(exactly, "exactly 3 lines");
+    screen.Tree().SetName(exactly.node, "exactly");
+
+    screen.Tree().SetName(screen.AddScroll(row, ListStyle(), {false, true}), "list");
+}
+
+/// Whether the two nodes called @p name agree on everything making one decides.
+void CheckSame(const NodeTree &fromFile, const NodeTree &byHand, std::string_view name)
+{
+    const Node *const one = fromFile.Get(fromFile.Find(name));
+    const Node *const other = byHand.Get(byHand.Find(name));
+    REQUIRE_MESSAGE(one != nullptr, "the file has no " << name);
+    REQUIRE_MESSAGE(other != nullptr, "the twin has no " << name);
+
+    INFO("control: " << name);
+
+    CHECK(one->behaviour == other->behaviour);
+    CHECK(one->value == other->value);
+    CHECK(one->text == other->text);
+    CHECK(one->range.min == other->range.min);
+    CHECK(one->range.max == other->range.max);
+    CHECK(one->range.step == other->range.step);
+    CHECK(one->steps == other->steps);
+
+    CHECK(one->focusable == other->focusable);
+    CHECK(one->takesKeyboard == other->takesKeyboard);
+    CHECK(one->blocksPointer == other->blocksPointer);
+
+    // The look a control gives itself. A field written in a file with no style
+    // of its own would otherwise be an invisible box where one built in code is
+    // not, and nothing else here would notice.
+    CHECK(one->style.background.a == other->style.background.a);
+    CHECK(one->style.borderWidth == other->style.borderWidth);
+    CHECK(one->style.cornerRadius == other->style.cornerRadius);
+    CHECK(one->style.textSize == other->style.textSize);
+    CHECK(one->style.padding.left == other->style.padding.left);
+    CHECK(one->style.sizing[static_cast<std::size_t>(Axis::Y)].kind ==
+          other->style.sizing[static_cast<std::size_t>(Axis::Y)].kind);
+    CHECK(one->style.enabledScrollBars == other->style.enabledScrollBars);
+
+    CHECK(one->edit.editing == other->edit.editing);
+    CHECK(one->edit.placeholder == other->edit.placeholder);
+    CHECK(one->edit.maxLength == other->edit.maxLength);
+    CHECK(one->edit.lines == other->edit.lines);
+    CHECK(one->edit.height == other->edit.height);
+    CHECK(one->edit.lineLimit == other->edit.lineLimit);
+    CHECK(one->edit.mask == other->edit.mask);
+    CHECK(one->edit.check == other->edit.check);
+    CHECK((one->edit.pattern == nullptr) == (other->edit.pattern == nullptr));
+
+    // Masking a field turns copy and cut off, so these say whether the loader
+    // applied a field's settings in an order that kept that true.
+    for (std::size_t ability = 0; ability < kTextAbilityCount; ++ability)
+    {
+        CHECK(one->edit.abilities[ability] == other->edit.abilities[ability]);
+    }
 }
 
 /// The node called @p name, which the case expects to exist.
@@ -345,6 +496,49 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
     CHECK(NodeNamed(*read, "quit").eventName == "Game::QuitRequested");
 }
 
+TEST_CASE("ScreenCompiler: every construction attribute survives the round trip")
+{
+    // The two halves of the format against each other, over the fields this
+    // issue adds: a write and a read that disagree by one field would shift
+    // everything after it and still frame correctly.
+    const std::expected<std::vector<std::byte>, MarkupError> bytes = CompileScreenText(kEveryControl, OneEvent());
+    REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
+
+    const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
+    REQUIRE(read.has_value());
+
+    CHECK(NodeNamed(*read, "fullscreen").on);
+
+    const ScreenNode &volume = NodeNamed(*read, "volume");
+    CHECK(volume.range.min == 0.f);
+    CHECK(volume.range.max == 100.f);
+    CHECK(volume.range.step == 5.f);
+    CHECK(volume.value == 60.f);
+
+    const ScreenNode &quality = NodeNamed(*read, "quality");
+    CHECK(quality.steps == 4);
+    CHECK(quality.step == 2);
+
+    CHECK(NodeNamed(*read, "list").style.enabledScrollBars[static_cast<std::size_t>(Axis::Y)]);
+
+    const ScreenNode &player = NodeNamed(*read, "player");
+    CHECK(player.placeholder == "Name");
+    CHECK(player.maxLength == 24);
+    CHECK(player.lines == TextLines::Single);
+
+    CHECK(NodeNamed(*read, "secret").mask == TextMask::Dots);
+
+    const ScreenNode &notes = NodeNamed(*read, "notes");
+    CHECK(notes.height == TextHeight::UpTo);
+    CHECK(notes.lineLimit == 3);
+
+    const ScreenNode &port = NodeNamed(*read, "port");
+    CHECK(port.pattern == "[0-9]+");
+    CHECK(port.check == TextCheck::Refuse);
+
+    CHECK(NodeNamed(*read, "who").pattern == Patterns::kEmail);
+}
+
 TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it replaced")
 {
     // The file itself, not a copy of it. What this catches is a mistake in the
@@ -407,6 +601,249 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     // Focus starts on Resume, so a player reaching for the keyboard is one
     // press from carrying on rather than one press from leaving.
     CHECK(document->focus == IndexOf(*document, "resume"));
+}
+
+TEST_CASE("ScreenCompiler: every control compiles to the node that builds it")
+{
+    const ScreenDocument document = Compiled(kEveryControl);
+
+    const ScreenNode &fullscreen = NodeNamed(document, "fullscreen");
+    CHECK(fullscreen.widget == BuiltinWidget::Toggle);
+    CHECK(fullscreen.on);
+
+    const ScreenNode &volume = NodeNamed(document, "volume");
+    CHECK(volume.widget == BuiltinWidget::ContinuousSlider);
+    CHECK(volume.range.min == 0.f);
+    CHECK(volume.range.max == 100.f);
+    CHECK(volume.range.step == 5.f);
+    CHECK(volume.value == 60.f);
+
+    const ScreenNode &quality = NodeNamed(document, "quality");
+    CHECK(quality.widget == BuiltinWidget::SteppedSlider);
+    CHECK(quality.range.max == 3.f);
+    CHECK(quality.steps == 4);
+    // `value` is which step it starts on, counted from zero. A stepped slider
+    // moves one step per press whatever its range, so `step` would name
+    // something it does not have.
+    CHECK(quality.step == 2);
+
+    const ScreenNode &list = NodeNamed(document, "list");
+    CHECK(list.widget == BuiltinWidget::Scroll);
+    CHECK_FALSE(list.style.enabledScrollBars[static_cast<std::size_t>(Axis::X)]);
+    CHECK(list.style.enabledScrollBars[static_cast<std::size_t>(Axis::Y)]);
+    // A scroll takes the pointer for its own drags, as AddScroll does, so a
+    // file gets the same node either way round.
+    CHECK(list.blocksPointer);
+
+    const ScreenNode &player = NodeNamed(document, "player");
+    CHECK(player.widget == BuiltinWidget::TextField);
+    CHECK(player.lines == TextLines::Single);
+    CHECK(player.placeholder == "Name");
+    CHECK(player.maxLength == 24);
+    // A field made with no style of its own is an invisible box, and a player
+    // cannot type into what they cannot see: the document carries the look the
+    // node API would have given it.
+    CHECK(player.style.borderWidth > 0.f);
+    CHECK(player.style.background.a > 0.f);
+    CHECK(player.takesKeyboard);
+
+    CHECK(NodeNamed(document, "secret").mask == TextMask::Dots);
+
+    const ScreenNode &notes = NodeNamed(document, "notes");
+    CHECK(notes.lines == TextLines::Multi);
+    CHECK(notes.height == TextHeight::UpTo);
+    CHECK(notes.lineLimit == 3);
+
+    const ScreenNode &port = NodeNamed(document, "port");
+    // The delimiters mark it as a regex and are not part of it.
+    CHECK(port.pattern == "[0-9]+");
+    CHECK(port.check == TextCheck::Refuse);
+    // A field's text content is what it starts holding.
+    CHECK(port.text == "8080");
+
+    // A preset is expanded here, so the loader knows nothing of presets and the
+    // shipped game has no table to look one up in.
+    CHECK(NodeNamed(document, "who").pattern == Patterns::kEmail);
+}
+
+TEST_CASE("ScreenCompiler: a pattern is a name or a marked regex, never guessed between")
+{
+    SUBCASE("every built-in preset resolves")
+    {
+        CHECK(Compiled(R"(<screen><text_field pattern="alphabetic" /></screen>)").nodes[1].pattern ==
+              Patterns::kAlphabetic);
+        CHECK(Compiled(R"(<screen><text_field pattern="alphanumeric" /></screen>)").nodes[1].pattern ==
+              Patterns::kAlphanumeric);
+        CHECK(Compiled(R"(<screen><text_field pattern="integer" /></screen>)").nodes[1].pattern == Patterns::kInteger);
+        CHECK(Compiled(R"(<screen><text_field pattern="real" /></screen>)").nodes[1].pattern == Patterns::kReal);
+        CHECK(Compiled(R"(<screen><text_field pattern="email" /></screen>)").nodes[1].pattern == Patterns::kEmail);
+    }
+
+    SUBCASE("a name nothing declares")
+    {
+        // The whole point of marking the regex: a misspelt preset fails here
+        // rather than quietly becoming a pattern matching the letters of its
+        // own name, which would accept nothing a player could type.
+        const MarkupError error = Refused(R"(<screen><text_field pattern="emial" /></screen>)");
+        CHECK(error.message.find("emial") != std::string::npos);
+        // The message names what there is, so the fix is in front of whoever
+        // reads it.
+        CHECK(error.message.find("email") != std::string::npos);
+    }
+
+    SUBCASE("a regex written without its delimiters")
+    {
+        // Reads as a name, and is not one. Saying so beats compiling it.
+        CHECK(Refused(R"(<screen><text_field pattern="[0-9]+" /></screen>)").message.find("/") != std::string::npos);
+    }
+
+    SUBCASE("an empty pattern takes the rule off")
+    {
+        CHECK(Compiled(R"(<screen><text_field pattern="" /></screen>)").nodes[1].pattern.empty());
+    }
+}
+
+TEST_CASE("ScreenCompiler: a field's lines say how many and how tall at once")
+{
+    const ScreenDocument single = Compiled(R"(<screen><text_field lines="single" /></screen>)");
+    CHECK(single.nodes[1].lines == TextLines::Single);
+    CHECK(single.nodes[1].height == TextHeight::Unbounded);
+
+    const ScreenDocument grows = Compiled(R"(<screen><text_field lines="multi" /></screen>)");
+    CHECK(grows.nodes[1].lines == TextLines::Multi);
+    CHECK(grows.nodes[1].height == TextHeight::Unbounded);
+
+    const ScreenDocument exactly = Compiled(R"(<screen><text_field lines="multi exactly 4" /></screen>)");
+    CHECK(exactly.nodes[1].height == TextHeight::Exactly);
+    CHECK(exactly.nodes[1].lineLimit == 4);
+
+    SUBCASE("a bound with no count")
+    {
+        CHECK(Refused(R"(<screen><text_field lines="multi up-to" /></screen>)").message.find("up-to") !=
+              std::string::npos);
+    }
+
+    SUBCASE("a bound of no lines")
+    {
+        // A field held to no lines could never hold anything, which nobody
+        // means by it.
+        CHECK(Refused(R"(<screen><text_field lines="multi exactly 0" /></screen>)").message.find("exactly 0") !=
+              std::string::npos);
+    }
+
+    SUBCASE("a height on a single line")
+    {
+        CHECK(Refused(R"(<screen><text_field lines="single up-to 3" /></screen>)").message.find("single") !=
+              std::string::npos);
+    }
+}
+
+TEST_CASE("ScreenCompiler: a slider says how far a press moves it")
+{
+    // The default step is a tenth, which is a tenth of a 0..1 range and a
+    // thousandth of a 0..100 one. A file that leaves it out is far likelier to
+    // have forgotten than to want a thousand presses end to end.
+    SUBCASE("a slider that does not say")
+    {
+        const MarkupError error = Refused(R"(<screen><slider min="0" max="100" /></screen>)");
+        CHECK(error.message.find("step") != std::string::npos);
+    }
+
+    SUBCASE("a slider that says none")
+    {
+        // Zero moves nothing, so the control swallows the key and stays put.
+        CHECK(Refused(R"(<screen><slider min="0" max="1" step="0" /></screen>)").message.find("step") !=
+              std::string::npos);
+    }
+
+    SUBCASE("a stepped slider needs none")
+    {
+        // It moves one step per press whatever its range, so there is nothing
+        // for a step to say.
+        const ScreenDocument document = Compiled(R"(<screen><stepped_slider min="0" max="3" steps="4" /></screen>)");
+        CHECK(document.nodes[1].steps == 4);
+    }
+}
+
+TEST_CASE("ScreenCompiler: a pattern that does not compile is refused where it was written")
+{
+    // The only construction attribute with a failure mode of its own. Caught
+    // here, the author reads it with the file open; caught at load, a player
+    // reads it instead.
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <text_field\n"
+                                      "      pattern=\"/[0-9/\" />\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    CHECK(error.message.find("pattern") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: a scroll spells its axes one way")
+{
+    // Both names write the same field, and two spellings for one thing is how a
+    // file comes to say two different things at once.
+    const MarkupError error = Refused(R"(<screen><scroll scroll_bars="y" /></screen>)");
+    CHECK(error.message.find("axes") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: only a button can be clicked")
+{
+    // A toggle's press is the toggle's; an on_click there would be read by
+    // nothing and do nothing.
+    CHECK(Refused(R"(<screen><toggle on_click="hide" /></screen>)").message.find("button") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: a control holds what it can hold")
+{
+    SUBCASE("a toggle holding words")
+    {
+        CHECK(Refused(R"(<screen><toggle>on</toggle></screen>)").message.find("text") != std::string::npos);
+    }
+
+    SUBCASE("a slider holding elements")
+    {
+        CHECK(Refused(R"(<screen><slider step="1"><text /></slider></screen>)").message.find("elements") !=
+              std::string::npos);
+    }
+
+    SUBCASE("a scroll holds elements")
+    {
+        const ScreenDocument document = Compiled(R"(<screen><scroll axes="xy"><text>in</text></scroll></screen>)");
+        REQUIRE(document.nodes.size() == 3);
+        CHECK(document.nodes[2].parent == 1);
+    }
+}
+
+TEST_CASE("ScreenCompiler: the controls file builds the screen the node API builds")
+{
+    // The whole claim markup makes: a loader over the node API that reaches
+    // nothing the API lacks. Both screens are built here and compared control
+    // for control, so an argument the cooker drops, or a default the compiler
+    // fails to seed, shows up as a difference rather than as a screen that
+    // looks nearly right.
+    std::ifstream file{ASSISI_CONTROLS_SCREEN_PATH};
+    REQUIRE(file.is_open());
+    const std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+
+    const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
+    REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
+    REQUIRE_MESSAGE(document.has_value(), Why(document));
+
+    EventQueue events;
+    Ui ui{events};
+    const EventCatalog catalog = OneEvent();
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, *document, catalog);
+    REQUIRE(loaded.has_value());
+
+    Screen twin{ui, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
+    BuildTwin(twin);
+
+    for (const std::string_view name : kComparedControls)
+    {
+        CheckSame(loaded->screen->Tree(), twin.Tree(), name);
+    }
 }
 
 TEST_CASE("ScreenCompiler: a file that does not parse fails before it compiles")

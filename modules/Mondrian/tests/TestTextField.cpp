@@ -543,7 +543,7 @@ TEST_CASE("TextField: Back gets out of the field, and only then out of the scree
 TEST_CASE("TextField: leaving a field settles what it holds")
 {
     Field field;
-    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::OnCommit).has_value());
     field.Type("jim@");
     REQUIRE(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
 
@@ -908,7 +908,7 @@ TEST_CASE("TextField: a double click takes the word under it")
 TEST_CASE("TextField: a pattern that refuses keeps what it will not accept out")
 {
     Field field;
-    REQUIRE(field.screen->SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kInteger, TextCheck::Refuse).has_value());
 
     field.Type("4");
     field.Type("2");
@@ -926,7 +926,7 @@ TEST_CASE("TextField: a pattern that refuses keeps what it will not accept out")
 TEST_CASE("TextField: a pattern that marks as typed says so the moment it stops matching")
 {
     Field field;
-    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksAsTyped).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::OnChange).has_value());
     CHECK(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
 
     field.Type("jim@");
@@ -939,7 +939,7 @@ TEST_CASE("TextField: a pattern that marks as typed says so the moment it stops 
 TEST_CASE("TextField: a pattern that marks on commit says nothing until Enter")
 {
     Field field;
-    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::OnCommit).has_value());
 
     field.Type("jim@");
     CHECK(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
@@ -957,7 +957,7 @@ TEST_CASE("TextField: a pattern that marks on commit says nothing until Enter")
 TEST_CASE("TextField: leaving a field is finishing with it, so it is judged then too")
 {
     Field field;
-    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::MarksOnCommit).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kEmail, TextCheck::OnCommit).has_value());
     field.Type("jim@");
     REQUIRE(field.screen->GetValidity(field.field) == TextValidity::Unchecked);
 
@@ -976,8 +976,7 @@ TEST_CASE("TextField: leaving a field is finishing with it, so it is judged then
 TEST_CASE("TextField: a pattern that will not compile is refused and leaves the field as it was")
 {
     Field field;
-    const std::expected<void, PatternError> set =
-        field.screen->SetPattern(field.field, "[unclosed", TextCheck::Refuses);
+    const std::expected<void, PatternError> set = field.screen->SetPattern(field.field, "[unclosed", TextCheck::Refuse);
     REQUIRE_FALSE(set.has_value());
     CHECK_FALSE(set.error().message.empty());
 
@@ -989,7 +988,7 @@ TEST_CASE("TextField: text set from code is taken as given, limit and pattern no
 {
     Field field;
     field.screen->SetMaxLength(field.field, 2);
-    REQUIRE(field.screen->SetPattern(field.field, Patterns::kInteger, TextCheck::Refuses).has_value());
+    REQUIRE(field.screen->SetPattern(field.field, Patterns::kInteger, TextCheck::Refuse).has_value());
 
     field.screen->SetText(field.field, "a longer answer");
     CHECK(field.Text() == "a longer answer");
