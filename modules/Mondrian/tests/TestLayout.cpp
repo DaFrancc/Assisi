@@ -368,3 +368,43 @@ TEST_CASE("Layout: the root fills the viewport and a new viewport reflows the tr
     CHECK(scene.RectOf(half).width == 300.f);
     CHECK(scene.RectOf(half).height == 400.f);
 }
+
+TEST_CASE("Layout: a node sized to fit its own text keeps it on one line wherever it lands")
+{
+    // A node fits to a measurement, its box is snapped to whole pixels, and its
+    // text is then wrapped at whatever is left inside it. Snapping takes up to
+    // a pixel depending on where the node sits, and the padding subtracted
+    // afterwards is fractional at any scale but one, so a box can hold its own
+    // text at one position and not at another. The word here has no space in it
+    // to break at, so when it does not fit it breaks mid-word.
+    constexpr int32_t kScales = 24;
+    constexpr int32_t kPositions = 24;
+
+    for (int32_t s = 1; s <= kScales; ++s)
+    {
+        const float scale = 0.5f + (static_cast<float>(s) / static_cast<float>(kScales));
+        for (int32_t offset = 0; offset < kPositions; ++offset)
+        {
+            Scene scene;
+
+            Style outer;
+            outer.padding.left = static_cast<float>(offset) / 4.f;
+            const NodeId parent = scene.Add(scene.tree.Root(), outer);
+
+            // A button's shape: a label with room around it.
+            Style inner;
+            inner.sizing = {Sizing::Fit(), Sizing::Fit()};
+            inner.textSize = kFixtureSize;
+            inner.padding = Padding{.left = 28.f, .top = 10.f, .right = 28.f, .bottom = 10.f};
+            const NodeId text = scene.Add(parent, inner);
+            scene.tree.SetText(text, "AAA");
+
+            scene.Run(kReference, scale);
+
+            const LayoutNode &placed = scene.NodeOf(text);
+            REQUIRE(placed.text != LayoutNode::kNoText);
+            INFO("scale: " << scale << "  left padding: " << outer.padding.left);
+            CHECK(scene.layout.texts[placed.text].lines.size() == 1);
+        }
+    }
+}

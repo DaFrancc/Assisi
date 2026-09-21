@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -293,6 +294,14 @@ class Screen
     /// Returns what went wrong with @p pattern, in which case the field keeps
     /// the pattern it had. An empty pattern takes the rule off.
     std::expected<void, PatternError> SetPattern(TextFieldId field, std::string_view pattern, TextCheck check);
+
+    /// @brief The same, given a pattern already compiled. Null takes the rule
+    /// off.
+    ///
+    /// For a caller that compiled it earlier to find out whether it would: a
+    /// screen loaded from a file settles every pattern before it builds a
+    /// single node, so nothing can fail half way through building one.
+    void SetPattern(TextFieldId field, std::shared_ptr<const Pattern> pattern, TextCheck check);
 
     /// @brief Whether @p field's text is acceptable, as of the last time its
     /// pattern was consulted. Unchecked until then, and for a field with no

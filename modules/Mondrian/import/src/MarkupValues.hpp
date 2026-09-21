@@ -12,6 +12,7 @@
 /// Internal to the import library.
 
 #include <Assisi/Mondrian/Style.hpp>
+#include <Assisi/Mondrian/TextEdit.hpp>
 
 #include <Assisi/Math/Color.hpp>
 
@@ -19,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -87,6 +89,33 @@ template <typename E, std::size_t N>
 
 /// @brief A layer the engine names, or a plain number for one between them.
 [[nodiscard]] std::optional<int32_t> ParseSortKey(std::string_view text);
+
+/// @brief What `lines` says at once: how many lines a field holds, and how
+/// tall it is counted in them.
+///
+/// One attribute rather than two because `height` is already a node's box on
+/// the Y axis, and a field wants to say both without the two names colliding.
+struct LinesValue
+{
+    uint32_t lines = 1;
+    TextLines kind = TextLines::Single;
+    TextHeight height = TextHeight::Unbounded;
+};
+
+/// @brief `single`, `multi`, `multi up-to <n>` or `multi exactly <n>`.
+///
+/// A height belongs only to a field of many lines, and `<n>` is at least one: a
+/// field held to no lines could never hold anything.
+[[nodiscard]] std::optional<LinesValue> ParseLines(std::string_view text);
+
+[[nodiscard]] std::optional<TextMask> ParseTextMask(std::string_view text);
+[[nodiscard]] std::optional<TextCheck> ParseTextCheck(std::string_view text);
+
+/// @brief The expression the preset called @p name stands for, or nullopt.
+[[nodiscard]] std::optional<std::string_view> LookUpPattern(std::string_view name);
+
+/// @brief Every preset this build knows, for the message an unknown one prints.
+[[nodiscard]] std::string KnownPatterns();
 
 [[nodiscard]] std::optional<Alignment> ParseAlignment(std::string_view text);
 [[nodiscard]] std::optional<Direction> ParseDirection(std::string_view text);

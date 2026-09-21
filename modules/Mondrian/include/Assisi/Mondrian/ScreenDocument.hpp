@@ -17,6 +17,7 @@
 
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Style.hpp>
+#include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
 #include <cstdint>
@@ -75,16 +76,51 @@ struct ScreenNode
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     std::string eventName;
 
+    /// What a field shows while it holds nothing.
+    std::string placeholder;
+
+    /// The expression a field's text must match, or empty for no rule. The
+    /// expression itself and never a name for one: a file may write either, and
+    /// a name is expanded where it is read, so nothing downstream needs a table
+    /// to look one up in.
+    std::string pattern;
+
+    /// What a slider's ends mean, and how far one press moves it. A stepped
+    /// slider moves a whole step at a time and ignores the step here.
+    SliderRange range;
+
+    /// Where a continuous slider starts, within its range.
+    float value = 0.f;
+
+    uint32_t maxLength = kUnlimitedLength;
+
+    /// How many lines UpTo and Exactly mean; unused while Unbounded.
+    uint32_t lineLimit = 1;
+
+    /// How many positions a stepped slider has, and which it starts on.
+    int32_t steps = 1;
+    int32_t step = 0;
+
     /// Index into the document's own table. kNoNode on the root alone.
     uint32_t parent = kNoNode;
 
-    /// Which control this node is, or None for a plain box.
+    /// Which control this node is, or None for a plain box. It decides which of
+    /// the fields above mean anything; the rest ride at their defaults, as they
+    /// do on the live node this becomes.
     BuiltinWidget widget = BuiltinWidget::None;
 
     ActionKind action = ActionKind::None;
 
     /// Meaningful only for ActionKind::Verb.
     ScreenVerb verb = ScreenVerb::Hide;
+
+    TextLines lines = TextLines::Single;
+    TextMask mask = TextMask::None;
+    TextCheck check = TextCheck::OnCommit;
+    TextHeight height = TextHeight::Unbounded;
+
+    /// Whether a toggle starts on.
+    bool on = false;
 
     bool visible = true;
     bool enabled = true;

@@ -9,9 +9,11 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <variant>
 
 using namespace Assisi::Mondrian;
 using Assisi::Core::EventCatalog;
@@ -96,6 +98,84 @@ ScreenDocument PauseMenu()
     document.nodes.push_back(quit);
 
     document.focus = 3; // Resume
+    return document;
+}
+
+/// One of every control, with every construction field set to something a
+/// default would not give, so a field the loader drops shows up as a value that
+/// stayed at its default rather than as a crash.
+ScreenDocument EveryControl()
+{
+    ScreenDocument document;
+    document.name = "Controls";
+
+    ScreenNode root;
+    document.nodes.push_back(root);
+
+    ScreenNode toggle;
+    toggle.parent = 0;
+    toggle.name = "fullscreen";
+    toggle.widget = BuiltinWidget::Toggle;
+    toggle.on = true;
+    document.nodes.push_back(toggle);
+
+    ScreenNode volume;
+    volume.parent = 0;
+    volume.name = "volume";
+    volume.widget = BuiltinWidget::ContinuousSlider;
+    volume.range = {.min = 0.f, .max = 100.f, .step = 5.f};
+    volume.value = 60.f;
+    document.nodes.push_back(volume);
+
+    ScreenNode quality;
+    quality.parent = 0;
+    quality.name = "quality";
+    quality.widget = BuiltinWidget::SteppedSlider;
+    quality.range = {.min = 0.f, .max = 3.f, .step = 1.f};
+    quality.steps = 4;
+    quality.step = 2;
+    document.nodes.push_back(quality);
+
+    ScreenNode list;
+    list.parent = 0;
+    list.name = "list";
+    list.widget = BuiltinWidget::Scroll;
+    list.style.enabledScrollBars = {false, true};
+    document.nodes.push_back(list);
+
+    ScreenNode player;
+    player.parent = 0;
+    player.name = "player";
+    player.widget = BuiltinWidget::TextField;
+    player.placeholder = "Name";
+    player.maxLength = 24;
+    document.nodes.push_back(player);
+
+    ScreenNode secret;
+    secret.parent = 0;
+    secret.name = "secret";
+    secret.widget = BuiltinWidget::TextField;
+    secret.mask = TextMask::Dots;
+    document.nodes.push_back(secret);
+
+    ScreenNode notes;
+    notes.parent = 0;
+    notes.name = "notes";
+    notes.widget = BuiltinWidget::TextField;
+    notes.lines = TextLines::Multi;
+    notes.height = TextHeight::UpTo;
+    notes.lineLimit = 3;
+    document.nodes.push_back(notes);
+
+    ScreenNode port;
+    port.parent = 0;
+    port.name = "port";
+    port.widget = BuiltinWidget::TextField;
+    port.text = "8080";
+    port.pattern = "[0-9]+";
+    port.check = TextCheck::Refuse;
+    document.nodes.push_back(port);
+
     return document;
 }
 
@@ -323,22 +403,106 @@ TEST_CASE("ScreenLoader: a control or an action on the root is refused")
     }
 }
 
-TEST_CASE("ScreenLoader: a control this build does not build is named as such")
+TEST_CASE("ScreenLoader: a widget this build does not have is named as such")
 {
-    // The element table and the loader's switch grow together. A slider that
-    // silently became a plain box would be a screen that looks nearly right.
+    // A stale package naming a control added after this build. Silently
+    // becoming a plain box would be a screen that looks nearly right.
     EventQueue events;
     Ui ui{events};
     const EventCatalog catalog = TwoEvents();
 
     ScreenDocument document;
     document.nodes.emplace_back();
-    ScreenNode slider;
-    slider.parent = 0;
-    slider.widget = BuiltinWidget::ContinuousSlider;
-    document.nodes.push_back(slider);
+    ScreenNode unknown;
+    unknown.parent = 0;
+    unknown.widget = BuiltinWidget::Count;
+    document.nodes.push_back(unknown);
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::UnsupportedWidget);
+}
+
+TEST_CASE("ScreenLoader: every control a document names is built as that control")
+{
+    // The document's construction fields reaching the same node API a screen
+    // built in C++ calls. A control built with its arguments dropped would look
+    // right and read wrong.
+    EventQueue events;
+    Ui ui{events};
+    const EventCatalog catalog = TwoEvents();
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, EveryControl(), catalog);
+    REQUIRE(loaded.has_value());
+
+    Screen &screen = *loaded->screen;
+    const NodeTree &tree = screen.Tree();
+
+    const NodeId toggle = screen.Find("fullscreen");
+    REQUIRE(tree.IsAlive(toggle));
+    CHECK(tree.Get(toggle)->behaviour == static_cast<uint32_t>(BuiltinWidget::Toggle));
+    CHECK(std::get<bool>(tree.Get(toggle)->value));
+
+    const ContinuousSliderId volume{.node = screen.Find("volume")};
+    CHECK(tree.Get(volume.node)->behaviour == static_cast<uint32_t>(BuiltinWidget::ContinuousSlider));
+    CHECK(screen.GetRange(volume).max == 100.f);
+    CHECK(screen.GetRange(volume).step == 5.f);
+    CHECK(screen.GetValue(volume) == 60.f);
+
+    const SteppedSliderId quality{.node = screen.Find("quality")};
+    CHECK(screen.GetSteps(quality) == 4);
+    CHECK(screen.GetValue(quality) == 2);
+
+    const NodeId list = screen.Find("list");
+    CHECK(tree.Get(list)->behaviour == static_cast<uint32_t>(BuiltinWidget::Scroll));
+    CHECK(tree.Get(list)->style.enabledScrollBars[static_cast<std::size_t>(Axis::Y)]);
+
+    const TextFieldId player{.node = screen.Find("player")};
+    CHECK(tree.Get(player.node)->behaviour == static_cast<uint32_t>(BuiltinWidget::TextField));
+    CHECK(tree.Get(player.node)->edit.placeholder == "Name");
+    CHECK(tree.Get(player.node)->edit.maxLength == 24);
+    CHECK(tree.Get(player.node)->edit.lines == TextLines::Single);
+    CHECK(tree.Get(player.node)->edit.editing == TextEditing::Editable);
+
+    // Masking a field also stops copy and cut, so the order the loader applies
+    // a field's settings in is not free: a mask applied before the abilities
+    // would have them turned back on.
+    const TextFieldId secret{.node = screen.Find("secret")};
+    CHECK(tree.Get(secret.node)->edit.mask == TextMask::Dots);
+    CHECK_FALSE(tree.Get(secret.node)->edit.Can(TextAbility::Copy));
+
+    const TextFieldId notes{.node = screen.Find("notes")};
+    CHECK(tree.Get(notes.node)->edit.height == TextHeight::UpTo);
+    CHECK(tree.Get(notes.node)->edit.lineLimit == 3);
+
+    const TextFieldId port{.node = screen.Find("port")};
+    CHECK(tree.Get(port.node)->edit.pattern != nullptr);
+    CHECK(tree.Get(port.node)->edit.check == TextCheck::Refuse);
+    CHECK(screen.GetText(port) == "8080");
+}
+
+TEST_CASE("ScreenLoader: a pattern this build cannot compile leaves no screen behind")
+{
+    // The cook checked it, so this is a stale package rather than a bad file —
+    // the same reason an unknown event is refused here. Answered before
+    // anything is built: a screen joins its Ui in its own constructor.
+    EventQueue events;
+    Ui ui{events};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document = EveryControl();
+    for (ScreenNode &node : document.nodes)
+    {
+        if (node.name == "port")
+        {
+            node.pattern = "[0-9";
+        }
+    }
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error() == ScreenLoadError::BadPattern);
+
+    CHECK(ui.InputScreen() == nullptr);
+    CHECK_FALSE(ui.TakesInput());
 }

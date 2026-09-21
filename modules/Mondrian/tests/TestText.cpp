@@ -437,3 +437,30 @@ TEST_CASE("Text: every drawn glyph's pen lies inside the measured box")
         CHECK(layout.width <= box);
     }
 }
+
+TEST_CASE("Text: the width a word is measured at is a width that word fits in")
+{
+    // Layout gives a node at least this much room for its longest word, then
+    // wraps the text at what the node ended up with. The two have to be the
+    // same arithmetic. A sum scaled once and a sum of scaled parts are the same
+    // number written down and different ones in floating point, and a word
+    // measured a hair narrower than it is laid out has nowhere to break but the
+    // middle of itself.
+    const Font font = PlainFont();
+    const ShapedText shaped = Shape("sAisA", font); // one word, nowhere to break
+
+    // Sizes the cooked advances do not divide into whole pixels, which is where
+    // the two orders of arithmetic part company.
+    constexpr int32_t kSteps = 128;
+    for (int32_t step = 1; step <= kSteps; ++step)
+    {
+        const float size = static_cast<float>(step) * kCookedSize / static_cast<float>(kSteps);
+        const float measured = MeasureLongestWord(shaped, font, size);
+
+        const TextLayout laid = LayoutText(shaped, font, size, std::nullopt, TextAlign::Left);
+        REQUIRE(laid.lines.size() == 1);
+
+        INFO("size: " << size);
+        CHECK(laid.lines[0].width <= measured);
+    }
+}

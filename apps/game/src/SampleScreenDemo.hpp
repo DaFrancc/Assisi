@@ -2,7 +2,10 @@
 #pragma once
 
 /// @file SampleScreenDemo.hpp
-/// @brief F4 shows one of everything the UI can draw.
+/// @brief F4 shows one of everything the UI can draw, built in C++.
+///
+/// Its twin is on F3, written as a file instead. Looking at the two is how the
+/// markup route and the code route are compared by eye.
 ///
 /// The sample screen holds every kind of sizing, every built-in control and
 /// both ways text can be set, so a look at it in two window sizes says whether

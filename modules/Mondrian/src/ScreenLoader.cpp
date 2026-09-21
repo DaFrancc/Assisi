@@ -8,7 +8,10 @@
 #include <Assisi/Core/EventCatalog.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian
 {
@@ -42,10 +45,20 @@ bool IsWalkable(const ScreenDocument &document)
 }
 
 /// Whether every name in @p document resolves, and every node's contents suit
-/// where it sits. Answered before anything is built: a screen joins its Ui in
-/// its own constructor, so one abandoned part-way would stay in it.
-std::expected<void, ScreenLoadError> Resolvable(const ScreenDocument &document, const Core::EventCatalog &catalog)
+/// where it sits — and the patterns, compiled, for the caller to apply.
+///
+/// Answered before anything is built: a screen joins its Ui in its own
+/// constructor, so one abandoned part-way would stay in it. Compiling the
+/// patterns here rather than while building is what keeps that true, and it
+/// leaves the build loop with no failure it would have to unwind from.
+///
+/// One slot per node, null wherever a node has no pattern.
+std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Resolve(const ScreenDocument &document,
+                                                                                    const Core::EventCatalog &catalog)
 {
+    std::vector<std::shared_ptr<const Pattern>> patterns;
+    patterns.resize(document.nodes.size());
+
     for (std::size_t index = 0; index < document.nodes.size(); ++index)
     {
         const ScreenNode &node = document.nodes[index];
@@ -57,7 +70,7 @@ std::expected<void, ScreenLoadError> Resolvable(const ScreenDocument &document, 
             return std::unexpected(ScreenLoadError::MisplacedNode);
         }
 
-        if (node.widget != BuiltinWidget::None && node.widget != BuiltinWidget::Button)
+        if (static_cast<uint32_t>(node.widget) >= static_cast<uint32_t>(BuiltinWidget::Count))
         {
             return std::unexpected(ScreenLoadError::UnsupportedWidget);
         }
@@ -66,8 +79,72 @@ std::expected<void, ScreenLoadError> Resolvable(const ScreenDocument &document, 
         {
             return std::unexpected(ScreenLoadError::UnknownEvent);
         }
+
+        if (node.widget == BuiltinWidget::TextField && !node.pattern.empty())
+        {
+            std::expected<std::shared_ptr<const Pattern>, PatternError> compiled = CompilePattern(node.pattern);
+            if (!compiled)
+            {
+                return std::unexpected(ScreenLoadError::BadPattern);
+            }
+            patterns[index] = *std::move(compiled);
+        }
     }
-    return {};
+    return patterns;
+}
+
+/// The node @p node describes, built by the same call a screen written in C++
+/// would make. Every control gives its node a style of its own, which the
+/// caller replaces whole with the document's: a document is fully resolved, so
+/// what it carries is the answer and not an override.
+NodeId Create(Screen &screen, NodeId parent, const ScreenNode &node)
+{
+    switch (node.widget)
+    {
+    case BuiltinWidget::Button:
+        return screen.AddButton(parent, node.text).node;
+    case BuiltinWidget::Toggle:
+        return screen.AddToggle(parent, node.on).node;
+    case BuiltinWidget::ContinuousSlider:
+        return screen.AddContinuousSlider(parent, node.range, node.value).node;
+    case BuiltinWidget::SteppedSlider:
+        return screen.AddSteppedSlider(parent, node.range, node.steps, node.step).node;
+    case BuiltinWidget::Scroll:
+        // Which axes scroll is a style field, so the style the document carries
+        // is already the answer this argument wants.
+        return screen.AddScroll(parent, node.style, node.style.enabledScrollBars);
+    case BuiltinWidget::TextField:
+        return screen.AddTextField(parent, node.lines).node;
+    case BuiltinWidget::None:
+    case BuiltinWidget::Count:
+        break;
+    }
+    return screen.Add(parent, node.style);
+}
+
+/// Everything a field carries beyond being a field. @p pattern is the one
+/// Resolve compiled for this node, or null.
+void ApplyTextField(Screen &screen, TextFieldId field, const ScreenNode &node, std::shared_ptr<const Pattern> pattern)
+{
+    screen.SetPlaceholder(field, node.placeholder);
+    screen.SetMaxLength(field, node.maxLength);
+    // Only where the file asked for one. A field is unbounded already, and
+    // saying so again would leave it holding a line count that an unbounded
+    // field never had when it was built in code.
+    if (node.height != TextHeight::Unbounded)
+    {
+        screen.SetHeight(field, node.height, node.lineLimit);
+    }
+    // Before the text, because setting text settles the field against whatever
+    // pattern it has by then.
+    screen.SetPattern(field, std::move(pattern), node.check);
+    if (!node.text.empty())
+    {
+        screen.SetText(field, node.text);
+    }
+    // Last: masking a field also turns copy and cut off, so anything after it
+    // that touched the abilities would quietly turn them back on.
+    screen.SetMask(field, node.mask);
 }
 
 /// Everything about a node that is neither its style nor its place.
@@ -99,7 +176,7 @@ void ApplyAction(Screen &screen, NodeId id, const ScreenNode &node, const Core::
         }
         return;
     case ActionKind::Event:
-        // Resolved in Resolvable, which ran before anything was built.
+        // Resolved in Resolve, which ran before anything was built.
         screen.Tree().SetOnActivate(id, catalog.Find(node.eventName)->push);
         return;
     case ActionKind::Count:
@@ -117,8 +194,10 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "describes no tree that can be walked";
     case ScreenLoadError::UnknownEvent:
         return "names an event this build does not declare";
+    case ScreenLoadError::BadPattern:
+        return "holds a pattern this build does not compile";
     case ScreenLoadError::UnsupportedWidget:
-        return "names a control this build does not build from a document";
+        return "names a control this build does not have";
     case ScreenLoadError::MisplacedNode:
         return "puts a control or an action where one cannot go";
     case ScreenLoadError::Count:
@@ -134,9 +213,11 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const Scr
     {
         return std::unexpected(ScreenLoadError::BadDocument);
     }
-    if (const std::expected<void, ScreenLoadError> resolvable = Resolvable(document, catalog); !resolvable)
+
+    std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> patterns = Resolve(document, catalog);
+    if (!patterns)
     {
-        return std::unexpected(resolvable.error());
+        return std::unexpected(patterns.error());
     }
 
     LoadedScreen loaded;
@@ -163,18 +244,23 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const Scr
             id = screen.Root();
             tree.SetStyle(id, node.style);
         }
-        else if (node.widget == BuiltinWidget::Button)
-        {
-            // Created with its label, then styled — the same order a screen
-            // built in C++ uses, because AddButton gives the node a style of
-            // its own that the document's replaces whole.
-            id = screen.AddButton(ids[node.parent], node.text).node;
-            tree.SetStyle(id, node.style);
-        }
         else
         {
-            id = screen.Add(ids[node.parent], node.style);
-            tree.SetText(id, node.text);
+            // Created by the call its control names, then styled — the same
+            // order a screen built in C++ uses.
+            id = Create(screen, ids[node.parent], node);
+            tree.SetStyle(id, node.style);
+
+            if (node.widget == BuiltinWidget::None)
+            {
+                // A control took its text where it was created, from the label
+                // or the starting contents its call takes.
+                tree.SetText(id, node.text);
+            }
+            if (node.widget == BuiltinWidget::TextField)
+            {
+                ApplyTextField(screen, {.node = id}, node, (*patterns)[index]);
+            }
         }
 
         tree.SetName(id, node.name);

@@ -1,0 +1,59 @@
+<!-- One of every built-in control, written as a file. A test builds the same
+     screen through the node API and compares the two node for node, so a
+     construction attribute the cooker drops or the loader forgets shows up as
+     a difference rather than as a screen that looks nearly right. -->
+<screen name="Controls" input="consume" sort="popup" align="center center">
+
+  <!-- Fit rather than a fixed width: a text field asks for 220 logical pixels
+       at its narrowest, and a row of four of them wants more than any width
+       picked by hand. -->
+  <column name="panel" width="fit" padding="32" gap="20"
+          background="#1a1c24f0" border_width="2" border_color="#575f7a"
+          corner_radius="16" corner_style="rounded" align="center start">
+
+    <text name="title" width="grow" text_size="48">Controls</text>
+
+    <row name="controls" width="grow" gap="20" align="start center">
+      <toggle name="fullscreen" on="true" />
+      <slider name="volume" min="0" max="100" step="5" value="60" />
+      <stepped_slider name="quality" min="0" max="3" steps="4" value="1" />
+    </row>
+
+    <row name="fields" width="grow" gap="20" align="start center">
+      <text_field name="player" lines="single"
+                  placeholder="your name" max_length="24">type here</text_field>
+      <text_field name="secret" lines="single"
+                  placeholder="password" mask="dots">hunter2</text_field>
+
+      <!-- A named pattern, and one written out. `refuse` keeps what it will not
+           accept from being typed at all; `on-change` lets it be typed and says
+           so as it goes. -->
+      <text_field name="port" lines="single" placeholder="port"
+                  pattern="integer" check="refuse" />
+      <text_field name="who" lines="single" placeholder="address"
+                  pattern="/[^@ ]+@[^@ ]+/" check="on-change" />
+    </row>
+
+    <!-- One field for each way of being tall, side by side so that typing into
+         them shows what the three do differently. -->
+    <row name="notes" width="grow" gap="20" align="start start">
+      <text_field name="growing" lines="multi"
+                  placeholder="grows forever" />
+      <text_field name="upTo" lines="multi up-to 3"
+                  placeholder="up to 3 lines" />
+      <text_field name="exactly" lines="multi exactly 3"
+                  placeholder="exactly 3 lines" />
+    </row>
+
+    <scroll name="list" axes="y" width="grow" height="fixed 150"
+            background="#0f1217" corner_radius="10" corner_style="rounded"
+            scroll_bar_visibility="when-needed" scroll_smoothing="0.12">
+      <button name="one" padding="28 10 28 10" text_size="28">One</button>
+      <button name="two" padding="28 10 28 10" text_size="28">Two</button>
+      <button name="three" padding="28 10 28 10" text_size="28">Three</button>
+      <button name="four" padding="28 10 28 10" text_size="28">Four</button>
+      <button name="five" padding="28 10 28 10" text_size="28">Five</button>
+    </scroll>
+
+  </column>
+</screen>

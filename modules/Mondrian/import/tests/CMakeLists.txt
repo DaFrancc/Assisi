@@ -53,11 +53,12 @@ target_link_libraries(Assisi-MondrianImport-Tests
     Assisi::TestSupport
 )
 
-# The screen the game ships, read in place rather than copied into a fixture.
-# Without this the first thing to notice a mistake in it would be a cook, which
-# no test runs.
+# The screens the game ships, read in place rather than copied into a fixture.
+# Without these the first thing to notice a mistake in one would be a cook,
+# which no test runs.
 target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
   ASSISI_PAUSE_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Pause.amdn"
+  ASSISI_CONTROLS_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Controls.amdn"
 )
 
 add_test(NAME MondrianImport COMMAND Assisi-MondrianImport-Tests)

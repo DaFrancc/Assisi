@@ -16,9 +16,9 @@ namespace
 constexpr std::size_t kBitsPerByte = 8;
 
 /// A floor on what one node occupies, not its true size: the fixed integer
-/// fields and four empty strings. It exists only to stop a count no file could
+/// fields and six empty strings. It exists only to stop a count no file could
 /// hold from reaching a resize.
-constexpr std::size_t kMinNodeBytes = 16;
+constexpr std::size_t kMinNodeBytes = 48;
 
 /// The same for a system name: a length and at least one character.
 constexpr std::size_t kMinSystemBytes = 2;
@@ -79,6 +79,22 @@ Sizing ReadSizing(Core::BitReader &reader)
     sizing.max = reader.ReadFloat();
     sizing.kind = static_cast<SizingKind>(reader.ReadUInt8());
     return sizing;
+}
+
+void WriteSliderRange(Core::BitWriter &writer, const SliderRange &range)
+{
+    writer.WriteFloat(range.min);
+    writer.WriteFloat(range.max);
+    writer.WriteFloat(range.step);
+}
+
+SliderRange ReadSliderRange(Core::BitReader &reader)
+{
+    SliderRange range;
+    range.min = reader.ReadFloat();
+    range.max = reader.ReadFloat();
+    range.step = reader.ReadFloat();
+    return range;
 }
 
 void WriteFloating(Core::BitWriter &writer, const Floating &floating)
@@ -246,6 +262,17 @@ bool IsConsistent(const ScreenDocument &document)
             return false;
         }
 
+        // The text field switches over these as layout switches over a style's,
+        // so one out of range is a case no switch covers rather than a field
+        // that merely looks wrong.
+        if (!InRange<TextLines>(static_cast<uint32_t>(node.lines)) ||
+            !InRange<TextMask>(static_cast<uint32_t>(node.mask)) ||
+            !InRange<TextCheck>(static_cast<uint32_t>(node.check)) ||
+            !InRange<TextHeight>(static_cast<uint32_t>(node.height)))
+        {
+            return false;
+        }
+
         // An event action with no name is a button that would resolve to
         // nothing and silently do nothing.
         if (node.action == ActionKind::Event && node.eventName.empty())
@@ -315,6 +342,19 @@ void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
         writer.WriteString(node.text);
         writer.WriteString(node.styleName);
         writer.WriteString(node.eventName);
+        writer.WriteString(node.placeholder);
+        writer.WriteString(node.pattern);
+        WriteSliderRange(writer, node.range);
+        writer.WriteFloat(node.value);
+        writer.WriteUInt32(node.maxLength);
+        writer.WriteUInt32(node.lineLimit);
+        writer.WriteInt32(node.steps);
+        writer.WriteInt32(node.step);
+        writer.WriteUInt8(static_cast<uint8_t>(node.lines));
+        writer.WriteUInt8(static_cast<uint8_t>(node.mask));
+        writer.WriteUInt8(static_cast<uint8_t>(node.check));
+        writer.WriteUInt8(static_cast<uint8_t>(node.height));
+        writer.WriteBool(node.on);
         WriteStyle(writer, node.style);
     }
 }
@@ -383,6 +423,19 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
         node.text = reader.ReadString();
         node.styleName = reader.ReadString();
         node.eventName = reader.ReadString();
+        node.placeholder = reader.ReadString();
+        node.pattern = reader.ReadString();
+        node.range = ReadSliderRange(reader);
+        node.value = reader.ReadFloat();
+        node.maxLength = reader.ReadUInt32();
+        node.lineLimit = reader.ReadUInt32();
+        node.steps = reader.ReadInt32();
+        node.step = reader.ReadInt32();
+        node.lines = static_cast<TextLines>(reader.ReadUInt8());
+        node.mask = static_cast<TextMask>(reader.ReadUInt8());
+        node.check = static_cast<TextCheck>(reader.ReadUInt8());
+        node.height = static_cast<TextHeight>(reader.ReadUInt8());
+        node.on = reader.ReadBool();
         node.style = ReadStyle(reader);
     }
 

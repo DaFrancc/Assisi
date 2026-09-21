@@ -138,7 +138,7 @@ void MoveCaret(TextEdit &edit, uint32_t index, TextReach reach)
 /// with no way back.
 bool Refuses(const TextEdit &edit, std::string_view candidate)
 {
-    if (edit.check != TextCheck::Refuses || edit.pattern == nullptr || candidate.empty())
+    if (edit.check != TextCheck::Refuse || edit.pattern == nullptr || candidate.empty())
     {
         return false;
     }
@@ -212,7 +212,7 @@ bool Replace(const WidgetView &view, Node &node, std::string_view insert)
 
     node.text = std::move(candidate);
     MoveCaret(edit, gone.first + CharacterCount(insert), TextReach::Moves);
-    if (edit.check == TextCheck::MarksAsTyped)
+    if (edit.check == TextCheck::OnChange)
     {
         edit.validity = Judge(edit, node.text);
     }
@@ -259,7 +259,7 @@ bool MoveSelection(const WidgetView &view, Node &node, uint32_t dropAt)
     node.text = std::move(candidate);
     edit.anchor = landing;
     edit.caret = landing + CharacterCount(carried);
-    if (edit.check == TextCheck::MarksAsTyped)
+    if (edit.check == TextCheck::OnChange)
     {
         edit.validity = Judge(edit, node.text);
     }
