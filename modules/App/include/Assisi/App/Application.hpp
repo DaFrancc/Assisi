@@ -106,6 +106,12 @@ class Application
     /// case where the render-pass splits those cost are worth paying.
     void SetPerfCapture(const PerfCaptureConfig &config);
 
+    /// @brief Render at exactly @p width by @p height, whatever the options and
+    /// the game config say, in an undecorated window so no title bar takes a
+    /// row of it. For a run whose numbers have to be comparable with another
+    /// machine's or another day's. Must be called before Initialize().
+    void SetExactResolution(int32_t width, int32_t height);
+
     /// @brief Whether this process is a capture run.
     [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
 
@@ -447,9 +453,9 @@ class Application
     /// See CaptureNextFrame. Empty when no picture is asked for.
     std::string _frameImagePath;
 
-    /// Resolution a capture asked to render at, 0 when it did not ask. Applied
-    /// in InitializePresentation rather than at SetPerfCapture, because
-    /// Initialize() reloads _config from the game config in between.
+    /// Resolution a capture or SetExactResolution asked to render at, 0 when
+    /// nothing asked. Applied in InitializePresentation rather than when set,
+    /// because Initialize() reloads _config from the game config in between.
     int32_t _captureWidth = 0;
     int32_t _captureHeight = 0;
 

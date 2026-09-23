@@ -48,6 +48,11 @@ constexpr std::uint64_t kAssetPublishBudgetBytes = 128ull << 20;
 /// The MSAA sample count a benchmark renders at.
 constexpr std::int32_t kBenchmarkMsaaSamples = 8;
 
+/// The resolution a benchmark renders at: 1080p, the size most players play at,
+/// and one where the per-pixel work weighs what it does in a shipped game.
+constexpr std::int32_t kBenchmarkWidth = 1920;
+constexpr std::int32_t kBenchmarkHeight = 1080;
+
 /// OptionsConfig::fpsLimit's value for no cap.
 constexpr std::int16_t kUnlimitedFps = -1;
 
@@ -59,6 +64,10 @@ constexpr std::int16_t kUnlimitedFps = -1;
 
 GameApp::GameApp(GameLaunch launch) : _launch(std::move(launch))
 {
+    if (_launch.benchmark)
+    {
+        SetExactResolution(kBenchmarkWidth, kBenchmarkHeight);
+    }
 }
 
 GameApp::~GameApp()

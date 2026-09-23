@@ -55,7 +55,7 @@ inline constexpr std::int32_t kDefaultBenchmarkShotCount = 24;
 /// @brief A benchmark run: the camera flies the level's route, a Chiara session
 /// records it, and the game exits when the route ends.
 ///
-/// Renders uncapped with 8x MSAA and FXAA and the Ultra shadow tier, with every
+/// Renders uncapped at 1920x1080 with 8x MSAA and FXAA and the Ultra shadow tier, with every
 /// other graphics setting at its default, whatever the player's options say. So
 /// runs on different machines and days measure the same settings. The options
 /// are changed for the run only; a game never saves them.

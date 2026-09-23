@@ -77,7 +77,7 @@ constexpr const char *kUsage =
     "                          one beside the executable (also ASSISI_PAK)\n"
 #endif
 #if defined(ASSISI_CHIARA_ENABLED)
-    "  --benchmark [level]     fly the level's camera paths uncapped with 8x MSAA,\n"
+    "  --benchmark [level]     fly the level's camera paths uncapped at 1080p with 8x MSAA,\n"
     "                          FXAA and Ultra shadows, record a Chiara session,\n"
     "                          then exit. Without a level, flies the startup scene\n"
     "  --benchmark-seconds <n> how long the flight takes (default 15)\n"

@@ -258,7 +258,7 @@ bool Application::InitializePresentation()
     // for: 1440p on a 1440p display does not fit once a title bar is added, and
     // a report labelled 1440p that rendered 2560x1400 is quoting a workload
     // nobody ran.
-    winCfg.Undecorated = _perfCapture != nullptr;
+    winCfg.Undecorated = _perfCapture != nullptr || (_captureWidth > 0 && _captureHeight > 0);
 
     _window = std::make_unique<Window::WindowContext>(winCfg);
     if (!_window->IsValid())
@@ -443,6 +443,12 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     _capturePerPassTiming = config.perPassTiming;
     _captureImagePath = config.imagePath;
     _captureOptionsPath = config.optionsPath;
+}
+
+void Application::SetExactResolution(int32_t width, int32_t height)
+{
+    _captureWidth = width;
+    _captureHeight = height;
 }
 
 void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context)
