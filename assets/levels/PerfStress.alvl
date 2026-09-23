@@ -42773,6 +42773,21 @@
     },
     {
       "components": {
+        "Oscillator": {
+          "amplitude": 3.0,
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "origin": [
+            26.0,
+            3.107820987701416,
+            0.0
+          ],
+          "periodSeconds": 4.0,
+          "phase": 0.0
+        },
         "PointLight": {
           "castsShadows": true,
           "color": [
@@ -43333,6 +43348,21 @@
     },
     {
       "components": {
+        "Oscillator": {
+          "amplitude": 3.0,
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "origin": [
+            -26.0,
+            3.614788055419922,
+            0.0
+          ],
+          "periodSeconds": 4.0,
+          "phase": 0.5
+        },
         "PointLight": {
           "castsShadows": true,
           "color": [
@@ -43893,6 +43923,21 @@
     },
     {
       "components": {
+        "Oscillator": {
+          "amplitude": 3.0,
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "origin": [
+            13.73099422454834,
+            8.0,
+            2.731265068054199
+          ],
+          "periodSeconds": 5.0,
+          "phase": 0.25
+        },
         "SpotLight": {
           "castsShadows": true,
           "color": [
@@ -44189,6 +44234,21 @@
     },
     {
       "components": {
+        "Oscillator": {
+          "amplitude": 3.0,
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "origin": [
+            -13.73099422454834,
+            8.0,
+            -2.731265068054199
+          ],
+          "periodSeconds": 5.0,
+          "phase": 0.75
+        },
         "SpotLight": {
           "castsShadows": true,
           "color": [
