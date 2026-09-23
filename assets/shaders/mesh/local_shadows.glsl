@@ -11,16 +11,43 @@
 // biases arrive from the CPU per unit of distance and are scaled here by the
 // receiver's distance along the view's axis.
 
-layout(binding = 9) uniform texture2D uShadowAtlas;
+// Two layers at the same rectangles: the still casters' depth in layer 0, and
+// the moving casters' in layer 1 for a tile whose view row marks it live
+// (ShadowViewRow.params.w = 1). A texel is lit only if it is lit in both, so the
+// still depth is never copied under the movers.
+layout(binding = 9) uniform texture2DArray uShadowAtlas;
 
 // The nearest a receiver is taken to be to its light, in world units, so the
 // per-distance biases never divide by zero.
 const float kMinAxisDepth = 1e-4;
 
-float LocalShadowTap(vec2 uv, vec4 clampUv, float reference)
+// Layer 0 is the still depth; a tile whose moving layer is live also reads
+// layer 1.
+const float kStillLayer  = 0.0;
+const float kMovingLayer = 1.0;
+
+// Whether @p view's tile has movers to sample beside its still depth.
+bool HasMovingLayer(ShadowViewRow view)
 {
-    return texture(sampler2DShadow(uShadowAtlas, uShadowSampler),
-                   vec3(clamp(uv, clampUv.xy, clampUv.zw), reference));
+    return view.params.w > 0.5;
+}
+
+float LocalShadowTap(vec2 uv, vec4 clampUv, float reference, bool moving)
+{
+    vec2  tapUv = clamp(uv, clampUv.xy, clampUv.zw);
+    float lit   = texture(sampler2DArrayShadow(uShadowAtlas, uShadowSampler), vec4(tapUv, kStillLayer, reference));
+    if (moving)
+    {
+        lit *= texture(sampler2DArrayShadow(uShadowAtlas, uShadowSampler), vec4(tapUv, kMovingLayer, reference));
+    }
+    return lit;
+}
+
+// The nearer of the two layers' stored depths at @p texel.
+float LocalStoredDepth(ivec2 texel, bool moving)
+{
+    float stored = texelFetch(uShadowAtlas, ivec3(texel, 0), 0).r;
+    return moving ? min(stored, texelFetch(uShadowAtlas, ivec3(texel, 1), 0).r) : stored;
 }
 
 // A point light's faces, in the order its views are in the table. Must match
@@ -63,8 +90,9 @@ float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
 {
     float searchUv  = PcssPenumbraUv(view.pcss.x, reference, view.pcss.z);
     float threshold = kPcssBlockerMinDepthTexels * texelDepth;
-    ivec2 size      = textureSize(uShadowAtlas, 0);
+    ivec2 size      = textureSize(uShadowAtlas, 0).xy;
     float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    bool  moving    = HasMovingLayer(view);
 
     float gapSum   = 0.0;
     float blockers = 0.0;
@@ -73,7 +101,7 @@ float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
         vec2  tapUv  = clamp(uv + VogelOffset(i, phi, searchUv), view.clampUv.xy, view.clampUv.zw);
         ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
         vec2  centre = (vec2(texel) + 0.5) / vec2(size);
-        float gap    = reference + dot(centre - uv, slope) - texelFetch(uShadowAtlas, texel, 0).r;
+        float gap    = reference + dot(centre - uv, slope) - LocalStoredDepth(texel, moving);
         if (gap > threshold)
         {
             gapSum += gap;
@@ -88,7 +116,7 @@ float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
 float LocalPcssTap(ShadowViewRow view, vec2 uv, vec2 offset, float reference, vec2 slope)
 {
     vec2 tapUv = clamp(uv + offset, view.clampUv.xy, view.clampUv.zw);
-    return LocalShadowTap(tapUv, view.clampUv, reference + dot(tapUv - uv, slope));
+    return LocalShadowTap(tapUv, view.clampUv, reference + dot(tapUv - uv, slope), HasMovingLayer(view));
 }
 
 // The Vogel kernel at @p stepUv inside one tile, with the probe early-out.
@@ -96,7 +124,7 @@ float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
 {
     float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
     float sum = 0.0;
-    for (uint i = 0u; i < 4u; ++i)
+    for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
         sum += LocalPcssTap(view, uv, VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
     }
@@ -104,7 +132,7 @@ float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
     {
         return 0.0;
     }
-    if (sum == 4.0)
+    if (sum == float(kVogelProbeTaps))
     {
         return 1.0;
     }
@@ -166,6 +194,7 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     float reference = ndc.z - view.params.x / max(axisDepth, kMinAxisDepth);
     float stepUv    = view.params.z;
     vec4  clampUv   = view.clampUv;
+    bool  moving    = HasMovingLayer(view);
 
     if (uFrame.localShadowCounts.z == 1u)
     {
@@ -175,16 +204,33 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     uint filterMode = uFrame.localShadowCounts.x;
     if (filterMode == kShadowFilterPoint)
     {
-        return LocalShadowTap(uv, clampUv, reference);
+        return LocalShadowTap(uv, clampUv, reference, moving);
     }
 
     if (filterMode == kShadowFilterVogel)
     {
+        // Most receivers are wholly lit or wholly shadowed, and there four
+        // well-spread taps agree and the other twelve would only agree with
+        // them. The rest of the kernel runs where the probe straddles an edge.
         float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
         float sum = 0.0;
-        for (uint i = 0u; i < kVogelTaps; i++)
+        for (uint i = 0u; i < kVogelProbeTaps; ++i)
         {
-            sum += LocalShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, clampUv, reference);
+            sum += LocalShadowTap(uv + VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, clampUv,
+                                  reference, moving);
+        }
+        if (sum == 0.0)
+        {
+            return 0.0;
+        }
+        if (sum == float(kVogelProbeTaps))
+        {
+            return 1.0;
+        }
+        for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
+        {
+            sum += LocalShadowTap(uv + VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv, clampUv,
+                                  reference, moving);
         }
         return sum / float(kVogelTaps);
     }
@@ -195,7 +241,7 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     {
         for (int x = -radius; x <= radius; ++x)
         {
-            sum += LocalShadowTap(uv + vec2(float(x), float(y)) * stepUv, clampUv, reference);
+            sum += LocalShadowTap(uv + vec2(float(x), float(y)) * stepUv, clampUv, reference, moving);
         }
     }
     return sum / PcfTapCount(radius);

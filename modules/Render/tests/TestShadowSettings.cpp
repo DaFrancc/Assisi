@@ -298,11 +298,12 @@ TEST_CASE("Contact hardening is a tier knob, and the source's size is not")
 
 TEST_CASE("Shadow memory is reported per half and in total")
 {
-    // The memory column of the tier table, computed rather than quoted.
-    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Low).sun) == 4ull * 1024 * 1024 * 2);
-    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Medium).sun) == 4ull * 2048 * 2048 * 4);
-    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::High).sun) == 4ull * 4096 * 4096 * 4);
-    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Ultra).sun) == 6ull * 4096 * 4096 * 4);
+    // The memory column of the tier table, computed rather than quoted. Two
+    // arrays of cascades at every tier: the still layers and the read slices.
+    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Low).sun) == 2ull * 4 * 1024 * 1024 * 2);
+    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Medium).sun) == 2ull * 4 * 2048 * 2048 * 4);
+    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::High).sun) == 2ull * 4 * 4096 * 4096 * 4);
+    CHECK(SunShadowMemoryBytes(TierSettings(ShadowTier::Ultra).sun) == 2ull * 6 * 4096 * 4096 * 4);
 
     // One atlas whatever the light count is — that is what an atlas is for —
     // and a second one holding the still geometry's depth while tiles are

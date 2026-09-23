@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
+#include <Assisi/Render/ShaderModule.hpp>
 
 #include <algorithm>
 
@@ -15,6 +16,23 @@ nvrhi::Format DepthFormat(ShadowMapFormat format)
 {
     return format == ShadowMapFormat::D16 ? nvrhi::Format::D16 : nvrhi::Format::D32;
 }
+
+/// The atlas's layers while caching. Must match local_shadows.glsl's kStillLayer
+/// and kMovingLayer; a view row's arraySlice names the highest one it reads.
+enum class AtlasLayer : std::uint32_t
+{
+    Still,
+    Moving,
+    Count
+};
+
+[[nodiscard]] constexpr std::uint32_t LayerIndex(AtlasLayer layer)
+{
+    return static_cast<std::uint32_t>(layer);
+}
+
+/// Vertices in the triangle shadow_tile_reset.vert expands to cover the viewport.
+constexpr std::uint32_t kFullscreenTriangleVertices = 3;
 } // namespace
 
 void LocalShadowCasterIndex::Clear()
@@ -31,6 +49,13 @@ bool LocalShadowPass::Initialize(const InitParams &params)
     {
         return false;
     }
+    _tileResetShader = LoadSpirvShader(_device, params.tileResetVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    if (_tileResetShader == nullptr)
+    {
+        Core::Log::Error("LocalShadowPass: failed to load the tile reset shader '{}'.",
+                         params.tileResetVertexShaderSpvPath);
+        return false;
+    }
     return CreateNoAtlasTexture();
 }
 
@@ -40,7 +65,7 @@ bool LocalShadowPass::CreateNoAtlasTexture()
     desc.width = 1;
     desc.height = 1;
     desc.arraySize = 1;
-    desc.dimension = nvrhi::TextureDimension::Texture2D;
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
     desc.format = nvrhi::Format::D32;
     desc.isShaderResource = true;
     // Never drawn into, but a depth-format image is sampled from the depth
@@ -63,13 +88,10 @@ bool LocalShadowPass::CreateNoAtlasTexture()
 void LocalShadowPass::ReleaseTargets()
 {
     _atlasFramebuffer = nullptr;
+    _moverFramebuffer = nullptr;
     _atlasTexture = _noAtlasTexture;
-    _cacheFramebuffer = nullptr;
-    _cacheTexture = nullptr;
-    _clearTile = nullptr;
+    _tileResetPipeline = nullptr;
     _builtResolution = 0;
-    _builtClearTileSize = 0;
-    _clearTileReady = false;
     _builtCacheEnabled = false;
     _tiles.clear();
     _targets.clear();
@@ -78,81 +100,20 @@ void LocalShadowPass::ReleaseTargets()
     _cache.Forget();
 }
 
-bool LocalShadowPass::RebuildCacheTargets()
-{
-    _cacheFramebuffer = nullptr;
-    _cacheTexture = nullptr;
-    _clearTile = nullptr;
-    _builtClearTileSize = 0;
-    _clearTileReady = false;
-    _builtCacheEnabled = _settings.cache.enabled;
-    // Every rectangle the cache remembered was a rectangle of the texture just
-    // dropped, whichever way the toggle moved.
-    _cache.Forget();
-    if (!_settings.cache.enabled)
-    {
-        return true;
-    }
-
-    nvrhi::TextureDesc desc;
-    desc.width = _settings.atlasResolution;
-    desc.height = _settings.atlasResolution;
-    desc.arraySize = 1;
-    desc.dimension = nvrhi::TextureDimension::Texture2D;
-    desc.format = DepthFormat(_settings.format);
-    desc.isRenderTarget = true;
-    desc.initialState = nvrhi::ResourceStates::DepthWrite;
-    desc.keepInitialState = true;
-    desc.debugName = "LocalShadowPass::CachedAtlas";
-
-    nvrhi::TextureHandle cache = _device->createTexture(desc);
-    if (cache == nullptr)
-    {
-        Core::Log::Error("LocalShadowPass: failed to allocate the {}x{} cached shadow atlas.",
-                         _settings.atlasResolution, _settings.atlasResolution);
-        return false;
-    }
-
-    nvrhi::FramebufferDesc framebufferDesc;
-    framebufferDesc.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(cache));
-    nvrhi::FramebufferHandle framebuffer = _device->createFramebuffer(framebufferDesc);
-    if (framebuffer == nullptr)
-    {
-        Core::Log::Error("LocalShadowPass: failed to create the cached atlas framebuffer.");
-        return false;
-    }
-
-    // The largest tile the settings can hand out, which is the face resolution
-    // the selector treats as a ceiling — never larger, so no rectangle needing a
-    // blank is wider than this.
-    const std::uint32_t clearSize = std::min(_settings.faceResolution, _settings.atlasResolution);
-    nvrhi::TextureDesc clearDesc = desc;
-    clearDesc.width = clearSize;
-    clearDesc.height = clearSize;
-    clearDesc.debugName = "LocalShadowPass::ClearTile";
-    nvrhi::TextureHandle clearTile = _device->createTexture(clearDesc);
-    if (clearTile == nullptr)
-    {
-        Core::Log::Error("LocalShadowPass: failed to allocate the {}x{} clear tile.", clearSize, clearSize);
-        return false;
-    }
-
-    _cacheTexture = std::move(cache);
-    _cacheFramebuffer = std::move(framebuffer);
-    _clearTile = std::move(clearTile);
-    _builtClearTileSize = clearSize;
-    return true;
-}
-
 bool LocalShadowPass::RebuildTargets()
 {
     _atlasFramebuffer = nullptr;
+    _moverFramebuffer = nullptr;
+    // Every rectangle the cache remembered was a rectangle of the texture about
+    // to be dropped.
+    _cache.Forget();
 
+    const bool caching = _settings.cache.enabled;
     nvrhi::TextureDesc desc;
     desc.width = _settings.atlasResolution;
     desc.height = _settings.atlasResolution;
-    desc.arraySize = 1;
-    desc.dimension = nvrhi::TextureDimension::Texture2D;
+    desc.arraySize = caching ? LayerIndex(AtlasLayer::Count) : LayerIndex(AtlasLayer::Moving);
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
     desc.format = DepthFormat(_settings.format);
     desc.isRenderTarget = true;
     desc.isShaderResource = true;
@@ -168,19 +129,26 @@ bool LocalShadowPass::RebuildTargets()
         return false;
     }
 
-    nvrhi::FramebufferDesc framebufferDesc;
-    framebufferDesc.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(texture));
-    nvrhi::FramebufferHandle framebuffer = _device->createFramebuffer(framebufferDesc);
-    if (framebuffer == nullptr)
+    const auto layerFramebuffer = [this, &texture](std::uint32_t layer)
     {
-        Core::Log::Error("LocalShadowPass: failed to create the atlas framebuffer.");
+        nvrhi::FramebufferDesc framebufferDesc;
+        framebufferDesc.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(texture).setArraySlice(layer));
+        return _device->createFramebuffer(framebufferDesc);
+    };
+    nvrhi::FramebufferHandle still = layerFramebuffer(LayerIndex(AtlasLayer::Still));
+    nvrhi::FramebufferHandle moving = caching ? layerFramebuffer(LayerIndex(AtlasLayer::Moving)) : nullptr;
+    if (still == nullptr || (caching && moving == nullptr))
+    {
+        Core::Log::Error("LocalShadowPass: failed to create the atlas framebuffers.");
         return false;
     }
 
     _atlasTexture = std::move(texture);
-    _atlasFramebuffer = std::move(framebuffer);
+    _atlasFramebuffer = std::move(still);
+    _moverFramebuffer = std::move(moving);
     _builtResolution = _settings.atlasResolution;
     _builtFormat = _settings.format;
+    _builtCacheEnabled = caching;
     return true;
 }
 
@@ -212,6 +180,25 @@ bool LocalShadowPass::RebuildPipelines()
     {
         return false;
     }
+
+    // Depth only, and written unconditionally: the triangle sits at the far
+    // plane, and Always is what lets it replace nearer depth rather than lose
+    // to it. Built against the still layer's framebuffer, whose shape the moving
+    // one's matches.
+    nvrhi::GraphicsPipelineDesc resetDesc;
+    resetDesc.primType = nvrhi::PrimitiveType::TriangleList;
+    resetDesc.VS = _tileResetShader;
+    resetDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+    resetDesc.renderState.depthStencilState.depthTestEnable = true;
+    resetDesc.renderState.depthStencilState.depthWriteEnable = true;
+    resetDesc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Always;
+    _tileResetPipeline = _device->createGraphicsPipeline(resetDesc, _atlasFramebuffer->getFramebufferInfo());
+    if (_tileResetPipeline == nullptr)
+    {
+        Core::Log::Error("LocalShadowPass: failed to create the tile reset pipeline.");
+        return false;
+    }
+
     _builtSlopeBias = _settings.slopeBias;
     return true;
 }
@@ -235,31 +222,21 @@ bool LocalShadowPass::Configure(const LocalShadowSettings &settings, bool active
     }
 
     const LocalShadowSettings safe = Sanitized(settings);
-    const bool targetsStale =
-        _atlasFramebuffer == nullptr || safe.atlasResolution != _builtResolution || safe.format != _builtFormat;
+    // The cache decides how many layers the atlas has, so turning it on or off
+    // is a new texture.
+    const bool targetsStale = _atlasFramebuffer == nullptr || safe.atlasResolution != _builtResolution ||
+                              safe.format != _builtFormat || safe.cache.enabled != _builtCacheEnabled;
     const bool pipelinesStale =
         _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] == nullptr || safe.slopeBias != _builtSlopeBias;
-    // The kept-depth atlas is the live one's shape, so it follows it, and the
-    // clear tile follows the face class it has to be able to blank.
-    const bool cacheStale =
-        targetsStale || safe.cache.enabled != _builtCacheEnabled ||
-        (safe.cache.enabled && std::min(safe.faceResolution, safe.atlasResolution) != _builtClearTileSize);
     _settings = safe;
 
-    if (!targetsStale && !pipelinesStale && !cacheStale)
+    if (!targetsStale && !pipelinesStale)
     {
         _active = true;
         return true;
     }
 
     if (targetsStale && !RebuildTargets())
-    {
-        ReleaseTargets();
-        _pipelines = {};
-        _active = false;
-        return false;
-    }
-    if (cacheStale && !RebuildCacheTargets())
     {
         ReleaseTargets();
         _pipelines = {};
@@ -497,43 +474,18 @@ ShadowDepthRenderer::Stats LocalShadowPass::RenderTargets(nvrhi::ICommandList *c
     return total;
 }
 
-void LocalShadowPass::BlankCacheTile(nvrhi::ICommandList *commandList, const ShadowViewRect &rect)
+void LocalShadowPass::ResetTile(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer,
+                                const ShadowView &view)
 {
-    if (_clearTile == nullptr || rect.width == 0u)
-    {
-        return;
-    }
-    if (rect.width > _builtClearTileSize)
-    {
-        // Unreachable while the selector treats the face resolution as a
-        // ceiling, which is what the clear tile is sized from. Said out loud
-        // rather than skipped, because a rectangle that cannot be blanked is one
-        // re-baked over depth that is still in it — a stale shadow, and the one
-        // defect here with no visual tell.
-        Core::Log::Error("LocalShadowPass: a {}-texel tile cannot be blanked by a {}-texel clear tile.", rect.width,
-                         _builtClearTileSize);
-        return;
-    }
-    if (!_clearTileReady)
-    {
-        commandList->clearDepthStencilTexture(_clearTile, nvrhi::AllSubresources, true, 1.0f, false, 0);
-        _clearTileReady = true;
-    }
-    const auto source = nvrhi::TextureSlice().setOrigin(0, 0, 0).setSize(rect.width, rect.height, 1);
-    const auto destination = nvrhi::TextureSlice().setOrigin(rect.x, rect.y, 0).setSize(rect.width, rect.height, 1);
-    commandList->copyTexture(_cacheTexture, destination, _clearTile, source);
-}
+    nvrhi::GraphicsState state;
+    state.pipeline = _tileResetPipeline;
+    state.framebuffer = framebuffer;
+    state.viewport.addViewportAndScissorRect(ShadowViewViewport(view));
+    commandList->setGraphicsState(state);
 
-void LocalShadowPass::CopyCachedTile(nvrhi::ICommandList *commandList, const ShadowViewRect &rect)
-{
-    if (_cacheTexture == nullptr || rect.width == 0u)
-    {
-        return;
-    }
-    // The same rectangle of both textures, which is why the kept layer is its
-    // own atlas of the same shape rather than a region of one.
-    const auto slice = nvrhi::TextureSlice().setOrigin(rect.x, rect.y, 0).setSize(rect.width, rect.height, 1);
-    commandList->copyTexture(_atlasTexture, slice, _cacheTexture, slice);
+    nvrhi::DrawArguments triangle;
+    triangle.vertexCount = kFullscreenTriangleVertices;
+    commandList->draw(triangle);
 }
 
 LocalShadowPass::Stats LocalShadowPass::RenderUncached(nvrhi::ICommandList *commandList, const Frame &frame,
@@ -574,10 +526,8 @@ LocalShadowPass::Stats LocalShadowPass::RenderUncached(nvrhi::ICommandList *comm
 
 LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *commandList, const Frame &frame, Stats stats)
 {
-    // Which faces need their kept layer redrawn, and which need composing from
-    // it. A face needs composing when its kept layer just changed, or when
-    // something is moving over it — and neither, which is the resting case, is
-    // no work at all.
+    // Which faces need their still layer redrawn. The targets already point at
+    // the still layer, which is where a bake goes.
     _bakeTargets.clear();
     _bakeTargetRequest.clear();
     for (std::uint32_t target = 0; target < _targets.size(); ++target)
@@ -587,9 +537,7 @@ LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *comman
         {
             continue;
         }
-        ShadowDepthTarget baked = _targets[target];
-        baked.framebuffer = _cacheFramebuffer;
-        _bakeTargets.push_back(baked);
+        _bakeTargets.push_back(_targets[target]);
         _bakeTargetRequest.push_back(_targetRequest[target]);
     }
 
@@ -598,10 +546,7 @@ LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *comman
         ASSISI_PROFILE_GPU_SCOPE(commandList, "atlas-bake");
         for (const ShadowDepthTarget &target : _bakeTargets)
         {
-            // Blanked one rectangle at a time. Clearing the attachment would
-            // wipe every other light's kept depth to re-bake one, which is the
-            // opposite of what the cache is for.
-            BlankCacheTile(commandList, target.view.rect);
+            ResetTile(commandList, _atlasFramebuffer, target.view);
         }
         const ShadowDepthRenderer::Stats baked = RenderTargets(
             commandList, TargetRun{.targets = _bakeTargets, .request = _bakeTargetRequest}, CasterSide::Static, frame);
@@ -613,30 +558,33 @@ LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *comman
         stats.culled += baked.culled;
     }
 
-    if (!_targets.empty())
+    // The moving layer. A face whose movers are redrawn this frame is reset and
+    // drawn; one the throttle skips keeps what its last redraw left and draws
+    // nothing; one nothing moves over is not read at all. Each face's row says
+    // which, through its array slice.
+    ASSISI_PROFILE_GPU_SCOPE(commandList, "atlas-dynamic");
+    _moverTargets.assign(_targets.begin(), _targets.end());
+    for (std::uint32_t target = 0; target < _moverTargets.size(); ++target)
     {
-        ASSISI_PROFILE_GPU_SCOPE(commandList, "atlas-compose");
-        for (std::uint32_t target = 0; target < _targets.size(); ++target)
+        const LocalShadowTilePlan &plan = _plans[_targetRequest[target]];
+        const std::uint32_t faceBit = 1u << _targetFace[target];
+        const bool redrawn = plan.redrawMovers && (plan.moverFaces & faceBit) != 0u;
+        ShadowDepthTarget &mover = _moverTargets[target];
+        mover.view.arraySlice =
+            (plan.liveMoverFaces & faceBit) != 0u ? LayerIndex(AtlasLayer::Moving) : LayerIndex(AtlasLayer::Still);
+        mover.framebuffer = redrawn ? _moverFramebuffer.Get() : nullptr;
+        if (redrawn)
         {
-            const LocalShadowTilePlan &plan = _plans[_targetRequest[target]];
-            const bool rebaked = (plan.dirtyFaces & (1u << _targetFace[target])) != 0u;
-            const bool moving = plan.hasMovers && plan.redrawMovers;
-            if (!rebaked && !moving)
-            {
-                continue; // the live tile already holds exactly this
-            }
-            CopyCachedTile(commandList, _targets[target].view.rect);
-            ++stats.copiedFaces;
+            ResetTile(commandList, _moverFramebuffer, mover.view);
+            ++stats.moverFaces;
         }
     }
 
     // Every served face, every frame, whether or not anything draws into it: the
     // frame's view table is what the mesh shader reads a tile through, so a
-    // resting light needs a row in it as much as a redrawn one does. A resting
-    // light's row names no casters, so this costs the table and no draw.
-    ASSISI_PROFILE_GPU_SCOPE(commandList, "atlas-dynamic");
+    // resting light needs a row in it as much as a redrawn one does.
     const ShadowDepthRenderer::Stats drawn = RenderTargets(
-        commandList, TargetRun{.targets = _targets, .request = _targetRequest}, CasterSide::Dynamic, frame);
+        commandList, TargetRun{.targets = _moverTargets, .request = _targetRequest}, CasterSide::Dynamic, frame);
     for (Tile &tile : _tiles)
     {
         tile.firstView += drawn.firstView;
@@ -658,10 +606,11 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
     if (!IsActive())
     {
         _plans.clear();
+        _stillRequests.clear();
         return false;
     }
 
-    if (_settings.cache.enabled && _cacheFramebuffer != nullptr)
+    if (_settings.cache.enabled && _moverFramebuffer != nullptr)
     {
         _cache.Plan(LocalShadowCacheFrame{.frameIndex = frame.frameIndex,
                                           .settings = _settings.cache,
@@ -679,7 +628,17 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
         // So every face needs every caster, every frame. The plans mark no face
         // dirty, which here means nothing, and asking them would skip the gather
         // and draw each face over a cleared atlas from an empty caster list.
+        _stillRequests.assign(frame.requests.size(), 1u);
         return !_plans.empty();
+    }
+
+    // Deferred lights included: they bake nothing this frame, but a row they
+    // do not read costs only the gather, and leaving them out would make this
+    // a second copy of the budget's decision to keep in step with it.
+    _stillRequests.resize(_plans.size());
+    for (std::size_t index = 0; index < _plans.size(); ++index)
+    {
+        _stillRequests[index] = _plans[index].dirtyFaces != 0u ? 1u : 0u;
     }
 
     // A tile with a dirty face needs the *still* casters, which have not moved
@@ -719,7 +678,7 @@ LocalShadowPass::Stats LocalShadowPass::Render(nvrhi::ICommandList *commandList,
 
     ASSISI_PROFILE_GPU_PASS(commandList, "shadow-atlas");
 
-    const bool caching = _settings.cache.enabled && _cacheFramebuffer != nullptr;
+    const bool caching = _settings.cache.enabled && _moverFramebuffer != nullptr;
     if (!_planned || _plannedFrame != frame.frameIndex)
     {
         (void)PlanFrame(frame);

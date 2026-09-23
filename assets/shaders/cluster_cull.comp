@@ -1,7 +1,8 @@
 #version 460 core
 
 /// cluster_cull.comp
-/// Tests every light against every cluster AABB (sphere-vs-AABB test) and
+/// Tests every light against every cluster AABB (sphere-vs-AABB, and for a spot
+/// its cone against the cluster's bounding sphere as well) and
 /// writes per-cluster light index lists into a shared flat buffer.
 /// Dispatch: ceil(clusterCount / 64) workgroups of local_size_x = 64, one
 /// cluster per thread. Run every frame, after uploading light data to the SSBOs.
@@ -88,10 +89,49 @@ bool sphereVsAABB(vec3 center, float radius, vec3 aabbMin, vec3 aabbMax)
     return dot(d, d) <= radius * radius;
 }
 
+// Whether a spot's cone can reach a sphere: its apex @p origin, unit axis
+// @p axis, reach @p range and outer half-angle given as cosine and sine. The
+// sphere is rejected only when it lies wholly outside the cone's angle, wholly
+// past its reach, or wholly behind its apex — never when any part of it could
+// be lit, since mesh.frag gives a spot nothing past its outer cone.
+bool coneVsSphere(vec3 origin, vec3 axis, float range, float cosOuter, float sinOuter, vec3 center, float radius)
+{
+    vec3  v          = center - origin;
+    float alongSq    = dot(v, v);
+    float along      = dot(v, axis);
+    float fromAxis   = sqrt(max(alongSq - along * along, 0.0));
+    float outside    = cosOuter * fromAxis - along * sinOuter;
+    return outside <= radius && along <= radius + range && along >= -radius;
+}
+
 // One batch of lights, already in view space: xyz = position, w = radius. Both
-// light types use it — the culling test only needs a bounding sphere, and the
-// leading barrier() of each batch loop makes the reuse safe.
+// light types use it, and the leading barrier() of each batch loop makes the
+// reuse safe.
 shared vec4 sLights[CULL_BATCH];
+// A spot batch's cones beside it: xyz = view-space axis, w = cosine of the outer
+// half-angle.
+shared vec4 sCones[CULL_BATCH];
+
+// Whether spot @p j of the staged batch can light the cluster: its sphere must
+// touch the cluster's box, and its cone the sphere around that box.
+bool spotReaches(uint j, vec3 cMin, vec3 cMax, vec3 cCenter, float cRadius)
+{
+    if (!sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+    {
+        return false;
+    }
+    float cosOuter = sCones[j].w;
+    float sinOuter = sqrt(max(1.0 - cosOuter * cosOuter, 0.0));
+    return coneVsSphere(sLights[j].xyz, sCones[j].xyz, sLights[j].w, cosOuter, sinOuter, cCenter, cRadius);
+}
+
+// Stages spot @p index of the frame into slot @p tid.
+void stageSpot(uint tid, uint index)
+{
+    vec4 pr      = spotLights[index].positionRadius;
+    sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+    sCones[tid]  = vec4(normalize(mat3(pc.view) * spotLights[index].directionInner.xyz), spotLights[index].outerCutoff);
+}
 
 void main()
 {
@@ -117,6 +157,9 @@ void main()
         cMin = clusterAABBs[clusterIdx].minPoint.xyz;
         cMax = clusterAABBs[clusterIdx].maxPoint.xyz;
     }
+    // The sphere around the box, which is what a cone is tested against.
+    vec3  cCenter = (cMin + cMax) * 0.5;
+    float cRadius = length(cMax - cMin) * 0.5;
 
     uint pointLightCount = pc.lightCounts.x;
     uint spotLightCount  = pc.lightCounts.y;
@@ -194,7 +237,7 @@ void main()
         }
     }
 
-    // ---- Spot lights: count (culled by bounding sphere for simplicity) ----
+    // ---- Spot lights: count ----
     uint spotCount = 0u;
     for (uint base = 0u; base < spotLightCount; base += CULL_BATCH)
     {
@@ -203,8 +246,7 @@ void main()
         barrier();
         if (tid < n)
         {
-            vec4 pr      = spotLights[base + tid].positionRadius;
-            sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+            stageSpot(tid, base + tid);
         }
         barrier();
 
@@ -212,8 +254,10 @@ void main()
         {
             for (uint j = 0u; j < n; j++)
             {
-                if (sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+                if (spotReaches(j, cMin, cMax, cCenter, cRadius))
+                {
                     spotCount++;
+                }
             }
         }
     }
@@ -234,8 +278,7 @@ void main()
         barrier();
         if (tid < n)
         {
-            vec4 pr      = spotLights[base + tid].positionRadius;
-            sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+            stageSpot(tid, base + tid);
         }
         barrier();
 
@@ -243,8 +286,10 @@ void main()
         {
             for (uint j = 0u; j < n && spotWritten < spotCount; j++)
             {
-                if (sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+                if (spotReaches(j, cMin, cMax, cCenter, cRadius))
+                {
                     lightIndexList[MAX_LIGHT_INDICES + spotOffset + spotWritten++] = base + j;
+                }
             }
         }
     }

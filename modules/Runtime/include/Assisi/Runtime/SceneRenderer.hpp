@@ -38,6 +38,7 @@
 #include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/ShadowCasterGather.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -261,6 +262,16 @@ public:
     /// a scene with no sun in it pays neither the memory nor the pass whatever
     /// these say.
     void SetShadowSettings(const Render::ShadowSettings &settings) { _shadowSettings = settings; }
+
+    /// @brief The simulated time the next Render happens at, in seconds.
+    ///
+    /// What a shadow caster's stillness is measured in: movers are written on
+    /// the simulation's tick, so a caster has held still for as long as the
+    /// simulation has run without writing it. A host that never sets this
+    /// leaves every caster that has moved drawn as a mover, which is correct
+    /// and merely never folds it back into the still layers.
+    void SetSimulationSeconds(double seconds) { _simulationSeconds = seconds; }
+
     [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
 
     /// @brief Which shadow diagnostic the mesh shader draws over the lit image.
@@ -275,7 +286,7 @@ public:
 
     /// @brief Caster-cascade pairs the most recent sun gather drew one level
     /// coarser than on screen. Zero on a frame that redrew no cascade.
-    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const { return _shadowCasters.coarserViews; }
+    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const { return _shadowCasters.Result().coarserViews; }
 
     /// @brief What the local-light atlas drew in the most recent Render().
     ///
@@ -375,13 +386,24 @@ private:
     /// whether an environment answers this frame.
     [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
 
-    /// @brief Hold the prepass pipelines, the scene distance target and
-    /// occlusion's targets for @p frame, and point the mesh pass at the result.
-    /// Releases all of it while the setting is off, and turns the setting off if
-    /// any of it fails.
+    /// @brief Hold the prepass pipelines for @p frame.
     ///
-    /// @return whether this frame draws a depth prepass and runs occlusion.
-    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame);
+    /// Every frame with a depth target draws one, because the lit pass then
+    /// shades each pixel once instead of once per overlapping surface: shading
+    /// runs the whole light loop and every shadow filter, and re-rasterising the
+    /// scene as depth alone costs far less than the overdraw it removes. If the
+    /// pipelines fail to build, the frame is lit directly and it is said once.
+    ///
+    /// @return whether this frame draws a depth prepass.
+    [[nodiscard]] bool PrepareDepthPrepass(const Render::RenderFrame &frame);
+
+    /// @brief Hold the scene distance target and occlusion's targets for
+    /// @p frame, and point the mesh pass at the result. Releases all of it while
+    /// the setting is off or there is no @p prepass to read depth from, and turns
+    /// the setting off if any of it fails.
+    ///
+    /// @return whether this frame runs occlusion.
+    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass);
 
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
@@ -445,7 +467,7 @@ private:
     // pass has drawn with it.
     Render::ShadowPass _shadowPass;
     Render::CascadeFit _cascadeFit;
-    ShadowCasterGather _shadowCasters;
+    SunShadowCasterGather _shadowCasters;
     // Which cascades still hold the right depth, and this frame's answer. The
     // plan is a member so a steady state allocates nothing, and because the fit
     // it publishes is what the mesh pass borrows.
@@ -480,6 +502,11 @@ private:
     // The scene tick the mover set was last taken at. Everything written after
     // it has moved since, which is the whole of the invalidation input.
     uint64_t _lastMoverTick = 0;
+    // See SetSimulationSeconds.
+    double _simulationSeconds = 0.0;
+    // Entities that lost their Transform or MeshRenderer since the last look,
+    // kept for the capacity.
+    std::vector<ECS::Entity> _removedEntities;
     // Counts frames for the atlas's throttle phase and its tile ages. Its own
     // counter rather than the scene's tick, which advances per write.
     std::uint32_t _shadowFrameIndex = 0;
@@ -521,6 +548,9 @@ private:
     // frame rate. Cleared when the scene stops having several suns, so fixing it
     // and breaking it again is reported both times.
     bool _multipleSunsWarned = false;
+    // Set once the prepass pipelines have failed to build, so the failure is
+    // said once and every later frame is lit directly without retrying.
+    bool _prepassFailed = false;
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;                             // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats;           // what the shadow pass drew, for the same overlay
@@ -529,6 +559,9 @@ private:
     // something is looking, which is what keeps a closed panel free.
     Render::ShadowDiagnostics _shadowDiagnostics;
     bool _shadowDiagnosticsEnabled = false;
+    // Whether _lastMoverTick has been taken from the current scene. Until it
+    // has, the scene's change ticks record its loading, not its motion.
+    bool _moverTickPrimed = false;
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene
     // Render() overload: the scene tick at the end of the last propagation. 0

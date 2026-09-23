@@ -79,8 +79,9 @@ struct ShadowView
     /// both the cascade array and the atlas are.
     std::uint32_t targetResolution = 0;
 
-    /// Which array slice of the target. Cascades take one each; every atlas
-    /// tile shares slice zero.
+    /// Which array slice of the target. Cascades take one each. An atlas tile's
+    /// still depth is always in slice zero, and a tile whose moving layer is
+    /// live says 1: the shader samples slice one as well, at the same rectangle.
     std::uint32_t arraySlice = 0;
 
     /// Whether this view projects orthographically.
@@ -238,6 +239,10 @@ enum PointLightFace : std::uint32_t
 /// world — so this is as small as it can be while covering the widest kernel the
 /// filters here use.
 inline constexpr float kPointLightFaceOverlapDegrees = 6.0f;
+
+/// @brief The field of view a point light's face is drawn with: the right angle
+/// a cube face spans from its centre, widened by the overlap.
+inline constexpr float kPointLightFaceFovDegrees = 90.0f + kPointLightFaceOverlapDegrees;
 
 /// @brief Where a local light stands and how far it reaches — everything the
 /// shape of its shadow map depends on.

@@ -20,7 +20,13 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <expected>
+#include <filesystem>
+#include <format>
+#include <system_error>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,10 +44,30 @@ namespace
 // so it takes the generous tier the editor reserves for a foreground load.
 constexpr double kAssetPublishBudgetMs = 10.0;
 constexpr std::uint64_t kAssetPublishBudgetBytes = 128ull << 20;
+
+/// The MSAA sample count a benchmark renders at.
+constexpr std::int32_t kBenchmarkMsaaSamples = 8;
+
+/// The resolution a benchmark renders at: 1080p, the size most players play at,
+/// and one where the per-pixel work weighs what it does in a shipped game.
+constexpr std::int32_t kBenchmarkWidth = 1920;
+constexpr std::int32_t kBenchmarkHeight = 1080;
+
+/// OptionsConfig::fpsLimit's value for no cap.
+constexpr std::int16_t kUnlimitedFps = -1;
+
+[[nodiscard]] double MonotonicSeconds()
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 } // namespace
 
 GameApp::GameApp(GameLaunch launch) : _launch(std::move(launch))
 {
+    if (_launch.benchmark)
+    {
+        SetExactResolution(kBenchmarkWidth, kBenchmarkHeight);
+    }
 }
 
 GameApp::~GameApp()
@@ -121,20 +147,27 @@ void GameApp::OnStart()
         RefuseStart();
         return;
     }
+    if (_launch.benchmark && HasPresentation())
+    {
+        ApplyBenchmarkSettings(*_launch.benchmark);
+    }
 
     // The shipped config is the only thing that says what to open — a game takes
-    // no level argument. Each way it can fail names itself, because "the game
-    // would not start" sends a player looking in the wrong place.
+    // no level argument, and only a benchmark, which a shipped build cannot ask
+    // for, names one. Each way it can fail names itself, because "the game would
+    // not start" sends a player looking in the wrong place.
     // A package indexes paths by hash and holds none of their text, so an id
     // cannot be turned back into the path a level is loaded by.
+    const std::string_view requested = _launch.benchmark && !_launch.benchmark->level.empty()
+                                           ? std::string_view(_launch.benchmark->level)
+                                           : GetConfig().startupScene.View();
     const Core::PakProvider &pak = *_pak;
     const std::expected<std::string, StartupSceneError> scene = ResolveStartupScene(
-        GetConfig().startupScene.View(), [](const Core::AssetId &) { return std::optional<std::string>{}; },
+        requested, [](const Core::AssetId &) { return std::optional<std::string>{}; },
         [&pak](std::string_view vpath) { return pak.Resolve(vpath).has_value(); });
     if (!scene)
     {
-        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", GetConfig().startupScene.View(),
-                         Describe(scene.error()));
+        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", requested, Describe(scene.error()));
         RefuseStart();
         return;
     }
@@ -158,6 +191,95 @@ void GameApp::OnStart()
     {
         Core::Log::Error("Game: cannot start - '{}' would not load.", *scene);
         RefuseStart();
+        return;
+    }
+
+    if (_launch.benchmark && HasPresentation())
+    {
+        std::vector<Runtime::CameraRouteLeg> route = Runtime::BuildCameraRoute(_world->scene);
+        if (route.empty())
+        {
+            Core::Log::Error("Benchmark: cannot start - '{}' has no camera paths with a length to fly.", *scene);
+            RefuseStart();
+            return;
+        }
+        Core::Log::Info("Benchmark: '{}', {} camera paths over {} s.", *scene, route.size(),
+                        _launch.benchmark->seconds);
+        const std::int32_t shots = _launch.benchmark->shotsDirectory.empty() ? 0 : _launch.benchmark->shotCount;
+        _benchmark.emplace(std::move(route), _launch.benchmark->seconds, shots);
+    }
+}
+
+void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
+{
+    OptionsConfig &options = GetOptions();
+    options.aaMode = Render::AaMode::MSAA_FXAA;
+    options.msaaSamples = kBenchmarkMsaaSamples;
+    options.frameSync = FrameSyncMode::FpsLimit;
+    options.fpsLimit = kUnlimitedFps;
+    ApplyDisplayOptions();
+
+    options.shadows = Render::TierSettings(Render::ShadowTier::Ultra);
+    options.environment = Render::EnvironmentSettings{};
+    options.ambientOcclusion = Render::SsaoSettings{};
+    _sceneRenderer.SetShadowSettings(options.shadows);
+    _sceneRenderer.SetEnvironmentSettings(options.environment);
+    _sceneRenderer.SetSsaoSettings(options.ambientOcclusion);
+
+    if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
+    {
+        vulkanContext->SetPassTimingEnabled(benchmark.passTiming);
+    }
+}
+
+void GameApp::AdvanceBenchmark()
+{
+    const BenchmarkPhase before = _benchmark->Phase();
+    const BenchmarkPhase phase = _benchmark->Advance(_world->start == StartProgress::Loaded, MonotonicSeconds());
+    const std::string &shotsDirectory = _launch.benchmark->shotsDirectory;
+
+    if (const std::int32_t shot = _benchmark->ShotThisFrame(); shot >= 0)
+    {
+        CaptureNextFrame(std::format("{}/shot-{:02}.png", shotsDirectory, shot));
+    }
+    if (phase == before)
+    {
+        return;
+    }
+
+    switch (phase)
+    {
+    case BenchmarkPhase::WarmingUp:
+        Core::Log::Info("Benchmark: loaded; warming up for {} s.", kBenchmarkWarmupSeconds);
+        break;
+    case BenchmarkPhase::Running:
+        if (shotsDirectory.empty())
+        {
+            StartChiaraSession();
+        }
+        else
+        {
+            std::error_code error;
+            std::filesystem::create_directories(shotsDirectory, error);
+        }
+        Core::Log::Info("Benchmark: running.");
+        break;
+    case BenchmarkPhase::Finished:
+        if (shotsDirectory.empty())
+        {
+            StopChiaraSession();
+            Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.",
+                            _benchmark->ElapsedSeconds(), LastChiaraDump().path);
+        }
+        else
+        {
+            Core::Log::Info("Benchmark: {} shots written to '{}'.", _launch.benchmark->shotCount, shotsDirectory);
+        }
+        RequestClose();
+        break;
+    case BenchmarkPhase::Settling:
+    case BenchmarkPhase::Count:
+        break;
     }
 }
 
@@ -237,7 +359,7 @@ void GameApp::StepWorlds(float dt)
             // system lands on; ordering within a phase cannot substitute for it.
             world.systems.Run(SystemPhase::FixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
@@ -253,8 +375,22 @@ void GameApp::StepWorlds(float dt)
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
         });
+}
+
+double GameApp::SimulationSeconds(double frameSeconds)
+{
+    if (!_benchmark)
+    {
+        return frameSeconds;
+    }
+    // Only forward: a shots run can step its clock back a little between the
+    // approaches to two close stops, and a simulation cannot un-happen.
+    const double clock = _benchmark->RunClockSeconds();
+    const double advance = std::max(clock - _simulatedRunSeconds, 0.0);
+    _simulatedRunSeconds = std::max(clock, _simulatedRunSeconds);
+    return advance;
 }
 
 void GameApp::OnFixedUpdate(float dt)
@@ -333,7 +469,7 @@ void GameApp::OnUpdate(float dt)
             {
                 if (world.state != WorldState::Loading)
                 {
-                    SettleWorld(WorldStartContext(world), /*assetsPending=*/false);
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
                 }
             });
     }
@@ -366,13 +502,18 @@ void GameApp::OnUpdate(float dt)
                                     HasPresentation() ? &GetInput() : nullptr,
                                     &GetActions(),
                                     GetEvents(),
-                                    /*isActiveWorld=*/&world == _worlds.Active(),
+                                    /*isActiveWorld=*/ &world == _worlds.Active(),
                                     &_worlds,
                                     GetUi()};
             world.systems.Run(SystemPhase::PreUpdate, ctx);
             world.systems.Run(SystemPhase::Update, ctx);
             world.systems.Run(SystemPhase::PostUpdate, ctx);
         });
+
+    if (_benchmark)
+    {
+        AdvanceBenchmark();
+    }
 }
 
 void GameApp::OnRender(Render::RenderFrame &frame)
@@ -404,8 +545,12 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // behind whatever it is attached to.
     _world->propagationTick = Runtime::PropagateTransforms(_world->scene, _world->propagationTick);
 
+    // A benchmark flies its route from the scene camera's lens: the route says
+    // where the camera is, the level's Camera still says what it sees.
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const Runtime::Transform &pose = view ? view->pose : _fallbackPose;
+    const Runtime::Transform benchmarkPose =
+        _benchmark ? Runtime::CameraTransformFor(_benchmark->Aim()) : Runtime::Transform{};
+    const Runtime::Transform &pose = _benchmark ? benchmarkPose : view ? view->pose : _fallbackPose;
     const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
 
     // The game's own render systems, through the world's registry. After
@@ -414,12 +559,13 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     if (_world->systems.HasRenderSystems())
     {
         const float aspectRatio =
-            frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
+            Runtime::AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
         RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(pose),
                                 Runtime::ProjectionMatrix(camera, aspectRatio)};
         _world->systems.RunRender(renderCtx);
     }
 
+    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
     _sceneRenderer.Render(frame, _world->scene, pose, camera, _world->propagationTick);
 }
 

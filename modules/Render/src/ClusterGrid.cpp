@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 namespace Assisi::Render
 {
@@ -37,6 +38,28 @@ static_assert(sizeof(CullPushConstants) == 96);
 constexpr uint32_t kAABBStride      = 32u;
 constexpr uint32_t kLightGridStride = 16u;
 constexpr uint32_t kUintStride      = 4u;
+
+// Point and spot lights, each culled into its own half of the index list and
+// counted by its own word of the global count.
+constexpr uint32_t kCulledLightKinds = 2u;
+
+// Where each of the light cull's buffers sits in its register space. Each must
+// match the layout(binding = …) cluster_cull.comp declares it at; the backend
+// offsets UAVs into their own range, so a read and a write slot of the same
+// number are different bindings.
+enum class CullReadSlot : std::uint8_t
+{
+    ClusterBounds = 0,
+    PointLights = 1,
+    SpotLights = 2,
+};
+
+enum class CullWriteSlot : std::uint8_t
+{
+    LightIndices = 0,
+    LightGrids = 1,
+    GlobalCount = 2,
+};
 } // namespace
 
 bool ClusterGrid::Initialize(nvrhi::IDevice *device)
@@ -55,12 +78,15 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
 
     nvrhi::BindingLayoutDesc cullLayoutDesc;
     cullLayoutDesc.visibility = nvrhi::ShaderType::Compute;
-    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)); // clusterAABBs
-    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // pointLights
-    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // spotLights
-    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0)); // lightIndexList
-    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1)); // lightGrids
-    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2)); // globalCount
+    cullLayoutDesc.addItem(
+            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(CullReadSlot::ClusterBounds)));
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(CullReadSlot::PointLights)));
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(CullReadSlot::SpotLights)));
+    cullLayoutDesc.addItem(
+            nvrhi::BindingLayoutItem::StructuredBuffer_UAV(std::to_underlying(CullWriteSlot::LightIndices)));
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(std::to_underlying(CullWriteSlot::LightGrids)));
+    cullLayoutDesc.addItem(
+            nvrhi::BindingLayoutItem::StructuredBuffer_UAV(std::to_underlying(CullWriteSlot::GlobalCount)));
     cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(CullPushConstants)));
     if (!_cullShader.Initialize(device, "shaders/cluster_cull.comp.spv", cullLayoutDesc))
     {
@@ -74,9 +100,9 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
     _pointLightBuffer.Create(device, sizeof(PointLightGPU), kMaxPointLights, false, "ClusterGrid::PointLights");
     _spotLightBuffer.Create(device, sizeof(SpotLightGPU), kMaxSpotLights, false, "ClusterGrid::SpotLights");
     _dirLightBuffer.Create(device, sizeof(DirLightGPU), kMaxDirLights, false, "ClusterGrid::DirLights");
-    _lightIndexBuffer.Create(device, kUintStride, kMaxLightIndices * 2u, true, "ClusterGrid::LightIndexList");
+    _lightIndexBuffer.Create(device, kUintStride, kMaxLightIndices * kCulledLightKinds, true, "ClusterGrid::LightIndexList");
     _lightGridBuffer.Create(device, kLightGridStride, kNumClusters, true, "ClusterGrid::LightGrids");
-    _globalCountBuffer.Create(device, kUintStride, 2u, true, "ClusterGrid::GlobalCount");
+    _globalCountBuffer.Create(device, kUintStride, kCulledLightKinds, true, "ClusterGrid::GlobalCount");
 
     nvrhi::BindingSetDesc buildSetDesc;
     buildSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _clusterAABBBuffer.NativeBuffer()));
@@ -84,12 +110,18 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
     _buildBindingSet = device->createBindingSet(buildSetDesc, _buildShader.BindingLayout());
 
     nvrhi::BindingSetDesc cullSetDesc;
-    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, _clusterAABBBuffer.NativeBuffer()));
-    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _pointLightBuffer.NativeBuffer()));
-    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _spotLightBuffer.NativeBuffer()));
-    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _lightIndexBuffer.NativeBuffer()));
-    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, _lightGridBuffer.NativeBuffer()));
-    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, _globalCountBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(CullReadSlot::ClusterBounds),
+                                                                    _clusterAABBBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(CullReadSlot::PointLights),
+                                                                    _pointLightBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(CullReadSlot::SpotLights),
+                                                                    _spotLightBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(std::to_underlying(CullWriteSlot::LightIndices),
+                                                                    _lightIndexBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(std::to_underlying(CullWriteSlot::LightGrids),
+                                                                    _lightGridBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(std::to_underlying(CullWriteSlot::GlobalCount),
+                                                                    _globalCountBuffer.NativeBuffer()));
     cullSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(CullPushConstants)));
     _cullBindingSet = device->createBindingSet(cullSetDesc, _cullShader.BindingLayout());
 

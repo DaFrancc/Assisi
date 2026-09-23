@@ -34,6 +34,7 @@ target_sources(Assisi-Editor
     "src/EditorAssetBrowser.cpp"
     "src/EditorBlueprintMode.cpp"
     "src/EditorCamera.cpp"
+    "src/EditorCameraPaths.cpp"
     "src/EditorChiaraPanel.cpp"
     "src/EditorColliders.cpp"
     "src/EditorGizmo.cpp"

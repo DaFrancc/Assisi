@@ -450,16 +450,12 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
                           "into a new room landing as one long frame. A light that does not fit waits, "
                           "unshadowed, rather than showing a tile that is out of date.");
 
-    int32_t stillFrames = static_cast<int32_t>(shadows.local.cache.promoteStillFrames);
-    if (ImGui::SliderInt("Settle Frames", &stillFrames, static_cast<int32_t>(Assisi::Render::kMinPromoteStillFrames),
-                         static_cast<int32_t>(Assisi::Render::kMaxPromoteStillFrames)))
-    {
-        shadows.local.cache.promoteStillFrames = static_cast<std::uint32_t>(stillFrames);
-        changed = true;
-    }
-    ImGui::SetItemTooltip("How long a caster must hold still before it is folded back into the kept layer. A "
-                          "motion costs two redraws however long it lasts — one leaving, one rejoining — and "
-                          "this is the wait before the second.");
+    changed |= ImGui::SliderFloat("Settle Seconds", &shadows.local.cache.promoteStillSeconds,
+                                  Assisi::Render::kMinPromoteStillSeconds, Assisi::Render::kMaxPromoteStillSeconds,
+                                  "%.2f s");
+    ImGui::SetItemTooltip("How long a caster must hold still before it is folded back into the kept layers, the "
+                          "sun's and the local lights' alike. A motion costs two redraws however long it lasts — "
+                          "one leaving, one rejoining — and this is the wait before the second.");
 
     int32_t divisor = static_cast<int32_t>(shadows.local.cache.movingLightUpdateDivisor);
     if (ImGui::SliderInt("Mover Update Rate", &divisor, static_cast<int32_t>(Assisi::Render::kMinLightUpdateDivisor),
@@ -584,14 +580,14 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         // a still scene every served light is resting and both draws are zero.
         //
         // Every count carries its unit, and they are three different ones. A
-        // point light is six faces, so resting lights and copied faces are an
+        // point light is six faces, so resting lights and redrawn faces are an
         // order of magnitude apart while describing the same lights — printed
         // bare, side by side, they read as a contradiction that is not there.
-        ImGui::Text("Cache: %u of %u lights resting  |  %u baked / %u copied faces  |  %u moving casters",
-                    local.restingLights, local.lights, local.bakedFaces, local.copiedFaces, local.dynamicCasters);
+        ImGui::Text("Cache: %u of %u lights resting  |  %u baked / %u mover faces  |  %u moving casters",
+                    local.restingLights, local.lights, local.bakedFaces, local.moverFaces, local.dynamicCasters);
         ImGui::SetItemTooltip("Resting is per light and means nothing is moving within its reach. Baked and "
-                              "copied are per face — six of them for every point light — so the two counts are "
-                              "not comparable and are not meant to be.");
+                              "mover faces are per face — six of them for every point light — so the two counts "
+                              "are not comparable and are not meant to be.");
 
         // The burst condition, said only when it happens. Walking into a room
         // saturating the budget for a frame is the mechanism working; the same

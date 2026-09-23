@@ -4,7 +4,9 @@
 /// @file ShadowPass.hpp
 /// @brief The sun's cascade array, and the strategy that fills it.
 ///
-/// One texture array, one slice per cascade, one framebuffer each. The drawing
+/// Two texture arrays, one slice per cascade in each, one framebuffer each: the
+/// still casters' depth, and the slice the shader reads, which is that with the
+/// moving casters drawn over it (see Render). The drawing
 /// itself belongs to ShadowDepthRenderer, which knows nothing about cascades —
 /// this owns what is specific to the sun: how many slices there are, what
 /// format they take, when they are cleared, and the pipeline state their depth
@@ -18,11 +20,13 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/ShadowCadence.hpp>
 #include <Assisi/Render/ShadowCascades.hpp>
 #include <Assisi/Render/ShadowDepthRenderer.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -42,6 +46,11 @@ public:
         /// The shared depth renderer this pass draws through. Not owned, and it
         /// must outlive the pass.
         const ShadowDepthRenderer *depthRenderer = nullptr;
+        /// A triangle covering the viewport, and the fragment stage that writes
+        /// a cascade's still depth through it: what puts the still depth back
+        /// under where movers stood.
+        std::string restoreVertexShaderSpvPath;
+        std::string restorePixelShaderSpvPath;
     };
 
     /// @brief Bind to the device and the shared renderer, and create the empty
@@ -84,27 +93,31 @@ public:
         /// the district cost very differently, and only the per-cascade figure
         /// says which of them a rise in the total came from.
         std::array<std::uint32_t, kMaxShadowCascades> cascadeCasters{};
+
+        /// Cascades whose movers were drawn again over their still depth.
+        std::uint32_t moverCascades = 0;
     };
 
-    /// @brief Clear the cascades @p redraw names and draw @p casters into them.
+    /// @brief Bring the cascades up to date with @p plan: rebake the still
+    /// layers it names, and redraw the movers where it says they changed.
+    ///
+    /// Each cascade is two slices. The still layer holds the still casters'
+    /// depth and nothing else; the slice the shader reads is that depth with
+    /// the moving casters drawn over it. A rebaked still layer is written whole
+    /// into the read slice; otherwise, where the movers last stood is written
+    /// back from the still layer before they are drawn where they stand now.
     ///
     /// @p casters must be sorted by ShadowGeometryKey — consecutive items with
     /// the same key coalesce into one instanced draw, and an unsorted span
     /// merely draws more commands.
     ///
-    /// Each cascade culls against its own frustum the casters whose view mask
-    /// named it, and no others. The cascade matrices already reach back to the
-    /// casters (see CascadeFitParams), so a caster behind the camera survives
-    /// the test rather than being clipped.
-    ///
-    /// @p redraw is cascade indices, ascending, and a caster's view mask is
-    /// **indexed by position in it** rather than by cascade — the gather
-    /// classifies against the volumes of the cascades being drawn, in the same
-    /// order, so bit i names redraw[i]. A cascade this span does not name is
-    /// neither cleared nor drawn and keeps the depth it holds, which is only
-    /// correct while @p fit carries the matrix that depth was rasterized with.
-    /// See SunShadowCadence, which decides both together.
-    Stats Render(nvrhi::ICommandList *commandList, const CascadeFit &fit, std::span<const std::uint32_t> redraw,
+    /// A caster's view mask is **indexed by position** in the plan's lists
+    /// rather than by cascade: bit i names @p plan.redraw[i] (a still caster
+    /// for that still layer), and bit redrawCount + j names
+    /// @p plan.movingRedraw[j] (a moving caster for that read slice). A cascade
+    /// neither list names keeps both slices as they are, which is only correct
+    /// while @p plan.fit carries the matrix they were rasterized with.
+    Stats Render(nvrhi::ICommandList *commandList, const SunShadowCadencePlan &plan,
                  std::span<const ShadowCaster> casters) const;
 
     [[nodiscard]] bool IsActive() const { return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr; }
@@ -144,6 +157,14 @@ private:
     void ReleaseTargets();
     /// @brief Create the one-texel array bound while the pass is inactive.
     [[nodiscard]] bool CreateNoCascadesTexture();
+    /// @brief Write back from the still layer every tile of @p cascade's read
+    /// slice a mover was last drawn into, and forget them.
+    void RestoreMoverTiles(nvrhi::ICommandList *commandList, std::uint32_t cascade) const;
+    /// @brief Write @p cascade's still depth over @p region of its read slice.
+    void RestoreStillDepth(nvrhi::ICommandList *commandList, std::uint32_t cascade, const nvrhi::Rect &region) const;
+    /// @brief Note the tiles this frame's movers were drawn into, for each
+    /// cascade @p movingRedraw names.
+    void RecordMoverTiles(const CascadeFit &fit, std::span<const std::uint32_t> movingRedraw) const;
 
     nvrhi::IDevice *_device = nullptr;
     const ShadowDepthRenderer *_depthRenderer = nullptr;
@@ -159,6 +180,19 @@ private:
     // The cascade array, and one framebuffer per slice. Empty while inactive.
     nvrhi::TextureHandle _cascadeTexture;
     std::vector<nvrhi::FramebufferHandle> _cascadeFramebuffers;
+    // The still layers, one slice per cascade: the still casters' depth alone,
+    // which the read slices above are put back from. Empty while inactive.
+    nvrhi::TextureHandle _stillTexture;
+    std::vector<nvrhi::FramebufferHandle> _stillFramebuffers;
+    // What writes the still depth back into a read slice (RestoreStillDepth).
+    // A draw rather than a copy: a copy moves both arrays to transfer layouts,
+    // which on a GPU that compresses depth costs a pass over the whole array
+    // every frame anything moves.
+    nvrhi::ShaderHandle _restoreVertexShader;
+    nvrhi::ShaderHandle _restorePixelShader;
+    nvrhi::BindingLayoutHandle _restoreLayout;
+    nvrhi::BindingSetHandle _restoreSet;
+    nvrhi::GraphicsPipelineHandle _restorePipeline;
     // Bound while the pass is inactive, so the mesh pass always has a texture to
     // sample. Permanent, not scaffolding: a scene with no sun never leaves it.
     nvrhi::TextureHandle _noCascadesTexture;
@@ -180,6 +214,12 @@ private:
     mutable std::uint32_t _firstView = 0;
     // Per-frame scratch, kept across frames so a steady state allocates nothing.
     mutable std::vector<ShadowDepthTarget> _scratchTargets;
+    mutable std::vector<ShadowCaster> _stillCasters;
+    mutable std::vector<ShadowCaster> _movingCasters;
+    // Per cascade, which tiles of its read slice movers were last drawn into, a
+    // byte per tile row-major: what has to be put back before they are drawn
+    // again. Cleared by a whole-slice copy.
+    mutable std::array<std::vector<std::uint8_t>, kMaxShadowCascades> _moverTiles;
 };
 
 } // namespace Assisi::Render

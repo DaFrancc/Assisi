@@ -22,7 +22,7 @@ namespace
 /// so a caster near one dirties the face rather than being missed by it.
 float PointFaceConeCosine()
 {
-    const float halfFovRadians = glm::radians((90.f + kPointLightFaceOverlapDegrees) * 0.5f);
+    const float halfFovRadians = glm::radians(kPointLightFaceFovDegrees * 0.5f);
     const float diagonalTangent = std::tan(halfFovRadians) * std::sqrt(2.f);
     return 1.f / std::sqrt(1.f + diagonalTangent * diagonalTangent);
 }
@@ -144,13 +144,12 @@ void ShadowCasterMobility::NoteBaked(const ShadowMover &caster)
     }
 }
 
-void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promoteStillFrames,
-                                  std::span<const ShadowMover> moved, std::vector<ShadowMover> &dynamicOut,
-                                  std::vector<ShadowMover> &invalidateOut)
+void ShadowCasterMobility::Update(double nowSeconds, float promoteStillSeconds, std::span<const ShadowMover> moved,
+                                  std::vector<ShadowMover> &dynamicOut, std::vector<ShadowMover> &invalidateOut)
 {
-    dynamicOut.clear();
-    invalidateOut.clear();
-    promoteStillFrames = std::max(promoteStillFrames, 1u);
+    _dynamic.clear();
+    invalidateOut.assign(_pendingInvalidations.begin(), _pendingInvalidations.end());
+    _pendingInvalidations.clear();
 
     for (const ShadowMover &mover : moved)
     {
@@ -167,7 +166,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
             invalidateOut.push_back(ShadowMover{mover.casterId, Merged(leaving, mover.worldSphere)});
         }
         record.sphere = mover.worldSphere;
-        record.lastMovedFrame = frameIndex;
+        record.lastMovedSeconds = nowSeconds;
     }
 
     for (auto entry = _casters.begin(); entry != _casters.end();)
@@ -178,9 +177,9 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
             ++entry;
             continue;
         }
-        if (frameIndex - record.lastMovedFrame < promoteStillFrames)
+        if (nowSeconds - record.lastMovedSeconds < static_cast<double>(promoteStillSeconds))
         {
-            dynamicOut.push_back(ShadowMover{entry->first, record.sphere});
+            _dynamic.push_back(ShadowMover{entry->first, record.sphere});
             ++entry;
             continue;
         }
@@ -196,6 +195,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
         // life. Its baked pose is re-recorded by the bake it just triggered.
         entry = _casters.erase(entry);
     }
+    dynamicOut.assign(_dynamic.begin(), _dynamic.end());
 }
 
 bool ShadowCasterMobility::IsDynamic(std::uint64_t casterId) const
@@ -207,6 +207,8 @@ bool ShadowCasterMobility::IsDynamic(std::uint64_t casterId) const
 void ShadowCasterMobility::Clear()
 {
     _casters.clear();
+    _dynamic.clear();
+    _pendingInvalidations.clear();
     _dynamicCount = 0;
 }
 
@@ -255,6 +257,8 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         // out of date this frame, and forgetting it is exactly the missed
         // invalidation this whole file exists to prevent.
         plan.dirtyFaces = found->second.dirtyFaces;
+        plan.liveMoverFaces = found->second.liveMoverFaces;
+        plan.drawnMoverSignature = found->second.moverSignature;
     }
 
     // Invalidation, and the only place a caster meets a light. Movers times
@@ -274,7 +278,16 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
                                    }
                                    if (countsAsMotion)
                                    {
+                                       out[index].moverFaces |= mask;
                                        out[index].hasMovers = true;
+                                       const std::uint64_t signature = ShadowMoverSignature(caster);
+                                       for (std::uint32_t face = 0; face < kMaxLocalShadowFaces; ++face)
+                                       {
+                                           if ((mask & (1u << face)) != 0u)
+                                           {
+                                               out[index].moverSignature[face] += signature;
+                                           }
+                                       }
                                    }
                                    else
                                    {
@@ -284,9 +297,9 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
                            }
                        };
     // A caster that is merely moving does not invalidate anything: it is not in
-    // the cached layer at all, and its depth is redrawn over the copy every
-    // frame. Only changing sides invalidates, which is what makes a motion
-    // episode two re-bakes rather than one per frame.
+    // the still layer at all, and its depth is in the moving layer beside it.
+    // Only changing sides invalidates, which is what makes a motion episode two
+    // re-bakes rather than one per frame.
     dirty(frame.movers, true);
     dirty(frame.invalidations, false);
 
@@ -308,6 +321,33 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         {
             plan.redrawMovers = false;
             ++_stats.throttledLights;
+        }
+    }
+
+    // Nothing to redraw. Movers are written on the game's tick, not every
+    // frame, so most frames find every mover exactly where the moving layer
+    // already has it — same faces, same casters, same poses — and redrawing
+    // would put back the depth that is already there.
+    for (LocalShadowTilePlan &plan : out)
+    {
+        if (plan.redrawMovers && plan.retained && plan.moverFaces == plan.liveMoverFaces &&
+            plan.moverSignature == plan.drawnMoverSignature)
+        {
+            plan.redrawMovers = false;
+            if (plan.hasMovers)
+            {
+                ++_stats.unchangedMoverLights;
+            }
+        }
+    }
+
+    // A redraw leaves the moving layer holding exactly this frame's movers; a
+    // light that skips one keeps sampling what its last redraw left.
+    for (LocalShadowTilePlan &plan : out)
+    {
+        if (plan.redrawMovers)
+        {
+            plan.liveMoverFaces = plan.moverFaces;
         }
     }
 
@@ -381,6 +421,8 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         {
             entry.lastMoverDrawFrame = frameIndex;
         }
+        entry.moverSignature = plan.redrawMovers ? plan.moverSignature : plan.drawnMoverSignature;
+        entry.liveMoverFaces = plan.liveMoverFaces;
         entry.lastSeenFrame = frameIndex;
         rectCursor += faces;
 

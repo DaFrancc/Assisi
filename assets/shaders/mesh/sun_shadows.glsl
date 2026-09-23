@@ -86,7 +86,7 @@ float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, floa
 {
     float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
     float sum = 0.0;
-    for (uint i = 0u; i < 4u; ++i)
+    for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
         vec2 offset = VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv;
         sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
@@ -95,7 +95,7 @@ float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, floa
     {
         return 0.0;
     }
-    if (sum == 4.0)
+    if (sum == float(kVogelProbeTaps))
     {
         return 1.0;
     }
@@ -172,7 +172,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         // A tap returns exactly 0 or 1 unless it straddles an edge, so four
         // probe taps that agree almost always mean the whole kernel would too.
         float sum = 0.0;
-        for (uint i = 0u; i < 4u; ++i)
+        for (uint i = 0u; i < kVogelProbeTaps; ++i)
         {
             sum += VogelTap(kVogelProbe[i], uv, cascade, reference, step, phi);
         }
@@ -180,7 +180,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         {
             return 0.0;
         }
-        if (sum == 4.0)
+        if (sum == float(kVogelProbeTaps))
         {
             return 1.0;
         }

@@ -63,6 +63,8 @@ target_sources(Assisi-Render
     "src/GpuMarker.cpp"
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
+    "src/MeshPassFrameConstants.cpp"
+    "src/MeshPassFrameConstants.hpp"
     "src/PostProcess.cpp"
     "src/SceneDistancePass.cpp"
     "src/ShadowAtlas.cpp"

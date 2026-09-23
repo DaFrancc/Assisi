@@ -2,10 +2,11 @@
 
 #include <Assisi/Render/MeshPass.hpp>
 
+#include "MeshPassFrameConstants.hpp"
+
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/AssetCache.hpp>
-#include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/ShadowView.hpp>
@@ -14,9 +15,8 @@
 #include <glm/gtc/packing.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
-#include <limits>
+#include <cstdint>
 #include <iterator>
 #include <utility>
 #include <vector>
@@ -39,7 +39,7 @@ using InstanceData = MeshPass::InstanceData;
 // the layout(binding = …) mesh.frag and mesh.vert declare it at; the backend
 // offsets samplers and constant buffers into their own ranges, so the same
 // number in two of these is two different bindings.
-enum class ResourceSlot : uint32_t
+enum class ResourceSlot : std::uint8_t
 {
     Materials = 0,
     PointLights = 1,
@@ -56,14 +56,14 @@ enum class ResourceSlot : uint32_t
     ScreenOcclusion = 12,
 };
 
-enum class SamplerSlot : uint32_t
+enum class SamplerSlot : std::uint8_t
 {
     Material = 0,
     Shadow = 1,
     Clamp = 2,
 };
 
-enum class ConstantBufferSlot : uint32_t
+enum class ConstantBufferSlot : std::uint8_t
 {
     Frame = 0,
 };
@@ -79,117 +79,6 @@ constexpr uint32_t kInitialInstanceCapacity = 1024u;
 static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
               "DrawIndexedIndirectArguments must match VkDrawIndexedIndirectCommand's packed layout.");
 
-// Per-frame data (view-projection + camera + cluster-grid parameters), uploaded
-// once per frame via UpdateFrameConstants() into a constant buffer. viewProjection
-// leads so the vertex shader can form clip position from each instance's world
-// matrix. Mirrors mesh.vert/frag's matching `uniform FrameConstants` block.
-struct FrameConstants
-{
-    glm::mat4 viewProjection;
-    glm::mat4 view;
-    glm::uvec4 gridDim;           // xyz used, w unused
-    glm::vec4 screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
-    glm::uvec4 lightCounts;       // x = directional light count, y = debug view, zw unused
-    /// World-space camera position, w unused. Derived once here rather than per
-    /// fragment: it is constant across the frame, but view is a uniform, so the
-    /// shader compiler cannot hoist the -transpose(mat3(view)) * view[3] out.
-    glm::vec4 cameraPosition;
-    /// Froxel lookup scale/bias, so mesh.frag's ClusterIndex() is FMAs and a
-    /// single log instead of three divides and two logs (the Doom-2016 form):
-    ///   xy = gridDim.xy / screenSize        (screen pixel -> cluster column/row)
-    ///   z  = gridDim.z / log(farZ / nearZ)  (log-depth slice scale)
-    ///   w  = -z * log(nearZ)                (matching bias)
-    /// slice = log(|viewZ|) * z + w, which is gridDim.z * log(|viewZ|/nearZ) / log(farZ/nearZ).
-    glm::vec4 clusterScale;
-    /// The frame's indirect term, as its provider answered it (see
-    /// Render::IndirectConstants): rgb = the radiance a surface facing straight
-    /// up receives, then the same facing straight down, w unused in both.
-    glm::vec4 indirectSky;
-    glm::vec4 indirectGround;
-    /// x = 1 while a prefiltered environment answers the specular half, y =
-    /// its last mip, z = 1 while screen-space occlusion ran this frame, w unused.
-    glm::vec4 indirectSpecular;
-
-    /// x = cascade count (0 = nothing shadows this frame, and the shader takes
-    /// no lookup at all), y = which directional light the cascades belong to,
-    /// z = ShadowFilter, w = 1 to tint by cascade.
-    glm::uvec4 shadowCounts;
-    /// x = the ShadowFilter the atlas is sampled with, y = 1 while any local
-    /// light holds a tile and the two light loops should look one up, z = 1
-    /// while those lookups take the contact-hardening path, w unused.
-    ///
-    /// The biases and the tap step are deliberately absent: a demoted tile is
-    /// biased for the smaller map it got, so those belong per view rather than
-    /// per frame, and they ride in the shadow view table with the matrix.
-    glm::uvec4 localShadowCounts;
-    /// x = one texel of the map, in UV, which is the step between PCF taps in
-    /// every cascade whose texels are small enough,
-    /// y = the fraction of each cascade spent fading into the next,
-    /// z = the penumbra cap over the filter's radius, which the shader divides
-    /// by a cascade's depth range to get the widest step that cascade may use,
-    /// w = the sun's penumbra per world unit of blocker distance over the same
-    /// radius, which the shader multiplies by the distance it reads out of the
-    /// map to get the step the scene actually calls for. The cascade's depth
-    /// range cancels in that product, which is why no cascade term appears.
-    glm::vec4 shadowParams;
-    /// The sun's contact-hardening constants (see SunPcssConstants): x = its
-    /// penumbra UV per unit of depth, y = the reach cap in UV, z = one texel of
-    /// depth, w = kMaxPenumbraWorld. All zero while the sun takes the fixed
-    /// kernel, and x is what the shader tests: the sun's own figure is never
-    /// zero, so zero can only mean off. A local light's ride in its view instead.
-    ///
-    /// The world cap rides here rather than being read off shadowParams.z,
-    /// which is quoted over the selected filter's radius; this path's kernel is
-    /// always the Vogel disk.
-    glm::vec4 shadowPcss;
-    /// One record per cascade: x = the view-space distance it ends at (what the
-    /// shader selects on), y = its constant depth bias already in the [0, 1]
-    /// depth the shader compares in, z = its normal offset in world units,
-    /// w = the world span of its depth range, which is also how wide its ortho
-    /// box is, and what the tap-step cap above is divided by to reach a step.
-    /// Both biases are scaled CPU-side by that cascade's texel size,
-    /// which is why one setting holds across cascades whose texels differ by an
-    /// order of magnitude (see CascadeDepthBiasNdc).
-    ///
-    /// One array of records rather than three arrays of scalars: std140 pads a
-    /// float array to a 16-byte stride anyway, so three of them would cost the
-    /// same and read as three places to keep in step instead of one. Entries
-    /// past the live count are unread.
-    std::array<glm::vec4, kMaxShadowCascades> shadowCascade;
-    /// World space to each cascade's clip space. Last because it is the only
-    /// member whose size is not one lane, and appending keeps every offset
-    /// above it fixed.
-    std::array<glm::mat4, kMaxShadowCascades> shadowViewProjection;
-};
-
-// std140, not std430 — this is a uniform block. The two agree on everything this
-// struct contains, because every member is a vec4/uvec4/mat4 lane or an array of
-// one, and those take a 16-byte offset and stride under both rules. That is not
-// an accident to be preserved by luck: it is why nothing here is a bare float or
-// a uint, and the offsets below are what keeps it true.
-//
-// GLM's default gentypes are 4-aligned, so the C++ side packs these tightly and
-// every member still lands on a lane boundary because every member is a whole
-// number of lanes wide. Insert anything narrower and the two layouts part
-// company silently — which is what these lines exist to prevent.
-ASSISI_GPU_LAYOUT(FrameConstants);
-ASSISI_GPU_FIRST_FIELD(FrameConstants, viewProjection);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, view, viewProjection);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, gridDim, view);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, screenSizeNearFar, gridDim);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, lightCounts, screenSizeNearFar);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, cameraPosition, lightCounts);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, clusterScale, cameraPosition);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectSky, clusterScale);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectGround, indirectSky);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, indirectSpecular, indirectGround);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCounts, indirectSpecular);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, localShadowCounts, shadowCounts);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowParams, localShadowCounts);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowPcss, shadowParams);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowCascade, shadowPcss);
-ASSISI_GPU_FIELD_AFTER(FrameConstants, shadowViewProjection, shadowCascade);
-ASSISI_GPU_NO_TAIL_PADDING(FrameConstants, shadowViewProjection);
 } // namespace
 
 bool MeshPass::Initialize(const InitParams &params)
@@ -362,7 +251,7 @@ bool MeshPass::Initialize(const InitParams &params)
     }
 
     nvrhi::BufferDesc frameConstantsDesc;
-    frameConstantsDesc.byteSize = sizeof(FrameConstants);
+    frameConstantsDesc.byteSize = sizeof(MeshPassFrameConstants);
     frameConstantsDesc.isConstantBuffer = true;
     frameConstantsDesc.debugName = "MeshPass::FrameConstants";
     frameConstantsDesc.initialState = nvrhi::ResourceStates::ConstantBuffer;
@@ -522,102 +411,6 @@ const nvrhi::GraphicsPipelineHandle *MeshPass::PipelinesFor(MeshPassStage stage)
     case MeshPassStage::Count:           break;
     }
     return _pipelines;
-}
-
-void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const FrameConstantsParams &params) const
-{
-    // A new frame has submitted nothing yet. Without this, a frame whose draw
-    // path found nothing to submit would leave Redraw replaying the last one's.
-    _lastSubmission = Submission::None;
-
-    FrameConstants constants;
-    constants.viewProjection = params.viewProjection;
-    constants.view = params.view;
-    constants.gridDim = glm::uvec4(ClusterGrid::kNumX, ClusterGrid::kNumY, ClusterGrid::kNumZ, 0u);
-    constants.screenSizeNearFar = glm::vec4(static_cast<float>(params.screenWidth),
-                                            static_cast<float>(params.screenHeight), params.nearZ, params.farZ);
-    constants.lightCounts =
-        glm::uvec4(params.dirLightCount, static_cast<uint32_t>(params.debugView), 0u, 0u);
-
-    // View is a rigid transform (View = R | t, t = -R * cameraPos), so the camera
-    // position is -R^-1 * t, and R^-1 == transpose(R) because R is orthonormal.
-    constants.cameraPosition =
-        glm::vec4(-glm::transpose(glm::mat3(params.view)) * glm::vec3(params.view[3]), 0.f);
-
-    // Guard the logs: a zero/negative near or far plane would make these inf/NaN
-    // and poison every cluster lookup. Both come from the camera, which validates
-    // them, so this is belt-and-braces rather than an expected path.
-    const float safeNear = params.nearZ > 0.f ? params.nearZ : 0.001f;
-    const float safeFar  = params.farZ > safeNear ? params.farZ : safeNear * 2.f;
-    const float logRatio = std::log(safeFar / safeNear);
-    const float sliceScale = static_cast<float>(ClusterGrid::kNumZ) / logRatio;
-    constants.clusterScale =
-        glm::vec4(static_cast<float>(ClusterGrid::kNumX) / static_cast<float>(params.screenWidth),
-                  static_cast<float>(ClusterGrid::kNumY) / static_cast<float>(params.screenHeight), sliceScale,
-                  -sliceScale * std::log(safeNear));
-
-    constants.indirectSky = glm::vec4(params.indirect.skyRadiance, 0.f);
-    constants.indirectGround = glm::vec4(params.indirect.groundRadiance, 0.f);
-    // z is not the provider's: occlusion is visibility, applied to whatever
-    // radiance the provider answered, and rides in this lane only because the
-    // lane belongs to the indirect term it darkens.
-    constants.indirectSpecular = glm::vec4(params.indirect.specularEnvironment, params.indirect.specularMaxLod,
-                                           params.screenOcclusion ? 1.f : 0.f, 0.f);
-
-    // Shadows. A zero cascade count is the whole of "nothing shadows this frame"
-    // as far as the shader is concerned: it takes no lookup, so an unshadowed
-    // scene pays one comparison against a constant.
-    const ShadowFrameData &shadows = params.shadows;
-    const uint32_t cascadeCount = shadows.fit != nullptr ? shadows.fit->count : 0u;
-    constants.shadowCounts = glm::uvec4(cascadeCount, shadows.sunLightIndex,
-                                        static_cast<uint32_t>(shadows.settings.filter),
-                                        static_cast<uint32_t>(shadows.debugView));
-    // The local half switches on its own flag rather than on the cascade count:
-    // a scene may have shadowed lamps and no sun, or a sun and no shadowed lamp,
-    // and neither should pay for the other's lookup.
-    constants.localShadowCounts = glm::uvec4(static_cast<uint32_t>(shadows.localSettings.filter),
-                                             shadows.localActive ? 1u : 0u, shadows.localPcss ? 1u : 0u, 0u);
-    for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
-    {
-        constants.shadowCascade[i] = glm::vec4(0.f);
-        constants.shadowViewProjection[i] = glm::mat4(1.f);
-    }
-    for (uint32_t i = 0; i < cascadeCount && i < kMaxShadowCascades; ++i)
-    {
-        const ShadowCascade &cascade = shadows.fit->cascades[i];
-        // w is the cascade's depth range in world units, which is what turns the
-        // [0, 1] depths the shader compares back into metres. Only the margin
-        // debug view reads it; the comparison itself never needs the scale.
-        constants.shadowCascade[i] = glm::vec4(cascade.splitFarView,
-                                               CascadeDepthBiasNdc(cascade, shadows.settings),
-                                               CascadeNormalOffsetWorld(cascade, shadows.settings),
-                                               cascade.depthRange);
-        constants.shadowViewProjection[i] = cascade.viewProjection;
-    }
-    // z is the penumbra cap divided by the filter's radius, so the shader can
-    // turn it into a tap step with one divide by the cascade's own depth range —
-    // which is the same 2r the cascade's box is wide. Infinite for a filter with
-    // no kernel of its own, so the min below it never bites.
-    const float radiusTaps = FilterRadiusTaps(shadows.settings.filter);
-    const float cappedStepNumerator =
-        radiusTaps > 0.f ? kMaxPenumbraWorld / radiusTaps : std::numeric_limits<float>::max();
-    // The cascade's depth range cancels: a blocker distance read in the map's own
-    // [0, 1] depth, times this, is already the UV step that gives the penumbra
-    // the sun's angular radius calls for at that distance.
-    const float contactStepNumerator =
-        radiusTaps > 0.f ? kSunPenumbraPerWorldUnit / radiusTaps : std::numeric_limits<float>::max();
-    constants.shadowParams = glm::vec4(ShadowTexelSizeUv(shadows.settings), shadows.settings.cascadeBlend,
-                                       cappedStepNumerator, contactStepNumerator);
-
-    constants.shadowPcss = glm::vec4(0.f);
-    if (shadows.sunPcss)
-    {
-        const SunPcssConstants sunPcss = SunPcssFrameConstants(shadows.settings);
-        constants.shadowPcss =
-            glm::vec4(sunPcss.penumbraUvPerDepth, sunPcss.maxReachUv, sunPcss.texelDepth, kMaxPenumbraWorld);
-    }
-
-    commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 
 void MeshPass::SetShadowMap(nvrhi::ITexture *cascades)

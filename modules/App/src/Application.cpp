@@ -258,7 +258,7 @@ bool Application::InitializePresentation()
     // for: 1440p on a 1440p display does not fit once a title bar is added, and
     // a report labelled 1440p that rendered 2560x1400 is quoting a workload
     // nobody ran.
-    winCfg.Undecorated = _perfCapture != nullptr;
+    winCfg.Undecorated = _perfCapture != nullptr || (_captureWidth > 0 && _captureHeight > 0);
 
     _window = std::make_unique<Window::WindowContext>(winCfg);
     if (!_window->IsValid())
@@ -443,6 +443,12 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     _capturePerPassTiming = config.perPassTiming;
     _captureImagePath = config.imagePath;
     _captureOptionsPath = config.optionsPath;
+}
+
+void Application::SetExactResolution(int32_t width, int32_t height)
+{
+    _captureWidth = width;
+    _captureHeight = height;
 }
 
 void Application::RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context)
@@ -709,7 +715,7 @@ void Application::Run()
             // what matters is the total the frame paid, and N nested identical
             // slices would bury it.
             ASSISI_PROFILE_SCOPE("fixed-update");
-            accumulator += dt;
+            accumulator += SimulationSeconds(dt);
             while (accumulator >= physicsStep)
             {
                 // The network clock. Incremented with the step, before the hook,
@@ -1105,6 +1111,14 @@ void Application::RenderFrame()
         }
     }
 
+    // A picture an app asked for, which unlike the capture's does not end the run.
+    Render::FrameCapture requestedCapture;
+    std::string requestedPath;
+    requestedPath.swap(_frameImagePath);
+    const bool requestedImage =
+        !requestedPath.empty() &&
+        requestedCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
+
     {
         // One scope, because what happens inside belongs to whoever overrode
         // this: bringing a UI toolkit up, drawing into it and submitting it are
@@ -1125,6 +1139,10 @@ void Application::RenderFrame()
     {
         (void)frameCapture.Write(vulkanContext->GetDevice(), _captureImagePath);
         RequestClose();
+    }
+    if (requestedImage)
+    {
+        (void)requestedCapture.Write(vulkanContext->GetDevice(), requestedPath);
     }
 }
 

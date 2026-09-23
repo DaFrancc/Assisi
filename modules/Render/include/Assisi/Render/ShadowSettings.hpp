@@ -138,6 +138,10 @@ inline constexpr std::uint32_t kShadowTierCount = 4; // presets only; Custom is 
 inline constexpr std::uint32_t kMaxShadowCascades = 8;
 inline constexpr std::uint32_t kMinShadowCascades = 1;
 
+/// @brief The most sun views one frame draws: every cascade's still layer
+/// rebaked, and the movers drawn over every cascade.
+inline constexpr std::uint32_t kMaxSunShadowViews = 2 * kMaxShadowCascades;
+
 /// @brief Cascade resolution bounds. The floor is where a 3x3 kernel stops
 /// resolving anything at typical splits; the ceiling is 4 x 4096^2 x 4 bytes,
 /// which is already 256 MiB of shadow map.
@@ -286,9 +290,10 @@ struct SunShadowCadenceSettings
     /// Texels of tolerated shadow-edge drift.
     ///
     /// A cascade's own texel, so this means the same thing in a near cascade
-    /// covering a courtyard and a far one covering the district. Two things are
-    /// measured against it: how far the fitted centre has walked, and how far the
-    /// sun's rotation moves an edge over the cascade's depth range.
+    /// covering a courtyard and a far one covering the district. What is
+    /// measured against it is how far the sun's rotation moves an edge over the
+    /// cascade's depth range. The camera's movement is not: a kept map stays
+    /// right for as long as the slice is inside it (see kCascadePadding).
     ///
     /// Half a texel is at or below the half-texel the hardware's own bilinear
     /// comparison already softens every edge by, so the step a re-render makes is
@@ -357,21 +362,21 @@ struct SunShadowSettings
 
 /// @brief Bounds on how many atlas faces may be re-rendered in one frame.
 ///
-/// The ceiling is above every tier's total face count — 64 spots and 16 points
-/// is 160 — so setting it there is "never wait", which is what the A/B against
+/// The ceiling is above every tier's total face count — 128 spots and 32 points
+/// is 320 — so setting it there is "never wait", which is what the A/B against
 /// the uncached path wants. The floor is one rather than zero: a budget of zero
 /// re-renders nothing ever, which is not a slower cache but a broken one.
 inline constexpr std::uint32_t kMinShadowBakeBudget = 1;
-inline constexpr std::uint32_t kMaxShadowBakeBudget = 256;
+inline constexpr std::uint32_t kMaxShadowBakeBudget = 512;
 
-/// @brief Bounds on how long a caster must hold still before it rejoins the
-/// cached layer.
+/// @brief Bounds on how long, in seconds, a caster must hold still before it
+/// rejoins the still layers.
 ///
-/// The floor is one frame, which is no hysteresis at all: every pause in a
-/// motion re-bakes. The ceiling is four seconds at 60 Hz, past which a thing
+/// The floor is about a frame at 60 Hz, which is barely any hysteresis: every
+/// pause in a motion re-bakes. The ceiling is four seconds, past which a thing
 /// that stopped moving is still being drawn as though it might not have.
-inline constexpr std::uint32_t kMinPromoteStillFrames = 1;
-inline constexpr std::uint32_t kMaxPromoteStillFrames = 240;
+inline constexpr float kMinPromoteStillSeconds = 1.f / 60.f;
+inline constexpr float kMaxPromoteStillSeconds = 4.f;
 
 /// @brief Bounds on the update-rate divisor a light's dynamic layer may be
 /// throttled to. One is every frame; three is every third.
@@ -394,10 +399,9 @@ inline constexpr float kMaxLocalSourceRadius = 1.f;
 ///
 /// A tile's depth is two layers: what the still geometry recorded, which changes
 /// only when that geometry does, and what the moving geometry records, which
-/// changes every frame. Cached, a tile costs a copy of the first plus a draw of
-/// the second — and a light with nothing moving under it costs nothing at all,
-/// because its tile already holds the right depth from whenever it was last
-/// drawn.
+/// changes whenever it moves. Cached, a tile costs a draw of the second only —
+/// and a light with nothing moving under it costs nothing at all, because its
+/// tile already holds the right depth from whenever it was last drawn.
 ///
 /// Which casters are "still" is inferred rather than authored: Transform carries
 /// a change tick, so a caster that has not been written is one that has not
@@ -420,16 +424,22 @@ struct LocalShadowCacheSettings
     /// drawn, and that is a dimmer image rather than a wrong one.
     std::uint32_t updateBudgetFaces = 32;
 
-    /// Frames a caster must hold still before it is folded back into the cached
-    /// layer.
+    /// Seconds a caster must hold still before it is folded back into the still
+    /// layers — the sun's cascades and the local-light tiles alike.
     ///
-    /// A caster's first moved frame drops it out of the cached layer of every
-    /// tile it touches — one re-bake — and it draws with the movers until it
-    /// settles, at which point it is folded back in with one more. So a motion
-    /// episode costs two re-bakes however long it lasts, and standing still
-    /// costs none. Without the wait, a caster that pauses mid-motion re-bakes
-    /// every tile around it and then immediately undoes that.
-    std::uint32_t promoteStillFrames = 30;
+    /// A caster's first move drops it out of the still layer of every cascade
+    /// and tile it reaches — one re-bake — and it draws with the movers until
+    /// it settles, at which point it is folded back in with one more. So a
+    /// motion episode costs two re-bakes however long it lasts, and standing
+    /// still costs none. Without the wait, a caster that pauses mid-motion
+    /// re-bakes everything around it and then immediately undoes that.
+    ///
+    /// Time rather than frames: a mover is only ever written on the game's
+    /// tick, so at a high frame rate a count of frames is a sliver of a second,
+    /// and something swinging through the still point of an oscillation would
+    /// settle and wake again every cycle. Staying a mover costs little; each
+    /// change of side is a re-bake.
+    float promoteStillSeconds = 1.f;
 
     /// The slowest rate a light's moving layer may be redrawn at: 1 is every
     /// frame, 2 every other, 3 every third.
@@ -658,8 +668,9 @@ struct ShadowSettings
 
     settings.cache.updateBudgetFaces =
         std::clamp(settings.cache.updateBudgetFaces, kMinShadowBakeBudget, kMaxShadowBakeBudget);
-    settings.cache.promoteStillFrames =
-        std::clamp(settings.cache.promoteStillFrames, kMinPromoteStillFrames, kMaxPromoteStillFrames);
+    settings.cache.promoteStillSeconds =
+        ClampFiniteShadow(settings.cache.promoteStillSeconds, kMinPromoteStillSeconds, kMaxPromoteStillSeconds,
+                          defaults.cache.promoteStillSeconds);
     settings.cache.movingLightUpdateDivisor =
         std::clamp(settings.cache.movingLightUpdateDivisor, kMinLightUpdateDivisor, kMaxLightUpdateDivisor);
     return settings;
@@ -750,8 +761,8 @@ struct ShadowSettings
         settings.local.atlasResolution = 8192;
         settings.local.faceResolution = 512;
         settings.local.filter = ShadowFilter::Vogel;
-        settings.selection.capSpot = 64;
-        settings.selection.capPoint = 16;
+        settings.selection.capSpot = 128;
+        settings.selection.capPoint = 32;
         // Provisional, as every tier value is until its cost is measured: the
         // sun alone, because a local light's search is paid once per light per
         // fragment rather than once per fragment.
@@ -798,36 +809,49 @@ struct ShadowSettings
     return ShadowTier::Custom;
 }
 
-/// @brief Bytes the cascade array occupies at these settings.
+/// @brief Bytes one texel of a depth map in @p format occupies.
+[[nodiscard]] inline std::uint64_t ShadowTexelBytes(ShadowMapFormat format)
+{
+    constexpr std::uint64_t kD16Bytes = 2;
+    constexpr std::uint64_t kD32Bytes = 4;
+    return format == ShadowMapFormat::D16 ? kD16Bytes : kD32Bytes;
+}
+
+/// @brief Bytes the sun's cascades occupy at these settings.
+///
+/// Two arrays of them: the still casters' depth alone, and the slice the
+/// shader reads with the movers drawn over it (see ShadowPass). The first is
+/// what lets a cascade be kept while things move through it, and it is the
+/// same shape as the second, so it exactly doubles the figure.
 [[nodiscard]] inline std::uint64_t SunShadowMemoryBytes(const SunShadowSettings &settings)
 {
+    constexpr std::uint64_t kCascadeArrays = 2;
     const SunShadowSettings safe = Sanitized(settings);
     if (!safe.enabled)
     {
         return 0;
     }
-    const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
     const std::uint64_t texels = static_cast<std::uint64_t>(safe.resolution) * safe.resolution * safe.cascadeCount;
-    return texels * bytesPerTexel;
+    return texels * ShadowTexelBytes(safe.format) * kCascadeArrays;
 }
 
 /// @brief Bytes the local-light atlas occupies at these settings. One texture
 /// whatever the light count is — that is the point of an atlas.
 ///
-/// Two textures when tiles are cached: the still geometry's depth is kept in its
-/// own atlas so a tile can be composed from it without having been redrawn, and
-/// that second copy is the whole price of the cache. It is the same shape as the
-/// first, so caching exactly doubles this figure.
+/// Two layers when tiles are cached: the still geometry's depth, sampled in
+/// place, and the moving geometry's beside it (see LocalShadowPass). The second
+/// is the whole price of the cache, and it is the same shape as the first, so
+/// caching exactly doubles this figure.
 [[nodiscard]] inline std::uint64_t LocalShadowMemoryBytes(const LocalShadowSettings &settings)
 {
+    constexpr std::uint64_t kCachedLayers = 2;
     const LocalShadowSettings safe = Sanitized(settings);
     if (!safe.enabled)
     {
         return 0;
     }
-    const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
     const std::uint64_t texels = static_cast<std::uint64_t>(safe.atlasResolution) * safe.atlasResolution;
-    return texels * bytesPerTexel * (safe.cache.enabled ? 2u : 1u);
+    return texels * ShadowTexelBytes(safe.format) * (safe.cache.enabled ? kCachedLayers : 1u);
 }
 
 /// @brief Bytes every shadow map occupies at these settings. What the tier

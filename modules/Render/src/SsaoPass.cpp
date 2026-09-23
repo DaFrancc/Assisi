@@ -9,6 +9,8 @@
 #include <Assisi/Render/Ssao.hpp>
 
 #include <algorithm>
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Render
@@ -50,6 +52,13 @@ ASSISI_GPU_NO_TAIL_PADDING(SsaoConstants, kernel);
 // The blur's axis, as ssao_blur.frag's push constant reads it.
 using BlurAxis = glm::ivec2;
 
+// The blur's two textures, at the layout(binding = …) ssao_blur.frag reads them.
+enum class BlurTexture : std::uint8_t
+{
+    Occlusion = 0,
+    Distance = 1,
+};
+
 nvrhi::FramebufferInfo SingleTargetInfo(nvrhi::Format format)
 {
     nvrhi::FramebufferInfo info;
@@ -80,8 +89,8 @@ bool SsaoPass::Initialize(const InitParams &params)
     nvrhi::BindingLayoutDesc blur;
     blur.visibility = nvrhi::ShaderType::Pixel;
     blur.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
-    blur.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
-    blur.addItem(nvrhi::BindingLayoutItem::Texture_SRV(1));
+    blur.addItem(nvrhi::BindingLayoutItem::Texture_SRV(std::to_underlying(BlurTexture::Occlusion)));
+    blur.addItem(nvrhi::BindingLayoutItem::Texture_SRV(std::to_underlying(BlurTexture::Distance)));
     blur.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BlurAxis)));
     _blurLayout = _device->createBindingLayout(blur);
 
@@ -196,8 +205,8 @@ void SsaoPass::CreateBindingSets()
     {
         nvrhi::BindingSetDesc desc;
         desc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _constants));
-        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, input));
-        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(1, _distance));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(std::to_underlying(BlurTexture::Occlusion), input));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(std::to_underlying(BlurTexture::Distance), _distance));
         desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(BlurAxis)));
         return _device->createBindingSet(desc, _blurLayout);
     };

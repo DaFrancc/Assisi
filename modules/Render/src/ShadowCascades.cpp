@@ -2,8 +2,13 @@
 
 #include <Assisi/Render/ShadowCascades.hpp>
 
+#include <Assisi/Core/ContentHash.hpp>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 
 namespace Assisi::Render
 {
@@ -27,6 +32,16 @@ glm::vec3 SafeLightDirection(const glm::vec3 &direction)
     return lengthSq > 0.f && std::isfinite(lengthSq) ? direction / std::sqrt(lengthSq) : kFallbackLightDirection;
 }
 } // namespace
+
+std::uint64_t ShadowMoverSignature(const ShadowMover &mover)
+{
+    const std::array<float, 4> sphere{mover.worldSphere.center.x, mover.worldSphere.center.y,
+                                      mover.worldSphere.center.z, mover.worldSphere.radius};
+    std::array<std::byte, sizeof(mover.casterId) + sizeof(sphere)> bytes{};
+    std::memcpy(bytes.data(), &mover.casterId, sizeof(mover.casterId));
+    std::memcpy(bytes.data() + sizeof(mover.casterId), sphere.data(), sizeof(sphere));
+    return Core::ContentHash64(bytes);
+}
 
 float PracticalSplitDistance(float nearZ, float farZ, std::uint32_t index, std::uint32_t count, float lambda)
 {
@@ -180,9 +195,14 @@ CascadeFit FitCascades(const CascadeFitParams &params)
         const Geometry::BoundingSphere sphere =
             FrustumSliceSphere(inverseCameraView, params.tanHalfFovY, params.aspectRatio, splitNear, splitFar);
 
-        // The box is 2r across and `resolution` texels wide, so this is what one
-        // texel covers — the scale every bias in this cascade is quoted in.
-        const float worldUnitsPerTexel = 2.f * sphere.radius / static_cast<float>(settings.resolution);
+        // The box is the padded sphere, the same size along the light as across
+        // it, so the depth range equals the box's width — the identity the
+        // shader's contact-hardening scale rests on.
+        const float extent = sphere.radius * (1.f + kCascadePadding);
+
+        // The box is 2 * extent across and `resolution` texels wide, so this is
+        // what one texel covers — the scale every bias in this cascade is quoted in.
+        const float worldUnitsPerTexel = 2.f * extent / static_cast<float>(settings.resolution);
         const glm::vec3 center = SnapToTexelGrid(sphere.center, lightRotation, worldUnitsPerTexel);
 
         // The slice's own extent along the light, and nothing more. A caster
@@ -197,19 +217,19 @@ CascadeFit FitCascades(const CascadeFitParams &params)
         // map absorbs and a 16-bit one does not: the quantisation step grows
         // with it until it passes the constant bias meant to cover it.
         const float centerAlongLight = glm::dot(center, lightDirection);
-        const float nearAlongLight = centerAlongLight - sphere.radius;
-        const float depthRange = 2.f * sphere.radius;
+        const float nearAlongLight = centerAlongLight - extent;
+        const float depthRange = 2.f * extent;
 
         // The eye moves only along the light, so its light-space XY still match
         // the snapped centre's and the texel lattice survives the pull-back.
         const glm::vec3 eye = center - lightDirection * (centerAlongLight - nearAlongLight);
         const glm::mat4 lightView = lightRotation * glm::translate(glm::mat4(1.f), -eye);
-        const glm::mat4 lightProjection =
-            glm::ortho(-sphere.radius, sphere.radius, -sphere.radius, sphere.radius, 0.f, depthRange);
+        const glm::mat4 lightProjection = glm::ortho(-extent, extent, -extent, extent, 0.f, depthRange);
 
         fit.cascades[i] = ShadowCascade{.viewProjection = lightProjection * lightView,
                                         .center = center,
                                         .radius = sphere.radius,
+                                        .extent = extent,
                                         .splitNearView = splitNear,
                                         .splitFarView = splitFar,
                                         .worldUnitsPerTexel = worldUnitsPerTexel,
@@ -229,8 +249,10 @@ constexpr float kBoxCircumradiusPerHalfExtent = 1.7320508f;
 
 Geometry::BoundingSphere CascadeVolumeBounds(const ShadowCascade &cascade)
 {
+    // The box the map covers, margin included: a kept map is read over all of
+    // it as the camera drifts, so a caster anywhere in it has to be drawn.
     return Geometry::BoundingSphere{.center = cascade.center,
-                                    .radius = cascade.radius * kBoxCircumradiusPerHalfExtent};
+                                    .radius = cascade.extent * kBoxCircumradiusPerHalfExtent};
 }
 
 std::uint32_t CascadeVolumeBounds(const CascadeFit &fit, std::span<Geometry::BoundingSphere> out)
@@ -351,7 +373,7 @@ float CascadeFilterTapStepUv(const ShadowCascade &cascade, const SunShadowSettin
     const SunShadowSettings safe = Sanitized(settings);
     const float texelUv = ShadowTexelSizeUv(safe);
     const float radiusTaps = FilterRadiusTaps(safe.filter);
-    const float boxWidth = 2.f * cascade.radius;
+    const float boxWidth = 2.f * cascade.extent;
     if (!(radiusTaps > 0.f) || !(boxWidth > 0.f))
     {
         return texelUv;
@@ -368,7 +390,7 @@ float CascadeFilterTapStepUv(const ShadowCascade &cascade, const SunShadowSettin
 float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings &settings)
 {
     const SunShadowSettings safe = Sanitized(settings);
-    const float boxWidth = 2.f * cascade.radius;
+    const float boxWidth = 2.f * cascade.extent;
     const float kernelUv = FilterRadiusTaps(safe.filter) * CascadeFilterTapStepUv(cascade, safe);
     // The hardware compares against four texels and blends, so every filter —
     // the one-tap one included — is soft to half a texel before its own kernel

@@ -50,6 +50,29 @@ struct ShadowMover
     Geometry::BoundingSphere worldSphere;
 };
 
+/// @brief One mover's contribution to the fingerprint of a layer it is drawn
+/// into: which caster, and exactly where.
+///
+/// A layer's fingerprint is the sum of these over its movers, so it does not
+/// depend on the order they arrive in — the mobility table hands them over in
+/// hash-map order, which changes whenever the map rehashes. An unchanged sum is
+/// a layer whose redraw would put back the depth it already holds.
+[[nodiscard]] std::uint64_t ShadowMoverSignature(const ShadowMover &mover);
+
+/// @brief How much larger than its slice's sphere a cascade's map is, as a
+/// fraction of the radius.
+///
+/// A map exactly the sphere's size has to be redrawn whenever the camera
+/// crosses a texel, which a moving camera does nearly every frame. With a
+/// margin the map stays put until the sphere leaves it: at a tenth of the
+/// radius, a camera moving 4 cm a frame keeps the nearest cascade for about
+/// five frames and the farthest for well over a hundred.
+///
+/// The cost is texels a tenth larger, and that is what bounds it: Ultra's
+/// cascade seams are held to about a pixel at the gate resolution, and a
+/// quarter of the radius breaks that where a tenth does not.
+inline constexpr float kCascadePadding = 0.1f;
+
 /// @brief One fitted cascade: the matrix the depth pass draws with, and the
 /// scalars the mesh shader needs to sample and bias it.
 struct ShadowCascade
@@ -62,6 +85,12 @@ struct ShadowCascade
     /// texels; the radius is fixed for a given split pair and field of view.
     glm::vec3 center{0.f};
     float radius = 0.f;
+
+    /// Half the side of the box the map covers, in every direction including
+    /// along the light: the radius padded by kCascadePadding. The margin is what
+    /// lets the map be kept while the camera moves, until the slice's sphere
+    /// leaves the box.
+    float extent = 0.f;
 
     /// View-space distances this cascade covers. The mesh shader selects on
     /// `splitFarView`, and fades into the next cascade over the end of the range.
@@ -171,6 +200,22 @@ struct CascadeFitParams
 /// masks. Conservative rather than clever, because a bit that does not exist
 /// cannot be read as "not a member" without dropping shadows.
 inline constexpr std::uint32_t kShadowViewMaskBits = 32;
+
+/// @brief The mask naming the first @p count views, every bit when @p count
+/// reaches the mask's width — where a plain `(1u << count) - 1` would shift by
+/// the whole width, which C++ leaves undefined.
+[[nodiscard]] constexpr std::uint32_t ShadowViewBits(std::uint32_t count)
+{
+    return count >= kShadowViewMaskBits ? ~0u : (1u << count) - 1u;
+}
+
+/// @brief @p mask with its first @p count views dropped and the rest moved
+/// down to start at bit zero — the mask as a list of views that begins after
+/// them would number it. Empty when @p count is the whole width.
+[[nodiscard]] constexpr std::uint32_t ShadowViewBitsAfter(std::uint32_t mask, std::uint32_t count)
+{
+    return count >= kShadowViewMaskBits ? 0u : mask >> count;
+}
 
 /// @brief Which of @p volumes @p caster can cast into, one bit per volume.
 ///

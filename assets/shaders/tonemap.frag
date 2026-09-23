@@ -92,9 +92,13 @@ vec3 Reinhard(vec3 x)
     return x / (x + vec3(1.0));
 }
 
+// The display's transfer curve, approximated as a power. mesh.frag repeats it
+// for the debug views this pass leaves untouched.
+const float kDisplayGamma = 2.2;
+
 vec3 EncodeGamma(vec3 x)
 {
-    return pow(max(x, vec3(0.0)), vec3(1.0 / 2.2));
+    return pow(max(x, vec3(0.0)), vec3(1.0 / kDisplayGamma));
 }
 
 // The grade, an ASC CDL power plus a saturation about the pixel's luma. AgX is

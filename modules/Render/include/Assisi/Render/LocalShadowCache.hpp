@@ -6,10 +6,10 @@
 /// redrawn because they do not.
 ///
 /// A local light's tile is two layers. The still geometry's depth changes only
-/// when that geometry does, so it is kept and copied; the moving geometry's is
-/// redrawn every frame it is wanted. A light with nothing moving under it
-/// therefore costs neither — its tile already holds what it should, from
-/// whenever it was last drawn.
+/// when that geometry does, so it is kept and sampled in place; the moving
+/// geometry's is redrawn whenever the movers in it change. A light with nothing
+/// moving under it therefore costs neither — its tile already holds what it
+/// should, from whenever it was last drawn.
 ///
 /// Everything that decides this is here, and it is here alone because this is
 /// the one stage that can produce a **stale shadow**: a tile kept when it should
@@ -34,6 +34,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <iterator>
 #include <unordered_map>
 #include <vector>
 
@@ -96,6 +97,14 @@ struct LocalShadowServedTile
 /// that is what the budget spends itself against.
 struct LocalShadowTilePlan
 {
+    /// Per face, a fingerprint of the movers it holds this frame: which
+    /// casters, and exactly where. Zero for a face nothing moves over.
+    std::array<std::uint64_t, kMaxLocalShadowFaces> moverSignature{};
+    /// The same fingerprint for what the moving layer was last drawn with, while
+    /// @ref retained. Equal to @ref moverSignature means a redraw would put back
+    /// the depth already there.
+    std::array<std::uint64_t, kMaxLocalShadowFaces> drawnMoverSignature{};
+
     /// Whether the light kept the rectangles it held last frame. False means the
     /// atlas must cut it new ones, and that whatever is in them belongs to
     /// somebody else.
@@ -110,14 +119,23 @@ struct LocalShadowTilePlan
     /// a fresh rectangle holds another light's depth entirely.
     std::uint32_t dirtyFaces = 0;
 
+    /// Faces something moving can cast into this frame, as a bit each.
+    std::uint32_t moverFaces = 0;
+
+    /// Faces whose moving layer holds movers and is sampled beside the still
+    /// layer. On a frame the movers are redrawn this is @ref moverFaces; under
+    /// the throttle it is what the last redraw left, because that is what the
+    /// moving layer still holds.
+    std::uint32_t liveMoverFaces = 0;
+
     /// Whether anything is moving inside this light's reach. False is the
-    /// resting case: the tile is composed of the cached layer and nothing else,
-    /// so there is no draw to make at all.
+    /// resting case: the tile is the cached layer and nothing else, so there is
+    /// no draw to make at all.
     bool hasMovers = false;
 
-    /// Whether the moving layer is redrawn this frame. False only under the
-    /// update-rate throttle, and never for a light with no cached tile to fall
-    /// back on.
+    /// Whether the moving layer is redrawn this frame. False under the
+    /// update-rate throttle, and when no mover has changed since the last
+    /// redraw; never for a light with no cached tile to fall back on.
     bool redrawMovers = true;
 
     /// Whether the budget refused this light's re-render.
@@ -143,6 +161,9 @@ struct LocalShadowCachePlanStats
     std::uint32_t deferredLights = 0;
     /// Lights whose moving layer was skipped by the update-rate throttle.
     std::uint32_t throttledLights = 0;
+    /// Lights with movers whose moving layer was skipped because every one of
+    /// them stands where the last redraw drew it.
+    std::uint32_t unchangedMoverLights = 0;
     /// Casters drawn with the movers this frame, and casters folded back into
     /// the cached layer by having held still long enough.
     std::uint32_t dynamicCasters = 0;
@@ -177,6 +198,8 @@ public:
 
     /// @brief Fold this frame's movement in and age everything else.
     ///
+    /// @p nowSeconds is a monotonic clock; a caster still for
+    /// @p promoteStillSeconds of it rejoins the still layers.
     /// @p moved names the casters written this frame and where they now are.
     /// @p dynamicOut receives every caster that draws with the movers this frame.
     /// @p invalidateOut receives every caster that changed sides this frame,
@@ -184,7 +207,7 @@ public:
     /// is taking — which is what the tiles are dirtied against.
     ///
     /// Both outputs are cleared and refilled.
-    void Update(std::uint32_t frameIndex, std::uint32_t promoteStillFrames, std::span<const ShadowMover> moved,
+    void Update(double nowSeconds, float promoteStillSeconds, std::span<const ShadowMover> moved,
                 std::vector<ShadowMover> &dynamicOut, std::vector<ShadowMover> &invalidateOut);
 
     /// @brief Whether @p casterId draws with the movers rather than into the
@@ -194,6 +217,38 @@ public:
     /// @brief How many casters are moving right now.
     [[nodiscard]] std::uint32_t DynamicCount() const { return _dynamicCount; }
 
+    /// @brief Forget every caster @p gone says no longer exists, or no longer
+    /// casts.
+    ///
+    /// A caster that was baked into a kept layer is still drawn there, so the
+    /// next Update invalidates where it was baked and the tiles are redrawn
+    /// without it. One that was moving leaves the movers, which changes what
+    /// the moving layer of every face it reached should hold. Called with a
+    /// predicate rather than a list because only the caller can resolve a
+    /// caster id to whatever it names.
+    template <typename Gone> void DropIf(Gone &&gone)
+    {
+        for (auto entry = _casters.begin(); entry != _casters.end();)
+        {
+            entry = gone(entry->first) ? Drop(entry) : std::next(entry);
+        }
+    }
+
+    /// @brief Forget @p casterId, as DropIf would. For a caller that already
+    /// knows which casters went. A caster with no record is a no-op.
+    void Drop(std::uint64_t casterId)
+    {
+        const auto found = _casters.find(casterId);
+        if (found != _casters.end())
+        {
+            (void)Drop(found);
+        }
+    }
+
+    /// @brief The casters that draw with the movers, as the last Update left
+    /// them — the same list it wrote to its `dynamicOut`.
+    [[nodiscard]] std::span<const ShadowMover> Dynamic() const { return _dynamic; }
+
     /// @brief Forget everything. What a level load wants, and what turning the
     /// cache off and on again wants: the recorded poses describe an atlas that
     /// no longer holds them.
@@ -202,17 +257,40 @@ public:
 private:
     struct Record
     {
-        /// Where the cached layer has this caster, if it is in one.
-        Geometry::BoundingSphere bakedSphere;
-        bool baked = false;
+        /// When it last moved, on the clock Update is given.
+        double lastMovedSeconds = 0.0;
 
-        /// Where it stands now, and the frame that was last true of.
+        /// Where the still layers have this caster, if they have it.
+        Geometry::BoundingSphere bakedSphere;
+
+        /// Where it stands now.
         Geometry::BoundingSphere sphere;
-        std::uint32_t lastMovedFrame = 0;
+        bool baked = false;
         bool dynamic = false;
     };
 
-    std::unordered_map<std::uint64_t, Record> _casters;
+    using CasterMap = std::unordered_map<std::uint64_t, Record>;
+
+    /// Erase one record, owing an invalidation where it was baked. Returns the
+    /// entry after it.
+    CasterMap::iterator Drop(CasterMap::iterator entry)
+    {
+        const Record &record = entry->second;
+        if (record.dynamic)
+        {
+            --_dynamicCount;
+        }
+        else if (record.baked)
+        {
+            _pendingInvalidations.push_back(ShadowMover{entry->first, record.bakedSphere});
+        }
+        return _casters.erase(entry);
+    }
+
+    CasterMap _casters;
+    std::vector<ShadowMover> _dynamic;
+    // Invalidations DropIf owes the next Update: where a dropped caster was baked.
+    std::vector<ShadowMover> _pendingInvalidations;
     std::uint32_t _dynamicCount = 0;
 };
 
@@ -306,6 +384,9 @@ public:
 private:
     struct Entry
     {
+        /// See LocalShadowTilePlan::moverSignature: what the moving layer of
+        /// this light's tiles was last drawn with.
+        std::array<std::uint64_t, kMaxLocalShadowFaces> moverSignature{};
         std::uint32_t sizeClass = 0;
         std::uint32_t faces = 0;
         std::array<ShadowViewRect, kMaxLocalShadowFaces> rect{};
@@ -313,6 +394,9 @@ private:
         /// Faces whose still layer is out of date. Carried across frames: a face
         /// the budget refused stays dirty until a frame has room for it.
         std::uint32_t dirtyFaces = 0;
+        /// See LocalShadowTilePlan::liveMoverFaces: what the moving layer of
+        /// this light's tiles holds, carried to a frame the throttle skips.
+        std::uint32_t liveMoverFaces = 0;
         std::uint32_t lastBakeFrame = 0;
         std::uint32_t lastMoverDrawFrame = 0;
         std::uint32_t lastSeenFrame = 0;

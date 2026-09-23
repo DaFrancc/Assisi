@@ -26,6 +26,7 @@
 /// any override, since each one does the engine half of its own job.
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/CameraBenchmark.hpp>
 #include <Assisi/App/CookedAssets.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/PakProvider.hpp>
@@ -38,6 +39,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <string>
 
 namespace Assisi::App
 {
@@ -45,9 +47,47 @@ namespace Assisi::App
 /// @brief The name of the content package a game reads, beside its executable.
 inline constexpr const char *kDefaultPakName = "assets.pak";
 
+/// @brief How many pictures a shots run takes along the route unless told
+/// otherwise. Enough that a route which dips close to the geometry is caught
+/// there as well as from afar.
+inline constexpr std::int32_t kDefaultBenchmarkShotCount = 24;
+
+/// @brief A benchmark run: the camera flies the level's route, a Chiara session
+/// records it, and the game exits when the route ends.
+///
+/// Renders uncapped at 1920x1080 with 8x MSAA and FXAA and the Ultra shadow tier, with every
+/// other graphics setting at its default, whatever the player's options say. So
+/// runs on different machines and days measure the same settings. The options
+/// are changed for the run only; a game never saves them.
+struct GameBenchmark
+{
+    /// The level to fly. Empty flies the startup scene.
+    std::string level;
+
+    /// Where to write a picture at each of @ref shotCount points along the
+    /// route, instead of flying it in time and recording a session. Empty flies
+    /// and measures. The pictures are for comparing two builds' images, so the
+    /// run that takes them measures nothing.
+    std::string shotsDirectory;
+
+    /// How long the route takes. The route is scaled to fit.
+    double seconds = kDefaultBenchmarkSeconds;
+
+    /// How many evenly spaced points a shots run stops at.
+    std::int32_t shotCount = kDefaultBenchmarkShotCount;
+
+    /// Time each render pass as well as the frame. Off by default: pass timers
+    /// split render passes, so the frame they time is not the frame that ships.
+    bool passTiming = false;
+};
+
 /// @brief What a game is launched with, as the command line resolved it.
 struct GameLaunch
 {
+    /// Set for a benchmark run. Only a build with Chiara compiled in parses the
+    /// flag, since a benchmark names a level and a shipped game takes none.
+    std::optional<GameBenchmark> benchmark;
+
     /// The content package to read. Empty reads kDefaultPakName beside the
     /// executable, which is the only one a shipped build can name.
     std::filesystem::path pak;
@@ -62,11 +102,11 @@ struct GameLaunch
 /// @brief The game application. See the file comment.
 class GameApp : public Application
 {
-  public:
+public:
     explicit GameApp(GameLaunch launch);
     ~GameApp() override;
 
-  protected:
+protected:
     /// Opens the content package and installs the readers over it: the asset
     /// source, the level document reader and the config reader. A package that
     /// is missing or unreadable refuses the launch and names its path.
@@ -74,6 +114,10 @@ class GameApp : public Application
 
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
+    /// During a benchmark, the benchmark's run clock: nothing is simulated
+    /// through the load and the warm-up, and after that the world advances as
+    /// the camera does. Real time otherwise.
+    [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
     void OnUpdate(float dt) override;
     void OnRender(Render::RenderFrame &frame) override;
     void OnResize(int32_t width, int32_t height) override;
@@ -92,7 +136,7 @@ class GameApp : public Application
     /// @brief Every resident world, for a game that keeps more than one.
     [[nodiscard]] WorldManager &Worlds() { return _worlds; }
 
-  private:
+private:
     /// Brings up the asset cache and the scene renderer. Windowed runs only —
     /// there is no device in a headless process and nothing to draw with it.
     ///
@@ -108,6 +152,13 @@ class GameApp : public Application
     /// its physics, then its PostFixedUpdate systems. Worlds step sequentially,
     /// which is what lets them share one Jolt thread pool.
     void StepWorlds(float dt);
+
+    /// Overrides the display options for a benchmark run. See GameBenchmark.
+    void ApplyBenchmarkSettings(const GameBenchmark &benchmark);
+
+    /// Moves the benchmark on by one frame, starting the Chiara session when
+    /// the run starts and ending it, and the game, when the run ends.
+    void AdvanceBenchmark();
 
     // Largest first, so the object carries no interior padding.
 
@@ -134,6 +185,12 @@ class GameApp : public Application
     Runtime::Camera _fallbackCamera;
 
     GameLaunch _launch;
+
+    /// Set for a benchmark run once its level has loaded.
+    std::optional<CameraBenchmark> _benchmark;
+
+    /// The benchmark run clock the simulation has been advanced to.
+    double _simulatedRunSeconds = 0.0;
 
     /// The world being played. Points into the manager, which keeps world
     /// addresses stable for their lifetime.

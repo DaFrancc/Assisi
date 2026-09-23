@@ -106,6 +106,12 @@ class Application
     /// case where the render-pass splits those cost are worth paying.
     void SetPerfCapture(const PerfCaptureConfig &config);
 
+    /// @brief Render at exactly @p width by @p height, whatever the options and
+    /// the game config say, in an undecorated window so no title bar takes a
+    /// row of it. For a run whose numbers have to be comparable with another
+    /// machine's or another day's. Must be called before Initialize().
+    void SetExactResolution(int32_t width, int32_t height);
+
     /// @brief Whether this process is a capture run.
     [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
 
@@ -153,6 +159,11 @@ class Application
 
     virtual void OnStart() = 0;
     virtual void OnFixedUpdate(float dt) = 0;
+    /// @brief How far the fixed-step simulation advances for a frame that took
+    /// @p frameSeconds of real time. Real time, unless an app runs the
+    /// simulation from a clock of its own — a benchmark, whose world must be in
+    /// the same state wherever its camera is, whatever the machine did.
+    [[nodiscard]] virtual double SimulationSeconds(double frameSeconds) { return frameSeconds; }
     virtual void OnUpdate(float dt) = 0;
     /// Not pure: a headless app never receives this call and should not have to
     /// write an empty override to say so.
@@ -244,6 +255,15 @@ class Application
     /// it must never be derived from wall-clock time or frame count.
     [[nodiscard]] std::uint64_t GetSimTick() const { return _simTick; }
 
+    /// @brief How much simulated time the ticks so far add up to, in seconds.
+    /// The clock anything measuring how long the world has been doing something
+    /// should read: it moves only when the world does, and the same way in
+    /// every run of a benchmark.
+    [[nodiscard]] double SimulatedSeconds() const
+    {
+        return _config.physicsHz > 0.0 ? static_cast<double>(_simTick) / _config.physicsHz : 0.0;
+    }
+
     /// @brief Fraction of a fixed physics step left unconsumed by the current
     /// frame — in [0, 1). Use it in OnRender() to blend physics-driven state
     /// between its previous and current fixed-step poses (see
@@ -274,6 +294,12 @@ class Application
     [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
 
     void RequestClose();
+
+    /// @brief Write the next finished frame to @p path as a PNG, taken after the
+    /// game UI and before any debug UI. Waits for the GPU that frame, so it is
+    /// for the frames a test compares and never for a measured one. A second
+    /// request before that frame replaces the first.
+    void CaptureNextFrame(std::string path) { _frameImagePath = std::move(path); }
 
     /// @brief Feed one frame to the running capture, and close the app once it
     /// has the frames it asked for.
@@ -433,9 +459,12 @@ class Application
     std::string _captureImagePath;
     std::string _captureOptionsPath;
 
-    /// Resolution a capture asked to render at, 0 when it did not ask. Applied
-    /// in InitializePresentation rather than at SetPerfCapture, because
-    /// Initialize() reloads _config from the game config in between.
+    /// See CaptureNextFrame. Empty when no picture is asked for.
+    std::string _frameImagePath;
+
+    /// Resolution a capture or SetExactResolution asked to render at, 0 when
+    /// nothing asked. Applied in InitializePresentation rather than when set,
+    /// because Initialize() reloads _config from the game config in between.
     int32_t _captureWidth = 0;
     int32_t _captureHeight = 0;
 

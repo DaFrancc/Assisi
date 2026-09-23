@@ -12,6 +12,7 @@
 #if defined(ASSISI_CHIARA_ENABLED)
 
 #    include <atomic>
+#    include <chrono>
 #    include <cstring>
 #    include <string>
 #    include <thread>
@@ -26,16 +27,22 @@ TEST_CASE("Eight threads emit concurrently while a reader walks their open scope
 
     constexpr std::int32_t kThreads    = 8;
     constexpr std::int32_t kIterations = 300;
+    // How long a worker holds its first scope open for the reader to find. Long
+    // past any scheduling delay, so reaching it means the reader cannot see
+    // open scopes at all.
+    constexpr std::chrono::seconds kCatchTimeout{10};
 
     std::atomic<std::int32_t> ready{0};
     std::atomic<bool>         keepReading{true};
+    std::atomic<bool>         readerCaught{false};
     std::vector<std::thread>  workers;
     workers.reserve(kThreads);
+    const std::chrono::steady_clock::time_point catchDeadline = std::chrono::steady_clock::now() + kCatchTimeout;
 
     for (std::int32_t index = 0; index < kThreads; ++index)
     {
         workers.emplace_back(
-            [index, &ready]
+            [index, &ready, &readerCaught, catchDeadline]
         {
             Chiara::RegisterCurrentThread(("chiara-w" + std::to_string(index)).c_str());
             ready.fetch_add(1, std::memory_order_release);
@@ -44,6 +51,15 @@ TEST_CASE("Eight threads emit concurrently while a reader walks their open scope
             {
                 ASSISI_PROFILE_SCOPE("worker-outer");
                 ASSISI_PROFILE_ARG_U64("iteration", static_cast<std::uint64_t>(iteration));
+                // Held open until the reader has seen a scope in flight. Without
+                // this, a loaded machine can run every iteration before the
+                // reader is first scheduled, and the check below fails with
+                // nothing wrong.
+                while (iteration == 0 && !readerCaught.load(std::memory_order_acquire) &&
+                       std::chrono::steady_clock::now() < catchDeadline)
+                {
+                    std::this_thread::yield();
+                }
                 {
                     ASSISI_PROFILE_SCOPE("worker-inner");
                     ASSISI_PROFILE_COUNTER("worker/iteration", static_cast<double>(iteration));
@@ -58,7 +74,7 @@ TEST_CASE("Eight threads emit concurrently while a reader walks their open scope
     // loop deliberately touches only what SnapshotThreads can give safely.
     std::int32_t observedOpenScopes = 0;
     std::thread reader(
-        [&keepReading, &observedOpenScopes]
+        [&keepReading, &observedOpenScopes, &readerCaught]
         {
         while (keepReading.load(std::memory_order_relaxed))
         {
@@ -71,6 +87,7 @@ TEST_CASE("Eight threads emit concurrently while a reader walks their open scope
                     if (open.name != nullptr && open.beginTicks != 0)
                     {
                         ++observedOpenScopes;
+                        readerCaught.store(true, std::memory_order_release);
                     }
                 }
             }

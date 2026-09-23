@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <vector>
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TestComponents.hpp>
@@ -85,6 +86,82 @@ TEST_CASE("Scene: destroy is deferred until FlushDestroyed")
     CHECK_FALSE(scene.IsAlive(e));
     CHECK_FALSE(scene.Has<Position>(e));
     CHECK_FALSE(scene.Has<Velocity>(e));
+}
+
+TEST_CASE("Scene: RemovedSince lists what left after a tick, and only that")
+{
+    Scene scene;
+    const Entity kept = scene.Create();
+    const Entity stripped = scene.Create();
+    const Entity destroyed = scene.Create();
+    for (const Entity e : {kept, stripped, destroyed})
+    {
+        REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
+    }
+
+    const uint64_t before = scene.CurrentChangeTick();
+    scene.Remove<Position>(stripped);
+    scene.Destroy(destroyed);
+
+    // A destroy happens at the flush: until then the entity is alive, and so is
+    // every handle to it.
+    std::vector<Entity> removed;
+    CHECK(scene.RemovedSince<Position>(before, removed));
+    CHECK(removed == std::vector<Entity>{stripped});
+
+    scene.FlushDestroyed();
+    removed.clear();
+    CHECK(scene.RemovedSince<Position>(before, removed));
+    CHECK(removed == std::vector<Entity>{stripped, destroyed});
+
+    // A reader that looked after all that has nothing new to check.
+    removed.clear();
+    CHECK(scene.RemovedSince<Position>(scene.CurrentChangeTick(), removed));
+    CHECK(removed.empty());
+
+    // A component never added has had nothing removed, which is a complete answer.
+    CHECK(scene.RemovedSince<Velocity>(before, removed));
+    CHECK(removed.empty());
+}
+
+TEST_CASE("Scene: RemovedSince admits when it cannot reach back far enough")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
+    const uint64_t before = scene.CurrentChangeTick();
+
+    // A Clear drops the log rather than listing the whole pool, so a reader from
+    // before it is told to check everything it holds.
+    scene.Clear();
+    std::vector<Entity> removed;
+    CHECK_FALSE(scene.RemovedSince<Position>(before, removed));
+    CHECK(scene.RemovedSince<Position>(scene.CurrentChangeTick(), removed));
+
+    // So does one whose cursor predates the entries a full log dropped.
+    const uint64_t start = scene.CurrentChangeTick();
+    constexpr int kChurn = 5000; // past the log's bound
+    for (int i = 0; i < kChurn; ++i)
+    {
+        const Entity churn = scene.Create();
+        REQUIRE(scene.Add<Position>(churn, {0.0f}) != nullptr);
+        scene.Remove<Position>(churn);
+    }
+    removed.clear();
+    CHECK_FALSE(scene.RemovedSince<Position>(start, removed));
+
+    // ...while a reader keeping up every step never is.
+    uint64_t cursor = scene.CurrentChangeTick();
+    for (int i = 0; i < kChurn; ++i)
+    {
+        const Entity churn = scene.Create();
+        REQUIRE(scene.Add<Position>(churn, {0.0f}) != nullptr);
+        scene.Remove<Position>(churn);
+        removed.clear();
+        REQUIRE(scene.RemovedSince<Position>(cursor, removed));
+        REQUIRE(removed == std::vector<Entity>{churn});
+        cursor = scene.CurrentChangeTick();
+    }
 }
 
 TEST_CASE("Scene: clear resets entity ids and leaves pools reusable")

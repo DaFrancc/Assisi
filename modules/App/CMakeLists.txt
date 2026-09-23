@@ -6,6 +6,7 @@ target_sources(Assisi-App
     "include/Assisi/App/AppConfig.hpp"
     "include/Assisi/App/Application.hpp"
     "include/Assisi/App/BlueprintVerbs.hpp"
+    "include/Assisi/App/CameraBenchmark.hpp"
     "include/Assisi/App/ChildProcess.hpp"
     "include/Assisi/App/ContentSet.hpp"
     "include/Assisi/App/CookedAssets.hpp"
@@ -25,6 +26,7 @@ target_sources(Assisi-App
     "src/Application.cpp"
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
+    "src/CameraBenchmark.cpp"
     "src/ChildProcess.cpp"
     "src/ChiaraCapture.cpp"
     "src/ContentSet.cpp"

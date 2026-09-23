@@ -21,24 +21,49 @@ glm::vec3 SafeDirection(const glm::vec3 &direction)
     return direction * (1.f / std::sqrt(lengthSquared));
 }
 
-/// Whether two fits describe the same box, exactly.
+/// Whether two fits cover the same stretch of view distance, exactly.
 ///
-/// Exactly, never within a tolerance: the splits and the radius are recomputed
-/// from unchanged inputs by the same arithmetic every frame, so a still camera
-/// produces bit-identical values and any difference at all is one the depth in
-/// the slice did not see. Everything else a fit carries — the texel size, the
-/// depth range, the matrix — is derived from the radius, so comparing the radius
-/// covers them.
-bool SameShape(const ShadowCascade &lhs, const ShadowCascade &rhs)
+/// Exactly, never within a tolerance: the splits are recomputed from unchanged
+/// inputs by the same arithmetic every frame, so any difference at all is a
+/// changed field of view, clip range or setting the kept map was not fitted for.
+bool SameSplits(const ShadowCascade &lhs, const ShadowCascade &rhs)
 {
-    return lhs.splitNearView == rhs.splitNearView && lhs.splitFarView == rhs.splitFarView && lhs.radius == rhs.radius;
+    return lhs.splitNearView == rhs.splitNearView && lhs.splitFarView == rhs.splitFarView;
+}
+
+/// Whether @p candidate's sphere lies inside the box @p kept's map covers.
+///
+/// Tested in the kept map's own clip space, where its box is [-1, 1] across and
+/// [0, 1] along the light. The projection is orthographic, so a sphere maps to
+/// an axis-aligned box of the radius over the extent across, and the radius over
+/// the depth range along.
+bool Contains(const ShadowCascade &kept, const ShadowCascade &candidate)
+{
+    if (!(kept.extent > 0.f) || candidate.radius > kept.extent)
+    {
+        return false;
+    }
+    const glm::vec4 clip = kept.viewProjection * glm::vec4(candidate.center, 1.f);
+    const float across = candidate.radius / kept.extent;
+    const float along = candidate.radius / kept.depthRange;
+    return std::abs(clip.x) + across <= 1.f && std::abs(clip.y) + across <= 1.f && clip.z - along >= 0.f &&
+           clip.z + along <= 1.f;
 }
 } // namespace
 
 bool SunShadowCadence::WithinTolerance(const Slice &slice, const ShadowCascade &candidate,
                                        const glm::vec3 &lightDirection, float driftTexels)
 {
-    if (!SameShape(slice.cascade, candidate))
+    if (!SameSplits(slice.cascade, candidate))
+    {
+        return false;
+    }
+
+    // The map covers the slice with a margin (see kCascadePadding), so it stays
+    // right for as long as the slice the camera now sees is inside it. The
+    // candidate's own snapped centre does not matter: the kept map is sampled
+    // through its own matrix, on its own texel lattice.
+    if (!Contains(slice.cascade, candidate))
     {
         return false;
     }
@@ -47,20 +72,6 @@ bool SunShadowCadence::WithinTolerance(const Slice &slice, const ShadowCascade &
     // candidate's: the bound is a claim about how far the picture in this slice
     // has slid, and this slice is the one with the texels.
     const float allowance = driftTexels * slice.cascade.worldUnitsPerTexel;
-
-    // Where the fitted centre has walked to. The centre is snapped to the
-    // cascade's own texel lattice, so it moves in whole texels or not at all —
-    // which is why a tolerance under one texel means the camera may not cross a
-    // texel boundary, and why free-look gameplay trips this nearly every frame.
-    //
-    // This is also the term that gives the cascades different cadences: a near
-    // cascade's texel is centimetres and a far one's is metres, so walking
-    // crosses the first constantly and the last hardly at all.
-    const glm::vec3 displacement = candidate.center - slice.cascade.center;
-    if (glm::dot(displacement, displacement) > allowance * allowance)
-    {
-        return false;
-    }
 
     // The sun's rotation times the lever arm is how far a shadow edge moves: an
     // occluder at the far end of the cascade's depth range swings by the angle
@@ -79,7 +90,7 @@ bool SunShadowCadence::WithinTolerance(const Slice &slice, const ShadowCascade &
 void SunShadowCadence::Forget()
 {
     _slices = {};
-    _drawnPose.clear();
+    _movingSignature = {};
     _stats = SunShadowCadenceStats{};
 }
 
@@ -100,7 +111,6 @@ void SunShadowCadence::Plan(const SunShadowCadenceFrame &frame, const CascadeFit
     out.fit.count = count;
 
     const glm::vec3 lightDirection = SafeDirection(frame.lightDirection);
-    const std::uint32_t everyCascade = count == 32u ? ~0u : (1u << count) - 1u;
 
     // Which cascades this frame must draw, as a mask so one dirtied twice is
     // still drawn once. First pass: what the fit and the sun have done.
@@ -124,39 +134,24 @@ void SunShadowCadence::Plan(const SunShadowCadenceFrame &frame, const CascadeFit
         volumes[i] = CascadeVolumeBounds(_slices[i].cascade);
     }
 
-    for (const ShadowMover &mover : frame.movers)
+    // A caster changing sides is the only motion a still layer answers to. Its
+    // sphere already covers both the pose the layer holds it at and the one it
+    // takes, so a caster leaving the layer is erased from where it was, not
+    // only drawn where it went.
+    for (const ShadowMover &changed : frame.invalidations)
     {
-        const auto recorded = _drawnPose.find(mover.casterId);
-        if (recorded == _drawnPose.end())
-        {
-            // Nothing here knows which slices were drawn holding this caster, so
-            // every one of them might have been. Conservative in the direction
-            // that costs a frame rather than the one that leaves a shadow
-            // standing where its object used to be.
-            ++_stats.unrecordedMovers;
-            dirty = everyCascade;
-            _drawnPose.emplace(mover.casterId, Record{mover.worldSphere, frame.frameIndex});
-            continue;
-        }
-
         for (std::uint32_t i = 0; i < count; ++i)
         {
             if (!_slices[i].valid || (dirty & (1u << i)) != 0u)
             {
                 continue;
             }
-            // Both poses: the one the depth holds it at, which the slice has to
-            // lose, and the one it has moved to, which the slice has to gain.
-            // Testing only where it now stands is the missed invalidation that
-            // leaves a shadow behind a caster that walked out of the cascade.
-            if (CasterReachesShadowedVolume(recorded->second.sphere, volumes[i], _slices[i].lightDirection) ||
-                CasterReachesShadowedVolume(mover.worldSphere, volumes[i], _slices[i].lightDirection))
+            if (CasterReachesShadowedVolume(changed.worldSphere, volumes[i], _slices[i].lightDirection))
             {
                 dirty |= 1u << i;
                 ++_stats.dirtiedByMotion;
             }
         }
-        recorded->second = Record{mover.worldSphere, frame.frameIndex};
     }
 
     for (std::uint32_t i = 0; i < count; ++i)
@@ -167,6 +162,10 @@ void SunShadowCadence::Plan(const SunShadowCadenceFrame &frame, const CascadeFit
                                .lightDirection = lightDirection,
                                .drawFrame = frame.frameIndex,
                                .valid = true};
+            // The sampled slice is copied whole from the new still depth, which
+            // carries no movers until they are drawn over it again.
+            _movingSignature[i] = 0;
+            volumes[i] = CascadeVolumeBounds(_slices[i].cascade);
             out.redraw[out.redrawCount++] = i;
             ++_stats.redrawn;
         }
@@ -178,23 +177,35 @@ void SunShadowCadence::Plan(const SunShadowCadenceFrame &frame, const CascadeFit
         out.ageFrames[i] = frame.frameIndex - _slices[i].drawFrame;
     }
 
-    // A pose no cascade holds, on a caster that is not moving right now, is a
-    // pose nothing can be invalidated against. Dropped, because a record per
-    // caster that has ever moved would grow without bound over a level's life.
-    //
-    // A caster still moving keeps its record however far outside the cascades it
-    // is, which is what stops something wandering past the shadow distance from
-    // dirtying every cascade on every frame of its journey.
-    for (auto entry = _drawnPose.begin(); entry != _drawnPose.end();)
+    // The movers. Walked as movers times cascades, like the rest of this, and
+    // on a frame they stand where they stood nothing is drawn.
+    std::array<std::uint64_t, kMaxShadowCascades> signature{};
+    for (const ShadowMover &mover : frame.dynamic)
     {
-        bool held = entry->second.moveFrame == frame.frameIndex;
-        for (std::uint32_t i = 0; i < count && !held; ++i)
+        const std::uint64_t contribution = ShadowMoverSignature(mover);
+        for (std::uint32_t i = 0; i < count; ++i)
         {
-            held = _slices[i].valid && CasterReachesShadowedVolume(entry->second.sphere,
-                                                                   CascadeVolumeBounds(_slices[i].cascade),
-                                                                   _slices[i].lightDirection);
+            if (CasterReachesShadowedVolume(mover.worldSphere, volumes[i], _slices[i].lightDirection))
+            {
+                signature[i] += contribution;
+            }
         }
-        entry = held ? std::next(entry) : _drawnPose.erase(entry);
+    }
+    for (std::uint32_t i = 0; i < count; ++i)
+    {
+        // Zero to zero is a cascade nothing moves in and nothing did; anything
+        // else changed what is drawn over the still depth — including every
+        // mover leaving, whose texels still have to be put back.
+        if (signature[i] != _movingSignature[i])
+        {
+            _movingSignature[i] = signature[i];
+            out.movingRedraw[out.movingRedrawCount++] = i;
+            ++_stats.movingRedrawn;
+        }
+        else if (signature[i] != 0u)
+        {
+            ++_stats.movingKept;
+        }
     }
 }
 

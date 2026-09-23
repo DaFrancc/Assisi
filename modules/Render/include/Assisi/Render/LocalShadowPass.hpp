@@ -19,7 +19,7 @@
 ///
 /// **Why the views are drawn in chunks.** A caster's ShadowCaster::viewMask is
 /// kShadowViewMaskBits wide, so one draw-list build can serve at most that many
-/// views. The Ultra tier's caps reach 64 spots and 16 points, which is 160 views
+/// views. The Ultra tier's caps reach 128 spots and 32 points, which is 320 views
 /// — well past it. The pass therefore packs whole lights into chunks of at most
 /// that many views and builds one draw list per chunk. Views stay contiguous in
 /// the frame's table across a chunk boundary, because the table is appended to,
@@ -28,6 +28,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
@@ -71,6 +72,10 @@ public:
         /// cascades use, so every shadow view of the frame lands in one table.
         /// Not owned, and it must outlive the pass.
         const ShadowDepthRenderer *depthRenderer = nullptr;
+
+        /// The vertex stage that sets one tile back to far depth (see
+        /// ResetTile).
+        std::string tileResetVertexShaderSpvPath = {};
     };
 
     /// @brief Bind to the device and the shared renderer, and create the empty
@@ -114,11 +119,12 @@ public:
         /// whether a dropped shadow was the cap's doing or the atlas's.
         float occupancy = 0.f;
 
-        /// Faces whose still layer was re-rendered, and tile copies made to
-        /// compose a face from it. Both are zero on a resting frame, which is
-        /// the pay-for-what-you-place gate read per light rather than per scene.
+        /// Faces whose still layer was re-rendered, and faces whose moving layer
+        /// was reset and had its movers drawn. Both are zero on a resting frame,
+        /// which is the pay-for-what-you-place gate read per light rather than
+        /// per scene.
         std::uint32_t bakedFaces = 0;
-        std::uint32_t copiedFaces = 0;
+        std::uint32_t moverFaces = 0;
         /// Lights whose tile was served straight out of the cache, with nothing
         /// drawn and nothing copied.
         std::uint32_t restingLights = 0;
@@ -240,6 +246,15 @@ public:
     /// and nothing can be deferred.
     [[nodiscard]] std::span<const LocalShadowTilePlan> Plans() const { return _plans; }
 
+    /// @brief Which of the last PlanFrame's requests draw still casters this
+    /// frame, index-parallel to them: nonzero for one whose kept layer is
+    /// rebaked, and for every request while caching is off.
+    ///
+    /// The rest draw only their movers, so their rows need hold nothing else.
+    /// A gather that knows this skips testing every resting caster against
+    /// every resting light, which is most of what a frame would otherwise spend.
+    [[nodiscard]] std::span<const std::uint8_t> StillCasterRequests() const { return _stillRequests; }
+
 private:
     [[nodiscard]] bool RebuildTargets();
     [[nodiscard]] bool RebuildPipelines();
@@ -247,9 +262,6 @@ private:
     void ReleaseTargets();
     /// @brief Create the one-texel atlas bound while the pass is inactive.
     [[nodiscard]] bool CreateNoAtlasTexture();
-    /// @brief Create or drop the kept-depth atlas and the cleared tile that
-    /// blanks a rectangle of it, to match @ref LocalShadowCacheSettings::enabled.
-    [[nodiscard]] bool RebuildCacheTargets();
 
     /// @brief Cut tiles for every request the atlas can serve, filling @ref
     /// _tiles, @ref _targets and @ref _servedTiles. Returns how many requests
@@ -264,9 +276,9 @@ private:
     /// @brief Which side of the cached/dynamic split a chunk draws.
     enum class CasterSide : std::uint8_t
     {
-        /// The still geometry, drawn into the kept layer when it is re-baked.
+        /// The still geometry, drawn into the still layer when it is re-baked.
         Static,
-        /// The moving geometry, drawn over a copy of that layer every frame.
+        /// The moving geometry, drawn into the moving layer.
         Dynamic,
         /// Everything, which is the uncached path.
         Both,
@@ -287,30 +299,28 @@ private:
     /// @brief Draw @p run, chunked to fit a caster's view mask.
     ///
     /// @p side filters the casters a target takes, which is what separates the
-    /// bake from the composite: they walk the same rows and keep opposite halves.
+    /// bake from the movers: they walk the same rows and keep opposite halves.
+    /// A target with no framebuffer draws nothing but still has its row in the
+    /// frame's view table.
     ShadowDepthRenderer::Stats RenderTargets(nvrhi::ICommandList *commandList, const TargetRun &run, CasterSide side,
                                              const Frame &frame);
 
-    /// @brief Blank the rectangle @p rect of the kept-depth atlas, by copying a
-    /// cleared tile over it.
+    /// @brief Set the rectangle @p view covers in @p framebuffer's layer back to
+    /// far depth, by drawing over it.
     ///
-    /// A depth clear is a whole-attachment operation, and this needs one
-    /// rectangle of a shared texture — clearing the attachment would wipe every
-    /// other light's kept depth to re-bake one. A copy from a tile cleared once
-    /// at creation is the same result confined to the rectangle, and it is the
-    /// same kind of transfer the composite already makes.
-    void BlankCacheTile(nvrhi::ICommandList *commandList, const ShadowViewRect &rect);
+    /// A depth clear is a whole-attachment operation, and this needs one tile of
+    /// a shared texture: clearing the attachment would wipe every other light's
+    /// depth to redraw one. Drawing is also far cheaper than copying a cleared
+    /// tile over it, because a depth copy moves every byte where a draw writes
+    /// only what it covers.
+    void ResetTile(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, const ShadowView &view);
 
-    /// @brief Copy the kept layer of @p rect over the live atlas, which is the
-    /// composite's first half.
-    void CopyCachedTile(nvrhi::ICommandList *commandList, const ShadowViewRect &rect);
-
-    /// @brief Redraw every served face into the live atlas from nothing, which
-    /// is what the pass did before there was a cache.
+    /// @brief Redraw every served face from nothing, which is what the pass did
+    /// before there was a cache.
     Stats RenderUncached(nvrhi::ICommandList *commandList, const Frame &frame, Stats stats);
 
-    /// @brief Re-bake the stale layers, compose the tiles that need it, and
-    /// leave the resting ones alone.
+    /// @brief Re-bake the stale still layers, redraw the movers of the tiles
+    /// that have them, and leave the resting ones alone.
     Stats RenderCached(nvrhi::ICommandList *commandList, const Frame &frame, Stats stats);
 
     nvrhi::IDevice *_device = nullptr;
@@ -318,32 +328,25 @@ private:
 
     std::array<nvrhi::GraphicsPipelineHandle, kMeshPipelineCount> _pipelines;
 
+    // Draws a tile back to far depth; see ResetTile.
+    nvrhi::ShaderHandle _tileResetShader;
+    nvrhi::GraphicsPipelineHandle _tileResetPipeline;
+
+    // A texture array of one layer, or two while caching: layer 0 holds the
+    // still casters' depth, and layer 1 the moving casters' at the same
+    // rectangles. The mesh shader reads layer 1 only for a tile whose row says
+    // it is live, so the still depth is never copied under the movers.
     nvrhi::TextureHandle _atlasTexture;
-    // One framebuffer for the whole atlas: every tile is a rectangle of the same
-    // texture and the viewport confines each draw, so there is nothing per-tile
-    // for a framebuffer to say.
+    // One framebuffer per layer: every tile is a rectangle of the layer and the
+    // viewport confines each draw, so there is nothing per-tile for a
+    // framebuffer to say. The moving one is null while caching is off.
     nvrhi::FramebufferHandle _atlasFramebuffer;
+    nvrhi::FramebufferHandle _moverFramebuffer;
     // Bound while the pass is inactive, so the mesh pass always has a texture
     // to sample. Permanent, not scaffolding: a scene with no shadowed lamp in
     // it never leaves it.
     nvrhi::TextureHandle _noAtlasTexture;
-
-    // The still geometry's depth, at the same rectangles as the live atlas. Its
-    // own texture rather than a second half of one, so a tile's kept depth and
-    // the tile composed from it are the same rectangle of two textures and the
-    // copy between them needs no offset.
-    nvrhi::TextureHandle _cacheTexture;
-    nvrhi::FramebufferHandle _cacheFramebuffer;
-    // One tile's worth of depth at 1.0, cleared once and copied wherever a
-    // rectangle has to be blanked. Sized for the largest tile the settings can
-    // hand out.
-    nvrhi::TextureHandle _clearTile;
-    std::uint32_t _builtClearTileSize = 0;
     bool _builtCacheEnabled = false;
-    // Whether the clear tile has been filled with far depth yet. It needs a
-    // command list, which creation does not have, so the first frame that has to
-    // blank anything fills it.
-    bool _clearTileReady = false;
 
     ShadowAtlasAllocator _allocator;
     LocalShadowCache _cache;
@@ -374,12 +377,17 @@ private:
     // Render remakes it when they disagree, so a caller that never calls
     // PlanFrame is merely slower rather than wrong.
     std::vector<LocalShadowTilePlan> _plans;
+    std::vector<std::uint8_t> _stillRequests;
     std::uint32_t _plannedFrame = 0;
     bool _planned = false;
     // The subset of _targets whose kept layer is being re-baked, and the request
     // each came from.
     std::vector<ShadowDepthTarget> _bakeTargets;
     std::vector<std::uint32_t> _bakeTargetRequest;
+    // Every served face again, pointed at the moving layer where its movers are
+    // redrawn this frame and at nothing where they are not, and marking in its
+    // row whether that layer is live.
+    std::vector<ShadowDepthTarget> _moverTargets;
     // The view mask each caster earns in the chunk being built, and the chunk
     // that last wrote it — a stamp rather than a clear, so a chunk costs the
     // casters it touches rather than the whole span.
