@@ -64,13 +64,12 @@ float LocalBlockerGap(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
     float searchUv  = PcssPenumbraUv(view.pcss.x, reference, view.pcss.z);
     float threshold = kPcssBlockerMinDepthTexels * texelDepth;
     ivec2 size      = textureSize(uShadowAtlas, 0);
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
 
     float gapSum   = 0.0;
     float blockers = 0.0;
     for (uint i = 0u; i < kVogelTaps; ++i)
     {
-        vec2  tapUv  = clamp(uv + VogelOffset(i, phi, searchUv), view.clampUv.xy, view.clampUv.zw);
+        vec2  tapUv  = clamp(uv + VogelOffset(i, searchUv), view.clampUv.xy, view.clampUv.zw);
         ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
         vec2  centre = (vec2(texel) + 0.5) / vec2(size);
         float gap    = reference + dot(centre - uv, slope) - texelFetch(uShadowAtlas, texel, 0).r;
@@ -94,11 +93,10 @@ float LocalPcssTap(ShadowViewRow view, vec2 uv, vec2 offset, float reference, ve
 // The Vogel kernel at @p stepUv inside one tile, with the probe early-out.
 float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, float stepUv)
 {
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
     float sum = 0.0;
     for (uint i = 0u; i < 4u; ++i)
     {
-        sum += LocalPcssTap(view, uv, VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
+        sum += LocalPcssTap(view, uv, VogelOffset(kVogelProbe[i], kVogelRadiusSteps) * stepUv, reference, slope);
     }
     if (sum == 0.0)
     {
@@ -110,7 +108,7 @@ float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
     }
     for (uint i = 0u; i < 12u; ++i)
     {
-        sum += LocalPcssTap(view, uv, VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
+        sum += LocalPcssTap(view, uv, VogelOffset(kVogelRest[i], kVogelRadiusSteps) * stepUv, reference, slope);
     }
     return sum / float(kVogelTaps);
 }
@@ -180,11 +178,24 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
 
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+        // A tap returns exactly 0 or 1 unless it straddles an edge, so four
+        // probe taps that agree almost always mean the whole kernel would too.
         float sum = 0.0;
-        for (uint i = 0u; i < kVogelTaps; i++)
+        for (uint i = 0u; i < 4u; ++i)
         {
-            sum += LocalShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, clampUv, reference);
+            sum += LocalShadowTap(uv + VogelOffset(kVogelProbe[i], kVogelRadiusSteps) * stepUv, clampUv, reference);
+        }
+        if (sum == 0.0)
+        {
+            return 0.0;
+        }
+        if (sum == 4.0)
+        {
+            return 1.0;
+        }
+        for (uint i = 0u; i < 12u; ++i)
+        {
+            sum += LocalShadowTap(uv + VogelOffset(kVogelRest[i], kVogelRadiusSteps) * stepUv, clampUv, reference);
         }
         return sum / float(kVogelTaps);
     }

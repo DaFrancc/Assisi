@@ -28,9 +28,9 @@ float ShadowTap(vec2 uv, uint cascade, float reference)
     return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
 }
 
-float VogelTap(uint i, vec2 uv, uint cascade, float reference, float stepUv, float phi)
+float VogelTap(uint i, vec2 uv, uint cascade, float reference, float stepUv)
 {
-    return ShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, cascade, reference);
+    return ShadowTap(uv + VogelOffset(i, kVogelRadiusSteps) * stepUv, cascade, reference);
 }
 
 // The depth of the nearest occluder the map recorded in front of @p reference at
@@ -57,13 +57,12 @@ float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
     float searchUv  = PcssPenumbraUv(uFrame.shadowPcss.x, reference, uFrame.shadowPcss.y);
     float threshold = kPcssBlockerMinDepthTexels * uFrame.shadowPcss.z;
     vec2  size      = vec2(textureSize(uShadowCascades, 0).xy);
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
 
     float gapSum   = 0.0;
     float blockers = 0.0;
     for (uint i = 0u; i < kVogelTaps; ++i)
     {
-        vec2 tapUv = uv + VogelOffset(i, phi, searchUv);
+        vec2 tapUv = uv + VogelOffset(i, searchUv);
         if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThanEqual(tapUv, vec2(1.0))))
         {
             continue;
@@ -84,11 +83,10 @@ float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
 // The Vogel kernel at @p stepUv, each tap compared against the receiver's plane.
 float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, float stepUv)
 {
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
     float sum = 0.0;
     for (uint i = 0u; i < 4u; ++i)
     {
-        vec2 offset = VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv;
+        vec2 offset = VogelOffset(kVogelProbe[i], kVogelRadiusSteps) * stepUv;
         sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
     }
     if (sum == 0.0)
@@ -101,7 +99,7 @@ float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, floa
     }
     for (uint i = 0u; i < 12u; ++i)
     {
-        vec2 offset = VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv;
+        vec2 offset = VogelOffset(kVogelRest[i], kVogelRadiusSteps) * stepUv;
         sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
     }
     return sum / float(kVogelTaps);
@@ -167,14 +165,12 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
 
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-
         // A tap returns exactly 0 or 1 unless it straddles an edge, so four
         // probe taps that agree almost always mean the whole kernel would too.
         float sum = 0.0;
         for (uint i = 0u; i < 4u; ++i)
         {
-            sum += VogelTap(kVogelProbe[i], uv, cascade, reference, step, phi);
+            sum += VogelTap(kVogelProbe[i], uv, cascade, reference, step);
         }
         if (sum == 0.0)
         {
@@ -186,7 +182,7 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         }
         for (uint i = 0u; i < 12u; ++i)
         {
-            sum += VogelTap(kVogelRest[i], uv, cascade, reference, step, phi);
+            sum += VogelTap(kVogelRest[i], uv, cascade, reference, step);
         }
         return sum / float(kVogelTaps);
     }

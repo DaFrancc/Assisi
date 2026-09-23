@@ -29,7 +29,28 @@ float PcfTapCount(int radius)
 // The Vogel disk. kVogelRadiusSteps must match Render::kVogelFilterRadiusTaps.
 const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
-const float kGoldenAngle        = 2.39996323;
+
+// The disk at unit radius: tap i at radius sqrt((i + 0.5) / 16) and angle i
+// times the golden angle (2.39996323 rad). Tabulated, because a per-tap sqrt,
+// sin and cos in every filter of every light is transcendental work repeated
+// per light for a pattern that never changes.
+const vec2 kVogelDisk[kVogelTaps] = vec2[](
+    vec2(0.17677670, 0.00000000),
+    vec2(-0.22577219, 0.20682582),
+    vec2(0.03455805, -0.39377118),
+    vec2(0.28457122, 0.37117276),
+    vec2(-0.52222319, -0.09237393),
+    vec2(0.49469539, -0.31468471),
+    vec2(-0.16546593, 0.61552500),
+    vec2(-0.31556147, -0.60759440),
+    vec2(0.68464216, 0.25003022),
+    vec2(-0.71225609, 0.29400896),
+    vec2(0.34335450, -0.73372862),
+    vec2(0.25373024, 0.80893199),
+    vec2(-0.76474589, -0.44318588),
+    vec2(0.89713398, -0.19723239),
+    vec2(-0.54750691, 0.77877223),
+    vec2(-0.12648677, -0.97608970));
 
 // The disk split into a probe of four well-spread taps and the rest; the rest
 // runs only where the probe disagrees.
@@ -57,12 +78,22 @@ float InterleavedGradientNoise(vec2 position)
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
-// Tap @p i of the Vogel disk of radius @p radius, rotated by @p phi.
-vec2 VogelOffset(uint i, float phi, float radius)
+// This pixel's rotation of the disk as (cos, sin). Set once at the top of main:
+// every filter in the fragment rotates by the same angle.
+vec2 gVogelRotation = vec2(1.0, 0.0);
+
+vec2 VogelRotation()
 {
-    float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * radius;
-    float theta = float(i) * kGoldenAngle + phi;
-    return vec2(r * cos(theta), r * sin(theta));
+    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    return vec2(cos(phi), sin(phi));
+}
+
+// Tap @p i of the Vogel disk of radius @p radius, rotated by this pixel's angle.
+vec2 VogelOffset(uint i, float radius)
+{
+    vec2 d = kVogelDisk[i];
+    return vec2(d.x * gVogelRotation.x - d.y * gVogelRotation.y, d.x * gVogelRotation.y + d.y * gVogelRotation.x) *
+           radius;
 }
 
 // The rasterized surface's normal, flipped for a back face as the shaded normal

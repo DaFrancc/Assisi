@@ -24,6 +24,7 @@ void main()
         gWorldPosDx = dFdx(vWorldPos);
         gWorldPosDy = dFdy(vWorldPos);
     }
+    gVogelRotation = VogelRotation();
 
     Surface surf = SampleMaterial();
 
