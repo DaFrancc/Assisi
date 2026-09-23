@@ -195,7 +195,7 @@ void GameApp::OnStart()
         }
         Core::Log::Info("Benchmark: '{}', {} camera paths over {} s.", *scene, route.size(),
                         _launch.benchmark->seconds);
-        const std::int32_t shots = _launch.benchmark->shotsDirectory.empty() ? 0 : kBenchmarkShotCount;
+        const std::int32_t shots = _launch.benchmark->shotsDirectory.empty() ? 0 : _launch.benchmark->shotCount;
         _benchmark.emplace(std::move(route), _launch.benchmark->seconds, shots);
     }
 }
@@ -263,7 +263,7 @@ void GameApp::AdvanceBenchmark()
         }
         else
         {
-            Core::Log::Info("Benchmark: {} shots written to '{}'.", kBenchmarkShotCount, shotsDirectory);
+            Core::Log::Info("Benchmark: {} shots written to '{}'.", _launch.benchmark->shotCount, shotsDirectory);
         }
         RequestClose();
         break;

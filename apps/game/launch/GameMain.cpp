@@ -83,8 +83,10 @@ constexpr const char *kUsage =
     "  --benchmark-seconds <n> how long the flight takes (default 15)\n"
     "  --benchmark-passes      also time each render pass. Splits render\n"
     "                          passes, so the frame total is not the shipped one\n"
-    "  --benchmark-shots <dir> instead of measuring, stop at six points along the\n"
-    "                          route and write a PNG of each into dir\n"
+    "  --benchmark-shots <dir> instead of measuring, stop at evenly spaced points\n"
+    "                          along the route and write a PNG of each into dir\n"
+    "  --benchmark-shot-count <n> how many points --benchmark-shots stops at\n"
+    "                          (default 24)\n"
 #endif
     "  -h, --help              show this help and exit\n";
 
@@ -199,6 +201,23 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
                 return false;
             }
             BenchmarkOf(out).shotsDirectory = argv[++i];
+        }
+        else if (arg == "--benchmark-shot-count")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--benchmark-shot-count requires a number of shots\n\n%s", kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            int32_t shots = 0;
+            if (!Game::ParsePositive(value, shots))
+            {
+                std::fprintf(stderr, "--benchmark-shot-count expects a positive integer, got '%.*s'\n\n%s",
+                             static_cast<int>(value.size()), value.data(), kUsage);
+                return false;
+            }
+            BenchmarkOf(out).shotCount = shots;
         }
 #endif
 #ifdef ASSISI_PAK_OVERRIDES
