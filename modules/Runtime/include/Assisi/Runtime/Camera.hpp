@@ -11,6 +11,8 @@
 /// All functions read from Transform::worldMatrix, so
 /// PropagateTransforms() must be called before using them each frame.
 
+#include <cstdint>
+
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -22,6 +24,10 @@ glm::mat4 ViewMatrix(const Transform &transform);
 
 /// @brief Returns a perspective projection matrix from the camera's parameters.
 glm::mat4 ProjectionMatrix(const Camera &camera, float aspectRatio);
+
+/// @brief Width over height, or 1 for a target with no height — a minimised
+/// window reports zero, and a projection built from a division by it is NaN.
+float AspectRatio(int32_t width, int32_t height);
 
 /// @brief World-space forward direction (-Z column of the world matrix).
 glm::vec3 ForwardDirection(const Transform &transform);

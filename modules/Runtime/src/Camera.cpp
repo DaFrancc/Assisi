@@ -17,6 +17,11 @@ glm::mat4 ProjectionMatrix(const Camera &camera, float aspectRatio)
     return glm::perspective(glm::radians(camera.fovDegrees), aspectRatio, camera.nearZ, camera.farZ);
 }
 
+float AspectRatio(int32_t width, int32_t height)
+{
+    return height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
+}
+
 glm::vec3 ForwardDirection(const Transform &transform)
 {
     return -glm::normalize(glm::vec3(transform.worldMatrix[2]));

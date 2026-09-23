@@ -33,6 +33,7 @@ target_sources(Assisi-Runtime
     "src/Naming.cpp"
     "src/Renderer.cpp"
     "src/SceneRenderer.cpp"
+    "src/SceneRendererShadows.cpp"
     "src/SceneSerializerBlueprint.cpp"
     "src/SceneSerializerCooked.cpp"
     "src/SceneSerializerContext.hpp"
