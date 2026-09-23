@@ -57,8 +57,13 @@ BenchmarkPhase CameraBenchmark::Advance(bool assetsLoaded, double nowSeconds)
 
 Runtime::CameraAim CameraBenchmark::Aim() const
 {
+    return Runtime::EvaluateCameraRoute(_route, static_cast<float>(RunClockSeconds()) * _routeScale);
+}
+
+double CameraBenchmark::RunClockSeconds() const
+{
     double seconds = _elapsed;
-    if (_shotCount > 0)
+    if (_shotCount > 0 && _phase != BenchmarkPhase::Settling && _phase != BenchmarkPhase::WarmingUp)
     {
         // Evenly spaced with both ends included; a single shot is the middle.
         const std::int32_t shot = std::min(_shotFrame / kBenchmarkShotSettleFrames, _shotCount - 1);
@@ -71,7 +76,7 @@ Runtime::CameraAim CameraBenchmark::Aim() const
                                 static_cast<double>(kBenchmarkShotSettleFrames - 1);
         seconds = std::max(fraction * _runSeconds - approach, 0.0);
     }
-    return Runtime::EvaluateCameraRoute(_route, static_cast<float>(seconds) * _routeScale);
+    return seconds;
 }
 
 std::int32_t CameraBenchmark::ShotThisFrame() const

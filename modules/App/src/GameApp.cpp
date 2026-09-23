@@ -20,6 +20,7 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <expected>
@@ -367,6 +368,20 @@ void GameApp::StepWorlds(float dt)
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
                                GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
         });
+}
+
+double GameApp::SimulationSeconds(double frameSeconds)
+{
+    if (!_benchmark)
+    {
+        return frameSeconds;
+    }
+    // Only forward: a shots run can step its clock back a little between the
+    // approaches to two close stops, and a simulation cannot un-happen.
+    const double clock = _benchmark->RunClockSeconds();
+    const double advance = std::max(clock - _simulatedRunSeconds, 0.0);
+    _simulatedRunSeconds = std::max(clock, _simulatedRunSeconds);
+    return advance;
 }
 
 void GameApp::OnFixedUpdate(float dt)

@@ -709,7 +709,7 @@ void Application::Run()
             // what matters is the total the frame paid, and N nested identical
             // slices would bury it.
             ASSISI_PROFILE_SCOPE("fixed-update");
-            accumulator += dt;
+            accumulator += SimulationSeconds(dt);
             while (accumulator >= physicsStep)
             {
                 // The network clock. Incremented with the step, before the hook,

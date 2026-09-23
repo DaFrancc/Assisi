@@ -82,6 +82,17 @@ public:
     /// @brief The pose for the current frame.
     [[nodiscard]] Runtime::CameraAim Aim() const;
 
+    /// @brief Seconds of run the camera stands at this frame: the clock Aim
+    /// reads, 0 until the run starts. A shots run's approach to each stop can
+    /// step it back a little when the stops are closer together than
+    /// kBenchmarkShotApproachSeconds.
+    ///
+    /// What the world's simulation follows during a benchmark, so everything
+    /// that moves with simulated time is in the same place whenever the camera
+    /// is — however long the load and the warm-up took, and in a shots run as
+    /// much as a timed one.
+    [[nodiscard]] double RunClockSeconds() const;
+
     [[nodiscard]] BenchmarkPhase Phase() const { return _phase; }
 
     /// @brief Seconds into the run, clamped to its length. 0 before it starts.

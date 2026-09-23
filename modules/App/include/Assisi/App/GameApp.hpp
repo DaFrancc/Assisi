@@ -114,6 +114,10 @@ protected:
 
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
+    /// During a benchmark, the benchmark's run clock: nothing is simulated
+    /// through the load and the warm-up, and after that the world advances as
+    /// the camera does. Real time otherwise.
+    [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
     void OnUpdate(float dt) override;
     void OnRender(Render::RenderFrame &frame) override;
     void OnResize(int32_t width, int32_t height) override;
@@ -184,6 +188,9 @@ private:
 
     /// Set for a benchmark run once its level has loaded.
     std::optional<CameraBenchmark> _benchmark;
+
+    /// The benchmark run clock the simulation has been advanced to.
+    double _simulatedRunSeconds = 0.0;
 
     /// The world being played. Points into the manager, which keeps world
     /// addresses stable for their lifetime.

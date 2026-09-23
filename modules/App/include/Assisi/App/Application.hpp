@@ -153,6 +153,11 @@ class Application
 
     virtual void OnStart() = 0;
     virtual void OnFixedUpdate(float dt) = 0;
+    /// @brief How far the fixed-step simulation advances for a frame that took
+    /// @p frameSeconds of real time. Real time, unless an app runs the
+    /// simulation from a clock of its own — a benchmark, whose world must be in
+    /// the same state wherever its camera is, whatever the machine did.
+    [[nodiscard]] virtual double SimulationSeconds(double frameSeconds) { return frameSeconds; }
     virtual void OnUpdate(float dt) = 0;
     /// Not pure: a headless app never receives this call and should not have to
     /// write an empty override to say so.
