@@ -303,8 +303,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     _lighting.Upload(frame.commandList, view);
 
-    // Before the frame constants, which say whether the lit pass reads it.
-    const bool prepass = PrepareScreenOcclusion(frame);
+    // Before the frame constants, which say whether the lit pass reads occlusion.
+    const bool prepass = PrepareDepthPrepass(frame);
+    const bool occlusion = PrepareScreenOcclusion(frame, prepass);
 
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
@@ -318,12 +319,11 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .debugView = _debugView,
                                                                     .indirect = ResolveIndirect(sky, _ambient, probe),
                                                                     .shadows = shadows,
-                                                                    .screenOcclusion = prepass};
+                                                                    .screenOcclusion = occlusion};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
-    // With scene depth wanted, this is the depth prepass: the same extract, cull
-    // and sort as ever, drawn as depth alone, and kept for the lit pass below to
-    // shade. Without, it is the lit pass, exactly as it always was.
+    // With a prepass, this draws depth alone: the same extract, cull and sort as
+    // ever, kept for the lit pass below to shade. Without, it is the lit pass.
     _lastDrawStats = DrawScene(DrawSceneParams{.scene = scene,
                                                .meshPass = _meshPass,
                                                .frame = frame,
@@ -342,9 +342,13 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     if (prepass)
     {
-        _sceneDistancePass.Render(frame.commandList, projection);
-        _ssaoPass.Render(frame.commandList,
-                         Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
+        if (occlusion)
+        {
+            _sceneDistancePass.Render(frame.commandList, projection);
+            _ssaoPass.Render(
+                frame.commandList,
+                Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
+        }
 
         // Under the name the lit pass has always been measured by, so a capture
         // with a prepass reads `draw-scene` against its own history and the
@@ -483,21 +487,30 @@ SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, co
     return SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()};
 }
 
-bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
+bool SceneRenderer::PrepareDepthPrepass(const Render::RenderFrame &frame)
 {
-    // Released rather than kept while off — pay for what you place. A frame
-    // with no depth texture to read has nothing to occlude from.
-    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid() &&
-                        frame.depthTexture != nullptr;
+    if (_prepassFailed || frame.depthTexture == nullptr)
+    {
+        return false;
+    }
+    if (!_meshPass.PreparePrepass())
+    {
+        Core::Log::Warn("SceneRenderer: the depth prepass failed to build; the scene is lit without one.");
+        _prepassFailed = true;
+        return false;
+    }
+    return true;
+}
+
+bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass)
+{
+    // Released rather than kept while off — pay for what you place. Occlusion
+    // reads the prepass's depth, so a frame without one has nothing to read.
+    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid() && prepass;
     if (wanted)
     {
-        if (!_meshPass.PreparePrepass())
-        {
-            Core::Log::Warn("SceneRenderer: ambient occlusion disabled (the depth prepass failed to build).");
-            _ssaoSettings.enabled = false;
-        }
-        else if (!_sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture) ||
-                 !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture()))
+        if (!_sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture) ||
+            !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture()))
         {
             Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
             _ssaoSettings.enabled = false;

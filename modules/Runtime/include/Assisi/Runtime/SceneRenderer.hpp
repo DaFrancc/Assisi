@@ -375,13 +375,24 @@ private:
     /// whether an environment answers this frame.
     [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
 
-    /// @brief Hold the prepass pipelines, the scene distance target and
-    /// occlusion's targets for @p frame, and point the mesh pass at the result.
-    /// Releases all of it while the setting is off, and turns the setting off if
-    /// any of it fails.
+    /// @brief Hold the prepass pipelines for @p frame.
     ///
-    /// @return whether this frame draws a depth prepass and runs occlusion.
-    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame);
+    /// Every frame with a depth target draws one, because the lit pass then
+    /// shades each pixel once instead of once per overlapping surface: shading
+    /// runs the whole light loop and every shadow filter, and re-rasterising the
+    /// scene as depth alone costs far less than the overdraw it removes. If the
+    /// pipelines fail to build, the frame is lit directly and it is said once.
+    ///
+    /// @return whether this frame draws a depth prepass.
+    [[nodiscard]] bool PrepareDepthPrepass(const Render::RenderFrame &frame);
+
+    /// @brief Hold the scene distance target and occlusion's targets for
+    /// @p frame, and point the mesh pass at the result. Releases all of it while
+    /// the setting is off or there is no @p prepass to read depth from, and turns
+    /// the setting off if any of it fails.
+    ///
+    /// @return whether this frame runs occlusion.
+    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass);
 
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
@@ -521,6 +532,9 @@ private:
     // frame rate. Cleared when the scene stops having several suns, so fixing it
     // and breaking it again is reported both times.
     bool _multipleSunsWarned = false;
+    // Set once the prepass pipelines have failed to build, so the failure is
+    // said once and every later frame is lit directly without retrying.
+    bool _prepassFailed = false;
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;                             // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats;           // what the shadow pass drew, for the same overlay
