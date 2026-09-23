@@ -2,33 +2,15 @@
 
 #include <Assisi/Render/LocalShadowCache.hpp>
 
-#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Render/ShadowView.hpp>
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace Assisi::Render
 {
 namespace
 {
-/// @brief One mover's contribution to the signature of each face it reaches:
-/// which caster, and exactly where.
-///
-/// A face's signature is the sum of these over its movers, so it does not
-/// depend on the order they arrive in — the mobility table hands them over in
-/// hash-map order, which changes whenever the map rehashes.
-std::uint64_t MoverSignature(const ShadowMover &mover)
-{
-    const std::array<float, 4> sphere{mover.worldSphere.center.x, mover.worldSphere.center.y,
-                                      mover.worldSphere.center.z, mover.worldSphere.radius};
-    std::array<std::byte, sizeof(mover.casterId) + sizeof(sphere)> bytes{};
-    std::memcpy(bytes.data(), &mover.casterId, sizeof(mover.casterId));
-    std::memcpy(bytes.data() + sizeof(mover.casterId), sphere.data(), sizeof(sphere));
-    return Core::ContentHash64(bytes);
-}
-
 /// @brief The cosine of the half-angle of the cone that contains one point-light
 /// face's frustum.
 ///
@@ -300,7 +282,7 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
                                    {
                                        out[index].moverFaces |= mask;
                                        out[index].hasMovers = true;
-                                       const std::uint64_t signature = MoverSignature(caster);
+                                       const std::uint64_t signature = ShadowMoverSignature(caster);
                                        for (std::uint32_t face = 0; face < kMaxLocalShadowFaces; ++face)
                                        {
                                            if ((mask & (1u << face)) != 0u)

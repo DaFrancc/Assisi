@@ -59,6 +59,9 @@ constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv"
 // Sets one tile of the local-light atlas back to far depth (see
 // Render::LocalShadowPass::ResetTile).
 constexpr const char *kShadowTileResetShader = "shaders/shadow_tile_reset.vert.spv";
+// Writes a cascade's still depth back where movers stood (see
+// Render::ShadowPass::RestoreStillDepth), through the tile reset's triangle.
+constexpr const char *kShadowDepthRestoreShader = "shaders/shadow_depth_restore.frag.spv";
 
 // The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
 // plane, so its vertex stage is its own rather than the shared one: that one
@@ -116,7 +119,10 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                     .bindlessLayout = params.bindlessLayout,
                                                     .bindlessTable = params.bindlessTable}) ||
         !_shadowPass.Initialize(
-            Render::ShadowPass::InitParams{.device = _device, .depthRenderer = &_shadowDepthRenderer}))
+            Render::ShadowPass::InitParams{.device = _device,
+                                           .depthRenderer = &_shadowDepthRenderer,
+                                           .restoreVertexShaderSpvPath = kShadowTileResetShader,
+                                           .restorePixelShaderSpvPath = kShadowDepthRestoreShader}))
     {
         Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
     }
@@ -417,10 +423,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // Casters the gather never handed to a view at all, because nothing they
     // cast can reach the shadow distance. Walking content out past it moves this
     // and leaves every other shadow counter where it was.
-    ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(_shadowCasters.culledEntities));
+    ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(_shadowCasters.Result().culledEntities));
     // Caster-cascade pairs drawn a level coarser than on screen: where shadow
     // LOD saves vertices. Zero with it off, and in a scene with no LOD chains.
-    ASSISI_PROFILE_COUNTER("shadows/lod-coarser", static_cast<double>(_shadowCasters.coarserViews));
+    ASSISI_PROFILE_COUNTER("shadows/lod-coarser", static_cast<double>(_shadowCasters.Result().coarserViews));
 
     // The local-light atlas on its own tracks. `dropped-by-cap` and `unserved`
     // answer different questions about a lamp with no shadow — the first is the
@@ -631,6 +637,12 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     }
 
     GatherShadowMovers(scene, _movedEntities, _movedCasters);
+
+    // Which casters move and which changed sides, decided once for both halves
+    // of the shadow system: the sun's cascades and the local atlas each keep a
+    // still layer, and they must agree about which one an object is in.
+    _casterMobility.Update(_shadowFrameIndex, _shadowSettings.local.cache.promoteStillFrames, _movedCasters,
+                           _dynamicCasters, _casterInvalidations);
 }
 
 Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
@@ -711,52 +723,56 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
     _sunCadence.Plan(Render::SunShadowCadenceFrame{.frameIndex = _shadowFrameIndex,
                                                    .settings = _shadowPass.Settings().cadence,
                                                    .lightDirection = sun->direction,
-                                                   .movers = _movedCasters},
+                                                   .dynamic = _dynamicCasters,
+                                                   .invalidations = _casterInvalidations},
                      candidate, _sunCadencePlan);
     _cascadeFit = _sunCadencePlan.fit;
 
     const std::span<const std::uint32_t> redraw(_sunCadencePlan.redraw.data(), _sunCadencePlan.redrawCount);
+    const std::span<const std::uint32_t> movingRedraw(_sunCadencePlan.movingRedraw.data(),
+                                                      _sunCadencePlan.movingRedrawCount);
 
     // The gather, skipped whole when nothing needs drawing. This is where the
     // saving is: the depth pass is a fraction of a millisecond and walking every
     // Transform + MeshRenderer to decide what goes into it is not.
-    if (redraw.empty())
+    if (redraw.empty() && movingRedraw.empty())
     {
-        _shadowCasters.casters.clear();
-        _shadowCasters.nearAlongLight.reset();
-        _shadowCasters.culledEntities = 0;
-        _shadowCasters.coarserViews = 0;
+        _shadowCasters.Clear();
     }
     else
     {
         // After the fit, because the gather classifies against it: the sun's
         // shadow distance lives in the cascades' own extent, and a caster that
-        // reaches no cascade is one no view wants. The fit reads nothing from
-        // the gather, so this is the order it always could have been in.
+        // reaches no cascade is one no view wants.
         //
-        // One volume per cascade **being drawn**, in the order they are drawn:
-        // the bit a caster earns here is the view it draws into, and the views
-        // this frame submits are the redrawn cascades alone. Handing it every
-        // cascade's volume would number the bits by cascade and leave each view
-        // reading the mask of whichever cascade shares its position in the list.
+        // One volume per view **being drawn**, in the order they are drawn: the
+        // still layers being rebaked, then the slices movers are drawn over.
+        // The bit a caster earns here is the view it draws into, so handing it
+        // every cascade's volume would number the bits by cascade instead.
         //
         // The widths go to the selector in the same order, for the same reason:
         // a caster's level in a view is measured against that view's texels.
-        std::array<Geometry::BoundingSphere, Render::kMaxShadowCascades> cascadeVolumes{};
-        std::array<float, Render::kMaxShadowCascades> cascadeExtents{};
-        for (std::uint32_t i = 0; i < redraw.size(); ++i)
+        std::array<Geometry::BoundingSphere, 2 * Render::kMaxShadowCascades> viewVolumes{};
+        std::array<float, 2 * Render::kMaxShadowCascades> viewExtents{};
+        std::uint32_t views = 0;
+        for (const std::span<const std::uint32_t> cascades : {redraw, movingRedraw})
         {
-            const Render::ShadowCascade &cascade = _cascadeFit.cascades[redraw[i]];
-            cascadeVolumes[i] = Render::CascadeVolumeBounds(cascade);
-            cascadeExtents[i] = cascade.worldUnitsPerTexel * static_cast<float>(_shadowPass.Settings().resolution);
+            for (const std::uint32_t index : cascades)
+            {
+                const Render::ShadowCascade &cascade = _cascadeFit.cascades[index];
+                viewVolumes[views] = Render::CascadeVolumeBounds(cascade);
+                viewExtents[views] =
+                    cascade.worldUnitsPerTexel * static_cast<float>(_shadowPass.Settings().resolution);
+                ++views;
+            }
         }
-        _lodSelector.SetShadowViews(std::span<const float>(cascadeExtents.data(), redraw.size()));
-        GatherShadowCasters(scene, sun->direction,
-                            std::span<const Geometry::BoundingSphere>(cascadeVolumes.data(), redraw.size()),
-                            &_lodSelector, _shadowCasters);
+        _lodSelector.SetShadowViews(std::span<const float>(viewExtents.data(), views));
+        _shadowCasters.SetViews(std::span<const Geometry::BoundingSphere>(viewVolumes.data(), views),
+                                static_cast<std::uint32_t>(redraw.size()), sun->direction);
+        _shadowCasters.Gather(scene, _casterMobility, &_lodSelector);
     }
 
-    _lastShadowStats = _shadowPass.Render(frame.commandList, _cascadeFit, redraw, _shadowCasters.casters);
+    _lastShadowStats = _shadowPass.Render(frame.commandList, _sunCadencePlan, _shadowCasters.Result().casters);
 
     shadows.fit = &_cascadeFit;
     shadows.settings = _shadowPass.Settings();
@@ -827,10 +843,9 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         // The selector's memory is of an atlas that is no longer there, so the
         // next frame that turns shadows back on takes its demand outright rather
         // than resisting a change from a size class that no longer exists. The
-        // mobility table goes with it: the poses it holds are poses of a kept
-        // layer that no longer exists either.
+        // mobility table stays: the sun's still layers are kept by it too, and
+        // an atlas coming back cuts every tile afresh whatever it says.
         _localShadowSelector.Forget();
-        _casterMobility.Clear();
         return;
     }
 
@@ -913,9 +928,6 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         // one gather serving both kinds.
         _localLightVolumes.push_back(Geometry::BoundingSphere{light->position, light->range});
     }
-
-    _casterMobility.Update(_shadowFrameIndex, _shadowSettings.local.cache.promoteStillFrames, _movedCasters,
-                           _dynamicCasters, _casterInvalidations);
 
     Render::LocalShadowPass::Frame shadowFrame{.requests = _localRequests,
                                                .casters = {},

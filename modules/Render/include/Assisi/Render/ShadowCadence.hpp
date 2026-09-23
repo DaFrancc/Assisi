@@ -6,30 +6,30 @@
 /// to be drawn again.
 ///
 /// With a fixed sun, a still camera and a still scene, every cascade produces
-/// bitwise-identical contents every frame. This is what stops that. A cascade is
-/// kept when its fit has not moved, the sun has not turned far enough to matter
-/// at its texel size, and nothing has moved inside it — and a kept cascade costs
-/// no gather, no cull, no instance build and no upload, which is where the
-/// saving is. Drawing a cascade is a fraction of a millisecond; deciding what
-/// goes into it means walking every caster in the scene.
+/// bitwise-identical contents every frame. This is what stops that.
+///
+/// **Two layers per cascade**: the still casters' depth alone, and the slice
+/// the shader reads, which is that depth with the moving casters drawn over it.
+/// A still layer is kept while its fit has not moved, the sun has not turned
+/// far enough to matter at its texel size, and no caster has joined or left it
+/// — and a kept layer costs no gather, no cull, no instance build and no
+/// upload, which is where the saving is. Objects moving about do not touch it:
+/// when they stand somewhere new, the texels they covered are put back from it
+/// and they are drawn again, and the shader never knows there are two.
 ///
 /// **Kept whole or drawn whole.** There is no page table, no toroidal
-/// addressing and no partial-region bookkeeping: a cascade holds one frame's
+/// addressing and no partial-region bookkeeping: a layer holds one frame's
 /// depth or it is redrawn from scratch. That is the difference between this and
 /// the virtual-shadow-map form, which is rejected.
 ///
-/// Two rules run through all of it, and they are the same two the local-light
-/// atlas keeps:
+/// **Iterate what changed, never what exists.** Invalidation walks the casters
+/// that changed sides, and the moving layers the casters that move, against
+/// the cascades — a handful against at most eight — and never every caster
+/// against the cascades. A frame in which nothing moved does no work at all.
 ///
-///   * **Iterate what changed, never what exists.** Invalidation walks the
-///     casters that moved against the cascades — a handful against at most
-///     eight — and never the casters against the cascades. A frame in which
-///     nothing moved does no work at all, which is the whole claim.
-///   * **When it is ambiguous, redraw.** A caster moving for the first time has
-///     no recorded pose, so nothing here knows which cascades were drawn holding
-///     it; every cascade is dirtied rather than guessing. That is one frame of
-///     today's cost, once per caster, against a shadow left behind by an object
-///     that walked away from it.
+/// Which casters move, and when one changes sides, is ShadowCasterMobility's
+/// answer, shared with the local-light atlas so the two can never disagree
+/// about which layer an object is in.
 ///
 /// Nothing here draws or allocates. ShadowPass owns the cascade array and draws
 /// into it; this says which slices of it are worth drawing.
@@ -37,7 +37,6 @@
 #include <array>
 #include <cstdint>
 #include <span>
-#include <unordered_map>
 
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/Angles.hpp>
@@ -65,9 +64,17 @@ struct SunShadowCadenceFrame
     /// measures.
     glm::vec3 lightDirection{0.f, -1.f, 0.f};
 
-    /// Casters that moved this frame, and where they now stand. Empty on a still
-    /// frame, and that is the case the whole design is for.
-    std::span<const ShadowMover> movers;
+    /// Casters drawn into the moving layers this frame, and where they stand
+    /// (ShadowCasterMobility::Dynamic). They never touch a still layer, so
+    /// their motion dirties nothing there: it only decides which moving layers
+    /// have to be redrawn.
+    std::span<const ShadowMover> dynamic;
+
+    /// Casters that changed sides this frame, each with a sphere covering the
+    /// pose a still layer holds it at and the pose it now takes. The one kind
+    /// of motion a still layer has to answer to: a caster leaving it must be
+    /// erased from it, and one joining must be drawn into it.
+    std::span<const ShadowMover> invalidations;
 };
 
 /// @brief What the frame draws, and what it publishes to the shader.
@@ -79,10 +86,17 @@ struct SunShadowCadencePlan
     /// a newer one would slide every shadow by the difference.
     CascadeFit fit;
 
-    /// Cascades to clear and draw, ascending. Everything not named here keeps
-    /// what it holds.
+    /// Cascades whose still layer is cleared and drawn, ascending. Everything
+    /// not named here keeps what it holds.
     std::array<std::uint32_t, kMaxShadowCascades> redraw{};
+
+    /// Cascades whose movers are drawn again, ascending: the ones they covered
+    /// last time put back from the still layer, and this frame's drawn over
+    /// it. Includes a cascade whose movers have all gone, which is the put-back
+    /// alone.
+    std::array<std::uint32_t, kMaxShadowCascades> movingRedraw{};
     std::uint32_t redrawCount = 0;
+    std::uint32_t movingRedrawCount = 0;
 
     /// Frames since each cascade's depth was drawn. Zero for one drawn this
     /// frame; a large number is a cascade that has been paying nothing for a
@@ -113,16 +127,16 @@ struct SunShadowCadenceStats
     std::uint32_t redrawn = 0;
     std::uint32_t kept = 0;
 
-    /// Cascades a caster's motion dirtied, as against ones the fit or the sun
-    /// moved out from under. The two are different problems: motion is content
-    /// and is answered by the scene, drift is the camera and the day cycle and
-    /// is answered by the knob.
+    /// Still layers a caster changing sides dirtied, as against ones the fit or
+    /// the sun moved out from under. The two are different problems: motion is
+    /// content and is answered by the scene, drift is the camera and the day
+    /// cycle and is answered by the knob.
     std::uint32_t dirtiedByMotion = 0;
 
-    /// Movers with no recorded pose, each of which dirtied every cascade. A
-    /// steady stream of these is a scene whose casters keep leaving the shadow
-    /// distance and coming back, which costs a full redraw every time.
-    std::uint32_t unrecordedMovers = 0;
+    /// Moving layers redrawn this frame, and ones whose movers stood where the
+    /// last redraw drew them.
+    std::uint32_t movingRedrawn = 0;
+    std::uint32_t movingKept = 0;
 };
 
 /// @brief Which cascades hold usable depth, and what invalidates it.
@@ -137,12 +151,13 @@ public:
     /// kept cascades carry the fit their depth was drawn at, redrawn ones carry
     /// @p candidate's.
     ///
-    /// The movers are walked against the cascades and against nothing else, so
-    /// this costs movers times cascades — never casters times cascades, and
-    /// nothing at all on a frame in which nothing moved.
+    /// The movers and the casters changing sides are walked against the
+    /// cascades and against nothing else, so this costs movers times cascades —
+    /// never casters times cascades.
     ///
-    /// Recording happens here: every cascade named in @p out.redraw is taken to
-    /// have been drawn this frame, so the caller must draw all of them.
+    /// Recording happens here: every layer named in @p out.redraw and
+    /// @p out.movingRedraw is taken to have been drawn this frame, so the caller
+    /// must draw all of them.
     void Plan(const SunShadowCadenceFrame &frame, const CascadeFit &candidate, SunShadowCadencePlan &out);
 
     /// @brief Forget every cascade, so the next Plan draws all of them.
@@ -173,25 +188,10 @@ private:
 
     std::array<Slice, kMaxShadowCascades> _slices{};
 
-    /// @brief Where a cascade's depth holds one caster, and when it last moved.
-    struct Record
-    {
-        Geometry::BoundingSphere sphere;
-        /// The frame it was last written on. An entry is kept while it is still
-        /// moving even once it is past every cascade, so a caster wandering out
-        /// of the shadow distance does not read as unrecorded on its way back.
-        std::uint32_t moveFrame = 0;
-    };
-
-    /// Where the depth holds each caster that has moved. Consulted so a caster
-    /// leaving a cascade dirties the cascade it left as well as the one it
-    /// entered — testing only where it now stands leaves its shadow behind it,
-    /// with no visual tell until someone notices.
-    ///
-    /// An entry lives while some cascade's volume still contains the pose or the
-    /// caster is still moving, so this is bounded by the movers within the shadow
-    /// distance rather than by every caster that has ever moved.
-    std::unordered_map<std::uint64_t, Record> _drawnPose;
+    /// Per cascade, the fingerprint (ShadowMoverSignature summed) of the movers
+    /// drawn over its still depth, zero for none — which is also what a fresh
+    /// still layer holds, since the slice it is copied into starts without any.
+    std::array<std::uint64_t, kMaxShadowCascades> _movingSignature{};
 
     SunShadowCadenceStats _stats;
 };

@@ -50,6 +50,15 @@ struct ShadowMover
     Geometry::BoundingSphere worldSphere;
 };
 
+/// @brief One mover's contribution to the fingerprint of a layer it is drawn
+/// into: which caster, and exactly where.
+///
+/// A layer's fingerprint is the sum of these over its movers, so it does not
+/// depend on the order they arrive in — the mobility table hands them over in
+/// hash-map order, which changes whenever the map rehashes. An unchanged sum is
+/// a layer whose redraw would put back the depth it already holds.
+[[nodiscard]] std::uint64_t ShadowMoverSignature(const ShadowMover &mover);
+
 /// @brief How much larger than its slice's sphere a cascade's map is, as a
 /// fraction of the radius.
 ///

@@ -205,10 +205,43 @@ struct ShadowCasterGather
 /// texel, and the depth pass pays for vertices once per view. Null selects LOD0
 /// for everything.
 ///
-/// @p out is cleared and refilled; pass the same object every frame.
-void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
-                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, LodSelector *lodSelector,
-                         ShadowCasterGather &out);
+///
+/// The views are of two kinds (see Render::ShadowPass::Render): still layers
+/// being rebaked, which take the casters that are not moving, and read slices
+/// the movers are drawn over, which take the ones that are. Which a caster is
+/// comes from the shared Render::ShadowCasterMobility, so the sun and the
+/// local lights always agree about which layer holds it. A frame rebaking no
+/// still layer walks the movers alone rather than the scene.
+class SunShadowCasterGather
+{
+public:
+    /// @brief This frame's views: @p stillViews still layers first, then the
+    /// read slices movers are drawn into, one volume each, in the order they
+    /// are drawn. A caster's view mask is numbered the same way.
+    void SetViews(std::span<const Assisi::Geometry::BoundingSphere> volumes, std::uint32_t stillViews,
+                  const glm::vec3 &lightDirection);
+
+    /// @brief Gather for the views SetViews named, into Result(). Still
+    /// casters gathered for a still layer are told to @p mobility as baked:
+    /// that is the pose the layer now holds them at.
+    void Gather(Assisi::ECS::Scene &scene, Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+
+    /// @brief Nothing gathered: what a frame drawing nothing hands the pass.
+    void Clear();
+
+    [[nodiscard]] const ShadowCasterGather &Result() const { return _result; }
+
+private:
+    void AddCaster(Assisi::ECS::Entity entity, const Transform &transform, const MeshRenderer &meshRenderer,
+                   Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+
+    ShadowCasterGather _result;
+    std::array<Assisi::Geometry::BoundingSphere, 2 * Assisi::Render::kMaxShadowCascades> _volumes{};
+    glm::vec3 _lightDirection{0.f, -1.f, 0.f};
+    std::uint32_t _viewCount = 0;
+    std::uint32_t _stillViews = 0;
+    float _nearAlongLight = 0.f;
+};
 
 /// @brief One frame's local-light shadow casters, the lights each one reaches,
 /// and the per-light rows the atlas reads.

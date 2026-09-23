@@ -372,81 +372,134 @@ DrawStats DrawScene(const DrawSceneParams &params)
     return stats;
 }
 
-void GatherShadowCasters(Assisi::ECS::Scene &scene, const glm::vec3 &lightDirection,
-                         std::span<const Assisi::Geometry::BoundingSphere> viewVolumes, LodSelector *lodSelector,
-                         ShadowCasterGather &out)
+void SunShadowCasterGather::SetViews(std::span<const Assisi::Geometry::BoundingSphere> volumes,
+                                     std::uint32_t stillViews, const glm::vec3 &lightDirection)
+{
+    _viewCount = static_cast<std::uint32_t>(std::min(volumes.size(), _volumes.size()));
+    std::copy_n(volumes.begin(), _viewCount, _volumes.begin());
+    _stillViews = std::min(stillViews, _viewCount);
+    _lightDirection = lightDirection;
+}
+
+void SunShadowCasterGather::Clear()
+{
+    _result.casters.clear();
+    _result.nearAlongLight.reset();
+    _result.culledEntities = 0;
+    _result.coarserViews = 0;
+}
+
+void SunShadowCasterGather::Gather(Assisi::ECS::Scene &scene, Assisi::Render::ShadowCasterMobility &mobility,
+                                   LodSelector *lodSelector)
 {
     ASSISI_PROFILE_SCOPE("shadow-gather");
-
-    out.casters.clear();
-    out.nearAlongLight.reset();
-    out.culledEntities = 0;
-    out.coarserViews = 0;
+    Clear();
 
     // The selector's widths name views by the same bits these volumes do; a
     // count that disagrees would measure casters against another view's texels.
-    ASSISI_ASSERT(lodSelector == nullptr || lodSelector->ShadowViewCount() == viewVolumes.size(),
+    ASSISI_ASSERT(lodSelector == nullptr || lodSelector->ShadowViewCount() == _viewCount,
                   "LodSelector::SetShadowViews must describe the views being gathered for");
 
-    float nearAlongLight = std::numeric_limits<float>::max();
-
-    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+    _nearAlongLight = std::numeric_limits<float>::max();
+    if (_stillViews > 0u)
     {
-        const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
-        if (mesh == nullptr || !meshRenderer.castsShadows)
+        for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
         {
-            continue;
+            AddCaster(entity, transform, meshRenderer, mobility, lodSelector);
         }
-
-        const Assisi::Geometry::BoundingSphere worldSphere =
-            Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
-
-        // Swept down-light against each view's volume, once, here. The same
-        // rejection made per view is one the frustum test would have reached
-        // only after walking this caster again for every view and every pipeline
-        // class; the mask is what turns that product into a classification, and
-        // the sweep is what makes it without cutting off the casters up-light
-        // that the views deliberately keep.
-        const std::uint32_t viewMask = Assisi::Render::ShadowCasterViewMask(worldSphere, viewVolumes, lightDirection);
-        if (viewMask == 0u)
+    }
+    else
+    {
+        // No still layer is being rebaked, so only movers are drawn anywhere,
+        // and they are the casters the mobility table already lists.
+        for (const Assisi::Render::ShadowMover &mover : mobility.Dynamic())
         {
-            ++out.culledEntities;
-            continue;
-        }
-
-        // How far up-light this caster reaches. Every cascade's near plane is
-        // pulled back to the smallest of these, which is what stops geometry
-        // behind the camera from being clipped out of the map it shadows into.
-        nearAlongLight = std::min(nearAlongLight, glm::dot(worldSphere.center, lightDirection) - worldSphere.radius);
-
-        // The sun redraws every cascade every frame, so nothing here is ever
-        // held back from a kept layer: every caster is drawn, every time.
-        const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
-        const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
-        const std::uint32_t coarser =
-            lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh->Lods(), worldSphere, level) & viewMask
-                                   : 0u;
-
-        // At most two copies, each masked to the views that draw it, so every
-        // view's list still holds the entity exactly once.
-        if ((viewMask & ~coarser) != 0u)
-        {
-            EmitShadowCasters(source, viewMask & ~coarser, level, Assisi::Render::ShadowCasterMotion::Still,
-                              out.casters);
-        }
-        if (coarser != 0u)
-        {
-            EmitShadowCasters(source, coarser, level + 1u, Assisi::Render::ShadowCasterMotion::Still, out.casters);
-            out.coarserViews += static_cast<std::uint32_t>(std::popcount(coarser));
+            const Assisi::ECS::Entity entity = ShadowCasterEntity(mover.casterId);
+            if (!scene.IsAlive(entity))
+            {
+                continue;
+            }
+            const Transform *transform = scene.Get<Transform>(entity);
+            const MeshRenderer *meshRenderer = scene.Get<MeshRenderer>(entity);
+            if (transform != nullptr && meshRenderer != nullptr)
+            {
+                AddCaster(entity, *transform, *meshRenderer, mobility, lodSelector);
+            }
         }
     }
 
-    if (out.casters.empty())
+    if (_result.casters.empty())
     {
         return;
     }
-    out.nearAlongLight = nearAlongLight;
-    SortShadowCasters(out.casters);
+    _result.nearAlongLight = _nearAlongLight;
+    SortShadowCasters(_result.casters);
+}
+
+void SunShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const Transform &transform,
+                                      const MeshRenderer &meshRenderer, Assisi::Render::ShadowCasterMobility &mobility,
+                                      LodSelector *lodSelector)
+{
+    const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+    if (mesh == nullptr || !meshRenderer.castsShadows)
+    {
+        return;
+    }
+
+    const Assisi::Geometry::BoundingSphere worldSphere =
+        Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
+
+    // Swept down-light against each view's volume, once, here. The same
+    // rejection made per view is one the frustum test would have reached only
+    // after walking this caster again for every view and every pipeline class;
+    // the mask is what turns that product into a classification, and the sweep
+    // is what makes it without cutting off the casters up-light that the views
+    // deliberately keep. A still caster is drawn into still layers only, and a
+    // moving one over the read slices only.
+    const std::uint64_t casterId = ShadowCasterId(entity);
+    const bool still = !mobility.IsDynamic(casterId);
+    const std::uint32_t stillBits = (1u << _stillViews) - 1u;
+    const std::uint32_t allBits = _viewCount >= 32u ? ~0u : (1u << _viewCount) - 1u;
+    const std::uint32_t viewMask =
+        Assisi::Render::ShadowCasterViewMask(worldSphere, std::span(_volumes.data(), _viewCount), _lightDirection) &
+        (still ? stillBits : allBits & ~stillBits);
+    if (viewMask == 0u)
+    {
+        ++_result.culledEntities;
+        return;
+    }
+    if (still)
+    {
+        // The pose the still layers being rebaked now hold it at, which is what
+        // a later start of motion has to erase it from.
+        mobility.NoteBaked(Assisi::Render::ShadowMover{casterId, worldSphere});
+    }
+
+    // How far up-light this caster reaches. Every cascade's near plane is
+    // pulled back to the smallest of these, which is what stops geometry
+    // behind the camera from being clipped out of the map it shadows into.
+    _nearAlongLight =
+        std::min(_nearAlongLight, glm::dot(worldSphere.center, _lightDirection) - worldSphere.radius);
+
+    const Assisi::Render::ShadowCasterMotion motion =
+        still ? Assisi::Render::ShadowCasterMotion::Still : Assisi::Render::ShadowCasterMotion::Moving;
+    const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
+    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+    const std::uint32_t coarser =
+        lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh->Lods(), worldSphere, level) & viewMask
+                               : 0u;
+
+    // At most two copies, each masked to the views that draw it, so every
+    // view's list still holds the entity exactly once.
+    if ((viewMask & ~coarser) != 0u)
+    {
+        EmitShadowCasters(source, viewMask & ~coarser, level, motion, _result.casters);
+    }
+    if (coarser != 0u)
+    {
+        EmitShadowCasters(source, coarser, level + 1u, motion, _result.casters);
+        _result.coarserViews += static_cast<std::uint32_t>(std::popcount(coarser));
+    }
 }
 
 void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::Entity> changed,

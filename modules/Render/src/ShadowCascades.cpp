@@ -2,8 +2,13 @@
 
 #include <Assisi/Render/ShadowCascades.hpp>
 
+#include <Assisi/Core/ContentHash.hpp>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 
 namespace Assisi::Render
 {
@@ -27,6 +32,16 @@ glm::vec3 SafeLightDirection(const glm::vec3 &direction)
     return lengthSq > 0.f && std::isfinite(lengthSq) ? direction / std::sqrt(lengthSq) : kFallbackLightDirection;
 }
 } // namespace
+
+std::uint64_t ShadowMoverSignature(const ShadowMover &mover)
+{
+    const std::array<float, 4> sphere{mover.worldSphere.center.x, mover.worldSphere.center.y,
+                                      mover.worldSphere.center.z, mover.worldSphere.radius};
+    std::array<std::byte, sizeof(mover.casterId) + sizeof(sphere)> bytes{};
+    std::memcpy(bytes.data(), &mover.casterId, sizeof(mover.casterId));
+    std::memcpy(bytes.data() + sizeof(mover.casterId), sphere.data(), sizeof(sphere));
+    return Core::ContentHash64(bytes);
+}
 
 float PracticalSplitDistance(float nearZ, float farZ, std::uint32_t index, std::uint32_t count, float lambda)
 {

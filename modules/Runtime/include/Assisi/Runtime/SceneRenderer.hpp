@@ -275,7 +275,7 @@ public:
 
     /// @brief Caster-cascade pairs the most recent sun gather drew one level
     /// coarser than on screen. Zero on a frame that redrew no cascade.
-    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const { return _shadowCasters.coarserViews; }
+    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const { return _shadowCasters.Result().coarserViews; }
 
     /// @brief What the local-light atlas drew in the most recent Render().
     ///
@@ -456,7 +456,7 @@ private:
     // pass has drawn with it.
     Render::ShadowPass _shadowPass;
     Render::CascadeFit _cascadeFit;
-    ShadowCasterGather _shadowCasters;
+    SunShadowCasterGather _shadowCasters;
     // Which cascades still hold the right depth, and this frame's answer. The
     // plan is a member so a steady state allocates nothing, and because the fit
     // it publishes is what the mesh pass borrows.
