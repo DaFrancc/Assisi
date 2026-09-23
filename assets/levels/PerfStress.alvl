@@ -42935,7 +42935,7 @@
             0.7925450205802917,
             0.7847210168838501
           ],
-          "intensity": 6.320752143859863,
+          "intensity": 150.0,
           "radius": 22.0,
           "shadowAlwaysOn": false,
           "shadowPriority": 0.0
@@ -42970,7 +42970,7 @@
             0.7115200161933899,
             0.819009006023407
           ],
-          "intensity": 9.131013870239258,
+          "intensity": 150.0,
           "radius": 22.0,
           "shadowAlwaysOn": false,
           "shadowPriority": 0.0
@@ -43005,7 +43005,7 @@
             0.8042830228805542,
             0.6880580186843872
           ],
-          "intensity": 10.798992156982422,
+          "intensity": 150.0,
           "radius": 22.0,
           "shadowAlwaysOn": false,
           "shadowPriority": 0.0
@@ -43040,7 +43040,7 @@
             0.7021129727363586,
             0.9199569821357727
           ],
-          "intensity": 7.648703098297119,
+          "intensity": 150.0,
           "radius": 22.0,
           "shadowAlwaysOn": false,
           "shadowPriority": 0.0
@@ -43075,7 +43075,7 @@
             0.9276639819145203,
             0.8708270192146301
           ],
-          "intensity": 11.850957870483398,
+          "intensity": 150.0,
           "radius": 22.0,
           "shadowAlwaysOn": false,
           "shadowPriority": 0.0
@@ -43110,7 +43110,7 @@
             0.9925050139427185,
             0.7788749933242798
           ],
-          "intensity": 6.274980068206787,
+          "intensity": 150.0,
           "radius": 22.0,
           "shadowAlwaysOn": false,
           "shadowPriority": 0.0
@@ -44020,7 +44020,7 @@
             0.9944210052490234
           ],
           "innerAngle": 18.0,
-          "intensity": 19.45416259765625,
+          "intensity": 300.0,
           "outerAngle": 32.0,
           "radius": 32.0,
           "shadowAlwaysOn": false,
@@ -44057,7 +44057,7 @@
             0.8786669969558716
           ],
           "innerAngle": 18.0,
-          "intensity": 21.98277473449707,
+          "intensity": 300.0,
           "outerAngle": 32.0,
           "radius": 32.0,
           "shadowAlwaysOn": false,
@@ -44094,7 +44094,7 @@
             0.9660509824752808
           ],
           "innerAngle": 18.0,
-          "intensity": 17.899267196655273,
+          "intensity": 300.0,
           "outerAngle": 32.0,
           "radius": 32.0,
           "shadowAlwaysOn": false,
@@ -44131,7 +44131,7 @@
             0.7266179919242859
           ],
           "innerAngle": 18.0,
-          "intensity": 17.564800262451172,
+          "intensity": 300.0,
           "outerAngle": 32.0,
           "radius": 32.0,
           "shadowAlwaysOn": false,
