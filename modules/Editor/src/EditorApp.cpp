@@ -1022,6 +1022,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // author left it and is what Stop returns to.
     Assisi::Runtime::Transform playPose;
     Assisi::Runtime::Camera playCamera;
+    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
     if (PlayViewCamera(playPose, playCamera))
     {
         _sceneRenderer.Render(frame, *_scene, playPose, playCamera, _world->propagationTick);

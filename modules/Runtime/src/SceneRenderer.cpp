@@ -553,11 +553,11 @@ void SceneRenderer::OnSceneReplaced()
     // happened to match would keep a bake of the last level's sky.
     _skyProbe.Release();
 
-    // The mover bookmark goes back to the beginning, so the first frame after a
-    // load reads every caster as moved and draws every cascade. Conservative in
-    // the direction that costs one frame rather than the one that leaves a
-    // shadow behind.
-    _lastMoverTick = 0;
+    // The mobility table holds the old scene's handles, which the new scene's
+    // entities reuse; and the mover bookmark is re-taken from the new scene on
+    // its first frame rather than read from zero.
+    _casterMobility.Clear();
+    _moverTickPrimed = false;
 }
 
 void SceneRenderer::SetLodSettings(const Runtime::LodSettings &settings)

@@ -262,6 +262,16 @@ public:
     /// a scene with no sun in it pays neither the memory nor the pass whatever
     /// these say.
     void SetShadowSettings(const Render::ShadowSettings &settings) { _shadowSettings = settings; }
+
+    /// @brief The simulated time the next Render happens at, in seconds.
+    ///
+    /// What a shadow caster's stillness is measured in: movers are written on
+    /// the simulation's tick, so a caster has held still for as long as the
+    /// simulation has run without writing it. A host that never sets this
+    /// leaves every caster that has moved drawn as a mover, which is correct
+    /// and merely never folds it back into the still layers.
+    void SetSimulationSeconds(double seconds) { _simulationSeconds = seconds; }
+
     [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
 
     /// @brief Which shadow diagnostic the mesh shader draws over the lit image.
@@ -492,6 +502,8 @@ private:
     // The scene tick the mover set was last taken at. Everything written after
     // it has moved since, which is the whole of the invalidation input.
     uint64_t _lastMoverTick = 0;
+    // See SetSimulationSeconds.
+    double _simulationSeconds = 0.0;
     // Entities that lost their Transform or MeshRenderer since the last look,
     // kept for the capacity.
     std::vector<ECS::Entity> _removedEntities;
@@ -547,6 +559,9 @@ private:
     // something is looking, which is what keeps a closed panel free.
     Render::ShadowDiagnostics _shadowDiagnostics;
     bool _shadowDiagnosticsEnabled = false;
+    // Whether _lastMoverTick has been taken from the current scene. Until it
+    // has, the scene's change ticks record its loading, not its motion.
+    bool _moverTickPrimed = false;
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene
     // Render() overload: the scene tick at the end of the last propagation. 0

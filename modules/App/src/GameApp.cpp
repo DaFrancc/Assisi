@@ -559,12 +559,13 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     if (_world->systems.HasRenderSystems())
     {
         const float aspectRatio =
-            frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
+            Runtime::AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
         RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(pose),
                                 Runtime::ProjectionMatrix(camera, aspectRatio)};
         _world->systems.RunRender(renderCtx);
     }
 
+    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
     _sceneRenderer.Render(frame, _world->scene, pose, camera, _world->propagationTick);
 }
 

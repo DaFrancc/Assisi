@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -42,6 +41,15 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     // read of them would come back empty and tell the second half that nothing
     // had moved.
     ++_shadowFrameIndex;
+    if (!_moverTickPrimed)
+    {
+        // A scene's first frame finds every Transform written by its load.
+        // Read as motion, that would draw every caster as a mover until they
+        // all settled at once and the bake budget met every light together.
+        // Nothing is kept from before, so every map draws them as still.
+        _lastMoverTick = scene.CurrentChangeTick();
+        _moverTickPrimed = true;
+    }
     _movedEntities.clear();
     scene.ChangedSince<Transform>(_lastMoverTick, _movedEntities);
 
@@ -79,12 +87,11 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     // of the shadow system: the sun's cascades and the local atlas each keep a
     // still layer, and they must agree about which one an object is in.
     //
-    // Real time rather than the game's tick, which this has no view of: what it
-    // measures is how long an object has stood still, and that is the same
-    // either way wherever the game runs at speed.
-    const double nowSeconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    _casterMobility.Update(nowSeconds, _shadowSettings.local.cache.promoteStillSeconds, _movedCasters,
+    // On the simulation's clock rather than the wall's: movers are written on
+    // its tick, and a caster's shadow edge differs by a hair between the two
+    // layers, so settling on real time would make the same run draw slightly
+    // different pictures from one launch to the next.
+    _casterMobility.Update(_simulationSeconds, _shadowSettings.local.cache.promoteStillSeconds, _movedCasters,
                            _dynamicCasters, _casterInvalidations);
 }
 

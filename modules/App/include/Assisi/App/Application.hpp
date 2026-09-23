@@ -255,6 +255,15 @@ class Application
     /// it must never be derived from wall-clock time or frame count.
     [[nodiscard]] std::uint64_t GetSimTick() const { return _simTick; }
 
+    /// @brief How much simulated time the ticks so far add up to, in seconds.
+    /// The clock anything measuring how long the world has been doing something
+    /// should read: it moves only when the world does, and the same way in
+    /// every run of a benchmark.
+    [[nodiscard]] double SimulatedSeconds() const
+    {
+        return _config.physicsHz > 0.0 ? static_cast<double>(_simTick) / _config.physicsHz : 0.0;
+    }
+
     /// @brief Fraction of a fixed physics step left unconsumed by the current
     /// frame — in [0, 1). Use it in OnRender() to blend physics-driven state
     /// between its previous and current fixed-step poses (see
