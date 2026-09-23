@@ -38,6 +38,7 @@
 #include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/ShadowCasterGather.hpp>
 
 #include <nvrhi/nvrhi.h>
 
