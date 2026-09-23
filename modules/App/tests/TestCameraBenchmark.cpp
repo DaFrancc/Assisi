@@ -28,13 +28,10 @@ std::vector<Runtime::CameraRouteLeg> StraightRoute(float seconds)
     return {leg};
 }
 
-/// Advances through the warm-up with the world loaded, at time @p now.
+/// Finishes a warm-up that began at or before @p now minus its length.
 void WarmUp(CameraBenchmark &benchmark, double now)
 {
-    for (std::int32_t i = 0; i < kBenchmarkWarmupFrames; ++i)
-    {
-        (void)benchmark.Advance(true, now);
-    }
+    (void)benchmark.Advance(true, now);
 }
 } // namespace
 
@@ -51,17 +48,22 @@ TEST_CASE("A benchmark does not start until the world has loaded")
     CHECK(benchmark.Advance(true, static_cast<double>(kLoadingFrames)) == BenchmarkPhase::WarmingUp);
 }
 
-TEST_CASE("The warm-up holds the first pose for its frames, then the run starts")
+TEST_CASE("The warm-up holds the first pose for its time, then the run starts")
 {
-    CameraBenchmark benchmark(StraightRoute(5.f), 10.0);
-    (void)benchmark.Advance(true, 0.0);
+    // Frames within the warm-up, however many there are.
+    constexpr std::int32_t kWarmupFrames = 500;
+    constexpr double kLoadedAt = 2.0;
 
-    for (std::int32_t i = 0; i < kBenchmarkWarmupFrames - 1; ++i)
+    CameraBenchmark benchmark(StraightRoute(5.f), 10.0);
+    (void)benchmark.Advance(true, kLoadedAt);
+
+    for (std::int32_t i = 0; i < kWarmupFrames; ++i)
     {
-        CHECK(benchmark.Advance(true, 1.0) == BenchmarkPhase::WarmingUp);
+        const double now = kLoadedAt + kBenchmarkWarmupSeconds * static_cast<double>(i) / kWarmupFrames;
+        CHECK(benchmark.Advance(true, now) == BenchmarkPhase::WarmingUp);
         CHECK(glm::length(benchmark.Aim().eye) < kTolerance);
     }
-    CHECK(benchmark.Advance(true, 1.0) == BenchmarkPhase::Running);
+    CHECK(benchmark.Advance(true, kLoadedAt + kBenchmarkWarmupSeconds) == BenchmarkPhase::Running);
     CHECK(benchmark.ElapsedSeconds() == doctest::Approx(0.0));
 }
 
@@ -82,7 +84,7 @@ TEST_CASE("A shots run stops at evenly spaced points and wants each picture once
     constexpr std::int32_t kShots = 3;
     CameraBenchmark benchmark(StraightRoute(5.f), 10.0, kShots);
     (void)benchmark.Advance(true, 0.0);
-    WarmUp(benchmark, 0.0);
+    WarmUp(benchmark, kBenchmarkWarmupSeconds);
     REQUIRE(benchmark.Phase() == BenchmarkPhase::Running);
 
     // The clock plays no part: the poses are the route's ends and middle.

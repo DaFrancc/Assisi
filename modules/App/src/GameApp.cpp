@@ -241,7 +241,7 @@ void GameApp::AdvanceBenchmark()
     switch (phase)
     {
     case BenchmarkPhase::WarmingUp:
-        Core::Log::Info("Benchmark: loaded; warming up for {} frames.", kBenchmarkWarmupFrames);
+        Core::Log::Info("Benchmark: loaded; warming up for {} s.", kBenchmarkWarmupSeconds);
         break;
     case BenchmarkPhase::Running:
         if (shotsDirectory.empty())

@@ -22,11 +22,11 @@ BenchmarkPhase CameraBenchmark::Advance(bool assetsLoaded, double nowSeconds)
         if (assetsLoaded)
         {
             _phase = BenchmarkPhase::WarmingUp;
+            _warmupStartSeconds = nowSeconds;
         }
         break;
     case BenchmarkPhase::WarmingUp:
-        --_warmupFramesLeft;
-        if (_warmupFramesLeft <= 0)
+        if (nowSeconds - _warmupStartSeconds >= kBenchmarkWarmupSeconds)
         {
             _phase = BenchmarkPhase::Running;
             _startSeconds = nowSeconds;

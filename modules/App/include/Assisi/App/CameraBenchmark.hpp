@@ -28,8 +28,13 @@
 namespace Assisi::App
 {
 
-/// @brief Frames drawn at the first pose before the route starts.
-inline constexpr std::int32_t kBenchmarkWarmupFrames = 120;
+/// @brief Seconds drawn at the first pose before the route starts.
+///
+/// Time rather than frames: what is being waited for is the GPU leaving its
+/// idle clocks, which takes about the same time however fast frames come. A
+/// frame count short enough for a slow scene is a fraction of a second in a
+/// fast one, and the run would start while the clocks were still climbing.
+inline constexpr double kBenchmarkWarmupSeconds = 3.0;
 
 /// @brief How long a benchmark runs when nothing asks otherwise, in seconds.
 inline constexpr double kDefaultBenchmarkSeconds = 15.0;
@@ -109,10 +114,11 @@ private:
     double _runSeconds = 0.0;
     double _startSeconds = 0.0;
     double _elapsed = 0.0;
+    /// When the warm-up began, on the clock Advance is given.
+    double _warmupStartSeconds = 0.0;
 
     /// Authored route seconds per second of run.
     float _routeScale = 0.f;
-    std::int32_t _warmupFramesLeft = kBenchmarkWarmupFrames;
     std::int32_t _shotCount = 0;
 
     /// Frames spent in the running phase of a shots run.
