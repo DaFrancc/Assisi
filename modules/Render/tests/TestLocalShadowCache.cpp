@@ -394,10 +394,15 @@ TEST_CASE("The throttle spares the lights that matter and never a fresh tile")
     }
     const std::vector<ShadowMover> movers{CasterAt(1, glm::vec3(0.f)), CasterAt(2, glm::vec3(50.f, 0.f, 0.f)),
                                           CasterAt(3, glm::vec3(400.f, 0.f, 0.f))};
+    // The same casters a step further on, so the second frame has something new
+    // to draw and only the throttle can decide against drawing it.
+    const glm::vec3 step{0.f, 0.5f, 0.f};
+    const std::vector<ShadowMover> moved{CasterAt(1, step), CasterAt(2, glm::vec3(50.f, 0.f, 0.f) + step),
+                                         CasterAt(3, glm::vec3(400.f, 0.f, 0.f) + step)};
 
     std::vector<LocalShadowTilePlan> plans;
     RunFrame(cache, FrameAt(1, settings, requests, movers), plans);
-    RunFrame(cache, FrameAt(2, settings, requests, movers), plans);
+    RunFrame(cache, FrameAt(2, settings, requests, moved), plans);
 
     // The top of the ordering redraws every frame whatever the divisor says: a
     // frame of lag on the light the shot is built around is the one place this
@@ -405,7 +410,8 @@ TEST_CASE("The throttle spares the lights that matter and never a fresh tile")
     CHECK(plans[0].redrawMovers);
     CHECK(plans[1].redrawMovers);
     // A light with nothing moving under it has no moving layer to throttle.
-    CHECK(plans[4].redrawMovers);
+    CHECK_FALSE(plans[4].hasMovers);
+    CHECK(cache.Stats().throttledLights == 1);
 
     // And a light whose tile is being cut fresh is never throttled — there is no
     // cached composite for it to fall back on.
@@ -415,6 +421,43 @@ TEST_CASE("The throttle spares the lights that matter and never a fresh tile")
     {
         CHECK(plan.redrawMovers);
     }
+}
+
+TEST_CASE("A moving layer is redrawn only when its movers have changed")
+{
+    LocalShadowCache cache;
+    const LocalShadowCacheSettings settings;
+    const std::vector<LocalShadowRequest> requests{PointAt(0, glm::vec3(0.f), 20.f)};
+    const ShadowMover still = CasterAt(7, glm::vec3(10.f, 0.f, 0.f), 0.5f);
+    const ShadowMover other = CasterAt(8, glm::vec3(-10.f, 0.f, 0.f), 0.5f);
+
+    std::vector<LocalShadowTilePlan> plans;
+    RunFrame(cache, FrameAt(1, settings, requests, std::vector<ShadowMover>{still}), plans);
+    REQUIRE(plans[0].redrawMovers);
+
+    // Movers are written on the game's tick, so a frame between ticks finds
+    // them exactly where the layer already has them.
+    RunFrame(cache, FrameAt(2, settings, requests, std::vector<ShadowMover>{still}), plans);
+    CHECK_FALSE(plans[0].redrawMovers);
+    CHECK(plans[0].liveMoverFaces == plans[0].moverFaces); // still sampled
+    CHECK(cache.Stats().unchangedMoverLights == 1);
+
+    // A step, however small, is a redraw.
+    const ShadowMover stepped = CasterAt(7, glm::vec3(10.f, 0.01f, 0.f), 0.5f);
+    RunFrame(cache, FrameAt(3, settings, requests, std::vector<ShadowMover>{stepped}), plans);
+    CHECK(plans[0].redrawMovers);
+
+    // So is a caster joining, and one leaving: in both the layer holds depth
+    // for a set of casters that is no longer the set.
+    RunFrame(cache, FrameAt(4, settings, requests, std::vector<ShadowMover>{stepped, other}), plans);
+    CHECK(plans[0].redrawMovers);
+    RunFrame(cache, FrameAt(5, settings, requests, std::vector<ShadowMover>{stepped}), plans);
+    CHECK(plans[0].redrawMovers);
+
+    // And the order they arrive in is not a change.
+    RunFrame(cache, FrameAt(6, settings, requests, std::vector<ShadowMover>{stepped, other}), plans);
+    RunFrame(cache, FrameAt(7, settings, requests, std::vector<ShadowMover>{other, stepped}), plans);
+    CHECK_FALSE(plans[0].redrawMovers);
 }
 
 TEST_CASE("A mover marks only the point-light faces it can cast into as moving")

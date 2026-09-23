@@ -96,6 +96,14 @@ struct LocalShadowServedTile
 /// that is what the budget spends itself against.
 struct LocalShadowTilePlan
 {
+    /// Per face, a fingerprint of the movers it holds this frame: which
+    /// casters, and exactly where. Zero for a face nothing moves over.
+    std::array<std::uint64_t, kMaxLocalShadowFaces> moverSignature{};
+    /// The same fingerprint for what the moving layer was last drawn with, while
+    /// @ref retained. Equal to @ref moverSignature means a redraw would put back
+    /// the depth already there.
+    std::array<std::uint64_t, kMaxLocalShadowFaces> drawnMoverSignature{};
+
     /// Whether the light kept the rectangles it held last frame. False means the
     /// atlas must cut it new ones, and that whatever is in them belongs to
     /// somebody else.
@@ -124,9 +132,9 @@ struct LocalShadowTilePlan
     /// no draw to make at all.
     bool hasMovers = false;
 
-    /// Whether the moving layer is redrawn this frame. False only under the
-    /// update-rate throttle, and never for a light with no cached tile to fall
-    /// back on.
+    /// Whether the moving layer is redrawn this frame. False under the
+    /// update-rate throttle, and when no mover has changed since the last
+    /// redraw; never for a light with no cached tile to fall back on.
     bool redrawMovers = true;
 
     /// Whether the budget refused this light's re-render.
@@ -152,6 +160,9 @@ struct LocalShadowCachePlanStats
     std::uint32_t deferredLights = 0;
     /// Lights whose moving layer was skipped by the update-rate throttle.
     std::uint32_t throttledLights = 0;
+    /// Lights with movers whose moving layer was skipped because every one of
+    /// them stands where the last redraw drew it.
+    std::uint32_t unchangedMoverLights = 0;
     /// Casters drawn with the movers this frame, and casters folded back into
     /// the cached layer by having held still long enough.
     std::uint32_t dynamicCasters = 0;
@@ -320,6 +331,9 @@ public:
 private:
     struct Entry
     {
+        /// See LocalShadowTilePlan::moverSignature: what the moving layer of
+        /// this light's tiles was last drawn with.
+        std::array<std::uint64_t, kMaxLocalShadowFaces> moverSignature{};
         std::uint32_t sizeClass = 0;
         std::uint32_t faces = 0;
         std::array<ShadowViewRect, kMaxLocalShadowFaces> rect{};

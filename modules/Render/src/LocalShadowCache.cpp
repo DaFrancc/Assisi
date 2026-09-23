@@ -2,15 +2,33 @@
 
 #include <Assisi/Render/LocalShadowCache.hpp>
 
+#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Render/ShadowView.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace Assisi::Render
 {
 namespace
 {
+/// @brief One mover's contribution to the signature of each face it reaches:
+/// which caster, and exactly where.
+///
+/// A face's signature is the sum of these over its movers, so it does not
+/// depend on the order they arrive in — the mobility table hands them over in
+/// hash-map order, which changes whenever the map rehashes.
+std::uint64_t MoverSignature(const ShadowMover &mover)
+{
+    const std::array<float, 4> sphere{mover.worldSphere.center.x, mover.worldSphere.center.y,
+                                      mover.worldSphere.center.z, mover.worldSphere.radius};
+    std::array<std::byte, sizeof(mover.casterId) + sizeof(sphere)> bytes{};
+    std::memcpy(bytes.data(), &mover.casterId, sizeof(mover.casterId));
+    std::memcpy(bytes.data() + sizeof(mover.casterId), sphere.data(), sizeof(sphere));
+    return Core::ContentHash64(bytes);
+}
+
 /// @brief The cosine of the half-angle of the cone that contains one point-light
 /// face's frustum.
 ///
@@ -258,6 +276,7 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         // invalidation this whole file exists to prevent.
         plan.dirtyFaces = found->second.dirtyFaces;
         plan.liveMoverFaces = found->second.liveMoverFaces;
+        plan.drawnMoverSignature = found->second.moverSignature;
     }
 
     // Invalidation, and the only place a caster meets a light. Movers times
@@ -279,6 +298,14 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
                                    {
                                        out[index].moverFaces |= mask;
                                        out[index].hasMovers = true;
+                                       const std::uint64_t signature = MoverSignature(caster);
+                                       for (std::uint32_t face = 0; face < kMaxLocalShadowFaces; ++face)
+                                       {
+                                           if ((mask & (1u << face)) != 0u)
+                                           {
+                                               out[index].moverSignature[face] += signature;
+                                           }
+                                       }
                                    }
                                    else
                                    {
@@ -315,8 +342,25 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         }
     }
 
+    // Nothing to redraw. Movers are written on the game's tick, not every
+    // frame, so most frames find every mover exactly where the moving layer
+    // already has it — same faces, same casters, same poses — and redrawing
+    // would put back the depth that is already there.
+    for (LocalShadowTilePlan &plan : out)
+    {
+        if (plan.redrawMovers && plan.retained && plan.moverFaces == plan.liveMoverFaces &&
+            plan.moverSignature == plan.drawnMoverSignature)
+        {
+            plan.redrawMovers = false;
+            if (plan.hasMovers)
+            {
+                ++_stats.unchangedMoverLights;
+            }
+        }
+    }
+
     // A redraw leaves the moving layer holding exactly this frame's movers; a
-    // throttled light keeps sampling what its last redraw left.
+    // light that skips one keeps sampling what its last redraw left.
     for (LocalShadowTilePlan &plan : out)
     {
         if (plan.redrawMovers)
@@ -395,6 +439,7 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         {
             entry.lastMoverDrawFrame = frameIndex;
         }
+        entry.moverSignature = plan.redrawMovers ? plan.moverSignature : plan.drawnMoverSignature;
         entry.liveMoverFaces = plan.liveMoverFaces;
         entry.lastSeenFrame = frameIndex;
         rectCursor += faces;
