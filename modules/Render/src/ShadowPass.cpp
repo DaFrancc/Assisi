@@ -418,6 +418,13 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Sun
     {
         ASSISI_PROFILE_GPU_SCOPE(commandList, "cascade-restore");
         const std::int32_t side = static_cast<std::int32_t>(_builtResolution);
+        // Stated outright rather than left to the binding set: nvrhi re-derives
+        // a set's barriers only when the bound sets change or something marks
+        // them dirty, and a depth clear does not. A restore whose set is
+        // already current would read the still layer with no barrier after
+        // the clear and still draw that just wrote it.
+        commandList->setTextureState(_stillTexture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+        commandList->commitBarriers();
         for (const std::uint32_t cascade : redraw)
         {
             RestoreStillDepth(commandList, cascade, nvrhi::Rect(0, side, 0, side));
