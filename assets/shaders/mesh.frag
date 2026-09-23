@@ -15,6 +15,18 @@
 #include "mesh/local_shadows.glsl"
 #include "mesh/indirect.glsl"
 
+// The display encode tonemap.frag applies, repeated here for the debug views
+// it passes through untouched.
+const float kDisplayGamma = 2.2;
+
+// Floor on a fragment's squared distance to a light, so one exactly on the
+// light normalises a direction rather than dividing by zero.
+const float kMinLightDistanceSq = 1e-8;
+
+// The narrowest penumbra a spot's cone is given, in cosine, so one authored
+// with inner == outer blends over a sliver rather than dividing by zero.
+const float kMinConeBlend = 1e-4;
+
 void main()
 {
     // Derivatives while control flow is still uniform, before the masked build's
@@ -42,21 +54,37 @@ void main()
     if (debugMode != kDebugNone)
     {
         if (debugMode == kDebugBaseColor)
-            outColor = vec4(pow(surf.albedo, vec3(1.0 / 2.2)), 1.0);
+        {
+            outColor = vec4(pow(surf.albedo, vec3(1.0 / kDisplayGamma)), 1.0);
+        }
         else if (debugMode == kDebugMetallic)
+        {
             outColor = vec4(vec3(surf.metallic), 1.0);
+        }
         else if (debugMode == kDebugRoughness)
+        {
             outColor = vec4(vec3(surf.roughness), 1.0);
+        }
         else if (debugMode == kDebugNormal)
+        {
             outColor = vec4(surf.normal * 0.5 + 0.5, 1.0);
+        }
         else if (debugMode == kDebugOcclusion)
+        {
             outColor = vec4(vec3(surf.occlusion), 1.0);
+        }
         else if (debugMode == kDebugEmissive)
-            outColor = vec4(pow(surf.emissive, vec3(1.0 / 2.2)), 1.0);
+        {
+            outColor = vec4(pow(surf.emissive, vec3(1.0 / kDisplayGamma)), 1.0);
+        }
         else if (debugMode == kDebugScreenOcclusion)
+        {
             outColor = vec4(vec3(uFrame.indirectSpecular.z != 0.0 ? ScreenOcclusion() : 1.0), 1.0);
+        }
         else
+        {
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
         return;
     }
 
@@ -118,9 +146,8 @@ void main()
         vec3  lPos = pointLights[li].positionRadius.xyz;
         float r    = pointLights[li].positionRadius.w;
 
-        // max() guards a fragment exactly on the light.
         vec3  toLight = lPos - vWorldPos;
-        float d2      = max(dot(toLight, toLight), 1e-8);
+        float d2      = max(dot(toLight, toLight), kMinLightDistanceSq);
 
         // The cluster can list a light for fragments past its radius.
         float att = AttenuationSq(d2, r * r);
@@ -163,12 +190,11 @@ void main()
         float outer  = spotLights[li].outerCutoff;
 
         vec3  toLight = lPos - vWorldPos;
-        float d2      = max(dot(toLight, toLight), 1e-8);
+        float d2      = max(dot(toLight, toLight), kMinLightDistanceSq);
         vec3  L       = toLight * inversesqrt(d2);
 
-        // max() keeps a cone authored with inner == outer from dividing by zero.
         float theta = dot(L, -lDir);
-        float cone  = smoothstep(outer, max(inner, outer + 1e-4), theta);
+        float cone  = smoothstep(outer, max(inner, outer + kMinConeBlend), theta);
 
         float att = AttenuationSq(d2, r * r);
         if (att == 0.0 || cone == 0.0)

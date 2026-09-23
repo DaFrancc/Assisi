@@ -37,6 +37,14 @@ layout(std430, binding = 0) readonly buffer Materials
 // squared.
 const float kSpecAaScreenSpaceVariance = 0.5;
 
+// Below this squared length the tangent left after removing its normal part
+// has no usable direction, and a perpendicular is built from N instead.
+const float kMinTangentLengthSq = 1e-8;
+
+// |N.y| past which N is too close to world up to cross with it, so the
+// fallback tangent is built from world X instead.
+const float kNearlyVerticalNormalY = 0.99;
+
 struct Surface
 {
     vec3  albedo;    // base colour x baseWeight
@@ -93,9 +101,10 @@ Surface SampleMaterial()
         // Gram-Schmidt the tangent against N, with an arbitrary perpendicular
         // where the tangent is parallel to N.
         vec3 Traw = vTangent - dot(vTangent, N) * N;
-        vec3 T    = dot(Traw, Traw) > 1e-8 ? normalize(Traw)
-                                           : normalize(abs(N.y) < 0.99 ? cross(N, vec3(0.0, 1.0, 0.0))
-                                                                       : cross(N, vec3(1.0, 0.0, 0.0)));
+        vec3 T    = dot(Traw, Traw) > kMinTangentLengthSq
+                        ? normalize(Traw)
+                        : normalize(abs(N.y) < kNearlyVerticalNormalY ? cross(N, vec3(0.0, 1.0, 0.0))
+                                                                      : cross(N, vec3(1.0, 0.0, 0.0)));
         vec3 B = cross(N, T) * vTangentSign;
 
         // Only X and Y are read, and Z is rebuilt from them. A BC5-compressed

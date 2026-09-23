@@ -56,6 +56,7 @@ float ViewAirMass(float cosZenith)
     {
         return kHorizonAirMass;
     }
+    // Kasten and Young's fit, whose coefficients are the fit itself.
     return 1.0 / (c + 0.15 * pow(93.885 - degrees(acos(c)), -1.253));
 }
 
@@ -75,12 +76,14 @@ float RayleighPhase(float cosTheta)
     return 0.75 * (1.0 + cosTheta * cosTheta);
 }
 
+// Floor on the Mie phase denominator. It reaches zero looking along the beam as
+// the asymmetry approaches one, where the pow would return infinity.
+const float kMinMiePhaseDenominator = 1e-4;
+
 float MiePhase(float cosTheta, float asymmetry)
 {
     float gg = asymmetry * asymmetry;
-    // Clamped because the denominator reaches zero looking along the beam as the
-    // asymmetry approaches one, and the pow would return infinity.
-    float denom = max(1.0 + gg - 2.0 * asymmetry * cosTheta, 1e-4);
+    float denom = max(1.0 + gg - 2.0 * asymmetry * cosTheta, kMinMiePhaseDenominator);
     return (1.0 - gg) / pow(denom, 1.5);
 }
 

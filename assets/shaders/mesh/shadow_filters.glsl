@@ -52,7 +52,8 @@ const float kPcssMaxReceiverSlope = 10.0;
 vec3 gWorldPosDx = vec3(0.0);
 vec3 gWorldPosDy = vec3(0.0);
 
-// Per-pixel rotation for the Vogel disk.
+// Per-pixel rotation for the Vogel disk: Jimenez's interleaved gradient noise,
+// whose constants are the function.
 float InterleavedGradientNoise(vec2 position)
 {
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));

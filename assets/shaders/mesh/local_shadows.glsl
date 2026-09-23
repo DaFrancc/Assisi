@@ -124,7 +124,7 @@ float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
 {
     float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
     float sum = 0.0;
-    for (uint i = 0u; i < 4u; ++i)
+    for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
         sum += LocalPcssTap(view, uv, VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, reference, slope);
     }
@@ -132,7 +132,7 @@ float FilterLocalPcss(ShadowViewRow view, vec2 uv, float reference, vec2 slope, 
     {
         return 0.0;
     }
-    if (sum == 4.0)
+    if (sum == float(kVogelProbeTaps))
     {
         return 1.0;
     }
