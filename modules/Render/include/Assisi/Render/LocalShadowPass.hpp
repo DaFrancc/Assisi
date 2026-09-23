@@ -19,7 +19,7 @@
 ///
 /// **Why the views are drawn in chunks.** A caster's ShadowCaster::viewMask is
 /// kShadowViewMaskBits wide, so one draw-list build can serve at most that many
-/// views. The Ultra tier's caps reach 64 spots and 16 points, which is 160 views
+/// views. The Ultra tier's caps reach 128 spots and 32 points, which is 320 views
 /// — well past it. The pass therefore packs whole lights into chunks of at most
 /// that many views and builds one draw list per chunk. Views stay contiguous in
 /// the frame's table across a chunk boundary, because the table is appended to,

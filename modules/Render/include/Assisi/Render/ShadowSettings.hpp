@@ -358,12 +358,12 @@ struct SunShadowSettings
 
 /// @brief Bounds on how many atlas faces may be re-rendered in one frame.
 ///
-/// The ceiling is above every tier's total face count — 64 spots and 16 points
-/// is 160 — so setting it there is "never wait", which is what the A/B against
+/// The ceiling is above every tier's total face count — 128 spots and 32 points
+/// is 320 — so setting it there is "never wait", which is what the A/B against
 /// the uncached path wants. The floor is one rather than zero: a budget of zero
 /// re-renders nothing ever, which is not a slower cache but a broken one.
 inline constexpr std::uint32_t kMinShadowBakeBudget = 1;
-inline constexpr std::uint32_t kMaxShadowBakeBudget = 256;
+inline constexpr std::uint32_t kMaxShadowBakeBudget = 512;
 
 /// @brief Bounds on how long a caster must hold still before it rejoins the
 /// cached layer.
@@ -751,8 +751,8 @@ struct ShadowSettings
         settings.local.atlasResolution = 8192;
         settings.local.faceResolution = 512;
         settings.local.filter = ShadowFilter::Vogel;
-        settings.selection.capSpot = 64;
-        settings.selection.capPoint = 16;
+        settings.selection.capSpot = 128;
+        settings.selection.capPoint = 32;
         // Provisional, as every tier value is until its cost is measured: the
         // sun alone, because a local light's search is paid once per light per
         // fragment rather than once per fragment.
