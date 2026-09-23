@@ -30,6 +30,7 @@
 
 #if defined(ASSISI_CHIARA_ENABLED) && !defined(ASSISI_CHIARA_SANITIZED)
 
+#    include <algorithm>
 #    include <chrono>
 #    include <cstdint>
 #    include <cstdio>
@@ -39,18 +40,31 @@ using Assisi::ChiaraTest::EnsureInitialized;
 namespace
 {
 
-/// @brief Nanoseconds per iteration of @p body, averaged over @p iterations.
+/// Batches each measurement is split into, and the iterations in each.
+///
+/// The fastest batch is the one reported. A scope costs about a nanosecond, so
+/// a single long run lasts a fraction of a millisecond and one preemption
+/// inside it multiplies the average; a preemption only slows the batch it lands
+/// in, and the fastest batch is the one nothing interrupted.
+constexpr std::int32_t kBatches = 50;
+constexpr std::int32_t kIterationsPerBatch = 4'000;
+
+/// @brief Nanoseconds per iteration of @p body in its fastest batch.
 template <typename Fn>
-[[nodiscard]] double NanosPerIteration(std::int32_t iterations, Fn &&body)
+[[nodiscard]] double NanosPerIteration(Fn &&body)
 {
-    const auto start = std::chrono::steady_clock::now();
-    for (std::int32_t i = 0; i < iterations; ++i)
+    std::chrono::steady_clock::duration fastest = std::chrono::steady_clock::duration::max();
+    for (std::int32_t batch = 0; batch < kBatches; ++batch)
     {
-        body();
+        const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        for (std::int32_t i = 0; i < kIterationsPerBatch; ++i)
+        {
+            body();
+        }
+        fastest = std::min(fastest, std::chrono::steady_clock::now() - start);
     }
-    const auto elapsed = std::chrono::steady_clock::now() - start;
-    return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count())
-           / static_cast<double>(iterations);
+    return static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(fastest).count())
+           / static_cast<double>(kIterationsPerBatch);
 }
 
 } // namespace
@@ -59,38 +73,24 @@ TEST_CASE("A scope costs what the notes claim it does")
 {
     EnsureInitialized();
 
-    constexpr std::int32_t kIterations = 200'000;
-
     // Recording off: one relaxed atomic load and a predicted branch. This is what
     // instrumentation costs in a -c build that is not currently capturing, which
     // is the state a shipped build spends nearly all its time in.
     Assisi::Chiara::SetRecording(false);
-    const double disabledNanos = NanosPerIteration(kIterations,
-                                                   []
-    {
-        ASSISI_PROFILE_SCOPE("overhead-disabled");
-    });
+    const double disabledNanos = NanosPerIteration([] { ASSISI_PROFILE_SCOPE("overhead-disabled"); });
 
     // Recording on: two clock reads, the shadow-stack seqlock, and a 32-byte
     // ring store.
     Assisi::Chiara::SetRecording(true);
-    const double enabledNanos = NanosPerIteration(kIterations,
-                                                  []
-    {
-        ASSISI_PROFILE_SCOPE("overhead-enabled");
-    });
+    const double enabledNanos = NanosPerIteration([] { ASSISI_PROFILE_SCOPE("overhead-enabled"); });
 
-    const double counterNanos = NanosPerIteration(kIterations,
-                                                  []
-    {
-        ASSISI_PROFILE_COUNTER("overhead/counter", 1.0);
-    });
+    const double counterNanos = NanosPerIteration([] { ASSISI_PROFILE_COUNTER("overhead/counter", 1.0); });
 
-    std::printf("\n[chiara] measured overhead, %d iterations each:\n"
+    std::printf("\n[chiara] measured overhead, fastest of %d batches of %d:\n"
                 "         scope, not recording : %6.2f ns\n"
                 "         scope, recording     : %6.2f ns\n"
                 "         counter, recording   : %6.2f ns\n\n",
-                kIterations, disabledNanos, enabledNanos, counterNanos);
+                kBatches, kIterationsPerBatch, disabledNanos, enabledNanos, counterNanos);
 
     // Loose bounds on purpose. The measurement is the deliverable; these only
     // catch a regression that changes the order of magnitude — an accidental
