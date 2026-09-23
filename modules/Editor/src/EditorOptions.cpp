@@ -584,14 +584,14 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
         // a still scene every served light is resting and both draws are zero.
         //
         // Every count carries its unit, and they are three different ones. A
-        // point light is six faces, so resting lights and copied faces are an
+        // point light is six faces, so resting lights and redrawn faces are an
         // order of magnitude apart while describing the same lights — printed
         // bare, side by side, they read as a contradiction that is not there.
-        ImGui::Text("Cache: %u of %u lights resting  |  %u baked / %u copied faces  |  %u moving casters",
-                    local.restingLights, local.lights, local.bakedFaces, local.copiedFaces, local.dynamicCasters);
+        ImGui::Text("Cache: %u of %u lights resting  |  %u baked / %u mover faces  |  %u moving casters",
+                    local.restingLights, local.lights, local.bakedFaces, local.moverFaces, local.dynamicCasters);
         ImGui::SetItemTooltip("Resting is per light and means nothing is moving within its reach. Baked and "
-                              "copied are per face — six of them for every point light — so the two counts are "
-                              "not comparable and are not meant to be.");
+                              "mover faces are per face — six of them for every point light — so the two counts "
+                              "are not comparable and are not meant to be.");
 
         // The burst condition, said only when it happens. Walking into a room
         // saturating the budget for a frame is the mechanism working; the same

@@ -417,6 +417,64 @@ TEST_CASE("The throttle spares the lights that matter and never a fresh tile")
     }
 }
 
+TEST_CASE("A mover marks only the point-light faces it can cast into as moving")
+{
+    LocalShadowCache cache;
+    const LocalShadowCacheSettings settings;
+    const std::vector<LocalShadowRequest> requests{PointAt(0, glm::vec3(0.f), 20.f)};
+
+    std::vector<LocalShadowTilePlan> plans;
+    RunFrame(cache, FrameAt(1, settings, requests), plans);
+
+    // The moving layer is redrawn per face, so a mover beside one face of a point
+    // light must not cost the other five.
+    const std::vector<ShadowMover> mover{CasterAt(7, glm::vec3(10.f, 0.f, 0.f), 0.5f)};
+    RunFrame(cache, FrameAt(2, settings, requests, mover), plans);
+    CHECK((plans[0].moverFaces & (1u << kPointLightFacePositiveX)) != 0u);
+    CHECK((plans[0].moverFaces & (1u << kPointLightFaceNegativeX)) == 0u);
+    CHECK(plans[0].liveMoverFaces == plans[0].moverFaces);
+
+    // Once it is gone, no face reads the moving layer.
+    RunFrame(cache, FrameAt(3, settings, requests), plans);
+    CHECK(plans[0].moverFaces == 0u);
+    CHECK(plans[0].liveMoverFaces == 0u);
+}
+
+TEST_CASE("A throttled light keeps reading the movers its last redraw left")
+{
+    constexpr std::uint32_t kDivisor = 3;
+    constexpr std::uint32_t kLights = 9;
+    constexpr std::uint32_t kFrames = 12;
+    // Past the full-rate head of the ordering, so the throttle applies to it.
+    constexpr std::uint32_t kThrottled = kLights - 1;
+
+    LocalShadowCache cache;
+    LocalShadowCacheSettings settings;
+    settings.movingLightUpdateDivisor = kDivisor;
+
+    std::vector<LocalShadowRequest> requests;
+    for (std::uint32_t index = 0; index < kLights; ++index)
+    {
+        requests.push_back(SpotAt(index, glm::vec3(static_cast<float>(index) * 50.f, 0.f, 0.f)));
+    }
+    const std::vector<ShadowMover> movers{
+        CasterAt(1, glm::vec3(static_cast<float>(kThrottled) * 50.f, -2.f, 0.f))};
+
+    std::vector<LocalShadowTilePlan> plans;
+    bool sawThrottledFrame = false;
+    for (std::uint32_t frame = 1; frame <= kFrames; ++frame)
+    {
+        RunFrame(cache, FrameAt(frame, settings, requests, movers), plans);
+        const LocalShadowTilePlan &plan = plans[kThrottled];
+        REQUIRE(plan.moverFaces != 0u);
+        // Redrawn or not, the layer holds this light's movers, and its row must
+        // say so: a skipped frame reads the last redraw rather than nothing.
+        CHECK(plan.liveMoverFaces == plan.moverFaces);
+        sawThrottledFrame = sawThrottledFrame || !plan.redrawMovers;
+    }
+    CHECK(sawThrottledFrame);
+}
+
 TEST_CASE("Forget drops every tile")
 {
     LocalShadowCache cache;

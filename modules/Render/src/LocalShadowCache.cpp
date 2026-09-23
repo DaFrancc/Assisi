@@ -255,6 +255,7 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         // out of date this frame, and forgetting it is exactly the missed
         // invalidation this whole file exists to prevent.
         plan.dirtyFaces = found->second.dirtyFaces;
+        plan.liveMoverFaces = found->second.liveMoverFaces;
     }
 
     // Invalidation, and the only place a caster meets a light. Movers times
@@ -274,6 +275,7 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
                                    }
                                    if (countsAsMotion)
                                    {
+                                       out[index].moverFaces |= mask;
                                        out[index].hasMovers = true;
                                    }
                                    else
@@ -308,6 +310,16 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         {
             plan.redrawMovers = false;
             ++_stats.throttledLights;
+        }
+    }
+
+    // A redraw leaves the moving layer holding exactly this frame's movers; a
+    // throttled light keeps sampling what its last redraw left.
+    for (LocalShadowTilePlan &plan : out)
+    {
+        if (plan.redrawMovers)
+        {
+            plan.liveMoverFaces = plan.moverFaces;
         }
     }
 
@@ -381,6 +393,7 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         {
             entry.lastMoverDrawFrame = frameIndex;
         }
+        entry.liveMoverFaces = plan.liveMoverFaces;
         entry.lastSeenFrame = frameIndex;
         rectCursor += faces;
 

@@ -110,9 +110,18 @@ struct LocalShadowTilePlan
     /// a fresh rectangle holds another light's depth entirely.
     std::uint32_t dirtyFaces = 0;
 
+    /// Faces something moving can cast into this frame, as a bit each.
+    std::uint32_t moverFaces = 0;
+
+    /// Faces whose moving layer holds movers and is sampled beside the still
+    /// layer. On a frame the movers are redrawn this is @ref moverFaces; under
+    /// the throttle it is what the last redraw left, because that is what the
+    /// moving layer still holds.
+    std::uint32_t liveMoverFaces = 0;
+
     /// Whether anything is moving inside this light's reach. False is the
-    /// resting case: the tile is composed of the cached layer and nothing else,
-    /// so there is no draw to make at all.
+    /// resting case: the tile is the cached layer and nothing else, so there is
+    /// no draw to make at all.
     bool hasMovers = false;
 
     /// Whether the moving layer is redrawn this frame. False only under the
@@ -313,6 +322,9 @@ private:
         /// Faces whose still layer is out of date. Carried across frames: a face
         /// the budget refused stays dirty until a frame has room for it.
         std::uint32_t dirtyFaces = 0;
+        /// See LocalShadowTilePlan::liveMoverFaces: what the moving layer of
+        /// this light's tiles holds, carried to a frame the throttle skips.
+        std::uint32_t liveMoverFaces = 0;
         std::uint32_t lastBakeFrame = 0;
         std::uint32_t lastMoverDrawFrame = 0;
         std::uint32_t lastSeenFrame = 0;

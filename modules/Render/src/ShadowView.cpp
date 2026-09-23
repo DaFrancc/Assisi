@@ -71,8 +71,8 @@ ShadowView LocalShadowView(const LocalShadowLightPose &pose, const glm::vec3 &fo
                           glm::lookAt(pose.position, pose.position + forward, UpFor(forward));
     view.rect = tile.rect;
     view.targetResolution = tile.atlasResolution;
-    // Every tile shares slice zero: the atlas is one texture, and the slice lane
-    // exists for the cascade array that is not.
+    // The still layer. The pass raises this to 1 on a tile whose moving layer
+    // is live this frame.
     view.arraySlice = 0;
     // Both are coefficients the shader scales by the receiver's own distance
     // from the light, not figures fixed at the far plane. See their declarations.

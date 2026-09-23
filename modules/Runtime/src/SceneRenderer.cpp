@@ -56,6 +56,9 @@ constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 // material casts a shadow with its hole in it.
 constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
 constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
+// Sets one tile of the local-light atlas back to far depth (see
+// Render::LocalShadowPass::ResetTile).
+constexpr const char *kShadowTileResetShader = "shaders/shadow_tile_reset.vert.spv";
 
 // The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
 // plane, so its vertex stage is its own rather than the shared one: that one
@@ -120,7 +123,9 @@ bool SceneRenderer::Initialize(const InitParams &params)
     // The same renderer, so every shadow view of the frame lands in one table
     // whichever kind of map produced it.
     if (!_localShadowPass.Initialize(
-            Render::LocalShadowPass::InitParams{.device = _device, .depthRenderer = &_shadowDepthRenderer}))
+            Render::LocalShadowPass::InitParams{.device = _device,
+                                                .depthRenderer = &_shadowDepthRenderer,
+                                                .tileResetVertexShaderSpvPath = kShadowTileResetShader}))
     {
         Core::Log::Warn("SceneRenderer: local-light shadows unavailable (the depth pass failed to initialise).");
     }
@@ -435,7 +440,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // never settles is a cache invalidating something that did not move.
     ASSISI_PROFILE_COUNTER("shadows/atlas-resting", static_cast<double>(_lastLocalShadowStats.restingLights));
     ASSISI_PROFILE_COUNTER("shadows/atlas-baked", static_cast<double>(_lastLocalShadowStats.bakedFaces));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-copied", static_cast<double>(_lastLocalShadowStats.copiedFaces));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-mover-faces", static_cast<double>(_lastLocalShadowStats.moverFaces));
     ASSISI_PROFILE_COUNTER("shadows/atlas-waiting", static_cast<double>(_lastLocalShadowStats.deferredLights));
     ASSISI_PROFILE_COUNTER("shadows/atlas-movers", static_cast<double>(_lastLocalShadowStats.dynamicCasters));
 
