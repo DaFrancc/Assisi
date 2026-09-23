@@ -21,6 +21,7 @@
 #    include <imgui.h>
 
 #    include <Assisi/Chiara/Chiara.hpp>
+#    include <Assisi/Chiara/Serializer.hpp>
 #    include <Assisi/Render/RenderSystem.hpp>
 #    include <Assisi/Render/Vulkan/VulkanContext.hpp>
 
