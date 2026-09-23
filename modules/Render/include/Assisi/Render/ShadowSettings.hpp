@@ -138,6 +138,10 @@ inline constexpr std::uint32_t kShadowTierCount = 4; // presets only; Custom is 
 inline constexpr std::uint32_t kMaxShadowCascades = 8;
 inline constexpr std::uint32_t kMinShadowCascades = 1;
 
+/// @brief The most sun views one frame draws: every cascade's still layer
+/// rebaked, and the movers drawn over every cascade.
+inline constexpr std::uint32_t kMaxSunShadowViews = 2 * kMaxShadowCascades;
+
 /// @brief Cascade resolution bounds. The floor is where a 3x3 kernel stops
 /// resolving anything at typical splits; the ceiling is 4 x 4096^2 x 4 bytes,
 /// which is already 256 MiB of shadow map.

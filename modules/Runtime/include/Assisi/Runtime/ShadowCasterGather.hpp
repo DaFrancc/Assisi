@@ -120,7 +120,7 @@ private:
 
     ShadowCasterGather _result;
     /// Room for every cascade twice: once as a still layer, once as a read slice.
-    std::array<Assisi::Geometry::BoundingSphere, 2 * Assisi::Render::kMaxShadowCascades> _volumes{};
+    std::array<Assisi::Geometry::BoundingSphere, Assisi::Render::kMaxSunShadowViews> _volumes{};
     glm::vec3 _lightDirection{0.f, -1.f, 0.f};
     std::uint32_t _viewCount = 0;
     std::uint32_t _stillViews = 0;

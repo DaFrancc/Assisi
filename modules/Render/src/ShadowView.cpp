@@ -261,7 +261,7 @@ float LocalSlopeBiasClampNdc(std::uint32_t tileResolution)
     // shrinks with it by the same factor. That is only true because the near
     // plane is a fixed fraction of the far one — the fraction, not the range, is
     // what sets the curve.
-    const float tanHalfFov = std::tan(glm::radians((90.f + kPointLightFaceOverlapDegrees) * 0.5f));
+    const float tanHalfFov = std::tan(glm::radians(kPointLightFaceFovDegrees * 0.5f));
     const float ndcPerWorldTimesFar = kLocalNearFraction / (1.f - kLocalNearFraction);
     const float worldPerTexelOverFar = 2.f * tanHalfFov / static_cast<float>(tileResolution);
     return ndcPerWorldTimesFar * worldPerTexelOverFar;
@@ -308,7 +308,7 @@ ShadowView SpotShadowView(const LocalShadowLightPose &pose, const ShadowAtlasTil
 ShadowView PointFaceShadowView(const LocalShadowLightPose &pose, std::uint32_t face, const ShadowAtlasTile &tile,
                                const LocalShadowSettings &settings)
 {
-    return LocalShadowView(pose, PointLightFaceDirection(face), 90.f + kPointLightFaceOverlapDegrees, tile, settings);
+    return LocalShadowView(pose, PointLightFaceDirection(face), kPointLightFaceFovDegrees, tile, settings);
 }
 
 } // namespace Assisi::Render

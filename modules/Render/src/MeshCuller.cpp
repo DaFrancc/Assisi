@@ -3,6 +3,8 @@
 #include <Assisi/Render/MeshCuller.hpp>
 
 #include <algorithm>
+#include <cstdint>
+#include <utility>
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Material.hpp>
@@ -35,6 +37,26 @@ struct CullViewConstants
     glm::vec4 lod; // x = bias, yzw unused
 };
 static_assert(sizeof(CullViewConstants) == 128, "CullViewConstants must match mesh_cull.comp's uniform block.");
+
+// Where each of the cull's buffers sits in its register space. Each must match
+// the layout(binding = …) mesh_cull.comp declares it at; the backend offsets
+// UAVs into their own range, so a read and a write slot of the same number are
+// different bindings.
+enum class ReadSlot : std::uint8_t
+{
+    Objects = 0,
+    MeshDescs = 1,
+    SubMeshes = 2,
+    ObjectMaterials = 3,
+    Lods = 4,
+};
+
+enum class WriteSlot : std::uint8_t
+{
+    Instances = 0,
+    Draws = 1,
+    Stats = 2,
+};
 
 // The stats buffer: survivor instances, live batches, culled objects, then
 // survivors per LOD bucket. Must match mesh_cull.comp's Stats block.
@@ -298,15 +320,15 @@ bool MeshCuller::Initialize(nvrhi::IDevice *device)
 
     nvrhi::BindingLayoutDesc layoutDesc;
     layoutDesc.visibility = nvrhi::ShaderType::Compute;
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)); // objects
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // meshDescs
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // submeshes
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3)); // objectMaterials
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lods
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));       // view
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0)); // outInstances
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1)); // outDraws
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2)); // stats
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::Objects)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::MeshDescs)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::SubMeshes)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::ObjectMaterials)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::Lods)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(std::to_underlying(WriteSlot::Instances)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(std::to_underlying(WriteSlot::Draws)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(std::to_underlying(WriteSlot::Stats)));
     layoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(CullPushConstants)));
     if (!_cullShader.Initialize(device, "shaders/mesh_cull.comp.spv", layoutDesc))
     {
@@ -423,15 +445,21 @@ void MeshCuller::EnsureIndirectCapacity(uint32_t neededCommands)
 void MeshCuller::RebuildBindingSet()
 {
     nvrhi::BindingSetDesc setDesc;
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, _objectBuffer.NativeBuffer()));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _meshDescBuffer.NativeBuffer()));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _submeshBuffer.NativeBuffer()));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, _objectMaterialBuffer.NativeBuffer()));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(4, _lodBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::Objects),
+                                                                _objectBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::MeshDescs),
+                                                                _meshDescBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::SubMeshes),
+                                                                _submeshBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::ObjectMaterials),
+                                                                _objectMaterialBuffer.NativeBuffer()));
+    setDesc.addItem(
+            nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ReadSlot::Lods), _lodBuffer.NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _viewConstants));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _instanceBuffer.NativeBuffer()));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, _indirectBuffer));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, _statsBuffer));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(std::to_underlying(WriteSlot::Instances),
+                                                                _instanceBuffer.NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(std::to_underlying(WriteSlot::Draws), _indirectBuffer));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(std::to_underlying(WriteSlot::Stats), _statsBuffer));
     setDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(CullPushConstants)));
     _cullBindingSet  = _device->createBindingSet(setDesc, _cullShader.BindingLayout());
     _bindingSetDirty = false;

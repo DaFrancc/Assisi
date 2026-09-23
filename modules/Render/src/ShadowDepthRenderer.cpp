@@ -13,6 +13,7 @@
 #include <bit>
 #include <cstddef>
 #include <iterator>
+#include <utility>
 
 namespace Assisi::Render
 {
@@ -21,6 +22,15 @@ namespace
 /// Starting capacity of the instance and indirect-args buffers, in records.
 /// Grown geometrically past this; a first level typically fits without one.
 constexpr std::uint32_t kInitialCasterCapacity = 1024u;
+
+/// The buffers the depth shaders read, at the layout(binding = …)
+/// shadow_depth.vert and shadow_depth.frag declare them at. The opaque layout
+/// binds only the instances; the masked one binds both.
+enum class ShadowBuffer : std::uint8_t
+{
+    Instances = 0,
+    Materials = 1,
+};
 
 /// @brief What one view hands the depth vertex stage. Mirrors
 /// shadow_depth.vert's push_constant block.
@@ -298,12 +308,13 @@ bool ShadowDepthRenderer::Initialize(const InitParams &params)
     _inputLayout = _device->createInputLayout(attributes, static_cast<std::uint32_t>(std::size(attributes)),
                                               _vertexShader);
 
-    // t0 = per-instance world matrices, plus the view matrix as a push constant.
+    // The per-instance world matrices, plus the view matrix as a push constant.
     // Nothing else: no material, no lights, no frame constants.
     nvrhi::BindingLayoutDesc bindingLayoutDesc;
     bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex;
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
+    bindingLayoutDesc.addItem(
+            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ShadowBuffer::Instances)));
     _bindingLayout = _device->createBindingLayout(bindingLayoutDesc);
     if (_bindingLayout == nullptr)
     {
@@ -354,14 +365,16 @@ void ShadowDepthRenderer::InitializeAlphaTest(const InitParams &params)
     _maskedInputLayout = _device->createInputLayout(attributes, static_cast<std::uint32_t>(std::size(attributes)),
                                                     _maskedVertexShader);
 
-    // t0 = instances (vertex), t1 = the material table and s0 the sampler its
+    // The instances (vertex), the material table and the sampler its
     // base-colour slot is read through (fragment), plus the same view push
     // constant. The bindless textures join as register space 1.
     nvrhi::BindingLayoutDesc maskedLayoutDesc;
     maskedLayoutDesc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
     maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
-    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0));
-    maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1));
+    maskedLayoutDesc.addItem(
+            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ShadowBuffer::Instances)));
+    maskedLayoutDesc.addItem(
+            nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ShadowBuffer::Materials)));
     maskedLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
     _maskedBindingLayout = _device->createBindingLayout(maskedLayoutDesc);
 
@@ -468,8 +481,8 @@ nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateMaskedBindingSet(nvrhi::IBuf
     }
     nvrhi::BindingSetDesc desc;
     desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
-    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, instanceBuffer));
-    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _materialTable));
+    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ShadowBuffer::Instances), instanceBuffer));
+    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ShadowBuffer::Materials), _materialTable));
     desc.addItem(nvrhi::BindingSetItem::Sampler(0, _maskedSampler));
     _maskedBindingSet = _device->createBindingSet(desc, _maskedBindingLayout);
     _maskedBindingSetInstanceBuffer = instanceBuffer;
@@ -484,7 +497,7 @@ nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateBindingSet(nvrhi::IBuffer *i
     }
     nvrhi::BindingSetDesc desc;
     desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ShadowDepthPushConstants)));
-    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, instanceBuffer));
+    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ShadowBuffer::Instances), instanceBuffer));
     _bindingSet = _device->createBindingSet(desc, _bindingLayout);
     _bindingSetInstanceBuffer = instanceBuffer;
     return _bindingSet;

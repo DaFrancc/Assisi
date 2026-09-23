@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <utility>
 #include <vector>
@@ -38,7 +39,7 @@ using InstanceData = MeshPass::InstanceData;
 // the layout(binding = …) mesh.frag and mesh.vert declare it at; the backend
 // offsets samplers and constant buffers into their own ranges, so the same
 // number in two of these is two different bindings.
-enum class ResourceSlot : uint32_t
+enum class ResourceSlot : std::uint8_t
 {
     Materials = 0,
     PointLights = 1,
@@ -55,14 +56,14 @@ enum class ResourceSlot : uint32_t
     ScreenOcclusion = 12,
 };
 
-enum class SamplerSlot : uint32_t
+enum class SamplerSlot : std::uint8_t
 {
     Material = 0,
     Shadow = 1,
     Clamp = 2,
 };
 
-enum class ConstantBufferSlot : uint32_t
+enum class ConstantBufferSlot : std::uint8_t
 {
     Frame = 0,
 };

@@ -240,6 +240,10 @@ enum PointLightFace : std::uint32_t
 /// filters here use.
 inline constexpr float kPointLightFaceOverlapDegrees = 6.0f;
 
+/// @brief The field of view a point light's face is drawn with: the right angle
+/// a cube face spans from its centre, widened by the overlap.
+inline constexpr float kPointLightFaceFovDegrees = 90.0f + kPointLightFaceOverlapDegrees;
+
 /// @brief Where a local light stands and how far it reaches — everything the
 /// shape of its shadow map depends on.
 ///

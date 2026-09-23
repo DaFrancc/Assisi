@@ -202,8 +202,8 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         //
         // The widths go to the selector in the same order, for the same reason:
         // a caster's level in a view is measured against that view's texels.
-        std::array<Geometry::BoundingSphere, 2 * Render::kMaxShadowCascades> viewVolumes{};
-        std::array<float, 2 * Render::kMaxShadowCascades> viewExtents{};
+        std::array<Geometry::BoundingSphere, Render::kMaxSunShadowViews> viewVolumes{};
+        std::array<float, Render::kMaxSunShadowViews> viewExtents{};
         std::uint32_t views = 0;
         for (const std::span<const std::uint32_t> cascades : {redraw, movingRedraw})
         {

@@ -22,7 +22,7 @@ namespace
 /// so a caster near one dirties the face rather than being missed by it.
 float PointFaceConeCosine()
 {
-    const float halfFovRadians = glm::radians((90.f + kPointLightFaceOverlapDegrees) * 0.5f);
+    const float halfFovRadians = glm::radians(kPointLightFaceFovDegrees * 0.5f);
     const float diagonalTangent = std::tan(halfFovRadians) * std::sqrt(2.f);
     return 1.f / std::sqrt(1.f + diagonalTangent * diagonalTangent);
 }
