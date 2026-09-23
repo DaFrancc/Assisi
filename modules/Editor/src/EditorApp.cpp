@@ -989,6 +989,10 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // actually covers.
         SubmitLightGizmos();
 
+        // Where the benchmark camera will fly, which nothing else in the
+        // viewport shows.
+        SubmitCameraPathGizmos();
+
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
         // and an unmarked origin is also an unclickable one.

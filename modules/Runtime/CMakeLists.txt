@@ -7,6 +7,7 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Blueprint.hpp"
     "include/Assisi/Runtime/CookedScene.hpp"
     "include/Assisi/Runtime/Camera.hpp"
+    "include/Assisi/Runtime/CameraPath.hpp"
     "include/Assisi/Runtime/Components.hpp"
     "include/Assisi/Runtime/Hierarchy.hpp"
     "include/Assisi/Runtime/IndirectResolve.hpp"
@@ -25,6 +26,7 @@ target_sources(Assisi-Runtime
     "src/AssetResolve.cpp"
     "src/Blueprint.cpp"
     "src/Camera.cpp"
+    "src/CameraPath.cpp"
     "src/Hierarchy.cpp"
     "src/LightingSystem.cpp"
     "src/LodSelection.cpp"
@@ -61,6 +63,7 @@ target_link_libraries(Assisi-Runtime
 assisi_reflect(
   TARGET Assisi-Runtime
   HEADERS
+    include/Assisi/Runtime/CameraPath.hpp
     include/Assisi/Runtime/Components.hpp
     include/Assisi/Runtime/EditorOnly.hpp
     include/Assisi/Runtime/Hierarchy.hpp

@@ -26,6 +26,7 @@
 /// any override, since each one does the engine half of its own job.
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/CameraBenchmark.hpp>
 #include <Assisi/App/CookedAssets.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/PakProvider.hpp>
@@ -38,6 +39,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <string>
 
 namespace Assisi::App
 {
@@ -45,9 +47,32 @@ namespace Assisi::App
 /// @brief The name of the content package a game reads, beside its executable.
 inline constexpr const char *kDefaultPakName = "assets.pak";
 
+/// @brief A benchmark run: the camera flies the level's route, a Chiara session
+/// records it, and the game exits when the route ends.
+///
+/// Renders uncapped with 8x MSAA and FXAA, whatever the player's options say, so
+/// runs on different machines and days measure the same settings. The options
+/// are changed for the run only; a game never saves them.
+struct GameBenchmark
+{
+    /// The level to fly. Empty flies the startup scene.
+    std::string level;
+
+    /// How long the route takes. The route is scaled to fit.
+    double seconds = kDefaultBenchmarkSeconds;
+
+    /// Time each render pass as well as the frame. Off by default: pass timers
+    /// split render passes, so the frame they time is not the frame that ships.
+    bool passTiming = false;
+};
+
 /// @brief What a game is launched with, as the command line resolved it.
 struct GameLaunch
 {
+    /// Set for a benchmark run. Only a build with Chiara compiled in parses the
+    /// flag, since a benchmark names a level and a shipped game takes none.
+    std::optional<GameBenchmark> benchmark;
+
     /// The content package to read. Empty reads kDefaultPakName beside the
     /// executable, which is the only one a shipped build can name.
     std::filesystem::path pak;
@@ -109,6 +134,13 @@ class GameApp : public Application
     /// which is what lets them share one Jolt thread pool.
     void StepWorlds(float dt);
 
+    /// Overrides the display options for a benchmark run. See GameBenchmark.
+    void ApplyBenchmarkSettings(const GameBenchmark &benchmark);
+
+    /// Moves the benchmark on by one frame, starting the Chiara session when
+    /// the run starts and ending it, and the game, when the run ends.
+    void AdvanceBenchmark();
+
     // Largest first, so the object carries no interior padding.
 
     /// GPU-side meshes, materials and textures, and the bindless table the mesh
@@ -134,6 +166,9 @@ class GameApp : public Application
     Runtime::Camera _fallbackCamera;
 
     GameLaunch _launch;
+
+    /// Set for a benchmark run once its level has loaded.
+    std::optional<CameraBenchmark> _benchmark;
 
     /// The world being played. Points into the manager, which keeps world
     /// addresses stable for their lifetime.

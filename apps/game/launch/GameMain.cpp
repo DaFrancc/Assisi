@@ -76,6 +76,14 @@ constexpr const char *kUsage =
     "  --pak <path>            read content from this package instead of the\n"
     "                          one beside the executable (also ASSISI_PAK)\n"
 #endif
+#if defined(ASSISI_CHIARA_ENABLED)
+    "  --benchmark [level]     fly the level's camera paths uncapped with 8x MSAA\n"
+    "                          and FXAA, record a Chiara session, then exit.\n"
+    "                          Without a level, flies the startup scene\n"
+    "  --benchmark-seconds <n> how long the flight takes (default 15)\n"
+    "  --benchmark-passes      also time each render pass. Splits render\n"
+    "                          passes, so the frame total is not the shipped one\n"
+#endif
     "  -h, --help              show this help and exit\n";
 
 #ifdef ASSISI_PAK_OVERRIDES
@@ -90,6 +98,19 @@ struct GameArgs
     bool headless   = false;
     bool shouldExit = false;
 };
+
+#if defined(ASSISI_CHIARA_ENABLED)
+/// The benchmark settings in @p args, created by whichever benchmark flag comes
+/// first, so the flags can be given in any order.
+Assisi::App::GameBenchmark &BenchmarkOf(GameArgs &args)
+{
+    if (!args.launch.benchmark)
+    {
+        args.launch.benchmark.emplace();
+    }
+    return *args.launch.benchmark;
+}
+#endif
 
 /// Parses argv into @p out. Returns false with a message printed when the
 /// arguments are malformed; sets shouldExit when --help was handled, which is a
@@ -136,6 +157,39 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
             }
             out.launch.tickLimit = static_cast<std::uint64_t>(ticks);
         }
+#if defined(ASSISI_CHIARA_ENABLED)
+        else if (arg == "--benchmark")
+        {
+            Assisi::App::GameBenchmark &benchmark = BenchmarkOf(out);
+            // The level is optional: a next argument that is another flag is
+            // not one.
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
+                benchmark.level = argv[++i];
+            }
+        }
+        else if (arg == "--benchmark-seconds")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--benchmark-seconds requires a number of seconds\n\n%s", kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            int32_t seconds = 0;
+            if (!Game::ParsePositive(value, seconds))
+            {
+                std::fprintf(stderr, "--benchmark-seconds expects a positive integer, got '%.*s'\n\n%s",
+                             static_cast<int>(value.size()), value.data(), kUsage);
+                return false;
+            }
+            BenchmarkOf(out).seconds = static_cast<double>(seconds);
+        }
+        else if (arg == "--benchmark-passes")
+        {
+            BenchmarkOf(out).passTiming = true;
+        }
+#endif
 #ifdef ASSISI_PAK_OVERRIDES
         else if (arg == "--pak")
         {
@@ -200,6 +254,11 @@ int main(int argc, char **argv)
     if (args.shouldExit)
     {
         return EXIT_SUCCESS;
+    }
+    if (args.headless && args.launch.benchmark)
+    {
+        std::fprintf(stderr, "--benchmark renders, so it cannot run --headless\n\n%s", kUsage);
+        return EXIT_FAILURE;
     }
 
     Assisi::App::GameApp app(args.launch);

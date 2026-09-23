@@ -20,6 +20,8 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
+#include <chrono>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -38,6 +40,17 @@ namespace
 // so it takes the generous tier the editor reserves for a foreground load.
 constexpr double kAssetPublishBudgetMs = 10.0;
 constexpr std::uint64_t kAssetPublishBudgetBytes = 128ull << 20;
+
+/// The MSAA sample count a benchmark renders at.
+constexpr std::int32_t kBenchmarkMsaaSamples = 8;
+
+/// OptionsConfig::fpsLimit's value for no cap.
+constexpr std::int16_t kUnlimitedFps = -1;
+
+[[nodiscard]] double MonotonicSeconds()
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 } // namespace
 
 GameApp::GameApp(GameLaunch launch) : _launch(std::move(launch))
@@ -121,20 +134,27 @@ void GameApp::OnStart()
         RefuseStart();
         return;
     }
+    if (_launch.benchmark && HasPresentation())
+    {
+        ApplyBenchmarkSettings(*_launch.benchmark);
+    }
 
     // The shipped config is the only thing that says what to open — a game takes
-    // no level argument. Each way it can fail names itself, because "the game
-    // would not start" sends a player looking in the wrong place.
+    // no level argument, and only a benchmark, which a shipped build cannot ask
+    // for, names one. Each way it can fail names itself, because "the game would
+    // not start" sends a player looking in the wrong place.
     // A package indexes paths by hash and holds none of their text, so an id
     // cannot be turned back into the path a level is loaded by.
+    const std::string_view requested = _launch.benchmark && !_launch.benchmark->level.empty()
+                                           ? std::string_view(_launch.benchmark->level)
+                                           : GetConfig().startupScene.View();
     const Core::PakProvider &pak = *_pak;
     const std::expected<std::string, StartupSceneError> scene = ResolveStartupScene(
-        GetConfig().startupScene.View(), [](const Core::AssetId &) { return std::optional<std::string>{}; },
+        requested, [](const Core::AssetId &) { return std::optional<std::string>{}; },
         [&pak](std::string_view vpath) { return pak.Resolve(vpath).has_value(); });
     if (!scene)
     {
-        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", GetConfig().startupScene.View(),
-                         Describe(scene.error()));
+        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", requested, Describe(scene.error()));
         RefuseStart();
         return;
     }
@@ -158,6 +178,66 @@ void GameApp::OnStart()
     {
         Core::Log::Error("Game: cannot start - '{}' would not load.", *scene);
         RefuseStart();
+        return;
+    }
+
+    if (_launch.benchmark && HasPresentation())
+    {
+        std::vector<Runtime::CameraRouteLeg> route = Runtime::BuildCameraRoute(_world->scene);
+        if (route.empty())
+        {
+            Core::Log::Error("Benchmark: cannot start - '{}' has no camera paths with a length to fly.", *scene);
+            RefuseStart();
+            return;
+        }
+        Core::Log::Info("Benchmark: '{}', {} camera paths over {} s.", *scene, route.size(),
+                        _launch.benchmark->seconds);
+        _benchmark.emplace(std::move(route), _launch.benchmark->seconds);
+    }
+}
+
+void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
+{
+    OptionsConfig &options = GetOptions();
+    options.aaMode = Render::AaMode::MSAA_FXAA;
+    options.msaaSamples = kBenchmarkMsaaSamples;
+    options.frameSync = FrameSyncMode::FpsLimit;
+    options.fpsLimit = kUnlimitedFps;
+    ApplyDisplayOptions();
+
+    if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
+    {
+        vulkanContext->SetPassTimingEnabled(benchmark.passTiming);
+    }
+}
+
+void GameApp::AdvanceBenchmark()
+{
+    const BenchmarkPhase before = _benchmark->Phase();
+    const BenchmarkPhase phase = _benchmark->Advance(_world->start == StartProgress::Loaded, MonotonicSeconds());
+    if (phase == before)
+    {
+        return;
+    }
+
+    switch (phase)
+    {
+    case BenchmarkPhase::WarmingUp:
+        Core::Log::Info("Benchmark: loaded; warming up for {} frames.", kBenchmarkWarmupFrames);
+        break;
+    case BenchmarkPhase::Running:
+        StartChiaraSession();
+        Core::Log::Info("Benchmark: running.");
+        break;
+    case BenchmarkPhase::Finished:
+        StopChiaraSession();
+        Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.", _benchmark->ElapsedSeconds(),
+                        LastChiaraDump().path);
+        RequestClose();
+        break;
+    case BenchmarkPhase::Settling:
+    case BenchmarkPhase::Count:
+        break;
     }
 }
 
@@ -373,6 +453,11 @@ void GameApp::OnUpdate(float dt)
             world.systems.Run(SystemPhase::Update, ctx);
             world.systems.Run(SystemPhase::PostUpdate, ctx);
         });
+
+    if (_benchmark)
+    {
+        AdvanceBenchmark();
+    }
 }
 
 void GameApp::OnRender(Render::RenderFrame &frame)
@@ -404,8 +489,12 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // behind whatever it is attached to.
     _world->propagationTick = Runtime::PropagateTransforms(_world->scene, _world->propagationTick);
 
+    // A benchmark flies its route from the scene camera's lens: the route says
+    // where the camera is, the level's Camera still says what it sees.
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const Runtime::Transform &pose = view ? view->pose : _fallbackPose;
+    const Runtime::Transform benchmarkPose =
+        _benchmark ? Runtime::CameraTransformFor(_benchmark->Aim()) : Runtime::Transform{};
+    const Runtime::Transform &pose = _benchmark ? benchmarkPose : view ? view->pose : _fallbackPose;
     const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
 
     // The game's own render systems, through the world's registry. After

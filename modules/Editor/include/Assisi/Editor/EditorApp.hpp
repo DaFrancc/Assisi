@@ -574,6 +574,11 @@ class EditorApp : public Assisi::App::Application
     /// enough to sit under a scene full of lights.
     void SubmitLightGizmos();
 
+    /// @brief Draw the benchmark camera route: each path's course, which way it
+    /// travels, where it starts and what it looks at, and dashes joining each
+    /// path to the next in play order.
+    void SubmitCameraPathGizmos();
+
     /// @brief The light whose outline the cursor is on, or NullEntity.
     ///
     /// The outline, not the volume it encloses: a point light's sphere is where
@@ -1690,6 +1695,9 @@ class EditorApp : public Assisi::App::Application
     // one's absence depend on the other's ordering.
     std::vector<LineVertex> _lightLinesDepthTested;
     std::vector<LineVertex> _lightLinesOnTop;
+
+    // The benchmark camera route. One batch: it always draws on top.
+    std::vector<LineVertex> _cameraPathLines;
 
     // One light's outline at a time, rebuilt and cleared per light while a click
     // is resolved. A member only to keep its storage between clicks; nothing here
