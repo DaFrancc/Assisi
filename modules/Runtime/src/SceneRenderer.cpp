@@ -601,7 +601,35 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     ++_shadowFrameIndex;
     _movedEntities.clear();
     scene.ChangedSince<Transform>(_lastMoverTick, _movedEntities);
+
+    // The mobility table holds casters by handle across frames, so a caster
+    // that has since been destroyed, or lost what made it one, must be let go
+    // of — or its shadow stays in whichever layer last drew it. Read on the
+    // same cursor as the movers, before it advances.
+    _removedEntities.clear();
+    const bool removalsComplete = scene.RemovedSince<Transform>(_lastMoverTick, _removedEntities) &&
+                                  scene.RemovedSince<MeshRenderer>(_lastMoverTick, _removedEntities);
     _lastMoverTick = scene.CurrentChangeTick();
+
+    if (removalsComplete)
+    {
+        for (const ECS::Entity entity : _removedEntities)
+        {
+            _casterMobility.Drop(ShadowCasterId(entity));
+        }
+    }
+    else
+    {
+        // The log no longer reaches back to the last look, so which ones went
+        // is unknown: every handle is checked instead.
+        _casterMobility.DropIf([&scene](std::uint64_t casterId)
+                               {
+                                   const ECS::Entity entity = ShadowCasterEntity(casterId);
+                                   return !scene.IsAlive(entity) || !scene.Has<Transform>(entity) ||
+                                          !scene.Has<MeshRenderer>(entity);
+                               });
+    }
+
     GatherShadowMovers(scene, _movedEntities, _movedCasters);
 }
 

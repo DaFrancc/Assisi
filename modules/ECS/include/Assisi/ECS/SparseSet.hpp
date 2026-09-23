@@ -15,6 +15,7 @@
 /// Remove() swaps the target element with the last one and pops, keeping
 /// the dense array gap-free at all times.
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
@@ -101,6 +102,7 @@ template <typename T> struct SparseSet
         _entities.pop_back();
         if (_tracksChanges)
             _changeTicks.pop_back();
+        LogRemoval(entity);
         BumpVersion();
     }
 
@@ -153,6 +155,14 @@ template <typename T> struct SparseSet
         _dense.clear();
         _entities.clear();
         _changeTicks.clear(); // no-op when untracked (already empty)
+        // Every component went at once. Listing them all would be a log as long
+        // as the pool was; saying "nothing before now is known" costs nothing
+        // and sends every reader to check what it holds, which it has to anyway.
+        _removals.clear();
+        if (_removalClock != nullptr)
+        {
+            _removalFloor = ++*_removalClock;
+        }
         BumpVersion();
     }
 
@@ -224,6 +234,44 @@ template <typename T> struct SparseSet
         }
     }
 
+    // ── Removal log ───────────────────────────────────────────────────────────
+    // Which entities lost this component, and at what tick of the owning Scene's
+    // clock — the same clock change ticks are stamped from, so one cursor serves
+    // both questions. Kept for every pool rather than only tracked ones: it
+    // costs an entry per removal and nothing per component.
+    //
+    // A reader that holds entity handles across frames asks what left since it
+    // last looked, and checks only those. The log is bounded; when it drops
+    // entries, RemovedSince says so for any reader whose cursor predates them.
+
+    /// @brief The clock removals are stamped from. Wired by the owning Scene at
+    /// pool creation; a pool with none (a SparseSet used on its own) logs
+    /// nothing.
+    void SetRemovalClock(uint64_t *clock) { _removalClock = clock; }
+
+    /// @brief Appends every entity that lost this component after @p sinceTick.
+    ///
+    /// @return false when the log no longer reaches back to @p sinceTick — it
+    /// was trimmed, or the pool was cleared — so some removals since then are
+    /// not listed and the reader must check every handle it holds. What is
+    /// appended is still correct either way.
+    ///
+    /// @p out is appended to, never cleared, as with ChangedSince.
+    [[nodiscard]] bool RemovedSince(uint64_t sinceTick, std::vector<Entity> &out) const
+    {
+        // Ticks only rise, so the log is sorted and the tail is the answer.
+        std::size_t first = _removals.size();
+        while (first > 0 && _removals[first - 1].tick > sinceTick)
+        {
+            --first;
+        }
+        for (std::size_t index = first; index < _removals.size(); ++index)
+        {
+            out.push_back(_removals[index].entity);
+        }
+        return sinceTick >= _removalFloor;
+    }
+
 #ifndef NDEBUG
     /// @brief Debug-only counter bumped on every structural change (Add / Remove
     /// / Clear). A Query iterator snapshots this at construction and re-checks it
@@ -234,6 +282,32 @@ template <typename T> struct SparseSet
 #endif
 
 private:
+    /// The most removals a pool remembers. Past it the older half is dropped at
+    /// once, so trimming costs a constant amount per removal on average, and a
+    /// reader that polls every frame is never behind by anything like this many.
+    static constexpr std::size_t kRemovalLogCapacity = 4096;
+
+    struct Removal
+    {
+        uint64_t tick = 0;
+        Entity entity;
+    };
+
+    void LogRemoval(Entity entity)
+    {
+        if (_removalClock == nullptr)
+        {
+            return;
+        }
+        if (_removals.size() >= kRemovalLogCapacity)
+        {
+            const std::size_t dropped = kRemovalLogCapacity / 2;
+            _removalFloor = _removals[dropped - 1].tick;
+            _removals.erase(_removals.begin(), _removals.begin() + static_cast<std::ptrdiff_t>(dropped));
+        }
+        _removals.push_back(Removal{.tick = ++*_removalClock, .entity = entity});
+    }
+
     /// Bumps the structural-change counter. A no-op (and no member) in release
     /// builds, so the three call sites cost nothing once NDEBUG is defined.
     void BumpVersion()
@@ -247,6 +321,9 @@ private:
     std::vector<T> _dense;              ///< Packed component values.
     std::vector<Entity> _entities;      ///< Entity that owns each dense slot.
     std::vector<uint64_t> _changeTicks; ///< Parallel to _dense; per-component last-written tick. Empty when untracked.
+    std::vector<Removal> _removals;     ///< Removal log, oldest first; see RemovedSince.
+    uint64_t *_removalClock = nullptr;  ///< The owning Scene's change tick; null logs nothing.
+    uint64_t _removalFloor = 0;         ///< Removals at or before this tick may be missing from the log.
     bool _tracksChanges = false;        ///< Whether the _changeTicks lane is maintained (ACOMP(tracked)).
 #ifndef NDEBUG
     uint32_t _structureVersion = 0; ///< See StructureVersion(); debug-only tripwire state.

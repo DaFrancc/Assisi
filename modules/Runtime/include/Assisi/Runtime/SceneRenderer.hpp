@@ -491,6 +491,9 @@ private:
     // The scene tick the mover set was last taken at. Everything written after
     // it has moved since, which is the whole of the invalidation input.
     uint64_t _lastMoverTick = 0;
+    // Entities that lost their Transform or MeshRenderer since the last look,
+    // kept for the capacity.
+    std::vector<ECS::Entity> _removedEntities;
     // Counts frames for the atlas's throttle phase and its tile ages. Its own
     // counter rather than the scene's tick, which advances per write.
     std::uint32_t _shadowFrameIndex = 0;

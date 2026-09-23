@@ -515,8 +515,7 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
     // them again is the cost of every resting caster, paid to discard it.
     for (const Assisi::Render::ShadowMover &mover : mobility.Dynamic())
     {
-        const Assisi::ECS::Entity entity{.index = static_cast<std::uint32_t>(mover.casterId),
-                                         .generation = static_cast<std::uint32_t>(mover.casterId >> 32u)};
+        const Assisi::ECS::Entity entity = ShadowCasterEntity(mover.casterId);
         if (!scene.IsAlive(entity))
         {
             continue;

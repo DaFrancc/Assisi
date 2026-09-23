@@ -645,3 +645,49 @@ TEST_CASE("Mobility: Clear forgets every caster")
     CHECK_FALSE(mobility.IsDynamic(7));
     CHECK(mobility.DynamicCount() == 0);
 }
+
+TEST_CASE("Mobility: a caster that is gone leaves the layer that drew it")
+{
+    ShadowCasterMobility mobility;
+    std::vector<ShadowMover> dynamic;
+    std::vector<ShadowMover> invalidate;
+
+    // One caster baked into a kept layer, one moving.
+    const ShadowMover baked = CasterAt(3, glm::vec3(5.f, 0.f, 0.f));
+    mobility.NoteBaked(baked);
+    mobility.Update(1, 30, std::vector<ShadowMover>{CasterAt(7, glm::vec3(0.f))}, dynamic, invalidate);
+    REQUIRE(mobility.DynamicCount() == 1);
+
+    mobility.DropIf([](std::uint64_t) { return true; });
+
+    // The mover is simply no longer one: nothing draws it into the moving layer.
+    CHECK(mobility.DynamicCount() == 0);
+    CHECK_FALSE(mobility.IsDynamic(7));
+
+    // The baked one is still in the kept layer until its tiles are redrawn, so
+    // the next frame owes an invalidation exactly where it was baked.
+    mobility.Update(2, 30, {}, dynamic, invalidate);
+    CHECK(dynamic.empty());
+    REQUIRE(invalidate.size() == 1);
+    CHECK(invalidate[0].casterId == 3);
+    CHECK(invalidate[0].worldSphere.center == baked.worldSphere.center);
+
+    // Owed once, not every frame after.
+    mobility.Update(3, 30, {}, dynamic, invalidate);
+    CHECK(invalidate.empty());
+}
+
+TEST_CASE("Mobility: DropIf keeps what is still there")
+{
+    ShadowCasterMobility mobility;
+    std::vector<ShadowMover> dynamic;
+    std::vector<ShadowMover> invalidate;
+    mobility.NoteBaked(CasterAt(3, glm::vec3(5.f, 0.f, 0.f)));
+    mobility.Update(1, 30, std::vector<ShadowMover>{CasterAt(7, glm::vec3(0.f))}, dynamic, invalidate);
+
+    mobility.DropIf([](std::uint64_t casterId) { return casterId == 99; });
+    CHECK(mobility.IsDynamic(7));
+    mobility.Update(2, 30, {}, dynamic, invalidate);
+    CHECK(invalidate.empty());
+    CHECK(dynamic.size() == 1);
+}

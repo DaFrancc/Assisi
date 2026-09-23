@@ -167,7 +167,8 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
                                   std::vector<ShadowMover> &invalidateOut)
 {
     _dynamic.clear();
-    invalidateOut.clear();
+    invalidateOut.assign(_pendingInvalidations.begin(), _pendingInvalidations.end());
+    _pendingInvalidations.clear();
     promoteStillFrames = std::max(promoteStillFrames, 1u);
 
     for (const ShadowMover &mover : moved)
@@ -227,6 +228,7 @@ void ShadowCasterMobility::Clear()
 {
     _casters.clear();
     _dynamic.clear();
+    _pendingInvalidations.clear();
     _dynamicCount = 0;
 }
 

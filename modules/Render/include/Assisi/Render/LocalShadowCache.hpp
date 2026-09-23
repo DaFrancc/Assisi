@@ -34,6 +34,7 @@
 #include <array>
 #include <cstdint>
 #include <span>
+#include <iterator>
 #include <unordered_map>
 #include <vector>
 
@@ -214,6 +215,34 @@ public:
     /// @brief How many casters are moving right now.
     [[nodiscard]] std::uint32_t DynamicCount() const { return _dynamicCount; }
 
+    /// @brief Forget every caster @p gone says no longer exists, or no longer
+    /// casts.
+    ///
+    /// A caster that was baked into a kept layer is still drawn there, so the
+    /// next Update invalidates where it was baked and the tiles are redrawn
+    /// without it. One that was moving leaves the movers, which changes what
+    /// the moving layer of every face it reached should hold. Called with a
+    /// predicate rather than a list because only the caller can resolve a
+    /// caster id to whatever it names.
+    template <typename Gone> void DropIf(Gone &&gone)
+    {
+        for (auto entry = _casters.begin(); entry != _casters.end();)
+        {
+            entry = gone(entry->first) ? Drop(entry) : std::next(entry);
+        }
+    }
+
+    /// @brief Forget @p casterId, as DropIf would. For a caller that already
+    /// knows which casters went. A caster with no record is a no-op.
+    void Drop(std::uint64_t casterId)
+    {
+        const auto found = _casters.find(casterId);
+        if (found != _casters.end())
+        {
+            (void)Drop(found);
+        }
+    }
+
     /// @brief The casters that draw with the movers, as the last Update left
     /// them — the same list it wrote to its `dynamicOut`.
     [[nodiscard]] std::span<const ShadowMover> Dynamic() const { return _dynamic; }
@@ -236,8 +265,28 @@ private:
         bool dynamic = false;
     };
 
-    std::unordered_map<std::uint64_t, Record> _casters;
+    using CasterMap = std::unordered_map<std::uint64_t, Record>;
+
+    /// Erase one record, owing an invalidation where it was baked. Returns the
+    /// entry after it.
+    CasterMap::iterator Drop(CasterMap::iterator entry)
+    {
+        const Record &record = entry->second;
+        if (record.dynamic)
+        {
+            --_dynamicCount;
+        }
+        else if (record.baked)
+        {
+            _pendingInvalidations.push_back(ShadowMover{entry->first, record.bakedSphere});
+        }
+        return _casters.erase(entry);
+    }
+
+    CasterMap _casters;
     std::vector<ShadowMover> _dynamic;
+    // Invalidations DropIf owes the next Update: where a dropped caster was baked.
+    std::vector<ShadowMover> _pendingInvalidations;
     std::uint32_t _dynamicCount = 0;
 };
 

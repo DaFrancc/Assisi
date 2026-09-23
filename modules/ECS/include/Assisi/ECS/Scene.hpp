@@ -230,6 +230,27 @@ struct Scene
             pool->ChangedSince(sinceTick, out);
     }
 
+    /// @brief Appends every entity that lost its T after @p sinceTick — removed
+    /// directly, or destroyed with the entity.
+    ///
+    /// For a reader that keeps entity handles across frames: it records
+    /// CurrentChangeTick() when it looks, and next time checks only the handles
+    /// this names rather than every handle it holds. Any component, tracked or
+    /// not. A destroy counts when FlushDestroyed applies it, since until then
+    /// the entity is alive and every handle to it is good.
+    ///
+    /// @return false when the log no longer reaches back to @p sinceTick (it is
+    /// bounded, and a Clear resets it), meaning some removals are not listed
+    /// and the reader must check every handle it holds. A T never added to this
+    /// scene has had nothing removed, which is complete.
+    ///
+    /// @p out is appended to rather than cleared.
+    template <typename T> [[nodiscard]] bool RemovedSince(uint64_t sinceTick, std::vector<Entity> &out) const
+    {
+        const SparseSet<T> *pool = GetPool<T>();
+        return pool == nullptr || pool->RemovedSince(sinceTick, out);
+    }
+
     /// @brief How many entities in this scene carry the component with @p id.
     ///
     /// By ComponentId rather than static type so a caller holding only a runtime
@@ -479,6 +500,9 @@ private:
         {
             auto *pool = new SparseSet<T>();
             _registry.RegisterPool(pool);
+            // Every pool logs its removals on the change clock, tracked or not:
+            // the log costs an entry per removal and nothing per component.
+            pool->SetRemovalClock(&_changeTick);
             slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>, nullptr, &SizeFn<T>};
 
             // Wire change detection for ACOMP(tracked) types. The registry is

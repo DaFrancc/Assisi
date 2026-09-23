@@ -136,6 +136,15 @@ DrawStats DrawScene(const DrawSceneParams &params);
     return (static_cast<std::uint64_t>(entity.generation) << 32) | entity.index;
 }
 
+/// @brief The entity handle a ShadowCasterId was made from. A handle, not a
+/// promise: the entity may have been destroyed since, so check it with
+/// Scene::IsAlive before use.
+[[nodiscard]] constexpr Assisi::ECS::Entity ShadowCasterEntity(std::uint64_t casterId)
+{
+    return Assisi::ECS::Entity{.index = static_cast<std::uint32_t>(casterId),
+                               .generation = static_cast<std::uint32_t>(casterId >> 32u)};
+}
+
 /// @brief One frame's shadow casters, and how far up-light they reach.
 ///
 /// Reused across frames by the caller — the vector's capacity survives a
