@@ -3,6 +3,8 @@
 #include <Assisi/Render/LocalShadowPass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+
+#include <cstdlib>
 #include <Assisi/Render/GpuMarker.hpp>
 
 #include <algorithm>
@@ -616,6 +618,15 @@ LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *comman
     if (!_targets.empty())
     {
         ASSISI_PROFILE_GPU_SCOPE(commandList, "atlas-compose");
+        if (std::getenv("ASSISI_EXP_NOCOPY"))
+        {
+        }
+        else if (std::getenv("ASSISI_EXP_FULLCOPY"))
+        {
+            commandList->copyTexture(_atlasTexture, nvrhi::TextureSlice(), _cacheTexture, nvrhi::TextureSlice());
+            stats.copiedFaces = static_cast<std::uint32_t>(_targets.size());
+        }
+        else
         for (std::uint32_t target = 0; target < _targets.size(); ++target)
         {
             const LocalShadowTilePlan &plan = _plans[_targetRequest[target]];
@@ -635,8 +646,10 @@ LocalShadowPass::Stats LocalShadowPass::RenderCached(nvrhi::ICommandList *comman
     // resting light needs a row in it as much as a redrawn one does. A resting
     // light's row names no casters, so this costs the table and no draw.
     ASSISI_PROFILE_GPU_SCOPE(commandList, "atlas-dynamic");
-    const ShadowDepthRenderer::Stats drawn = RenderTargets(
-        commandList, TargetRun{.targets = _targets, .request = _targetRequest}, CasterSide::Dynamic, frame);
+    const ShadowDepthRenderer::Stats drawn = std::getenv("ASSISI_EXP_NODYN")
+        ? ShadowDepthRenderer::Stats{}
+        : RenderTargets(commandList, TargetRun{.targets = _targets, .request = _targetRequest}, CasterSide::Dynamic,
+                        frame);
     for (Tile &tile : _tiles)
     {
         tile.firstView += drawn.firstView;

@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <span>
 #include <utility>
@@ -304,7 +305,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lighting.Upload(frame.commandList, view);
 
     // Before the frame constants, which say whether the lit pass reads it.
-    const bool prepass = PrepareScreenOcclusion(frame);
+    const bool occlusion = PrepareScreenOcclusion(frame);
+    const bool prepass = occlusion || (std::getenv("ASSISI_EXP_PREPASS") != nullptr && _meshPass.PreparePrepass());
 
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
@@ -318,7 +320,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .debugView = _debugView,
                                                                     .indirect = ResolveIndirect(sky, _ambient, probe),
                                                                     .shadows = shadows,
-                                                                    .screenOcclusion = prepass};
+                                                                    .screenOcclusion = occlusion};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
     // With scene depth wanted, this is the depth prepass: the same extract, cull
@@ -342,9 +344,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     if (prepass)
     {
+        if (occlusion)
+        {
         _sceneDistancePass.Render(frame.commandList, projection);
         _ssaoPass.Render(frame.commandList,
                          Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
+        }
 
         // Under the name the lit pass has always been measured by, so a capture
         // with a prepass reads `draw-scene` against its own history and the

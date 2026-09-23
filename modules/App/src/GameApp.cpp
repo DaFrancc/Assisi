@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <optional>
 #include <string>
@@ -201,11 +202,43 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     OptionsConfig &options = GetOptions();
     options.aaMode = Render::AaMode::MSAA_FXAA;
     options.msaaSamples = kBenchmarkMsaaSamples;
+    if (const char *msaa = std::getenv("ASSISI_EXP_MSAA"))
+    {
+        options.msaaSamples = std::atoi(msaa);
+        if (options.msaaSamples <= 1)
+        {
+            options.aaMode = Render::AaMode::FXAA;
+        }
+    }
     options.frameSync = FrameSyncMode::FpsLimit;
     options.fpsLimit = kUnlimitedFps;
     ApplyDisplayOptions();
 
     options.shadows = Render::TierSettings(Render::ShadowTier::Ultra);
+    if (const char *tier = std::getenv("ASSISI_EXP_TIER"))
+    {
+        options.shadows = Render::TierSettings(static_cast<Render::ShadowTier>(std::atoi(tier)));
+    }
+    if (std::getenv("ASSISI_EXP_POINT"))
+    {
+        options.shadows.sun.filter = Render::ShadowFilter::Point;
+        options.shadows.local.filter = Render::ShadowFilter::Point;
+        options.shadows.pcss = Render::ShadowPcss::Off;
+    }
+    if (std::getenv("ASSISI_EXP_NOPCSS"))
+    {
+        options.shadows.pcss = Render::ShadowPcss::Off;
+    }
+    if (std::getenv("ASSISI_EXP_NOLOCAL"))
+    {
+        options.shadows.local.enabled = false;
+    }
+    if (std::getenv("ASSISI_EXP_NOCACHE"))
+    {
+        options.shadows.local.cache.enabled = false;
+    }
+    Core::Log::Info("EXP: msaa {} aa {} tier {}", options.msaaSamples, static_cast<int>(options.aaMode),
+                    static_cast<int>(Render::Tier(options.shadows)));
     options.environment = Render::EnvironmentSettings{};
     options.ambientOcclusion = Render::SsaoSettings{};
     _sceneRenderer.SetShadowSettings(options.shadows);
