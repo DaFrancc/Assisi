@@ -209,11 +209,28 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
 
     if (filterMode == kShadowFilterVogel)
     {
+        // Most receivers are wholly lit or wholly shadowed, and there four
+        // well-spread taps agree and the other twelve would only agree with
+        // them. The rest of the kernel runs where the probe straddles an edge.
         float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
         float sum = 0.0;
-        for (uint i = 0u; i < kVogelTaps; i++)
+        for (uint i = 0u; i < kVogelProbeTaps; ++i)
         {
-            sum += LocalShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, clampUv, reference, moving);
+            sum += LocalShadowTap(uv + VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, clampUv,
+                                  reference, moving);
+        }
+        if (sum == 0.0)
+        {
+            return 0.0;
+        }
+        if (sum == float(kVogelProbeTaps))
+        {
+            return 1.0;
+        }
+        for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
+        {
+            sum += LocalShadowTap(uv + VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv, clampUv,
+                                  reference, moving);
         }
         return sum / float(kVogelTaps);
     }

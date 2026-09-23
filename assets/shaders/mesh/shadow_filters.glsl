@@ -33,8 +33,9 @@ const float kGoldenAngle        = 2.39996323;
 
 // The disk split into a probe of four well-spread taps and the rest; the rest
 // runs only where the probe disagrees.
-const uint kVogelProbe[4] = uint[](0u, 4u, 11u, 15u);
-const uint kVogelRest[12] = uint[](1u, 2u, 3u, 5u, 6u, 7u, 8u, 9u, 10u, 12u, 13u, 14u);
+const uint kVogelProbeTaps = 4u;
+const uint kVogelProbe[kVogelProbeTaps] = uint[](0u, 4u, 11u, 15u);
+const uint kVogelRest[kVogelTaps - kVogelProbeTaps] = uint[](1u, 2u, 3u, 5u, 6u, 7u, 8u, 9u, 10u, 12u, 13u, 14u);
 
 const float kTwoPi = 6.28318531;
 
