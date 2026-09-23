@@ -23,6 +23,7 @@ counts the perf scenes publish") on the C++ side and asserted again here.
 import json
 import math
 import pathlib
+import sys
 import uuid
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -348,12 +349,142 @@ def build_geometry_stress(icosphere_count=150, half_extent=45.0, seed=0x5EED0004
     return entities, []
 
 
+PRIM_SPHERE_COLLIDER = 1  # Physics::ColliderShape::Sphere, which levels store as its number
+
+
+def static_body(half_extents):
+    return {"RigidBodyDescriptor": {"halfExtents": [round6(v) for v in half_extents], "isStatic": True}}
+
+
+def wall_entity(name, position, scale):
+    entity = mesh_entity(name, "prim://cube", position, scale)
+    entity["components"].update(static_body([s * 0.5 for s in scale]))
+    return entity
+
+
+def bouncing_body(name, position, sphere):
+    """A dynamic body that ricochets at full speed off whatever it lands on, so
+    the stage never settles: something is always moving, every run alike."""
+    if sphere:
+        entity = mesh_entity(name, "prim://sphere-low", position, (1.0, 1.0, 1.0))
+        body = {"isStatic": False, "radius": 0.5, "shape": PRIM_SPHERE_COLLIDER}
+    else:
+        entity = mesh_entity(name, "prim://cube", position, (1.0, 1.0, 1.0))
+        body = {"halfExtents": [0.5, 0.5, 0.5], "isStatic": False}
+    entity["components"]["RigidBodyDescriptor"] = body
+    entity["components"]["Bounce"] = {"rebound": 1.0}
+    return entity
+
+
+def oscillate(entity, rng, amplitude_range, period_range):
+    """Gives @p entity an Oscillator about where it stands, on a random axis."""
+    axes = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.707107, 0.0, 0.707107), (0.707107, 0.707107, 0.0)]
+    axis = axes[int(rng.next_float() * len(axes)) % len(axes)]
+    entity["components"]["Oscillator"] = {
+        "origin": list(entity["components"]["Transform"]["position"]),
+        "axis": list(axis),
+        "amplitude": round6(rng.range(*amplitude_range)),
+        "periodSeconds": round6(rng.range(*period_range)),
+        "phase": round6(rng.next_float()),
+    }
+    return entity
+
+
+def build_insane(half_extent=40.0, seed=0x5EED0005):
+    """PerfStress and a great deal more: the load at which frame-to-frame noise
+    is small beside what a change is worth.
+
+    Built on the committed PerfStress, so it carries that level's camera route,
+    its bright side and its sliding lights, and regenerating it after PerfStress
+    changes carries those changes too. On top of it: twice the static geometry,
+    ten times the oscillators, bodies that never stop bouncing, and more point
+    and spot lights than the Ultra tier shadows at once — so which lights hold
+    a shadow changes as the camera moves. Walls and a ground collider keep every
+    body on the stage.
+    """
+    rng = Lcg(seed)
+    base = json.loads((LEVELS / "PerfStress.alvl").read_text())
+    entities = [entity for entity in base["entities"] if not entity["name"].startswith("Insane_")]
+
+    for entity in entities:
+        if entity["name"] == "Ground":
+            entity["components"].update(static_body((half_extent, 0.25, half_extent)))
+
+    # The stage's walls, taller than any body is dropped from.
+    wall_height = 12.0
+    thickness = 1.0
+    span = half_extent * 2.0 + thickness * 2.0
+    offset = half_extent + thickness * 0.5
+    y = wall_height * 0.5
+    entities += [
+        wall_entity("Insane_WallEast", (offset, y, 0.0), (thickness, wall_height, span)),
+        wall_entity("Insane_WallWest", (-offset, y, 0.0), (thickness, wall_height, span)),
+        wall_entity("Insane_WallNorth", (0.0, y, offset), (span, wall_height, thickness)),
+        wall_entity("Insane_WallSouth", (0.0, y, -offset), (span, wall_height, thickness)),
+    ]
+
+    inner = half_extent * 0.9
+    for i, position in enumerate(scatter(rng, 300, inner, 1.0)):
+        entities.append(mesh_entity(f"Insane_Sphere_{i}", "prim://sphere", position, (1.0, 1.0, 1.0)))
+    for i, position in enumerate(scatter(rng, 450, inner, 1.0)):
+        entities.append(mesh_entity(f"Insane_Cylinder_{i}", "prim://cylinder", position, (0.5, 1.0, 0.5)))
+    for i, position in enumerate(scatter(rng, 450, inner, 0.5)):
+        entities.append(mesh_entity(f"Insane_Cube_{i}", "prim://cube", position, (1.0, 1.0, 1.0)))
+
+    # Dense geometry among the cheap: millions of triangles through the same
+    # depth, shadow and lit passes the draw count already loads.
+    for i, position in enumerate(scatter(rng, 150, inner, 2.0)):
+        scale = rng.range(1.5, 3.0)
+        lifted = (position[0], scale, position[2])
+        entity = mesh_entity(f"Insane_Dense_{i}", "prim://icosphere-high", lifted, (scale, scale, scale))
+        entities.append(oscillate(entity, rng, (1.0, 3.0), (3.0, 8.0)) if i % 10 == 0 else entity)
+    for i, position in enumerate(scatter(rng, 200, inner, 1.0)):
+        entities.append(mesh_entity(f"Insane_Smooth_{i}", "prim://sphere-high", position, (1.2, 1.2, 1.2)))
+
+    shapes = ["prim://sphere", "prim://cube", "prim://cylinder", "prim://icosphere-low"]
+    for i, position in enumerate(scatter(rng, 40, inner, 0.0)):
+        lifted = (position[0], rng.range(1.5, 4.0), position[2])
+        scale = rng.range(0.8, 2.0)
+        entity = mesh_entity(f"Insane_Mover_{i}", shapes[i % len(shapes)], lifted, (scale, scale, scale))
+        entities.append(oscillate(entity, rng, (1.0, 4.0), (2.0, 7.0)))
+
+    # Piles rather than singles: bodies dropped onto each other scatter sideways,
+    # which a lone body bouncing on the floor never does.
+    pile_count = 12
+    per_pile = 5
+    for pile, centre in enumerate(scatter(rng, pile_count, half_extent * 0.75, 0.0)):
+        for level in range(per_pile):
+            position = (centre[0] + rng.range(-0.4, 0.4), 3.0 + level * 1.6, centre[2] + rng.range(-0.4, 0.4))
+            entities.append(bouncing_body(f"Insane_Body_{pile}_{level}", position, sphere=(level % 2 == 1)))
+
+    for i, position in enumerate(scatter(rng, 48, inner, 0.0)):
+        light = point_light_entity(f"Insane_Point_{i}", (position[0], rng.range(2.5, 5.5), position[2]),
+                                   (rng.range(0.6, 1.0), rng.range(0.6, 1.0), rng.range(0.6, 1.0)),
+                                   radius=round6(rng.range(14.0, 22.0)), intensity=round6(rng.range(6.0, 30.0)))
+        light["components"]["PointLight"]["castsShadows"] = True
+        if i % 5 == 0:
+            oscillate(light, rng, (2.0, 5.0), (3.0, 8.0))
+        entities.append(light)
+    for i, position in enumerate(scatter(rng, 144, inner, 0.0)):
+        light = spot_light_entity(f"Insane_Spot_{i}", (position[0], rng.range(7.0, 9.0), position[2]),
+                                  (rng.range(0.7, 1.0), rng.range(0.7, 1.0), rng.range(0.7, 1.0)),
+                                  radius=round6(rng.range(16.0, 26.0)), intensity=round6(rng.range(15.0, 60.0)))
+        light["components"]["SpotLight"]["castsShadows"] = True
+        if i % 7 == 0:
+            oscillate(light, rng, (2.0, 5.0), (3.0, 8.0))
+        entities.append(light)
+
+    systems = sorted(set(base.get("systems", [])) | {"Oscillate", "Bounce"})
+    return entities, systems
+
+
 SCENES = {
     "PerfBlank": build_blank,
     "PerfReferenceManyInstances": build_many_instances,
     "PerfReferenceFewInstances": build_few_instances,
     "PerfStress": build_stress,
     "PerfGeometryStress": build_geometry_stress,
+    "PerfInsane": build_insane,
 }
 
 
@@ -395,8 +526,16 @@ def write_scene(name, entities, systems):
 
 
 def main():
+    # Scene names on the command line regenerate only those. PerfStress has been
+    # composed further in the editor since it was generated, so regenerating it
+    # would discard that; name the scenes wanted rather than rebuilding all.
+    wanted = sys.argv[1:] or list(SCENES)
+    unknown = [name for name in wanted if name not in SCENES]
+    if unknown:
+        sys.exit(f"unknown scene(s): {', '.join(unknown)}; known: {', '.join(SCENES)}")
     print(f"{'scene':<30} {'entities':>9} {'meshes':>7} {'triangles':>10}  lights")
-    for name, build in SCENES.items():
+    for name in wanted:
+        build = SCENES[name]
         entities, systems = build()
         path = write_scene(name, entities, systems)
         triangles, meshes, counts = summarise(entities)
