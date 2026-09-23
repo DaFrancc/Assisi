@@ -311,7 +311,7 @@ TEST_CASE("A cascade's depth range is its own slice, whatever the scene holds")
 
     const CascadeFit fit = FitCascades(params);
     REQUIRE(fit.count == 1);
-    CHECK(fit.cascades[0].depthRange == doctest::Approx(2.f * fit.cascades[0].radius));
+    CHECK(fit.cascades[0].depthRange == doctest::Approx(2.f * fit.cascades[0].extent));
 
     // A caster far upstream projects in front of the near plane, which is what
     // the vertex stage clamps. What matters here is that its existence has not
@@ -332,7 +332,7 @@ TEST_CASE("Every cascade keeps a range proportional to the world it covers")
 
     for (std::uint32_t i = 0; i < fit.count; ++i)
     {
-        CHECK(fit.cascades[i].depthRange == doctest::Approx(2.f * fit.cascades[i].radius));
+        CHECK(fit.cascades[i].depthRange == doctest::Approx(2.f * fit.cascades[i].extent));
     }
     CHECK(fit.cascades[0].depthRange < fit.cascades[fit.count - 1].depthRange);
 }
@@ -506,7 +506,7 @@ TEST_CASE("No cascade's kernel reaches further into the world than the cap")
             const ShadowCascade &cascade = fit.cascades[i];
             const float kernelWorld =
                 FilterRadiusTaps(params.settings.filter) * CascadeFilterTapStepUv(cascade, params.settings) *
-                (2.f * cascade.radius);
+                (2.f * cascade.extent);
             CHECK(kernelWorld <= kMaxPenumbraWorld + 1e-4f);
         }
     }
@@ -698,7 +698,7 @@ TEST_CASE("Contact hardening softens a blocker's shadow the same in every cascad
             REQUIRE(gap <= 1.f);
             const float reachUv = PcssPenumbraUv(constants.penumbraUvPerDepth, gap, constants.maxReachUv);
             REQUIRE(reachUv < constants.maxReachUv);
-            CHECK(reachUv * 2.f * cascade.radius == doctest::Approx(kSunPenumbraPerWorldUnit * kBlockerDistance));
+            CHECK(reachUv * 2.f * cascade.extent == doctest::Approx(kSunPenumbraPerWorldUnit * kBlockerDistance));
         }
     }
 }
@@ -774,7 +774,7 @@ TEST_CASE("Contact hardening widens past a texel near the camera and never past 
             {
                 CAPTURE(distance);
                 const float step = CascadePcssTapStepUv(cascade, params.settings, distance);
-                CHECK(step * kVogelFilterRadiusTaps * 2.f * cascade.radius <= kMaxPenumbraWorld + 1e-4f);
+                CHECK(step * kVogelFilterRadiusTaps * 2.f * cascade.extent <= kMaxPenumbraWorld + 1e-4f);
             }
         }
     }
@@ -863,16 +863,23 @@ TEST_CASE("Every tier's seams stay inside what a blend band can hide")
     // gradient. Ultra is held to the stricter bar it exists for: a seam at the
     // limit of what the gate resolution can resolve, around a pixel, rather
     // than one that is merely small.
+    //
+    // The bounds carry the keep margin (kCascadePadding): a padded map's texels
+    // are that much larger, and the margin is what lets a moving camera keep a
+    // cascade instead of redrawing all of them every frame.
+    constexpr float kSeamBound = 3.0f * (1.f + kCascadePadding);
+    constexpr float kLowSeamBound = 6.5f * (1.f + kCascadePadding);
+    constexpr float kUltraSeamBound = 1.15f * (1.f + kCascadePadding);
     CascadeFitParams params = DefaultParams();
     for (std::uint32_t i = 0; i < kShadowTierCount; ++i)
     {
         const auto tier = static_cast<ShadowTier>(i);
         params.settings = TierSettings(tier).sun;
         const float seam = WorstSeamPixels(FitCascades(params));
-        CHECK(seam <= (tier == ShadowTier::Low ? 6.5f : 3.0f));
+        CHECK(seam <= (tier == ShadowTier::Low ? kLowSeamBound : kSeamBound));
         if (tier == ShadowTier::Ultra)
         {
-            CHECK(seam <= 1.15f);
+            CHECK(seam <= kUltraSeamBound);
         }
     }
 

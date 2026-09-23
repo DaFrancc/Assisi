@@ -23,18 +23,23 @@ namespace
 {
 constexpr std::uint32_t kResolution = 2048;
 
-/// One cascade of @p radius centred at @p center, with the derived scalars the
-/// real fit produces: an ortho box twice the radius deep, and a texel of that
-/// box divided by the map's width.
+/// One cascade of @p radius centred at @p center, as the real fit builds it for
+/// a sun straight down: a box padded by kCascadePadding on every side, as deep
+/// as it is wide, and a texel of that box divided by the map's width.
 ShadowCascade CascadeOf(float radius, const glm::vec3 &center, float splitNear, float splitFar)
 {
-    return ShadowCascade{.viewProjection = glm::mat4(1.f),
+    const float extent = radius * (1.f + kCascadePadding);
+    const glm::vec3 eye = center + glm::vec3(0.f, extent, 0.f);
+    const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.f, 0.f, 1.f));
+    const glm::mat4 projection = glm::ortho(-extent, extent, -extent, extent, 0.f, 2.f * extent);
+    return ShadowCascade{.viewProjection = projection * view,
                          .center = center,
                          .radius = radius,
+                         .extent = extent,
                          .splitNearView = splitNear,
                          .splitFarView = splitFar,
-                         .worldUnitsPerTexel = 2.f * radius / static_cast<float>(kResolution),
-                         .depthRange = 2.f * radius};
+                         .worldUnitsPerTexel = 2.f * extent / static_cast<float>(kResolution),
+                         .depthRange = 2.f * extent};
 }
 
 /// A fit of @p count cascades, each twice the radius of the one before it and
@@ -151,7 +156,7 @@ TEST_CASE("SunShadowCadence: a redrawn cascade publishes this frame's fit")
     CHECK(plan.fit.cascades[0].center == candidate.cascades[0].center);
 }
 
-TEST_CASE("SunShadowCadence: the centre drift is measured in the cascade's own texels")
+TEST_CASE("SunShadowCadence: a cascade is kept until its slice leaves the padded map")
 {
     SunShadowCadence cadence;
     SunShadowCadencePlan plan;
@@ -159,21 +164,36 @@ TEST_CASE("SunShadowCadence: the centre drift is measured in the cascade's own t
     cadence.Plan(FrameAt(1), drawn, plan);
     REQUIRE(plan.redrawCount == 3);
 
-    // Three quarters of the nearest cascade's texel. The next cascade's texel is
-    // twice as wide and the one after that four times, so the same walk is well
-    // inside their tolerances — which is the whole of what "per-cascade cadence"
-    // means here, and it comes from the fit rather than from a tier.
-    const float step = drawn.cascades[0].worldUnitsPerTexel * 0.75f;
-    CascadeFit candidate = FitOf(3);
-    for (std::uint32_t i = 0; i < candidate.count; ++i)
-    {
-        candidate.cascades[i].center = glm::vec3(step, 0.f, 0.f);
-    }
+    // Inside the nearest cascade's margin: every map still covers its slice, so
+    // nothing is redrawn however many texels the camera crossed.
+    const float margin0 = drawn.cascades[0].radius * kCascadePadding;
+    CascadeFit candidate = FitOf(3, glm::vec3(margin0 * 0.5f, 0.f, 0.f));
     cadence.Plan(FrameAt(2), candidate, plan);
+    CHECK(plan.redrawCount == 0);
 
+    // Past the nearest margin and inside the next one, which is twice as wide:
+    // the nearest cascade alone is redrawn, which is the whole of what
+    // "per-cascade cadence" means here, and it comes from the fit.
+    candidate = FitOf(3, glm::vec3(margin0 * 1.5f, 0.f, 0.f));
+    cadence.Plan(FrameAt(3), candidate, plan);
     REQUIRE(plan.redrawCount == 1);
     CHECK(plan.redraw[0] == 0);
     CHECK(cadence.Stats().kept == 2);
+}
+
+TEST_CASE("SunShadowCadence: a slice that leaves its map along the light redraws it")
+{
+    SunShadowCadence cadence;
+    SunShadowCadencePlan plan;
+    const CascadeFit drawn = FitOf(1);
+    cadence.Plan(FrameAt(1), drawn, plan);
+
+    // Straight down the light, which leaves the box's depth range rather than
+    // its footprint: a map that no longer spans the slice's depth would clip
+    // casters above it.
+    const float margin = drawn.cascades[0].radius * kCascadePadding;
+    cadence.Plan(FrameAt(2), FitOf(1, glm::vec3(0.f, margin * 1.5f, 0.f)), plan);
+    CHECK(plan.redrawCount == 1);
 }
 
 TEST_CASE("SunShadowCadence: the sun's rotation trips every cascade at once")

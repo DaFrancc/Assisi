@@ -50,6 +50,20 @@ struct ShadowMover
     Geometry::BoundingSphere worldSphere;
 };
 
+/// @brief How much larger than its slice's sphere a cascade's map is, as a
+/// fraction of the radius.
+///
+/// A map exactly the sphere's size has to be redrawn whenever the camera
+/// crosses a texel, which a moving camera does nearly every frame. With a
+/// margin the map stays put until the sphere leaves it: at a tenth of the
+/// radius, a camera moving 4 cm a frame keeps the nearest cascade for about
+/// five frames and the farthest for well over a hundred.
+///
+/// The cost is texels a tenth larger, and that is what bounds it: Ultra's
+/// cascade seams are held to about a pixel at the gate resolution, and a
+/// quarter of the radius breaks that where a tenth does not.
+inline constexpr float kCascadePadding = 0.1f;
+
 /// @brief One fitted cascade: the matrix the depth pass draws with, and the
 /// scalars the mesh shader needs to sample and bias it.
 struct ShadowCascade
@@ -62,6 +76,12 @@ struct ShadowCascade
     /// texels; the radius is fixed for a given split pair and field of view.
     glm::vec3 center{0.f};
     float radius = 0.f;
+
+    /// Half the side of the box the map covers, in every direction including
+    /// along the light: the radius padded by kCascadePadding. The margin is what
+    /// lets the map be kept while the camera moves, until the slice's sphere
+    /// leaves the box.
+    float extent = 0.f;
 
     /// View-space distances this cascade covers. The mesh shader selects on
     /// `splitFarView`, and fades into the next cascade over the end of the range.

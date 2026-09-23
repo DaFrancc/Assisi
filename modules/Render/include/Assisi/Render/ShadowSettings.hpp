@@ -286,9 +286,10 @@ struct SunShadowCadenceSettings
     /// Texels of tolerated shadow-edge drift.
     ///
     /// A cascade's own texel, so this means the same thing in a near cascade
-    /// covering a courtyard and a far one covering the district. Two things are
-    /// measured against it: how far the fitted centre has walked, and how far the
-    /// sun's rotation moves an edge over the cascade's depth range.
+    /// covering a courtyard and a far one covering the district. What is
+    /// measured against it is how far the sun's rotation moves an edge over the
+    /// cascade's depth range. The camera's movement is not: a kept map stays
+    /// right for as long as the slice is inside it (see kCascadePadding).
     ///
     /// Half a texel is at or below the half-texel the hardware's own bilinear
     /// comparison already softens every edge by, so the step a re-render makes is
