@@ -198,6 +198,8 @@ public:
 
     /// @brief Fold this frame's movement in and age everything else.
     ///
+    /// @p nowSeconds is a monotonic clock; a caster still for
+    /// @p promoteStillSeconds of it rejoins the still layers.
     /// @p moved names the casters written this frame and where they now are.
     /// @p dynamicOut receives every caster that draws with the movers this frame.
     /// @p invalidateOut receives every caster that changed sides this frame,
@@ -205,7 +207,7 @@ public:
     /// is taking — which is what the tiles are dirtied against.
     ///
     /// Both outputs are cleared and refilled.
-    void Update(std::uint32_t frameIndex, std::uint32_t promoteStillFrames, std::span<const ShadowMover> moved,
+    void Update(double nowSeconds, float promoteStillSeconds, std::span<const ShadowMover> moved,
                 std::vector<ShadowMover> &dynamicOut, std::vector<ShadowMover> &invalidateOut);
 
     /// @brief Whether @p casterId draws with the movers rather than into the
@@ -255,13 +257,15 @@ public:
 private:
     struct Record
     {
-        /// Where the cached layer has this caster, if it is in one.
-        Geometry::BoundingSphere bakedSphere;
-        bool baked = false;
+        /// When it last moved, on the clock Update is given.
+        double lastMovedSeconds = 0.0;
 
-        /// Where it stands now, and the frame that was last true of.
+        /// Where the still layers have this caster, if they have it.
+        Geometry::BoundingSphere bakedSphere;
+
+        /// Where it stands now.
         Geometry::BoundingSphere sphere;
-        std::uint32_t lastMovedFrame = 0;
+        bool baked = false;
         bool dynamic = false;
     };
 

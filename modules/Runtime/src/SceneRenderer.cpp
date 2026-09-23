@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -641,7 +642,13 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     // Which casters move and which changed sides, decided once for both halves
     // of the shadow system: the sun's cascades and the local atlas each keep a
     // still layer, and they must agree about which one an object is in.
-    _casterMobility.Update(_shadowFrameIndex, _shadowSettings.local.cache.promoteStillFrames, _movedCasters,
+    //
+    // Real time rather than the game's tick, which this has no view of: what it
+    // measures is how long an object has stood still, and that is the same
+    // either way wherever the game runs at speed.
+    const double nowSeconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    _casterMobility.Update(nowSeconds, _shadowSettings.local.cache.promoteStillSeconds, _movedCasters,
                            _dynamicCasters, _casterInvalidations);
 }
 

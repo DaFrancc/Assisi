@@ -450,16 +450,12 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
                           "into a new room landing as one long frame. A light that does not fit waits, "
                           "unshadowed, rather than showing a tile that is out of date.");
 
-    int32_t stillFrames = static_cast<int32_t>(shadows.local.cache.promoteStillFrames);
-    if (ImGui::SliderInt("Settle Frames", &stillFrames, static_cast<int32_t>(Assisi::Render::kMinPromoteStillFrames),
-                         static_cast<int32_t>(Assisi::Render::kMaxPromoteStillFrames)))
-    {
-        shadows.local.cache.promoteStillFrames = static_cast<std::uint32_t>(stillFrames);
-        changed = true;
-    }
-    ImGui::SetItemTooltip("How long a caster must hold still before it is folded back into the kept layer. A "
-                          "motion costs two redraws however long it lasts — one leaving, one rejoining — and "
-                          "this is the wait before the second.");
+    changed |= ImGui::SliderFloat("Settle Seconds", &shadows.local.cache.promoteStillSeconds,
+                                  Assisi::Render::kMinPromoteStillSeconds, Assisi::Render::kMaxPromoteStillSeconds,
+                                  "%.2f s");
+    ImGui::SetItemTooltip("How long a caster must hold still before it is folded back into the kept layers, the "
+                          "sun's and the local lights' alike. A motion costs two redraws however long it lasts — "
+                          "one leaving, one rejoining — and this is the wait before the second.");
 
     int32_t divisor = static_cast<int32_t>(shadows.local.cache.movingLightUpdateDivisor);
     if (ImGui::SliderInt("Mover Update Rate", &divisor, static_cast<int32_t>(Assisi::Render::kMinLightUpdateDivisor),

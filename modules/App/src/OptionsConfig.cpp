@@ -231,7 +231,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                     const auto &cache = local.at("cache");
                     ReadField(cache, "enabled", shadows.local.cache.enabled);
                     ReadField(cache, "updateBudgetFaces", shadows.local.cache.updateBudgetFaces);
-                    ReadField(cache, "promoteStillFrames", shadows.local.cache.promoteStillFrames);
+                    ReadField(cache, "promoteStillSeconds", shadows.local.cache.promoteStillSeconds);
                     ReadField(cache, "movingLightUpdateDivisor", shadows.local.cache.movingLightUpdateDivisor);
                 }
             }
@@ -461,7 +461,7 @@ nlohmann::json FullJson(const OptionsConfig &options)
     nlohmann::json &cache = json["shadows"]["local"]["cache"];
     cache["enabled"] = shadows.local.cache.enabled;
     cache["updateBudgetFaces"] = shadows.local.cache.updateBudgetFaces;
-    cache["promoteStillFrames"] = shadows.local.cache.promoteStillFrames;
+    cache["promoteStillSeconds"] = shadows.local.cache.promoteStillSeconds;
     cache["movingLightUpdateDivisor"] = shadows.local.cache.movingLightUpdateDivisor;
 
     nlohmann::json &selection = json["shadows"]["selection"];

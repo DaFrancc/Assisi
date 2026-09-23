@@ -144,14 +144,12 @@ void ShadowCasterMobility::NoteBaked(const ShadowMover &caster)
     }
 }
 
-void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promoteStillFrames,
-                                  std::span<const ShadowMover> moved, std::vector<ShadowMover> &dynamicOut,
-                                  std::vector<ShadowMover> &invalidateOut)
+void ShadowCasterMobility::Update(double nowSeconds, float promoteStillSeconds, std::span<const ShadowMover> moved,
+                                  std::vector<ShadowMover> &dynamicOut, std::vector<ShadowMover> &invalidateOut)
 {
     _dynamic.clear();
     invalidateOut.assign(_pendingInvalidations.begin(), _pendingInvalidations.end());
     _pendingInvalidations.clear();
-    promoteStillFrames = std::max(promoteStillFrames, 1u);
 
     for (const ShadowMover &mover : moved)
     {
@@ -168,7 +166,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
             invalidateOut.push_back(ShadowMover{mover.casterId, Merged(leaving, mover.worldSphere)});
         }
         record.sphere = mover.worldSphere;
-        record.lastMovedFrame = frameIndex;
+        record.lastMovedSeconds = nowSeconds;
     }
 
     for (auto entry = _casters.begin(); entry != _casters.end();)
@@ -179,7 +177,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
             ++entry;
             continue;
         }
-        if (frameIndex - record.lastMovedFrame < promoteStillFrames)
+        if (nowSeconds - record.lastMovedSeconds < static_cast<double>(promoteStillSeconds))
         {
             _dynamic.push_back(ShadowMover{entry->first, record.sphere});
             ++entry;

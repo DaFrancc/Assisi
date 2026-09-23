@@ -365,14 +365,14 @@ struct SunShadowSettings
 inline constexpr std::uint32_t kMinShadowBakeBudget = 1;
 inline constexpr std::uint32_t kMaxShadowBakeBudget = 512;
 
-/// @brief Bounds on how long a caster must hold still before it rejoins the
-/// cached layer.
+/// @brief Bounds on how long, in seconds, a caster must hold still before it
+/// rejoins the still layers.
 ///
-/// The floor is one frame, which is no hysteresis at all: every pause in a
-/// motion re-bakes. The ceiling is four seconds at 60 Hz, past which a thing
+/// The floor is about a frame at 60 Hz, which is barely any hysteresis: every
+/// pause in a motion re-bakes. The ceiling is four seconds, past which a thing
 /// that stopped moving is still being drawn as though it might not have.
-inline constexpr std::uint32_t kMinPromoteStillFrames = 1;
-inline constexpr std::uint32_t kMaxPromoteStillFrames = 240;
+inline constexpr float kMinPromoteStillSeconds = 1.f / 60.f;
+inline constexpr float kMaxPromoteStillSeconds = 4.f;
 
 /// @brief Bounds on the update-rate divisor a light's dynamic layer may be
 /// throttled to. One is every frame; three is every third.
@@ -421,16 +421,22 @@ struct LocalShadowCacheSettings
     /// drawn, and that is a dimmer image rather than a wrong one.
     std::uint32_t updateBudgetFaces = 32;
 
-    /// Frames a caster must hold still before it is folded back into the cached
-    /// layer.
+    /// Seconds a caster must hold still before it is folded back into the still
+    /// layers — the sun's cascades and the local-light tiles alike.
     ///
-    /// A caster's first moved frame drops it out of the cached layer of every
-    /// tile it touches — one re-bake — and it draws with the movers until it
-    /// settles, at which point it is folded back in with one more. So a motion
-    /// episode costs two re-bakes however long it lasts, and standing still
-    /// costs none. Without the wait, a caster that pauses mid-motion re-bakes
-    /// every tile around it and then immediately undoes that.
-    std::uint32_t promoteStillFrames = 30;
+    /// A caster's first move drops it out of the still layer of every cascade
+    /// and tile it reaches — one re-bake — and it draws with the movers until
+    /// it settles, at which point it is folded back in with one more. So a
+    /// motion episode costs two re-bakes however long it lasts, and standing
+    /// still costs none. Without the wait, a caster that pauses mid-motion
+    /// re-bakes everything around it and then immediately undoes that.
+    ///
+    /// Time rather than frames: a mover is only ever written on the game's
+    /// tick, so at a high frame rate a count of frames is a sliver of a second,
+    /// and something swinging through the still point of an oscillation would
+    /// settle and wake again every cycle. Staying a mover costs little; each
+    /// change of side is a re-bake.
+    float promoteStillSeconds = 1.f;
 
     /// The slowest rate a light's moving layer may be redrawn at: 1 is every
     /// frame, 2 every other, 3 every third.
@@ -659,8 +665,9 @@ struct ShadowSettings
 
     settings.cache.updateBudgetFaces =
         std::clamp(settings.cache.updateBudgetFaces, kMinShadowBakeBudget, kMaxShadowBakeBudget);
-    settings.cache.promoteStillFrames =
-        std::clamp(settings.cache.promoteStillFrames, kMinPromoteStillFrames, kMaxPromoteStillFrames);
+    settings.cache.promoteStillSeconds =
+        ClampFiniteShadow(settings.cache.promoteStillSeconds, kMinPromoteStillSeconds, kMaxPromoteStillSeconds,
+                          defaults.cache.promoteStillSeconds);
     settings.cache.movingLightUpdateDivisor =
         std::clamp(settings.cache.movingLightUpdateDivisor, kMinLightUpdateDivisor, kMaxLightUpdateDivisor);
     return settings;
