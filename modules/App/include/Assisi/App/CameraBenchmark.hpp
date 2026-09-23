@@ -39,6 +39,15 @@ inline constexpr double kDefaultBenchmarkSeconds = 15.0;
 /// frames, has finished by the frame that is kept.
 inline constexpr std::int32_t kBenchmarkShotSettleFrames = 8;
 
+/// @brief How far back along the route, in seconds of run, a shot's camera
+/// starts before it reaches its pose on the frame that is kept.
+///
+/// A shot that jumped straight to its pose would picture a frame whose shadow
+/// maps were all just redrawn, and a map kept wrongly across camera motion
+/// would never show in one. Arriving by moving makes the kept frame one that
+/// could be holding such a map.
+inline constexpr double kBenchmarkShotApproachSeconds = 0.25;
+
 /// @brief Where a benchmark is. See the file comment.
 enum class BenchmarkPhase : std::uint8_t
 {

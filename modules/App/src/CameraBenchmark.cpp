@@ -64,7 +64,12 @@ Runtime::CameraAim CameraBenchmark::Aim() const
         const std::int32_t shot = std::min(_shotFrame / kBenchmarkShotSettleFrames, _shotCount - 1);
         const double fraction =
             _shotCount > 1 ? static_cast<double>(shot) / static_cast<double>(_shotCount - 1) : 0.5;
-        seconds = fraction * _runSeconds;
+        // Approaching the pose over the settle frames, and exactly on it for the
+        // last one, which is the frame kept.
+        const std::int32_t framesLeft = kBenchmarkShotSettleFrames - 1 - _shotFrame % kBenchmarkShotSettleFrames;
+        const double approach = kBenchmarkShotApproachSeconds * static_cast<double>(std::max(framesLeft, 0)) /
+                                static_cast<double>(kBenchmarkShotSettleFrames - 1);
+        seconds = std::max(fraction * _runSeconds - approach, 0.0);
     }
     return Runtime::EvaluateCameraRoute(_route, static_cast<float>(seconds) * _routeScale);
 }
