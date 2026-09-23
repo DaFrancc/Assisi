@@ -44,15 +44,15 @@ void AttachParentConsole()
         return;
     }
     auto reopen = [](FILE *stream, DWORD stdHandle)
-    {
-        FILE *reopened = nullptr;
-        if (freopen_s(&reopened, "CONOUT$", "w", stream) == 0)
-        {
-            // Published as the process's handle too, so Core::HasConsoleOutput()
-            // sees the console and the logger adds its console sink.
-            SetStdHandle(stdHandle, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stream))));
-        }
-    };
+                  {
+                      FILE *reopened = nullptr;
+                      if (freopen_s(&reopened, "CONOUT$", "w", stream) == 0)
+                      {
+                          // Published as the process's handle too, so Core::HasConsoleOutput()
+                          // sees the console and the logger adds its console sink.
+                          SetStdHandle(stdHandle, reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stream))));
+                      }
+                  };
     if (needOut)
     {
         reopen(stdout, STD_OUTPUT_HANDLE);
@@ -77,9 +77,9 @@ constexpr const char *kUsage =
     "                          one beside the executable (also ASSISI_PAK)\n"
 #endif
 #if defined(ASSISI_CHIARA_ENABLED)
-    "  --benchmark [level]     fly the level's camera paths uncapped with 8x MSAA\n"
-    "                          and FXAA, record a Chiara session, then exit.\n"
-    "                          Without a level, flies the startup scene\n"
+    "  --benchmark [level]     fly the level's camera paths uncapped with 8x MSAA,\n"
+    "                          FXAA and Ultra shadows, record a Chiara session,\n"
+    "                          then exit. Without a level, flies the startup scene\n"
     "  --benchmark-seconds <n> how long the flight takes (default 15)\n"
     "  --benchmark-passes      also time each render pass. Splits render\n"
     "                          passes, so the frame total is not the shipped one\n"

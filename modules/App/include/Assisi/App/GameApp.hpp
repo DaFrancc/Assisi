@@ -50,7 +50,8 @@ inline constexpr const char *kDefaultPakName = "assets.pak";
 /// @brief A benchmark run: the camera flies the level's route, a Chiara session
 /// records it, and the game exits when the route ends.
 ///
-/// Renders uncapped with 8x MSAA and FXAA, whatever the player's options say, so
+/// Renders uncapped with 8x MSAA and FXAA and the Ultra shadow tier, with every
+/// other graphics setting at its default, whatever the player's options say. So
 /// runs on different machines and days measure the same settings. The options
 /// are changed for the run only; a game never saves them.
 struct GameBenchmark
@@ -87,11 +88,11 @@ struct GameLaunch
 /// @brief The game application. See the file comment.
 class GameApp : public Application
 {
-  public:
+public:
     explicit GameApp(GameLaunch launch);
     ~GameApp() override;
 
-  protected:
+protected:
     /// Opens the content package and installs the readers over it: the asset
     /// source, the level document reader and the config reader. A package that
     /// is missing or unreadable refuses the launch and names its path.
@@ -117,7 +118,7 @@ class GameApp : public Application
     /// @brief Every resident world, for a game that keeps more than one.
     [[nodiscard]] WorldManager &Worlds() { return _worlds; }
 
-  private:
+private:
     /// Brings up the asset cache and the scene renderer. Windowed runs only —
     /// there is no device in a headless process and nothing to draw with it.
     ///

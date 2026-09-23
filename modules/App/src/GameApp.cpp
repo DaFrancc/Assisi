@@ -205,6 +205,13 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     options.fpsLimit = kUnlimitedFps;
     ApplyDisplayOptions();
 
+    options.shadows = Render::TierSettings(Render::ShadowTier::Ultra);
+    options.environment = Render::EnvironmentSettings{};
+    options.ambientOcclusion = Render::SsaoSettings{};
+    _sceneRenderer.SetShadowSettings(options.shadows);
+    _sceneRenderer.SetEnvironmentSettings(options.environment);
+    _sceneRenderer.SetSsaoSettings(options.ambientOcclusion);
+
     if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
         vulkanContext->SetPassTimingEnabled(benchmark.passTiming);
@@ -317,7 +324,7 @@ void GameApp::StepWorlds(float dt)
             // system lands on; ordering within a phase cannot substitute for it.
             world.systems.Run(SystemPhase::FixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
@@ -333,7 +340,7 @@ void GameApp::StepWorlds(float dt)
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
         });
 }
 
@@ -413,7 +420,7 @@ void GameApp::OnUpdate(float dt)
             {
                 if (world.state != WorldState::Loading)
                 {
-                    SettleWorld(WorldStartContext(world), /*assetsPending=*/false);
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
                 }
             });
     }
@@ -446,7 +453,7 @@ void GameApp::OnUpdate(float dt)
                                     HasPresentation() ? &GetInput() : nullptr,
                                     &GetActions(),
                                     GetEvents(),
-                                    /*isActiveWorld=*/&world == _worlds.Active(),
+                                    /*isActiveWorld=*/ &world == _worlds.Active(),
                                     &_worlds,
                                     GetUi()};
             world.systems.Run(SystemPhase::PreUpdate, ctx);
