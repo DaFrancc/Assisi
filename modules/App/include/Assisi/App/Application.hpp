@@ -275,6 +275,12 @@ class Application
 
     void RequestClose();
 
+    /// @brief Write the next finished frame to @p path as a PNG, taken after the
+    /// game UI and before any debug UI. Waits for the GPU that frame, so it is
+    /// for the frames a test compares and never for a measured one. A second
+    /// request before that frame replaces the first.
+    void CaptureNextFrame(std::string path) { _frameImagePath = std::move(path); }
+
     /// @brief Feed one frame to the running capture, and close the app once it
     /// has the frames it asked for.
     void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
@@ -432,6 +438,9 @@ class Application
     /// in Initialize, which is what loads the options.
     std::string _captureImagePath;
     std::string _captureOptionsPath;
+
+    /// See CaptureNextFrame. Empty when no picture is asked for.
+    std::string _frameImagePath;
 
     /// Resolution a capture asked to render at, 0 when it did not ask. Applied
     /// in InitializePresentation rather than at SetPerfCapture, because

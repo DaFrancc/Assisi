@@ -1105,6 +1105,14 @@ void Application::RenderFrame()
         }
     }
 
+    // A picture an app asked for, which unlike the capture's does not end the run.
+    Render::FrameCapture requestedCapture;
+    std::string requestedPath;
+    requestedPath.swap(_frameImagePath);
+    const bool requestedImage =
+        !requestedPath.empty() &&
+        requestedCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
+
     {
         // One scope, because what happens inside belongs to whoever overrode
         // this: bringing a UI toolkit up, drawing into it and submitting it are
@@ -1125,6 +1133,10 @@ void Application::RenderFrame()
     {
         (void)frameCapture.Write(vulkanContext->GetDevice(), _captureImagePath);
         RequestClose();
+    }
+    if (requestedImage)
+    {
+        (void)requestedCapture.Write(vulkanContext->GetDevice(), requestedPath);
     }
 }
 

@@ -23,6 +23,9 @@
 #include <chrono>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
+#include <format>
+#include <system_error>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -192,7 +195,8 @@ void GameApp::OnStart()
         }
         Core::Log::Info("Benchmark: '{}', {} camera paths over {} s.", *scene, route.size(),
                         _launch.benchmark->seconds);
-        _benchmark.emplace(std::move(route), _launch.benchmark->seconds);
+        const std::int32_t shots = _launch.benchmark->shotsDirectory.empty() ? 0 : kBenchmarkShotCount;
+        _benchmark.emplace(std::move(route), _launch.benchmark->seconds, shots);
     }
 }
 
@@ -222,6 +226,12 @@ void GameApp::AdvanceBenchmark()
 {
     const BenchmarkPhase before = _benchmark->Phase();
     const BenchmarkPhase phase = _benchmark->Advance(_world->start == StartProgress::Loaded, MonotonicSeconds());
+    const std::string &shotsDirectory = _launch.benchmark->shotsDirectory;
+
+    if (const std::int32_t shot = _benchmark->ShotThisFrame(); shot >= 0)
+    {
+        CaptureNextFrame(std::format("{}/shot-{:02}.png", shotsDirectory, shot));
+    }
     if (phase == before)
     {
         return;
@@ -233,13 +243,28 @@ void GameApp::AdvanceBenchmark()
         Core::Log::Info("Benchmark: loaded; warming up for {} frames.", kBenchmarkWarmupFrames);
         break;
     case BenchmarkPhase::Running:
-        StartChiaraSession();
+        if (shotsDirectory.empty())
+        {
+            StartChiaraSession();
+        }
+        else
+        {
+            std::error_code error;
+            std::filesystem::create_directories(shotsDirectory, error);
+        }
         Core::Log::Info("Benchmark: running.");
         break;
     case BenchmarkPhase::Finished:
-        StopChiaraSession();
-        Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.", _benchmark->ElapsedSeconds(),
-                        LastChiaraDump().path);
+        if (shotsDirectory.empty())
+        {
+            StopChiaraSession();
+            Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.",
+                            _benchmark->ElapsedSeconds(), LastChiaraDump().path);
+        }
+        else
+        {
+            Core::Log::Info("Benchmark: {} shots written to '{}'.", kBenchmarkShotCount, shotsDirectory);
+        }
         RequestClose();
         break;
     case BenchmarkPhase::Settling:

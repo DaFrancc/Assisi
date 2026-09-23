@@ -83,6 +83,8 @@ constexpr const char *kUsage =
     "  --benchmark-seconds <n> how long the flight takes (default 15)\n"
     "  --benchmark-passes      also time each render pass. Splits render\n"
     "                          passes, so the frame total is not the shipped one\n"
+    "  --benchmark-shots <dir> instead of measuring, stop at six points along the\n"
+    "                          route and write a PNG of each into dir\n"
 #endif
     "  -h, --help              show this help and exit\n";
 
@@ -188,6 +190,15 @@ bool ParseArgs(int32_t argc, char **argv, GameArgs &out)
         else if (arg == "--benchmark-passes")
         {
             BenchmarkOf(out).passTiming = true;
+        }
+        else if (arg == "--benchmark-shots")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--benchmark-shots requires a directory\n\n%s", kUsage);
+                return false;
+            }
+            BenchmarkOf(out).shotsDirectory = argv[++i];
         }
 #endif
 #ifdef ASSISI_PAK_OVERRIDES

@@ -47,6 +47,9 @@ namespace Assisi::App
 /// @brief The name of the content package a game reads, beside its executable.
 inline constexpr const char *kDefaultPakName = "assets.pak";
 
+/// @brief How many pictures a shots run takes along the route.
+inline constexpr std::int32_t kBenchmarkShotCount = 6;
+
 /// @brief A benchmark run: the camera flies the level's route, a Chiara session
 /// records it, and the game exits when the route ends.
 ///
@@ -58,6 +61,12 @@ struct GameBenchmark
 {
     /// The level to fly. Empty flies the startup scene.
     std::string level;
+
+    /// Where to write a picture at each of kBenchmarkShotCount points along the
+    /// route, instead of flying it in time and recording a session. Empty flies
+    /// and measures. The pictures are for comparing two builds' images, so the
+    /// run that takes them measures nothing.
+    std::string shotsDirectory;
 
     /// How long the route takes. The route is scaled to fit.
     double seconds = kDefaultBenchmarkSeconds;

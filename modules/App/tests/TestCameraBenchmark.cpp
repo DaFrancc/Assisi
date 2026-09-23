@@ -77,6 +77,35 @@ TEST_CASE("The route is scaled to fill the run, whatever its authored length")
     CHECK(benchmark.Aim().eye.x == doctest::Approx(5.f));
 }
 
+TEST_CASE("A shots run stops at evenly spaced points and wants each picture once, after it settles")
+{
+    constexpr std::int32_t kShots = 3;
+    CameraBenchmark benchmark(StraightRoute(5.f), 10.0, kShots);
+    (void)benchmark.Advance(true, 0.0);
+    WarmUp(benchmark, 0.0);
+    REQUIRE(benchmark.Phase() == BenchmarkPhase::Running);
+
+    // The clock plays no part: the poses are the route's ends and middle.
+    const float expectedX[kShots] = {0.f, 5.f, 10.f};
+    std::vector<std::int32_t> shotsTaken;
+    for (std::int32_t frame = 0; frame < kShots * kBenchmarkShotSettleFrames; ++frame)
+    {
+        (void)benchmark.Advance(true, 1000.0 * static_cast<double>(frame));
+        if (benchmark.Phase() != BenchmarkPhase::Running)
+        {
+            break;
+        }
+        const std::int32_t shot = benchmark.ShotThisFrame();
+        if (shot >= 0)
+        {
+            shotsTaken.push_back(shot);
+            CHECK(benchmark.Aim().eye.x == doctest::Approx(expectedX[shot]));
+        }
+    }
+    CHECK(shotsTaken == std::vector<std::int32_t>{0, 1, 2});
+    CHECK(benchmark.Phase() == BenchmarkPhase::Finished);
+}
+
 TEST_CASE("The run finishes at its length and holds the last pose")
 {
     CameraBenchmark benchmark(StraightRoute(20.f), 3.0);

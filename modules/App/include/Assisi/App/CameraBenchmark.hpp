@@ -34,6 +34,11 @@ inline constexpr std::int32_t kBenchmarkWarmupFrames = 120;
 /// @brief How long a benchmark runs when nothing asks otherwise, in seconds.
 inline constexpr double kDefaultBenchmarkSeconds = 15.0;
 
+/// @brief Frames a shot holds its pose before its picture is taken, so work a
+/// new view starts, such as a cascade refit or a shadow bake spread over a few
+/// frames, has finished by the frame that is kept.
+inline constexpr std::int32_t kBenchmarkShotSettleFrames = 8;
+
 /// @brief Where a benchmark is. See the file comment.
 enum class BenchmarkPhase : std::uint8_t
 {
@@ -45,12 +50,19 @@ enum class BenchmarkPhase : std::uint8_t
 };
 
 /// @brief Drives one benchmark run. See the file comment.
+///
+/// With shots, the run does not fly the route in time. It stops at @p shotCount
+/// evenly spaced points along it instead, first and last included, and holds
+/// each for kBenchmarkShotSettleFrames. The poses are exact, so two builds'
+/// pictures of the same shot are of the same view, which a timed flight cannot
+/// promise.
 class CameraBenchmark
 {
 public:
     /// @p route must not be empty, and @p runSeconds must be positive: the route
-    /// is scaled to fit that time whatever its authored length.
-    CameraBenchmark(std::vector<Runtime::CameraRouteLeg> route, double runSeconds);
+    /// is scaled to fit that time whatever its authored length. A @p shotCount of
+    /// zero flies the route in time.
+    CameraBenchmark(std::vector<Runtime::CameraRouteLeg> route, double runSeconds, std::int32_t shotCount = 0);
 
     /// @brief Moves on by one frame.
     ///
@@ -68,6 +80,10 @@ public:
 
     [[nodiscard]] double RunSeconds() const { return _runSeconds; }
 
+    /// @brief The shot whose picture this frame is, or -1 when this frame's is
+    /// not wanted.
+    [[nodiscard]] std::int32_t ShotThisFrame() const;
+
 private:
     std::vector<Runtime::CameraRouteLeg> _route;
     double _runSeconds = 0.0;
@@ -77,6 +93,10 @@ private:
     /// Authored route seconds per second of run.
     float _routeScale = 0.f;
     std::int32_t _warmupFramesLeft = kBenchmarkWarmupFrames;
+    std::int32_t _shotCount = 0;
+
+    /// Frames spent in the running phase of a shots run.
+    std::int32_t _shotFrame = 0;
     BenchmarkPhase _phase = BenchmarkPhase::Settling;
 };
 
