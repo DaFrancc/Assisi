@@ -362,7 +362,7 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Sun
 
     // Each draw below numbers its views from zero, so each gets the casters
     // whose bits name its views, shifted to start there.
-    const std::uint32_t stillBits = redraw.size() >= 32u ? ~0u : (1u << redraw.size()) - 1u;
+    const std::uint32_t stillBits = ShadowViewBits(static_cast<std::uint32_t>(redraw.size()));
     _stillCasters.clear();
     _movingCasters.clear();
     for (const ShadowCaster &caster : casters)
@@ -373,7 +373,8 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Sun
             still.viewMask &= stillBits;
             _stillCasters.push_back(still);
         }
-        const std::uint32_t movingMask = redraw.size() >= 32u ? 0u : caster.viewMask >> redraw.size();
+        const std::uint32_t movingMask =
+            ShadowViewBitsAfter(caster.viewMask, static_cast<std::uint32_t>(redraw.size()));
         if (movingMask != 0u)
         {
             ShadowCaster moving = caster;

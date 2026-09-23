@@ -201,6 +201,22 @@ struct CascadeFitParams
 /// cannot be read as "not a member" without dropping shadows.
 inline constexpr std::uint32_t kShadowViewMaskBits = 32;
 
+/// @brief The mask naming the first @p count views, every bit when @p count
+/// reaches the mask's width — where a plain `(1u << count) - 1` would shift by
+/// the whole width, which C++ leaves undefined.
+[[nodiscard]] constexpr std::uint32_t ShadowViewBits(std::uint32_t count)
+{
+    return count >= kShadowViewMaskBits ? ~0u : (1u << count) - 1u;
+}
+
+/// @brief @p mask with its first @p count views dropped and the rest moved
+/// down to start at bit zero — the mask as a list of views that begins after
+/// them would number it. Empty when @p count is the whole width.
+[[nodiscard]] constexpr std::uint32_t ShadowViewBitsAfter(std::uint32_t mask, std::uint32_t count)
+{
+    return count >= kShadowViewMaskBits ? 0u : mask >> count;
+}
+
 /// @brief Which of @p volumes @p caster can cast into, one bit per volume.
 ///
 /// The whole of what a per-view sweep would decide, decided once where the

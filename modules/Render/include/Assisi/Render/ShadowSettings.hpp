@@ -395,10 +395,9 @@ inline constexpr float kMaxLocalSourceRadius = 1.f;
 ///
 /// A tile's depth is two layers: what the still geometry recorded, which changes
 /// only when that geometry does, and what the moving geometry records, which
-/// changes every frame. Cached, a tile costs a copy of the first plus a draw of
-/// the second — and a light with nothing moving under it costs nothing at all,
-/// because its tile already holds the right depth from whenever it was last
-/// drawn.
+/// changes whenever it moves. Cached, a tile costs a draw of the second only —
+/// and a light with nothing moving under it costs nothing at all, because its
+/// tile already holds the right depth from whenever it was last drawn.
 ///
 /// Which casters are "still" is inferred rather than authored: Transform carries
 /// a change tick, so a caster that has not been written is one that has not
@@ -806,36 +805,49 @@ struct ShadowSettings
     return ShadowTier::Custom;
 }
 
-/// @brief Bytes the cascade array occupies at these settings.
+/// @brief Bytes one texel of a depth map in @p format occupies.
+[[nodiscard]] inline std::uint64_t ShadowTexelBytes(ShadowMapFormat format)
+{
+    constexpr std::uint64_t kD16Bytes = 2;
+    constexpr std::uint64_t kD32Bytes = 4;
+    return format == ShadowMapFormat::D16 ? kD16Bytes : kD32Bytes;
+}
+
+/// @brief Bytes the sun's cascades occupy at these settings.
+///
+/// Two arrays of them: the still casters' depth alone, and the slice the
+/// shader reads with the movers drawn over it (see ShadowPass). The first is
+/// what lets a cascade be kept while things move through it, and it is the
+/// same shape as the second, so it exactly doubles the figure.
 [[nodiscard]] inline std::uint64_t SunShadowMemoryBytes(const SunShadowSettings &settings)
 {
+    constexpr std::uint64_t kCascadeArrays = 2;
     const SunShadowSettings safe = Sanitized(settings);
     if (!safe.enabled)
     {
         return 0;
     }
-    const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
     const std::uint64_t texels = static_cast<std::uint64_t>(safe.resolution) * safe.resolution * safe.cascadeCount;
-    return texels * bytesPerTexel;
+    return texels * ShadowTexelBytes(safe.format) * kCascadeArrays;
 }
 
 /// @brief Bytes the local-light atlas occupies at these settings. One texture
 /// whatever the light count is — that is the point of an atlas.
 ///
-/// Two textures when tiles are cached: the still geometry's depth is kept in its
-/// own atlas so a tile can be composed from it without having been redrawn, and
-/// that second copy is the whole price of the cache. It is the same shape as the
-/// first, so caching exactly doubles this figure.
+/// Two layers when tiles are cached: the still geometry's depth, sampled in
+/// place, and the moving geometry's beside it (see LocalShadowPass). The second
+/// is the whole price of the cache, and it is the same shape as the first, so
+/// caching exactly doubles this figure.
 [[nodiscard]] inline std::uint64_t LocalShadowMemoryBytes(const LocalShadowSettings &settings)
 {
+    constexpr std::uint64_t kCachedLayers = 2;
     const LocalShadowSettings safe = Sanitized(settings);
     if (!safe.enabled)
     {
         return 0;
     }
-    const std::uint64_t bytesPerTexel = safe.format == ShadowMapFormat::D16 ? 2u : 4u;
     const std::uint64_t texels = static_cast<std::uint64_t>(safe.atlasResolution) * safe.atlasResolution;
-    return texels * bytesPerTexel * (safe.cache.enabled ? 2u : 1u);
+    return texels * ShadowTexelBytes(safe.format) * (safe.cache.enabled ? kCachedLayers : 1u);
 }
 
 /// @brief Bytes every shadow map occupies at these settings. What the tier

@@ -6,10 +6,10 @@
 /// redrawn because they do not.
 ///
 /// A local light's tile is two layers. The still geometry's depth changes only
-/// when that geometry does, so it is kept and copied; the moving geometry's is
-/// redrawn every frame it is wanted. A light with nothing moving under it
-/// therefore costs neither — its tile already holds what it should, from
-/// whenever it was last drawn.
+/// when that geometry does, so it is kept and sampled in place; the moving
+/// geometry's is redrawn whenever the movers in it change. A light with nothing
+/// moving under it therefore costs neither — its tile already holds what it
+/// should, from whenever it was last drawn.
 ///
 /// Everything that decides this is here, and it is here alone because this is
 /// the one stage that can produce a **stale shadow**: a tile kept when it should

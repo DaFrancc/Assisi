@@ -82,9 +82,7 @@ namespace
 /// every caster, and the walk adds them separately.
 [[nodiscard]] std::uint32_t MemberBits(const ShadowCaster &caster, std::uint32_t viewCount)
 {
-    const std::uint32_t width = std::min(viewCount, kShadowViewMaskBits);
-    const std::uint32_t inRange = width == kShadowViewMaskBits ? ~0u : (1u << width) - 1u;
-    return caster.viewMask & inRange;
+    return caster.viewMask & ShadowViewBits(viewCount);
 }
 
 /// @brief Cull one view's members of a single pipeline class and append their

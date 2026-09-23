@@ -458,8 +458,8 @@ void SunShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const Transfor
     // moving one over the read slices only.
     const std::uint64_t casterId = ShadowCasterId(entity);
     const bool still = !mobility.IsDynamic(casterId);
-    const std::uint32_t stillBits = (1u << _stillViews) - 1u;
-    const std::uint32_t allBits = _viewCount >= 32u ? ~0u : (1u << _viewCount) - 1u;
+    const std::uint32_t stillBits = Assisi::Render::ShadowViewBits(_stillViews);
+    const std::uint32_t allBits = Assisi::Render::ShadowViewBits(_viewCount);
     const std::uint32_t viewMask =
         Assisi::Render::ShadowCasterViewMask(worldSphere, std::span(_volumes.data(), _viewCount), _lightDirection) &
         (still ? stillBits : allBits & ~stillBits);

@@ -297,9 +297,9 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
                            }
                        };
     // A caster that is merely moving does not invalidate anything: it is not in
-    // the cached layer at all, and its depth is redrawn over the copy every
-    // frame. Only changing sides invalidates, which is what makes a motion
-    // episode two re-bakes rather than one per frame.
+    // the still layer at all, and its depth is in the moving layer beside it.
+    // Only changing sides invalidates, which is what makes a motion episode two
+    // re-bakes rather than one per frame.
     dirty(frame.movers, true);
     dirty(frame.invalidations, false);
 
