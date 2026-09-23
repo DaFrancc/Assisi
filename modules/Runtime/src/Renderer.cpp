@@ -484,6 +484,7 @@ void LocalShadowCasterGather::Reset(std::uint32_t lightCount)
 
 void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
                                      std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
+                                     std::span<const std::uint8_t> stillRequests,
                                      Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector)
 {
     ASSISI_PROFILE_SCOPE("local-shadow-gather");
@@ -493,72 +494,117 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
     {
         return;
     }
+    _lightVolumes = lightVolumes;
+    // A list that does not line up with the lights cannot say which of them
+    // rest, so every one of them is taken to want its still casters.
+    _stillRequests = stillRequests.size() == lightVolumes.size() ? stillRequests : std::span<const std::uint8_t>{};
+
+    const bool anyStill = _stillRequests.empty() ||
+                          std::ranges::any_of(_stillRequests, [](std::uint8_t wanted) { return wanted != 0u; });
+    if (anyStill)
+    {
+        for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+        {
+            AddCaster(entity, transform, meshRenderer, mobility, lodSelector);
+        }
+        return;
+    }
+
+    // Every light rests, so only the movers are drawn anywhere, and they are
+    // the casters the mobility table already lists. Walking the scene to find
+    // them again is the cost of every resting caster, paid to discard it.
+    for (const Assisi::Render::ShadowMover &mover : mobility.Dynamic())
+    {
+        const Assisi::ECS::Entity entity{.index = static_cast<std::uint32_t>(mover.casterId),
+                                         .generation = static_cast<std::uint32_t>(mover.casterId >> 32u)};
+        if (!scene.IsAlive(entity))
+        {
+            continue;
+        }
+        const Transform *transform = scene.Get<Transform>(entity);
+        const MeshRenderer *meshRenderer = scene.Get<MeshRenderer>(entity);
+        if (transform == nullptr || meshRenderer == nullptr)
+        {
+            continue;
+        }
+        AddCaster(entity, *transform, *meshRenderer, mobility, lodSelector);
+    }
+}
+
+void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const Transform &transform,
+                                        const MeshRenderer &meshRenderer,
+                                        Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector)
+{
+    const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+    if (mesh == nullptr || !meshRenderer.castsShadows)
+    {
+        return;
+    }
+
+    const std::uint64_t casterId = ShadowCasterId(entity);
+    const Assisi::Render::ShadowCasterMotion motion = mobility.IsDynamic(casterId)
+                                                          ? Assisi::Render::ShadowCasterMotion::Moving
+                                                          : Assisi::Render::ShadowCasterMotion::Still;
+    const bool still = motion == Assisi::Render::ShadowCasterMotion::Still;
+
+    const Assisi::Geometry::BoundingSphere worldSphere =
+        Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
 
     // Recorded per caster rather than per light because the atlas's rows index
     // the *sorted* caster span, and the sort has not happened yet.
     std::vector<std::uint32_t> &reached = _reachedLights;
 
-    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+    // A plain sphere-sphere test, and no sweep: a local light is a point with a
+    // range, so what can occlude for it is what stands inside its reach. The
+    // sun's gather sweeps down-light because the sun has no position to be
+    // inside of. A still caster is tested only against the lights rebaking
+    // this frame, since those are the only rows that draw still casters.
+    const std::size_t firstReach = reached.size();
+    for (std::uint32_t light = 0; light < _lightVolumes.size(); ++light)
     {
-        const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
-        if (mesh == nullptr || !meshRenderer.castsShadows)
+        if (still && !_stillRequests.empty() && _stillRequests[light] == 0u)
         {
             continue;
         }
-
-        const Assisi::Geometry::BoundingSphere worldSphere =
-            Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
-
-        // A plain sphere-sphere test, and no sweep: a local light is a point
-        // with a range, so what can occlude for it is what stands inside its
-        // reach. The sun's gather sweeps down-light because the sun has no
-        // position to be inside of.
-        const std::size_t firstReach = reached.size();
-        for (std::uint32_t light = 0; light < lightVolumes.size(); ++light)
+        const glm::vec3 separation = worldSphere.center - _lightVolumes[light].center;
+        const float reach = worldSphere.radius + _lightVolumes[light].radius;
+        if (glm::dot(separation, separation) <= reach * reach)
         {
-            const glm::vec3 separation = worldSphere.center - lightVolumes[light].center;
-            const float reach = worldSphere.radius + lightVolumes[light].radius;
-            if (glm::dot(separation, separation) <= reach * reach)
-            {
-                reached.push_back(light);
-            }
+            reached.push_back(light);
         }
-        if (reached.size() == firstReach)
-        {
-            ++_culledEntities;
-            continue;
-        }
+    }
+    if (reached.size() == firstReach)
+    {
+        ++_culledEntities;
+        return;
+    }
 
-        const std::uint64_t casterId = ShadowCasterId(entity);
-        const Assisi::Render::ShadowCasterMotion motion = mobility.IsDynamic(casterId)
-                                                              ? Assisi::Render::ShadowCasterMotion::Moving
-                                                              : Assisi::Render::ShadowCasterMotion::Still;
-        if (motion == Assisi::Render::ShadowCasterMotion::Still)
-        {
-            // A still caster stands where a kept layer holds it, by definition:
-            // it has not been written since it was baked, or it would be moving.
-            // Recorded here rather than at the bake because this is where the
-            // sphere is already in hand, and a caster gathered but not baked is
-            // still standing where the last bake put it.
-            mobility.NoteBaked(Assisi::Render::ShadowMover{casterId, worldSphere});
-        }
+    if (still)
+    {
+        // A still caster stands where a kept layer holds it, by definition: it
+        // has not been written since it was baked, or it would be moving.
+        // Recorded here rather than at the bake because this is where the
+        // sphere is already in hand. Only a caster reaching a light that
+        // rebakes is recorded, and that is every caster a bake can draw; one
+        // left unrecorded this frame has not moved since whatever recorded it.
+        mobility.NoteBaked(Assisi::Render::ShadowMover{casterId, worldSphere});
+    }
 
-        // One row per emitted caster, not per entity: a mesh's submeshes are
-        // separate casters and each needs its own row, and they all reach
-        // exactly the lights the entity's sphere did.
-        const std::size_t before = _casters.size();
-        const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
-        const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
-        EmitShadowCasters(source, ~0u, level, motion, _casters);
-        for (std::size_t emitted = before; emitted < _casters.size(); ++emitted)
+    // One row per emitted caster, not per entity: a mesh's submeshes are
+    // separate casters and each needs its own row, and they all reach exactly
+    // the lights the entity's sphere did.
+    const std::size_t before = _casters.size();
+    const ShadowCasterSource source{*mesh, meshRenderer, transform, worldSphere};
+    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+    EmitShadowCasters(source, ~0u, level, motion, _casters);
+    for (std::size_t emitted = before; emitted < _casters.size(); ++emitted)
+    {
+        if (emitted != before)
         {
-            if (emitted != before)
-            {
-                reached.insert(reached.end(), reached.begin() + static_cast<std::ptrdiff_t>(firstReach),
-                               reached.begin() + static_cast<std::ptrdiff_t>(reached.size()));
-            }
-            _casterStart.push_back(static_cast<std::uint32_t>(reached.size()));
+            reached.insert(reached.end(), reached.begin() + static_cast<std::ptrdiff_t>(firstReach),
+                           reached.begin() + static_cast<std::ptrdiff_t>(reached.size()));
         }
+        _casterStart.push_back(static_cast<std::uint32_t>(reached.size()));
     }
 }
 

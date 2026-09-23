@@ -203,6 +203,10 @@ public:
     /// @brief How many casters are moving right now.
     [[nodiscard]] std::uint32_t DynamicCount() const { return _dynamicCount; }
 
+    /// @brief The casters that draw with the movers, as the last Update left
+    /// them — the same list it wrote to its `dynamicOut`.
+    [[nodiscard]] std::span<const ShadowMover> Dynamic() const { return _dynamic; }
+
     /// @brief Forget everything. What a level load wants, and what turning the
     /// cache off and on again wants: the recorded poses describe an atlas that
     /// no longer holds them.
@@ -222,6 +226,7 @@ private:
     };
 
     std::unordered_map<std::uint64_t, Record> _casters;
+    std::vector<ShadowMover> _dynamic;
     std::uint32_t _dynamicCount = 0;
 };
 

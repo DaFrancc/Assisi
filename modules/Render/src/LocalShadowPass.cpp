@@ -606,6 +606,7 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
     if (!IsActive())
     {
         _plans.clear();
+        _stillRequests.clear();
         return false;
     }
 
@@ -627,7 +628,17 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
         // So every face needs every caster, every frame. The plans mark no face
         // dirty, which here means nothing, and asking them would skip the gather
         // and draw each face over a cleared atlas from an empty caster list.
+        _stillRequests.assign(frame.requests.size(), 1u);
         return !_plans.empty();
+    }
+
+    // Deferred lights included: they bake nothing this frame, but a row they
+    // do not read costs only the gather, and leaving them out would make this
+    // a second copy of the budget's decision to keep in step with it.
+    _stillRequests.resize(_plans.size());
+    for (std::size_t index = 0; index < _plans.size(); ++index)
+    {
+        _stillRequests[index] = _plans[index].dirtyFaces != 0u ? 1u : 0u;
     }
 
     // A tile with a dirty face needs the *still* casters, which have not moved

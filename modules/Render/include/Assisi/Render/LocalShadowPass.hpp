@@ -246,6 +246,15 @@ public:
     /// and nothing can be deferred.
     [[nodiscard]] std::span<const LocalShadowTilePlan> Plans() const { return _plans; }
 
+    /// @brief Which of the last PlanFrame's requests draw still casters this
+    /// frame, index-parallel to them: nonzero for one whose kept layer is
+    /// rebaked, and for every request while caching is off.
+    ///
+    /// The rest draw only their movers, so their rows need hold nothing else.
+    /// A gather that knows this skips testing every resting caster against
+    /// every resting light, which is most of what a frame would otherwise spend.
+    [[nodiscard]] std::span<const std::uint8_t> StillCasterRequests() const { return _stillRequests; }
+
 private:
     [[nodiscard]] bool RebuildTargets();
     [[nodiscard]] bool RebuildPipelines();
@@ -368,6 +377,7 @@ private:
     // Render remakes it when they disagree, so a caller that never calls
     // PlanFrame is merely slower rather than wrong.
     std::vector<LocalShadowTilePlan> _plans;
+    std::vector<std::uint8_t> _stillRequests;
     std::uint32_t _plannedFrame = 0;
     bool _planned = false;
     // The subset of _targets whose kept layer is being re-baked, and the request

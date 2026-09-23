@@ -222,8 +222,15 @@ public:
     /// it at, and what a later demotion has to invalidate.
     /// @p lodSelector picks each caster's level, as the sun's gather and the draw
     /// path do; null gathers everything at LOD0.
+    ///
+    /// @p stillRequests, index-parallel to @p lightVolumes, says which lights
+    /// draw still casters this frame (LocalShadowPass::StillCasterRequests).
+    /// The others' rows hold only moving casters, and a frame where every
+    /// light rests walks only the movers instead of the scene. Empty, or any
+    /// other length, means every light wants everything.
     void Gather(Assisi::ECS::Scene &scene, std::span<const Assisi::Geometry::BoundingSphere> lightVolumes,
-                Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+                std::span<const std::uint8_t> stillRequests, Assisi::Render::ShadowCasterMobility &mobility,
+                LodSelector *lodSelector);
 
     /// @brief Invert the membership into the per-light rows, and sort the casters
     /// those rows name.
@@ -245,7 +252,17 @@ public:
     [[nodiscard]] std::uint32_t CulledEntities() const { return _culledEntities; }
 
 private:
+    /// Test one entity against this gather's lights and emit its casters with
+    /// the lights they reach.
+    void AddCaster(Assisi::ECS::Entity entity, const Transform &transform, const MeshRenderer &meshRenderer,
+                   Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+
     std::vector<Assisi::Render::ShadowCaster> _casters;
+
+    // The gather in progress's lights, and which of them draw still casters
+    // (empty: all of them). Views of the caller's spans, valid during Gather.
+    std::span<const Assisi::Geometry::BoundingSphere> _lightVolumes;
+    std::span<const std::uint8_t> _stillRequests;
 
     // Light indices, concatenated: `_casterStart[i]` to `_casterStart[i + 1]` is
     // caster i's row. `_index`'s rows are this, inverted.

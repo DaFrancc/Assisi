@@ -907,7 +907,8 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     // happens to dirty it again.
     if (_localShadowPass.PlanFrame(shadowFrame))
     {
-        _localShadowCasters.Gather(scene, _localLightVolumes, _casterMobility, &_lodSelector);
+        _localShadowCasters.Gather(scene, _localLightVolumes, _localShadowPass.StillCasterRequests(), _casterMobility,
+                                   &_lodSelector);
         _localShadowCasters.BuildIndex();
         shadowFrame.casters = _localShadowCasters.Casters();
     }

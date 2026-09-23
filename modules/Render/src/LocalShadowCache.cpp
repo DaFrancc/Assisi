@@ -148,7 +148,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
                                   std::span<const ShadowMover> moved, std::vector<ShadowMover> &dynamicOut,
                                   std::vector<ShadowMover> &invalidateOut)
 {
-    dynamicOut.clear();
+    _dynamic.clear();
     invalidateOut.clear();
     promoteStillFrames = std::max(promoteStillFrames, 1u);
 
@@ -180,7 +180,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
         }
         if (frameIndex - record.lastMovedFrame < promoteStillFrames)
         {
-            dynamicOut.push_back(ShadowMover{entry->first, record.sphere});
+            _dynamic.push_back(ShadowMover{entry->first, record.sphere});
             ++entry;
             continue;
         }
@@ -196,6 +196,7 @@ void ShadowCasterMobility::Update(std::uint32_t frameIndex, std::uint32_t promot
         // life. Its baked pose is re-recorded by the bake it just triggered.
         entry = _casters.erase(entry);
     }
+    dynamicOut.assign(_dynamic.begin(), _dynamic.end());
 }
 
 bool ShadowCasterMobility::IsDynamic(std::uint64_t casterId) const
@@ -207,6 +208,7 @@ bool ShadowCasterMobility::IsDynamic(std::uint64_t casterId) const
 void ShadowCasterMobility::Clear()
 {
     _casters.clear();
+    _dynamic.clear();
     _dynamicCount = 0;
 }
 
