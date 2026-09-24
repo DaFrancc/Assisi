@@ -133,6 +133,8 @@ void TutorialMenuSystem(Assisi::App::SystemContext &ctx)
 - `LoadScreen` loads the compiled screen and gives it to the world. The screen
   starts hidden.
 - `FindScreen` looks the screen up by the `name` on its `<screen>` element.
+- `ConsumeKey` marks the Escape press as used, so no other system acts on the
+  same press. The key stays hidden from other systems until it is released.
 - `Show` makes it visible. Closing it needs no code: the button's `hide()` and
   the Escape key both do that (see [Screen settings](#screen-settings)).
 
