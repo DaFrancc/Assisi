@@ -9,13 +9,18 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian::Import
 {
@@ -24,6 +29,12 @@ namespace
 
 /// The element every file's root is.
 constexpr std::string_view kScreenElement = "screen";
+
+/// The element declaring a template, which only the root holds.
+constexpr std::string_view kTemplateElement = "template";
+
+/// What joins an instance's name to the names inside it: `music.slider`.
+constexpr char kNameSeparator = '.';
 
 /// How a file spells each verb. One entry per ScreenVerb, which the assert
 /// below holds the table to: a verb with no spelling is one no file can call.
@@ -498,7 +509,10 @@ void Seed(ScreenNode &node)
 }
 
 /// What an element has to say for itself, as against what it may say.
-std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node)
+/// @p stepWritten is whether `step` was written anywhere the node took its
+/// attributes from: on an instance, that is its template's root as well as the
+/// instance. Errors point at @p element.
+std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node, bool stepWritten)
 {
     if (node.widget != BuiltinWidget::ContinuousSlider)
     {
@@ -506,7 +520,7 @@ std::expected<void, MarkupError> Required(const MarkupElement &element, const Sc
     }
     // Left out, a slider would take a step sized for a 0-to-1 range whatever
     // its own ends are: on 0 to 100 that is a thousand presses end to end.
-    if (element.Find("step") == nullptr)
+    if (!stepWritten)
     {
         return std::unexpected(At(element, "a slider says how far one press moves it, with step."));
     }
@@ -543,12 +557,38 @@ std::string KnownElements()
     return names;
 }
 
-/// A node a name was given to: where it sits in the table, and the line the
-/// name was written on.
+/// A node a name was given to: where it sits in the table, and where the name
+/// was written.
 struct NamedNode
 {
     uint32_t index = kNoNode;
     uint32_t line = 0;
+    uint32_t column = 0;
+};
+
+/// A template a screen declares: the declaration, for where to point, and the
+/// one element it holds, which every instance is built from. Both point into
+/// the parsed file, which outlives the compile.
+struct Template
+{
+    const MarkupElement *declaration = nullptr;
+    const MarkupElement *root = nullptr;
+};
+
+/// One template instance being compiled: what names inside it are qualified
+/// with, and where it was written, for an error found inside it to say so.
+struct Scope
+{
+    /// What names inside this instance are qualified with: the instance's own
+    /// qualified name, or its enclosing scope's prefix when it has no name.
+    std::string prefix;
+    std::string_view templateName;
+    uint32_t line = 0;
+    uint32_t column = 0;
+    bool named = false;
+    /// Whether this is the stand-in a template is checked through when the
+    /// file may never use it, which was written nowhere.
+    bool standIn = false;
 };
 
 /// A target a verb names, waiting for the walk to finish: a button may come
@@ -571,28 +611,64 @@ struct Walk
     /// refused with the first's place in hand, and a target can be resolved.
     std::unordered_map<std::string, NamedNode> names;
     std::vector<PendingTarget> targets;
+    /// The screen's templates, by name.
+    std::unordered_map<std::string, Template> templates;
+    /// The instances being compiled, outermost first.
+    std::vector<Scope> scopes;
     /// Whether some node has already claimed focus, so a second can be refused
     /// rather than quietly winning.
     bool focusClaimed = false;
 };
+
+/// @p name as the screen knows it: qualified with the instance it was written
+/// inside, if any.
+std::string Qualify(const Walk &walk, std::string_view name)
+{
+    if (walk.scopes.empty() || walk.scopes.back().prefix.empty())
+    {
+        return std::string{name};
+    }
+    return walk.scopes.back().prefix + kNameSeparator + std::string{name};
+}
 
 /// Names node @p index, refusing a name another node on the screen has. A name
 /// is what a target and a lookup mean a node by, so two nodes sharing one would
 /// leave both meaning whichever came first.
 std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &attribute, uint32_t index)
 {
-    if (!attribute.value.empty())
+    // The separator is how an instance qualifies what is inside it, so a name
+    // written with one could be the same name an instance makes.
+    if (attribute.value.find(kNameSeparator) != std::string::npos)
     {
-        const std::unordered_map<std::string, NamedNode>::const_iterator first = walk.names.find(attribute.value);
+        return std::unexpected(At(attribute, "'" + attribute.value + "' holds '" + kNameSeparator +
+                                                 "', which is how a template instance qualifies the names inside "
+                                                 "it. Name the instance instead."));
+    }
+    const std::string name = Qualify(walk, attribute.value);
+    if (!name.empty())
+    {
+        const std::unordered_map<std::string, NamedNode>::const_iterator first = walk.names.find(name);
         if (first != walk.names.end())
         {
-            return std::unexpected(At(attribute, "'" + attribute.value +
-                                                     "' is already the name of a node on this screen (line " +
+            // The same attribute reached twice is one template's name, made by
+            // two instances of it that each left the name as it was written.
+            const bool sameSource = first->second.line == attribute.line && first->second.column == attribute.column;
+            if (sameSource && !walk.scopes.empty() && !walk.scopes.back().named)
+            {
+                const Scope &scope = walk.scopes.back();
+                return std::unexpected(MarkupError{
+                    .message = "template '" + std::string{scope.templateName} + "' names '" + attribute.value +
+                               "' inside it, and an unnamed instance keeps the names it makes as they are written, "
+                               "so a second one makes them twice. Name the instance.",
+                    .line = scope.line,
+                    .column = scope.column});
+            }
+            return std::unexpected(At(attribute, "'" + name + "' is already the name of a node on this screen (line " +
                                                      std::to_string(first->second.line) + "). A name means one node."));
         }
-        walk.names.emplace(attribute.value, NamedNode{.index = index, .line = attribute.line});
+        walk.names.emplace(name, NamedNode{.index = index, .line = attribute.line, .column = attribute.column});
     }
-    walk.document.nodes[index].name = attribute.value;
+    walk.document.nodes[index].name = name;
     return {};
 }
 
@@ -741,7 +817,9 @@ std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const Mar
     std::size_t next = 0;
     if (VerbTakesTarget(*verb))
     {
-        walk.targets.push_back(PendingTarget{.name = std::string{call.arguments[next]},
+        // Qualified here, where the scope it was written in is known: a target
+        // inside a template means a part of the same instance.
+        walk.targets.push_back(PendingTarget{.name = Qualify(walk, call.arguments[next]),
                                              .node = index,
                                              .line = attribute.line,
                                              .column = attribute.column});
@@ -930,13 +1008,147 @@ std::expected<void, MarkupError> CompileChildren(Walk &walk, const MarkupElement
     return {};
 }
 
+/// Every template the screen declares, for the message an unknown element
+/// prints, in no particular order.
+std::string KnownTemplates(const Walk &walk)
+{
+    std::string names;
+    for (const std::pair<const std::string, Template> &entry : walk.templates)
+    {
+        names += names.empty() ? "" : ", ";
+        names += entry.first;
+    }
+    return names;
+}
+
+/// @p error, saying which instance it was found inside. A stand-in was written
+/// nowhere, so an error inside one is left pointing at the template alone.
+MarkupError Inside(MarkupError error, const Scope &scope)
+{
+    if (!scope.standIn)
+    {
+        error.message += " (inside template '" + std::string{scope.templateName} + "', used at line " +
+                         std::to_string(scope.line) + " column " + std::to_string(scope.column) + ")";
+    }
+    return error;
+}
+
+/// The template root's attributes an instance leaves alone, as an element to
+/// apply: every one the instance does not also write, since the instance's win.
+MarkupElement TemplateBase(const MarkupElement &root, const MarkupElement &instance)
+{
+    MarkupElement base;
+    base.name = root.name;
+    base.line = root.line;
+    base.column = root.column;
+    for (const MarkupAttribute &attribute : root.attributes)
+    {
+        if (instance.Find(attribute.name) == nullptr)
+        {
+            base.attributes.push_back(attribute);
+        }
+    }
+    return base;
+}
+
+/// Compiles an instance of @p used under @p parent: a node of the template's
+/// root kind, the template's attributes and children compiled inside the
+/// instance's scope, then the instance's own over them in the scope around it.
+///
+/// Scoped so that what the template writes means the template's parts — its
+/// names and targets carry the instance's name — while what the instance
+/// writes means what it does where the instance sits. @p standIn marks the
+/// check a template gets when nothing may use it.
+std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement &instance, const Template &used,
+                                                 uint32_t parent, bool standIn)
+{
+    if (walk.scopes.size() >= kMaxTemplateNesting)
+    {
+        return std::unexpected(At(instance, "templates nest more than " + std::to_string(kMaxTemplateNesting) +
+                                                " deep here. Flatten one of them."));
+    }
+
+    const MarkupElement &root = *used.root;
+    // A template's root is a built-in element; CollectTemplates holds it to that.
+    const ElementKind &kind = *FindElement(root.name);
+    if (!kind.carriesText && !instance.text.empty())
+    {
+        return std::unexpected(At(instance, "'" + instance.name + "' is a " + std::string{kind.name} +
+                                                ", which carries no text. Put the words in a <text>."));
+    }
+    if (!kind.carriesChildren && !instance.children.empty())
+    {
+        return std::unexpected(
+            At(instance, "'" + instance.name + "' is a " + std::string{kind.name} + ", which holds no elements."));
+    }
+
+    ScreenNode node;
+    node.parent = parent;
+    node.widget = kind.widget;
+    // The instance's words replace the template's, and leave them when it has none.
+    node.text = instance.text.empty() ? root.text : instance.text;
+    Seed(node);
+    node.style.direction = kind.direction;
+    const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
+    walk.document.nodes.push_back(std::move(node));
+
+    const MarkupAttribute *const instanceName = instance.Find("name");
+    const bool named = instanceName != nullptr && !instanceName->value.empty();
+    Scope scope{.prefix = named                 ? Qualify(walk, instanceName->value)
+                          : walk.scopes.empty() ? std::string{}
+                                                : walk.scopes.back().prefix,
+                .templateName = instance.name,
+                .line = instance.line,
+                .column = instance.column,
+                .named = named,
+                .standIn = standIn};
+
+    const MarkupElement base = TemplateBase(root, instance);
+    walk.scopes.push_back(std::move(scope));
+    std::expected<void, MarkupError> inside = ApplyAttributes(walk, base, index);
+    if (inside)
+    {
+        inside = CompileChildren(walk, root, index);
+    }
+    const Scope left = std::move(walk.scopes.back());
+    walk.scopes.pop_back();
+    if (!inside)
+    {
+        return std::unexpected(Inside(std::move(inside.error()), left));
+    }
+
+    if (const std::expected<void, MarkupError> own = ApplyAttributes(walk, instance, index); !own)
+    {
+        return std::unexpected(own.error());
+    }
+    const bool stepWritten = base.Find("step") != nullptr || instance.Find("step") != nullptr;
+    if (const std::expected<void, MarkupError> required = Required(instance, walk.document.nodes[index], stepWritten);
+        !required)
+    {
+        return std::unexpected(required.error());
+    }
+    // After the template's, so an instance adds to what the template holds.
+    return CompileChildren(walk, instance, index);
+}
+
 std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement &element, uint32_t parent)
 {
+    if (element.name == kTemplateElement)
+    {
+        return std::unexpected(At(element, "a template is declared directly inside the <" +
+                                               std::string{kScreenElement} + ">, and nowhere else."));
+    }
     const ElementKind *const kind = FindElement(element.name);
     if (kind == nullptr)
     {
-        return std::unexpected(
-            At(element, "'" + element.name + "' is not an element this markup has. It has: " + KnownElements() + "."));
+        const std::unordered_map<std::string, Template>::const_iterator used = walk.templates.find(element.name);
+        if (used != walk.templates.end())
+        {
+            return CompileInstance(walk, element, used->second, parent, false);
+        }
+        std::string message = "'" + element.name + "' is not an element this markup has. It has: " + KnownElements();
+        message += walk.templates.empty() ? "." : "; and this screen's templates: " + KnownTemplates(walk) + ".";
+        return std::unexpected(At(element, std::move(message)));
     }
     if (!kind->carriesText && !element.text.empty())
     {
@@ -965,11 +1177,174 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     {
         return std::unexpected(attributes.error());
     }
-    if (const std::expected<void, MarkupError> required = Required(element, walk.document.nodes[index]); !required)
+    if (const std::expected<void, MarkupError> required =
+            Required(element, walk.document.nodes[index], element.Find("step") != nullptr);
+        !required)
     {
         return std::unexpected(required.error());
     }
     return CompileChildren(walk, element, index);
+}
+
+/// Reads the templates @p root declares into the walk, refusing any that is
+/// not one name over one built-in element.
+///
+/// Read before anything is compiled, so a template may be used above where it
+/// is declared.
+std::expected<void, MarkupError> CollectTemplates(Walk &walk, const MarkupElement &root)
+{
+    for (const MarkupElement &declaration : root.children)
+    {
+        if (declaration.name != kTemplateElement)
+        {
+            continue;
+        }
+        const MarkupAttribute *const named = declaration.Find("name");
+        if (named == nullptr || named->value.empty() || declaration.attributes.size() != 1)
+        {
+            return std::unexpected(At(declaration, "a template says its name and nothing else: <" +
+                                                       std::string{kTemplateElement} + " name=\"...\">."));
+        }
+        const std::string &name = named->value;
+        if (name.find(kNameSeparator) != std::string::npos)
+        {
+            return std::unexpected(At(*named, "'" + name + "' holds '" + kNameSeparator +
+                                                  "', which is how an instance qualifies the names inside it."));
+        }
+        if (FindElement(name) != nullptr || name == kScreenElement || name == kTemplateElement)
+        {
+            return std::unexpected(At(*named, "'" + name +
+                                                  "' is already an element this markup has, so a template "
+                                                  "needs another name."));
+        }
+        if (const std::unordered_map<std::string, Template>::const_iterator first = walk.templates.find(name);
+            first != walk.templates.end())
+        {
+            return std::unexpected(At(*named, "'" + name + "' is already a template on this screen (line " +
+                                                  std::to_string(first->second.declaration->line) + ")."));
+        }
+        if (!declaration.text.empty() || declaration.children.size() != 1)
+        {
+            return std::unexpected(At(declaration, "template '" + name +
+                                                       "' holds one element, which every instance is built "
+                                                       "from, and nothing else."));
+        }
+        // One layer of overrides: a root that was itself an instance would put
+        // this template's attributes over another's, under the instance's.
+        const MarkupElement &body = declaration.children.front();
+        if (FindElement(body.name) == nullptr)
+        {
+            return std::unexpected(At(body, "template '" + name + "' is built on <" + body.name +
+                                                ">, and a template is built on an element this markup has. "
+                                                "Use other templates inside it."));
+        }
+        walk.templates.emplace(name, Template{.declaration = &declaration, .root = &body});
+    }
+    return {};
+}
+
+/// Every instance anywhere beneath @p element, in the order the file writes them.
+void CollectUses(const Walk &walk, const MarkupElement &element, std::vector<const MarkupElement *> &uses)
+{
+    for (const MarkupElement &child : element.children)
+    {
+        if (walk.templates.contains(child.name))
+        {
+            uses.push_back(&child);
+        }
+        CollectUses(walk, child, uses);
+    }
+}
+
+/// Refuses a template that holds itself, through @p path — the templates being
+/// followed, outermost first. Each template is followed once; @p done holds
+/// those already cleared.
+///
+/// Stops following at the nesting bound: a chain that long is refused when it
+/// is compiled, and a cycle inside it with it.
+std::expected<void, MarkupError> RefuseCycles(const Walk &walk, std::vector<std::string_view> &path,
+                                              std::unordered_set<std::string_view> &done)
+{
+    if (path.size() > kMaxTemplateNesting)
+    {
+        return {};
+    }
+    const std::string_view name = path.back();
+    std::vector<const MarkupElement *> uses;
+    CollectUses(walk, *walk.templates.at(std::string{name}).declaration, uses);
+
+    for (const MarkupElement *const use : uses)
+    {
+        const std::vector<std::string_view>::const_iterator seen = std::ranges::find(path, use->name);
+        if (seen != path.end())
+        {
+            std::string chain = "'" + std::string{*seen} + "'";
+            for (std::vector<std::string_view>::const_iterator next = seen + 1; next != path.end(); ++next)
+            {
+                chain += ", which holds '" + std::string{*next} + "'";
+            }
+            chain += ", which holds '" + use->name + "'";
+            return std::unexpected(At(*use, "a template may not hold itself, however far down: " + chain + "."));
+        }
+        if (done.contains(use->name))
+        {
+            continue;
+        }
+        path.push_back(use->name);
+        if (const std::expected<void, MarkupError> inner = RefuseCycles(walk, path, done); !inner)
+        {
+            return inner;
+        }
+        path.pop_back();
+    }
+    done.insert(name);
+    return {};
+}
+
+/// Compiles every template once on its own, as though an unnamed instance of
+/// it stood where it is declared, so a mistake in one nothing uses still fails
+/// the cook. What it builds is thrown away.
+std::expected<void, MarkupError> CheckTemplates(const Walk &walk, const MarkupElement &root)
+{
+    for (const MarkupElement &declaration : root.children)
+    {
+        if (declaration.name != kTemplateElement)
+        {
+            continue;
+        }
+        const std::string &name = declaration.Find("name")->value;
+
+        std::vector<std::string_view> path{name};
+        std::unordered_set<std::string_view> done;
+        if (const std::expected<void, MarkupError> cycles = RefuseCycles(walk, path, done); !cycles)
+        {
+            return cycles;
+        }
+
+        ScreenDocument scratch;
+        scratch.nodes.emplace_back();
+        Walk check{.document = scratch,
+                   .catalog = walk.catalog,
+                   .names = {},
+                   .targets = {},
+                   .templates = walk.templates,
+                   .scopes = {}};
+        MarkupElement standIn;
+        standIn.name = name;
+        standIn.line = declaration.line;
+        standIn.column = declaration.column;
+        if (const std::expected<void, MarkupError> compiled =
+                CompileInstance(check, standIn, walk.templates.at(name), 0, true);
+            !compiled)
+        {
+            return compiled;
+        }
+        if (const std::expected<void, MarkupError> targets = ResolveTargets(check); !targets)
+        {
+            return targets;
+        }
+    }
+    return {};
 }
 
 } // namespace
@@ -995,14 +1370,30 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     screenNode.style.direction = Direction::Column;
     document.nodes.push_back(std::move(screenNode));
 
-    Walk walk{.document = document, .catalog = catalog, .names = {}, .targets = {}};
+    Walk walk{.document = document, .catalog = catalog, .names = {}, .targets = {}, .templates = {}, .scopes = {}};
     if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, root, 0); !attributes)
     {
         return std::unexpected(attributes.error());
     }
-    if (const std::expected<void, MarkupError> children = CompileChildren(walk, root, 0); !children)
+    if (const std::expected<void, MarkupError> templates = CollectTemplates(walk, root); !templates)
     {
-        return std::unexpected(children.error());
+        return std::unexpected(templates.error());
+    }
+    if (const std::expected<void, MarkupError> checked = CheckTemplates(walk, root); !checked)
+    {
+        return std::unexpected(checked.error());
+    }
+    for (const MarkupElement &child : root.children)
+    {
+        // Declarations make nothing themselves; their instances do.
+        if (child.name == kTemplateElement)
+        {
+            continue;
+        }
+        if (const std::expected<void, MarkupError> compiled = CompileElement(walk, child, 0); !compiled)
+        {
+            return std::unexpected(compiled.error());
+        }
     }
     if (const std::expected<void, MarkupError> targets = ResolveTargets(walk); !targets)
     {
