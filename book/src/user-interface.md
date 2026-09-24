@@ -639,13 +639,28 @@ Each instance adds its own name and a dot in front of the names inside it. This
 example creates `music.label`, `music.down`, `music.slider`, `effects.label`,
 and so on.
 
-- An action inside the template refers to the same instance: the `-` button in
-  `music` moves `music.slider`.
-- Anything outside the instance uses the full name, for example
-  `step(music.slider, 1)`.
-- Attributes written on the instance element itself belong to the outer screen.
-  An `on_click="step(slider, 1)"` on the instance looks for a node called
-  `slider` on the screen, not the one inside the template.
+#### Which node an action's target means
+
+An action's target is looked up where the action is written:
+
+- **Written inside the `<template>`**, a target means a node in the same
+  instance. The template's `step(slider, -1)` becomes `step(music.slider, -1)`
+  in the `music` instance and `step(effects.slider, -1)` in the `effects`
+  instance, so each `-` button moves its own slider.
+- **Written anywhere else in the screen**, a target means a node on the screen,
+  and a node inside an instance needs its full name. This includes attributes
+  on the instance element itself, because they are written in the screen, not
+  in the template.
+
+```xml
+<screen>
+  <labelled_slider name="music" />
+
+  <!-- Written in the screen: the full name is needed. -->
+  <button on_click="step(music.slider, 1)">+</button>   <!-- moves music.slider -->
+  <button on_click="step(slider, 1)">+</button>         <!-- refused: the screen has no node called "slider" -->
+</screen>
+```
 
 An instance without a name leaves the names inside unchanged. That works once;
 a second unnamed instance would create the same names again, so the cook asks
