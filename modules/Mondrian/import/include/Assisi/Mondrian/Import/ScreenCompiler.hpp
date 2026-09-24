@@ -21,6 +21,7 @@
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <string_view>
 #include <vector>
@@ -32,6 +33,11 @@ class EventCatalog;
 
 namespace Assisi::Mondrian::Import
 {
+
+/// @brief How many template instances may sit inside one another. A bound, so
+/// a chain of templates each using the next cannot grow the tree without end;
+/// a template using itself is refused outright, whatever the count.
+inline constexpr uint32_t kMaxTemplateNesting = 8;
 
 /// @brief Compiles a parsed screen into its document.
 ///

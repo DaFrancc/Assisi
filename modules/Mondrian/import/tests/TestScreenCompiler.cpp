@@ -1029,6 +1029,325 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
     }
 }
 
+namespace
+{
+
+/// A labelled slider with a stepper beside it: a template that names what it
+/// holds and wires one of its parts to another.
+constexpr std::string_view kLabelledSlider = R"amdn(
+  <template name="labelled_slider">
+    <row>
+      <text name="label" />
+      <button name="down" on_click="step(slider, -1)">-</button>
+      <slider name="slider" step="5" />
+    </row>
+  </template>)amdn";
+
+/// A screen holding @p body and, after it, @p templates.
+std::string ScreenWith(std::string_view body, std::string_view templates)
+{
+    return "<screen>\n" + std::string{body} + std::string{templates} + "\n</screen>\n";
+}
+
+/// A chain of @p count templates, each holding an instance of the next, and
+/// one instance of the first.
+std::string TemplateChain(uint32_t count)
+{
+    std::string text = "<screen>\n  <t0 />\n";
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        const std::string inner = index + 1 < count ? "<t" + std::to_string(index + 1) + " />" : std::string{};
+        text += "  <template name=\"t" + std::to_string(index) + "\"><row>" + inner + "</row></template>\n";
+    }
+    return text + "</screen>\n";
+}
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: an instance is its template's root, with the instance's own over it")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="menu_button">
+    <button padding="28 10 28 10" text_size="28" background="#000000">Label</button>
+  </template>
+  <menu_button name="quit" background="#ffffff">Quit</menu_button>
+  <menu_button name="plain" />
+</screen>)amdn");
+
+    const ScreenNode &quit = NodeNamed(document, "quit");
+    CHECK(quit.widget == BuiltinWidget::Button);
+    // The template's, where the instance says nothing.
+    CHECK(quit.style.padding.left == 28.f);
+    CHECK(quit.style.textSize == 28.f);
+    // The instance's, where both do.
+    CHECK(quit.style.background.r == doctest::Approx(1.f));
+    CHECK(quit.text == "Quit");
+
+    const ScreenNode &plain = NodeNamed(document, "plain");
+    CHECK(plain.style.background.r == doctest::Approx(0.f));
+    CHECK(plain.text == "Label");
+}
+
+TEST_CASE("ScreenCompiler: an instance's children follow its template's")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="panel"><column gap="4"><text name="heading" /></column></template>
+  <panel name="box"><text name="extra" /></panel>
+</screen>)amdn");
+
+    const uint32_t box = IndexOf(document, "box");
+    const uint32_t heading = IndexOf(document, "box.heading");
+    const uint32_t extra = IndexOf(document, "extra");
+    REQUIRE(box != kNoNode);
+    REQUIRE(heading != kNoNode);
+    REQUIRE(extra != kNoNode);
+    CHECK(document.nodes[heading].parent == box);
+    CHECK(document.nodes[extra].parent == box);
+    CHECK(heading < extra);
+    CHECK(document.nodes[box].style.gap == 4.f);
+}
+
+TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-expanded twin does")
+{
+    // Nothing of a template reaches the binary: the loader and the runtime
+    // cannot tell one was used.
+    const std::string_view templated = R"amdn(<screen name="Pause">
+  <template name="menu_button">
+    <button padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded" />
+  </template>
+  <row name="buttons">
+    <menu_button name="resume" on_click="hide()" focus="true" background="#e63319">Resume</menu_button>
+    <menu_button name="quit" on_click="Game::QuitRequested" border_width="2">Quit</menu_button>
+  </row>
+</screen>)amdn";
+    const std::string_view expanded = R"amdn(<screen name="Pause">
+  <row name="buttons">
+    <button name="resume" on_click="hide()" focus="true" background="#e63319"
+            padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded">Resume</button>
+    <button name="quit" on_click="Game::QuitRequested" border_width="2"
+            padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded">Quit</button>
+  </row>
+</screen>)amdn";
+
+    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent());
+    REQUIRE_MESSAGE(one.has_value(), Why(one));
+    REQUIRE_MESSAGE(other.has_value(), Why(other));
+    CHECK(*one == *other);
+}
+
+TEST_CASE("ScreenCompiler: names inside an instance carry the instance's name")
+{
+    const ScreenDocument document =
+        Compiled(ScreenWith("  <labelled_slider name=\"music\" />\n  <labelled_slider name=\"sfx\" />\n"
+                            "  <button name=\"louder\" on_click=\"step(music.slider, 1)\" />\n",
+                            kLabelledSlider));
+
+    CHECK(IndexOf(document, "music") != kNoNode);
+    CHECK(IndexOf(document, "music.label") != kNoNode);
+    CHECK(IndexOf(document, "music.slider") != kNoNode);
+    CHECK(IndexOf(document, "sfx.slider") != kNoNode);
+    CHECK(IndexOf(document, "slider") == kNoNode);
+
+    // A target inside the template means the part of the same instance.
+    CHECK(NodeNamed(document, "music.down").target == IndexOf(document, "music.slider"));
+    CHECK(NodeNamed(document, "sfx.down").target == IndexOf(document, "sfx.slider"));
+    // And markup outside reaches it by the full name.
+    CHECK(NodeNamed(document, "louder").target == IndexOf(document, "music.slider"));
+}
+
+TEST_CASE("ScreenCompiler: an instance's own attributes belong to the screen, not the template")
+{
+    // `slider` exists only inside the instance, as `music.slider`. Written on the
+    // instance itself, it is read where the instance sits, and names nothing.
+    const MarkupError error =
+        Refused(ScreenWith("  <labelled_slider name=\"music\" />\n  <stepper on_click=\"step(slider, 1)\" />\n",
+                           std::string{kLabelledSlider} + "\n  <template name=\"stepper\"><button /></template>"));
+    CHECK(error.line == 3);
+    CHECK(error.message.find("names no node") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: an unnamed instance keeps its template's names, so a second one is refused")
+{
+    SUBCASE("one is fine")
+    {
+        const ScreenDocument document = Compiled(ScreenWith("  <labelled_slider />\n", kLabelledSlider));
+        CHECK(IndexOf(document, "slider") != kNoNode);
+    }
+
+    SUBCASE("a second is refused at the instance, and says to name it")
+    {
+        // The templates come after the instances, so this also shows a template
+        // may be used above where it is declared.
+        const MarkupError error =
+            Refused(ScreenWith("  <labelled_slider />\n  <labelled_slider />\n", kLabelledSlider));
+        CHECK(error.line == 3);
+        CHECK(error.message.find("labelled_slider") != std::string::npos);
+        CHECK(error.message.find("Name the instance") != std::string::npos);
+    }
+
+    SUBCASE("a template naming nothing may be used unnamed any number of times")
+    {
+        const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="spacer"><row /></template>
+  <spacer /><spacer /><spacer />
+</screen>)amdn");
+        CHECK(document.nodes.size() == 4);
+    }
+}
+
+TEST_CASE("ScreenCompiler: a name may not hold the separator instances qualify with")
+{
+    // Otherwise `music.slider` written by hand and the one an instance makes
+    // could be two nodes with one name.
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <row>\n"
+                                      "    <text name=\"music.slider\" />\n"
+                                      "  </row>\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    CHECK(error.message.find(".") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: a template that reaches itself is refused, used or not")
+{
+    SUBCASE("directly")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <template name=\"a\">\n"
+                                          "    <row><a /></row>\n"
+                                          "  </template>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("'a'") != std::string::npos);
+    }
+
+    SUBCASE("through another")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <template name=\"a\"><row><b /></row></template>\n"
+                                          "  <template name=\"b\"><row><a /></row></template>\n"
+                                          "</screen>\n");
+        CHECK(error.message.find("'a'") != std::string::npos);
+        CHECK(error.message.find("'b'") != std::string::npos);
+    }
+}
+
+TEST_CASE("ScreenCompiler: templates nest as deep as the bound and no deeper")
+{
+    const ScreenDocument document = Compiled(TemplateChain(kMaxTemplateNesting));
+    // The root, then one row per template in the chain.
+    CHECK(document.nodes.size() == kMaxTemplateNesting + 1);
+
+    CHECK(Refused(TemplateChain(kMaxTemplateNesting + 1)).message.find(std::to_string(kMaxTemplateNesting)) !=
+          std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: a template is declared one way")
+{
+    // Each fault sits on line 3.
+    const std::string before = "<screen>\n  <template name=\"fine\"><row /></template>\n";
+    const std::string after = "\n</screen>\n";
+
+    SUBCASE("with no name")
+    {
+        CHECK(Refused(before + "  <template><row /></template>" + after).line == 3);
+    }
+
+    SUBCASE("with a name another template has")
+    {
+        const MarkupError error = Refused(before + "  <template name=\"fine\"><row /></template>" + after);
+        CHECK(error.line == 3);
+        CHECK(error.message.find("fine") != std::string::npos);
+    }
+
+    SUBCASE("with the name of an element the markup has")
+    {
+        const MarkupError error = Refused(before + "  <template name=\"button\"><row /></template>" + after);
+        CHECK(error.line == 3);
+        CHECK(error.message.find("button") != std::string::npos);
+    }
+
+    SUBCASE("holding nothing")
+    {
+        CHECK(Refused(before + "  <template name=\"empty\"></template>" + after).line == 3);
+    }
+
+    SUBCASE("holding two roots")
+    {
+        CHECK(Refused(before + "  <template name=\"two\"><row /><row /></template>" + after).line == 3);
+    }
+
+    SUBCASE("holding words")
+    {
+        CHECK(Refused(before + "  <template name=\"wordy\">stray<row /></template>" + after).line == 3);
+    }
+
+    SUBCASE("anywhere but directly in the screen")
+    {
+        CHECK(Refused(before + "  <row><template name=\"inner\"><row /></template></row>" + after).line == 3);
+    }
+
+    SUBCASE("rooted in another template")
+    {
+        // One layer of overrides: a root that is itself an instance would put a
+        // template's attributes under two others.
+        CHECK(Refused(before + "  <template name=\"wrapped\"><fine /></template>" + after).line == 3);
+    }
+}
+
+TEST_CASE("ScreenCompiler: an instance holds what its template's root can hold")
+{
+    SUBCASE("words on a row")
+    {
+        CHECK(Refused("<screen>\n"
+                      "  <template name=\"strip\"><row /></template>\n"
+                      "  <strip>words</strip>\n"
+                      "</screen>\n")
+                  .line == 3);
+    }
+
+    SUBCASE("elements in a text")
+    {
+        CHECK(Refused("<screen>\n"
+                      "  <template name=\"caption\"><text /></template>\n"
+                      "  <caption><row /></caption>\n"
+                      "</screen>\n")
+                  .line == 3);
+    }
+}
+
+TEST_CASE("ScreenCompiler: every template is checked, used or not")
+{
+    SUBCASE("a mistake in one nobody uses fails the cook where it is written")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <template name=\"unused\">\n"
+                                          "    <button colour=\"#ff0000\" />\n"
+                                          "  </template>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("colour") != std::string::npos);
+    }
+
+    SUBCASE("and one nobody uses makes no nodes")
+    {
+        CHECK(Compiled(R"amdn(<screen><template name="t"><row><text /></row></template></screen>)amdn").nodes.size() ==
+              1);
+    }
+}
+
+TEST_CASE("ScreenCompiler: an unknown element names the templates beside the elements")
+{
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <template name=\"menu_button\"><button /></template>\n"
+                                      "  <menu_buton />\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    CHECK(error.message.find("button") != std::string::npos);
+    CHECK(error.message.find("menu_button") != std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: a file that does not parse fails before it compiles")
 {
     const std::expected<std::vector<std::byte>, MarkupError> bytes =

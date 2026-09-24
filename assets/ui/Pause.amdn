@@ -15,16 +15,19 @@
 
       <!-- Resume closes the menu and reaches nothing outside the UI, so it
            needs no event, no system and nothing named in a level. -->
-      <button name="resume" on_click="hide()" focus="true"
-              padding="28 10 28 10" text_size="28" background="#e63319"
-              corner_radius="10" corner_style="rounded">Resume</button>
+      <menu_button name="resume" on_click="hide()" focus="true"
+                   background="#e63319">Resume</menu_button>
 
       <!-- Quit leaves the UI, so it goes through an event a system answers. -->
-      <button name="quit" on_click="Assisi::App::QuitRequested"
-              padding="28 10 28 10" text_size="28"
-              border_width="2" border_color="#ffffff"
-              corner_radius="10" corner_style="rounded">Quit</button>
+      <menu_button name="quit" on_click="Assisi::App::QuitRequested"
+                   border_width="2" border_color="#ffffff">Quit</menu_button>
 
     </row>
   </column>
+
+  <!-- The look both buttons share. Each instance adds its own colour. -->
+  <template name="menu_button">
+    <button padding="28 10 28 10" text_size="28"
+            corner_radius="10" corner_style="rounded" />
+  </template>
 </screen>

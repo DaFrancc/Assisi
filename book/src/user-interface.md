@@ -530,6 +530,70 @@ will look up or point a verb at, and leave the rest unnamed. A button's label is
 not its name: two buttons may both read "Back", and you find either by the
 `name` you gave it.
 
+## Templates
+
+When two parts of a screen look alike, write the look once. A `<template>` sits
+directly inside `<screen>`, has a name, and holds exactly one element:
+
+```xml
+<template name="menu_button">
+  <button padding="28 10 28 10" text_size="28"
+          corner_radius="10" corner_style="rounded" />
+</template>
+```
+
+Its name is now an element you can write anywhere on that screen, above or
+below the declaration:
+
+```xml
+<menu_button name="resume" on_click="hide()" background="#e63319">Resume</menu_button>
+<menu_button name="quit" on_click="Assisi::App::QuitRequested"
+             border_width="2" border_color="#ffffff">Quit</menu_button>
+```
+
+Each use is the template's element with three things laid over it:
+
+- **Its attributes win.** `background` on the instance replaces the template's,
+  and anything the instance doesn't say comes from the template.
+- **Its words replace the template's**, when it has any.
+- **Its children come after the template's**, when the template holds some.
+
+The cook expands every use into ordinary elements, so a screen using templates
+is byte-for-byte the screen you'd get writing them out by hand. Nothing at run
+time knows a template was involved.
+
+**Names inside a template get the instance's name in front.** A template can
+name its parts and wire them together:
+
+```xml
+<template name="labelled_slider">
+  <row>
+    <text name="label" />
+    <button name="down" on_click="step(slider, -1)">-</button>
+    <slider name="slider" min="0" max="100" step="5" />
+  </row>
+</template>
+
+<labelled_slider name="music" />
+<labelled_slider name="effects" />
+```
+
+That makes `music.label`, `music.slider`, `effects.slider` and so on, and each
+`-` button moves the slider in its own instance. From outside, reach a part by
+its full name: `step(music.slider, 1)`. Because `.` joins the names, you can't
+write one in a name yourself.
+
+An instance with no name leaves the names inside as they're written. That's
+fine once, but a second unnamed instance would make them twice, so the cook
+tells you to name it. A template that names nothing inside can be used unnamed
+as often as you like.
+
+> **Every template is checked, used or not.** A misspelt attribute inside one
+> fails the cook where it's written, even if nothing on the screen uses it yet.
+> So does a template that holds itself, directly or through another, and
+> templates nested more than eight deep. A template is built on an element the
+> markup has — it can use other templates inside, but not be one.
+
 ## What's next
 
 Markup is a loader on top of the node API, and adds nothing that API lacks —
@@ -537,6 +601,5 @@ anything a file can say, C++ can say by calling `Screen::Add`, `AddText` and
 `AddButton` directly. Building a screen by hand is how you'd make one whose
 shape isn't known until it's built.
 
-Templates for reusing a piece of a screen arrive next, along with themes for
-keeping colours out of the layout, and data bindings for showing what the world
-holds.
+Themes for keeping colours out of the layout arrive next, and data bindings for
+showing what the world holds.
