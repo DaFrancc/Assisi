@@ -2,7 +2,7 @@
      screen through the node API and compares the two node for node, so a
      construction attribute the cooker drops or the loader forgets shows up as
      a difference rather than as a screen that looks nearly right. -->
-<screen name="Controls" input="consume" sort="popup" align="center center">
+<screen input="consume" sort="popup" align="center center">
 
   <!-- Fit rather than a fixed width: a text field asks for 220 logical pixels
        at its narrowest, and a row of four of them wants more than any width

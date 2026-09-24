@@ -379,11 +379,6 @@ Applied ApplyScreenAttribute(ScreenDocument &document, std::string_view name, st
     static constexpr std::array<NamedEnum<ScreenBeneath>, 2> kBeneaths{
         {{"show", ScreenBeneath::NoHide}, {"hide", ScreenBeneath::HidesBeneath}}};
 
-    if (name == "name")
-    {
-        document.name = value;
-        return Applied::Yes;
-    }
     if (name == "input")
     {
         return Read(document.traits.input, value, [](std::string_view text) { return LookUpEnum(text, kInputs); });
@@ -903,10 +898,15 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
                                                  "'scroll_bars'."));
         }
 
-        // On the root, `name` is what the screen is called and not a node's
-        // name, so the screen's table reads it below.
-        if (attribute.name == "name" && !isRoot)
+        if (attribute.name == "name")
         {
+            // A name written in the file would say again what its path says,
+            // and the two drift the moment the file is renamed.
+            if (isRoot)
+            {
+                return std::unexpected(At(attribute, "a screen is found by the path it is loaded from, such as "
+                                                     "\"ui/Pause.amdn\", and names itself nowhere. Remove 'name'."));
+            }
             if (const std::expected<void, MarkupError> named = ApplyName(walk, attribute, index); !named)
             {
                 return std::unexpected(named.error());

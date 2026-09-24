@@ -257,7 +257,8 @@ std::string_view ToString(ScreenLoadError error) noexcept
     return "unknown";
 }
 
-std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const ScreenDocument &document,
+std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, std::string_view name,
+                                                               const ScreenDocument &document,
                                                                const Core::EventCatalog &catalog)
 {
     if (!IsWalkable(document))
@@ -272,7 +273,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const Scr
     }
 
     LoadedScreen loaded;
-    loaded.screen = std::make_unique<Screen>(ui, document.traits, document.sortKey, document.name);
+    loaded.screen = std::make_unique<Screen>(ui, document.traits, document.sortKey, std::string{name});
     loaded.systems = document.systems;
 
     Screen &screen = *loaded.screen;

@@ -21,11 +21,8 @@
 namespace Game
 {
 
-/// The name the pause menu is created under, which is how a system with
-/// nowhere to keep a pointer finds it again. The file says the same.
-inline constexpr std::string_view kPauseScreenName = "Pause";
-
-/// Where the screen is authored.
+/// Where the screen is authored, which is also how a system with nowhere to
+/// keep a pointer finds it again.
 inline constexpr std::string_view kPauseScreenPath = "ui/Pause.amdn";
 
 /// Gives the world a pause menu, and asks for the system that opens it.

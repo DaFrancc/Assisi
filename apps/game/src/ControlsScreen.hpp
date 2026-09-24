@@ -17,10 +17,8 @@
 namespace Game
 {
 
-/// What the screen calls itself in the file, which is how it is found again.
-inline constexpr std::string_view kControlsScreenName = "Controls";
-
-/// Where the file sits in the package.
+/// Where the file sits in the package, which is also how the screen is found
+/// again.
 inline constexpr std::string_view kControlsScreenPath = "ui/Controls.amdn";
 
 /// Gives the world the controls screen, hidden.

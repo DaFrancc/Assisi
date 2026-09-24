@@ -321,7 +321,6 @@ void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
     Core::WriteCookedHeader(writer, Core::CookedKind::Screen);
     writer.WriteUInt8(kScreenPayloadVersion);
 
-    writer.WriteString(document.name);
     writer.WriteInt32(document.sortKey);
     writer.WriteUInt8(static_cast<uint8_t>(document.traits.input));
     writer.WriteUInt8(static_cast<uint8_t>(document.traits.beneath));
@@ -394,7 +393,6 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
     }
 
     ScreenDocument document;
-    document.name = reader.ReadString();
     document.sortKey = reader.ReadInt32();
     document.traits.input = static_cast<ScreenInput>(reader.ReadUInt8());
     document.traits.beneath = static_cast<ScreenBeneath>(reader.ReadUInt8());

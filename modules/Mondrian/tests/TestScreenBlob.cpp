@@ -24,7 +24,6 @@ using Color = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>;
 ScreenDocument Everything()
 {
     ScreenDocument document;
-    document.name = "Pause";
     document.sortKey = kSortPopup + 7;
     document.traits = {
         .input = ScreenInput::LockedConsumeInput, .beneath = ScreenBeneath::HidesBeneath, .pause = ScreenPause::Pause};
@@ -168,7 +167,6 @@ TEST_CASE("ScreenBlob: a document survives the round trip field for field")
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(written));
 
     REQUIRE(read.has_value());
-    CHECK(read->name == written.name);
     CHECK(read->sortKey == written.sortKey);
     CHECK(read->traits.input == written.traits.input);
     CHECK(read->traits.beneath == written.traits.beneath);

@@ -33,7 +33,7 @@ again.
 Create `assets/ui/TutorialMenu.amdn`:
 
 ```xml
-<screen name="TutorialMenu" input="consume" beneath="hide" pause="true"
+<screen input="consume" beneath="hide" pause="true"
         sort="menu" needs="TutorialMenu"
         align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
 
@@ -117,7 +117,7 @@ void TutorialMenuSystem(Assisi::App::SystemContext &ctx)
     }
 
     Assisi::Mondrian::Screen *const menu =
-        Assisi::App::FindScreen(ctx.world, "TutorialMenu");
+        Assisi::App::FindScreen(ctx.world, "ui/TutorialMenu.amdn");
     if (menu == nullptr)
     {
         return;
@@ -133,7 +133,8 @@ void TutorialMenuSystem(Assisi::App::SystemContext &ctx)
 
 - `LoadScreen` loads the compiled screen and gives it to the world. The screen
   starts hidden.
-- `FindScreen` looks the screen up by the `name` on its `<screen>` element.
+- `FindScreen` looks the screen up by the path it was loaded from — the same
+  string you gave `LoadScreen`.
 - `ConsumeKey` marks the Escape press as used, so no other system acts on the
   same press. The key stays hidden from other systems until it is released.
 - `Show` makes it visible. Closing it needs no code: the button's `hide()` and
@@ -190,12 +191,15 @@ The attributes on the `<screen>` element describe the screen as a whole:
 
 | Attribute | Values | Meaning |
 |---|---|---|
-| `name` | text | The screen's name. `FindScreen` looks screens up by it. |
 | `input` | `none`, `consume`, `locked` | What the screen does with the keyboard and mouse. |
 | `beneath` | `show`, `hide` | Whether screens below this one are still drawn. |
 | `pause` | `true`, `false` | Whether the world stops while the screen is shown. |
 | `sort` | `hud`, `menu`, `popup`, `overlay`, or a number | Where the screen draws relative to others. |
 | `needs` | system names, separated by spaces | Systems the world installs when the screen is loaded. |
+
+A screen has no `name` attribute. It is identified by the path of its file,
+such as `ui/Pause.amdn`, so renaming or moving the file is all it takes to
+rename the screen. Writing `name` on `<screen>` fails the cook.
 
 The `<screen>` element is also the root node, so it takes the layout and
 appearance attributes described later (`align`, `background` and so on).
@@ -506,9 +510,6 @@ The rules:
 - **A button's label is not its name.** Two buttons can both read "Back"; you
   find each by its `name`.
 
-The `name` on the `<screen>` element is the screen's name, not a node name, so a
-node inside may use the same word.
-
 ## Button actions
 
 A button's `on_click` says what happens when it is clicked, or when Enter is
@@ -706,12 +707,15 @@ cleaned up by hand.
 
 ### Finding a screen and its nodes
 
-`FindScreen` returns a world's screen by its name:
+`FindScreen` returns a world's screen by the path it was loaded from:
 
 ```cpp
 Assisi::Mondrian::Screen *const menu =
-    Assisi::App::FindScreen(ctx.world, "TutorialMenu");
+    Assisi::App::FindScreen(ctx.world, "ui/TutorialMenu.amdn");
 ```
+
+A screen built in C++ has no file, so it is found by the name given to its
+constructor instead.
 
 Systems can't keep pointers between frames, so calling `FindScreen` every frame
 is normal. A world has only a few screens, so the lookup is cheap.

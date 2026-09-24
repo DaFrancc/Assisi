@@ -32,7 +32,7 @@ void ControlsScreenToggleSystem(Assisi::App::SystemContext &ctx)
         return;
     }
 
-    Assisi::Mondrian::Screen *const controls = Assisi::App::FindScreen(ctx.world, kControlsScreenName);
+    Assisi::Mondrian::Screen *const controls = Assisi::App::FindScreen(ctx.world, kControlsScreenPath);
     if (controls == nullptr)
     {
         return; // this level did not ask for one

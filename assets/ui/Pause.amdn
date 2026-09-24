@@ -1,7 +1,7 @@
 <!-- The pause menu. Escape shows it, Resume or Back closes it, Quit ends the
      game. While it is up it takes the pointer and the keys, and the world
      stops. -->
-<screen name="Pause" input="consume" beneath="hide" pause="true" sort="menu"
+<screen input="consume" beneath="hide" pause="true" sort="menu"
         needs="PauseMenu"
         align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
 

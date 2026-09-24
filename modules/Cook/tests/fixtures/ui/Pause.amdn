@@ -1,6 +1,6 @@
 <!-- A screen that names no event, so it cooks in a binary that links only the
      registrations this fixture tree needs. -->
-<screen name="Pause" input="consume" beneath="hide" pause="true" sort="menu"
+<screen input="consume" beneath="hide" pause="true" sort="menu"
         align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
   <column name="panel" width="fixed 420" padding="32" gap="20"
           background="#1a1c24f0" corner_radius="16" corner_style="rounded">

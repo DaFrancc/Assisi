@@ -266,7 +266,9 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
 /// and the next load clears the registry anyway.
 void RemoveScreen(World &world, Mondrian::Screen &screen);
 
-/// @brief The screen on @p world called @p name, or null. A scan, which is what
+/// @brief The screen on @p world called @p name, or null. A screen loaded from a
+/// file is called by the path LoadScreen was given, such as "ui/Pause.amdn"; one
+/// built in C++ by the name its constructor was given. A scan, which is what
 /// a system with nowhere to keep a pointer uses; anything touching the same
 /// nodes every frame keeps the pointer and the ids it writes to instead.
 [[nodiscard]] Mondrian::Screen *FindScreen(World &world, std::string_view name);

@@ -43,7 +43,7 @@ EventCatalog OneEvent()
 }
 
 /// The pause menu as a file: every element and most of the attribute table.
-constexpr std::string_view kPauseMenu = R"amdn(<screen name="Pause" input="consume" beneath="hide" pause="true"
+constexpr std::string_view kPauseMenu = R"amdn(<screen input="consume" beneath="hide" pause="true"
         sort="menu" needs="PauseMenu" align="center center"
         background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
   <column name="panel" width="fixed 420" padding="32" gap="20"
@@ -67,7 +67,7 @@ constexpr std::string_view kPauseMenu = R"amdn(<screen name="Pause" input="consu
 /// One file rather than one per element: what this is for is the whole
 /// vocabulary holding together, and a screen that mixes them is what an author
 /// writes.
-constexpr std::string_view kEveryControl = R"amdn(<screen name="Controls">
+constexpr std::string_view kEveryControl = R"amdn(<screen>
   <column name="panel" gap="8">
     <toggle name="fullscreen" on="true" />
     <slider name="volume" min="0" max="100" step="5" value="60" />
@@ -277,7 +277,6 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
 {
     const ScreenDocument document = Compiled(kPauseMenu);
 
-    CHECK(document.name == "Pause");
     CHECK(document.sortKey == kSortMenu);
     CHECK(document.traits.input == ScreenInput::ConsumeInput);
     CHECK(document.traits.beneath == ScreenBeneath::HidesBeneath);
@@ -617,13 +616,6 @@ TEST_CASE("ScreenCompiler: a name means one node on its screen")
                   .line == 5);
     }
 
-    SUBCASE("the screen's own name is not a node's")
-    {
-        // The root's name is what the screen is called, which a system finds it
-        // by; a node inside may share it without the two being confused.
-        CHECK(Compiled(R"(<screen name="Pause"><text name="Pause" /></screen>)").nodes[1].name == "Pause");
-    }
-
     SUBCASE("unnamed nodes never collide")
     {
         CHECK(Compiled(R"(<screen><text /><text /><row /><row /></screen>)").nodes.size() == 5);
@@ -759,6 +751,18 @@ TEST_CASE("ScreenCompiler: a verb that cannot act is refused where it was writte
     }
 }
 
+TEST_CASE("ScreenCompiler: a screen is found by the path it is loaded from, so it names itself nowhere")
+{
+    // A name written inside the file would say again what its path says, and
+    // the two drift the moment the file is renamed.
+    const MarkupError error = Refused("<screen\n"
+                                      "    input=\"consume\"\n"
+                                      "    name=\"Pause\">\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    CHECK(error.message.find("path") != std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: the screen itself cannot be clicked")
 {
     // The root is the screen; an action there would never fire.
@@ -783,7 +787,6 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
     REQUIRE(read.has_value());
-    CHECK(read->name == "Pause");
     CHECK(read->nodes.size() == 6);
     CHECK(read->systems.size() == 1);
     CHECK(NodeNamed(*read, "quit").eventName == "Game::QuitRequested");
@@ -861,7 +864,6 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
 
     // Everything the C++ builder this file replaced set, so a difference shows
     // up here rather than as a menu that looks nearly right.
-    CHECK(document->name == "Pause");
     CHECK(document->sortKey == kSortMenu);
     CHECK(document->traits.input == ScreenInput::ConsumeInput);
     CHECK(document->traits.beneath == ScreenBeneath::HidesBeneath);
@@ -1136,7 +1138,8 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
     Ui ui{events};
     const EventCatalog catalog = OneEvent();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, *document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, "ui/Controls.amdn", *document, catalog);
     REQUIRE(loaded.has_value());
 
     Screen twin{ui, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
@@ -1230,7 +1233,7 @@ TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-ex
 {
     // Nothing of a template reaches the binary: the loader and the runtime
     // cannot tell one was used.
-    const std::string_view templated = R"amdn(<screen name="Pause">
+    const std::string_view templated = R"amdn(<screen>
   <template name="menu_button">
     <button padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded" />
   </template>
@@ -1239,7 +1242,7 @@ TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-ex
     <menu_button name="quit" on_click="Game::QuitRequested" border_width="2">Quit</menu_button>
   </row>
 </screen>)amdn";
-    const std::string_view expanded = R"amdn(<screen name="Pause">
+    const std::string_view expanded = R"amdn(<screen>
   <row name="buttons">
     <button name="resume" on_click="hide()" focus="true" background="#e63319"
             padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded">Resume</button>

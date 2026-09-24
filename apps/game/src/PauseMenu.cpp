@@ -28,7 +28,7 @@ void PauseMenuSystem(Assisi::App::SystemContext &ctx)
         return;
     }
 
-    Assisi::Mondrian::Screen *const pause = Assisi::App::FindScreen(ctx.world, kPauseScreenName);
+    Assisi::Mondrian::Screen *const pause = Assisi::App::FindScreen(ctx.world, kPauseScreenPath);
     if (pause == nullptr)
     {
         return; // this level did not ask for one
