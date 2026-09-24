@@ -64,23 +64,7 @@ What this describes:
 - `focus="true"` gives the button keyboard focus when the screen opens, so
   pressing Enter clicks it.
 
-### Step 2: Give the file an asset id
-
-Every asset needs a sidecar file holding a stable id. Create
-`assets/ui/TutorialMenu.amdn.aast` next to the screen file:
-
-```json
-{
-  "guid": "1f2e3d4c-5b6a-4798-8899-aabbccddeeff",
-  "type": "AssetSidecar",
-  "version": 1
-}
-```
-
-> **Generate your own guid.** Two assets with the same guid fail the cook. Run
-> `uuidgen`, or use your editor's "generate UUID" command.
-
-### Step 3: Write the systems that load and open the screen
+### Step 2: Write the systems that load and open the screen
 
 The screen file can't know *when* it should appear or which key opens it. Two
 systems handle that:
@@ -152,7 +136,7 @@ void TutorialMenuSystem(Assisi::App::SystemContext &ctx)
 - `Show` makes it visible. Closing it needs no code: the button's `hide()` and
   the Escape key both do that (see [Screen settings](#screen-settings)).
 
-### Step 4: Build
+### Step 3: Build
 
 Use the same command as in [Installation](installation.md):
 
@@ -160,9 +144,13 @@ Use the same command as in [Installation](installation.md):
 make gcc-dev
 ```
 
-### Step 5: Add the screen to a level
+### Step 4: Add the screen to a level
 
 1. Open the editor with a level: `-l levels/Test.alvl`.
+
+   When the editor starts, it creates `assets/ui/TutorialMenu.amdn.aast` next
+   to your screen file. This sidecar file holds the asset's id; commit it along
+   with the screen (see [A tour of the repository](tour.md)).
 2. In the **Systems** panel, type `TutorialMenuScreen` in **Add System** and
    press **Enter**.
 3. Click **Save**.
@@ -173,7 +161,7 @@ isn't needed.
 If `TutorialMenuScreen` isn't offered in **Add System**, the build didn't find
 the header. Check that it is under `apps/game/src/` and rebuild.
 
-### Step 6: Try it
+### Step 5: Try it
 
 Press **F5** to play, then **Escape**. The menu appears and the scene behind it
 stops. Click **Resume**, or press Escape again, to close it.
