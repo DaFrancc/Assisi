@@ -19,6 +19,9 @@ Every one of these fails the cook with the file, line and column:
 - A template that is declared in the wrong place, is badly formed, contains
   itself, or nests more than eight deep.
 - An unnamed instance that would repeat names made by another.
+- A template parameter named like an attribute or declared twice, an instance
+  that leaves out a parameter with no default, an `@name` the template doesn't
+  declare, or an `@` inside a template that isn't `@@` or a parameter.
 
 ## What's next
 

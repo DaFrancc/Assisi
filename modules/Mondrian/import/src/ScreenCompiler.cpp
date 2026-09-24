@@ -36,6 +36,16 @@ constexpr std::string_view kTemplateElement = "template";
 /// What joins an instance's name to the names inside it: `music.slider`.
 constexpr char kNameSeparator = '.';
 
+/// The attribute on a `<template>` listing what its instances pass it.
+constexpr std::string_view kParamsAttribute = "params";
+
+/// What marks a parameter's use inside a template: `@target`. Written twice,
+/// it is itself.
+constexpr char kParameterMark = '@';
+
+/// What separates a parameter from its default in `params`: `moves=1`.
+constexpr char kDefaultSeparator = '=';
+
 /// How a file spells each verb. One entry per ScreenVerb, which the assert
 /// below holds the table to: a verb with no spelling is one no file can call.
 constexpr std::array<NamedEnum<ScreenVerb>, 2> kVerbs{{
@@ -549,19 +559,44 @@ struct NamedNode
     uint32_t column = 0;
 };
 
+/// One parameter a template takes, as its `params` declares it.
+struct ParameterDeclaration
+{
+    std::string name;
+    /// What an instance that passes nothing gets, when hasDefault.
+    std::string fallback;
+    bool hasDefault = false;
+};
+
 /// A template a screen declares: the declaration, for where to point, and the
 /// one element it holds, which every instance is built from. Both point into
 /// the parsed file, which outlives the compile.
 struct Template
 {
+    std::vector<ParameterDeclaration> parameters;
     const MarkupElement *declaration = nullptr;
     const MarkupElement *root = nullptr;
+};
+
+/// One parameter's value in one instance.
+struct Parameter
+{
+    std::string value;
+    /// The prefix a node name in the value is qualified with: that of the
+    /// place the value was written. A passed value was written where the
+    /// instance sits; a default was written in the template.
+    std::string resolveIn;
+    /// False only in the check a template gets on its own, where a parameter
+    /// nobody passed has no value; what uses it is checked per instance.
+    bool known = true;
 };
 
 /// One template instance being compiled: what names inside it are qualified
 /// with, and where it was written, for an error found inside it to say so.
 struct Scope
 {
+    /// What `@name` means inside this instance.
+    std::unordered_map<std::string, Parameter> parameters;
     /// What names inside this instance are qualified with: the instance's own
     /// qualified name, or its enclosing scope's prefix when it has no name.
     std::string prefix;
@@ -603,15 +638,119 @@ struct Walk
     bool focusClaimed = false;
 };
 
+/// What a name written here is qualified with: the innermost instance's prefix,
+/// or none outside every template.
+std::string_view CurrentPrefix(const Walk &walk)
+{
+    return walk.scopes.empty() ? std::string_view{} : std::string_view{walk.scopes.back().prefix};
+}
+
+/// @p name qualified with @p prefix.
+std::string QualifyIn(std::string_view prefix, std::string_view name)
+{
+    if (prefix.empty())
+    {
+        return std::string{name};
+    }
+    return std::string{prefix} + kNameSeparator + std::string{name};
+}
+
 /// @p name as the screen knows it: qualified with the instance it was written
 /// inside, if any.
 std::string Qualify(const Walk &walk, std::string_view name)
 {
-    if (walk.scopes.empty() || walk.scopes.back().prefix.empty())
+    return QualifyIn(CurrentPrefix(walk), name);
+}
+
+bool IsParameterStart(char character)
+{
+    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_';
+}
+
+bool IsParameterChar(char character)
+{
+    return IsParameterStart(character) || (character >= '0' && character <= '9');
+}
+
+/// Text with every parameter it uses replaced by its value.
+struct Substituted
+{
+    std::string text;
+    /// The parameter the text is, when it is exactly one `@name` and nothing
+    /// else — which is when a node name in it is resolved where that
+    /// parameter's value was written.
+    const Parameter *sole = nullptr;
+    /// False when any parameter used has no value yet.
+    bool known = true;
+};
+
+/// @p text with each `@name` replaced by the innermost instance's value for it,
+/// and each `@@` by `@`. Outside every template there are no parameters, and
+/// `@` is plain text. @p line and @p column are where an error points.
+std::expected<Substituted, MarkupError> Substitute(const Walk &walk, std::string_view text, uint32_t line,
+                                                   uint32_t column)
+{
+    Substituted out;
+    if (walk.scopes.empty())
     {
-        return std::string{name};
+        out.text = text;
+        return out;
     }
-    return walk.scopes.back().prefix + kNameSeparator + std::string{name};
+    const Scope &scope = walk.scopes.back();
+    bool whole = false;
+    std::size_t index = 0;
+    while (index < text.size())
+    {
+        if (text[index] != kParameterMark)
+        {
+            out.text += text[index];
+            ++index;
+            continue;
+        }
+        if (index + 1 < text.size() && text[index + 1] == kParameterMark)
+        {
+            out.text += kParameterMark;
+            index += 2;
+            continue;
+        }
+        std::size_t end = index + 1;
+        if (end < text.size() && IsParameterStart(text[end]))
+        {
+            while (end < text.size() && IsParameterChar(text[end]))
+            {
+                ++end;
+            }
+        }
+        if (end == index + 1)
+        {
+            return std::unexpected(MarkupError{.message = "'" + std::string{text} + "' holds a '" + kParameterMark +
+                                                          "' that begins no parameter name. Inside a template, " +
+                                                          "a literal one is written '" + kParameterMark +
+                                                          kParameterMark + "'.",
+                                               .line = line,
+                                               .column = column});
+        }
+        const std::string name{text.substr(index + 1, end - index - 1)};
+        const std::unordered_map<std::string, Parameter>::const_iterator found = scope.parameters.find(name);
+        if (found == scope.parameters.end())
+        {
+            return std::unexpected(MarkupError{.message = "template '" + std::string{scope.templateName} +
+                                                          "' declares no parameter '" + name +
+                                                          "'. A template lists what it takes in params=\"...\".",
+                                               .line = line,
+                                               .column = column});
+        }
+        out.text += found->second.value;
+        out.known = out.known && found->second.known;
+        out.sole = &found->second;
+        whole = index == 0 && end == text.size();
+        index = end;
+    }
+    if (!whole)
+    {
+        out.sole = nullptr;
+    }
+    return out;
 }
 
 /// Names node @p index, refusing a name another node on the screen has. A name
@@ -744,10 +883,25 @@ std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttrib
     return {};
 }
 
+/// One argument of a call, with every parameter in it replaced.
+struct Argument
+{
+    std::string text;
+    /// What a node name here is qualified with: where the text was written.
+    std::string resolveIn;
+};
+
+/// A call as it reads once parameters are replaced.
+struct ResolvedCall
+{
+    std::vector<Argument> arguments;
+    std::string name;
+};
+
 /// A call: a verb, checked against what it takes. A target is kept by name
 /// until the walk is done, since the node it names may not have been read yet.
 std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const MarkupAttribute &attribute,
-                                           const MarkupCall &call)
+                                           const ResolvedCall &call)
 {
     const std::optional<ScreenVerb> verb = LookUpEnum(call.name, kVerbs);
     if (!verb)
@@ -773,8 +927,10 @@ std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const Mar
     if (VerbTakesTarget(*verb))
     {
         // Qualified here, where the scope it was written in is known: a target
-        // inside a template means a part of the same instance.
-        walk.targets.push_back(PendingTarget{.name = Qualify(walk, call.arguments[next]),
+        // inside a template means a part of the same instance, and one an
+        // instance passed means a node where the instance sits.
+        const Argument &target = call.arguments[next];
+        walk.targets.push_back(PendingTarget{.name = QualifyIn(target.resolveIn, target.text),
                                              .node = index,
                                              .line = attribute.line,
                                              .column = attribute.column});
@@ -782,7 +938,7 @@ std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const Mar
     }
     if (VerbTakesMoves(*verb))
     {
-        const std::string_view written = call.arguments[next];
+        const std::string_view written = call.arguments[next].text;
         const std::optional<int32_t> moves = ParseInt(written);
         if (!moves)
         {
@@ -801,8 +957,26 @@ std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const Mar
 
 /// What a control does when it fires: a call is a verb, and a bare name is an
 /// event.
-std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &attribute)
+///
+/// @p written is the attribute as the file has it. A call written out has
+/// each argument's parameters replaced on their own, so a target the template
+/// writes and one an instance passes each resolve where they were written. A
+/// call that is wholly one parameter's value was written where that value was.
+std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &written)
 {
+    const std::expected<Substituted, MarkupError> whole = Substitute(walk, written.value, written.line, written.column);
+    if (!whole)
+    {
+        return std::unexpected(whole.error());
+    }
+    // Checked per instance, once the value is known.
+    if (!whole->known)
+    {
+        return {};
+    }
+    MarkupAttribute attribute = written;
+    attribute.value = whole->text;
+
     const std::expected<std::optional<MarkupCall>, MarkupError> call = ParseCall(attribute);
     if (!call)
     {
@@ -812,7 +986,38 @@ std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const M
     {
         return ApplyEvent(walk.document.nodes[index], attribute, walk.catalog);
     }
-    return ApplyVerb(walk, index, attribute, **call);
+
+    ResolvedCall resolved{.arguments = {}, .name = std::string{(*call)->name}};
+    const std::expected<std::optional<MarkupCall>, MarkupError> raw = ParseCall(written);
+    if (!raw)
+    {
+        return std::unexpected(raw.error());
+    }
+    if (raw->has_value() && (*raw)->arguments.size() == (*call)->arguments.size())
+    {
+        for (const std::string_view argument : (*raw)->arguments)
+        {
+            const std::expected<Substituted, MarkupError> one =
+                Substitute(walk, argument, written.line, written.column);
+            if (!one)
+            {
+                return std::unexpected(one.error());
+            }
+            resolved.arguments.push_back(
+                Argument{.text = one->text,
+                         .resolveIn = one->sole != nullptr ? one->sole->resolveIn : std::string{CurrentPrefix(walk)}});
+        }
+    }
+    else
+    {
+        const std::string resolveIn =
+            whole->sole != nullptr ? whole->sole->resolveIn : std::string{CurrentPrefix(walk)};
+        for (const std::string_view argument : (*call)->arguments)
+        {
+            resolved.arguments.push_back(Argument{.text = std::string{argument}, .resolveIn = resolveIn});
+        }
+    }
+    return ApplyVerb(walk, index, attribute, resolved);
 }
 
 /// Every target a verb named, looked up now that every node has been read.
@@ -850,27 +1055,41 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
     const bool isRoot = index == 0;
     ScreenNode &node = walk.document.nodes[index];
 
-    for (const MarkupAttribute &attribute : element.attributes)
+    for (const MarkupAttribute &written : element.attributes)
     {
-        if (attribute.name == "on_click")
+        if (written.name == "on_click")
         {
             if (isRoot)
             {
-                return std::unexpected(At(attribute, "the screen itself cannot be clicked; put on_click on a "
-                                                     "control inside it."));
+                return std::unexpected(At(written, "the screen itself cannot be clicked; put on_click on a "
+                                                   "control inside it."));
             }
             if (node.widget != BuiltinWidget::Button)
             {
-                return std::unexpected(At(attribute, "only a button is clicked. Every other control answers a "
-                                                     "press itself, and what it holds is read rather than "
-                                                     "announced."));
+                return std::unexpected(At(written, "only a button is clicked. Every other control answers a "
+                                                   "press itself, and what it holds is read rather than "
+                                                   "announced."));
             }
-            if (const std::expected<void, MarkupError> action = ApplyAction(walk, index, attribute); !action)
+            if (const std::expected<void, MarkupError> action = ApplyAction(walk, index, written); !action)
             {
                 return std::unexpected(action.error());
             }
             continue;
         }
+
+        const std::expected<Substituted, MarkupError> substituted =
+            Substitute(walk, written.value, written.line, written.column);
+        if (!substituted)
+        {
+            return std::unexpected(substituted.error());
+        }
+        // Checked per instance, once the value is known.
+        if (!substituted->known)
+        {
+            continue;
+        }
+        MarkupAttribute attribute = written;
+        attribute.value = substituted->text;
 
         // Read here rather than through the style table, which only says a
         // value was bad: a colour's likeliest mistakes each have one fix to name.
@@ -1072,27 +1291,114 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     ScreenNode node;
     node.parent = parent;
     node.widget = kind.widget;
-    // The instance's words replace the template's, and leave them when it has none.
-    node.text = instance.text.empty() ? root.text : instance.text;
     Seed(node);
     node.style.direction = kind.direction;
     const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
     walk.document.nodes.push_back(std::move(node));
 
+    // What the instance writes is read where the instance sits, before its
+    // own scope opens.
+    const std::expected<Substituted, MarkupError> ownText =
+        Substitute(walk, instance.text, instance.line, instance.column);
+    if (!ownText)
+    {
+        return std::unexpected(ownText.error());
+    }
     const MarkupAttribute *const instanceName = instance.Find("name");
-    const bool named = instanceName != nullptr && !instanceName->value.empty();
-    Scope scope{.prefix = named                 ? Qualify(walk, instanceName->value)
-                          : walk.scopes.empty() ? std::string{}
-                                                : walk.scopes.back().prefix,
+    std::string written = instanceName != nullptr ? instanceName->value : std::string{};
+    if (instanceName != nullptr)
+    {
+        const std::expected<Substituted, MarkupError> name =
+            Substitute(walk, instanceName->value, instanceName->line, instanceName->column);
+        if (!name)
+        {
+            return std::unexpected(name.error());
+        }
+        // Unknown only in a template's own check, where the raw text, which
+        // holds a mark no real name can, still keeps the names inside apart.
+        if (name->known)
+        {
+            written = name->text;
+        }
+    }
+    const bool named = !written.empty();
+    Scope scope{.parameters = {},
+                .prefix = named ? Qualify(walk, written) : std::string{CurrentPrefix(walk)},
                 .templateName = instance.name,
                 .line = instance.line,
                 .column = instance.column,
                 .named = named,
                 .standIn = standIn};
 
-    const MarkupElement base = TemplateBase(root, instance);
+    // The instance's attributes are each a parameter or an override of the
+    // root's, never both: a parameter may not be named like an attribute.
+    MarkupElement overrides;
+    overrides.name = instance.name;
+    overrides.line = instance.line;
+    overrides.column = instance.column;
+    for (const MarkupAttribute &attribute : instance.attributes)
+    {
+        if (std::ranges::find(used.parameters, attribute.name, &ParameterDeclaration::name) == used.parameters.end())
+        {
+            overrides.attributes.push_back(attribute);
+        }
+    }
+    for (const ParameterDeclaration &declared : used.parameters)
+    {
+        Parameter bound;
+        if (const MarkupAttribute *const passed = instance.Find(declared.name))
+        {
+            const std::expected<Substituted, MarkupError> value =
+                Substitute(walk, passed->value, passed->line, passed->column);
+            if (!value)
+            {
+                return std::unexpected(value.error());
+            }
+            bound.value = value->text;
+            bound.resolveIn = value->sole != nullptr ? value->sole->resolveIn : std::string{CurrentPrefix(walk)};
+            bound.known = value->known;
+        }
+        else if (declared.hasDefault)
+        {
+            bound.value = declared.fallback;
+            bound.resolveIn = scope.prefix;
+        }
+        else if (standIn)
+        {
+            bound.known = false;
+        }
+        else
+        {
+            return std::unexpected(At(instance, "template '" + instance.name + "' takes '" + declared.name +
+                                                    "', which has no default, and this instance does not pass it."));
+        }
+        scope.parameters.emplace(declared.name, std::move(bound));
+    }
+
+    const MarkupElement base = TemplateBase(root, overrides);
     walk.scopes.push_back(std::move(scope));
-    std::expected<void, MarkupError> inside = ApplyAttributes(walk, base, index);
+    std::expected<void, MarkupError> inside{};
+    // The instance's words replace the template's, and leave them when it has none.
+    if (!instance.text.empty())
+    {
+        walk.document.nodes[index].text = ownText->known ? ownText->text : std::string{};
+    }
+    else
+    {
+        const std::expected<Substituted, MarkupError> rootText = Substitute(walk, root.text, root.line, root.column);
+        if (rootText)
+        {
+            walk.document.nodes[index].text = rootText->known ? rootText->text : std::string{};
+        }
+        else
+        {
+            inside = std::unexpected(rootText.error());
+        }
+    }
+    if (inside)
+    {
+        inside = ApplyAttributes(walk, base, index);
+    }
     if (inside)
     {
         inside = CompileChildren(walk, root, index);
@@ -1104,11 +1410,11 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
         return std::unexpected(Inside(std::move(inside.error()), left));
     }
 
-    if (const std::expected<void, MarkupError> own = ApplyAttributes(walk, instance, index); !own)
+    if (const std::expected<void, MarkupError> own = ApplyAttributes(walk, overrides, index); !own)
     {
         return std::unexpected(own.error());
     }
-    const bool stepWritten = base.Find("step") != nullptr || instance.Find("step") != nullptr;
+    const bool stepWritten = base.Find("step") != nullptr || overrides.Find("step") != nullptr;
     if (const std::expected<void, MarkupError> required = Required(instance, walk.document.nodes[index], stepWritten);
         !required)
     {
@@ -1148,10 +1454,16 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
         return std::unexpected(At(element, "'" + element.name + "' holds elements, and holds none."));
     }
 
+    const std::expected<Substituted, MarkupError> text = Substitute(walk, element.text, element.line, element.column);
+    if (!text)
+    {
+        return std::unexpected(text.error());
+    }
+
     ScreenNode node;
     node.parent = parent;
     node.widget = kind->widget;
-    node.text = element.text;
+    node.text = text->known ? text->text : std::string{};
     // Seeded first, because a control's own look is what a file's attributes
     // are written over.
     Seed(node);
@@ -1173,6 +1485,75 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     return CompileChildren(walk, element, index);
 }
 
+/// The attributes ApplyAttributes reads itself rather than through a table.
+/// The colours are the other such set, and ColorField answers for them.
+constexpr std::array<std::string_view, 4> kDirectAttributes{"on_click", "pattern", "name", "focus"};
+
+/// Whether @p name is an attribute some element has, found by offering it to
+/// every table as each kind of control would.
+bool IsMarkupAttribute(std::string_view name)
+{
+    Style style;
+    if (std::ranges::find(kDirectAttributes, name) != kDirectAttributes.end() || ColorField(style, name) != nullptr)
+    {
+        return true;
+    }
+    ScreenDocument screen;
+    if (ApplyScreenAttribute(screen, name, {}) != Applied::Unknown ||
+        ApplyStyleAttribute(style, name, {}) != Applied::Unknown)
+    {
+        return true;
+    }
+    for (uint32_t widget = 0; widget < static_cast<uint32_t>(BuiltinWidget::Count); ++widget)
+    {
+        ScreenNode node;
+        node.widget = static_cast<BuiltinWidget>(widget);
+        if (ApplyWidgetAttribute(node, name, {}) != Applied::Unknown ||
+            ApplyNodeAttribute(node, name, {}) != Applied::Unknown)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The parameters @p attribute, a template's `params`, declares: names
+/// separated by spaces, each with an optional `=default`.
+std::expected<std::vector<ParameterDeclaration>, MarkupError> ReadParameters(const MarkupAttribute &attribute)
+{
+    std::vector<ParameterDeclaration> parameters;
+    for (const std::string_view word : SplitWords(attribute.value))
+    {
+        const std::size_t split = word.find(kDefaultSeparator);
+        ParameterDeclaration declared{.name = std::string{word.substr(0, split)},
+                                      .fallback = split == std::string_view::npos ? std::string{}
+                                                                                  : std::string{word.substr(split + 1)},
+                                      .hasDefault = split != std::string_view::npos};
+        const bool wellFormed = !declared.name.empty() && IsParameterStart(declared.name.front()) &&
+                                std::ranges::all_of(declared.name, IsParameterChar);
+        if (!wellFormed)
+        {
+            return std::unexpected(At(attribute, "'" + declared.name +
+                                                     "' is not a parameter name: letters, digits and '_', "
+                                                     "not starting with a digit."));
+        }
+        // An instance attribute is then a parameter or an override, never
+        // either depending on how it is read.
+        if (IsMarkupAttribute(declared.name) || declared.name == kParamsAttribute)
+        {
+            return std::unexpected(At(attribute, "'" + declared.name +
+                                                     "' is already an attribute this markup has, so a parameter "
+                                                     "needs another name."));
+        }
+        if (std::ranges::find(parameters, declared.name, &ParameterDeclaration::name) != parameters.end())
+        {
+            return std::unexpected(At(attribute, "'" + declared.name + "' is declared twice."));
+        }
+        parameters.push_back(std::move(declared));
+    }
+    return parameters;
+}
+
 /// Reads the templates @p root declares into the walk, refusing any that is
 /// not one name over one built-in element.
 ///
@@ -1187,10 +1568,14 @@ std::expected<void, MarkupError> CollectTemplates(Walk &walk, const MarkupElemen
             continue;
         }
         const MarkupAttribute *const named = declaration.Find("name");
-        if (named == nullptr || named->value.empty() || declaration.attributes.size() != 1)
+        const MarkupAttribute *const params = declaration.Find(kParamsAttribute);
+        const std::size_t expected = params != nullptr ? 2 : 1;
+        if (named == nullptr || named->value.empty() || declaration.attributes.size() != expected)
         {
-            return std::unexpected(At(declaration, "a template says its name and nothing else: <" +
-                                                       std::string{kTemplateElement} + " name=\"...\">."));
+            return std::unexpected(At(declaration, "a template says its name, and what it takes, and nothing "
+                                                   "else: <" +
+                                                       std::string{kTemplateElement} + " name=\"...\" " +
+                                                       std::string{kParamsAttribute} + "=\"...\">."));
         }
         const std::string &name = named->value;
         if (name.find(kNameSeparator) != std::string::npos)
@@ -1225,7 +1610,18 @@ std::expected<void, MarkupError> CollectTemplates(Walk &walk, const MarkupElemen
                                                 ">, and a template is built on an element this markup has. "
                                                 "Use other templates inside it."));
         }
-        walk.templates.emplace(name, Template{.declaration = &declaration, .root = &body});
+        std::vector<ParameterDeclaration> parameters;
+        if (params != nullptr)
+        {
+            std::expected<std::vector<ParameterDeclaration>, MarkupError> read = ReadParameters(*params);
+            if (!read)
+            {
+                return std::unexpected(read.error());
+            }
+            parameters = std::move(*read);
+        }
+        walk.templates.emplace(
+            name, Template{.parameters = std::move(parameters), .declaration = &declaration, .root = &body});
     }
     return {};
 }
