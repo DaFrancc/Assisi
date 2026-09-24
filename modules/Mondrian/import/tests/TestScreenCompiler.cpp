@@ -45,7 +45,7 @@ EventCatalog OneEvent()
 /// The pause menu as a file: every element and most of the attribute table.
 constexpr std::string_view kPauseMenu = R"amdn(<screen name="Pause" input="consume" beneath="hide" pause="true"
         sort="menu" needs="PauseMenu" align="center center"
-        background="0 0 0 0.55" blocks_pointer="true">
+        background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
   <column name="panel" width="fixed 420" padding="32" gap="20"
           background="#1a1c24f0" border_width="2" border_color="#575f7a"
           corner_radius="16" corner_style="rounded" align="center start">
@@ -341,20 +341,139 @@ TEST_CASE("ScreenCompiler: the table is preorder with every parent before its ch
     CHECK(document.nodes[0].parent == kNoNode);
 }
 
-TEST_CASE("ScreenCompiler: colours read as hex and as numbers")
+TEST_CASE("ScreenCompiler: a colour is hex, rgb() or rgbf()")
 {
-    const ScreenDocument hex = Compiled(R"(<screen background="#ff8000" />)");
-    CHECK(hex.nodes[0].style.background.r == doctest::Approx(1.f));
-    CHECK(hex.nodes[0].style.background.g == doctest::Approx(0.50196f));
-    CHECK(hex.nodes[0].style.background.b == doctest::Approx(0.f));
-    CHECK(hex.nodes[0].style.background.a == doctest::Approx(1.f));
+    SUBCASE("hex, with and without alpha")
+    {
+        const ScreenDocument hex = Compiled(R"(<screen background="#ff8000" />)");
+        CHECK(hex.nodes[0].style.background.r == doctest::Approx(1.f));
+        CHECK(hex.nodes[0].style.background.g == doctest::Approx(0.50196f));
+        CHECK(hex.nodes[0].style.background.b == doctest::Approx(0.f));
+        CHECK(hex.nodes[0].style.background.a == doctest::Approx(1.f));
 
-    const ScreenDocument withAlpha = Compiled(R"(<screen background="#00000080" />)");
-    CHECK(withAlpha.nodes[0].style.background.a == doctest::Approx(0.50196f));
+        const ScreenDocument withAlpha = Compiled(R"(<screen background="#00000080" />)");
+        CHECK(withAlpha.nodes[0].style.background.a == doctest::Approx(0.50196f));
+    }
 
-    const ScreenDocument floats = Compiled(R"(<screen background="0.25 0.5 0.75 1" />)");
-    CHECK(floats.nodes[0].style.background.r == doctest::Approx(0.25f));
-    CHECK(floats.nodes[0].style.background.b == doctest::Approx(0.75f));
+    SUBCASE("rgb, whole numbers from 0 to 255")
+    {
+        const ScreenDocument opaque = Compiled(R"amdn(<screen background="rgb(255, 128, 0)" />)amdn");
+        CHECK(opaque.nodes[0].style.background.r == doctest::Approx(1.f));
+        CHECK(opaque.nodes[0].style.background.g == doctest::Approx(0.50196f));
+        CHECK(opaque.nodes[0].style.background.b == doctest::Approx(0.f));
+        CHECK(opaque.nodes[0].style.background.a == doctest::Approx(1.f));
+
+        // Alpha is on the same scale as the other channels.
+        const ScreenDocument clear = Compiled(R"amdn(<screen background="rgb(0, 0, 0, 128)" />)amdn");
+        CHECK(clear.nodes[0].style.background.a == doctest::Approx(0.50196f));
+    }
+
+    SUBCASE("rgbf, numbers from 0 to 1")
+    {
+        const ScreenDocument opaque = Compiled(R"amdn(<screen background="rgbf(0.25, 0.5, 0.75)" />)amdn");
+        CHECK(opaque.nodes[0].style.background.r == doctest::Approx(0.25f));
+        CHECK(opaque.nodes[0].style.background.b == doctest::Approx(0.75f));
+        CHECK(opaque.nodes[0].style.background.a == doctest::Approx(1.f));
+
+        const ScreenDocument clear = Compiled(R"amdn(<screen background="rgbf( 0, 0, 0, 0.55 )" />)amdn");
+        CHECK(clear.nodes[0].style.background.a == doctest::Approx(0.55f));
+    }
+
+    SUBCASE("every colour attribute reads the same forms")
+    {
+        const ScreenDocument document =
+            Compiled(R"amdn(<screen border_color="rgb(0, 255, 0)" text_color="rgbf(0, 0, 1)" />)amdn");
+        CHECK(document.nodes[0].style.borderColor.g == doctest::Approx(1.f));
+        CHECK(document.nodes[0].style.textColor.b == doctest::Approx(1.f));
+    }
+}
+
+namespace
+{
+
+/// The error from a text on line 3 whose `background` is @p colour, which the
+/// case expects to be refused there.
+MarkupError ColourRefusedOnLine3(std::string_view colour)
+{
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <row />\n"
+                                      "  <text background=\"" +
+                                      std::string{colour} +
+                                      "\" />\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    return error;
+}
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: a colour that could mean two things, or nothing, is refused where it was written")
+{
+    SUBCASE("bare numbers, which say no scale")
+    {
+        // `1 1 1` is white on one scale and nearly black on the other.
+        const MarkupError error = ColourRefusedOnLine3("1 1 1");
+        CHECK(error.message.find("rgb(") != std::string::npos);
+        CHECK(error.message.find("rgbf(") != std::string::npos);
+    }
+
+    SUBCASE("an rgb channel past 255")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(256, 0, 0)").message.find("256") != std::string::npos);
+    }
+
+    SUBCASE("an rgb channel that is not whole")
+    {
+        // The likeliest cause is a 0-to-1 value written in the wrong call.
+        const MarkupError error = ColourRefusedOnLine3("rgb(0.5, 0, 0)");
+        CHECK(error.message.find("0.5") != std::string::npos);
+        CHECK(error.message.find("rgbf") != std::string::npos);
+    }
+
+    SUBCASE("an rgbf channel past 1")
+    {
+        // The likeliest cause is a 0-to-255 value written in the wrong call.
+        const MarkupError error = ColourRefusedOnLine3("rgbf(255, 0, 0)");
+        CHECK(error.message.find("255") != std::string::npos);
+        CHECK(error.message.find("rgb(") != std::string::npos);
+    }
+
+    SUBCASE("a negative channel")
+    {
+        CHECK(ColourRefusedOnLine3("rgbf(-0.1, 0, 0)").message.find("-0.1") != std::string::npos);
+    }
+
+    SUBCASE("too few channels")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(0, 0)").message.find("2") != std::string::npos);
+    }
+
+    SUBCASE("too many channels")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(0, 0, 0, 0, 0)").message.find("5") != std::string::npos);
+    }
+
+    SUBCASE("a function that is not a colour")
+    {
+        const MarkupError error = ColourRefusedOnLine3("hsl(0, 0, 0)");
+        CHECK(error.message.find("hsl") != std::string::npos);
+        CHECK(error.message.find("rgbf") != std::string::npos);
+    }
+
+    SUBCASE("hex with the wrong number of digits")
+    {
+        CHECK(ColourRefusedOnLine3("#fff").message.find("#fff") != std::string::npos);
+    }
+
+    SUBCASE("hex with a digit that is not one")
+    {
+        CHECK(ColourRefusedOnLine3("#ff00zz").message.find("#ff00zz") != std::string::npos);
+    }
+
+    SUBCASE("a call never closed")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(0, 0, 0").message.find(")") != std::string::npos);
+    }
 }
 
 TEST_CASE("ScreenCompiler: every sizing form reads")

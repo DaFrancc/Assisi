@@ -35,7 +35,7 @@ Create `assets/ui/TutorialMenu.amdn`:
 ```xml
 <screen name="TutorialMenu" input="consume" beneath="hide" pause="true"
         sort="menu" needs="TutorialMenu"
-        align="center center" background="0 0 0 0.55" blocks_pointer="true">
+        align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
 
   <column width="fixed 420" padding="32" gap="20" background="#1a1c24f0"
           corner_radius="16" corner_style="rounded">
@@ -57,7 +57,8 @@ What this describes:
   below it (`beneath="hide"`), pauses the world (`pause="true"`), and needs a
   system called `TutorialMenu` (`needs`). These are explained in
   [Screen settings](#screen-settings).
-- The screen darkens everything behind it (`background="0 0 0 0.55"`) and
+- The screen darkens everything behind it (`background="rgbf(0, 0, 0, 0.55)"`,
+  black at 55% opacity) and
   centres its contents (`align="center center"`).
 - Inside is a panel (`<column>`) holding a title and a **Resume** button.
 - `on_click="hide()"` makes the button close the screen.
@@ -318,13 +319,22 @@ Any mode can be followed by `min N` and `max N` to limit it:
 | `corner_radius` | `N` | Size of the corners. |
 | `corner_style` | `square`, `rounded`, `cut` | Corner shape. |
 
-A colour is written `#rrggbb`, `#rrggbbaa`, or as three or four numbers from 0
-to 1:
+A colour is written in one of three forms. Each says which scale its numbers
+are on:
 
-```xml
-background="#1a1c24f0"
-background="0 0 0 0.55"
-```
+| Form | Channels | Example |
+|---|---|---|
+| `#rrggbb`, `#rrggbbaa` | Hex digits, `00` to `ff` | `#e63319`, `#1a1c24f0` |
+| `rgb(r, g, b)`, `rgb(r, g, b, a)` | Whole numbers from 0 to 255 | `rgb(230, 51, 25)` |
+| `rgbf(r, g, b)`, `rgbf(r, g, b, a)` | Numbers from 0 to 1 | `rgbf(0, 0, 0, 0.55)` |
+
+The fourth channel is alpha (opacity), on the same scale as the others. Without
+it, the colour is fully opaque.
+
+Bare numbers such as `background="1 1 1"` fail the cook, because they don't say
+which scale they're on: `1 1 1` is white on a 0–1 scale and nearly black on a
+0–255 scale. A channel outside its call's range also fails, with a message
+naming the call that takes that range.
 
 ### Text
 

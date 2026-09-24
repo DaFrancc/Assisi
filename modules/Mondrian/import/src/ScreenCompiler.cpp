@@ -44,14 +44,9 @@ constexpr std::array<NamedEnum<ScreenVerb>, 2> kVerbs{{
 }};
 static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count), "every verb needs a spelling");
 
-/// What separates a call's name from its arguments, the arguments from each
-/// other, and ends the call.
+/// What opens and closes a call, for the signatures a message spells out.
 constexpr char kCallOpen = '(';
-constexpr char kCallSeparator = ',';
 constexpr char kCallClose = ')';
-
-/// The whitespace an author may put around a call's name and arguments.
-constexpr std::string_view kCallSpace = " \t\r\n";
 
 /// What an element makes: a control, and the direction it lays its children out
 /// in. `column` and `row` are one node with one field different, which is why
@@ -127,18 +122,6 @@ template <typename T, typename Parse> Applied Read(T &field, std::string_view va
 /// how it places what is inside it.
 Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_view value)
 {
-    if (name == "background")
-    {
-        return Read(style.background, value, ParseColor);
-    }
-    if (name == "border_color")
-    {
-        return Read(style.borderColor, value, ParseColor);
-    }
-    if (name == "text_color")
-    {
-        return Read(style.textColor, value, ParseColor);
-    }
     if (name == "width")
     {
         return Read(style.sizing[static_cast<std::size_t>(Axis::X)], value, ParseSizing);
@@ -672,62 +655,34 @@ std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &at
     return {};
 }
 
-/// @p text without the whitespace around it.
-std::string_view Trimmed(std::string_view text)
+/// @p attribute's value read as a call, or nullopt when it is a bare name, with
+/// any refusal placed where the attribute was written.
+std::expected<std::optional<MarkupCall>, MarkupError> ParseCall(const MarkupAttribute &attribute)
 {
-    const std::size_t first = text.find_first_not_of(kCallSpace);
-    if (first == std::string_view::npos)
+    std::expected<std::optional<MarkupCall>, std::string> call = SplitCall(attribute.value);
+    if (!call)
     {
-        return {};
+        return std::unexpected(At(attribute, std::move(call.error())));
     }
-    const std::size_t last = text.find_last_not_of(kCallSpace);
-    return text.substr(first, last - first + 1);
+    return *call;
 }
 
-/// A call as a file writes it: the verb's name, and its arguments as written.
-struct Call
+/// The colour field @p name sets, or null when @p name is no colour attribute.
+Color *ColorField(Style &style, std::string_view name)
 {
-    std::vector<std::string_view> arguments;
-    std::string_view name;
-};
-
-/// @p value read as a call, or nullopt when it is a bare name. A call that
-/// opens and does not close, or has anything after it, is refused rather than
-/// read as the part that parsed.
-std::expected<std::optional<Call>, MarkupError> ParseCall(const MarkupAttribute &attribute)
-{
-    const std::string_view value = attribute.value;
-    const std::size_t open = value.find(kCallOpen);
-    if (open == std::string_view::npos)
+    if (name == "background")
     {
-        return std::optional<Call>{};
+        return &style.background;
     }
-    const std::size_t close = value.find(kCallClose, open);
-    if (close == std::string_view::npos)
+    if (name == "border_color")
     {
-        return std::unexpected(
-            At(attribute, "'" + attribute.value + "' opens a call and never closes it with " + kCallClose + "."));
+        return &style.borderColor;
     }
-    const std::string_view after = Trimmed(value.substr(close + 1));
-    if (!after.empty())
+    if (name == "text_color")
     {
-        return std::unexpected(At(attribute, "'" + std::string{after} + "' follows the call in '" + attribute.value +
-                                                 "'. on_click holds one call."));
+        return &style.textColor;
     }
-
-    Call call;
-    call.name = Trimmed(value.substr(0, open));
-    const std::string_view inside = Trimmed(value.substr(open + 1, close - open - 1));
-    // Nothing between the parens is no arguments, not one empty one.
-    std::size_t start = 0;
-    while (!inside.empty() && start <= inside.size())
-    {
-        std::size_t end = inside.find(kCallSeparator, start);
-        end = end == std::string_view::npos ? inside.size() : end;
-        call.arguments.push_back(Trimmed(inside.substr(start, end - start)));
-        start = end + 1;
-    }
-    return std::optional<Call>{call};
+    return nullptr;
 }
 
 /// How a file spells @p verb.
@@ -792,7 +747,7 @@ std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttrib
 /// A call: a verb, checked against what it takes. A target is kept by name
 /// until the walk is done, since the node it names may not have been read yet.
 std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const MarkupAttribute &attribute,
-                                           const Call &call)
+                                           const MarkupCall &call)
 {
     const std::optional<ScreenVerb> verb = LookUpEnum(call.name, kVerbs);
     if (!verb)
@@ -848,7 +803,7 @@ std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const Mar
 /// event.
 std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &attribute)
 {
-    const std::expected<std::optional<Call>, MarkupError> call = ParseCall(attribute);
+    const std::expected<std::optional<MarkupCall>, MarkupError> call = ParseCall(attribute);
     if (!call)
     {
         return std::unexpected(call.error());
@@ -914,6 +869,19 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             {
                 return std::unexpected(action.error());
             }
+            continue;
+        }
+
+        // Read here rather than through the style table, which only says a
+        // value was bad: a colour's likeliest mistakes each have one fix to name.
+        if (Color *const colour = ColorField(node.style, attribute.name))
+        {
+            const ParsedColor read = ParseColor(attribute.value);
+            if (!read)
+            {
+                return std::unexpected(At(attribute, read.error()));
+            }
+            *colour = *read;
             continue;
         }
 

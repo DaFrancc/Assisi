@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,12 +68,37 @@ template <typename E, std::size_t N>
 
 [[nodiscard]] std::optional<uint32_t> ParseUInt(std::string_view text);
 
-/// @brief `#rrggbb`, `#rrggbbaa`, or three or four numbers from 0 to 1.
+/// @brief The colour a style holds.
+using Color = Math::Color4<Math::ColorSpace::Srgb>;
+
+/// @brief A colour read from a file, or why the text was not one.
+using ParsedColor = std::expected<Color, std::string>;
+
+/// @brief @p text without the whitespace around it.
+[[nodiscard]] std::string_view TrimSpace(std::string_view text);
+
+/// @brief A call as a file writes it: `name(argument, argument)`, with space
+/// around the name and each argument dropped.
+struct MarkupCall
+{
+    std::vector<std::string_view> arguments;
+    std::string_view name;
+};
+
+/// @brief @p text read as a call, or nullopt when it opens none. A call that
+/// opens and does not close, or has anything after it, is refused with the
+/// reason rather than read as the part that parsed.
+[[nodiscard]] std::expected<std::optional<MarkupCall>, std::string> SplitCall(std::string_view text);
+
+/// @brief `#rrggbb`, `#rrggbbaa`, `rgb(r, g, b[, a])` with whole numbers from 0
+/// to 255, or `rgbf(r, g, b[, a])` with numbers from 0 to 1 — or why @p text is
+/// none of them.
 ///
-/// Both forms because they answer different questions: a hex triple is what a
-/// palette or a design tool hands over, and floats are what a value carried
-/// from code keeps exactly.
-[[nodiscard]] std::optional<Math::Color4<Math::ColorSpace::Srgb>> ParseColor(std::string_view text);
+/// Every form says its own scale. Bare numbers are refused because they don't:
+/// `1 1 1` is white on one scale and nearly black on the other. The reason is
+/// returned rather than a bare failure, because the likeliest mistakes — a
+/// 0-to-255 value in `rgbf`, a fraction in `rgb` — each have one fix to name.
+[[nodiscard]] ParsedColor ParseColor(std::string_view text);
 
 /// @brief `fit`, `grow`, `fixed <n>` or `percent <n>`, each optionally followed
 /// by `min <n>` and `max <n>`.
