@@ -48,6 +48,7 @@ from reflect_parser import (  # noqa: F401
     HandlerInfo,
     parse_header,
     parse_header_full,
+    headers_read,
     parse_annot_args,
     parse_amsg_args,
     parse_radio_spec,
@@ -404,9 +405,14 @@ def main():
     parser.add_argument('--asset-root', dest='asset_root', type=Path, default=None,
                         help='Directory the --blueprint paths are relative to.')
     parser.add_argument('--depfile', dest='depfile', type=Path, default=None,
-                        help='Write a Make-style depfile for --instance-views. Nested '
-                             'blueprints are only discovered by reading the files, so the '
-                             'build cannot state the dependency list up front.')
+                        help='Write a Make-style depfile. For --instance-views, the nested '
+                             'blueprints read; for header generation, every included header '
+                             'read to resolve enums. Either is only known by reading the '
+                             'files, so the build cannot state the list up front.')
+    parser.add_argument('--include-dir', dest='include_dirs', action='append', default=[], type=Path,
+                        help='A directory an #include in a reflected header is resolved '
+                             'against, so a field may name an AENUM declared in a header it '
+                             'includes. Repeatable.')
     args = parser.parse_args()
 
     if args.views_out is not None:
@@ -473,6 +479,9 @@ def main():
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     ok = True
+    # One Make-style line per header: its generated file depends on every header
+    # read while resolving its enums.
+    dependency_lines: list[str] = []
     for header in args.headers:
         header = header.resolve()
         include_path = args.include_path or _detect_include_path(header)
@@ -483,7 +492,9 @@ def main():
         # rejected header should print the reason it was rejected, not a Python
         # traceback with the reason buried at the bottom.
         try:
-            components, messages, handlers = parse_header_full(header)
+            components, messages, handlers = parse_header_full(header, args.include_dirs)
+            read = ' '.join(str(path) for path in headers_read(header, args.include_dirs))
+            dependency_lines.append(f"{args.outdir / (header.stem + '.generated.cpp')}: {header} {read}".rstrip())
             systems = parse_header_systems(header)
             events = reflect_events.parse_header_events(header)
             _check_unsupported(components, header.name)
@@ -526,6 +537,10 @@ def main():
         out = args.outdir / (header.stem + '.generated.cpp')
         out.write_text(cpp, encoding='utf-8')
         print(f'  wrote: {out}')
+
+    if args.depfile is not None:
+        args.depfile.parent.mkdir(parents=True, exist_ok=True)
+        args.depfile.write_text(''.join(line + '\n' for line in dependency_lines), encoding='utf-8')
 
     sys.exit(0 if ok else 1)
 

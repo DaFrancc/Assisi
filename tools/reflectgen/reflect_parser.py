@@ -451,7 +451,7 @@ def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
     if info is None:
         raise ValueError(
             f"{header_name}: field '{f.name}' names '{named}' as its bitmask, but no AENUM "
-            f"by that name is declared in this header.")
+            f"by that name is declared in this header or in a header it includes.")
 
     if not info.constants:
         raise ValueError(
@@ -1147,14 +1147,168 @@ def find_view_spellings(text: str) -> dict:
     return poisoned
 
 
-def parse_header(path: Path) -> list[ComponentInfo]:
+def parse_header(path: Path, include_dirs=()) -> list[ComponentInfo]:
     """Parse a header file and return all ACOMP-annotated components.
 
-    AENUM-annotated `enum class`es in the same header are collected first, and
-    any component field whose type names one is resolved to it (enum_info),
-    which is what lets reflectgen (de)serialize the field and emit its combo.
+    AENUM-annotated `enum class`es visible from the header — its own, and those
+    of the headers it includes, found through @p include_dirs — are collected
+    first, and any component field whose type names one is resolved to it
+    (enum_info), which is what lets reflectgen (de)serialize the field and emit
+    its combo.
     """
-    return parse_header_full(path)[0]
+    return parse_header_full(path, include_dirs)[0]
+
+
+# The engine's own headers, which are the only angle-bracket includes followed
+# when looking for enums: a third-party library declares no AENUM, and reading
+# one whole would cost every reflected header's generation.
+_ENGINE_INCLUDE_PREFIX = 'Assisi/'
+
+_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*([<"])([^>"\n]+)[>"]', re.M)
+
+
+def _enum_keys(fqn: str) -> list[str]:
+    """Every spelling a field may name @p fqn by: its full name and each shorter
+    qualification down to the bare name, as code inside the namespaces around
+    it would write it."""
+    parts = fqn.split('::')
+    return ['::'.join(parts[start:]) for start in range(len(parts))]
+
+
+# A preprocessor directive, with any lines it continues onto.
+_DIRECTIVE_RE = re.compile(r'^[ \t]*#(?:[^\n]*\\\n)*[^\n]*', re.M)
+
+
+def _collect_enums(text: str, path: Path) -> dict[str, EnumInfo]:
+    """Every AENUM @p text declares, keyed by each spelling of its name.
+
+    Directives are skipped first: the header that defines the annotation names
+    it in a #define, which declares no enum.
+    """
+    text = _DIRECTIVE_RE.sub('', text)
+    enums: dict[str, EnumInfo] = {}
+    ns_stack:       list[str] = []
+    ns_open_depths: list[int] = []
+    brace_depth = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ns_m = _NS_RE.match(text, i)
+        if ns_m:
+            j = ns_m.end()
+            while j < n and text[j] in ' \t\n\r':
+                j += 1
+            if j < n and text[j] == '{':
+                for p in ns_m.group(1).split('::'):
+                    ns_stack.append(p)
+                    ns_open_depths.append(brace_depth)
+                brace_depth += 1
+                i = j + 1
+                continue
+
+        aenum_m = _AENUM_RE.match(text, i)
+        if aenum_m:
+            # AENUM must be immediately followed (bar whitespace) by an
+            # `enum class`/`enum struct` with a body — anything else is a
+            # malformed annotation, which is a hard error, not a silent skip.
+            j = aenum_m.end()
+            while j < n and text[j] in ' \t\n\r':
+                j += 1
+            enum_m = _ENUM_RE.match(text, j)
+            if not enum_m:
+                snippet = ' '.join(text[j:j + 60].split())
+                raise ValueError(
+                    f"{path.name}: AENUM is not followed by an 'enum class' / 'enum struct' "
+                    f"definition (got: '{snippet}...').")
+            enum_name = enum_m.group(1)
+            size, is_signed = _enum_underlying(enum_m.group(2), enum_name, path.name)
+            body, end = _extract_brace_body(text, enum_m.end())
+            if body is None:
+                raise ValueError(f"{path.name}: AENUM enum '{enum_name}' has no '{{ ... }}' body.")
+            fqn = '::'.join(ns_stack + [enum_name]) if ns_stack else enum_name
+            info = EnumInfo(name=enum_name, fqn=fqn, constants=parse_enum_constants(body),
+                            size=size, is_signed=is_signed)
+            for key in _enum_keys(fqn):
+                enums[key] = info
+            i = end
+            continue
+
+        ch = text[i]
+        if ch == '{':
+            brace_depth += 1
+        elif ch == '}':
+            brace_depth -= 1
+            while ns_open_depths and ns_open_depths[-1] >= brace_depth:
+                ns_stack.pop()
+                ns_open_depths.pop()
+        i += 1
+    return enums
+
+
+def _included_headers(text: str, path: Path, include_dirs) -> list[Path]:
+    """The headers @p text includes that can hold an AENUM: the engine's own,
+    found through @p include_dirs, and quoted ones, found beside @p path first."""
+    found: list[Path] = []
+    for match in _INCLUDE_RE.finditer(text):
+        quoted, name = match.group(1) == '"', match.group(2).strip()
+        if not quoted and not name.startswith(_ENGINE_INCLUDE_PREFIX):
+            continue
+        candidates = ([path.parent / name] if quoted else []) + [Path(d) / name for d in include_dirs]
+        for candidate in candidates:
+            if candidate.is_file():
+                found.append(candidate.resolve())
+                break
+    return found
+
+
+def headers_read(path: Path, include_dirs) -> list[Path]:
+    """Every header @p path includes, directly or through another, that enum
+    resolution reads — what its generated code must be rebuilt after."""
+    start = path.resolve()
+    seen = {start}
+    order: list[Path] = []
+    pending = [start]
+    while pending:
+        current = pending.pop(0)
+        text = strip_comments(current.read_text(encoding='utf-8'))
+        for header in _included_headers(text, current, include_dirs):
+            if header not in seen:
+                seen.add(header)
+                order.append(header)
+                pending.append(header)
+    return order
+
+
+class _EnumScope:
+    """The AENUMs a header's fields may name: its own first, then those of every
+    header it includes. A spelling two different included enums share is
+    refused where a field uses it, so which one it meant is never a guess."""
+
+    def __init__(self, local: dict, path: Path, include_dirs):
+        self._local = local
+        self._path = path
+        self._included: dict[str, list[EnumInfo]] = {}
+        if not include_dirs:
+            return
+        for header in headers_read(path, include_dirs):
+            for key, info in _collect_enums(strip_comments(header.read_text(encoding='utf-8')), header).items():
+                known = self._included.setdefault(key, [])
+                if all(other.fqn != info.fqn for other in known):
+                    known.append(info)
+
+    def get(self, spelling: str) -> Optional[EnumInfo]:
+        key = spelling.removeprefix('::')
+        if key in self._local:
+            return self._local[key]
+        found = self._included.get(key)
+        if not found:
+            return None
+        if len(found) > 1:
+            names = ', '.join(sorted(info.fqn for info in found))
+            raise ValueError(
+                f"{self._path.name}: '{spelling}' names more than one enum the header can see "
+                f"({names}). Write the full name.")
+        return found[0]
 
 
 def parse_header_systems(path: Path) -> list:
@@ -1166,18 +1320,20 @@ def parse_header_systems(path: Path) -> list:
     return find_systems(strip_comments(path.read_text(encoding='utf-8')), path)
 
 
-def parse_header_full(path: Path) -> tuple[list, list, list]:
+def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
     """Everything a header declares: (components, messages, handlers).
 
     parse_header is the components-only facade over this, which is all most
     callers want. Systems come from parse_header_systems.
+
+    An enum-typed field may name an AENUM declared in this header or in any
+    header it includes, found through @p include_dirs — whatever C++ would let
+    the field name there.
     """
     text = strip_comments(path.read_text(encoding='utf-8'))
     components: list[ComponentInfo] = []
     messages: list = []
-    # Enum lookups, keyed by both the unqualified name and the fully-qualified
-    # spelling so a field can reference the enum either way.
-    enums: dict[str, EnumInfo] = {}
+    enums = _EnumScope(_collect_enums(text, path), path, include_dirs)
 
     ns_stack:       list[str] = []
     ns_open_depths: list[int] = []
@@ -1221,33 +1377,6 @@ def parse_header_full(path: Path) -> tuple[list, list, list]:
             pending_amsg = amsg_m.group(1)
             i = amsg_m.end()
             continue
-        aenum_m = _AENUM_RE.match(text, i)
-        if aenum_m:
-            # AENUM must be immediately followed (bar whitespace) by an
-            # `enum class`/`enum struct` with a body — anything else is a
-            # malformed annotation, which is a hard error, not a silent skip.
-            j = aenum_m.end()
-            while j < n and text[j] in ' \t\n\r':
-                j += 1
-            enum_m = _ENUM_RE.match(text, j)
-            if not enum_m:
-                snippet = ' '.join(text[j:j + 60].split())
-                raise ValueError(
-                    f"{path.name}: AENUM is not followed by an 'enum class' / 'enum struct' "
-                    f"definition (got: '{snippet}...').")
-            enum_name = enum_m.group(1)
-            size, is_signed = _enum_underlying(enum_m.group(2), enum_name, path.name)
-            body, end = _extract_brace_body(text, enum_m.end())
-            if body is None:
-                raise ValueError(f"{path.name}: AENUM enum '{enum_name}' has no '{{ ... }}' body.")
-            fqn = '::'.join(ns_stack + [enum_name]) if ns_stack else enum_name
-            info = EnumInfo(name=enum_name, fqn=fqn, constants=parse_enum_constants(body),
-                            size=size, is_signed=is_signed)
-            enums[enum_name] = info
-            enums[fqn] = info
-            i = end
-            continue
-
         # ── Struct (only matters after AMSG) ─────────────────────────────────
         if pending_amsg is not None:
             struct_m = _STRUCT_RE.match(text, i)

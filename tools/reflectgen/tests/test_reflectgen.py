@@ -2054,5 +2054,143 @@ class IncludePathTest(unittest.TestCase):
         self.assertEqual(reflectgen._detect_include_path(Path("src") / "Foo.hpp"), "Foo.hpp")
 
 
+class IncludedEnumTest(unittest.TestCase):
+    """An AENUM declared in a header the reflected one includes, as C++ sees it."""
+
+    _MODE = ("#pragma once\n#include <cstdint>\n"
+             "namespace Assisi::Other {\n"
+             "AENUM()\nenum class Mode : std::uint8_t { Near, Far, Count };\n"
+             "}\n")
+
+    def _tree(self, files: dict) -> Path:
+        """Writes @p files under a temporary include root and returns the root."""
+        root = Path(self._dir.name) / "include"
+        for relative, text in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return root
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _parse(self, root: Path, relative: str):
+        return reflect_parser.parse_header(root / relative, include_dirs=[root])
+
+    def test_an_enum_from_an_included_header_resolves_as_the_code_spells_it(self):
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Main/Config.hpp": ("#include <Assisi/Other/Mode.hpp>\n"
+                                       "namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Other::Mode mode = Other::Mode::Far; };\n}\n"),
+        })
+        info = self._parse(root, "Assisi/Main/Config.hpp")[0].fields[0].enum_info
+        self.assertIsNotNone(info)
+        self.assertEqual(info.fqn, "Assisi::Other::Mode")
+        self.assertEqual(info.constants, [("Near", 0), ("Far", 1)])
+
+    def test_the_generated_code_names_the_enum_by_its_full_name(self):
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Main/Config.hpp": ("#include <Assisi/Other/Mode.hpp>\n"
+                                       "namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Other::Mode mode = Other::Mode::Far; };\n}\n"),
+        })
+        cpp = reflectgen.generate_cpp(self._parse(root, "Assisi/Main/Config.hpp"), "Assisi/Main/Config.hpp")
+        self.assertIn("FieldType::Enum", cpp)
+        self.assertIn("static_cast<Assisi::Other::Mode>(_n)", cpp)
+
+    def test_an_enum_reached_through_another_header_resolves(self):
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Other/Layout.hpp": "#pragma once\n#include <Assisi/Other/Mode.hpp>\n",
+            "Assisi/Main/Config.hpp": ("#include <Assisi/Other/Layout.hpp>\n"
+                                       "namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Assisi::Other::Mode mode; };\n}\n"),
+        })
+        self.assertIsNotNone(self._parse(root, "Assisi/Main/Config.hpp")[0].fields[0].enum_info)
+
+    def test_a_quoted_include_beside_the_header_resolves(self):
+        root = self._tree({
+            "game/Mode.hpp": self._MODE,
+            "game/Config.hpp": ('#include "Mode.hpp"\n'
+                                "namespace Assisi::Other {\nAASSET()\n"
+                                "struct Config { AFIELD() Mode mode; };\n}\n"),
+        })
+        self.assertIsNotNone(self._parse(root, "game/Config.hpp")[0].fields[0].enum_info)
+
+    def test_an_enum_the_header_does_not_include_stays_unknown(self):
+        # Declared in the tree, but not visible from the header: C++ could not
+        # name it there either.
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Main/Config.hpp": ("namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Other::Mode mode; };\n}\n"),
+        })
+        self.assertIsNone(self._parse(root, "Assisi/Main/Config.hpp")[0].fields[0].enum_info)
+
+    def test_the_headers_own_enum_wins_over_an_included_one(self):
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Main/Config.hpp": ("#include <Assisi/Other/Mode.hpp>\n"
+                                       "namespace Assisi::Main {\n"
+                                       "AENUM()\nenum class Mode : std::uint8_t { Only };\n"
+                                       "AASSET()\nstruct Config { AFIELD() Mode mode; };\n}\n"),
+        })
+        info = self._parse(root, "Assisi/Main/Config.hpp")[0].fields[0].enum_info
+        self.assertEqual(info.fqn, "Assisi::Main::Mode")
+
+    def test_a_spelling_two_included_enums_share_is_refused(self):
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Third/Mode.hpp": ("#pragma once\nnamespace Assisi::Third {\n"
+                                      "AENUM()\nenum class Mode : std::uint8_t { Up };\n}\n"),
+            "Assisi/Main/Config.hpp": ("#include <Assisi/Other/Mode.hpp>\n#include <Assisi/Third/Mode.hpp>\n"
+                                       "namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Mode mode; };\n}\n"),
+        })
+        with self.assertRaises(ValueError) as caught:
+            self._parse(root, "Assisi/Main/Config.hpp")
+        self.assertIn("Assisi::Other::Mode", str(caught.exception))
+        self.assertIn("Assisi::Third::Mode", str(caught.exception))
+
+    def test_third_party_headers_are_not_read(self):
+        # Only the engine's own headers and quoted ones are followed: a library
+        # declares no AENUM, and reading all of one would cost every build.
+        root = self._tree({
+            "glm/glm.hpp": self._MODE,
+            "Assisi/Main/Config.hpp": ("#include <glm/glm.hpp>\n"
+                                       "namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Other::Mode mode; };\n}\n"),
+        })
+        self.assertIsNone(self._parse(root, "Assisi/Main/Config.hpp")[0].fields[0].enum_info)
+
+    def test_the_header_defining_the_annotation_is_not_read_as_using_it(self):
+        # What every reflected header includes: the macro's own definition names
+        # AENUM, and is not an enum.
+        root = self._tree({
+            "Assisi/Core/Reflect/Annotations.hpp": ("#pragma once\n#define AENUM(...)\n"
+                                                    "#define AFIELD(...) \\\n    /* nothing */\n"),
+            "Assisi/Other/Mode.hpp": "#include <Assisi/Core/Reflect/Annotations.hpp>\n" + self._MODE,
+            "Assisi/Main/Config.hpp": ("#include <Assisi/Other/Mode.hpp>\n"
+                                       "namespace Assisi::Main {\nAASSET()\n"
+                                       "struct Config { AFIELD() Other::Mode mode; };\n}\n"),
+        })
+        self.assertIsNotNone(self._parse(root, "Assisi/Main/Config.hpp")[0].fields[0].enum_info)
+
+    def test_every_header_read_is_reported_for_the_depfile(self):
+        root = self._tree({
+            "Assisi/Other/Mode.hpp": self._MODE,
+            "Assisi/Other/Layout.hpp": "#pragma once\n#include <Assisi/Other/Mode.hpp>\n",
+            "Assisi/Main/Config.hpp": "#include <Assisi/Other/Layout.hpp>\n",
+        })
+        read = reflect_parser.headers_read(root / "Assisi/Main/Config.hpp", [root])
+        names = sorted(path.name for path in read)
+        self.assertEqual(names, ["Layout.hpp", "Mode.hpp"])
+
+
 if __name__ == "__main__":
     unittest.main()
