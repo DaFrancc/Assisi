@@ -192,6 +192,8 @@ struct ScreenNode
     bool takesKeyboard = false;
     /// Plain text a player may select and copy.
     bool selectable = false;
+
+    [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
 };
 
 /// @brief A whole screen: its nodes, its traits, and what it needs installed.
@@ -213,6 +215,8 @@ struct ScreenDocument
     int32_t sortKey = kSortMenu;
 
     ScreenTraits traits;
+
+    [[nodiscard]] friend bool operator==(const ScreenDocument &, const ScreenDocument &) = default;
 };
 
 } // namespace Assisi::Mondrian

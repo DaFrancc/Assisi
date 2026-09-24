@@ -46,7 +46,7 @@ EventCatalog OneEvent()
 constexpr std::string_view kPauseMenu = R"amdn(<screen input="consume" beneath="hide" pause="true"
         sort="menu" needs="PauseMenu" align="center center"
         background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
-  <column name="panel" width="fixed 420" padding="32" gap="20"
+  <column name="panel" width="420" padding="32" gap="20"
           background="#1a1c24f0" border_width="2" border_color="#575f7a"
           corner_radius="16" corner_style="rounded" align="center start">
     <text name="title" text_size="48">Paused</text>
@@ -125,10 +125,10 @@ constexpr std::array<std::string_view, 11> kComparedControls{
 Style ListStyle()
 {
     Style style;
-    style.sizing = {Sizing::Grow(), Sizing::Fixed(150.f)};
+    style.sizing = {Sizing::Grow(), Sizing::Fixed(Px(150.f))};
     style.direction = Direction::Column;
     style.background = {0.0588235f, 0.0705882f, 0.0901961f, 1.f};
-    style.cornerRadius = 10.f;
+    style.cornerRadius = Px(10.f);
     style.cornerStyle = CornerStyle::Rounded;
     style.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
     style.scrollSmoothing = 0.12f;
@@ -297,15 +297,15 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
     CHECK(panel.parent == 0);
     CHECK(panel.style.direction == Direction::Column);
     CHECK(panel.style.sizing[0].kind == SizingKind::Fixed);
-    CHECK(panel.style.sizing[0].value == 420.f);
-    CHECK(panel.style.padding.left == 32.f);
-    CHECK(panel.style.gap == 20.f);
+    CHECK(panel.style.sizing[0].value == Px(420.f));
+    CHECK(panel.style.padding.left == Px(32.f));
+    CHECK(panel.style.gap == Px(20.f));
     CHECK(panel.style.cornerStyle == CornerStyle::Rounded);
-    CHECK(panel.style.cornerRadius == 16.f);
+    CHECK(panel.style.cornerRadius == Px(16.f));
 
     const ScreenNode &title = NodeNamed(document, "title");
     CHECK(title.text == "Paused");
-    CHECK(title.style.textSize == 48.f);
+    CHECK(title.style.textSize == Px(48.f));
     CHECK(title.parent == IndexOf(document, "panel"));
 
     const ScreenNode &buttons = NodeNamed(document, "buttons");
@@ -317,8 +317,8 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
     CHECK(resume.action == ActionKind::Verb);
     CHECK(resume.verb == ScreenVerb::Hide);
     CHECK(resume.parent == IndexOf(document, "buttons"));
-    CHECK(resume.style.padding.left == 28.f);
-    CHECK(resume.style.padding.top == 10.f);
+    CHECK(resume.style.padding.left == Px(28.f));
+    CHECK(resume.style.padding.top == Px(10.f));
 
     const ScreenNode &quit = NodeNamed(document, "quit");
     CHECK(quit.action == ActionKind::Event);
@@ -404,6 +404,19 @@ MarkupError ColourRefusedOnLine3(std::string_view colour)
     return error;
 }
 
+/// The error for a column on line 3 carrying @p attribute, written whole.
+MarkupError AttributeRefusedOnLine3(std::string_view attribute)
+{
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <row />\n"
+                                      "  <column " +
+                                      std::string{attribute} +
+                                      " />\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    return error;
+}
+
 } // namespace
 
 TEST_CASE("ScreenCompiler: a colour that could mean two things, or nothing, is refused where it was written")
@@ -480,15 +493,67 @@ TEST_CASE("ScreenCompiler: every sizing form reads")
     CHECK(Compiled(R"(<screen width="fit" />)").nodes[0].style.sizing[0].kind == SizingKind::Fit);
     CHECK(Compiled(R"(<screen width="grow" />)").nodes[0].style.sizing[0].kind == SizingKind::Grow);
 
-    const Sizing fixed = Compiled(R"(<screen width="fixed 420" />)").nodes[0].style.sizing[0];
+    const Sizing fixed = Compiled(R"(<screen width="420" />)").nodes[0].style.sizing[0];
     CHECK(fixed.kind == SizingKind::Fixed);
-    CHECK(fixed.value == 420.f);
+    CHECK(fixed.value == Px(420.f));
 
-    const Sizing bounded = Compiled(R"(<screen width="percent 0.5 min 100 max 800" />)").nodes[0].style.sizing[0];
-    CHECK(bounded.kind == SizingKind::Percent);
-    CHECK(bounded.value == 0.5f);
-    CHECK(bounded.min == 100.f);
-    CHECK(bounded.max == 800.f);
+    const Sizing bounded = Compiled(R"(<screen width="50% min 100 max 80vw" />)").nodes[0].style.sizing[0];
+    CHECK(bounded.kind == SizingKind::Fixed);
+    CHECK(bounded.value == Percent(50.f));
+    CHECK(bounded.min == Px(100.f));
+    CHECK(bounded.max == Vw(80.f));
+
+    const Sizing grown = Compiled(R"(<screen width="grow min 10vh" />)").nodes[0].style.sizing[0];
+    CHECK(grown.kind == SizingKind::Grow);
+    CHECK(grown.min == Vh(10.f));
+}
+
+TEST_CASE("ScreenCompiler: every length unit reads")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <column name="box" padding="1em 5% 2vw 3" gap="1.5vh" text_size="2em" corner_radius="50%"
+          border_width="0.25vw" scroll_bar_min_length="4vh" />
+  <text name="floater" float="true" float_offset="2vw 2vh" />
+</screen>)amdn");
+
+    const Style &box = NodeNamed(document, "box").style;
+    CHECK(box.padding.left == Em(1.f));
+    CHECK(box.padding.top == Percent(5.f));
+    CHECK(box.padding.right == Vw(2.f));
+    CHECK(box.padding.bottom == Px(3.f));
+    CHECK(box.gap == Vh(1.5f));
+    CHECK(box.textSize == Em(2.f));
+    CHECK(box.cornerRadius == Percent(50.f));
+    CHECK(box.borderWidth == Vw(0.25f));
+    CHECK(box.scrollBarMinLength == Vh(4.f));
+
+    const Style &floater = NodeNamed(document, "floater").style;
+    CHECK(floater.floating.offset[0] == Vw(2.f));
+    CHECK(floater.floating.offset[1] == Vh(2.f));
+}
+
+TEST_CASE("ScreenCompiler: a length that is not one is refused where it is written")
+{
+    SUBCASE("a px suffix, since a bare number already is one")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(padding="5px")").message.find("5px") != std::string::npos);
+    }
+
+    SUBCASE("a unit apart from its number")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(padding="5 %")").message.find('%') != std::string::npos);
+    }
+
+    SUBCASE("a unit that is not one")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(gap="1e")").message.find("1e") != std::string::npos);
+    }
+
+    SUBCASE("the old fixed and percent words")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(width="fixed 200")").message.find("not a size") != std::string::npos);
+        CHECK(AttributeRefusedOnLine3(R"(height="percent 0.5")").message.find('%') != std::string::npos);
+    }
 }
 
 TEST_CASE("ScreenCompiler: a sort key is a named layer or a number between them")
@@ -775,7 +840,7 @@ TEST_CASE("ScreenCompiler: a named style is carried and checked against nothing"
     // should cook, and start resolving when there is.
     const ScreenDocument document = Compiled(R"(<screen><column style="Panel" gap="4" /></screen>)");
     CHECK(document.nodes[1].styleName == "Panel");
-    CHECK(document.nodes[1].style.gap == 4.f);
+    CHECK(document.nodes[1].style.gap == Px(4.f));
 }
 
 TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
@@ -878,23 +943,23 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
 
     const ScreenNode &panel = NodeNamed(*document, "panel");
     CHECK(panel.style.sizing[0].kind == SizingKind::Fixed);
-    CHECK(panel.style.sizing[0].value == 420.f);
-    CHECK(panel.style.padding.left == 32.f);
-    CHECK(panel.style.gap == 20.f);
-    CHECK(panel.style.borderWidth == 2.f);
-    CHECK(panel.style.cornerRadius == 16.f);
+    CHECK(panel.style.sizing[0].value == Px(420.f));
+    CHECK(panel.style.padding.left == Px(32.f));
+    CHECK(panel.style.gap == Px(20.f));
+    CHECK(panel.style.borderWidth == Px(2.f));
+    CHECK(panel.style.cornerRadius == Px(16.f));
     CHECK(panel.style.cornerStyle == CornerStyle::Rounded);
     CHECK(panel.style.direction == Direction::Column);
 
     CHECK(NodeNamed(*document, "title").text == "Paused");
-    CHECK(NodeNamed(*document, "title").style.textSize == 48.f);
+    CHECK(NodeNamed(*document, "title").style.textSize == Px(48.f));
 
     const ScreenNode &resume = NodeNamed(*document, "resume");
     CHECK(resume.text == "Resume");
     CHECK(resume.action == ActionKind::Verb);
     CHECK(resume.verb == ScreenVerb::Hide);
-    CHECK(resume.style.textSize == 28.f);
-    CHECK(resume.style.cornerRadius == 10.f);
+    CHECK(resume.style.textSize == Px(28.f));
+    CHECK(resume.style.cornerRadius == Px(10.f));
 
     const ScreenNode &quit = NodeNamed(*document, "quit");
     CHECK(quit.text == "Quit");
@@ -946,7 +1011,7 @@ TEST_CASE("ScreenCompiler: every control compiles to the node that builds it")
     // A field made with no style of its own is an invisible box, and a player
     // cannot type into what they cannot see: the document carries the look the
     // node API would have given it.
-    CHECK(player.style.borderWidth > 0.f);
+    CHECK(player.style.borderWidth.value > 0.f);
     CHECK(player.style.background.a > 0.f);
     CHECK(player.takesKeyboard);
 
@@ -1199,8 +1264,8 @@ TEST_CASE("ScreenCompiler: an instance is its template's root, with the instance
     const ScreenNode &quit = NodeNamed(document, "quit");
     CHECK(quit.widget == BuiltinWidget::Button);
     // The template's, where the instance says nothing.
-    CHECK(quit.style.padding.left == 28.f);
-    CHECK(quit.style.textSize == 28.f);
+    CHECK(quit.style.padding.left == Px(28.f));
+    CHECK(quit.style.textSize == Px(28.f));
     // The instance's, where both do.
     CHECK(quit.style.background.r == doctest::Approx(1.f));
     CHECK(quit.text == "Quit");
@@ -1226,7 +1291,7 @@ TEST_CASE("ScreenCompiler: an instance's children follow its template's")
     CHECK(document.nodes[heading].parent == box);
     CHECK(document.nodes[extra].parent == box);
     CHECK(heading < extra);
-    CHECK(document.nodes[box].style.gap == 4.f);
+    CHECK(document.nodes[box].style.gap == Px(4.f));
 }
 
 TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-expanded twin does")

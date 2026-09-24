@@ -100,11 +100,16 @@ struct MarkupCall
 /// 0-to-255 value in `rgbf`, a fraction in `rgb` — each have one fix to name.
 [[nodiscard]] ParsedColor ParseColor(std::string_view text);
 
-/// @brief `fit`, `grow`, `fixed <n>` or `percent <n>`, each optionally followed
-/// by `min <n>` and `max <n>`.
+/// @brief A number and its unit, with nothing between them: `16` in UI pixels,
+/// or `5%`, `2vw`, `2vh`, `0.5em`. Anything else — `16px`, `5 %`, `1e` — is
+/// nullopt.
+[[nodiscard]] std::optional<Length> ParseLength(std::string_view text);
+
+/// @brief `fit`, `grow`, or a length, which is a fixed size, each optionally
+/// followed by `min <length>` and `max <length>`.
 [[nodiscard]] std::optional<Sizing> ParseSizing(std::string_view text);
 
-/// @brief One number for all four edges, or four for left, top, right, bottom.
+/// @brief One length for all four edges, or four for left, top, right, bottom.
 [[nodiscard]] std::optional<Padding> ParsePadding(std::string_view text);
 
 /// @brief Two alignments, across then down.

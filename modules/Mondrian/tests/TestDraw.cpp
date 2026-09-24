@@ -28,7 +28,7 @@ using Assisi::Math::ColorSpace;
 Style Filled(float width, float height, float red)
 {
     Style style;
-    style.sizing = {Sizing::Fixed(width), Sizing::Fixed(height)};
+    style.sizing = {Sizing::Fixed(Px(width)), Sizing::Fixed(Px(height))};
     style.background = Assisi::Math::Color4<ColorSpace::Srgb>{red, 0.f, 0.f, 1.f};
     return style;
 }
@@ -62,9 +62,9 @@ TEST_CASE("Draw: a box draws its background, border and corners where layout put
 {
     NodeTree tree;
     Style style = Filled(100.f, 50.f, 0.5f);
-    style.borderWidth = 2.f;
+    style.borderWidth = Px(2.f);
     style.borderColor = Assisi::Math::Color4<ColorSpace::Srgb>{1.f, 1.f, 1.f, 1.f};
-    style.cornerRadius = 8.f;
+    style.cornerRadius = Px(8.f);
     style.cornerStyle = CornerStyle::Rounded;
     tree.SetStyle(tree.Create(tree.Root()), style);
 
@@ -83,10 +83,10 @@ TEST_CASE("Draw: a border keeps at least one device pixel when the UI is scaled 
 {
     NodeTree tree;
     Style thin = Filled(100.f, 100.f, 0.25f);
-    thin.borderWidth = 1.f;
+    thin.borderWidth = Px(1.f);
     tree.SetStyle(tree.Create(tree.Root()), thin);
     Style thick = Filled(100.f, 100.f, 0.75f);
-    thick.borderWidth = 3.f;
+    thick.borderWidth = Px(3.f);
     tree.SetStyle(tree.Create(tree.Root()), thick);
 
     const DrawList list = Draw(tree, FixtureFont(), {960, 540}, 0.5f);
@@ -128,7 +128,7 @@ TEST_CASE("Draw: text draws from the font atlas inside its node, clipped with it
     const NodeId list = tree.Create(tree.Root());
     tree.SetStyle(list, listStyle);
     Style labelStyle;
-    labelStyle.textSize = kFixtureSize;
+    labelStyle.textSize = Px(kFixtureSize);
     const NodeId label = tree.Create(list);
     tree.SetStyle(label, labelStyle);
     tree.SetText(label, "AA");
@@ -177,7 +177,7 @@ TEST_CASE("Draw: what a control paints behind the text comes before the glyphs i
     constexpr float kFieldWidth = 200.f;
     const NodeId field = tree.Create(tree.Root());
     Style style;
-    style.sizing = {Sizing::Fixed(kFieldWidth), Sizing::Fit()};
+    style.sizing = {Sizing::Fixed(Px(kFieldWidth)), Sizing::Fit()};
     tree.SetStyle(field, style);
     tree.SetText(field, "AAA");
     tree.SetBehaviour(field, static_cast<uint32_t>(BuiltinWidget::TextField));

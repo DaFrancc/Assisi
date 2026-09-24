@@ -44,6 +44,11 @@ constexpr std::array<NamedEnum<ScreenVerb>, 2> kVerbs{{
 }};
 static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count), "every verb needs a spelling");
 
+/// The size keywords a bare length replaced, refused by name so the message
+/// can say what to write instead.
+constexpr std::string_view kFixedWord = "fixed";
+constexpr std::string_view kPercentWord = "percent";
+
 /// What opens and closes a call, for the signatures a message spells out.
 constexpr char kCallOpen = '(';
 constexpr char kCallClose = ')';
@@ -136,19 +141,19 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
     }
     if (name == "gap")
     {
-        return Read(style.gap, value, ParseFloat);
+        return Read(style.gap, value, ParseLength);
     }
     if (name == "text_size")
     {
-        return Read(style.textSize, value, ParseFloat);
+        return Read(style.textSize, value, ParseLength);
     }
     if (name == "border_width")
     {
-        return Read(style.borderWidth, value, ParseFloat);
+        return Read(style.borderWidth, value, ParseLength);
     }
     if (name == "corner_radius")
     {
-        return Read(style.cornerRadius, value, ParseFloat);
+        return Read(style.cornerRadius, value, ParseLength);
     }
     if (name == "corner_style")
     {
@@ -172,7 +177,7 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
     }
     if (name == "scroll_bar_min_length")
     {
-        return Read(style.scrollBarMinLength, value, ParseFloat);
+        return Read(style.scrollBarMinLength, value, ParseLength);
     }
     if (name == "scroll_bars")
     {
@@ -197,13 +202,13 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
         {
             return Applied::BadValue;
         }
-        const std::optional<float> x = ParseFloat(words[0]);
-        const std::optional<float> y = ParseFloat(words[1]);
+        const std::optional<Length> x = ParseLength(words[0]);
+        const std::optional<Length> y = ParseLength(words[1]);
         if (!x || !y)
         {
             return Applied::BadValue;
         }
-        style.floating.offset = {.x = *x, .y = *y};
+        style.floating.offset = {*x, *y};
         return Applied::Yes;
     }
     if (name == "float_anchor")
@@ -896,6 +901,20 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         {
             return std::unexpected(At(attribute, "a scroll says which axes it scrolls with 'axes', not "
                                                  "'scroll_bars'."));
+        }
+
+        // The size keywords a length replaced, each with one fix to name.
+        if (attribute.name == "width" || attribute.name == "height")
+        {
+            const std::vector<std::string_view> words = SplitWords(attribute.value);
+            if (!words.empty() && (words[0] == kFixedWord || words[0] == kPercentWord))
+            {
+                const std::string example = words[0] == kFixedWord ? "420" : "50%";
+                return std::unexpected(At(attribute, "'" + std::string{words[0]} +
+                                                         "' is not a size: write the length " + "itself, such as " +
+                                                         attribute.name + "=\"" + example +
+                                                         "\". A percentage is written with %, from 0 to 100."));
+            }
         }
 
         if (attribute.name == "name")

@@ -71,14 +71,14 @@ ScreenDocument PauseMenu()
     panel.parent = 0;
     panel.name = "panel";
     panel.style.direction = Direction::Column;
-    panel.style.gap = 20.f;
+    panel.style.gap = Px(20.f);
     document.nodes.push_back(panel);
 
     ScreenNode title;
     title.parent = 1;
     title.name = "title";
     title.text = "Paused";
-    title.style.textSize = 48.f;
+    title.style.textSize = Px(48.f);
     document.nodes.push_back(title);
 
     ScreenNode resume;
@@ -88,7 +88,7 @@ ScreenDocument PauseMenu()
     resume.widget = BuiltinWidget::Button;
     resume.action = ActionKind::Verb;
     resume.verb = ScreenVerb::Hide;
-    resume.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    resume.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     document.nodes.push_back(resume);
 
     ScreenNode quit;
@@ -98,7 +98,7 @@ ScreenDocument PauseMenu()
     quit.widget = BuiltinWidget::Button;
     quit.action = ActionKind::Event;
     quit.eventName = "Game::QuitRequested";
-    quit.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    quit.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     document.nodes.push_back(quit);
 
     document.focus = 3; // Resume
@@ -204,7 +204,7 @@ ScreenNode Stepper(std::string_view name, uint32_t target, int32_t moves)
     button.verb = ScreenVerb::Step;
     button.target = target;
     button.moves = moves;
-    button.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    button.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     return button;
 }
 
@@ -348,7 +348,7 @@ TEST_CASE("ScreenLoader: a document becomes the tree it describes")
     const NodeId title = screen.Find("title");
     REQUIRE(screen.Tree().IsAlive(title));
     CHECK(screen.Tree().Get(title)->text == "Paused");
-    CHECK(screen.Tree().Get(title)->style.textSize == 48.f);
+    CHECK(screen.Tree().Get(title)->style.textSize.value == 48.f);
 
     // The parent link the flat table describes, rebuilt.
     const NodeId panel = screen.Find("panel");
@@ -493,7 +493,7 @@ TEST_CASE("ScreenLoader: a named style is carried and ignored")
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
     // The node's own attributes are what it looks like, untouched by the name.
-    CHECK(loaded->screen->Tree().Get(loaded->screen->Find("panel"))->style.gap == 20.f);
+    CHECK(loaded->screen->Tree().Get(loaded->screen->Find("panel"))->style.gap.value == 20.f);
 }
 
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")

@@ -31,7 +31,7 @@ namespace Assisi::Mondrian
 /// envelope's.
 ///
 /// Part of the screen cooker's cache key, so bumping it re-cooks every screen.
-inline constexpr uint8_t kScreenPayloadVersion = 4;
+inline constexpr uint8_t kScreenPayloadVersion = 5;
 
 /// @brief Why bytes did not read as a cooked screen.
 enum class CookedScreenError : uint8_t

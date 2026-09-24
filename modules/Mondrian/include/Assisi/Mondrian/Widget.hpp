@@ -235,6 +235,8 @@ struct SliderRange
     float min = 0.f;
     float max = 1.f;
     float step = 0.1f;
+
+    [[nodiscard]] friend constexpr bool operator==(const SliderRange &, const SliderRange &) = default;
 };
 
 /// @brief Whether a slider carries a button at each end to step it.

@@ -139,7 +139,7 @@ bool ApplyBounds(std::span<const std::string_view> words, Sizing &sizing)
         {
             return false;
         }
-        const std::optional<float> bound = ParseFloat(words[at + 1]);
+        const std::optional<Length> bound = ParseLength(words[at + 1]);
         if (!bound)
         {
             return false;
@@ -377,6 +377,32 @@ ParsedColor ParseColor(std::string_view text)
     return ReadColorCall(**call);
 }
 
+std::optional<Length> ParseLength(std::string_view text)
+{
+    // The unit names CSS gives them. No `px`: a bare number is already UI
+    // pixels, and one spelling per thing.
+    static constexpr std::array<NamedEnum<LengthUnit>, 4> kUnits{
+        {{"%", LengthUnit::Percent}, {"vw", LengthUnit::Vw}, {"vh", LengthUnit::Vh}, {"em", LengthUnit::Em}}};
+    for (const NamedEnum<LengthUnit> &unit : kUnits)
+    {
+        if (text.size() > unit.name.size() && text.ends_with(unit.name))
+        {
+            const std::optional<float> value = ParseFloat(text.substr(0, text.size() - unit.name.size()));
+            if (!value)
+            {
+                return std::nullopt;
+            }
+            return Length{.value = *value, .unit = unit.value};
+        }
+    }
+    const std::optional<float> pixels = ParseFloat(text);
+    if (!pixels)
+    {
+        return std::nullopt;
+    }
+    return Px(*pixels);
+}
+
 std::optional<Sizing> ParseSizing(std::string_view text)
 {
     const std::vector<std::string_view> words = SplitWords(text);
@@ -385,8 +411,9 @@ std::optional<Sizing> ParseSizing(std::string_view text)
         return std::nullopt;
     }
 
+    // A bare length is a fixed size, as in CSS: anything not `fit` or `grow` is
+    // exactly the length it says, in whatever unit it says it in.
     Sizing sizing;
-    std::size_t consumed = 1;
     if (words[0] == "fit")
     {
         sizing = Sizing::Fit();
@@ -395,26 +422,16 @@ std::optional<Sizing> ParseSizing(std::string_view text)
     {
         sizing = Sizing::Grow();
     }
-    else if (words[0] == "fixed" || words[0] == "percent")
+    else if (const std::optional<Length> length = ParseLength(words[0]))
     {
-        if (words.size() < 2)
-        {
-            return std::nullopt;
-        }
-        const std::optional<float> amount = ParseFloat(words[1]);
-        if (!amount)
-        {
-            return std::nullopt;
-        }
-        sizing = words[0] == "fixed" ? Sizing::Fixed(*amount) : Sizing::Percent(*amount);
-        consumed = 2;
+        sizing = Sizing::Fixed(*length);
     }
     else
     {
         return std::nullopt;
     }
 
-    if (!ApplyBounds(std::span{words}.subspan(consumed), sizing))
+    if (!ApplyBounds(std::span{words}.subspan(1), sizing))
     {
         return std::nullopt;
     }
@@ -429,10 +446,10 @@ std::optional<Padding> ParsePadding(std::string_view text)
         return std::nullopt;
     }
 
-    std::array<float, kPaddingPerEdge> edges{};
+    std::array<Length, kPaddingPerEdge> edges{};
     for (std::size_t edge = 0; edge < words.size(); ++edge)
     {
-        const std::optional<float> value = ParseFloat(words[edge]);
+        const std::optional<Length> value = ParseLength(words[edge]);
         if (!value)
         {
             return std::nullopt;

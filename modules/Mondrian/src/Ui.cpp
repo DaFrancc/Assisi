@@ -785,7 +785,7 @@ void Ui::DrawFocusRing(const Screen &screen)
                     .y = node->rect.y - gap - width,
                     .width = node->rect.width + (2.f * (gap + width)),
                     .height = node->rect.height + (2.f * (gap + width))};
-    const float radius = focused->style.cornerRadius > 0.f ? (focused->style.cornerRadius * scale) + gap + width : 0.f;
+    const float radius = node->cornerRadius > 0.f ? node->cornerRadius + gap + width : 0.f;
     _drawList.SetDefaultClip(node->clip);
     _drawList.Quad(ring)
         .Fill({0.f, 0.f, 0.f, 0.f})

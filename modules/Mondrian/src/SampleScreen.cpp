@@ -22,29 +22,28 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kBodyText{0.80f, 0.82f, 0.86f, 1.
 constexpr Math::Color4<Math::ColorSpace::Srgb> kListColor{0.06f, 0.07f, 0.09f, 1.f};
 constexpr Rect kWholeTexture{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
 
-/// Lengths in UI pixels.
-constexpr float kPanelWidth = 720.f;
-constexpr float kPanelPadding = 32.f;
-constexpr float kPanelGap = 20.f;
-constexpr float kPanelRadius = 16.f;
-constexpr float kPanelBorderWidth = 2.f;
-constexpr float kPictureSide = 72.f;
-constexpr float kPictureRadius = 12.f;
-constexpr float kTitleSize = 48.f;
-constexpr float kBodySize = 24.f;
-constexpr float kButtonSize = 28.f;
-constexpr float kButtonRadius = 10.f;
-constexpr Padding kButtonPadding{.left = 28.f, .top = 10.f, .right = 28.f, .bottom = 10.f};
+constexpr Length kPanelWidth = Px(720.f);
+constexpr Length kPanelPadding = Px(32.f);
+constexpr Length kPanelGap = Px(20.f);
+constexpr Length kPanelRadius = Px(16.f);
+constexpr Length kPanelBorderWidth = Px(2.f);
+constexpr Length kPictureSide = Px(72.f);
+constexpr Length kPictureRadius = Px(12.f);
+constexpr Length kTitleSize = Px(48.f);
+constexpr Length kBodySize = Px(24.f);
+constexpr Length kButtonSize = Px(28.f);
+constexpr Length kButtonRadius = Px(10.f);
+constexpr Padding kButtonPadding{.left = Px(28.f), .top = Px(10.f), .right = Px(28.f), .bottom = Px(10.f)};
 constexpr SliderRange kSliderRange{.min = 0.f, .max = 100.f, .step = 5.f};
 constexpr float kSliderStart = 60.f;
 constexpr SliderRange kStepRange{.min = 0.f, .max = 3.f, .step = 1.f};
 constexpr int32_t kSliderSteps = 4;
 constexpr int32_t kSliderStep = 1;
-constexpr float kListHeight = 150.f;
+constexpr Length kListHeight = Px(150.f);
 constexpr float kScrollSmoothing = 0.12f;
-constexpr float kBadgeSize = 20.f;
-constexpr float kBadgeRadius = 16.f;
-constexpr Padding kBadgePadding{.left = 14.f, .top = 4.f, .right = 14.f, .bottom = 4.f};
+constexpr Length kBadgeSize = Px(20.f);
+constexpr Length kBadgeRadius = Px(16.f);
+constexpr Padding kBadgePadding{.left = Px(14.f), .top = Px(4.f), .right = Px(14.f), .bottom = Px(4.f)};
 
 /// One field of many lines for each way of being tall, side by side so that
 /// typing into them shows what the three do differently. Their text says which

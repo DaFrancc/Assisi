@@ -84,7 +84,7 @@ NodeId Aim(Screen &screen, std::string_view name)
 {
     Style style;
     style.floating.enabled = true;
-    style.sizing = {Sizing::Fixed(kButtonSide), Sizing::Fixed(kButtonSide)};
+    style.sizing = {Sizing::Fixed(Px(kButtonSide)), Sizing::Fixed(Px(kButtonSide))};
     const std::expected<ButtonId, NameError> id = screen.AddButton(screen.Root(), name, name);
     REQUIRE(id.has_value());
     screen.Tree().SetStyle(id->node, style);

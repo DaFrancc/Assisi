@@ -410,7 +410,7 @@ ScrollBarPlace PlaceScrollBar(const WidgetView &view, Axis axis)
     }
 
     const float thumbLength =
-        std::clamp(length * (length / content), std::min(length, node.style.scrollBarMinLength * view.scale), length);
+        std::clamp(length * (length / content), std::min(length, view.layout->scrollBarMinLength), length);
     place.travel = length - thumbLength;
     const float offset = Along(node.scrollOffset, axis) * view.scale;
     const float along = hidden > 0.f ? place.travel * std::clamp(offset / hidden, 0.f, 1.f) : 0.f;

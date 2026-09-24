@@ -267,8 +267,8 @@ TEST_CASE("Widget: a direction the widget handles does not also move focus")
     Probe probe;
     Style style;
     style.floating.enabled = true;
-    style.floating.offset = {.x = 600.f, .y = 0.f};
-    style.sizing = {Sizing::Fixed(100.f), Sizing::Fixed(40.f)};
+    style.floating.offset = {Px(600.f), Px(0.f)};
+    style.sizing = {Sizing::Fixed(Px(100.f)), Sizing::Fixed(Px(40.f))};
     const NodeId neighbour = probe.screen->Tree().Create(probe.screen->Tree().Root());
     probe.screen->Tree().SetStyle(neighbour, style);
     probe.screen->Tree().SetFocusable(neighbour, true);

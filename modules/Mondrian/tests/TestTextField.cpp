@@ -23,6 +23,12 @@ namespace
 constexpr Extent kScreen{1280, 720};
 constexpr TextureId kFontTexture{9};
 
+/// A fixed size in UI pixels.
+Sizing FixedPx(float pixels)
+{
+    return Sizing::Fixed(Px(pixels));
+}
+
 /// Wide enough that the sample text in these cases fits without scrolling.
 constexpr float kFieldTestWidth = 600.f;
 /// Narrow enough that the fixture's text wraps to several lines.
@@ -77,7 +83,7 @@ struct Field
         // the pointer can hit.
         Style style = screen->Tree().Get(field.node)->style;
         style.floating.enabled = true;
-        style.sizing = {Sizing::Fixed(kFieldTestWidth), Sizing::Fit()};
+        style.sizing = {FixedPx(kFieldTestWidth), Sizing::Fit()};
         screen->Tree().SetStyle(field.node, style);
         ui.SetFocus(*screen, field.node);
         Step({});
@@ -88,7 +94,7 @@ struct Field
     Field(TextHeight height, uint32_t lines) : Field(TextLines::Multi)
     {
         Style style = screen->Tree().Get(field.node)->style;
-        style.sizing = {Sizing::Fixed(kLinedTestWidth), Sizing::Fit()};
+        style.sizing = {FixedPx(kLinedTestWidth), Sizing::Fit()};
         screen->Tree().SetStyle(field.node, style);
         screen->SetHeight(field, height, lines);
         Step({});
@@ -449,7 +455,7 @@ TEST_CASE("TextField: the caret is as tall as the line it stands on, not as tall
     // all of them, and it moves down as the caret does.
     Field many(TextLines::Multi);
     Style style = many.screen->Tree().Get(many.field.node)->style;
-    style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
+    style.sizing = {FixedPx(120.f), Sizing::Fit()};
     many.screen->Tree().SetStyle(many.field.node, style);
     many.Step({});
     many.Type("AAAA AAAA AAAA AAAA");
@@ -473,7 +479,7 @@ TEST_CASE("TextField: a field of many lines wraps, and the caret moves between t
 {
     Field field(TextLines::Multi);
     Style style = field.screen->Tree().Get(field.field.node)->style;
-    style.sizing = {Sizing::Fixed(120.f), Sizing::Fit()};
+    style.sizing = {FixedPx(120.f), Sizing::Fit()};
     field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
     const float oneLine = field.Box().height;
@@ -1057,7 +1063,9 @@ TEST_CASE("TextField: a field does not grow with what is typed into it")
     // Sized by its parent rather than fixed, which is what a field in a row
     // gets and what made it grow with its text.
     Style style = field.screen->Tree().Get(field.field.node)->style;
-    style.sizing = {Sizing{.min = 80.f, .kind = SizingKind::Grow}, Sizing::Fit()};
+    Sizing across = Sizing::Grow();
+    across.min = Px(80.f);
+    style.sizing = {across, Sizing::Fit()};
     field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
 
@@ -1073,7 +1081,7 @@ TEST_CASE("TextField: what runs past the ends of a field is clipped to it")
 {
     Field field;
     Style style = field.screen->Tree().Get(field.field.node)->style;
-    style.sizing = {Sizing::Fixed(80.f), Sizing::Fit()};
+    style.sizing = {FixedPx(80.f), Sizing::Fit()};
     field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
     field.Type("AAAAAAAAAAAAAAAAAAAA");
@@ -1088,7 +1096,7 @@ TEST_CASE("TextField: a long single line scrolls to keep the caret in sight")
 {
     Field field;
     Style style = field.screen->Tree().Get(field.field.node)->style;
-    style.sizing = {Sizing::Fixed(80.f), Sizing::Fit()};
+    style.sizing = {FixedPx(80.f), Sizing::Fit()};
     field.screen->Tree().SetStyle(field.field.node, style);
     field.Step({});
 

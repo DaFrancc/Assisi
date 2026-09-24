@@ -17,6 +17,7 @@
 #include <Assisi/Mondrian/ScaleMatch.hpp>
 #include <Assisi/Mondrian/Text.hpp>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -33,23 +34,52 @@ inline constexpr float kReferenceHeight = 1080.f;
 /// measured against the reference, times the player's @p userScale.
 [[nodiscard]] float UiScale(Extent viewport, float userScale, ScaleMatch match);
 
+/// @brief Space inside a node's edges, resolved to device pixels.
+struct Insets
+{
+    float left = 0.f;
+    float top = 0.f;
+    float right = 0.f;
+    float bottom = 0.f;
+};
+
 /// @brief One node's result.
+///
+/// Every length the node's style gives is resolved here once, in device
+/// pixels, so that nothing after layout needs the parent, the viewport or the
+/// scale to know what a length meant.
 struct LayoutNode
 {
     static constexpr uint32_t kNoText = std::numeric_limits<uint32_t>::max();
 
     Rect rect;           ///< device pixels, edges whole
     Rect clip = kNoClip; ///< what the node's own quads are clipped to
-    Point contentSize;   ///< the extent of its content, which exceeds rect where it scrolls
-    Point minSize;       ///< the least it can shrink to without clipping its content
+    Insets padding;
+    Point contentSize; ///< the extent of its content, which exceeds rect where it scrolls
+    Point minSize;     ///< the least it can shrink to without clipping its content
+    /// What its content measured, and the least that content shrinks to, per
+    /// axis, before padding and gaps. Kept so the node's length can be worked
+    /// out again once a `%` padding or gap has a parent to be a share of.
+    Point content;
+    Point minContent;
+    /// The least and the most its sizing allows on each axis; kUnbounded where
+    /// no maximum binds.
+    std::array<float, kAxisCount> minLength{};
+    std::array<float, kAxisCount> maxLength{kUnbounded, kUnbounded};
+    float gap = 0.f;
+    float textSize = 0.f;
+    float borderWidth = 0.f;
+    float cornerRadius = 0.f;
+    float scrollBarMinLength = 0.f;
     /// How far a single line of text is shifted left to keep its caret in
     /// sight, in device pixels. Zero for everything that is not a field.
     float textScroll = 0.f;
+    uint32_t text = kNoText; ///< index into LayoutResult::texts
+    uint32_t generation = 0;
+    uint32_t inFlowChildren = 0;
     /// Whether what was laid out is the field's placeholder rather than its
     /// text, which is drawn fainter to say it is not there yet.
     bool placeholder = false;
-    uint32_t text = kNoText; ///< index into LayoutResult::texts
-    uint32_t generation = 0;
     bool placed = false; ///< false for a free slot and a hidden subtree
 };
 
@@ -75,7 +105,7 @@ void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Fon
 ///
 /// Anything asking what text would do in a node goes through this, so that the
 /// answer cannot differ from what layout itself used.
-[[nodiscard]] float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale);
+[[nodiscard]] float TextWrapWidth(const LayoutNode &placed);
 
 /// @brief Where @p placed's text begins, in device pixels: inside its padding,
 /// on whole pixels so the layout's own whole-pixel lines land on them, and
@@ -83,6 +113,6 @@ void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Fon
 ///
 /// Drawing and hit testing both go through this, which is what keeps a caret
 /// under the character it was clicked on.
-[[nodiscard]] Point TextOrigin(const LayoutNode &placed, const Style &style, float scale);
+[[nodiscard]] Point TextOrigin(const LayoutNode &placed);
 
 } // namespace Assisi::Mondrian

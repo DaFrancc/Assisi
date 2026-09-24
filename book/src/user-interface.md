@@ -37,7 +37,7 @@ Create `assets/ui/TutorialMenu.amdn`:
         sort="menu" needs="TutorialMenu"
         align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
 
-  <column width="fixed 420" padding="32" gap="20" background="#1a1c24f0"
+  <column width="420" padding="32" gap="20" background="#1a1c24f0"
           corner_radius="16" corner_style="rounded">
 
     <text width="grow" text_size="48">Paused</text>
@@ -282,8 +282,32 @@ take keyboard focus when the screen opens. Only one element per screen may have
 
 These attributes work on every element, including `<screen>` and the controls.
 
-All lengths are in **UI pixels**. A UI pixel is 1/1080 of the screen's shorter
-side, multiplied by the player's UI scale setting:
+### Lengths
+
+Every size, padding, gap, border, corner, offset and text size is a length. A
+length is a number, optionally followed by a unit with no space between them:
+
+| Written | Unit | Measured against |
+|---|---|---|
+| `20` | UI pixels | See below. |
+| `50%` | Percent, 0 to 100 | The parent's content area along the same axis. |
+| `5vw` | Percent of the screen's width | The screen. |
+| `5vh` | Percent of the screen's height | The screen. |
+| `1.5em` | Multiples of the text size | This element's text size. |
+
+A few attributes measure `%` and `em` against something else:
+
+| Attribute | `%` is of | `em` is of |
+|---|---|---|
+| `text_size` | The parent's text size | The parent's text size |
+| `border_width`, `corner_radius` | The element's own shorter side | The element's text size |
+| `float_offset` | The element it floats against | The element's text size |
+
+There is no `px` suffix: a bare number already is one. `5px`, `5 %` (with a
+space) and unknown units fail the cook.
+
+A UI pixel is 1/1080 of the screen's shorter side, multiplied by the player's
+UI scale setting:
 
 | Screen | One UI pixel is |
 |---|---|
@@ -300,21 +324,20 @@ orientation can measure against the width or the height instead, with the
 
 ### Size
 
-`width` and `height` each take one of four sizing modes:
+`width` and `height` each take one of three forms:
 
-| Mode | Meaning |
+| Form | Meaning |
 |---|---|
 | `fit` (default) | Just large enough for the content. |
 | `grow` | Large enough for the content, plus a share of the space the parent has left over. |
-| `fixed N` | Exactly N. |
-| `percent N` | A fraction (0 to 1) of the parent's content area. |
+| a length | Exactly that length, such as `420` or `50%`. |
 
-Any mode can be followed by `min N` and `max N` to limit it:
+Any form can be followed by `min` and `max` lengths to limit it:
 
 ```xml
-<column width="fixed 420" height="fit">
-<column width="grow">
-<column width="percent 0.5 min 100 max 800">
+<column width="420" height="fit">
+<column width="grow min 10vh">
+<column width="50% min 100 max 80vw">
 ```
 
 ### Arranging children
@@ -322,8 +345,8 @@ Any mode can be followed by `min N` and `max N` to limit it:
 | Attribute | Values | Meaning |
 |---|---|---|
 | `direction` | `row`, `column` | How children are arranged. `<row>` and `<column>` set this already; `<screen>` is a column. |
-| `padding` | `N`, or `left top right bottom` | Space between the element's edge and its children. |
-| `gap` | `N` | Space between children. |
+| `padding` | a length, or `left top right bottom` | Space between the element's edge and its children. |
+| `gap` | a length | Space between children. |
 | `align` | two words: horizontal, then vertical | Where children sit. Each word is `start`, `center` or `end`. |
 
 ### Colours, borders and corners
@@ -331,9 +354,9 @@ Any mode can be followed by `min N` and `max N` to limit it:
 | Attribute | Values | Meaning |
 |---|---|---|
 | `background` | colour | Fill colour. |
-| `border_width` | `N` | Border thickness. |
+| `border_width` | a length | Border thickness. |
 | `border_color` | colour | Border colour. |
-| `corner_radius` | `N` | Size of the corners. |
+| `corner_radius` | a length | Size of the corners. `50%` on a square makes a circle. |
 | `corner_style` | `square`, `rounded`, `cut` | Corner shape. |
 
 A colour is written in one of three forms. Each says which scale its numbers
@@ -357,7 +380,7 @@ naming the call that takes that range.
 
 | Attribute | Values | Meaning |
 |---|---|---|
-| `text_size` | `N` | Font size. |
+| `text_size` | a length | Font size. |
 | `text_color` | colour | Text colour. |
 | `text_align` | `left`, `center`, `right` | Horizontal alignment of the text. |
 
@@ -372,7 +395,7 @@ parent — a badge on a corner, for example.
 | `float_target` | `parent`, `root` | What it is placed against: its parent, or the whole screen. |
 | `float_anchor` | two alignment words | The point on the target to attach to. |
 | `float_attach` | two alignment words | The point on the element that goes on the anchor. |
-| `float_offset` | `x y` | A further shift after attaching. |
+| `float_offset` | two lengths, `x y` | A further shift after attaching. |
 | `float_clip` | `true`, `false` | Whether the parent's edges clip it. |
 
 ### Scrolling
@@ -384,7 +407,7 @@ These set how a `<scroll>` element (see [Scroll](#scroll)) looks and moves:
 | `scroll_bar_visibility` | `never`, `when-needed`, `always` | When the scroll bar is shown. `when-needed` shows it only while some content is out of view. |
 | `scroll_bar_drag` | `follows-pointer`, `smoothed` | Whether content moves with the dragged bar exactly, or glides after it. |
 | `scroll_smoothing` | seconds | How long scrolling takes to reach its destination. `0` jumps immediately. |
-| `scroll_bar_min_length` | `N` | The shortest the scroll bar's handle can be. |
+| `scroll_bar_min_length` | a length | The shortest the scroll bar's handle can be. |
 
 ### Behaviour
 
@@ -434,7 +457,7 @@ A `stepped_slider` always moves one position per press, so it has no `step`.
 ### Scroll
 
 ```xml
-<scroll name="list" axes="y" height="fixed 150" scroll_bar_visibility="when-needed">
+<scroll name="list" axes="y" height="150" scroll_bar_visibility="when-needed">
   <button>One</button>
   <button>Two</button>
 </scroll>

@@ -43,12 +43,12 @@ float Position(const Rect &rect, Axis axis)
     return axis == Axis::X ? rect.x : rect.y;
 }
 
-float &Length(Rect &rect, Axis axis)
+float &Span(Rect &rect, Axis axis)
 {
     return axis == Axis::X ? rect.width : rect.height;
 }
 
-float Length(const Rect &rect, Axis axis)
+float Span(const Rect &rect, Axis axis)
 {
     return axis == Axis::X ? rect.width : rect.height;
 }
@@ -63,14 +63,21 @@ float Component(const Point &point, Axis axis)
     return axis == Axis::X ? point.x : point.y;
 }
 
-float PaddingBefore(const Padding &padding, Axis axis)
+/// @p axis's leading edge of @p insets, and both its edges together.
+float Before(const Insets &insets, Axis axis)
 {
-    return axis == Axis::X ? padding.left : padding.top;
+    return axis == Axis::X ? insets.left : insets.top;
 }
 
-float PaddingAround(const Padding &padding, Axis axis)
+float Around(const Insets &insets, Axis axis)
 {
-    return axis == Axis::X ? padding.left + padding.right : padding.top + padding.bottom;
+    return axis == Axis::X ? insets.left + insets.right : insets.top + insets.bottom;
+}
+
+/// The viewport's length on @p axis, in device pixels.
+float ViewportSide(Extent viewport, Axis axis)
+{
+    return static_cast<float>(axis == Axis::X ? viewport.width : viewport.height);
 }
 
 /// Whether @p axis is the one @p direction places children along.
@@ -114,7 +121,7 @@ class Layouter
     void Run()
     {
         const uint32_t root = _root.index;
-        Prepare(root);
+        Prepare(root, Scaled(kDefaultTextSize));
         FitAxis(root, Axis::X);
         DistributeAxis(root, Axis::X);
         WrapText();
@@ -135,6 +142,7 @@ class Layouter
                 node.clip = SnapEdges(node.clip);
             }
         }
+        ResolveDrawn();
     }
 
   private:
@@ -142,14 +150,113 @@ class Layouter
     [[nodiscard]] LayoutNode &Result(uint32_t index) const { return _out.nodes[index]; }
     [[nodiscard]] float Scaled(float logical) const { return logical * _scale; }
 
-    [[nodiscard]] float ScaledMax(const Sizing &sizing) const
+    /// @p length in device pixels. @p share is what a `%` is of, and
+    /// @p textSize, in device pixels, what an `em` is of.
+    [[nodiscard]] float Resolve(Length length, float share, float textSize) const
     {
-        return sizing.max == kUnbounded ? kUnbounded : Scaled(sizing.max);
+        switch (length.unit)
+        {
+        case LengthUnit::Px:
+            return length.value == kUnbounded ? kUnbounded : Scaled(length.value);
+        case LengthUnit::Percent:
+            return length.value / kPercentOf * share;
+        case LengthUnit::Vw:
+            return length.value / kPercentOf * ViewportSide(_viewport, Axis::X);
+        case LengthUnit::Vh:
+            return length.value / kPercentOf * ViewportSide(_viewport, Axis::Y);
+        case LengthUnit::Em:
+            return length.value * textSize;
+        case LengthUnit::Count:
+            break;
+        }
+        return 0.f;
     }
 
-    [[nodiscard]] float Clamp(const Sizing &sizing, float length) const
+    /// @p length held to what @p index's sizing allows on @p axis.
+    [[nodiscard]] float Clamp(uint32_t index, Axis axis, float length) const
     {
-        return std::clamp(length, Scaled(sizing.min), std::max(Scaled(sizing.min), ScaledMax(sizing)));
+        const LayoutNode &result = Result(index);
+        const float least = result.minLength[At(axis)];
+        return std::clamp(length, least, std::max(least, result.maxLength[At(axis)]));
+    }
+
+    /// Resolves @p index's lengths on @p axis — its padding there, its gap if
+    /// that is the axis it places children along, its sizing — against
+    /// @p share, what a `%` of them is of, and sizes it from the content
+    /// FitAxis measured.
+    ///
+    /// The fit pass calls this with a share of nothing, since the parent is
+    /// not sized yet; the parent's own pass calls it again with the parent's
+    /// content size. Where no length is a `%` the two agree, so a node is sized
+    /// by one formula whichever pass it is in.
+    void SizeFromContent(uint32_t index, Axis axis, float share)
+    {
+        const Style &style = Slot(index).style;
+        LayoutNode &result = Result(index);
+        const float text = result.textSize;
+        if (axis == Axis::X)
+        {
+            result.padding.left = Resolve(style.padding.left, share, text);
+            result.padding.right = Resolve(style.padding.right, share, text);
+        }
+        else
+        {
+            result.padding.top = Resolve(style.padding.top, share, text);
+            result.padding.bottom = Resolve(style.padding.bottom, share, text);
+        }
+        const bool main = IsMainAxis(style.direction, axis);
+        if (main)
+        {
+            result.gap = Resolve(style.gap, share, text);
+        }
+        const Sizing &sizing = style.sizing[At(axis)];
+        result.minLength[At(axis)] = Resolve(sizing.min, share, text);
+        result.maxLength[At(axis)] = Resolve(sizing.max, share, text);
+
+        float &length = Span(result.rect, axis);
+        float &least = Component(result.minSize, axis);
+        if (index == _root.index)
+        {
+            length = ViewportSide(_viewport, axis);
+            least = length;
+            return;
+        }
+
+        const float gaps =
+            main && result.inFlowChildren > 1 ? result.gap * static_cast<float>(result.inFlowChildren - 1) : 0.f;
+        const float around = Around(result.padding, axis) + gaps;
+        switch (sizing.kind)
+        {
+        case SizingKind::Fixed:
+            length = Clamp(index, axis, Resolve(sizing.value, share, text));
+            least = length;
+            break;
+        case SizingKind::Fit:
+        case SizingKind::Grow:
+        case SizingKind::Count:
+            length = Clamp(index, axis, Component(result.content, axis) + around);
+            least = std::min(length, Clamp(index, axis, Component(result.minContent, axis) + around));
+            break;
+        }
+    }
+
+    /// The lengths with no axis of their own, against the node's own shorter
+    /// side once its box is final: what drawing reads.
+    void ResolveDrawn()
+    {
+        for (uint32_t index = 0; index < _out.nodes.size(); ++index)
+        {
+            LayoutNode &result = Result(index);
+            if (!result.placed)
+            {
+                continue;
+            }
+            const Style &style = Slot(index).style;
+            const float side = std::min(result.rect.width, result.rect.height);
+            result.borderWidth = Resolve(style.borderWidth, side, result.textSize);
+            result.cornerRadius = Resolve(style.cornerRadius, side, result.textSize);
+            result.scrollBarMinLength = Resolve(style.scrollBarMinLength, side, result.textSize);
+        }
     }
 
     [[nodiscard]] bool IsInFlow(uint32_t index) const { return !Slot(index).style.floating.enabled; }
@@ -166,18 +273,23 @@ class Layouter
         }
     }
 
-    /// Marks what will be placed, and shapes each text once.
-    void Prepare(uint32_t index)
+    /// Marks what will be placed, resolves each node's text size against its
+    /// parent's (@p parentTextSize, device pixels), and shapes each text once.
+    void Prepare(uint32_t index, float parentTextSize)
     {
         const Node &node = Slot(index);
         LayoutNode &result = Result(index);
         result.placed = true;
         result.generation = node.generation;
 
+        // A text size's `%` and `em` are of its parent's, as in CSS: a size
+        // cannot be a share of itself.
+        const float textSize = Resolve(node.style.textSize, parentTextSize, parentTextSize);
+        result.textSize = textSize;
+
         // A field is shaped even while it is empty, so that it has a line to
         // stand its caret on and a height that does not change on the first
         // character typed.
-        const float textSize = Scaled(node.style.textSize);
         const bool field = node.edit.editing == TextEditing::Editable;
         if ((!node.text.empty() || field) && _font != nullptr && _font->pixelSize > 0.f && textSize > 0.f)
         {
@@ -192,12 +304,13 @@ class Layouter
             _out.texts.emplace_back();
             _shaped.push_back(Shape(source, *_font));
         }
-        ForEachChild(index, [this](uint32_t child) { Prepare(child); });
+        ForEachChild(index, [this, textSize](uint32_t child) { Prepare(child, textSize); });
     }
 
     /// Bottom-up: each node's length from its content, and the least it can
-    /// shrink to. A Percent child counts as nothing here, which is what breaks
-    /// the cycle of a Percent child inside a Fit parent.
+    /// shrink to. A `%` length counts as nothing here, the parent it is a
+    /// share of not being sized yet; that is what breaks the cycle of a `%`
+    /// child inside a Fit parent.
     void FitAxis(uint32_t index, Axis axis)
     {
         ForEachChild(index, [this, axis](uint32_t child) { FitAxis(child, axis); });
@@ -207,6 +320,7 @@ class Layouter
         LayoutNode &result = Result(index);
         float content = 0.f;
         float minContent = 0.f;
+        uint32_t count = 0;
 
         const WidgetType *widget = _widgets->Get(node.behaviour);
         if (widget != nullptr && widget->measure != nullptr)
@@ -231,9 +345,8 @@ class Layouter
             else if (axis == Axis::X)
             {
                 const ShapedText &shaped = _shaped[result.text];
-                const float size = Scaled(style.textSize);
-                content = LayoutText(shaped, *_font, size, std::nullopt, style.textAlign).width;
-                minContent = MeasureLongestWord(shaped, *_font, size);
+                content = LayoutText(shaped, *_font, result.textSize, std::nullopt, style.textAlign).width;
+                minContent = MeasureLongestWord(shaped, *_font, result.textSize);
             }
             else
             {
@@ -244,7 +357,6 @@ class Layouter
         else
         {
             const bool main = IsMainAxis(style.direction, axis);
-            uint32_t count = 0;
             ForEachChild(index,
                          [&](uint32_t child)
                          {
@@ -252,58 +364,30 @@ class Layouter
                              {
                                  return;
                              }
-                             const bool percent = Slot(child).style.sizing[At(axis)].kind == SizingKind::Percent;
-                             const float length = percent ? 0.f : Length(Result(child).rect, axis);
-                             const float least = percent ? 0.f : Component(Result(child).minSize, axis);
+                             const float length = Span(Result(child).rect, axis);
+                             const float least = Component(Result(child).minSize, axis);
                              content = main ? content + length : std::max(content, length);
                              minContent = main ? minContent + least : std::max(minContent, least);
                              ++count;
                          });
-            if (main && count > 1)
-            {
-                const float gaps = Scaled(style.gap) * static_cast<float>(count - 1);
-                content += gaps;
-                minContent += gaps;
-            }
         }
 
-        const float padding = Scaled(PaddingAround(style.padding, axis));
-        const Sizing &sizing = style.sizing[At(axis)];
-        float &length = Length(result.rect, axis);
-        float &least = Component(result.minSize, axis);
-        if (index == _root.index)
-        {
-            length = static_cast<float>(axis == Axis::X ? _viewport.width : _viewport.height);
-            least = length;
-            return;
-        }
-        switch (sizing.kind)
-        {
-        case SizingKind::Fixed:
-            length = Clamp(sizing, Scaled(sizing.value));
-            least = length;
-            break;
-        case SizingKind::Percent:
-            length = 0.f;
-            least = 0.f;
-            break;
-        case SizingKind::Fit:
-        case SizingKind::Grow:
-        case SizingKind::Count:
-            length = Clamp(sizing, content + padding);
-            least = std::min(length, Clamp(sizing, minContent + padding));
-            break;
-        }
+        Component(result.content, axis) = content;
+        Component(result.minContent, axis) = minContent;
+        result.inFlowChildren = count;
+        // The root is the viewport, which is what its own `%` is a share of.
+        SizeFromContent(index, axis, index == _root.index ? ViewportSide(_viewport, axis) : 0.f);
     }
 
-    /// Top-down: resolves Percent children against this node's final length,
-    /// then shares out what is left on the main axis, or takes back what
-    /// overflows it; on the cross axis Grow children fill.
+    /// Top-down: resizes each child against this node's final content size,
+    /// which is what its `%` lengths are a share of, then shares out what is
+    /// left on the main axis, or takes back what overflows it; on the cross
+    /// axis Grow children fill.
     void DistributeAxis(uint32_t index, Axis axis)
     {
         const Style &style = Slot(index).style;
-        const float length = Length(Result(index).rect, axis);
-        const float space = length - Scaled(PaddingAround(style.padding, axis));
+        const LayoutNode &result = Result(index);
+        const float space = Span(result.rect, axis) - Around(result.padding, axis);
         const bool main = IsMainAxis(style.direction, axis);
         const bool scrolls = style.enabledScrollBars[At(axis)];
 
@@ -313,22 +397,18 @@ class Layouter
                      [&](uint32_t child)
                      {
                          const Sizing &sizing = Slot(child).style.sizing[At(axis)];
-                         float &childLength = Length(Result(child).rect, axis);
+                         float &childLength = Span(Result(child).rect, axis);
                          if (!IsInFlow(child))
                          {
                              FloatLength(child, axis, index);
                              return;
                          }
-                         if (sizing.kind == SizingKind::Percent)
-                         {
-                             childLength = Clamp(sizing, sizing.value * space);
-                             Component(Result(child).minSize, axis) = childLength;
-                         }
+                         SizeFromContent(child, axis, space);
                          if (!main)
                          {
                              if (sizing.kind == SizingKind::Grow)
                              {
-                                 childLength = Clamp(sizing, space);
+                                 childLength = Clamp(child, axis, space);
                              }
                              else if (childLength > space && !scrolls && sizing.kind == SizingKind::Fit)
                              {
@@ -341,7 +421,7 @@ class Layouter
 
         if (main && count > 0)
         {
-            const float remaining = space - used - Scaled(style.gap) * static_cast<float>(count - 1);
+            const float remaining = space - used - result.gap * static_cast<float>(count - 1);
             if (remaining > kSizeEpsilon)
             {
                 Grow(index, axis, remaining, count);
@@ -355,37 +435,31 @@ class Layouter
         ForEachChild(index, [this, axis](uint32_t child) { DistributeAxis(child, axis); });
     }
 
-    /// A floating node's Percent and Grow lengths, against what it floats on.
+    /// A floating node's lengths, against what it floats on: its `%` are a
+    /// share of that, and Grow fills it.
     void FloatLength(uint32_t index, Axis axis, uint32_t parent)
     {
         const Style &style = Slot(index).style;
-        const Sizing &sizing = style.sizing[At(axis)];
-        const float anchor = style.floating.target == FloatAnchor::Root
-                                 ? static_cast<float>(axis == Axis::X ? _viewport.width : _viewport.height)
-                                 : Length(Result(parent).rect, axis);
-        float &length = Length(Result(index).rect, axis);
-        if (sizing.kind == SizingKind::Percent)
+        const float anchor = style.floating.target == FloatAnchor::Root ? ViewportSide(_viewport, axis)
+                                                                        : Span(Result(parent).rect, axis);
+        SizeFromContent(index, axis, anchor);
+        if (style.sizing[At(axis)].kind == SizingKind::Grow)
         {
-            length = Clamp(sizing, sizing.value * anchor);
-        }
-        else if (sizing.kind == SizingKind::Grow)
-        {
-            length = Clamp(sizing, anchor);
+            Span(Result(index).rect, axis) = Clamp(index, axis, anchor);
         }
     }
 
     [[nodiscard]] bool CanGrow(uint32_t child, Axis axis) const
     {
-        const Sizing &sizing = Slot(child).style.sizing[At(axis)];
-        return IsInFlow(child) && sizing.kind == SizingKind::Grow &&
-               Length(Result(child).rect, axis) < ScaledMax(sizing) - kSizeEpsilon;
+        return IsInFlow(child) && Slot(child).style.sizing[At(axis)].kind == SizingKind::Grow &&
+               Span(Result(child).rect, axis) < Result(child).maxLength[At(axis)] - kSizeEpsilon;
     }
 
     [[nodiscard]] bool CanShrink(uint32_t child, Axis axis) const
     {
         const SizingKind kind = Slot(child).style.sizing[At(axis)].kind;
         return IsInFlow(child) && (kind == SizingKind::Fit || kind == SizingKind::Grow) &&
-               Length(Result(child).rect, axis) > Component(Result(child).minSize, axis) + kSizeEpsilon;
+               Span(Result(child).rect, axis) > Component(Result(child).minSize, axis) + kSizeEpsilon;
     }
 
     /// Hands @p remaining to the Grow children, always to the smallest first,
@@ -404,7 +478,7 @@ class Layouter
                          {
                              if (CanGrow(child, axis))
                              {
-                                 smallest = std::min(smallest, Length(Result(child).rect, axis));
+                                 smallest = std::min(smallest, Span(Result(child).rect, axis));
                              }
                          });
             if (smallest == kUnbounded)
@@ -422,11 +496,11 @@ class Layouter
                              {
                                  return;
                              }
-                             const float length = Length(Result(child).rect, axis);
+                             const float length = Span(Result(child).rect, axis);
                              if (length <= smallest + kSizeEpsilon)
                              {
                                  ++tied;
-                                 room = std::min(room, ScaledMax(Slot(child).style.sizing[At(axis)]) - length);
+                                 room = std::min(room, Result(child).maxLength[At(axis)] - length);
                              }
                              else
                              {
@@ -438,9 +512,9 @@ class Layouter
             ForEachChild(index,
                          [&](uint32_t child)
                          {
-                             if (CanGrow(child, axis) && Length(Result(child).rect, axis) <= smallest + kSizeEpsilon)
+                             if (CanGrow(child, axis) && Span(Result(child).rect, axis) <= smallest + kSizeEpsilon)
                              {
-                                 Length(Result(child).rect, axis) += step;
+                                 Span(Result(child).rect, axis) += step;
                              }
                          });
             remaining -= step * static_cast<float>(tied);
@@ -461,7 +535,7 @@ class Layouter
                          {
                              if (CanShrink(child, axis))
                              {
-                                 largest = std::max(largest, Length(Result(child).rect, axis));
+                                 largest = std::max(largest, Span(Result(child).rect, axis));
                              }
                          });
             if (largest == -kUnbounded)
@@ -479,7 +553,7 @@ class Layouter
                              {
                                  return;
                              }
-                             const float length = Length(Result(child).rect, axis);
+                             const float length = Span(Result(child).rect, axis);
                              if (length >= largest - kSizeEpsilon)
                              {
                                  ++tied;
@@ -495,9 +569,9 @@ class Layouter
             ForEachChild(index,
                          [&](uint32_t child)
                          {
-                             if (CanShrink(child, axis) && Length(Result(child).rect, axis) >= largest - kSizeEpsilon)
+                             if (CanShrink(child, axis) && Span(Result(child).rect, axis) >= largest - kSizeEpsilon)
                              {
-                                 Length(Result(child).rect, axis) -= step;
+                                 Span(Result(child).rect, axis) -= step;
                              }
                          });
             overflow -= step * static_cast<float>(tied);
@@ -516,16 +590,16 @@ class Layouter
             }
             const Node &node = Slot(index);
             const Style &style = node.style;
-            const float wrap = TextWrapWidth(result, style, _scale);
+            const float wrap = TextWrapWidth(result);
             // A single line does not wrap however narrow its box is; it runs on
             // and the box scrolls along it.
             const bool oneLine = node.edit.editing != TextEditing::None && node.edit.lines == TextLines::Single;
-            _out.texts[result.text] = LayoutText(_shaped[result.text], *_font, Scaled(style.textSize),
+            _out.texts[result.text] = LayoutText(_shaped[result.text], *_font, result.textSize,
                                                  oneLine ? std::nullopt : std::optional<float>{wrap}, style.textAlign);
             if (oneLine)
             {
-                Result(index).textScroll = LineScroll(
-                    node, _out.texts[result.text], result.rect.width - Scaled(PaddingAround(style.padding, Axis::X)));
+                Result(index).textScroll =
+                    LineScroll(node, _out.texts[result.text], result.rect.width - Around(result.padding, Axis::X));
             }
         }
     }
@@ -596,28 +670,28 @@ class Layouter
                      {
                          if (IsInFlow(child))
                          {
-                             mainExtent += Length(Result(child).rect, main);
-                             crossExtent = std::max(crossExtent, Length(Result(child).rect, cross));
+                             mainExtent += Span(Result(child).rect, main);
+                             crossExtent = std::max(crossExtent, Span(Result(child).rect, cross));
                              ++count;
                          }
                      });
         if (count > 1)
         {
-            mainExtent += Scaled(style.gap) * static_cast<float>(count - 1);
+            mainExtent += result.gap * static_cast<float>(count - 1);
         }
-        Component(result.contentSize, main) = mainExtent + Scaled(PaddingAround(style.padding, main));
-        Component(result.contentSize, cross) = crossExtent + Scaled(PaddingAround(style.padding, cross));
+        Component(result.contentSize, main) = mainExtent + Around(result.padding, main);
+        Component(result.contentSize, cross) = crossExtent + Around(result.padding, cross);
 
         Point origin;
         Point space;
         Point scroll;
         for (const Axis axis : kAxes)
         {
-            Component(origin, axis) = Position(rect, axis) + Scaled(PaddingBefore(style.padding, axis));
-            Component(space, axis) = Length(rect, axis) - Scaled(PaddingAround(style.padding, axis));
+            Component(origin, axis) = Position(rect, axis) + Before(result.padding, axis);
+            Component(space, axis) = Span(rect, axis) - Around(result.padding, axis);
             if (style.enabledScrollBars[At(axis)])
             {
-                const float furthest = std::max(0.f, Component(result.contentSize, axis) - Length(rect, axis));
+                const float furthest = std::max(0.f, Component(result.contentSize, axis) - Span(rect, axis));
                 Component(scroll, axis) = std::clamp(Scaled(Component(Slot(index).scrollOffset, axis)), 0.f, furthest);
             }
         }
@@ -640,9 +714,9 @@ class Layouter
                              return;
                          }
                          Position(childResult.rect, main) = cursor;
-                         cursor += Length(childResult.rect, main) + Scaled(style.gap);
+                         cursor += Span(childResult.rect, main) + result.gap;
 
-                         const float free = Component(space, cross) - Length(childResult.rect, cross);
+                         const float free = Component(space, cross) - Span(childResult.rect, cross);
                          Position(childResult.rect, cross) =
                              Component(origin, cross) - Component(scroll, cross) +
                              (free > 0.f ? free * AlignFactor(style.childAlign[At(cross)]) : 0.f);
@@ -660,10 +734,11 @@ class Layouter
         LayoutNode &result = Result(index);
         for (const Axis axis : kAxes)
         {
+            // A `%` offset is a share of what the node floats on.
             Position(result.rect, axis) = Position(anchor, axis) +
-                                          Length(anchor, axis) * AlignFactor(floating.anchor[At(axis)]) -
-                                          Length(result.rect, axis) * AlignFactor(floating.attach[At(axis)]) +
-                                          Scaled(Component(floating.offset, axis));
+                                          Span(anchor, axis) * AlignFactor(floating.anchor[At(axis)]) -
+                                          Span(result.rect, axis) * AlignFactor(floating.attach[At(axis)]) +
+                                          Resolve(floating.offset[At(axis)], Span(anchor, axis), result.textSize);
         }
     }
 
@@ -702,9 +777,9 @@ float UiScale(Extent viewport, float userScale, ScaleMatch match)
     return matched * userScale;
 }
 
-float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale)
+float TextWrapWidth(const LayoutNode &placed)
 {
-    const float space = placed.rect.width - ((style.padding.left + style.padding.right) * scale);
+    const float space = placed.rect.width - (placed.padding.left + placed.padding.right);
     // Rounded up, never down. A node that fits its text is sized from a width
     // rounded up, and its box is then snapped to whole pixels wherever it
     // landed; rounding the room left inside it down can take it back under the
@@ -715,10 +790,10 @@ float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale)
     return std::max(1.f, std::ceil(space));
 }
 
-Point TextOrigin(const LayoutNode &placed, const Style &style, float scale)
+Point TextOrigin(const LayoutNode &placed)
 {
-    return {.x = std::round(placed.rect.x + (style.padding.left * scale)) - placed.textScroll,
-            .y = std::round(placed.rect.y + (style.padding.top * scale))};
+    return {.x = std::round(placed.rect.x + placed.padding.left) - placed.textScroll,
+            .y = std::round(placed.rect.y + placed.padding.top)};
 }
 
 const LayoutNode *LayoutResult::Get(NodeId id) const

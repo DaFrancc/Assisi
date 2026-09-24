@@ -170,9 +170,8 @@ uint32_t LinesOf(const WidgetView &view, std::string_view candidate)
     std::string marks;
     const std::string_view shown = ShownText(candidate, view.node->edit.mask, marks);
     const Font &font = *text->font;
-    const TextLayout laid =
-        LayoutText(Shape(shown, font), font, view.node->style.textSize * view.scale,
-                   TextWrapWidth(*view.layout, view.node->style, view.scale), view.node->style.textAlign);
+    const TextLayout laid = LayoutText(Shape(shown, font), font, view.layout->textSize, TextWrapWidth(*view.layout),
+                                       view.node->style.textAlign);
     return static_cast<uint32_t>(laid.lines.size());
 }
 
@@ -358,7 +357,7 @@ Rect CaretRect(const Node &node, const LayoutNode *layout, const TextLayout *tex
     // text will end up.
     const uint32_t at = node.edit.drag == TextDrag::Moving ? node.edit.dropAt : node.edit.caret;
     const CaretPlace place = PlaceCaret(*text, shown, at);
-    const Point origin = TextOrigin(*layout, node.style, scale);
+    const Point origin = TextOrigin(*layout);
 
     // As tall as the line it stands on, not as tall as the box: a caret taking
     // the whole height of a field reaches out through its padding, and one in
@@ -392,7 +391,7 @@ namespace
 /// Where the text starts inside @p view's node, in device pixels.
 Point Origin(const WidgetView &view)
 {
-    return TextOrigin(*view.layout, view.node->style, view.scale);
+    return TextOrigin(*view.layout);
 }
 
 void DrawSelection(const WidgetView &view, DrawList &list)

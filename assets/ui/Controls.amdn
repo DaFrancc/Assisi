@@ -55,7 +55,7 @@
                   placeholder="exactly 3 lines" />
     </row>
 
-    <scroll name="list" axes="y" width="grow" height="fixed 150"
+    <scroll name="list" axes="y" width="grow" height="150"
             background="#0f1217" corner_radius="10" corner_style="rounded"
             scroll_bar_visibility="when-needed" scroll_smoothing="0.12">
       <button name="one" padding="28 10 28 10" text_size="28">One</button>

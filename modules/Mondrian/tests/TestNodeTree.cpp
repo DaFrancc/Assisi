@@ -144,7 +144,7 @@ TEST_CASE("NodeTree: setters reach the node their id names")
     NodeTree tree;
     const NodeId node = tree.Create(tree.Root());
     Style style;
-    style.gap = 7.f;
+    style.gap = Px(7.f);
     tree.SetStyle(node, style);
     tree.SetText(node, "caf\xC3\xA9");
     tree.SetVisible(node, false);
@@ -153,7 +153,7 @@ TEST_CASE("NodeTree: setters reach the node their id names")
 
     const Node *read = tree.Get(node);
     REQUIRE(read != nullptr);
-    CHECK(read->style.gap == 7.f);
+    CHECK(read->style.gap.value == 7.f);
     CHECK(read->text == "caf\xC3\xA9");
     CHECK_FALSE(read->visible);
     CHECK(read->behaviour == 3);
