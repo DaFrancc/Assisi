@@ -22,10 +22,6 @@ game loads the compiled form. Any mistake in a screen file — a misspelt
 attribute, an unknown event, a bad value — fails the cook with the file, line
 and column, so it is caught at build time rather than by a player.
 
-Everything a screen file can describe can also be built in C++ with the node
-API (see [Building a screen in C++](#building-a-screen-in-c)). Files are the
-usual way; C++ is for screens whose shape isn't known until run time.
-
 ## Tutorial: a pause menu
 
 You'll build a pause menu that opens when the player presses Escape, stops the
@@ -754,11 +750,12 @@ blueprint places no entities.
 
 ## Building a screen in C++
 
-When a compiled screen is loaded, its nodes are created through the node API, so
-a screen file can describe nothing the API can't. Anything a file describes can
-be built in C++ with `Screen::Add`,
-`AddText`, `AddButton` and the control functions such as `AddContinuousSlider`.
-Use C++ for screens whose content isn't known until the game is running.
+Screens can also be written in C++, with `Screen::Add`, `AddText`, `AddButton`
+and the control functions such as `AddContinuousSlider`.
+
+Screen files are the standard way to write a screen. They can describe
+everything the C++ functions can — loading a screen file calls those same
+functions — and they are easier to read.
 
 ## What the cook checks
 
