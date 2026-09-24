@@ -162,15 +162,31 @@ class Screen
     /// the tree being announced from would go with it.
     void OnActivate(NodeId node, std::function<void(Screen &)> act);
 
-    /// @brief A node under @p parent styled by @p style, called @p name.
-    NodeId Add(NodeId parent, const Style &style, std::string_view name = {});
+    /// @brief An unnamed node under @p parent styled by @p style.
+    NodeId Add(NodeId parent, const Style &style);
 
-    /// @brief The same, showing @p text.
-    NodeId AddText(NodeId parent, const Style &style, std::string_view text, std::string_view name = {});
+    /// @brief The same, called @p name, which no other node on this screen may
+    /// have. Refused before anything is made.
+    [[nodiscard]] std::expected<NodeId, NameError> Add(NodeId parent, const Style &style, std::string_view name);
 
-    /// @brief A button under @p parent showing @p label, which activates on a
-    /// click or on Accept while focused. Bind it with OnActivate.
+    /// @brief An unnamed node showing @p text.
+    NodeId AddText(NodeId parent, const Style &style, std::string_view text);
+
+    /// @brief The same, called @p name.
+    [[nodiscard]] std::expected<NodeId, NameError> AddText(NodeId parent, const Style &style, std::string_view text,
+                                                           std::string_view name);
+
+    /// @brief An unnamed button under @p parent showing @p label, which
+    /// activates on a click or on Accept while focused. Bind it with
+    /// OnActivate.
+    ///
+    /// A label is what a player reads and never what the button is found by:
+    /// two buttons may both read "Back".
     ButtonId AddButton(NodeId parent, std::string_view label);
+
+    /// @brief The same, called @p name.
+    [[nodiscard]] std::expected<ButtonId, NameError> AddButton(NodeId parent, std::string_view label,
+                                                               std::string_view name);
 
     /// @brief A toggle under @p parent, starting @p on.
     ToggleId AddToggle(NodeId parent, bool on);
@@ -225,6 +241,17 @@ class Screen
     void SetValue(ToggleId toggle, bool on);
     /// @brief Which step a stepped slider rests on, clamped to the steps it has.
     void SetValue(SteppedSliderId slider, int32_t step);
+
+    /// @brief Moves the slider @p slider as @p moves presses of an arrow key
+    /// would, Right for positive and Left for negative, and announces the move
+    /// as those presses would.
+    ///
+    /// One move is the slider's own: its step on a continuous slider, one
+    /// position on a stepped one. A slider a player could not move — disabled,
+    /// hidden, or on a screen that does not have the keys — is not moved.
+    /// Announced in the frame's own announcing when called from a node's
+    /// callback, and in the next frame's otherwise.
+    void Step(NodeId slider, int32_t moves);
 
     /// @brief Makes @p slider push the event @p recipe builds from its new
     /// value, every time that value moves. A recipe that does not take a float

@@ -43,7 +43,7 @@ EventCatalog OneEvent()
 }
 
 /// The pause menu as a file: every element and most of the attribute table.
-constexpr std::string_view kPauseMenu = R"(<screen name="Pause" input="consume" beneath="hide" pause="true"
+constexpr std::string_view kPauseMenu = R"amdn(<screen name="Pause" input="consume" beneath="hide" pause="true"
         sort="menu" needs="PauseMenu" align="center center"
         background="0 0 0 0.55" blocks_pointer="true">
   <column name="panel" width="fixed 420" padding="32" gap="20"
@@ -51,7 +51,7 @@ constexpr std::string_view kPauseMenu = R"(<screen name="Pause" input="consume" 
           corner_radius="16" corner_style="rounded" align="center start">
     <text name="title" text_size="48">Paused</text>
     <row name="buttons" gap="20" align="center center">
-      <button name="resume" on_click="hide" focus="true"
+      <button name="resume" on_click="hide()" focus="true"
               padding="28 10 28 10" text_size="28" background="#e63319"
               corner_radius="10" corner_style="rounded">Resume</button>
       <button name="quit" on_click="Game::QuitRequested"
@@ -61,19 +61,20 @@ constexpr std::string_view kPauseMenu = R"(<screen name="Pause" input="consume" 
     </row>
   </column>
 </screen>
-)";
+)amdn";
 
 /// Every control the markup has, with every construction attribute written.
 /// One file rather than one per element: what this is for is the whole
 /// vocabulary holding together, and a screen that mixes them is what an author
 /// writes.
-constexpr std::string_view kEveryControl = R"(<screen name="Controls">
+constexpr std::string_view kEveryControl = R"amdn(<screen name="Controls">
   <column name="panel" gap="8">
     <toggle name="fullscreen" on="true" />
     <slider name="volume" min="0" max="100" step="5" value="60" />
     <stepped_slider name="quality" min="0" max="3" steps="4" value="2" />
     <scroll name="list" axes="y">
-      <button name="one" on_click="hide">One</button>
+      <button name="one" on_click="hide()">One</button>
+      <button name="louder" on_click="step(volume, 2)">+</button>
     </scroll>
     <text_field name="player" lines="single" placeholder="Name" max_length="24" />
     <text_field name="secret" lines="single" mask="dots" />
@@ -82,7 +83,7 @@ constexpr std::string_view kEveryControl = R"(<screen name="Controls">
     <text_field name="who" pattern="email" check="on-commit" />
   </column>
 </screen>
-)";
+)amdn";
 
 /// The reason @p result failed, or empty. Its own function because `*` binds
 /// tighter than `?:` inside doctest's message macro, so a ternary written at
@@ -134,56 +135,62 @@ Style ListStyle()
     return style;
 }
 
+/// Gives @p id the name @p name, which the case expects to be free.
+void Name(Screen &screen, NodeId id, std::string_view name)
+{
+    REQUIRE(screen.Tree().SetName(id, name).has_value());
+}
+
 /// Controls.amdn's controls, built through the node API with the arguments the
 /// file writes, under the names the file gives them.
 void BuildTwin(Screen &screen)
 {
     const NodeId row = screen.Add(screen.Root(), Style{});
 
-    screen.Tree().SetName(screen.AddToggle(row, true).node, "fullscreen");
-    screen.Tree().SetName(
-        screen.AddContinuousSlider(row, SliderRange{.min = 0.f, .max = 100.f, .step = 5.f}, 60.f).node, "volume");
+    Name(screen, screen.AddToggle(row, true).node, "fullscreen");
+    Name(screen, screen.AddContinuousSlider(row, SliderRange{.min = 0.f, .max = 100.f, .step = 5.f}, 60.f).node,
+         "volume");
     // No step: a stepped slider moves one position per press whatever its ends
     // are, so the file has no way to say one and neither has this.
-    screen.Tree().SetName(screen.AddSteppedSlider(row, SliderRange{.min = 0.f, .max = 3.f}, 4, 1).node, "quality");
+    Name(screen, screen.AddSteppedSlider(row, SliderRange{.min = 0.f, .max = 3.f}, 4, 1).node, "quality");
 
     const TextFieldId player = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(player, "your name");
     screen.SetMaxLength(player, 24);
     screen.SetText(player, "type here");
-    screen.Tree().SetName(player.node, "player");
+    Name(screen, player.node, "player");
 
     const TextFieldId secret = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(secret, "password");
     screen.SetText(secret, "hunter2");
     screen.SetMask(secret, TextMask::Dots);
-    screen.Tree().SetName(secret.node, "secret");
+    Name(screen, secret.node, "secret");
 
     const TextFieldId port = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(port, "port");
     REQUIRE(screen.SetPattern(port, Patterns::kInteger, TextCheck::Refuse).has_value());
-    screen.Tree().SetName(port.node, "port");
+    Name(screen, port.node, "port");
 
     const TextFieldId who = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(who, "address");
     REQUIRE(screen.SetPattern(who, "[^@ ]+@[^@ ]+", TextCheck::OnChange).has_value());
-    screen.Tree().SetName(who.node, "who");
+    Name(screen, who.node, "who");
 
     const TextFieldId growing = screen.AddTextField(row, TextLines::Multi);
     screen.SetPlaceholder(growing, "grows forever");
-    screen.Tree().SetName(growing.node, "growing");
+    Name(screen, growing.node, "growing");
 
     const TextFieldId upTo = screen.AddTextField(row, TextLines::Multi);
     screen.SetHeight(upTo, TextHeight::UpTo, 3);
     screen.SetPlaceholder(upTo, "up to 3 lines");
-    screen.Tree().SetName(upTo.node, "upTo");
+    Name(screen, upTo.node, "upTo");
 
     const TextFieldId exactly = screen.AddTextField(row, TextLines::Multi);
     screen.SetHeight(exactly, TextHeight::Exactly, 3);
     screen.SetPlaceholder(exactly, "exactly 3 lines");
-    screen.Tree().SetName(exactly.node, "exactly");
+    Name(screen, exactly.node, "exactly");
 
-    screen.Tree().SetName(screen.AddScroll(row, ListStyle(), {false, true}), "list");
+    Name(screen, screen.AddScroll(row, ListStyle(), {false, true}), "list");
 }
 
 /// Whether the two nodes called @p name agree on everything making one decides.
@@ -459,17 +466,184 @@ TEST_CASE("ScreenCompiler: text goes where text goes")
 TEST_CASE("ScreenCompiler: focus is claimed once")
 {
     const MarkupError error = Refused("<screen>\n"
-                                      "  <button focus=\"true\" on_click=\"hide\">A</button>\n"
-                                      "  <button focus=\"true\" on_click=\"hide\">B</button>\n"
+                                      "  <button focus=\"true\" on_click=\"hide()\">A</button>\n"
+                                      "  <button focus=\"true\" on_click=\"hide()\">B</button>\n"
                                       "</screen>\n");
     CHECK(error.line == 3);
     CHECK(error.message.find("second") != std::string::npos);
 }
 
+TEST_CASE("ScreenCompiler: a name means one node on its screen")
+{
+    SUBCASE("a second node carrying it is refused where it was written")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <text name=\"title\">One</text>\n"
+                                          "  <text name=\"title\">Two</text>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("title") != std::string::npos);
+        // Where the first one is, so whoever reads it can choose which to rename.
+        CHECK(error.message.find("line 2") != std::string::npos);
+    }
+
+    SUBCASE("however far apart they sit")
+    {
+        CHECK(Refused("<screen>\n"
+                      "  <column name=\"panel\">\n"
+                      "    <row><text name=\"label\" /></row>\n"
+                      "  </column>\n"
+                      "  <row name=\"label\" />\n"
+                      "</screen>\n")
+                  .line == 5);
+    }
+
+    SUBCASE("the screen's own name is not a node's")
+    {
+        // The root's name is what the screen is called, which a system finds it
+        // by; a node inside may share it without the two being confused.
+        CHECK(Compiled(R"(<screen name="Pause"><text name="Pause" /></screen>)").nodes[1].name == "Pause");
+    }
+
+    SUBCASE("unnamed nodes never collide")
+    {
+        CHECK(Compiled(R"(<screen><text /><text /><row /><row /></screen>)").nodes.size() == 5);
+    }
+}
+
+TEST_CASE("ScreenCompiler: a verb is a call, and an event is a bare name")
+{
+    SUBCASE("hide takes nothing and acts on its own screen")
+    {
+        const ScreenNode resume = Compiled(R"amdn(<screen><button on_click="hide()" /></screen>)amdn").nodes[1];
+        CHECK(resume.action == ActionKind::Verb);
+        CHECK(resume.verb == ScreenVerb::Hide);
+        CHECK(resume.target == kNoNode);
+    }
+
+    SUBCASE("step names a slider that may come after it, and how many moves")
+    {
+        const ScreenDocument document = Compiled(R"amdn(<screen>
+  <button name="quieter" on_click="step(volume, -1)" />
+  <slider name="volume" min="0" max="100" step="5" />
+  <button name="louder" on_click="step( volume ,3 )" />
+</screen>)amdn");
+        const ScreenNode &quieter = NodeNamed(document, "quieter");
+        CHECK(quieter.action == ActionKind::Verb);
+        CHECK(quieter.verb == ScreenVerb::Step);
+        CHECK(quieter.target == IndexOf(document, "volume"));
+        CHECK(quieter.moves == -1);
+        // Space around the arguments is the author's, and means nothing.
+        CHECK(NodeNamed(document, "louder").moves == 3);
+        CHECK(NodeNamed(document, "louder").target == IndexOf(document, "volume"));
+    }
+
+    SUBCASE("a stepped slider is a target too")
+    {
+        const ScreenDocument document = Compiled(R"amdn(<screen>
+  <stepped_slider name="quality" steps="4" />
+  <button name="better" on_click="step(quality, 1)" />
+</screen>)amdn");
+        CHECK(NodeNamed(document, "better").target == IndexOf(document, "quality"));
+    }
+
+    SUBCASE("an event is unchanged")
+    {
+        const ScreenNode quit = Compiled(R"(<screen><button on_click="Game::QuitRequested" /></screen>)").nodes[1];
+        CHECK(quit.action == ActionKind::Event);
+        CHECK(quit.eventName == "Game::QuitRequested");
+    }
+}
+
+namespace
+{
+
+/// The error from a button on line 3 whose `on_click` is @p onClick, which the
+/// case expects to be refused there. Line 2 holds a slider called `volume` and a
+/// text called `label`, so a target has something to name.
+MarkupError RefusedOnLine3(std::string_view onClick)
+{
+    const std::string text = "<screen>\n"
+                             "  <slider name=\"volume\" step=\"1\" /><text name=\"label\" />\n"
+                             "  <button on_click=\"" +
+                             std::string{onClick} +
+                             "\" />\n"
+                             "</screen>\n";
+    const MarkupError error = Refused(text);
+    // Line 3 and not the slider's, so a compiler reporting the wrong element
+    // could not pass by accident.
+    CHECK(error.line == 3);
+    return error;
+}
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: a verb that cannot act is refused where it was written")
+{
+    SUBCASE("a verb written without parens")
+    {
+        // One spelling per thing: `hide` bare would be a second way to say it.
+        CHECK(RefusedOnLine3("hide").message.find("hide()") != std::string::npos);
+    }
+
+    SUBCASE("a verb this build does not have")
+    {
+        const MarkupError error = RefusedOnLine3("frobnicate()");
+        CHECK(error.message.find("frobnicate") != std::string::npos);
+        // The message names the verbs there are.
+        CHECK(error.message.find("step") != std::string::npos);
+    }
+
+    SUBCASE("hide given a target")
+    {
+        CHECK(RefusedOnLine3("hide(volume)").message.find("hide") != std::string::npos);
+    }
+
+    SUBCASE("step given nothing")
+    {
+        CHECK(RefusedOnLine3("step()").message.find("step") != std::string::npos);
+    }
+
+    SUBCASE("step given a target and no count")
+    {
+        CHECK(RefusedOnLine3("step(volume)").message.find("step") != std::string::npos);
+    }
+
+    SUBCASE("step given a count that is not a whole number")
+    {
+        CHECK(RefusedOnLine3("step(volume, 1.5)").message.find("1.5") != std::string::npos);
+    }
+
+    SUBCASE("step that moves nothing")
+    {
+        CHECK(RefusedOnLine3("step(volume, 0)").message.find("0") != std::string::npos);
+    }
+
+    SUBCASE("step naming no node")
+    {
+        CHECK(RefusedOnLine3("step(volum, 1)").message.find("volum") != std::string::npos);
+    }
+
+    SUBCASE("step naming something that is not a slider")
+    {
+        CHECK(RefusedOnLine3("step(label, 1)").message.find("slider") != std::string::npos);
+    }
+
+    SUBCASE("a call never closed")
+    {
+        CHECK(RefusedOnLine3("step(volume, 1").message.find(")") != std::string::npos);
+    }
+
+    SUBCASE("something after the call")
+    {
+        CHECK(RefusedOnLine3("hide() now").message.find("now") != std::string::npos);
+    }
+}
+
 TEST_CASE("ScreenCompiler: the screen itself cannot be clicked")
 {
     // The root is the screen; an action there would never fire.
-    CHECK(Refused(R"(<screen on_click="hide" />)").message.find("on_click") != std::string::npos);
+    CHECK(Refused(R"amdn(<screen on_click="hide()" />)amdn").message.find("on_click") != std::string::npos);
 }
 
 TEST_CASE("ScreenCompiler: a named style is carried and checked against nothing")
@@ -537,6 +711,14 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     CHECK(port.check == TextCheck::Refuse);
 
     CHECK(NodeNamed(*read, "who").pattern == Patterns::kEmail);
+
+    // A verb with a target: the name the file wrote, resolved to the node the
+    // table holds, survives the binary as that node's place.
+    const ScreenNode &louder = NodeNamed(*read, "louder");
+    CHECK(louder.action == ActionKind::Verb);
+    CHECK(louder.verb == ScreenVerb::Step);
+    CHECK(louder.target == IndexOf(*read, "volume"));
+    CHECK(louder.moves == 2);
 }
 
 TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it replaced")
@@ -790,7 +972,8 @@ TEST_CASE("ScreenCompiler: only a button can be clicked")
 {
     // A toggle's press is the toggle's; an on_click there would be read by
     // nothing and do nothing.
-    CHECK(Refused(R"(<screen><toggle on_click="hide" /></screen>)").message.find("button") != std::string::npos);
+    CHECK(Refused(R"amdn(<screen><toggle on_click="hide()" /></screen>)amdn").message.find("button") !=
+          std::string::npos);
 }
 
 TEST_CASE("ScreenCompiler: a control holds what it can hold")

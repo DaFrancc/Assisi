@@ -15,7 +15,7 @@
 
       <!-- Resume closes the menu and reaches nothing outside the UI, so it
            needs no event, no system and nothing named in a level. -->
-      <button name="resume" on_click="hide" focus="true"
+      <button name="resume" on_click="hide()" focus="true"
               padding="28 10 28 10" text_size="28" background="#e63319"
               corner_radius="10" corner_style="rounded">Resume</button>
 

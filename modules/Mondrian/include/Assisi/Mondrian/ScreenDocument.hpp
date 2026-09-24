@@ -39,8 +39,8 @@ enum class ActionKind : uint8_t
     Count
 };
 
-/// @brief What the UI does to itself, for a control whose whole effect is on
-/// the screen it is on.
+/// @brief What the UI does to itself when a control fires: to the screen the
+/// control is on, or to another control on it.
 ///
 /// A closed set rather than a name looked up somewhere: these reach nothing
 /// outside the UI, so there is nothing for a game to register and nothing a
@@ -48,8 +48,60 @@ enum class ActionKind : uint8_t
 enum class ScreenVerb : uint8_t
 {
     Hide, ///< hides the screen this node is on
+    Step, ///< moves the target slider as that many arrow-key presses would
     Count
 };
+
+/// @brief Whether @p verb acts on another node on the screen, which the file
+/// names, rather than on the screen itself.
+///
+/// This and the two below are what the cook checks a call against and what
+/// the loader checks a document against, so the two cannot disagree. Each is
+/// a switch with no default: a verb added without an answer here is a warning,
+/// and warnings are errors.
+[[nodiscard]] constexpr bool VerbTakesTarget(ScreenVerb verb)
+{
+    switch (verb)
+    {
+    case ScreenVerb::Hide:
+        return false;
+    case ScreenVerb::Step:
+        return true;
+    case ScreenVerb::Count:
+        break;
+    }
+    return false;
+}
+
+/// @brief Whether @p verb takes a count of moves after its target.
+[[nodiscard]] constexpr bool VerbTakesMoves(ScreenVerb verb)
+{
+    switch (verb)
+    {
+    case ScreenVerb::Hide:
+        return false;
+    case ScreenVerb::Step:
+        return true;
+    case ScreenVerb::Count:
+        break;
+    }
+    return false;
+}
+
+/// @brief Whether @p verb can act on a node that is @p widget.
+[[nodiscard]] constexpr bool VerbActsOn(ScreenVerb verb, BuiltinWidget widget)
+{
+    switch (verb)
+    {
+    case ScreenVerb::Hide:
+        return false;
+    case ScreenVerb::Step:
+        return widget == BuiltinWidget::ContinuousSlider || widget == BuiltinWidget::SteppedSlider;
+    case ScreenVerb::Count:
+        break;
+    }
+    return false;
+}
 
 /// @brief One node of a screen, as the file described it.
 struct ScreenNode
@@ -101,8 +153,18 @@ struct ScreenNode
     int32_t steps = 1;
     int32_t step = 0;
 
+    /// How many moves ScreenVerb::Step makes, and which way: negative moves
+    /// down the range. A move is whatever one arrow-key press does to the
+    /// target, so the file need not know which kind of slider it aims at.
+    int32_t moves = 0;
+
     /// Index into the document's own table. kNoNode on the root alone.
     uint32_t parent = kNoNode;
+
+    /// The node a verb acts on, as an index into the document's own table, or
+    /// kNoNode for a verb that acts on the screen. May point past this node: a
+    /// button can come before the control it moves.
+    uint32_t target = kNoNode;
 
     /// Which control this node is, or None for a plain box. It decides which of
     /// the fields above mean anything; the rest ride at their defaults, as they

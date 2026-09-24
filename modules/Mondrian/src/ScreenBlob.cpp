@@ -18,7 +18,7 @@ constexpr std::size_t kBitsPerByte = 8;
 /// A floor on what one node occupies, not its true size: the fixed integer
 /// fields and six empty strings. It exists only to stop a count no file could
 /// hold from reaching a resize.
-constexpr std::size_t kMinNodeBytes = 48;
+constexpr std::size_t kMinNodeBytes = 56;
 
 /// The same for a system name: a length and at least one character.
 constexpr std::size_t kMinSystemBytes = 2;
@@ -255,6 +255,14 @@ bool IsConsistent(const ScreenDocument &document)
             return false;
         }
 
+        // The loader indexes its table of built ids by this, so one past the
+        // end is a read out of bounds. Whether the node there can be acted on
+        // is the loader's question, asked with the verb in hand.
+        if (node.target != kNoNode && node.target >= document.nodes.size())
+        {
+            return false;
+        }
+
         if (!InRange<BuiltinWidget>(static_cast<uint32_t>(node.widget)) ||
             !InRange<ActionKind>(static_cast<uint32_t>(node.action)) ||
             !InRange<ScreenVerb>(static_cast<uint32_t>(node.verb)))
@@ -330,6 +338,7 @@ void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
     for (const ScreenNode &node : document.nodes)
     {
         writer.WriteUInt32(node.parent);
+        writer.WriteUInt32(node.target);
         writer.WriteUInt32(static_cast<uint32_t>(node.widget));
         writer.WriteUInt8(static_cast<uint8_t>(node.action));
         writer.WriteUInt8(static_cast<uint8_t>(node.verb));
@@ -350,6 +359,7 @@ void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
         writer.WriteUInt32(node.lineLimit);
         writer.WriteInt32(node.steps);
         writer.WriteInt32(node.step);
+        writer.WriteInt32(node.moves);
         writer.WriteUInt8(static_cast<uint8_t>(node.lines));
         writer.WriteUInt8(static_cast<uint8_t>(node.mask));
         writer.WriteUInt8(static_cast<uint8_t>(node.check));
@@ -411,6 +421,7 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
     for (ScreenNode &node : document.nodes)
     {
         node.parent = reader.ReadUInt32();
+        node.target = reader.ReadUInt32();
         node.widget = static_cast<BuiltinWidget>(reader.ReadUInt32());
         node.action = static_cast<ActionKind>(reader.ReadUInt8());
         node.verb = static_cast<ScreenVerb>(reader.ReadUInt8());
@@ -431,6 +442,7 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
         node.lineLimit = reader.ReadUInt32();
         node.steps = reader.ReadInt32();
         node.step = reader.ReadInt32();
+        node.moves = reader.ReadInt32();
         node.lines = static_cast<TextLines>(reader.ReadUInt8());
         node.mask = static_cast<TextMask>(reader.ReadUInt8());
         node.check = static_cast<TextCheck>(reader.ReadUInt8());

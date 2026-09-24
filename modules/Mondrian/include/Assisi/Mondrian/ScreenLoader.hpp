@@ -57,6 +57,16 @@ enum class ScreenLoadError : uint8_t
     /// on the root, which is the screen itself.
     MisplacedNode,
 
+    /// Two nodes carry one name. The cook refuses the same thing, so this is a
+    /// stale package or a document built by hand.
+    DuplicateName,
+
+    /// A verb lacks what it takes or carries what it does not: a step with no
+    /// target, a target that is no slider or past the table, a step of no
+    /// moves, a hide given a target. The cook refuses each, so this is a stale
+    /// package or a document built by hand.
+    BadTarget,
+
     Count
 };
 

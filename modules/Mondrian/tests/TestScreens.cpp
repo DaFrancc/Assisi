@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <expected>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -76,16 +77,18 @@ struct Stage
     }
 };
 
-/// One button on @p screen, floated to a fixed place so every screen's button
-/// lands on the same pixels and a press could have gone to either.
-NodeId Aim(Screen &screen, std::string_view label)
+/// One button on @p screen called @p name, floated to a fixed place so every
+/// screen's button lands on the same pixels and a press could have gone to
+/// either.
+NodeId Aim(Screen &screen, std::string_view name)
 {
     Style style;
     style.floating.enabled = true;
     style.sizing = {Sizing::Fixed(kButtonSide), Sizing::Fixed(kButtonSide)};
-    const ButtonId id = screen.AddButton(screen.Root(), label);
-    screen.Tree().SetStyle(id.node, style);
-    return id.node;
+    const std::expected<ButtonId, NameError> id = screen.AddButton(screen.Root(), name, name);
+    REQUIRE(id.has_value());
+    screen.Tree().SetStyle(id->node, style);
+    return id->node;
 }
 
 /// The centre of @p name on @p screen, as the last frame placed it.

@@ -5,11 +5,14 @@
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -44,6 +47,24 @@ bool IsWalkable(const ScreenDocument &document)
     return true;
 }
 
+/// Whether @p node's verb has what it takes: a target it can act on when it
+/// takes one and none when it does not, and a count of moves that moves.
+bool VerbFits(const ScreenDocument &document, const ScreenNode &node)
+{
+    if (VerbTakesTarget(node.verb))
+    {
+        if (node.target >= document.nodes.size() || !VerbActsOn(node.verb, document.nodes[node.target].widget))
+        {
+            return false;
+        }
+    }
+    else if (node.target != kNoNode)
+    {
+        return false;
+    }
+    return !VerbTakesMoves(node.verb) || node.moves != 0;
+}
+
 /// Whether every name in @p document resolves, and every node's contents suit
 /// where it sits — and the patterns, compiled, for the caller to apply.
 ///
@@ -59,9 +80,19 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
     std::vector<std::shared_ptr<const Pattern>> patterns;
     patterns.resize(document.nodes.size());
 
+    // Views into the document, which outlives this function.
+    std::unordered_set<std::string_view> names;
+
     for (std::size_t index = 0; index < document.nodes.size(); ++index)
     {
         const ScreenNode &node = document.nodes[index];
+
+        // Checked here rather than left to the tree, which would refuse the
+        // second one only after the first half of the screen was built.
+        if (!node.name.empty() && !names.insert(node.name).second)
+        {
+            return std::unexpected(ScreenLoadError::DuplicateName);
+        }
 
         // The root is the screen itself. A control there would have nothing to
         // be created under, and an action there would never fire.
@@ -78,6 +109,11 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
         if (node.action == ActionKind::Event && catalog.Find(node.eventName) == nullptr)
         {
             return std::unexpected(ScreenLoadError::UnknownEvent);
+        }
+
+        if (node.action == ActionKind::Verb && !VerbFits(document, node))
+        {
+            return std::unexpected(ScreenLoadError::BadTarget);
         }
 
         if (node.widget == BuiltinWidget::TextField && !node.pattern.empty())
@@ -156,8 +192,14 @@ void ApplyFlags(NodeTree &tree, NodeId id, const ScreenNode &node)
     tree.SetTakesKeyboard(id, node.takesKeyboard);
 }
 
-void ApplyAction(Screen &screen, NodeId id, const ScreenNode &node, const Core::EventCatalog &catalog)
+/// What node @p index does when it fires. @p ids is every node's id by its
+/// place in the document, so a verb's target is one lookup here and none per
+/// click.
+void ApplyAction(Screen &screen, const std::vector<NodeId> &ids, std::size_t index, const ScreenDocument &document,
+                 const Core::EventCatalog &catalog)
 {
+    const ScreenNode &node = document.nodes[index];
+    const NodeId id = ids[index];
     switch (node.action)
     {
     case ActionKind::None:
@@ -170,6 +212,11 @@ void ApplyAction(Screen &screen, NodeId id, const ScreenNode &node, const Core::
             // touches nothing but the UI, so it works wherever the screen is
             // shown with nothing named anywhere.
             screen.OnActivate(id, [](Screen &self) { self.Hide(); });
+            return;
+        case ScreenVerb::Step:
+            // Resolve checked the target is a slider in the table.
+            screen.OnActivate(id, [target = ids[node.target], moves = node.moves](Screen &self)
+                              { self.Step(target, moves); });
             return;
         case ScreenVerb::Count:
             return;
@@ -200,6 +247,10 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "names a control this build does not have";
     case ScreenLoadError::MisplacedNode:
         return "puts a control or an action where one cannot go";
+    case ScreenLoadError::DuplicateName:
+        return "gives two nodes one name";
+    case ScreenLoadError::BadTarget:
+        return "gives a verb a target it cannot act on";
     case ScreenLoadError::Count:
         break;
     }
@@ -263,14 +314,23 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const Scr
             }
         }
 
-        tree.SetName(id, node.name);
+        // Resolve refused any name two nodes carry, and every node on this
+        // screen came from this document.
+        const std::expected<void, NameError> named = tree.SetName(id, node.name);
+        ASSISI_ASSERT(named.has_value(), "a name Resolve passed was already taken on a screen it built");
         ApplyFlags(tree, id, node);
         if (node.selectable)
         {
             screen.SetSelectable(id, true);
         }
-        ApplyAction(screen, id, node, catalog);
         ids.push_back(id);
+    }
+
+    // After every node exists: a verb's target may come later in the document
+    // than the button naming it.
+    for (std::size_t index = 0; index < document.nodes.size(); ++index)
+    {
+        ApplyAction(screen, ids, index, document, catalog);
     }
 
     if (document.focus != kNoNode)

@@ -93,6 +93,24 @@ ScreenDocument Everything()
     quit.eventName = "Assisi::App::QuitRequested";
     document.nodes.push_back(quit);
 
+    // Before the slider it moves, so the target points forward.
+    ScreenNode quieter;
+    quieter.parent = 1;
+    quieter.name = "quieter";
+    quieter.widget = BuiltinWidget::Button;
+    quieter.action = ActionKind::Verb;
+    quieter.verb = ScreenVerb::Step;
+    quieter.target = 5;
+    quieter.moves = -3;
+    document.nodes.push_back(quieter);
+
+    ScreenNode volume;
+    volume.parent = 1;
+    volume.name = "volume";
+    volume.widget = BuiltinWidget::ContinuousSlider;
+    volume.range = {.min = 0.f, .max = 100.f, .step = 5.f};
+    document.nodes.push_back(volume);
+
     return document;
 }
 
@@ -171,6 +189,8 @@ TEST_CASE("ScreenBlob: a document survives the round trip field for field")
         CHECK(here.widget == there.widget);
         CHECK(here.action == there.action);
         CHECK(here.verb == there.verb);
+        CHECK(here.target == there.target);
+        CHECK(here.moves == there.moves);
         CHECK(here.visible == there.visible);
         CHECK(here.enabled == there.enabled);
         CHECK(here.blocksPointer == there.blocksPointer);
@@ -284,6 +304,19 @@ TEST_CASE("ScreenBlob: a table that is not a walkable tree is refused")
         ScreenDocument document;
         document.nodes.emplace_back();
         document.focus = 4;
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a target naming no node")
+    {
+        // The loader indexes its table of built ids by this, so one past the
+        // end is a read out of bounds rather than a button that does nothing.
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        document.nodes[0].target = 4;
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
         REQUIRE_FALSE(read.has_value());

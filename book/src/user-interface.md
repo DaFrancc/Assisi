@@ -25,7 +25,7 @@ Make `assets/ui/TutorialMenu.amdn`:
 
     <text width="grow" text_size="48">Paused</text>
 
-    <button name="resume" on_click="hide" focus="true"
+    <button name="resume" on_click="hide()" focus="true"
             padding="28 10 28 10" text_size="28" background="#e63319"
             corner_radius="10" corner_style="rounded">Resume</button>
 
@@ -154,17 +154,37 @@ have to know the car needs `Drive`.
 
 ## What a button does
 
-`on_click` takes one of two things.
+`on_click` takes one of two things, and the parentheses tell them apart: a verb
+is a call, and an event is a bare name.
 
-**A verb** — something the UI does to itself. There is one so far:
+**A verb** — something the UI does to itself, or to another control on the same
+screen. A verb reaches nothing outside the UI, so it needs no event, no system,
+and nothing named anywhere. A screen wired this way works wherever it's shown.
+
+`hide()` closes the screen the button is on:
 
 ```xml
-<button on_click="hide">Resume</button>
+<button on_click="hide()">Resume</button>
 ```
 
-`hide` closes the screen the button is on. It reaches nothing outside the UI, so
-it needs no event, no system, and nothing named anywhere. A screen wired this
-way works wherever it's shown.
+`step(target, moves)` moves a slider on the same screen, named by its `name`:
+
+```xml
+<button on_click="step(volume, -1)">-</button>
+<slider name="volume" min="0" max="100" step="5" value="60" />
+<button on_click="step(volume, 1)">+</button>
+```
+
+`moves` counts arrow-key presses, not distance. One move is whatever one press
+of Left or Right does to that slider — its `step` on a slider, one position on a
+stepped slider — so `step(volume, 2)` is two presses, and the button doesn't
+need to know which kind of slider it's aiming at. The slider announces the
+change exactly as it would for the key, so anything you bound with `OnChange`
+hears about it. A slider the player couldn't move — disabled or hidden — isn't
+moved.
+
+A verb has one spelling: `on_click="hide"` without the parentheses is refused
+rather than taken as a second way of writing it.
 
 **An event** — for anything that reaches the world: quitting, loading a level,
 respawning. The UI has no access to the world, so this half goes through the
@@ -202,7 +222,10 @@ and name it by its full C++ name, namespaces included:
 
 > **A misspelt name fails the cook**, with the file, line and column. So does an
 > event whose header isn't scanned — every header under `apps/game/src/` is, so
-> in practice this means you put the struct somewhere else.
+> in practice this means you put the struct somewhere else. The same goes for a
+> verb: an unknown one, the wrong number of arguments, a target naming no node
+> on the screen, and a target that isn't a slider all fail the cook where they
+> were written.
 
 ## The three answers
 
@@ -500,6 +523,12 @@ screens, and this is a short walk over them.
 `Screen::Find`, which looks up a **node** by the `name` you gave it in the file,
 is not the same: it walks every node on the screen. Use it while building, not
 every frame.
+
+**A name means one node on its screen.** Two nodes carrying the same name fail
+the cook, with the line of each. A name is optional — give one to anything you
+will look up or point a verb at, and leave the rest unnamed. A button's label is
+not its name: two buttons may both read "Back", and you find either by the
+`name` you gave it.
 
 ## What's next
 
