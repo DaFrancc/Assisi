@@ -501,6 +501,12 @@ screens, and this is a short walk over them.
 is not the same: it walks every node on the screen. Use it while building, not
 every frame.
 
+**A name means one node on its screen.** Two nodes carrying the same name fail
+the cook, with the line of each. A name is optional — give one to anything you
+will look up or point a verb at, and leave the rest unnamed. A button's label is
+not its name: two buttons may both read "Back", and you find either by the
+`name` you gave it.
+
 ## What's next
 
 Markup is a loader on top of the node API, and adds nothing that API lacks —

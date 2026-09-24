@@ -57,7 +57,7 @@ struct Panel
 
         Style style;
         style.floating.enabled = true;
-        row = screen->Tree().Create(screen->Root(), "row");
+        row = screen->Tree().Create(screen->Root());
         screen->Tree().SetStyle(row, style);
         Step({});
     }

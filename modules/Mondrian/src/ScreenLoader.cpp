@@ -5,11 +5,14 @@
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -59,9 +62,19 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
     std::vector<std::shared_ptr<const Pattern>> patterns;
     patterns.resize(document.nodes.size());
 
+    // Views into the document, which outlives this function.
+    std::unordered_set<std::string_view> names;
+
     for (std::size_t index = 0; index < document.nodes.size(); ++index)
     {
         const ScreenNode &node = document.nodes[index];
+
+        // Checked here rather than left to the tree, which would refuse the
+        // second one only after the first half of the screen was built.
+        if (!node.name.empty() && !names.insert(node.name).second)
+        {
+            return std::unexpected(ScreenLoadError::DuplicateName);
+        }
 
         // The root is the screen itself. A control there would have nothing to
         // be created under, and an action there would never fire.
@@ -200,6 +213,8 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "names a control this build does not have";
     case ScreenLoadError::MisplacedNode:
         return "puts a control or an action where one cannot go";
+    case ScreenLoadError::DuplicateName:
+        return "gives two nodes one name";
     case ScreenLoadError::Count:
         break;
     }
@@ -263,7 +278,10 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const Scr
             }
         }
 
-        tree.SetName(id, node.name);
+        // Resolve refused any name two nodes carry, and every node on this
+        // screen came from this document.
+        const std::expected<void, NameError> named = tree.SetName(id, node.name);
+        ASSISI_ASSERT(named.has_value(), "a name Resolve passed was already taken on a screen it built");
         ApplyFlags(tree, id, node);
         if (node.selectable)
         {

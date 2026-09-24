@@ -327,6 +327,42 @@ TEST_CASE("ScreenLoader: an unknown event leaves no screen behind")
     CHECK_FALSE(ui.TakesInput());
 }
 
+TEST_CASE("ScreenLoader: a name two nodes carry leaves no screen behind")
+{
+    // The cook refuses the same thing, so this is a stale package or a document
+    // built by hand. Answered before anything is built, like every refusal.
+    EventQueue events;
+    Ui ui{events};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document = PauseMenu();
+    document.nodes[4].name = "resume";
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error() == ScreenLoadError::DuplicateName);
+    CHECK(ui.InputScreen() == nullptr);
+    CHECK_FALSE(ui.TakesInput());
+}
+
+TEST_CASE("ScreenLoader: a button is found by its name, not its label")
+{
+    EventQueue events;
+    Ui ui{events};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document = PauseMenu();
+    // Two buttons reading the same thing are no collision: a label is what a
+    // player reads, and a name is what code and markup refer to.
+    document.nodes[4].text = "Resume";
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    REQUIRE(loaded.has_value());
+    CHECK(loaded->screen->Find("resume"));
+    CHECK(loaded->screen->Find("quit"));
+    CHECK_FALSE(loaded->screen->Find("Resume"));
+}
+
 TEST_CASE("ScreenLoader: a named style is carried and ignored")
 {
     // There is nowhere for a style name to resolve to yet. A file written today

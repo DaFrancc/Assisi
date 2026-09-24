@@ -30,7 +30,23 @@ Node *NodeTree::GetMutable(NodeId id)
     return const_cast<Node *>(std::as_const(*this).Get(id));
 }
 
-NodeId NodeTree::Create(NodeId parent, std::string_view name)
+std::expected<NodeId, NameError> NodeTree::Create(NodeId parent, std::string_view name)
+{
+    // Checked before the node exists, so a refusal leaves no nameless node
+    // behind for the caller to find and clean up.
+    if (!name.empty() && Find(name))
+    {
+        return std::unexpected(NameError::Taken);
+    }
+    const NodeId id = Create(parent);
+    if (Node *node = GetMutable(id))
+    {
+        node->name = name;
+    }
+    return id;
+}
+
+NodeId NodeTree::Create(NodeId parent)
 {
     if (!IsAlive(parent))
     {
@@ -56,7 +72,6 @@ NodeId NodeTree::Create(NodeId parent, std::string_view name)
     node = Node{};
     node.generation = generation;
     node.alive = true;
-    node.name = name;
     node.parent = parent;
     const NodeId id = IdOf(index);
 
@@ -132,12 +147,23 @@ void NodeTree::SetText(NodeId id, std::string_view text)
     }
 }
 
-void NodeTree::SetName(NodeId id, std::string_view name)
+std::expected<void, NameError> NodeTree::SetName(NodeId id, std::string_view name)
 {
-    if (Node *node = GetMutable(id))
+    Node *node = GetMutable(id);
+    if (node == nullptr)
     {
-        node->name = name;
+        return {};
     }
+    if (!name.empty())
+    {
+        const NodeId holder = Find(name);
+        if (holder && holder != id)
+        {
+            return std::unexpected(NameError::Taken);
+        }
+    }
+    node->name = name;
+    return {};
 }
 
 void NodeTree::SetVisible(NodeId id, bool visible)

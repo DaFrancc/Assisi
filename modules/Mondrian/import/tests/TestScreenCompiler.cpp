@@ -134,56 +134,62 @@ Style ListStyle()
     return style;
 }
 
+/// Gives @p id the name @p name, which the case expects to be free.
+void Name(Screen &screen, NodeId id, std::string_view name)
+{
+    REQUIRE(screen.Tree().SetName(id, name).has_value());
+}
+
 /// Controls.amdn's controls, built through the node API with the arguments the
 /// file writes, under the names the file gives them.
 void BuildTwin(Screen &screen)
 {
     const NodeId row = screen.Add(screen.Root(), Style{});
 
-    screen.Tree().SetName(screen.AddToggle(row, true).node, "fullscreen");
-    screen.Tree().SetName(
-        screen.AddContinuousSlider(row, SliderRange{.min = 0.f, .max = 100.f, .step = 5.f}, 60.f).node, "volume");
+    Name(screen, screen.AddToggle(row, true).node, "fullscreen");
+    Name(screen, screen.AddContinuousSlider(row, SliderRange{.min = 0.f, .max = 100.f, .step = 5.f}, 60.f).node,
+         "volume");
     // No step: a stepped slider moves one position per press whatever its ends
     // are, so the file has no way to say one and neither has this.
-    screen.Tree().SetName(screen.AddSteppedSlider(row, SliderRange{.min = 0.f, .max = 3.f}, 4, 1).node, "quality");
+    Name(screen, screen.AddSteppedSlider(row, SliderRange{.min = 0.f, .max = 3.f}, 4, 1).node, "quality");
 
     const TextFieldId player = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(player, "your name");
     screen.SetMaxLength(player, 24);
     screen.SetText(player, "type here");
-    screen.Tree().SetName(player.node, "player");
+    Name(screen, player.node, "player");
 
     const TextFieldId secret = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(secret, "password");
     screen.SetText(secret, "hunter2");
     screen.SetMask(secret, TextMask::Dots);
-    screen.Tree().SetName(secret.node, "secret");
+    Name(screen, secret.node, "secret");
 
     const TextFieldId port = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(port, "port");
     REQUIRE(screen.SetPattern(port, Patterns::kInteger, TextCheck::Refuse).has_value());
-    screen.Tree().SetName(port.node, "port");
+    Name(screen, port.node, "port");
 
     const TextFieldId who = screen.AddTextField(row, TextLines::Single);
     screen.SetPlaceholder(who, "address");
     REQUIRE(screen.SetPattern(who, "[^@ ]+@[^@ ]+", TextCheck::OnChange).has_value());
-    screen.Tree().SetName(who.node, "who");
+    Name(screen, who.node, "who");
 
     const TextFieldId growing = screen.AddTextField(row, TextLines::Multi);
     screen.SetPlaceholder(growing, "grows forever");
-    screen.Tree().SetName(growing.node, "growing");
+    Name(screen, growing.node, "growing");
 
     const TextFieldId upTo = screen.AddTextField(row, TextLines::Multi);
     screen.SetHeight(upTo, TextHeight::UpTo, 3);
     screen.SetPlaceholder(upTo, "up to 3 lines");
-    screen.Tree().SetName(upTo.node, "upTo");
+    Name(screen, upTo.node, "upTo");
 
     const TextFieldId exactly = screen.AddTextField(row, TextLines::Multi);
     screen.SetHeight(exactly, TextHeight::Exactly, 3);
     screen.SetPlaceholder(exactly, "exactly 3 lines");
-    screen.Tree().SetName(exactly.node, "exactly");
+    Name(screen, exactly.node, "exactly");
 
-    screen.Tree().SetName(screen.AddScroll(row, ListStyle(), {false, true}), "list");
+    Name(screen, screen.AddScroll(row, ListStyle(), {false, true}), "list");
 }
 
 /// Whether the two nodes called @p name agree on everything making one decides.
@@ -464,6 +470,44 @@ TEST_CASE("ScreenCompiler: focus is claimed once")
                                       "</screen>\n");
     CHECK(error.line == 3);
     CHECK(error.message.find("second") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: a name means one node on its screen")
+{
+    SUBCASE("a second node carrying it is refused where it was written")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <text name=\"title\">One</text>\n"
+                                          "  <text name=\"title\">Two</text>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("title") != std::string::npos);
+        // Where the first one is, so whoever reads it can choose which to rename.
+        CHECK(error.message.find("line 2") != std::string::npos);
+    }
+
+    SUBCASE("however far apart they sit")
+    {
+        CHECK(Refused("<screen>\n"
+                      "  <column name=\"panel\">\n"
+                      "    <row><text name=\"label\" /></row>\n"
+                      "  </column>\n"
+                      "  <row name=\"label\" />\n"
+                      "</screen>\n")
+                  .line == 5);
+    }
+
+    SUBCASE("the screen's own name is not a node's")
+    {
+        // The root's name is what the screen is called, which a system finds it
+        // by; a node inside may share it without the two being confused.
+        CHECK(Compiled(R"(<screen name="Pause"><text name="Pause" /></screen>)").nodes[1].name == "Pause");
+    }
+
+    SUBCASE("unnamed nodes never collide")
+    {
+        CHECK(Compiled(R"(<screen><text /><text /><row /><row /></screen>)").nodes.size() == 5);
+    }
 }
 
 TEST_CASE("ScreenCompiler: the screen itself cannot be clicked")

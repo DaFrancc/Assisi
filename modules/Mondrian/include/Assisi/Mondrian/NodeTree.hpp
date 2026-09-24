@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <limits>
 #include <span>
@@ -41,6 +42,13 @@ enum class NavDirection : uint8_t
 };
 
 inline constexpr std::size_t kNavDirectionCount = static_cast<std::size_t>(NavDirection::Count);
+
+/// @brief Why a node could not take a name.
+enum class NameError : uint8_t
+{
+    Taken, ///< another live node on the tree already has it
+    Count
+};
 
 /// @brief One slot: a box with optional text or image.
 struct Node
@@ -106,16 +114,22 @@ class NodeTree
 
     [[nodiscard]] NodeId Root() const { return _root; }
 
-    /// @brief A new node, last among @p parent's children, or a null id when
-    /// @p parent is not alive.
-    NodeId Create(NodeId parent, std::string_view name = {});
+    /// @brief A new unnamed node, last among @p parent's children, or a null id
+    /// when @p parent is not alive.
+    NodeId Create(NodeId parent);
+
+    /// @brief The same, called @p name, which no other live node on this tree
+    /// may have. Refused before anything is made; an empty name is no name.
+    [[nodiscard]] std::expected<NodeId, NameError> Create(NodeId parent, std::string_view name);
 
     /// @brief Destroys @p id and everything under it. The root may not be destroyed.
     void Destroy(NodeId id);
 
     void SetText(NodeId id, std::string_view text);
-    /// @brief What Find looks @p id up by, replacing the name it was made with.
-    void SetName(NodeId id, std::string_view name);
+    /// @brief What Find looks @p id up by, replacing the name it had. Refused,
+    /// leaving the old name, when another live node has @p name; an empty name
+    /// takes the name off.
+    [[nodiscard]] std::expected<void, NameError> SetName(NodeId id, std::string_view name);
     void SetVisible(NodeId id, bool visible);
     void SetStyle(NodeId id, const Style &style);
     /// @brief Draws @p texture over @p uv across the node, over its background.
@@ -164,8 +178,8 @@ class NodeTree
     /// those through the calls above, which keep them consistent.
     [[nodiscard]] Node *Editable(NodeId id) { return GetMutable(id); }
 
-    /// @brief The first live node named @p name, or a null id. A scan: look a
-    /// name up once and keep the id.
+    /// @brief The live node named @p name, or a null id. A scan: look a name up
+    /// once and keep the id.
     [[nodiscard]] NodeId Find(std::string_view name) const;
 
     [[nodiscard]] bool IsAlive(NodeId id) const { return Get(id) != nullptr; }

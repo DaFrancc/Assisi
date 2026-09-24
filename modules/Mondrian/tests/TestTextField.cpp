@@ -1004,7 +1004,7 @@ TEST_CASE("TextField: text set from code is taken as given, limit and pattern no
 TEST_CASE("TextField: a selectable label may be copied but not typed into")
 {
     Field field;
-    const NodeId label = field.screen->Tree().Create(field.screen->Tree().Root(), "label");
+    const NodeId label = field.screen->Tree().Create(field.screen->Tree().Root());
     field.screen->Tree().SetText(label, "10.0.0.1");
     field.screen->SetSelectable(label, true);
     // Laid out before it is focused: focus is checked against the last layout,

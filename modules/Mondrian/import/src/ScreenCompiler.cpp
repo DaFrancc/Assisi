@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace Assisi::Mondrian::Import
@@ -330,11 +331,6 @@ Applied ApplyWidgetAttribute(ScreenNode &node, std::string_view name, std::strin
 /// Everything about a node that is not its style and not its behaviour.
 Applied ApplyNodeAttribute(ScreenNode &node, std::string_view name, std::string_view value)
 {
-    if (name == "name")
-    {
-        node.name = value;
-        return Applied::Yes;
-    }
     if (name == "style")
     {
         // Carried and not resolved: there is nowhere for a name to resolve to
@@ -562,10 +558,33 @@ struct Walk
 {
     ScreenDocument &document;
     const Core::EventCatalog &catalog;
+    /// Every node name written so far, and the line it was written on, so a
+    /// second node carrying one is refused with the first's place in hand.
+    std::unordered_map<std::string, uint32_t> names;
     /// Whether some node has already claimed focus, so a second can be refused
     /// rather than quietly winning.
     bool focusClaimed = false;
 };
+
+/// Names node @p index, refusing a name another node on the screen has. A name
+/// is what a target and a lookup mean a node by, so two nodes sharing one would
+/// leave both meaning whichever came first.
+std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &attribute, uint32_t index)
+{
+    if (!attribute.value.empty())
+    {
+        const std::unordered_map<std::string, uint32_t>::const_iterator first = walk.names.find(attribute.value);
+        if (first != walk.names.end())
+        {
+            return std::unexpected(At(attribute, "'" + attribute.value +
+                                                     "' is already the name of a node on this screen (line " +
+                                                     std::to_string(first->second) + "). A name means one node."));
+        }
+        walk.names.emplace(attribute.value, attribute.line);
+    }
+    walk.document.nodes[index].name = attribute.value;
+    return {};
+}
 
 std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement &element, uint32_t parent);
 
@@ -614,6 +633,17 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         {
             return std::unexpected(At(attribute, "a scroll says which axes it scrolls with 'axes', not "
                                                  "'scroll_bars'."));
+        }
+
+        // On the root, `name` is what the screen is called and not a node's
+        // name, so the screen's table reads it below.
+        if (attribute.name == "name" && !isRoot)
+        {
+            if (const std::expected<void, MarkupError> named = ApplyName(walk, attribute, index); !named)
+            {
+                return std::unexpected(named.error());
+            }
+            continue;
         }
 
         if (attribute.name == "focus")
@@ -743,7 +773,7 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     screenNode.style.direction = Direction::Column;
     document.nodes.push_back(std::move(screenNode));
 
-    Walk walk{.document = document, .catalog = catalog};
+    Walk walk{.document = document, .catalog = catalog, .names = {}};
     if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, root, 0); !attributes)
     {
         return std::unexpected(attributes.error());

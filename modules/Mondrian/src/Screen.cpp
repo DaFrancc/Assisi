@@ -81,27 +81,63 @@ const TextLayout *Screen::TextOf(const LayoutNode &placed) const
     return placed.text < _layout.texts.size() ? &_layout.texts[placed.text] : nullptr;
 }
 
-NodeId Screen::Add(NodeId parent, const Style &style, std::string_view name)
+NodeId Screen::Add(NodeId parent, const Style &style)
 {
-    const NodeId id = _tree.Create(parent, name);
+    const NodeId id = _tree.Create(parent);
     _tree.SetStyle(id, style);
     return id;
 }
 
-NodeId Screen::AddText(NodeId parent, const Style &style, std::string_view text, std::string_view name)
+std::expected<NodeId, NameError> Screen::Add(NodeId parent, const Style &style, std::string_view name)
 {
-    const NodeId id = Add(parent, style, name);
+    const std::expected<NodeId, NameError> id = _tree.Create(parent, name);
+    if (id)
+    {
+        _tree.SetStyle(*id, style);
+    }
+    return id;
+}
+
+NodeId Screen::AddText(NodeId parent, const Style &style, std::string_view text)
+{
+    const NodeId id = Add(parent, style);
     _tree.SetText(id, text);
+    return id;
+}
+
+std::expected<NodeId, NameError> Screen::AddText(NodeId parent, const Style &style, std::string_view text,
+                                                 std::string_view name)
+{
+    const std::expected<NodeId, NameError> id = Add(parent, style, name);
+    if (id)
+    {
+        _tree.SetText(*id, text);
+    }
     return id;
 }
 
 ButtonId Screen::AddButton(NodeId parent, std::string_view label)
 {
-    const NodeId node = _tree.Create(parent, label);
+    const NodeId node = _tree.Create(parent);
     _tree.SetText(node, label);
     _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::Button));
     _tree.SetFocusable(node, true);
     return {.node = node};
+}
+
+std::expected<ButtonId, NameError> Screen::AddButton(NodeId parent, std::string_view label, std::string_view name)
+{
+    // Checked before the button exists, so a refusal leaves nothing behind.
+    if (!name.empty() && Find(name))
+    {
+        return std::unexpected(NameError::Taken);
+    }
+    const ButtonId button = AddButton(parent, label);
+    if (const std::expected<void, NameError> named = _tree.SetName(button.node, name); !named)
+    {
+        return std::unexpected(named.error());
+    }
+    return button;
 }
 
 ToggleId Screen::AddToggle(NodeId parent, bool on)

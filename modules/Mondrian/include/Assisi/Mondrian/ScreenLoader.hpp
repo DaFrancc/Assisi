@@ -57,6 +57,10 @@ enum class ScreenLoadError : uint8_t
     /// on the root, which is the screen itself.
     MisplacedNode,
 
+    /// Two nodes carry one name. The cook refuses the same thing, so this is a
+    /// stale package or a document built by hand.
+    DuplicateName,
+
     Count
 };
 

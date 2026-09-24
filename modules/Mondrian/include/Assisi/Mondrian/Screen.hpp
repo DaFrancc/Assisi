@@ -162,15 +162,31 @@ class Screen
     /// the tree being announced from would go with it.
     void OnActivate(NodeId node, std::function<void(Screen &)> act);
 
-    /// @brief A node under @p parent styled by @p style, called @p name.
-    NodeId Add(NodeId parent, const Style &style, std::string_view name = {});
+    /// @brief An unnamed node under @p parent styled by @p style.
+    NodeId Add(NodeId parent, const Style &style);
 
-    /// @brief The same, showing @p text.
-    NodeId AddText(NodeId parent, const Style &style, std::string_view text, std::string_view name = {});
+    /// @brief The same, called @p name, which no other node on this screen may
+    /// have. Refused before anything is made.
+    [[nodiscard]] std::expected<NodeId, NameError> Add(NodeId parent, const Style &style, std::string_view name);
 
-    /// @brief A button under @p parent showing @p label, which activates on a
-    /// click or on Accept while focused. Bind it with OnActivate.
+    /// @brief An unnamed node showing @p text.
+    NodeId AddText(NodeId parent, const Style &style, std::string_view text);
+
+    /// @brief The same, called @p name.
+    [[nodiscard]] std::expected<NodeId, NameError> AddText(NodeId parent, const Style &style, std::string_view text,
+                                                           std::string_view name);
+
+    /// @brief An unnamed button under @p parent showing @p label, which
+    /// activates on a click or on Accept while focused. Bind it with
+    /// OnActivate.
+    ///
+    /// A label is what a player reads and never what the button is found by:
+    /// two buttons may both read "Back".
     ButtonId AddButton(NodeId parent, std::string_view label);
+
+    /// @brief The same, called @p name.
+    [[nodiscard]] std::expected<ButtonId, NameError> AddButton(NodeId parent, std::string_view label,
+                                                               std::string_view name);
 
     /// @brief A toggle under @p parent, starting @p on.
     ToggleId AddToggle(NodeId parent, bool on);

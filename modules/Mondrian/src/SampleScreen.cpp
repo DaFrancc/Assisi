@@ -4,6 +4,9 @@
 #include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
+#include <Assisi/Core/Assert.hpp>
+
+#include <expected>
 #include <string_view>
 
 namespace Assisi::Mondrian
@@ -62,13 +65,21 @@ constexpr std::string_view kParagraph =
     "Cr\xC3\xA8me br\xC3\xBBl\xC3\xA9"
     "e.";
 
-/// A button: a label with padding around it, over @p look.
+/// The id @p named holds. Every name in this sample is a literal no other node
+/// here shares, so a refusal is a mistake in this file.
+template <typename Id> Id Named(const std::expected<Id, NameError> &named)
+{
+    ASSISI_ASSERT(named.has_value(), "the sample screen gave two nodes one name");
+    return named.value_or(Id{});
+}
+
+/// A button called @p label: the label with padding around it, over @p look.
 void AddButton(Screen &screen, NodeId row, std::string_view label, const Style &look)
 {
     Style style = look;
     style.padding = kButtonPadding;
     style.textSize = kButtonSize;
-    const ButtonId id = screen.AddButton(row, label);
+    const ButtonId id = Named(screen.AddButton(row, label, label));
     screen.Tree().SetStyle(id.node, style);
 }
 
@@ -89,38 +100,38 @@ NodeId BuildPanel(Screen &screen, TextureId picture)
     panel.borderColor = kPanelBorder;
     panel.cornerRadius = kPanelRadius;
     panel.cornerStyle = CornerStyle::Rounded;
-    const NodeId panelId = screen.Add(screen.Root(), panel, "panel");
+    const NodeId panelId = Named(screen.Add(screen.Root(), panel, "panel"));
     screen.Tree().SetBlocksPointer(panelId, true);
 
     Style header;
     header.sizing = {Sizing::Grow(), Sizing::Fit()};
     header.gap = kPanelGap;
     header.childAlign = {Alignment::Start, Alignment::Center};
-    const NodeId headerId = screen.Add(panelId, header, "header");
+    const NodeId headerId = Named(screen.Add(panelId, header, "header"));
 
     Style pictureStyle;
     pictureStyle.sizing = {Sizing::Fixed(kPictureSide), Sizing::Fixed(kPictureSide)};
     pictureStyle.cornerRadius = kPictureRadius;
     pictureStyle.cornerStyle = CornerStyle::Rounded;
-    const NodeId pictureId = screen.Add(headerId, pictureStyle, "picture");
+    const NodeId pictureId = Named(screen.Add(headerId, pictureStyle, "picture"));
     screen.Tree().SetImage(pictureId, picture, kWholeTexture);
 
     Style title;
     title.sizing = {Sizing::Grow(), Sizing::Fit()};
     title.textSize = kTitleSize;
-    screen.AddText(headerId, title, "Mondrian", "title");
+    Named(screen.AddText(headerId, title, "Mondrian", "title"));
 
     Style body;
     body.sizing = {Sizing::Grow(), Sizing::Fit()};
     body.textSize = kBodySize;
     body.textColor = kBodyText;
-    screen.AddText(panelId, body, kParagraph, "body");
+    Named(screen.AddText(panelId, body, kParagraph, "body"));
 
     Style buttons;
     buttons.sizing = {Sizing::Grow(), Sizing::Fit()};
     buttons.gap = kPanelGap;
     buttons.childAlign = {Alignment::End, Alignment::Center};
-    const NodeId buttonsId = screen.Add(panelId, buttons, "buttons");
+    const NodeId buttonsId = Named(screen.Add(panelId, buttons, "buttons"));
 
     Style outlined;
     outlined.borderWidth = kPanelBorderWidth;
@@ -144,7 +155,7 @@ NodeId BuildPanel(Screen &screen, TextureId picture)
     badge.floating.enabled = true;
     badge.floating.anchor = {Alignment::End, Alignment::Start};
     badge.floating.attach = {Alignment::Center, Alignment::Center};
-    screen.AddText(panelId, badge, "NEW", "badge");
+    Named(screen.AddText(panelId, badge, "NEW", "badge"));
 
     return panelId;
 }
@@ -156,14 +167,14 @@ void BuildControls(Screen &screen, NodeId panel)
     row.sizing = {Sizing::Grow(), Sizing::Fit()};
     row.gap = kPanelGap;
     row.childAlign = {Alignment::Start, Alignment::Center};
-    const NodeId controls = screen.Add(panel, row, "controls");
+    const NodeId controls = Named(screen.Add(panel, row, "controls"));
     screen.AddToggle(controls, true);
     const ContinuousSliderId volume = screen.AddContinuousSlider(controls, kSliderRange, kSliderStart);
     screen.SetButtons(volume, SliderButtons::Shown);
     screen.AddSteppedSlider(controls, kStepRange, kSliderSteps, kSliderStep);
 
     Style fields = row;
-    const NodeId fieldRow = screen.Add(panel, fields, "fields");
+    const NodeId fieldRow = Named(screen.Add(panel, fields, "fields"));
     const TextFieldId name = screen.AddTextField(fieldRow, TextLines::Single);
     screen.SetPlaceholder(name, "your name");
     screen.SetText(name, "type here");
@@ -174,7 +185,7 @@ void BuildControls(Screen &screen, NodeId panel)
 
     Style notes = fields;
     notes.childAlign = {Alignment::Start, Alignment::Start};
-    const NodeId noteRow = screen.Add(panel, notes, "notes");
+    const NodeId noteRow = Named(screen.Add(panel, notes, "notes"));
 
     // Their prompts say which is which, so emptying one does not lose the only
     // thing telling them apart.
@@ -202,7 +213,8 @@ void BuildControls(Screen &screen, NodeId panel)
     list.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
     list.scrollSmoothing = kScrollSmoothing;
     const NodeId scroller = screen.AddScroll(panel, list, {false, true});
-    screen.Tree().SetName(scroller, "list");
+    const std::expected<void, NameError> listed = screen.Tree().SetName(scroller, "list");
+    ASSISI_ASSERT(listed.has_value(), "the sample screen gave two nodes one name");
 
     Style entry;
     entry.sizing = {Sizing::Grow(), Sizing::Fit()};
@@ -210,7 +222,7 @@ void BuildControls(Screen &screen, NodeId panel)
     entry.textSize = kButtonSize;
     for (const std::string_view label : {"One", "Two", "Three", "Four", "Five"})
     {
-        const ButtonId id = screen.AddButton(scroller, label);
+        const ButtonId id = Named(screen.AddButton(scroller, label, label));
         screen.Tree().SetStyle(id.node, entry);
     }
 }

@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <expected>
 #include <vector>
 
 using namespace Assisi::Mondrian;
@@ -82,7 +83,9 @@ struct Probe
             WidgetType{.measure = &ProbeMeasure, .draw = &ProbeDraw, .input = &ProbeInput, .context = &record});
         Style style;
         style.floating.enabled = true;
-        node = screen->Tree().Create(screen->Root(), "probe");
+        const std::expected<NodeId, NameError> probe = screen->Tree().Create(screen->Root(), "probe");
+        REQUIRE(probe.has_value());
+        node = *probe;
         screen->Tree().SetStyle(node, style);
         screen->Tree().SetBehaviour(node, type);
         screen->Tree().SetFocusable(node, true);
@@ -266,7 +269,7 @@ TEST_CASE("Widget: a direction the widget handles does not also move focus")
     style.floating.enabled = true;
     style.floating.offset = {.x = 600.f, .y = 0.f};
     style.sizing = {Sizing::Fixed(100.f), Sizing::Fixed(40.f)};
-    const NodeId neighbour = probe.screen->Tree().Create(probe.screen->Tree().Root(), "neighbour");
+    const NodeId neighbour = probe.screen->Tree().Create(probe.screen->Tree().Root());
     probe.screen->Tree().SetStyle(neighbour, style);
     probe.screen->Tree().SetFocusable(neighbour, true);
     probe.Step({});
