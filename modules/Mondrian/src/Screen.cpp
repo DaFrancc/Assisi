@@ -12,14 +12,14 @@ namespace Assisi::Mondrian
 namespace
 {
 
-/// The look a text field has until a game restyles it, in logical pixels. A
-/// field made with no style at all would be an invisible box, and a player
-/// cannot type into what they cannot see.
-constexpr float kFieldWidth = 220.f;
-constexpr float kFieldTextSize = 28.f;
-constexpr float kFieldBorderWidth = 2.f;
-constexpr float kFieldCornerRadius = 10.f;
-constexpr Padding kFieldPadding{.left = 10.f, .top = 6.f, .right = 10.f, .bottom = 6.f};
+/// The look a text field has until a game restyles it. A field made with no
+/// style at all would be an invisible box, and a player cannot type into what
+/// they cannot see.
+constexpr Length kFieldWidth = Px(220.f);
+constexpr Length kFieldTextSize = Px(28.f);
+constexpr Length kFieldBorderWidth = Px(2.f);
+constexpr Length kFieldCornerRadius = Px(10.f);
+constexpr Padding kFieldPadding{.left = Px(10.f), .top = Px(6.f), .right = Px(10.f), .bottom = Px(6.f)};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldColor{0.04f, 0.05f, 0.07f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldBorder{0.34f, 0.38f, 0.48f, 1.f};
 
@@ -28,7 +28,9 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldBorder{0.34f, 0.38f, 0.48f,
 Style TextFieldStyle()
 {
     Style style;
-    style.sizing = {Sizing{.min = kFieldWidth, .kind = SizingKind::Grow}, Sizing::Fit()};
+    Sizing across = Sizing::Grow();
+    across.min = kFieldWidth;
+    style.sizing = {across, Sizing::Fit()};
     style.padding = kFieldPadding;
     style.textSize = kFieldTextSize;
     style.background = kFieldColor;

@@ -150,6 +150,11 @@ class Ui
     void SetUserScale(float scale) { _userScale = scale; }
     [[nodiscard]] float GetUserScale() const { return _userScale; }
 
+    /// @brief Which side of the viewport a UI pixel is measured against. The
+    /// shorter side until set.
+    void SetScaleMatch(ScaleMatch match) { _scaleMatch = match; }
+    [[nodiscard]] ScaleMatch GetScaleMatch() const { return _scaleMatch; }
+
   private:
     friend class Screen;
 
@@ -268,6 +273,7 @@ class Ui
     float _userScale = 1.f;
     FrameStep _nextStep = FrameStep::AwaitingInput;
     NavWrap _navWrap = NavWrap::Around;
+    ScaleMatch _scaleMatch = ScaleMatch::ShorterSide;
     bool _hoverFocuses = false;
     /// Whether Back was pressed and nothing on the screen wanted it, acted on
     /// once the frame's events are out so a screen announces before it goes.

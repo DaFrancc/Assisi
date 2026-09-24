@@ -88,7 +88,7 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, vpath, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
         Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,

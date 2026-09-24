@@ -324,7 +324,7 @@ TEST_CASE("A screen naming an event nothing declares fails the cook, with the li
     const std::filesystem::path screen = source.Path() / "ui" / "Misspelt.amdn";
     {
         std::ofstream markup(screen);
-        markup << "<screen name=\"Misspelt\">\n"
+        markup << "<screen>\n"
                   "  <button\n"
                   "          on_click=\"Game::NoSuchEvent\">Quit</button>\n"
                   "</screen>\n";

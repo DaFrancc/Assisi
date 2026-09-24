@@ -4,9 +4,12 @@
 
 #include <Assisi/Core/CookedBlob.hpp>
 
+#include <array>
+#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 namespace Assisi::Mondrian
 {
@@ -22,6 +25,185 @@ constexpr std::size_t kMinNodeBytes = 56;
 
 /// The same for a system name: a length and at least one character.
 constexpr std::size_t kMinSystemBytes = 2;
+
+using Color = Math::Color4<Math::ColorSpace::Srgb>;
+
+/// Whether @p Field is @p T, const or not: each field list below serves the
+/// writer, which holds a const document, and the reader, which fills one.
+template <typename Field, typename T>
+concept FieldOf = std::same_as<std::remove_const_t<Field>, T>;
+
+// Each struct the payload carries, as the fields it carries, in order. The
+// writer and the reader both walk these lists, so a field is never written
+// without being read, or read from a different place than it was written.
+
+template <typename Archive, FieldOf<Length> L> void Fields(Archive &archive, L &length)
+{
+    archive(length.value, length.unit);
+}
+
+template <typename Archive, FieldOf<Sizing> S> void Fields(Archive &archive, S &sizing)
+{
+    archive(sizing.value, sizing.min, sizing.max, sizing.kind);
+}
+
+template <typename Archive, FieldOf<Padding> P> void Fields(Archive &archive, P &padding)
+{
+    archive(padding.left, padding.top, padding.right, padding.bottom);
+}
+
+template <typename Archive, FieldOf<Floating> F> void Fields(Archive &archive, F &floating)
+{
+    archive(floating.offset, floating.anchor, floating.attach, floating.target, floating.enabled,
+            floating.clipToParent);
+}
+
+template <typename Archive, FieldOf<Style> S> void Fields(Archive &archive, S &style)
+{
+    // Box
+    archive(style.sizing, style.padding, style.floating, style.direction, style.childAlign, style.gap);
+    // Paint
+    archive(style.background, style.borderColor, style.borderWidth, style.cornerRadius, style.cornerStyle);
+    // Text
+    archive(style.textColor, style.textSize, style.textAlign);
+    // Scrolling
+    archive(style.enabledScrollBars, style.scrollSmoothing, style.scrollBarMinLength, style.scrollBarVisibility,
+            style.scrollBarDrag);
+}
+
+template <typename Archive, FieldOf<SliderRange> R> void Fields(Archive &archive, R &range)
+{
+    archive(range.min, range.max, range.step);
+}
+
+template <typename Archive, FieldOf<ScreenTraits> T> void Fields(Archive &archive, T &traits)
+{
+    archive(traits.input, traits.beneath, traits.pause);
+}
+
+template <typename Archive, FieldOf<ScreenNode> N> void Fields(Archive &archive, N &node)
+{
+    // Place in the tree
+    archive(node.parent, node.name, node.style, node.styleName);
+    // State
+    archive(node.visible, node.enabled, node.blocksPointer, node.takesKeyboard, node.selectable);
+    // Control and what it does
+    archive(node.widget, node.text, node.action, node.verb, node.target, node.moves, node.eventName);
+    // Sliders and toggles
+    archive(node.range, node.value, node.steps, node.step, node.on);
+    // Text fields
+    archive(node.placeholder, node.pattern, node.maxLength, node.lineLimit, node.lines, node.mask, node.check,
+            node.height);
+}
+
+/// Writes each field it is handed, in the order handed.
+class PayloadWriter
+{
+  public:
+    explicit PayloadWriter(Core::BitWriter &bits) : _bits(bits) {}
+
+    template <typename... Field> void operator()(const Field &...fields) { (Write(fields), ...); }
+
+  private:
+    void Write(bool value) { _bits.WriteBool(value); }
+    void Write(float value) { _bits.WriteFloat(value); }
+    void Write(int32_t value) { _bits.WriteInt32(value); }
+    void Write(uint32_t value) { _bits.WriteUInt32(value); }
+    void Write(const std::string &value) { _bits.WriteString(value); }
+
+    void Write(const Color &value)
+    {
+        _bits.WriteFloat(value.r);
+        _bits.WriteFloat(value.g);
+        _bits.WriteFloat(value.b);
+        _bits.WriteFloat(value.a);
+    }
+
+    template <typename E>
+        requires std::is_enum_v<E>
+    void Write(E value)
+    {
+        _bits.WriteVarUInt32(static_cast<uint32_t>(value));
+    }
+
+    template <typename T, std::size_t N> void Write(const std::array<T, N> &values)
+    {
+        for (const T &value : values)
+        {
+            Write(value);
+        }
+    }
+
+    template <typename T>
+        requires requires(PayloadWriter &writer, const T &value) { Fields(writer, value); }
+    void Write(const T &value)
+    {
+        Fields(*this, value);
+    }
+
+    Core::BitWriter &_bits;
+};
+
+/// Reads each field it is handed, in the order handed. An enumerator this
+/// build does not have is left at its default and refuses the payload, so
+/// nothing downstream switches over a value no case covers.
+class PayloadReader
+{
+  public:
+    explicit PayloadReader(Core::BitReader &bits) : _bits(bits) {}
+
+    template <typename... Field> void operator()(Field &...fields) { (Read(fields), ...); }
+
+    /// Whether an enumerator was out of range. Framing faults are the bit
+    /// reader's own Failed().
+    [[nodiscard]] bool Refused() const { return _refused; }
+
+  private:
+    void Read(bool &value) { value = _bits.ReadBool(); }
+    void Read(float &value) { value = _bits.ReadFloat(); }
+    void Read(int32_t &value) { value = _bits.ReadInt32(); }
+    void Read(uint32_t &value) { value = _bits.ReadUInt32(); }
+    void Read(std::string &value) { value = _bits.ReadString(); }
+
+    void Read(Color &value)
+    {
+        value.r = _bits.ReadFloat();
+        value.g = _bits.ReadFloat();
+        value.b = _bits.ReadFloat();
+        value.a = _bits.ReadFloat();
+    }
+
+    template <typename E>
+        requires std::is_enum_v<E>
+    void Read(E &value)
+    {
+        const uint32_t raw = _bits.ReadVarUInt32();
+        if (raw >= static_cast<uint32_t>(E::Count))
+        {
+            _refused = true;
+            return;
+        }
+        value = static_cast<E>(raw);
+    }
+
+    template <typename T, std::size_t N> void Read(std::array<T, N> &values)
+    {
+        for (T &value : values)
+        {
+            Read(value);
+        }
+    }
+
+    template <typename T>
+        requires requires(PayloadReader &reader, T &value) { Fields(reader, value); }
+    void Read(T &value)
+    {
+        Fields(*this, value);
+    }
+
+    Core::BitReader &_bits;
+    bool _refused = false;
+};
 
 std::size_t BytesLeft(const Core::BitReader &reader)
 {
@@ -39,191 +221,7 @@ std::optional<uint32_t> ReadCount(Core::BitReader &reader, std::size_t entryByte
     return count;
 }
 
-/// Whether @p value names an enumerator of an enum whose last is Count.
-template <typename E> bool InRange(uint32_t value)
-{
-    return value < static_cast<uint32_t>(E::Count);
-}
-
-void WriteColor(Core::BitWriter &writer, const Math::Color4<Math::ColorSpace::Srgb> &color)
-{
-    writer.WriteFloat(color.r);
-    writer.WriteFloat(color.g);
-    writer.WriteFloat(color.b);
-    writer.WriteFloat(color.a);
-}
-
-Math::Color4<Math::ColorSpace::Srgb> ReadColor(Core::BitReader &reader)
-{
-    Math::Color4<Math::ColorSpace::Srgb> color{0.f, 0.f, 0.f, 0.f};
-    color.r = reader.ReadFloat();
-    color.g = reader.ReadFloat();
-    color.b = reader.ReadFloat();
-    color.a = reader.ReadFloat();
-    return color;
-}
-
-void WriteSizing(Core::BitWriter &writer, const Sizing &sizing)
-{
-    writer.WriteFloat(sizing.value);
-    writer.WriteFloat(sizing.min);
-    writer.WriteFloat(sizing.max);
-    writer.WriteUInt8(static_cast<uint8_t>(sizing.kind));
-}
-
-Sizing ReadSizing(Core::BitReader &reader)
-{
-    Sizing sizing;
-    sizing.value = reader.ReadFloat();
-    sizing.min = reader.ReadFloat();
-    sizing.max = reader.ReadFloat();
-    sizing.kind = static_cast<SizingKind>(reader.ReadUInt8());
-    return sizing;
-}
-
-void WriteSliderRange(Core::BitWriter &writer, const SliderRange &range)
-{
-    writer.WriteFloat(range.min);
-    writer.WriteFloat(range.max);
-    writer.WriteFloat(range.step);
-}
-
-SliderRange ReadSliderRange(Core::BitReader &reader)
-{
-    SliderRange range;
-    range.min = reader.ReadFloat();
-    range.max = reader.ReadFloat();
-    range.step = reader.ReadFloat();
-    return range;
-}
-
-void WriteFloating(Core::BitWriter &writer, const Floating &floating)
-{
-    writer.WriteFloat(floating.offset.x);
-    writer.WriteFloat(floating.offset.y);
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        writer.WriteUInt8(static_cast<uint8_t>(floating.anchor[axis]));
-        writer.WriteUInt8(static_cast<uint8_t>(floating.attach[axis]));
-    }
-    writer.WriteUInt8(static_cast<uint8_t>(floating.target));
-    writer.WriteBool(floating.enabled);
-    writer.WriteBool(floating.clipToParent);
-}
-
-Floating ReadFloating(Core::BitReader &reader)
-{
-    Floating floating;
-    floating.offset.x = reader.ReadFloat();
-    floating.offset.y = reader.ReadFloat();
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        floating.anchor[axis] = static_cast<Alignment>(reader.ReadUInt8());
-        floating.attach[axis] = static_cast<Alignment>(reader.ReadUInt8());
-    }
-    floating.target = static_cast<FloatAnchor>(reader.ReadUInt8());
-    floating.enabled = reader.ReadBool();
-    floating.clipToParent = reader.ReadBool();
-    return floating;
-}
-
-void WriteStyle(Core::BitWriter &writer, const Style &style)
-{
-    WriteColor(writer, style.background);
-    WriteColor(writer, style.borderColor);
-    WriteColor(writer, style.textColor);
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        WriteSizing(writer, style.sizing[axis]);
-    }
-    writer.WriteFloat(style.padding.left);
-    writer.WriteFloat(style.padding.top);
-    writer.WriteFloat(style.padding.right);
-    writer.WriteFloat(style.padding.bottom);
-    WriteFloating(writer, style.floating);
-    writer.WriteFloat(style.gap);
-    writer.WriteFloat(style.textSize);
-    writer.WriteFloat(style.borderWidth);
-    writer.WriteFloat(style.cornerRadius);
-    writer.WriteUInt32(static_cast<uint32_t>(style.cornerStyle));
-    writer.WriteUInt8(static_cast<uint8_t>(style.direction));
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        writer.WriteUInt8(static_cast<uint8_t>(style.childAlign[axis]));
-    }
-    writer.WriteUInt8(static_cast<uint8_t>(style.textAlign));
-    writer.WriteFloat(style.scrollSmoothing);
-    writer.WriteFloat(style.scrollBarMinLength);
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        writer.WriteBool(style.enabledScrollBars[axis]);
-    }
-    writer.WriteUInt8(static_cast<uint8_t>(style.scrollBarVisibility));
-    writer.WriteUInt8(static_cast<uint8_t>(style.scrollBarDrag));
-}
-
-Style ReadStyle(Core::BitReader &reader)
-{
-    Style style;
-    style.background = ReadColor(reader);
-    style.borderColor = ReadColor(reader);
-    style.textColor = ReadColor(reader);
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        style.sizing[axis] = ReadSizing(reader);
-    }
-    style.padding.left = reader.ReadFloat();
-    style.padding.top = reader.ReadFloat();
-    style.padding.right = reader.ReadFloat();
-    style.padding.bottom = reader.ReadFloat();
-    style.floating = ReadFloating(reader);
-    style.gap = reader.ReadFloat();
-    style.textSize = reader.ReadFloat();
-    style.borderWidth = reader.ReadFloat();
-    style.cornerRadius = reader.ReadFloat();
-    style.cornerStyle = static_cast<CornerStyle>(reader.ReadUInt32());
-    style.direction = static_cast<Direction>(reader.ReadUInt8());
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        style.childAlign[axis] = static_cast<Alignment>(reader.ReadUInt8());
-    }
-    style.textAlign = static_cast<TextAlign>(reader.ReadUInt8());
-    style.scrollSmoothing = reader.ReadFloat();
-    style.scrollBarMinLength = reader.ReadFloat();
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        style.enabledScrollBars[axis] = reader.ReadBool();
-    }
-    style.scrollBarVisibility = static_cast<ScrollBarVisibility>(reader.ReadUInt8());
-    style.scrollBarDrag = static_cast<ScrollBarDrag>(reader.ReadUInt8());
-    return style;
-}
-
-/// Whether every enumerator in @p style names something this build has. The
-/// reader frames bytes; this is what says the frame holds a style the layout
-/// can act on rather than a cast to a value no switch covers.
-bool StyleIsInRange(const Style &style)
-{
-    for (std::size_t axis = 0; axis < kAxisCount; ++axis)
-    {
-        if (!InRange<SizingKind>(static_cast<uint32_t>(style.sizing[axis].kind)) ||
-            !InRange<Alignment>(static_cast<uint32_t>(style.childAlign[axis])) ||
-            !InRange<Alignment>(static_cast<uint32_t>(style.floating.anchor[axis])) ||
-            !InRange<Alignment>(static_cast<uint32_t>(style.floating.attach[axis])))
-        {
-            return false;
-        }
-    }
-    return InRange<FloatAnchor>(static_cast<uint32_t>(style.floating.target)) &&
-           InRange<CornerStyle>(static_cast<uint32_t>(style.cornerStyle)) &&
-           InRange<Direction>(static_cast<uint32_t>(style.direction)) &&
-           InRange<TextAlign>(static_cast<uint32_t>(style.textAlign)) &&
-           InRange<ScrollBarVisibility>(static_cast<uint32_t>(style.scrollBarVisibility)) &&
-           InRange<ScrollBarDrag>(static_cast<uint32_t>(style.scrollBarDrag));
-}
-
-/// Whether the table describes a tree this build can walk in one pass, and
-/// whether every node's own fields name something.
+/// Whether the table describes a tree this build can walk in one pass.
 bool IsConsistent(const ScreenDocument &document)
 {
     if (document.nodes.empty())
@@ -231,12 +229,6 @@ bool IsConsistent(const ScreenDocument &document)
         return false; // every screen has a root
     }
     if (document.focus != kNoNode && document.focus >= document.nodes.size())
-    {
-        return false;
-    }
-    if (!InRange<ScreenInput>(static_cast<uint32_t>(document.traits.input)) ||
-        !InRange<ScreenBeneath>(static_cast<uint32_t>(document.traits.beneath)) ||
-        !InRange<ScreenPause>(static_cast<uint32_t>(document.traits.pause)))
     {
         return false;
     }
@@ -263,32 +255,9 @@ bool IsConsistent(const ScreenDocument &document)
             return false;
         }
 
-        if (!InRange<BuiltinWidget>(static_cast<uint32_t>(node.widget)) ||
-            !InRange<ActionKind>(static_cast<uint32_t>(node.action)) ||
-            !InRange<ScreenVerb>(static_cast<uint32_t>(node.verb)))
-        {
-            return false;
-        }
-
-        // The text field switches over these as layout switches over a style's,
-        // so one out of range is a case no switch covers rather than a field
-        // that merely looks wrong.
-        if (!InRange<TextLines>(static_cast<uint32_t>(node.lines)) ||
-            !InRange<TextMask>(static_cast<uint32_t>(node.mask)) ||
-            !InRange<TextCheck>(static_cast<uint32_t>(node.check)) ||
-            !InRange<TextHeight>(static_cast<uint32_t>(node.height)))
-        {
-            return false;
-        }
-
         // An event action with no name is a button that would resolve to
         // nothing and silently do nothing.
         if (node.action == ActionKind::Event && node.eventName.empty())
-        {
-            return false;
-        }
-
-        if (!StyleIsInRange(node.style))
         {
             return false;
         }
@@ -321,51 +290,19 @@ void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
     Core::WriteCookedHeader(writer, Core::CookedKind::Screen);
     writer.WriteUInt8(kScreenPayloadVersion);
 
-    writer.WriteString(document.name);
-    writer.WriteInt32(document.sortKey);
-    writer.WriteUInt8(static_cast<uint8_t>(document.traits.input));
-    writer.WriteUInt8(static_cast<uint8_t>(document.traits.beneath));
-    writer.WriteUInt8(static_cast<uint8_t>(document.traits.pause));
-    writer.WriteUInt32(document.focus);
+    PayloadWriter payload{writer};
+    payload(document.sortKey, document.traits, document.focus);
 
     writer.WriteVarUInt32(static_cast<uint32_t>(document.systems.size()));
     for (const std::string &system : document.systems)
     {
-        writer.WriteString(system);
+        payload(system);
     }
 
     writer.WriteVarUInt32(static_cast<uint32_t>(document.nodes.size()));
     for (const ScreenNode &node : document.nodes)
     {
-        writer.WriteUInt32(node.parent);
-        writer.WriteUInt32(node.target);
-        writer.WriteUInt32(static_cast<uint32_t>(node.widget));
-        writer.WriteUInt8(static_cast<uint8_t>(node.action));
-        writer.WriteUInt8(static_cast<uint8_t>(node.verb));
-        writer.WriteBool(node.visible);
-        writer.WriteBool(node.enabled);
-        writer.WriteBool(node.blocksPointer);
-        writer.WriteBool(node.takesKeyboard);
-        writer.WriteBool(node.selectable);
-        writer.WriteString(node.name);
-        writer.WriteString(node.text);
-        writer.WriteString(node.styleName);
-        writer.WriteString(node.eventName);
-        writer.WriteString(node.placeholder);
-        writer.WriteString(node.pattern);
-        WriteSliderRange(writer, node.range);
-        writer.WriteFloat(node.value);
-        writer.WriteUInt32(node.maxLength);
-        writer.WriteUInt32(node.lineLimit);
-        writer.WriteInt32(node.steps);
-        writer.WriteInt32(node.step);
-        writer.WriteInt32(node.moves);
-        writer.WriteUInt8(static_cast<uint8_t>(node.lines));
-        writer.WriteUInt8(static_cast<uint8_t>(node.mask));
-        writer.WriteUInt8(static_cast<uint8_t>(node.check));
-        writer.WriteUInt8(static_cast<uint8_t>(node.height));
-        writer.WriteBool(node.on);
-        WriteStyle(writer, node.style);
+        payload(node);
     }
 }
 
@@ -394,22 +331,18 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
     }
 
     ScreenDocument document;
-    document.name = reader.ReadString();
-    document.sortKey = reader.ReadInt32();
-    document.traits.input = static_cast<ScreenInput>(reader.ReadUInt8());
-    document.traits.beneath = static_cast<ScreenBeneath>(reader.ReadUInt8());
-    document.traits.pause = static_cast<ScreenPause>(reader.ReadUInt8());
-    document.focus = reader.ReadUInt32();
+    PayloadReader payload{reader};
+    payload(document.sortKey, document.traits, document.focus);
 
     const std::optional<uint32_t> systemCount = ReadCount(reader, kMinSystemBytes);
     if (!systemCount)
     {
         return std::unexpected(CookedScreenError::Truncated);
     }
-    document.systems.reserve(*systemCount);
-    for (uint32_t index = 0; index < *systemCount; ++index)
+    document.systems.resize(*systemCount);
+    for (std::string &system : document.systems)
     {
-        document.systems.push_back(reader.ReadString());
+        payload(system);
     }
 
     const std::optional<uint32_t> nodeCount = ReadCount(reader, kMinNodeBytes);
@@ -420,35 +353,7 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
     document.nodes.resize(*nodeCount);
     for (ScreenNode &node : document.nodes)
     {
-        node.parent = reader.ReadUInt32();
-        node.target = reader.ReadUInt32();
-        node.widget = static_cast<BuiltinWidget>(reader.ReadUInt32());
-        node.action = static_cast<ActionKind>(reader.ReadUInt8());
-        node.verb = static_cast<ScreenVerb>(reader.ReadUInt8());
-        node.visible = reader.ReadBool();
-        node.enabled = reader.ReadBool();
-        node.blocksPointer = reader.ReadBool();
-        node.takesKeyboard = reader.ReadBool();
-        node.selectable = reader.ReadBool();
-        node.name = reader.ReadString();
-        node.text = reader.ReadString();
-        node.styleName = reader.ReadString();
-        node.eventName = reader.ReadString();
-        node.placeholder = reader.ReadString();
-        node.pattern = reader.ReadString();
-        node.range = ReadSliderRange(reader);
-        node.value = reader.ReadFloat();
-        node.maxLength = reader.ReadUInt32();
-        node.lineLimit = reader.ReadUInt32();
-        node.steps = reader.ReadInt32();
-        node.step = reader.ReadInt32();
-        node.moves = reader.ReadInt32();
-        node.lines = static_cast<TextLines>(reader.ReadUInt8());
-        node.mask = static_cast<TextMask>(reader.ReadUInt8());
-        node.check = static_cast<TextCheck>(reader.ReadUInt8());
-        node.height = static_cast<TextHeight>(reader.ReadUInt8());
-        node.on = reader.ReadBool();
-        node.style = ReadStyle(reader);
+        payload(node);
     }
 
     // Framing first: a document read out of bytes that ran out holds whatever
@@ -458,7 +363,7 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
     {
         return std::unexpected(CookedScreenError::Truncated);
     }
-    if (!IsConsistent(document))
+    if (payload.Refused() || !IsConsistent(document))
     {
         return std::unexpected(CookedScreenError::Invalid);
     }

@@ -192,14 +192,13 @@ struct ScreenNode
     bool takesKeyboard = false;
     /// Plain text a player may select and copy.
     bool selectable = false;
+
+    [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
 };
 
 /// @brief A whole screen: its nodes, its traits, and what it needs installed.
 struct ScreenDocument
 {
-    /// What the screen is called, which is how a system finds it again.
-    std::string name;
-
     /// Preorder, parent before child. Index 0 is the root, which every document
     /// has and which the loader applies to the tree's existing root rather than
     /// creating.
@@ -216,6 +215,8 @@ struct ScreenDocument
     int32_t sortKey = kSortMenu;
 
     ScreenTraits traits;
+
+    [[nodiscard]] friend bool operator==(const ScreenDocument &, const ScreenDocument &) = default;
 };
 
 } // namespace Assisi::Mondrian

@@ -13,6 +13,12 @@ namespace
 
 constexpr Extent kScreen{1920, 1080};
 
+/// A fixed size in UI pixels.
+Sizing FixedPx(float pixels)
+{
+    return Sizing::Fixed(Px(pixels));
+}
+
 /// A range a game would recognise, rather than a bare fraction.
 constexpr SliderRange kPercent{.min = 0.f, .max = 100.f, .step = 10.f};
 /// Four steps, whose values fall on whole numbers.
@@ -349,11 +355,11 @@ TEST_CASE("Widgets: a scroll container takes the wheel over anything inside it, 
 {
     Panel panel;
     Style tall;
-    tall.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    tall.sizing = {FixedPx(200.f), FixedPx(100.f)};
     tall.direction = Direction::Column;
     const NodeId list = panel.screen->AddScroll(panel.row, tall, {false, true});
     Style entry;
-    entry.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(80.f)};
+    entry.sizing = {FixedPx(200.f), FixedPx(80.f)};
     for (const std::string_view label : {"One", "Two", "Three"})
     {
         panel.screen->Tree().SetStyle(panel.screen->AddButton(list, label).node, entry);
@@ -388,11 +394,11 @@ TEST_CASE("Widgets: a scroll container the game makes focusable scrolls on the v
 {
     Panel panel;
     Style tall;
-    tall.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    tall.sizing = {FixedPx(200.f), FixedPx(100.f)};
     tall.direction = Direction::Column;
     const NodeId log = panel.screen->AddScroll(panel.row, tall, {false, true});
     Style line;
-    line.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(80.f)};
+    line.sizing = {FixedPx(200.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < 3; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(log), line);
@@ -420,11 +426,11 @@ namespace
 /// A scrolling list of @p rows rows, each as tall as the list itself is short.
 NodeId ListOf(Panel &panel, uint32_t rows, Style style)
 {
-    style.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    style.sizing = {FixedPx(200.f), FixedPx(100.f)};
     style.direction = Direction::Column;
     const NodeId list = panel.screen->AddScroll(panel.row, style, {false, true});
     Style line;
-    line.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(80.f)};
+    line.sizing = {FixedPx(200.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < rows; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(list), line);
@@ -451,7 +457,7 @@ TEST_CASE("Widgets: a scroll bar shows only while it is needed, or always, or ne
     const std::size_t bare = panel.ui.GetDrawList().Instances().size();
 
     style.enabledScrollBars = {false, true}; // AddScroll set these; a whole style replaces them
-    style.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    style.sizing = {FixedPx(200.f), FixedPx(100.f)};
     style.direction = Direction::Column;
     style.scrollBarVisibility = ScrollBarVisibility::Always;
     panel.screen->Tree().SetStyle(shortList, style);
@@ -475,7 +481,7 @@ TEST_CASE("Widgets: a scroll bar's thumb never shrinks past the size the style a
     Style style;
     style.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
     constexpr float kMinimum = 30.f;
-    style.scrollBarMinLength = kMinimum;
+    style.scrollBarMinLength = Px(kMinimum);
     ListOf(panel, 40, style); // far more content than the list is tall
 
     CHECK(ThumbOf(panel).height == doctest::Approx(kMinimum));
@@ -507,13 +513,13 @@ TEST_CASE("Widgets: a scroll container may glide to where it is going instead of
 {
     Panel panel;
     Style tall;
-    tall.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    tall.sizing = {FixedPx(200.f), FixedPx(100.f)};
     tall.direction = Direction::Column;
     constexpr float kSmoothing = 0.2f;
     tall.scrollSmoothing = kSmoothing;
     const NodeId list = panel.screen->AddScroll(panel.row, tall, {false, true});
     Style line;
-    line.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(80.f)};
+    line.sizing = {FixedPx(200.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < 3; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(list), line);
@@ -544,11 +550,11 @@ TEST_CASE("Widgets: without smoothing a scroll container is where it is going at
 {
     Panel panel;
     Style tall;
-    tall.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    tall.sizing = {FixedPx(200.f), FixedPx(100.f)};
     tall.direction = Direction::Column;
     const NodeId list = panel.screen->AddScroll(panel.row, tall, {false, true});
     Style line;
-    line.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(80.f)};
+    line.sizing = {FixedPx(200.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < 3; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(list), line);
@@ -566,13 +572,13 @@ TEST_CASE("Widgets: a scroll bar takes a press that lands on it, over whatever i
     Panel panel;
     Style style;
     style.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
-    style.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    style.sizing = {FixedPx(200.f), FixedPx(100.f)};
     style.direction = Direction::Column;
     const NodeId list = panel.screen->AddScroll(panel.row, style, {false, true});
 
     // Rows that fill the width, so they lie under the bar as a real list's do.
     Style row;
-    row.sizing = {Sizing::Grow(), Sizing::Fixed(80.f)};
+    row.sizing = {Sizing::Grow(), FixedPx(80.f)};
     for (const std::string_view label : {"One", "Two", "Three"})
     {
         panel.screen->Tree().SetStyle(panel.screen->AddButton(list, label).node, row);
@@ -623,10 +629,10 @@ TEST_CASE("Widgets: a container that scrolls only sideways takes a plain wheel s
 {
     Panel panel;
     Style wide;
-    wide.sizing = {Sizing::Fixed(100.f), Sizing::Fixed(100.f)};
+    wide.sizing = {FixedPx(100.f), FixedPx(100.f)};
     const NodeId strip = panel.screen->AddScroll(panel.row, wide, {true, false});
     Style card;
-    card.sizing = {Sizing::Fixed(80.f), Sizing::Fixed(80.f)};
+    card.sizing = {FixedPx(80.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < 4; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(strip), card);
@@ -642,12 +648,12 @@ TEST_CASE("Widgets: a container that scrolls both ways takes the wheel down and 
 {
     Panel panel;
     Style both;
-    both.sizing = {Sizing::Fixed(100.f), Sizing::Fixed(100.f)};
+    both.sizing = {FixedPx(100.f), FixedPx(100.f)};
     both.direction = Direction::Column;
     both.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
     const NodeId pane = panel.screen->AddScroll(panel.row, both, {true, true});
     Style block;
-    block.sizing = {Sizing::Fixed(300.f), Sizing::Fixed(80.f)};
+    block.sizing = {FixedPx(300.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < 3; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(pane), block);
@@ -679,11 +685,11 @@ TEST_CASE("Widgets: dragging a scroll container's background scrolls it")
 {
     Panel panel;
     Style tall;
-    tall.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(100.f)};
+    tall.sizing = {FixedPx(200.f), FixedPx(100.f)};
     tall.direction = Direction::Column;
     const NodeId list = panel.screen->AddScroll(panel.row, tall, {false, true});
     Style row;
-    row.sizing = {Sizing::Fixed(200.f), Sizing::Fixed(80.f)};
+    row.sizing = {FixedPx(200.f), FixedPx(80.f)};
     for (uint32_t index = 0; index < 3; ++index)
     {
         panel.screen->Tree().SetStyle(panel.screen->Tree().Create(list), row);

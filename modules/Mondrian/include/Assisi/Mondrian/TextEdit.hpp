@@ -34,7 +34,7 @@ struct Node;
 /// shows as the missing-glyph box instead.
 inline constexpr std::string_view kMaskMark = "\xE2\x80\xA2";
 
-/// How wide the caret draws, in logical pixels. Layout keeps this much room
+/// How wide the caret draws, in UI pixels. Layout keeps this much room
 /// for it at the end of a line, so a caret at the end of a full field is not
 /// the one thing pushed out of sight.
 inline constexpr float kCaretWidth = 2.f;
@@ -151,7 +151,7 @@ struct TextEdit
     /// read-only once compiled and several fields may want the same one.
     std::shared_ptr<const Pattern> pattern;
     /// How far a single line has scrolled sideways to keep the caret in view,
-    /// in logical pixels.
+    /// in UI pixels.
     float scrolled = 0.f;
     uint32_t caret = 0;
     uint32_t anchor = 0;

@@ -44,14 +44,14 @@ constexpr std::array<NamedEnum<ScreenVerb>, 2> kVerbs{{
 }};
 static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count), "every verb needs a spelling");
 
-/// What separates a call's name from its arguments, the arguments from each
-/// other, and ends the call.
-constexpr char kCallOpen = '(';
-constexpr char kCallSeparator = ',';
-constexpr char kCallClose = ')';
+/// The size keywords a bare length replaced, refused by name so the message
+/// can say what to write instead.
+constexpr std::string_view kFixedWord = "fixed";
+constexpr std::string_view kPercentWord = "percent";
 
-/// The whitespace an author may put around a call's name and arguments.
-constexpr std::string_view kCallSpace = " \t\r\n";
+/// What opens and closes a call, for the signatures a message spells out.
+constexpr char kCallOpen = '(';
+constexpr char kCallClose = ')';
 
 /// What an element makes: a control, and the direction it lays its children out
 /// in. `column` and `row` are one node with one field different, which is why
@@ -127,18 +127,6 @@ template <typename T, typename Parse> Applied Read(T &field, std::string_view va
 /// how it places what is inside it.
 Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_view value)
 {
-    if (name == "background")
-    {
-        return Read(style.background, value, ParseColor);
-    }
-    if (name == "border_color")
-    {
-        return Read(style.borderColor, value, ParseColor);
-    }
-    if (name == "text_color")
-    {
-        return Read(style.textColor, value, ParseColor);
-    }
     if (name == "width")
     {
         return Read(style.sizing[static_cast<std::size_t>(Axis::X)], value, ParseSizing);
@@ -153,19 +141,19 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
     }
     if (name == "gap")
     {
-        return Read(style.gap, value, ParseFloat);
+        return Read(style.gap, value, ParseLength);
     }
     if (name == "text_size")
     {
-        return Read(style.textSize, value, ParseFloat);
+        return Read(style.textSize, value, ParseLength);
     }
     if (name == "border_width")
     {
-        return Read(style.borderWidth, value, ParseFloat);
+        return Read(style.borderWidth, value, ParseLength);
     }
     if (name == "corner_radius")
     {
-        return Read(style.cornerRadius, value, ParseFloat);
+        return Read(style.cornerRadius, value, ParseLength);
     }
     if (name == "corner_style")
     {
@@ -189,7 +177,7 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
     }
     if (name == "scroll_bar_min_length")
     {
-        return Read(style.scrollBarMinLength, value, ParseFloat);
+        return Read(style.scrollBarMinLength, value, ParseLength);
     }
     if (name == "scroll_bars")
     {
@@ -214,13 +202,13 @@ Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_vie
         {
             return Applied::BadValue;
         }
-        const std::optional<float> x = ParseFloat(words[0]);
-        const std::optional<float> y = ParseFloat(words[1]);
+        const std::optional<Length> x = ParseLength(words[0]);
+        const std::optional<Length> y = ParseLength(words[1]);
         if (!x || !y)
         {
             return Applied::BadValue;
         }
-        style.floating.offset = {.x = *x, .y = *y};
+        style.floating.offset = {*x, *y};
         return Applied::Yes;
     }
     if (name == "float_anchor")
@@ -396,11 +384,6 @@ Applied ApplyScreenAttribute(ScreenDocument &document, std::string_view name, st
     static constexpr std::array<NamedEnum<ScreenBeneath>, 2> kBeneaths{
         {{"show", ScreenBeneath::NoHide}, {"hide", ScreenBeneath::HidesBeneath}}};
 
-    if (name == "name")
-    {
-        document.name = value;
-        return Applied::Yes;
-    }
     if (name == "input")
     {
         return Read(document.traits.input, value, [](std::string_view text) { return LookUpEnum(text, kInputs); });
@@ -672,62 +655,34 @@ std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &at
     return {};
 }
 
-/// @p text without the whitespace around it.
-std::string_view Trimmed(std::string_view text)
+/// @p attribute's value read as a call, or nullopt when it is a bare name, with
+/// any refusal placed where the attribute was written.
+std::expected<std::optional<MarkupCall>, MarkupError> ParseCall(const MarkupAttribute &attribute)
 {
-    const std::size_t first = text.find_first_not_of(kCallSpace);
-    if (first == std::string_view::npos)
+    std::expected<std::optional<MarkupCall>, std::string> call = SplitCall(attribute.value);
+    if (!call)
     {
-        return {};
+        return std::unexpected(At(attribute, std::move(call.error())));
     }
-    const std::size_t last = text.find_last_not_of(kCallSpace);
-    return text.substr(first, last - first + 1);
+    return *call;
 }
 
-/// A call as a file writes it: the verb's name, and its arguments as written.
-struct Call
+/// The colour field @p name sets, or null when @p name is no colour attribute.
+Color *ColorField(Style &style, std::string_view name)
 {
-    std::vector<std::string_view> arguments;
-    std::string_view name;
-};
-
-/// @p value read as a call, or nullopt when it is a bare name. A call that
-/// opens and does not close, or has anything after it, is refused rather than
-/// read as the part that parsed.
-std::expected<std::optional<Call>, MarkupError> ParseCall(const MarkupAttribute &attribute)
-{
-    const std::string_view value = attribute.value;
-    const std::size_t open = value.find(kCallOpen);
-    if (open == std::string_view::npos)
+    if (name == "background")
     {
-        return std::optional<Call>{};
+        return &style.background;
     }
-    const std::size_t close = value.find(kCallClose, open);
-    if (close == std::string_view::npos)
+    if (name == "border_color")
     {
-        return std::unexpected(
-            At(attribute, "'" + attribute.value + "' opens a call and never closes it with " + kCallClose + "."));
+        return &style.borderColor;
     }
-    const std::string_view after = Trimmed(value.substr(close + 1));
-    if (!after.empty())
+    if (name == "text_color")
     {
-        return std::unexpected(At(attribute, "'" + std::string{after} + "' follows the call in '" + attribute.value +
-                                                 "'. on_click holds one call."));
+        return &style.textColor;
     }
-
-    Call call;
-    call.name = Trimmed(value.substr(0, open));
-    const std::string_view inside = Trimmed(value.substr(open + 1, close - open - 1));
-    // Nothing between the parens is no arguments, not one empty one.
-    std::size_t start = 0;
-    while (!inside.empty() && start <= inside.size())
-    {
-        std::size_t end = inside.find(kCallSeparator, start);
-        end = end == std::string_view::npos ? inside.size() : end;
-        call.arguments.push_back(Trimmed(inside.substr(start, end - start)));
-        start = end + 1;
-    }
-    return std::optional<Call>{call};
+    return nullptr;
 }
 
 /// How a file spells @p verb.
@@ -792,7 +747,7 @@ std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttrib
 /// A call: a verb, checked against what it takes. A target is kept by name
 /// until the walk is done, since the node it names may not have been read yet.
 std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const MarkupAttribute &attribute,
-                                           const Call &call)
+                                           const MarkupCall &call)
 {
     const std::optional<ScreenVerb> verb = LookUpEnum(call.name, kVerbs);
     if (!verb)
@@ -848,7 +803,7 @@ std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const Mar
 /// event.
 std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &attribute)
 {
-    const std::expected<std::optional<Call>, MarkupError> call = ParseCall(attribute);
+    const std::expected<std::optional<MarkupCall>, MarkupError> call = ParseCall(attribute);
     if (!call)
     {
         return std::unexpected(call.error());
@@ -917,6 +872,19 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             continue;
         }
 
+        // Read here rather than through the style table, which only says a
+        // value was bad: a colour's likeliest mistakes each have one fix to name.
+        if (Color *const colour = ColorField(node.style, attribute.name))
+        {
+            const ParsedColor read = ParseColor(attribute.value);
+            if (!read)
+            {
+                return std::unexpected(At(attribute, read.error()));
+            }
+            *colour = *read;
+            continue;
+        }
+
         if (attribute.name == "pattern" && node.widget == BuiltinWidget::TextField)
         {
             if (const std::expected<void, MarkupError> pattern = ApplyPattern(node, attribute); !pattern)
@@ -935,10 +903,29 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
                                                  "'scroll_bars'."));
         }
 
-        // On the root, `name` is what the screen is called and not a node's
-        // name, so the screen's table reads it below.
-        if (attribute.name == "name" && !isRoot)
+        // The size keywords a length replaced, each with one fix to name.
+        if (attribute.name == "width" || attribute.name == "height")
         {
+            const std::vector<std::string_view> words = SplitWords(attribute.value);
+            if (!words.empty() && (words[0] == kFixedWord || words[0] == kPercentWord))
+            {
+                const std::string example = words[0] == kFixedWord ? "420" : "50%";
+                return std::unexpected(At(attribute, "'" + std::string{words[0]} +
+                                                         "' is not a size: write the length " + "itself, such as " +
+                                                         attribute.name + "=\"" + example +
+                                                         "\". A percentage is written with %, from 0 to 100."));
+            }
+        }
+
+        if (attribute.name == "name")
+        {
+            // A name written in the file would say again what its path says,
+            // and the two drift the moment the file is renamed.
+            if (isRoot)
+            {
+                return std::unexpected(At(attribute, "a screen is found by the path it is loaded from, such as "
+                                                     "\"ui/Pause.amdn\", and names itself nowhere. Remove 'name'."));
+            }
             if (const std::expected<void, MarkupError> named = ApplyName(walk, attribute, index); !named)
             {
                 return std::unexpected(named.error());

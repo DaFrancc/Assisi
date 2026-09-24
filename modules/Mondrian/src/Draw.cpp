@@ -40,16 +40,15 @@ class Drawer
         }
         const Node &node = _slots[index];
         const Style &style = node.style;
-        const float scale = _layout.scale;
-        const float radius = style.cornerRadius * scale;
+        const float radius = result.cornerRadius;
         _list.SetDefaultClip(result.clip);
 
-        if (style.background.a > 0.f || style.borderWidth > 0.f)
+        if (style.background.a > 0.f || result.borderWidth > 0.f)
         {
             // Whole device pixels, and never thinner than one, so a line stays
             // crisp and present at any scale.
             const float border =
-                style.borderWidth > 0.f ? std::max(kMinBorderDevicePixels, std::round(style.borderWidth * scale)) : 0.f;
+                result.borderWidth > 0.f ? std::max(kMinBorderDevicePixels, std::round(result.borderWidth)) : 0.f;
             _list.Quad(result.rect)
                 .Fill(style.background)
                 .Border(border, style.borderColor)
@@ -79,7 +78,7 @@ class Drawer
             {
                 ink.a *= kPlaceholderOpacity;
             }
-            DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, TextOrigin(result, style, scale), ink);
+            DrawGlyphs(_list, _layout.texts[result.text], _fontAtlas, TextOrigin(result), ink);
         }
 
         // The control's own parts — a slider's thumb, a toggle's knob, a

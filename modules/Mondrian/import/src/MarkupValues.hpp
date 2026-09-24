@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,18 +68,48 @@ template <typename E, std::size_t N>
 
 [[nodiscard]] std::optional<uint32_t> ParseUInt(std::string_view text);
 
-/// @brief `#rrggbb`, `#rrggbbaa`, or three or four numbers from 0 to 1.
-///
-/// Both forms because they answer different questions: a hex triple is what a
-/// palette or a design tool hands over, and floats are what a value carried
-/// from code keeps exactly.
-[[nodiscard]] std::optional<Math::Color4<Math::ColorSpace::Srgb>> ParseColor(std::string_view text);
+/// @brief The colour a style holds.
+using Color = Math::Color4<Math::ColorSpace::Srgb>;
 
-/// @brief `fit`, `grow`, `fixed <n>` or `percent <n>`, each optionally followed
-/// by `min <n>` and `max <n>`.
+/// @brief A colour read from a file, or why the text was not one.
+using ParsedColor = std::expected<Color, std::string>;
+
+/// @brief @p text without the whitespace around it.
+[[nodiscard]] std::string_view TrimSpace(std::string_view text);
+
+/// @brief A call as a file writes it: `name(argument, argument)`, with space
+/// around the name and each argument dropped.
+struct MarkupCall
+{
+    std::vector<std::string_view> arguments;
+    std::string_view name;
+};
+
+/// @brief @p text read as a call, or nullopt when it opens none. A call that
+/// opens and does not close, or has anything after it, is refused with the
+/// reason rather than read as the part that parsed.
+[[nodiscard]] std::expected<std::optional<MarkupCall>, std::string> SplitCall(std::string_view text);
+
+/// @brief `#rrggbb`, `#rrggbbaa`, `rgb(r, g, b[, a])` with whole numbers from 0
+/// to 255, or `rgbf(r, g, b[, a])` with numbers from 0 to 1 — or why @p text is
+/// none of them.
+///
+/// Every form says its own scale. Bare numbers are refused because they don't:
+/// `1 1 1` is white on one scale and nearly black on the other. The reason is
+/// returned rather than a bare failure, because the likeliest mistakes — a
+/// 0-to-255 value in `rgbf`, a fraction in `rgb` — each have one fix to name.
+[[nodiscard]] ParsedColor ParseColor(std::string_view text);
+
+/// @brief A number and its unit, with nothing between them: `16` in UI pixels,
+/// or `5%`, `2vw`, `2vh`, `0.5em`. Anything else — `16px`, `5 %`, `1e` — is
+/// nullopt.
+[[nodiscard]] std::optional<Length> ParseLength(std::string_view text);
+
+/// @brief `fit`, `grow`, or a length, which is a fixed size, each optionally
+/// followed by `min <length>` and `max <length>`.
 [[nodiscard]] std::optional<Sizing> ParseSizing(std::string_view text);
 
-/// @brief One number for all four edges, or four for left, top, right, bottom.
+/// @brief One length for all four edges, or four for left, top, right, bottom.
 [[nodiscard]] std::optional<Padding> ParsePadding(std::string_view text);
 
 /// @brief Two alignments, across then down.

@@ -15,7 +15,7 @@ constexpr Extent kScreen{1920, 1080};
 Style Box(float width, float height)
 {
     Style style;
-    style.sizing = {Sizing::Fixed(width), Sizing::Fixed(height)};
+    style.sizing = {Sizing::Fixed(Px(width)), Sizing::Fixed(Px(height))};
     return style;
 }
 
@@ -23,7 +23,7 @@ Style FloatingBox(float x, float y, float width, float height)
 {
     Style style = Box(width, height);
     style.floating.enabled = true;
-    style.floating.offset = {.x = x, .y = y};
+    style.floating.offset = {Px(x), Px(y)};
     return style;
 }
 

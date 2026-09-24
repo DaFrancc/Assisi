@@ -80,15 +80,24 @@ function(assisi_reflect)
         endif()
         set(_out "${_outdir}/${_stem}.generated.cpp")
 
+        # A field may name an AENUM declared in a header this one includes, so
+        # the generator resolves includes against the target's own include
+        # directories (with those of everything it links), and reports every
+        # header it read. That report is what regenerates this file when an enum
+        # in another header changes.
         add_custom_command(
             OUTPUT  "${_out}"
             COMMAND Python3::Interpreter
                     "${_ASSISI_REFLECTGEN}"
                     "${_abs}"
                     --outdir "${_outdir}"
+                    --depfile "${_out}.d"
+                    "$<LIST:TRANSFORM,$<TARGET_PROPERTY:${_ARG_TARGET},INCLUDE_DIRECTORIES>,PREPEND,--include-dir=>"
                     ${_include_args}
             DEPENDS "${_abs}" "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+            DEPFILE "${_out}.d"
             COMMENT "reflectgen: ${_header}"
+            COMMAND_EXPAND_LISTS
             VERBATIM
         )
 

@@ -138,7 +138,7 @@ struct WidgetView
     /// not a moment anything should be reading or writing it.
     const Clipboard *clipboard = nullptr;
     void *context = nullptr; ///< whatever the type was registered with
-    float scale = 1.f;       ///< device pixels per logical pixel
+    float scale = 1.f;       ///< device pixels per UI pixel
     NodeId id;
     bool focused = false;
     bool pressed = false;
@@ -158,7 +158,7 @@ enum class WidgetResponse : uint8_t
 /// @brief One kind of control. Every callback may be null.
 struct WidgetType
 {
-    /// The size the control wants, in logical pixels, before padding and sizing
+    /// The size the control wants, in UI pixels, before padding and sizing
     /// are applied. Null takes the size from the node's text and children.
     Point (*measure)(const Node &node, void *context) = nullptr;
     /// Whether the control takes the pointer at this point even over whatever
@@ -235,6 +235,8 @@ struct SliderRange
     float min = 0.f;
     float max = 1.f;
     float step = 0.1f;
+
+    [[nodiscard]] friend constexpr bool operator==(const SliderRange &, const SliderRange &) = default;
 };
 
 /// @brief Whether a slider carries a button at each end to step it.

@@ -43,10 +43,10 @@ EventCatalog OneEvent()
 }
 
 /// The pause menu as a file: every element and most of the attribute table.
-constexpr std::string_view kPauseMenu = R"amdn(<screen name="Pause" input="consume" beneath="hide" pause="true"
+constexpr std::string_view kPauseMenu = R"amdn(<screen input="consume" beneath="hide" pause="true"
         sort="menu" needs="PauseMenu" align="center center"
-        background="0 0 0 0.55" blocks_pointer="true">
-  <column name="panel" width="fixed 420" padding="32" gap="20"
+        background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
+  <column name="panel" width="420" padding="32" gap="20"
           background="#1a1c24f0" border_width="2" border_color="#575f7a"
           corner_radius="16" corner_style="rounded" align="center start">
     <text name="title" text_size="48">Paused</text>
@@ -67,7 +67,7 @@ constexpr std::string_view kPauseMenu = R"amdn(<screen name="Pause" input="consu
 /// One file rather than one per element: what this is for is the whole
 /// vocabulary holding together, and a screen that mixes them is what an author
 /// writes.
-constexpr std::string_view kEveryControl = R"amdn(<screen name="Controls">
+constexpr std::string_view kEveryControl = R"amdn(<screen>
   <column name="panel" gap="8">
     <toggle name="fullscreen" on="true" />
     <slider name="volume" min="0" max="100" step="5" value="60" />
@@ -125,10 +125,10 @@ constexpr std::array<std::string_view, 11> kComparedControls{
 Style ListStyle()
 {
     Style style;
-    style.sizing = {Sizing::Grow(), Sizing::Fixed(150.f)};
+    style.sizing = {Sizing::Grow(), Sizing::Fixed(Px(150.f))};
     style.direction = Direction::Column;
     style.background = {0.0588235f, 0.0705882f, 0.0901961f, 1.f};
-    style.cornerRadius = 10.f;
+    style.cornerRadius = Px(10.f);
     style.cornerStyle = CornerStyle::Rounded;
     style.scrollBarVisibility = ScrollBarVisibility::WhenNeeded;
     style.scrollSmoothing = 0.12f;
@@ -277,7 +277,6 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
 {
     const ScreenDocument document = Compiled(kPauseMenu);
 
-    CHECK(document.name == "Pause");
     CHECK(document.sortKey == kSortMenu);
     CHECK(document.traits.input == ScreenInput::ConsumeInput);
     CHECK(document.traits.beneath == ScreenBeneath::HidesBeneath);
@@ -298,15 +297,15 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
     CHECK(panel.parent == 0);
     CHECK(panel.style.direction == Direction::Column);
     CHECK(panel.style.sizing[0].kind == SizingKind::Fixed);
-    CHECK(panel.style.sizing[0].value == 420.f);
-    CHECK(panel.style.padding.left == 32.f);
-    CHECK(panel.style.gap == 20.f);
+    CHECK(panel.style.sizing[0].value == Px(420.f));
+    CHECK(panel.style.padding.left == Px(32.f));
+    CHECK(panel.style.gap == Px(20.f));
     CHECK(panel.style.cornerStyle == CornerStyle::Rounded);
-    CHECK(panel.style.cornerRadius == 16.f);
+    CHECK(panel.style.cornerRadius == Px(16.f));
 
     const ScreenNode &title = NodeNamed(document, "title");
     CHECK(title.text == "Paused");
-    CHECK(title.style.textSize == 48.f);
+    CHECK(title.style.textSize == Px(48.f));
     CHECK(title.parent == IndexOf(document, "panel"));
 
     const ScreenNode &buttons = NodeNamed(document, "buttons");
@@ -318,8 +317,8 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
     CHECK(resume.action == ActionKind::Verb);
     CHECK(resume.verb == ScreenVerb::Hide);
     CHECK(resume.parent == IndexOf(document, "buttons"));
-    CHECK(resume.style.padding.left == 28.f);
-    CHECK(resume.style.padding.top == 10.f);
+    CHECK(resume.style.padding.left == Px(28.f));
+    CHECK(resume.style.padding.top == Px(10.f));
 
     const ScreenNode &quit = NodeNamed(document, "quit");
     CHECK(quit.action == ActionKind::Event);
@@ -341,20 +340,152 @@ TEST_CASE("ScreenCompiler: the table is preorder with every parent before its ch
     CHECK(document.nodes[0].parent == kNoNode);
 }
 
-TEST_CASE("ScreenCompiler: colours read as hex and as numbers")
+TEST_CASE("ScreenCompiler: a colour is hex, rgb() or rgbf()")
 {
-    const ScreenDocument hex = Compiled(R"(<screen background="#ff8000" />)");
-    CHECK(hex.nodes[0].style.background.r == doctest::Approx(1.f));
-    CHECK(hex.nodes[0].style.background.g == doctest::Approx(0.50196f));
-    CHECK(hex.nodes[0].style.background.b == doctest::Approx(0.f));
-    CHECK(hex.nodes[0].style.background.a == doctest::Approx(1.f));
+    SUBCASE("hex, with and without alpha")
+    {
+        const ScreenDocument hex = Compiled(R"(<screen background="#ff8000" />)");
+        CHECK(hex.nodes[0].style.background.r == doctest::Approx(1.f));
+        CHECK(hex.nodes[0].style.background.g == doctest::Approx(0.50196f));
+        CHECK(hex.nodes[0].style.background.b == doctest::Approx(0.f));
+        CHECK(hex.nodes[0].style.background.a == doctest::Approx(1.f));
 
-    const ScreenDocument withAlpha = Compiled(R"(<screen background="#00000080" />)");
-    CHECK(withAlpha.nodes[0].style.background.a == doctest::Approx(0.50196f));
+        const ScreenDocument withAlpha = Compiled(R"(<screen background="#00000080" />)");
+        CHECK(withAlpha.nodes[0].style.background.a == doctest::Approx(0.50196f));
+    }
 
-    const ScreenDocument floats = Compiled(R"(<screen background="0.25 0.5 0.75 1" />)");
-    CHECK(floats.nodes[0].style.background.r == doctest::Approx(0.25f));
-    CHECK(floats.nodes[0].style.background.b == doctest::Approx(0.75f));
+    SUBCASE("rgb, whole numbers from 0 to 255")
+    {
+        const ScreenDocument opaque = Compiled(R"amdn(<screen background="rgb(255, 128, 0)" />)amdn");
+        CHECK(opaque.nodes[0].style.background.r == doctest::Approx(1.f));
+        CHECK(opaque.nodes[0].style.background.g == doctest::Approx(0.50196f));
+        CHECK(opaque.nodes[0].style.background.b == doctest::Approx(0.f));
+        CHECK(opaque.nodes[0].style.background.a == doctest::Approx(1.f));
+
+        // Alpha is on the same scale as the other channels.
+        const ScreenDocument clear = Compiled(R"amdn(<screen background="rgb(0, 0, 0, 128)" />)amdn");
+        CHECK(clear.nodes[0].style.background.a == doctest::Approx(0.50196f));
+    }
+
+    SUBCASE("rgbf, numbers from 0 to 1")
+    {
+        const ScreenDocument opaque = Compiled(R"amdn(<screen background="rgbf(0.25, 0.5, 0.75)" />)amdn");
+        CHECK(opaque.nodes[0].style.background.r == doctest::Approx(0.25f));
+        CHECK(opaque.nodes[0].style.background.b == doctest::Approx(0.75f));
+        CHECK(opaque.nodes[0].style.background.a == doctest::Approx(1.f));
+
+        const ScreenDocument clear = Compiled(R"amdn(<screen background="rgbf( 0, 0, 0, 0.55 )" />)amdn");
+        CHECK(clear.nodes[0].style.background.a == doctest::Approx(0.55f));
+    }
+
+    SUBCASE("every colour attribute reads the same forms")
+    {
+        const ScreenDocument document =
+            Compiled(R"amdn(<screen border_color="rgb(0, 255, 0)" text_color="rgbf(0, 0, 1)" />)amdn");
+        CHECK(document.nodes[0].style.borderColor.g == doctest::Approx(1.f));
+        CHECK(document.nodes[0].style.textColor.b == doctest::Approx(1.f));
+    }
+}
+
+namespace
+{
+
+/// The error from a text on line 3 whose `background` is @p colour, which the
+/// case expects to be refused there.
+MarkupError ColourRefusedOnLine3(std::string_view colour)
+{
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <row />\n"
+                                      "  <text background=\"" +
+                                      std::string{colour} +
+                                      "\" />\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    return error;
+}
+
+/// The error for a column on line 3 carrying @p attribute, written whole.
+MarkupError AttributeRefusedOnLine3(std::string_view attribute)
+{
+    const MarkupError error = Refused("<screen>\n"
+                                      "  <row />\n"
+                                      "  <column " +
+                                      std::string{attribute} +
+                                      " />\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    return error;
+}
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: a colour that could mean two things, or nothing, is refused where it was written")
+{
+    SUBCASE("bare numbers, which say no scale")
+    {
+        // `1 1 1` is white on one scale and nearly black on the other.
+        const MarkupError error = ColourRefusedOnLine3("1 1 1");
+        CHECK(error.message.find("rgb(") != std::string::npos);
+        CHECK(error.message.find("rgbf(") != std::string::npos);
+    }
+
+    SUBCASE("an rgb channel past 255")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(256, 0, 0)").message.find("256") != std::string::npos);
+    }
+
+    SUBCASE("an rgb channel that is not whole")
+    {
+        // The likeliest cause is a 0-to-1 value written in the wrong call.
+        const MarkupError error = ColourRefusedOnLine3("rgb(0.5, 0, 0)");
+        CHECK(error.message.find("0.5") != std::string::npos);
+        CHECK(error.message.find("rgbf") != std::string::npos);
+    }
+
+    SUBCASE("an rgbf channel past 1")
+    {
+        // The likeliest cause is a 0-to-255 value written in the wrong call.
+        const MarkupError error = ColourRefusedOnLine3("rgbf(255, 0, 0)");
+        CHECK(error.message.find("255") != std::string::npos);
+        CHECK(error.message.find("rgb(") != std::string::npos);
+    }
+
+    SUBCASE("a negative channel")
+    {
+        CHECK(ColourRefusedOnLine3("rgbf(-0.1, 0, 0)").message.find("-0.1") != std::string::npos);
+    }
+
+    SUBCASE("too few channels")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(0, 0)").message.find("2") != std::string::npos);
+    }
+
+    SUBCASE("too many channels")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(0, 0, 0, 0, 0)").message.find("5") != std::string::npos);
+    }
+
+    SUBCASE("a function that is not a colour")
+    {
+        const MarkupError error = ColourRefusedOnLine3("hsl(0, 0, 0)");
+        CHECK(error.message.find("hsl") != std::string::npos);
+        CHECK(error.message.find("rgbf") != std::string::npos);
+    }
+
+    SUBCASE("hex with the wrong number of digits")
+    {
+        CHECK(ColourRefusedOnLine3("#fff").message.find("#fff") != std::string::npos);
+    }
+
+    SUBCASE("hex with a digit that is not one")
+    {
+        CHECK(ColourRefusedOnLine3("#ff00zz").message.find("#ff00zz") != std::string::npos);
+    }
+
+    SUBCASE("a call never closed")
+    {
+        CHECK(ColourRefusedOnLine3("rgb(0, 0, 0").message.find(")") != std::string::npos);
+    }
 }
 
 TEST_CASE("ScreenCompiler: every sizing form reads")
@@ -362,15 +493,67 @@ TEST_CASE("ScreenCompiler: every sizing form reads")
     CHECK(Compiled(R"(<screen width="fit" />)").nodes[0].style.sizing[0].kind == SizingKind::Fit);
     CHECK(Compiled(R"(<screen width="grow" />)").nodes[0].style.sizing[0].kind == SizingKind::Grow);
 
-    const Sizing fixed = Compiled(R"(<screen width="fixed 420" />)").nodes[0].style.sizing[0];
+    const Sizing fixed = Compiled(R"(<screen width="420" />)").nodes[0].style.sizing[0];
     CHECK(fixed.kind == SizingKind::Fixed);
-    CHECK(fixed.value == 420.f);
+    CHECK(fixed.value == Px(420.f));
 
-    const Sizing bounded = Compiled(R"(<screen width="percent 0.5 min 100 max 800" />)").nodes[0].style.sizing[0];
-    CHECK(bounded.kind == SizingKind::Percent);
-    CHECK(bounded.value == 0.5f);
-    CHECK(bounded.min == 100.f);
-    CHECK(bounded.max == 800.f);
+    const Sizing bounded = Compiled(R"(<screen width="50% min 100 max 80vw" />)").nodes[0].style.sizing[0];
+    CHECK(bounded.kind == SizingKind::Fixed);
+    CHECK(bounded.value == Percent(50.f));
+    CHECK(bounded.min == Px(100.f));
+    CHECK(bounded.max == Vw(80.f));
+
+    const Sizing grown = Compiled(R"(<screen width="grow min 10vh" />)").nodes[0].style.sizing[0];
+    CHECK(grown.kind == SizingKind::Grow);
+    CHECK(grown.min == Vh(10.f));
+}
+
+TEST_CASE("ScreenCompiler: every length unit reads")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <column name="box" padding="1em 5% 2vw 3" gap="1.5vh" text_size="2em" corner_radius="50%"
+          border_width="0.25vw" scroll_bar_min_length="4vh" />
+  <text name="floater" float="true" float_offset="2vw 2vh" />
+</screen>)amdn");
+
+    const Style &box = NodeNamed(document, "box").style;
+    CHECK(box.padding.left == Em(1.f));
+    CHECK(box.padding.top == Percent(5.f));
+    CHECK(box.padding.right == Vw(2.f));
+    CHECK(box.padding.bottom == Px(3.f));
+    CHECK(box.gap == Vh(1.5f));
+    CHECK(box.textSize == Em(2.f));
+    CHECK(box.cornerRadius == Percent(50.f));
+    CHECK(box.borderWidth == Vw(0.25f));
+    CHECK(box.scrollBarMinLength == Vh(4.f));
+
+    const Style &floater = NodeNamed(document, "floater").style;
+    CHECK(floater.floating.offset[0] == Vw(2.f));
+    CHECK(floater.floating.offset[1] == Vh(2.f));
+}
+
+TEST_CASE("ScreenCompiler: a length that is not one is refused where it is written")
+{
+    SUBCASE("a px suffix, since a bare number already is one")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(padding="5px")").message.find("5px") != std::string::npos);
+    }
+
+    SUBCASE("a unit apart from its number")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(padding="5 %")").message.find('%') != std::string::npos);
+    }
+
+    SUBCASE("a unit that is not one")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(gap="1e")").message.find("1e") != std::string::npos);
+    }
+
+    SUBCASE("the old fixed and percent words")
+    {
+        CHECK(AttributeRefusedOnLine3(R"(width="fixed 200")").message.find("not a size") != std::string::npos);
+        CHECK(AttributeRefusedOnLine3(R"(height="percent 0.5")").message.find('%') != std::string::npos);
+    }
 }
 
 TEST_CASE("ScreenCompiler: a sort key is a named layer or a number between them")
@@ -496,13 +679,6 @@ TEST_CASE("ScreenCompiler: a name means one node on its screen")
                       "  <row name=\"label\" />\n"
                       "</screen>\n")
                   .line == 5);
-    }
-
-    SUBCASE("the screen's own name is not a node's")
-    {
-        // The root's name is what the screen is called, which a system finds it
-        // by; a node inside may share it without the two being confused.
-        CHECK(Compiled(R"(<screen name="Pause"><text name="Pause" /></screen>)").nodes[1].name == "Pause");
     }
 
     SUBCASE("unnamed nodes never collide")
@@ -640,6 +816,18 @@ TEST_CASE("ScreenCompiler: a verb that cannot act is refused where it was writte
     }
 }
 
+TEST_CASE("ScreenCompiler: a screen is found by the path it is loaded from, so it names itself nowhere")
+{
+    // A name written inside the file would say again what its path says, and
+    // the two drift the moment the file is renamed.
+    const MarkupError error = Refused("<screen\n"
+                                      "    input=\"consume\"\n"
+                                      "    name=\"Pause\">\n"
+                                      "</screen>\n");
+    CHECK(error.line == 3);
+    CHECK(error.message.find("path") != std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: the screen itself cannot be clicked")
 {
     // The root is the screen; an action there would never fire.
@@ -652,7 +840,7 @@ TEST_CASE("ScreenCompiler: a named style is carried and checked against nothing"
     // should cook, and start resolving when there is.
     const ScreenDocument document = Compiled(R"(<screen><column style="Panel" gap="4" /></screen>)");
     CHECK(document.nodes[1].styleName == "Panel");
-    CHECK(document.nodes[1].style.gap == 4.f);
+    CHECK(document.nodes[1].style.gap == Px(4.f));
 }
 
 TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
@@ -664,7 +852,6 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
     REQUIRE(read.has_value());
-    CHECK(read->name == "Pause");
     CHECK(read->nodes.size() == 6);
     CHECK(read->systems.size() == 1);
     CHECK(NodeNamed(*read, "quit").eventName == "Game::QuitRequested");
@@ -742,7 +929,6 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
 
     // Everything the C++ builder this file replaced set, so a difference shows
     // up here rather than as a menu that looks nearly right.
-    CHECK(document->name == "Pause");
     CHECK(document->sortKey == kSortMenu);
     CHECK(document->traits.input == ScreenInput::ConsumeInput);
     CHECK(document->traits.beneath == ScreenBeneath::HidesBeneath);
@@ -757,23 +943,23 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
 
     const ScreenNode &panel = NodeNamed(*document, "panel");
     CHECK(panel.style.sizing[0].kind == SizingKind::Fixed);
-    CHECK(panel.style.sizing[0].value == 420.f);
-    CHECK(panel.style.padding.left == 32.f);
-    CHECK(panel.style.gap == 20.f);
-    CHECK(panel.style.borderWidth == 2.f);
-    CHECK(panel.style.cornerRadius == 16.f);
+    CHECK(panel.style.sizing[0].value == Px(420.f));
+    CHECK(panel.style.padding.left == Px(32.f));
+    CHECK(panel.style.gap == Px(20.f));
+    CHECK(panel.style.borderWidth == Px(2.f));
+    CHECK(panel.style.cornerRadius == Px(16.f));
     CHECK(panel.style.cornerStyle == CornerStyle::Rounded);
     CHECK(panel.style.direction == Direction::Column);
 
     CHECK(NodeNamed(*document, "title").text == "Paused");
-    CHECK(NodeNamed(*document, "title").style.textSize == 48.f);
+    CHECK(NodeNamed(*document, "title").style.textSize == Px(48.f));
 
     const ScreenNode &resume = NodeNamed(*document, "resume");
     CHECK(resume.text == "Resume");
     CHECK(resume.action == ActionKind::Verb);
     CHECK(resume.verb == ScreenVerb::Hide);
-    CHECK(resume.style.textSize == 28.f);
-    CHECK(resume.style.cornerRadius == 10.f);
+    CHECK(resume.style.textSize == Px(28.f));
+    CHECK(resume.style.cornerRadius == Px(10.f));
 
     const ScreenNode &quit = NodeNamed(*document, "quit");
     CHECK(quit.text == "Quit");
@@ -825,7 +1011,7 @@ TEST_CASE("ScreenCompiler: every control compiles to the node that builds it")
     // A field made with no style of its own is an invisible box, and a player
     // cannot type into what they cannot see: the document carries the look the
     // node API would have given it.
-    CHECK(player.style.borderWidth > 0.f);
+    CHECK(player.style.borderWidth.value > 0.f);
     CHECK(player.style.background.a > 0.f);
     CHECK(player.takesKeyboard);
 
@@ -1017,7 +1203,8 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
     Ui ui{events};
     const EventCatalog catalog = OneEvent();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, *document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, "ui/Controls.amdn", *document, catalog);
     REQUIRE(loaded.has_value());
 
     Screen twin{ui, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
@@ -1077,8 +1264,8 @@ TEST_CASE("ScreenCompiler: an instance is its template's root, with the instance
     const ScreenNode &quit = NodeNamed(document, "quit");
     CHECK(quit.widget == BuiltinWidget::Button);
     // The template's, where the instance says nothing.
-    CHECK(quit.style.padding.left == 28.f);
-    CHECK(quit.style.textSize == 28.f);
+    CHECK(quit.style.padding.left == Px(28.f));
+    CHECK(quit.style.textSize == Px(28.f));
     // The instance's, where both do.
     CHECK(quit.style.background.r == doctest::Approx(1.f));
     CHECK(quit.text == "Quit");
@@ -1104,14 +1291,14 @@ TEST_CASE("ScreenCompiler: an instance's children follow its template's")
     CHECK(document.nodes[heading].parent == box);
     CHECK(document.nodes[extra].parent == box);
     CHECK(heading < extra);
-    CHECK(document.nodes[box].style.gap == 4.f);
+    CHECK(document.nodes[box].style.gap == Px(4.f));
 }
 
 TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-expanded twin does")
 {
     // Nothing of a template reaches the binary: the loader and the runtime
     // cannot tell one was used.
-    const std::string_view templated = R"amdn(<screen name="Pause">
+    const std::string_view templated = R"amdn(<screen>
   <template name="menu_button">
     <button padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded" />
   </template>
@@ -1120,7 +1307,7 @@ TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-ex
     <menu_button name="quit" on_click="Game::QuitRequested" border_width="2">Quit</menu_button>
   </row>
 </screen>)amdn";
-    const std::string_view expanded = R"amdn(<screen name="Pause">
+    const std::string_view expanded = R"amdn(<screen>
   <row name="buttons">
     <button name="resume" on_click="hide()" focus="true" background="#e63319"
             padding="28 10 28 10" text_size="28" corner_radius="10" corner_style="rounded">Resume</button>

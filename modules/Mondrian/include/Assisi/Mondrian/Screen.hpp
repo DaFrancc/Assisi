@@ -85,6 +85,8 @@ struct ScreenTraits
     ScreenInput input = ScreenInput::NoConsume;
     ScreenBeneath beneath = ScreenBeneath::NoHide;
     ScreenPause pause = ScreenPause::Run;
+
+    [[nodiscard]] friend constexpr bool operator==(const ScreenTraits &, const ScreenTraits &) = default;
 };
 
 /// The gap between the layers the engine names, so a game can slot a screen of

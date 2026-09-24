@@ -2,7 +2,7 @@
      screen through the node API and compares the two node for node, so a
      construction attribute the cooker drops or the loader forgets shows up as
      a difference rather than as a screen that looks nearly right. -->
-<screen name="Controls" input="consume" sort="popup" align="center center">
+<screen input="consume" sort="popup" align="center center">
 
   <!-- Fit rather than a fixed width: a text field asks for 220 logical pixels
        at its narrowest, and a row of four of them wants more than any width
@@ -55,7 +55,7 @@
                   placeholder="exactly 3 lines" />
     </row>
 
-    <scroll name="list" axes="y" width="grow" height="fixed 150"
+    <scroll name="list" axes="y" width="grow" height="150"
             background="#0f1217" corner_radius="10" corner_style="rounded"
             scroll_bar_visibility="when-needed" scroll_smoothing="0.12">
       <button name="one" padding="28 10 28 10" text_size="28">One</button>

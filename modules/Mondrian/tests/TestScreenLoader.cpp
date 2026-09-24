@@ -26,6 +26,9 @@ namespace
 
 constexpr Extent kViewport{1280, 720};
 
+/// What these screens are loaded as: the path a file-loaded screen is found by.
+constexpr std::string_view kScreenPath = "ui/Test.amdn";
+
 /// A button big enough to aim at. These tests set no font, so text takes no
 /// space and a button left to fit its label would be nothing to click.
 constexpr float kButtonWidth = 200.f;
@@ -54,7 +57,6 @@ EventCatalog TwoEvents()
 ScreenDocument PauseMenu()
 {
     ScreenDocument document;
-    document.name = "Pause";
     document.sortKey = kSortMenu;
     document.traits = {
         .input = ScreenInput::ConsumeInput, .beneath = ScreenBeneath::HidesBeneath, .pause = ScreenPause::Pause};
@@ -69,14 +71,14 @@ ScreenDocument PauseMenu()
     panel.parent = 0;
     panel.name = "panel";
     panel.style.direction = Direction::Column;
-    panel.style.gap = 20.f;
+    panel.style.gap = Px(20.f);
     document.nodes.push_back(panel);
 
     ScreenNode title;
     title.parent = 1;
     title.name = "title";
     title.text = "Paused";
-    title.style.textSize = 48.f;
+    title.style.textSize = Px(48.f);
     document.nodes.push_back(title);
 
     ScreenNode resume;
@@ -86,7 +88,7 @@ ScreenDocument PauseMenu()
     resume.widget = BuiltinWidget::Button;
     resume.action = ActionKind::Verb;
     resume.verb = ScreenVerb::Hide;
-    resume.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    resume.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     document.nodes.push_back(resume);
 
     ScreenNode quit;
@@ -96,7 +98,7 @@ ScreenDocument PauseMenu()
     quit.widget = BuiltinWidget::Button;
     quit.action = ActionKind::Event;
     quit.eventName = "Game::QuitRequested";
-    quit.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    quit.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     document.nodes.push_back(quit);
 
     document.focus = 3; // Resume
@@ -109,7 +111,6 @@ ScreenDocument PauseMenu()
 ScreenDocument EveryControl()
 {
     ScreenDocument document;
-    document.name = "Controls";
 
     ScreenNode root;
     document.nodes.push_back(root);
@@ -203,7 +204,7 @@ ScreenNode Stepper(std::string_view name, uint32_t target, int32_t moves)
     button.verb = ScreenVerb::Step;
     button.target = target;
     button.moves = moves;
-    button.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    button.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     return button;
 }
 
@@ -222,7 +223,6 @@ constexpr float kVolumeStep = 5.f;
 ScreenDocument Sliders()
 {
     ScreenDocument document;
-    document.name = "Sliders";
     document.traits.input = ScreenInput::ConsumeInput;
     document.nodes.emplace_back();
 
@@ -293,7 +293,7 @@ struct SliderScreen
 
     explicit SliderScreen(const ScreenDocument &document)
     {
-        std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, TwoEvents());
+        std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, TwoEvents());
         REQUIRE(loaded.has_value());
         screen = std::move(loaded->screen);
         quality = {.node = screen->Find("quality")};
@@ -311,7 +311,8 @@ ScreenLoadError Refusal(const ScreenDocument &document)
 {
     EventQueue events;
     Ui ui{events};
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, TwoEvents());
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, document, TwoEvents());
     REQUIRE_FALSE(loaded.has_value());
     // Nothing was built, so nothing is left behind taking input.
     CHECK(ui.InputScreen() == nullptr);
@@ -326,11 +327,14 @@ TEST_CASE("ScreenLoader: a document becomes the tree it describes")
     Ui ui{events};
     const EventCatalog catalog = TwoEvents();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, PauseMenu(), catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
-    CHECK(screen.Name() == "Pause");
+    // Named by what it was loaded as, which is the path a system finds it by;
+    // nothing in the document names it.
+    CHECK(screen.Name() == kScreenPath);
     CHECK(screen.SortKey() == kSortMenu);
     CHECK(screen.Traits().input == ScreenInput::ConsumeInput);
     CHECK(screen.Traits().beneath == ScreenBeneath::HidesBeneath);
@@ -344,7 +348,7 @@ TEST_CASE("ScreenLoader: a document becomes the tree it describes")
     const NodeId title = screen.Find("title");
     REQUIRE(screen.Tree().IsAlive(title));
     CHECK(screen.Tree().Get(title)->text == "Paused");
-    CHECK(screen.Tree().Get(title)->style.textSize == 48.f);
+    CHECK(screen.Tree().Get(title)->style.textSize.value == 48.f);
 
     // The parent link the flat table describes, rebuilt.
     const NodeId panel = screen.Find("panel");
@@ -362,7 +366,8 @@ TEST_CASE("ScreenLoader: a verb button acts on its own screen")
     Ui ui{events};
     const EventCatalog catalog = TwoEvents();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, PauseMenu(), catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -384,7 +389,8 @@ TEST_CASE("ScreenLoader: an event button pushes the event it names and no other"
     Ui ui{events};
     const EventCatalog catalog = TwoEvents();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, PauseMenu(), catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -404,7 +410,8 @@ TEST_CASE("ScreenLoader: the document's focus is what has the keys")
     Ui ui{events};
     const EventCatalog catalog = TwoEvents();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, PauseMenu(), catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -426,7 +433,7 @@ TEST_CASE("ScreenLoader: an unknown event leaves no screen behind")
     ScreenDocument document = PauseMenu();
     document.nodes[4].eventName = "Game::Misspelt";
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::UnknownEvent);
 
@@ -447,7 +454,7 @@ TEST_CASE("ScreenLoader: a name two nodes carry leaves no screen behind")
     ScreenDocument document = PauseMenu();
     document.nodes[4].name = "resume";
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::DuplicateName);
     CHECK(ui.InputScreen() == nullptr);
@@ -465,7 +472,7 @@ TEST_CASE("ScreenLoader: a button is found by its name, not its label")
     // player reads, and a name is what code and markup refer to.
     document.nodes[4].text = "Resume";
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
     CHECK(loaded->screen->Find("resume"));
     CHECK(loaded->screen->Find("quit"));
@@ -483,10 +490,10 @@ TEST_CASE("ScreenLoader: a named style is carried and ignored")
     ScreenDocument document = PauseMenu();
     document.nodes[1].styleName = "Panel";
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
     // The node's own attributes are what it looks like, untouched by the name.
-    CHECK(loaded->screen->Tree().Get(loaded->screen->Find("panel"))->style.gap == 20.f);
+    CHECK(loaded->screen->Tree().Get(loaded->screen->Find("panel"))->style.gap.value == 20.f);
 }
 
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
@@ -498,7 +505,7 @@ TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
     SUBCASE("no root")
     {
         const ScreenDocument empty;
-        const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, empty, catalog);
+        const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, empty, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::BadDocument);
     }
@@ -510,7 +517,8 @@ TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
         document.nodes.emplace_back();
         document.nodes[1].parent = 1;
 
-        const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+        const std::expected<LoadedScreen, ScreenLoadError> loaded =
+            InstantiateScreen(ui, kScreenPath, document, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::BadDocument);
     }
@@ -530,7 +538,8 @@ TEST_CASE("ScreenLoader: a control or an action on the root is refused")
         document.nodes.emplace_back();
         document.nodes[0].widget = BuiltinWidget::Button;
 
-        const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+        const std::expected<LoadedScreen, ScreenLoadError> loaded =
+            InstantiateScreen(ui, kScreenPath, document, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::MisplacedNode);
     }
@@ -542,7 +551,8 @@ TEST_CASE("ScreenLoader: a control or an action on the root is refused")
         document.nodes.emplace_back();
         document.nodes[0].action = ActionKind::Verb;
 
-        const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+        const std::expected<LoadedScreen, ScreenLoadError> loaded =
+            InstantiateScreen(ui, kScreenPath, document, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::MisplacedNode);
     }
@@ -563,7 +573,7 @@ TEST_CASE("ScreenLoader: a widget this build does not have is named as such")
     unknown.widget = BuiltinWidget::Count;
     document.nodes.push_back(unknown);
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::UnsupportedWidget);
 }
@@ -577,7 +587,8 @@ TEST_CASE("ScreenLoader: every control a document names is built as that control
     Ui ui{events};
     const EventCatalog catalog = TwoEvents();
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, EveryControl(), catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, EveryControl(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -644,7 +655,7 @@ TEST_CASE("ScreenLoader: a pattern this build cannot compile leaves no screen be
         }
     }
 
-    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, catalog);
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::BadPattern);
 

@@ -1,11 +1,11 @@
 <!-- The pause menu. Escape shows it, Resume or Back closes it, Quit ends the
      game. While it is up it takes the pointer and the keys, and the world
      stops. -->
-<screen name="Pause" input="consume" beneath="hide" pause="true" sort="menu"
+<screen input="consume" beneath="hide" pause="true" sort="menu"
         needs="PauseMenu"
-        align="center center" background="0 0 0 0.55" blocks_pointer="true">
+        align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
 
-  <column name="panel" width="fixed 420" padding="32" gap="20"
+  <column name="panel" width="420" padding="32" gap="20"
           background="#1a1c24f0" border_width="2" border_color="#575f7a"
           corner_radius="16" corner_style="rounded" align="center start">
 

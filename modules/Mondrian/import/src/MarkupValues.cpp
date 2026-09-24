@@ -6,6 +6,7 @@
 #include <Assisi/Mondrian/Screen.hpp>
 
 #include <charconv>
+#include <cmath>
 #include <span>
 #include <string>
 
@@ -74,8 +75,27 @@ constexpr float kChannelMax = 255.f;
 /// The counts each multi-number form accepts.
 constexpr std::size_t kPaddingAllEdges = 1;
 constexpr std::size_t kPaddingPerEdge = 4;
-constexpr std::size_t kColorRgbWords = 3;
-constexpr std::size_t kColorRgbaWords = 4;
+
+/// How many channels a colour call takes: red, green and blue, and alpha after
+/// them when it is not opaque.
+constexpr std::size_t kColorRgbChannels = 3;
+constexpr std::size_t kColorRgbaChannels = 4;
+
+/// The colour calls, by the scale their channels are written on.
+constexpr std::string_view kRgbCall = "rgb";
+constexpr std::string_view kRgbfCall = "rgbf";
+
+/// What marks a colour as hex.
+constexpr char kHexMark = '#';
+
+/// What separates a call's name from its arguments, the arguments from each
+/// other, and ends the call.
+constexpr char kCallOpen = '(';
+constexpr char kCallSeparator = ',';
+constexpr char kCallClose = ')';
+
+/// The whitespace an author may put around a call's name and arguments.
+constexpr std::string_view kCallSpace = " \t\r\n";
 
 std::optional<uint32_t> ParseHexPair(std::string_view digits)
 {
@@ -88,7 +108,7 @@ std::optional<uint32_t> ParseHexPair(std::string_view digits)
     return value;
 }
 
-std::optional<Math::Color4<Math::ColorSpace::Srgb>> ParseHexColor(std::string_view text)
+std::optional<Color> ParseHexColor(std::string_view text)
 {
     const std::string_view digits = text.substr(1);
     if (digits.size() != kHexRgbDigits && digits.size() != kHexRgbaDigits)
@@ -96,7 +116,7 @@ std::optional<Math::Color4<Math::ColorSpace::Srgb>> ParseHexColor(std::string_vi
         return std::nullopt;
     }
 
-    Math::Color4<Math::ColorSpace::Srgb> color{0.f, 0.f, 0.f, 1.f};
+    Color color{0.f, 0.f, 0.f, 1.f};
     for (std::size_t channel = 0; channel * kHexDigitsPerChannel < digits.size(); ++channel)
     {
         const std::optional<uint32_t> byte =
@@ -119,7 +139,7 @@ bool ApplyBounds(std::span<const std::string_view> words, Sizing &sizing)
         {
             return false;
         }
-        const std::optional<float> bound = ParseFloat(words[at + 1]);
+        const std::optional<Length> bound = ParseLength(words[at + 1]);
         if (!bound)
         {
             return false;
@@ -211,30 +231,176 @@ std::optional<uint32_t> ParseUInt(std::string_view text)
     return value;
 }
 
-std::optional<Math::Color4<Math::ColorSpace::Srgb>> ParseColor(std::string_view text)
+std::string_view TrimSpace(std::string_view text)
 {
-    if (text.starts_with('#'))
+    const std::size_t first = text.find_first_not_of(kCallSpace);
+    if (first == std::string_view::npos)
     {
-        return ParseHexColor(text);
+        return {};
+    }
+    const std::size_t last = text.find_last_not_of(kCallSpace);
+    return text.substr(first, last - first + 1);
+}
+
+std::expected<std::optional<MarkupCall>, std::string> SplitCall(std::string_view text)
+{
+    const std::size_t open = text.find(kCallOpen);
+    if (open == std::string_view::npos)
+    {
+        return std::optional<MarkupCall>{};
+    }
+    const std::size_t close = text.find(kCallClose, open);
+    if (close == std::string_view::npos)
+    {
+        return std::unexpected("'" + std::string{text} + "' opens a call and never closes it with " + kCallClose + ".");
+    }
+    const std::string_view after = TrimSpace(text.substr(close + 1));
+    if (!after.empty())
+    {
+        return std::unexpected("'" + std::string{after} + "' follows the call in '" + std::string{text} +
+                               "'. An attribute holds one call.");
     }
 
-    const std::vector<std::string_view> words = SplitWords(text);
-    if (words.size() != kColorRgbWords && words.size() != kColorRgbaWords)
+    MarkupCall call;
+    call.name = TrimSpace(text.substr(0, open));
+    const std::string_view inside = TrimSpace(text.substr(open + 1, close - open - 1));
+    // Nothing between the parens is no arguments, not one empty one.
+    std::size_t start = 0;
+    while (!inside.empty() && start <= inside.size())
     {
-        return std::nullopt;
+        std::size_t end = inside.find(kCallSeparator, start);
+        end = end == std::string_view::npos ? inside.size() : end;
+        call.arguments.push_back(TrimSpace(inside.substr(start, end - start)));
+        start = end + 1;
+    }
+    return std::optional<MarkupCall>{call};
+}
+
+namespace
+{
+
+/// One channel of an `rgb` call: a whole number from 0 to 255, as the 0-to-1 a
+/// colour holds. A fraction is the likeliest sign of a 0-to-1 value written in
+/// the wrong call, so the message says which call takes those.
+std::expected<float, std::string> ReadByteChannel(std::string_view written)
+{
+    const std::optional<float> value = ParseFloat(written);
+    if (!value || *value != std::floor(*value))
+    {
+        return std::unexpected("'" + std::string{written} + "' is not a whole number from 0 to 255. For channels " +
+                               "from 0 to 1, write " + std::string{kRgbfCall} + "(r, g, b).");
+    }
+    if (*value < 0.f || *value > kChannelMax)
+    {
+        return std::unexpected("'" + std::string{written} + "' is outside 0 to 255.");
+    }
+    return *value / kChannelMax;
+}
+
+/// One channel of an `rgbf` call: a number from 0 to 1. A value past 1 is the
+/// likeliest sign of a 0-to-255 value written in the wrong call.
+std::expected<float, std::string> ReadUnitChannel(std::string_view written)
+{
+    const std::optional<float> value = ParseFloat(written);
+    if (!value)
+    {
+        return std::unexpected("'" + std::string{written} + "' is not a number.");
+    }
+    if (*value < 0.f || *value > 1.f)
+    {
+        return std::unexpected("'" + std::string{written} + "' is outside 0 to 1. For channels from 0 to 255, " +
+                               "write " + std::string{kRgbCall} + "(r, g, b).");
+    }
+    return *value;
+}
+
+/// The colour an `rgb` or `rgbf` call names.
+ParsedColor ReadColorCall(const MarkupCall &call)
+{
+    const bool bytes = call.name == kRgbCall;
+    if (!bytes && call.name != kRgbfCall)
+    {
+        return std::unexpected("'" + std::string{call.name} + "' is not a colour function. A colour is #rrggbb, " +
+                               "#rrggbbaa, " + std::string{kRgbCall} + "(r, g, b[, a]) with whole numbers from 0 " +
+                               "to 255, or " + std::string{kRgbfCall} + "(r, g, b[, a]) with numbers from 0 to 1.");
+    }
+    if (call.arguments.size() != kColorRgbChannels && call.arguments.size() != kColorRgbaChannels)
+    {
+        return std::unexpected(std::string{call.name} + " takes 3 channels, or 4 with alpha, and was given " +
+                               std::to_string(call.arguments.size()) + ".");
     }
 
-    Math::Color4<Math::ColorSpace::Srgb> color{0.f, 0.f, 0.f, 1.f};
-    for (std::size_t channel = 0; channel < words.size(); ++channel)
+    // Opaque unless a fourth channel says otherwise.
+    Color color{0.f, 0.f, 0.f, 1.f};
+    for (std::size_t channel = 0; channel < call.arguments.size(); ++channel)
     {
-        const std::optional<float> value = ParseFloat(words[channel]);
+        const std::expected<float, std::string> value =
+            bytes ? ReadByteChannel(call.arguments[channel]) : ReadUnitChannel(call.arguments[channel]);
         if (!value)
         {
-            return std::nullopt;
+            return std::unexpected(value.error());
         }
         color[static_cast<glm::length_t>(channel)] = *value;
     }
     return color;
+}
+
+} // namespace
+
+ParsedColor ParseColor(std::string_view text)
+{
+    if (text.starts_with(kHexMark))
+    {
+        const std::optional<Color> hex = ParseHexColor(text);
+        if (!hex)
+        {
+            return std::unexpected("'" + std::string{text} + "' is not a colour: hex is # and then 6 or 8 hex " +
+                                   "digits, #rrggbb or #rrggbbaa.");
+        }
+        return *hex;
+    }
+
+    const std::expected<std::optional<MarkupCall>, std::string> call = SplitCall(text);
+    if (!call)
+    {
+        return std::unexpected(call.error());
+    }
+    if (!call->has_value())
+    {
+        // Bare numbers say no scale: `1 1 1` is white on one and nearly black
+        // on the other, so they are refused rather than guessed at.
+        return std::unexpected("'" + std::string{text} + "' is not a colour. Write it as hex (#rrggbb), " +
+                               std::string{kRgbCall} + "(r, g, b) with whole numbers from 0 to 255, or " +
+                               std::string{kRgbfCall} + "(r, g, b) with numbers from 0 to 1; each takes an " +
+                               "optional fourth channel for alpha.");
+    }
+    return ReadColorCall(**call);
+}
+
+std::optional<Length> ParseLength(std::string_view text)
+{
+    // The unit names CSS gives them. No `px`: a bare number is already UI
+    // pixels, and one spelling per thing.
+    static constexpr std::array<NamedEnum<LengthUnit>, 4> kUnits{
+        {{"%", LengthUnit::Percent}, {"vw", LengthUnit::Vw}, {"vh", LengthUnit::Vh}, {"em", LengthUnit::Em}}};
+    for (const NamedEnum<LengthUnit> &unit : kUnits)
+    {
+        if (text.size() > unit.name.size() && text.ends_with(unit.name))
+        {
+            const std::optional<float> value = ParseFloat(text.substr(0, text.size() - unit.name.size()));
+            if (!value)
+            {
+                return std::nullopt;
+            }
+            return Length{.value = *value, .unit = unit.value};
+        }
+    }
+    const std::optional<float> pixels = ParseFloat(text);
+    if (!pixels)
+    {
+        return std::nullopt;
+    }
+    return Px(*pixels);
 }
 
 std::optional<Sizing> ParseSizing(std::string_view text)
@@ -245,8 +411,9 @@ std::optional<Sizing> ParseSizing(std::string_view text)
         return std::nullopt;
     }
 
+    // A bare length is a fixed size, as in CSS: anything not `fit` or `grow` is
+    // exactly the length it says, in whatever unit it says it in.
     Sizing sizing;
-    std::size_t consumed = 1;
     if (words[0] == "fit")
     {
         sizing = Sizing::Fit();
@@ -255,26 +422,16 @@ std::optional<Sizing> ParseSizing(std::string_view text)
     {
         sizing = Sizing::Grow();
     }
-    else if (words[0] == "fixed" || words[0] == "percent")
+    else if (const std::optional<Length> length = ParseLength(words[0]))
     {
-        if (words.size() < 2)
-        {
-            return std::nullopt;
-        }
-        const std::optional<float> amount = ParseFloat(words[1]);
-        if (!amount)
-        {
-            return std::nullopt;
-        }
-        sizing = words[0] == "fixed" ? Sizing::Fixed(*amount) : Sizing::Percent(*amount);
-        consumed = 2;
+        sizing = Sizing::Fixed(*length);
     }
     else
     {
         return std::nullopt;
     }
 
-    if (!ApplyBounds(std::span{words}.subspan(consumed), sizing))
+    if (!ApplyBounds(std::span{words}.subspan(1), sizing))
     {
         return std::nullopt;
     }
@@ -289,10 +446,10 @@ std::optional<Padding> ParsePadding(std::string_view text)
         return std::nullopt;
     }
 
-    std::array<float, kPaddingPerEdge> edges{};
+    std::array<Length, kPaddingPerEdge> edges{};
     for (std::size_t edge = 0; edge < words.size(); ++edge)
     {
-        const std::optional<float> value = ParseFloat(words[edge]);
+        const std::optional<Length> value = ParseLength(words[edge]);
         if (!value)
         {
             return std::nullopt;
