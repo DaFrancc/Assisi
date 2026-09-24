@@ -1,19 +1,40 @@
 # User interface
 
-In this chapter you'll build a pause menu: Escape opens it, the world stops
-behind it, and Resume closes it again.
+Menus, HUDs and dialogs are drawn by **Mondrian**, the engine's own UI system.
+This chapter starts with a tutorial that builds a pause menu, then describes
+each part of the system in reference form.
 
-Menus, HUDs and dialogs are all **screens**, drawn by Mondrian — the engine's
-own UI. A screen is a tree of boxes and text that belongs to a world, and it
-goes away when that world does.
+## Overview
 
-You write a screen as a file. The engine compiles it when you cook your
-assets, and the game loads the compiled form — so a shipped game never reads
-the markup, and a mistake in it stops the build rather than the player.
+These are the terms the rest of the chapter uses:
 
-## Step 1: write the screen
+| Term | Meaning |
+|---|---|
+| **Screen** | One piece of UI: a menu, a HUD, a dialog. A screen belongs to a world and is destroyed with it. |
+| **Node** | One box in a screen. A node can hold text, children, or be a control such as a button. |
+| **Screen file** | A `.amdn` file describing one screen, written in an XML-style markup. |
+| **Element** | One tag in a screen file, such as `<button>`. Each element becomes one node. |
+| **Attribute** | A setting on an element, such as `width="grow"`. |
+| **Cooking** | The build step that compiles every screen file into a binary form. |
 
-Make `assets/ui/TutorialMenu.amdn`:
+A screen file is never read by the shipped game. The cook compiles it, and the
+game loads the compiled form. Any mistake in a screen file — a misspelt
+attribute, an unknown event, a bad value — fails the cook with the file, line
+and column, so it is caught at build time rather than by a player.
+
+Everything a screen file can describe can also be built in C++ with the node
+API (see [Building a screen in C++](#building-a-screen-in-c)). Files are the
+usual way; C++ is for screens whose shape isn't known until run time.
+
+## Tutorial: a pause menu
+
+You'll build a pause menu that opens when the player presses Escape, stops the
+world behind it, and closes when the player clicks **Resume** or presses Escape
+again.
+
+### Step 1: Write the screen file
+
+Create `assets/ui/TutorialMenu.amdn`:
 
 ```xml
 <screen name="TutorialMenu" input="consume" beneath="hide" pause="true"
@@ -33,8 +54,24 @@ Make `assets/ui/TutorialMenu.amdn`:
 </screen>
 ```
 
-Every asset needs a sidecar giving it a stable id. Make
-`assets/ui/TutorialMenu.amdn.aast` beside it:
+What this describes:
+
+- The `<screen>` element is the whole screen. Its attributes say how it
+  behaves: it takes the keyboard and mouse (`input="consume"`), hides screens
+  below it (`beneath="hide"`), pauses the world (`pause="true"`), and needs a
+  system called `TutorialMenu` (`needs`). These are explained in
+  [Screen settings](#screen-settings).
+- The screen darkens everything behind it (`background="0 0 0 0.55"`) and
+  centres its contents (`align="center center"`).
+- Inside is a panel (`<column>`) holding a title and a **Resume** button.
+- `on_click="hide()"` makes the button close the screen.
+- `focus="true"` gives the button keyboard focus when the screen opens, so
+  pressing Enter clicks it.
+
+### Step 2: Give the file an asset id
+
+Every asset needs a sidecar file holding a stable id. Create
+`assets/ui/TutorialMenu.amdn.aast` next to the screen file:
 
 ```json
 {
@@ -44,12 +81,18 @@ Every asset needs a sidecar giving it a stable id. Make
 }
 ```
 
-> **Make up your own guid.** Any two assets sharing one is a cook failure. Most
-> editors have a "generate UUID" command, or run `uuidgen`.
+> **Generate your own guid.** Two assets with the same guid fail the cook. Run
+> `uuidgen`, or use your editor's "generate UUID" command.
 
-## Step 2: load it
+### Step 3: Write the systems that load and open the screen
 
-Make `apps/game/src/Tutorial/TutorialMenu.hpp`:
+The screen file can't know *when* it should appear or which key opens it. Two
+systems handle that:
+
+- `TutorialMenuScreen` runs once when the level loads and creates the screen.
+- `TutorialMenu` runs every frame and shows the screen when Escape is pressed.
+
+Create `apps/game/src/Tutorial/TutorialMenu.hpp`:
 
 ```cpp
 #pragma once
@@ -57,11 +100,11 @@ Make `apps/game/src/Tutorial/TutorialMenu.hpp`:
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 
-/// Gives the world the pause menu when the level loads.
+/// Creates the pause menu when the level loads.
 ASYSTEM(Loaded, name = "TutorialMenuScreen")
 void TutorialMenuScreenSystem(Assisi::App::SystemContext &ctx);
 
-/// Opens it when Escape is pressed.
+/// Shows the pause menu when Escape is pressed.
 ASYSTEM(Update, name = "TutorialMenu", activeWorldOnly)
 void TutorialMenuSystem(Assisi::App::SystemContext &ctx);
 ```
@@ -107,189 +150,162 @@ void TutorialMenuSystem(Assisi::App::SystemContext &ctx)
 }
 ```
 
-That's the whole of the C++. A screen file cannot know *when* to appear or
-which key opens it, and those two things are what's left.
+- `LoadScreen` loads the compiled screen and gives it to the world. The screen
+  starts hidden.
+- `FindScreen` looks the screen up by the `name` on its `<screen>` element.
+- `Show` makes it visible. Closing it needs no code: the button's `hide()` and
+  the Escape key both do that (see [Screen settings](#screen-settings)).
 
-## Step 3: build
+### Step 4: Build
 
-The same command as in [Installation](installation.md):
+Use the same command as in [Installation](installation.md):
 
 ```bash
 make gcc-dev
 ```
 
-## Step 4: turn it on in a level
+### Step 5: Add the screen to a level
 
-Open the editor with a level (`-l levels/Test.alvl`), find the **Systems**
-panel, type `TutorialMenuScreen` in **Add System**, press **Enter**, and
-**Save**.
+1. Open the editor with a level: `-l levels/Test.alvl`.
+2. In the **Systems** panel, type `TutorialMenuScreen` in **Add System** and
+   press **Enter**.
+3. Click **Save**.
 
-Add only that one. You'll see why in a moment.
+Add only `TutorialMenuScreen`. The next section explains why `TutorialMenu`
+isn't needed.
 
-Press **F5** to play, then **Escape**. The menu appears, the scene behind it
-stops moving, and clicking **Resume** closes it. Escape closes it too.
+If `TutorialMenuScreen` isn't offered in **Add System**, the build didn't find
+the header. Check that it is under `apps/game/src/` and rebuild.
 
-If `TutorialMenuScreen` doesn't appear in the Add System box, the build didn't
-pick up the file. Check that the header is under `apps/game/src/` and that you
-rebuilt.
+### Step 6: Try it
 
-## You only named one system
+Press **F5** to play, then **Escape**. The menu appears and the scene behind it
+stops. Click **Resume**, or press Escape again, to close it.
 
-The level lists `TutorialMenuScreen`. But Escape is read by `TutorialMenu`,
-which you never added.
+### How the second system was installed
 
-It runs because the screen asked for it — in the file:
+The level only lists `TutorialMenuScreen`, yet `TutorialMenu` — the system that
+reads Escape — is running. The screen file asked for it:
 
 ```xml
 <screen ... needs="TutorialMenu">
 ```
 
-**A screen declares the systems it needs, and the world installs them.** A level
-that shows this menu doesn't have to know it needs `TutorialMenu` to open, and
-if you later give the menu a settings page that needs three more systems, you
-add them to `needs` and no level file changes.
+**A screen lists the systems it needs in `needs`, and the world installs them
+when the screen is loaded.** The level doesn't have to know what the menu
+requires. If the menu later needs more systems, you add them to `needs` and no
+level file changes. Blueprints work the same way: a level that places a car
+doesn't list the systems the car needs.
 
-This is the same bargain a blueprint makes: a level that places a car doesn't
-have to know the car needs `Drive`.
+## Screen settings
 
-## What a button does
+The attributes on the `<screen>` element describe the screen as a whole:
 
-`on_click` takes one of two things, and the parentheses tell them apart: a verb
-is a call, and an event is a bare name.
+| Attribute | Values | Meaning |
+|---|---|---|
+| `name` | text | The screen's name. `FindScreen` looks screens up by it. |
+| `input` | `none`, `consume`, `locked` | What the screen does with the keyboard and mouse. |
+| `beneath` | `show`, `hide` | Whether screens below this one are still drawn. |
+| `pause` | `true`, `false` | Whether the world stops while the screen is shown. |
+| `sort` | `hud`, `menu`, `popup`, `overlay`, or a number | Where the screen draws relative to others. |
+| `needs` | system names, separated by spaces | Systems the world installs when the screen is loaded. |
 
-**A verb** — something the UI does to itself, or to another control on the same
-screen. A verb reaches nothing outside the UI, so it needs no event, no system,
-and nothing named anywhere. A screen wired this way works wherever it's shown.
+The `<screen>` element is also the root node, so it takes the layout and
+appearance attributes described later (`align`, `background` and so on).
 
-`hide()` closes the screen the button is on:
+There are no predefined screen types. You combine these settings as you need.
+A menu is `input="consume" beneath="hide" pause="true"`; a HUD uses the
+defaults; a dialog over live gameplay is `input="consume" beneath="show"
+pause="false"`.
 
-```xml
-<button on_click="hide()">Resume</button>
-```
+### Input
 
-`step(target, moves)` moves a slider on the same screen, named by its `name`:
+| `input` | Keyboard and mouse | Back (Escape) |
+|---|---|---|
+| `none` (default) | The game receives them as if the screen weren't there. Use for a HUD. | Does nothing. |
+| `consume` | The screen receives them; the game doesn't. | Closes the screen. |
+| `locked` | The screen receives them; the game doesn't. | Does nothing. Only your code can close the screen. |
 
-```xml
-<button on_click="step(volume, -1)">-</button>
-<slider name="volume" min="0" max="100" step="5" value="60" />
-<button on_click="step(volume, 1)">+</button>
-```
+Only the topmost shown screen that consumes input receives it. This is why
+Escape closed the tutorial menu without any code: while a `consume` screen is
+shown, the UI handles Escape as Back and closes the screen before the game sees
+the key. It is also why `IsKeyPressed(Escape)` in `TutorialMenu` doesn't
+immediately reopen the menu — the game never sees that key press.
 
-`moves` counts arrow-key presses, not distance. One move is whatever one press
-of Left or Right does to that slider — its `step` on a slider, one position on a
-stepped slider — so `step(volume, 2)` is two presses, and the button doesn't
-need to know which kind of slider it's aiming at. The slider announces the
-change exactly as it would for the key, so anything you bound with `OnChange`
-hears about it. A slider the player couldn't move — disabled or hidden — isn't
-moved.
+### Beneath
 
-A verb has one spelling: `on_click="hide"` without the parentheses is refused
-rather than taken as a second way of writing it.
-
-**An event** — for anything that reaches the world: quitting, loading a level,
-respawning. The UI has no access to the world, so this half goes through the
-event queue:
-
-```xml
-<button on_click="Assisi::App::QuitRequested">Quit</button>
-```
-
-Read it in a system like any other event (see [Events](events.md)):
-
-```cpp
-for (const Assisi::App::QuitRequested &event :
-     ctx.events.Read<Assisi::App::QuitRequested>())
-{
-    // ...
-}
-```
-
-To make an event of your own, mark a struct `AEVENT()` in a header under
-`apps/game/src/`:
-
-```cpp
-AEVENT()
-struct RestartRequested
-{
-};
-```
-
-and name it by its full C++ name, namespaces included:
-
-```xml
-<button on_click="Game::RestartRequested">Restart</button>
-```
-
-> **A misspelt name fails the cook**, with the file, line and column. So does an
-> event whose header isn't scanned — every header under `apps/game/src/` is, so
-> in practice this means you put the struct somewhere else. The same goes for a
-> verb: an unknown one, the wrong number of arguments, a target naming no node
-> on the screen, and a target that isn't a slider all fail the cook where they
-> were written.
-
-## The three answers
-
-You gave the screen three answers at the top of the file:
-
-```xml
-<screen input="consume" beneath="hide" pause="true">
-```
-
-There's no list of screen types to choose from. You answer three questions, and
-any combination is yours.
-
-**`input` — what it does with the pointer and the keys**
-
-| | |
+| `beneath` | Meaning |
 |---|---|
-| `none` | the game reads them as though nothing were shown — a HUD |
-| `consume` | the screen has them, and Back closes it — your menu |
-| `locked` | the screen has them, and Back does nothing — only your code closes it |
+| `show` (default) | Screens below stay visible. Use for a dialog over the game. |
+| `hide` | Screens below aren't drawn or laid out. Use for a full-screen menu. |
 
-This is why Escape closed the menu without you writing anything: while a
-`consume` screen is up, the UI has the keys, and Back closes it before the game
-ever sees the press. It's also why your `IsKeyPressed(Escape)` doesn't re-open
-it immediately — the game doesn't see that press at all.
+### Pause
 
-**`beneath` — whether screens below it are still drawn**
-
-| | |
+| `pause` | Meaning |
 |---|---|
-| `show` | what's below stays visible — a dialog over the game |
-| `hide` | what's below isn't drawn at all — a full-screen menu |
+| `false` (default) | The world keeps running. |
+| `true` | The world's fixed update (including physics) is skipped while the screen is shown. |
 
-**`pause` — what happens to the world while it's shown**
+The UI itself always runs, so a screen that pauses the world can still be used.
 
-| | |
+### Draw order
+
+Screens are drawn in order of their **sort key**, lowest first. The engine
+names four layers, a thousand apart so you can place your own between them:
+
+| `sort` | Key | Typical use |
+|---|---|---|
+| `hud` | 0 | A HUD, below everything |
+| `menu` (default) | 1000 | A menu |
+| `popup` | 2000 | A dialog over a menu |
+| `overlay` | 3000 | A loading screen, above everything |
+
+`sort` also accepts a number: `sort="1500"` draws between menus and popups.
+Screens with the same key draw in the order they were shown.
+
+## Elements
+
+Each element becomes one node. There are nine:
+
+| Element | What it is | Holds text | Holds elements |
+|---|---|---|---|
+| `column` | A container that stacks its children top to bottom | No | Yes |
+| `row` | A container that places its children left to right | No | Yes |
+| `text` | Text | Yes | No |
+| `button` | A button; its text is its label | Yes | No |
+| `toggle` | An on/off switch | No | No |
+| `slider` | A slider that can rest anywhere between its ends | No | No |
+| `stepped_slider` | A slider that rests only on fixed positions | No | No |
+| `scroll` | A container that scrolls its children instead of shrinking them | No | Yes |
+| `text_field` | A box the player types into; its text is what it starts with | Yes | No |
+
+Text goes between the tags: `<text>Paused</text>`. Text inside an element that
+doesn't hold text, such as a `<row>`, fails the cook. So does an element inside
+one that doesn't hold elements.
+
+Any element can also have a `name` (see [Names](#names)) and `focus="true"` to
+take keyboard focus when the screen opens. Only one element per screen may have
+`focus="true"`.
+
+## Layout and appearance
+
+These attributes work on every element, including `<screen>` and the controls.
+
+All lengths are in logical pixels on a 1920×1080 screen. The engine scales them
+to the actual window size.
+
+### Size
+
+`width` and `height` each take one of four sizing modes:
+
+| Mode | Meaning |
 |---|---|
-| `false` | the world keeps simulating |
-| `true` | the world's fixed step is skipped, and its physics with it |
+| `fit` (default) | Just large enough for the content. |
+| `grow` | Large enough for the content, plus a share of the space the parent has left over. |
+| `fixed N` | Exactly N. |
+| `percent N` | A fraction (0 to 1) of the parent's content area. |
 
-The UI keeps running either way, which is why the menu that stopped the world
-is still clickable.
-
-Change `pause` to `false`, re-run, and the scene keeps moving behind the menu.
-Change `beneath` to `show` and anything below it stays drawn.
-
-## Laying it out
-
-Nine elements, one per built-in control:
-
-| | |
-|---|---|
-| `column` | children stacked top to bottom |
-| `row` | children left to right |
-| `text` | words |
-| `button` | a button, with its label as its text |
-| `toggle` | on or off |
-| `slider` | rests anywhere between its ends |
-| `stepped_slider` | rests only on whole positions |
-| `scroll` | scrolls its children rather than shrinking them |
-| `text_field` | a field, with its text as what it starts holding |
-
-The last five take arguments of their own — see [Controls](#controls) below.
-
-Size is per axis, with `width` and `height`:
+Any mode can be followed by `min N` and `max N` to limit it:
 
 ```xml
 <column width="fixed 420" height="fit">
@@ -297,35 +313,81 @@ Size is per axis, with `width` and `height`:
 <column width="percent 0.5 min 100 max 800">
 ```
 
-| | |
-|---|---|
-| `fit` | just large enough for its content — the default |
-| `grow` | its content, then a share of whatever its parent has left |
-| `fixed N` | exactly N |
-| `percent N` | a fraction of the parent's content size, 0 to 1 |
+### Arranging children
 
-`min` and `max` clamp any of them.
+| Attribute | Values | Meaning |
+|---|---|---|
+| `direction` | `row`, `column` | How children are arranged. `<row>` and `<column>` set this already; `<screen>` is a column. |
+| `padding` | `N`, or `left top right bottom` | Space between the element's edge and its children. |
+| `gap` | `N` | Space between children. |
+| `align` | two words: horizontal, then vertical | Where children sit. Each word is `start`, `center` or `end`. |
 
-Beyond that: `padding` (one number for all four edges, or four for left, top,
-right, bottom), `gap` between children, `align` (two words, across then down,
-each `start`, `center` or `end`), `background`, `border_width`, `border_color`,
-`corner_radius`, `corner_style`, `text_size`, `text_color` and `text_align`.
+### Colours, borders and corners
 
-Colours are `#rrggbb`, `#rrggbbaa`, or numbers from 0 to 1:
+| Attribute | Values | Meaning |
+|---|---|---|
+| `background` | colour | Fill colour. |
+| `border_width` | `N` | Border thickness. |
+| `border_color` | colour | Border colour. |
+| `corner_radius` | `N` | Size of the corners. |
+| `corner_style` | `square`, `rounded`, `cut` | Corner shape. |
+
+A colour is written `#rrggbb`, `#rrggbbaa`, or as three or four numbers from 0
+to 1:
 
 ```xml
 background="#1a1c24f0"
 background="0 0 0 0.55"
 ```
 
-All lengths are in logical pixels against a 1920×1080 screen; the engine scales
-them to the real one.
+### Text
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `text_size` | `N` | Font size. |
+| `text_color` | colour | Text colour. |
+| `text_align` | `left`, `center`, `right` | Horizontal alignment of the text. |
+
+### Floating
+
+A floating element is placed on top of the others instead of taking space in its
+parent — a badge on a corner, for example.
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `float` | `true`, `false` | Whether the element floats. |
+| `float_target` | `parent`, `root` | What it is placed against: its parent, or the whole screen. |
+| `float_anchor` | two alignment words | The point on the target to attach to. |
+| `float_attach` | two alignment words | The point on the element that goes on the anchor. |
+| `float_offset` | `x y` | A further shift after attaching. |
+| `float_clip` | `true`, `false` | Whether the parent's edges clip it. |
+
+### Scrolling
+
+These set how a `<scroll>` element (see [Scroll](#scroll)) looks and moves:
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `scroll_bar_visibility` | `never`, `when-needed`, `always` | When the scroll bar is shown. `when-needed` shows it only while some content is out of view. |
+| `scroll_bar_drag` | `follows-pointer`, `smoothed` | Whether content moves with the dragged bar exactly, or glides after it. |
+| `scroll_smoothing` | seconds | How long scrolling takes to reach its destination. `0` jumps immediately. |
+| `scroll_bar_min_length` | `N` | The shortest the scroll bar's handle can be. |
+
+### Behaviour
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `visible` | `true`, `false` | Whether the element is shown. A hidden element takes no space. |
+| `enabled` | `true`, `false` | Whether a control responds to the player. |
+| `blocks_pointer` | `true`, `false` | Whether clicks on this element stop here instead of reaching the game. Use on a panel's background. |
+| `takes_keyboard` | `true`, `false` | Whether, while focused, it receives the keyboard even when the game would otherwise have it. |
+| `selectable` | `true`, `false` | Whether the player can select and copy its text. |
+| `style` | a name | Reserved for themes. Accepted and stored, but has no effect yet. |
 
 ## Controls
 
-Every attribute above works on a control too — a slider takes `width`, a field
-takes `background`. What follows is what each control needs *beyond* that: the
-arguments it is made with.
+Controls take all the attributes above. This section lists the extra attributes
+each control is created with.
 
 ### Toggle
 
@@ -333,27 +395,28 @@ arguments it is made with.
 <toggle name="fullscreen" on="true" />
 ```
 
-### Sliders
+| Attribute | Meaning |
+|---|---|
+| `on` | Whether it starts on. |
+
+### Slider and stepped slider
 
 ```xml
 <slider name="volume" min="0" max="100" step="5" value="60" />
 <stepped_slider name="quality" min="0" max="3" steps="4" value="1" />
 ```
 
-| | |
-|---|---|
-| `min`, `max` | what its ends mean |
-| `step` | how far one key press moves it — **`slider` only, and required** |
-| `steps` | how many positions it has — `stepped_slider` only |
-| `value` | where it starts: a value on a `slider`, a position counted from zero on a `stepped_slider` |
+| Attribute | `slider` | `stepped_slider` |
+|---|---|---|
+| `min`, `max` | The values at each end. | The values at each end. |
+| `step` | How far one arrow-key press moves it. **Required**, and cannot be 0. | Not accepted. |
+| `steps` | Not accepted. | How many positions it has. |
+| `value` | The starting value. | The starting position, counted from 0. |
 
-`step` is required on a `slider`, and cannot be zero. There's no sensible
-default: a tenth is a tenth of a `0`–`1` range and a thousandth of a `0`–`100`
-one, and zero would leave a slider that swallows the key and never moves.
+`slider` requires `step` because no default suits every range: a step of 0.1 is
+reasonable on a 0–1 slider but would take a thousand presses on a 0–100 one.
 
-A `stepped_slider` has no `step`. It moves one position per press whatever its
-ends are, which is the only thing it could do and still let a player reach every
-position.
+A `stepped_slider` always moves one position per press, so it has no `step`.
 
 ### Scroll
 
@@ -364,9 +427,12 @@ position.
 </scroll>
 ```
 
-`axes` is `x`, `y`, `xy` or `none`. Write it as `axes` here — `scroll_bars` sets
-the same thing on any other element, and a `scroll` refuses that spelling so one
-node can't say both.
+| Attribute | Values | Meaning |
+|---|---|---|
+| `axes` | `x`, `y`, `xy`, `none` | Which directions it scrolls in. |
+
+Other elements write this setting as `scroll_bars`. On a `<scroll>`, only
+`axes` is accepted, so the setting can't be written twice.
 
 ### Text field
 
@@ -376,99 +442,280 @@ node can't say both.
 <text_field name="notes" lines="multi up-to 3" />
 ```
 
-| | |
-|---|---|
-| `lines` | `single`, `multi`, `multi up-to N` or `multi exactly N` |
-| `placeholder` | what it shows while empty, in fainter ink |
-| `mask` | `none`, or `dots` for a password |
-| `max_length` | the most characters a player may type, counted as they see them |
-| `pattern` | what the text must look like |
-| `check` | when the pattern is consulted |
+| Attribute | Values | Meaning |
+|---|---|---|
+| `lines` | `single`, `multi`, `multi up-to N`, `multi exactly N` | How many lines it holds, and how tall it is in lines. |
+| `placeholder` | text | Shown in fainter text while the field is empty. |
+| `mask` | `none`, `dots` | `dots` hides what is typed, for passwords. |
+| `max_length` | `N` | The most characters the player can type. |
+| `pattern` | a pattern name, or `/expression/` | What the text must look like. See [Patterns](#patterns). |
+| `check` | `refuse`, `on-change`, `on-commit` | When the pattern is checked. See [Patterns](#patterns). |
 
-A field's text content is what it starts holding:
+The text between the tags is what the field starts with:
 
 ```xml
 <text_field name="player">type here</text_field>
 ```
 
-`lines` carries both how many lines a field holds and how tall it is in them,
-because `height` already means the node's box on the Y axis. A field can have
-both, and they're different questions:
-
-```xml
-<text_field lines="multi up-to 3" width="grow" height="fit" />
-```
-
-A bounded field refuses what would overflow it rather than scrolling. Put it
-inside a `scroll` to hold more than it shows.
+`lines` sets the field's height in lines of text. `height` still sets the size of
+its box, as on any element. A field limited to a number of lines refuses input
+that would go past the limit rather than scrolling; put it inside a `<scroll>` to
+hold more than it shows.
 
 ### Patterns
 
-`pattern` takes a **name**, or an expression between slashes:
+`pattern` takes either the name of a built-in pattern or a regular expression
+between slashes:
 
 ```xml
 <text_field name="port" pattern="integer" check="refuse" />
 <text_field name="who" pattern="/[^@ ]+@[^@ ]+/" check="on-commit" />
 ```
 
-The names built in are `alphabetic`, `alphanumeric`, `integer`, `real` and
-`email`. A name that isn't one of them **fails the cook** — it never falls back
-to being read as an expression, which is what the slashes are for. Without that
-rule a misspelt `emial` would quietly become a pattern matching the letters of
-its own name, and the field would reject everything a player typed.
+The built-in patterns are `alphabetic`, `alphanumeric`, `integer`, `real` and
+`email`. A value without slashes must be one of these names, or the cook fails.
+This stops a misspelt name such as `emial` from being read as an expression that
+matches only those letters.
 
-An expression that doesn't compile fails the cook too, with the file, line and
-column of the attribute holding it.
+An expression that isn't valid also fails the cook.
 
-`check` says when the pattern has its say:
+`check` says when the pattern is applied:
 
-| | |
+| `check` | Meaning |
 |---|---|
-| `refuse` | an edit the pattern could never accept doesn't happen |
-| `on-change` | validity updates on every keystroke |
-| `on-commit` | judged on Enter, or when focus leaves — the default |
+| `refuse` | Typing that could never match is rejected as it is typed. |
+| `on-change` | The text is checked after every change. |
+| `on-commit` (default) | The text is checked when the player presses Enter or leaves the field. |
 
-`refuse` suits a pattern describing each character, like digits. It's wrong for
-one describing a whole finished value: `jim@` is not an address, and refusing it
-would stop anyone ever typing one.
+Use `refuse` for patterns that describe each character, such as digits. Don't
+use it for patterns that describe a finished value, such as an email address:
+`jim@` doesn't match yet, and refusing it would stop anyone typing an address.
 
-## Where the screen lives
+## Names
 
-`LoadScreen` gave the screen to the world, and **the world destroys it**. Press
-**M** in the demo level to travel to another level: the menu goes with the level
-it belonged to, and the new level builds its own.
+A `name` identifies a node so that code and other elements can refer to it:
 
-That's why a HUD doesn't follow you into the main menu, and why nothing has to
-remember to clean up.
+- `Screen::Find` looks a node up by name from C++.
+- A button's `step(...)` action names the slider it moves.
+- A template instance's name is added to the names inside it.
 
-## Draw order
+The rules:
 
-Screens draw lowest **sort key** first. You wrote `sort="menu"`. The engine
-names four layers, spaced a thousand apart so you can slot your own between
-them:
+- **Names are optional.** Name the nodes you need to refer to and leave the rest
+  unnamed.
+- **A name must be unique on its screen.** Two nodes with the same name fail the
+  cook, and the error gives both lines.
+- **A name can't contain `.`.** The dot is used for names inside template
+  instances (see [Templates](#templates)).
+- **A button's label is not its name.** Two buttons can both read "Back"; you
+  find each by its `name`.
 
-| | | |
-|---|---|---|
-| `hud` | 0 | a HUD, under everything |
-| `menu` | 1000 | a menu |
-| `popup` | 2000 | a dialog over a menu |
-| `overlay` | 3000 | a loading screen, over everything |
+The `name` on the `<screen>` element is the screen's name, not a node name, so a
+node inside may use the same word.
 
-`sort` takes a number too, so `sort="1500"` sits between a menu and a popup.
+## Button actions
 
-Two screens sharing a key draw in the order they were shown.
+A button's `on_click` says what happens when it is clicked, or when Enter is
+pressed while it has focus. It holds either an **action** or an **event**:
 
-Screens that consume input also form a **back-stack**. Open a settings screen
-over this one and Back returns to the pause menu rather than closing both — and
-the pause menu gets back the button that had focus.
+- An action is written as a call, with parentheses: `hide()`.
+- An event is written as a plain name: `Assisi::App::QuitRequested`.
 
-## Many levels
+### Actions
 
-You added `TutorialMenuScreen` to one level by hand. With twenty gameplay
-levels you don't want to do that twenty times.
+Actions change the UI itself. They need no code and no systems, so a screen
+using only actions works in any level.
 
-Put it in a blueprint that has no entities — nothing but a list of systems.
-`assets/blueprints/BaseGameplay.abp`:
+| Action | Meaning |
+|---|---|
+| `hide()` | Closes the screen the button is on. |
+| `step(target, moves)` | Moves the slider named `target` by `moves` steps. Negative moves go down. |
+
+```xml
+<button on_click="hide()">Resume</button>
+```
+
+```xml
+<button on_click="step(volume, -1)">-</button>
+<slider name="volume" min="0" max="100" step="5" value="60" />
+<button on_click="step(volume, 1)">+</button>
+```
+
+About `step`:
+
+- One move is exactly what one Left or Right arrow-key press does to that
+  slider: its `step` on a `slider`, one position on a `stepped_slider`. So
+  `step(volume, 2)` equals pressing Right twice.
+- The slider reports the change the same way it would for a key press, so
+  anything listening with `OnChange` is notified.
+- The target must be a `slider` or `stepped_slider` on the same screen. It may
+  come before or after the button in the file.
+- A disabled or hidden slider isn't moved.
+
+An action must be written with its parentheses: `on_click="hide"` fails the cook.
+
+### Events
+
+Anything that affects the game world — quitting, loading a level, respawning —
+goes through an event, because the UI has no access to the world. The button
+pushes the event, and a system reads it:
+
+```xml
+<button on_click="Assisi::App::QuitRequested">Quit</button>
+```
+
+```cpp
+for (const Assisi::App::QuitRequested &event :
+     ctx.events.Read<Assisi::App::QuitRequested>())
+{
+    // ...
+}
+```
+
+See [Events](events.md) for how events work.
+
+To define your own event, mark a struct `AEVENT()` in a header under
+`apps/game/src/`:
+
+```cpp
+AEVENT()
+struct RestartRequested
+{
+};
+```
+
+Refer to it by its full C++ name, including namespaces:
+
+```xml
+<button on_click="Game::RestartRequested">Restart</button>
+```
+
+Only headers under `apps/game/src/` are scanned for events. An event declared
+anywhere else is unknown to the cook, and a button naming it fails the cook.
+
+## Templates
+
+A template lets you define an element once and reuse it. Use templates when
+several parts of a screen share a look or a structure.
+
+### Declaring and using a template
+
+A template is declared directly inside `<screen>`. It has a name and contains
+exactly one element:
+
+```xml
+<template name="menu_button">
+  <button padding="28 10 28 10" text_size="28"
+          corner_radius="10" corner_style="rounded" />
+</template>
+```
+
+The template's name can then be used as an element anywhere on that screen,
+before or after the declaration. Each use is called an **instance**:
+
+```xml
+<menu_button name="resume" on_click="hide()" background="#e63319">Resume</menu_button>
+<menu_button name="quit" on_click="Assisi::App::QuitRequested"
+             border_width="2" border_color="#ffffff">Quit</menu_button>
+```
+
+An instance is a copy of the template's element, changed by the instance:
+
+| On the instance | Effect |
+|---|---|
+| Attributes | Replace the template's attribute of the same name. Attributes the instance doesn't set come from the template. |
+| Text | Replaces the template's text, if the instance has any. |
+| Child elements | Are added after the template's children. |
+
+The cook replaces every instance with ordinary elements. The compiled screen is
+identical to one written out by hand, so nothing at run time knows templates were
+used.
+
+### Names inside a template
+
+Nodes inside a template can have names, and actions inside it can refer to them:
+
+```xml
+<template name="labelled_slider">
+  <row>
+    <text name="label" />
+    <button name="down" on_click="step(slider, -1)">-</button>
+    <slider name="slider" min="0" max="100" step="5" />
+  </row>
+</template>
+
+<labelled_slider name="music" />
+<labelled_slider name="effects" />
+```
+
+Each instance adds its own name and a dot in front of the names inside it. This
+example creates `music.label`, `music.down`, `music.slider`, `effects.label`,
+and so on.
+
+- An action inside the template refers to the same instance: the `-` button in
+  `music` moves `music.slider`.
+- Anything outside the instance uses the full name, for example
+  `step(music.slider, 1)`.
+- Attributes written on the instance element itself belong to the outer screen.
+  An `on_click="step(slider, 1)"` on the instance looks for a node called
+  `slider` on the screen, not the one inside the template.
+
+An instance without a name leaves the names inside unchanged. That works once;
+a second unnamed instance would create the same names again, so the cook asks
+you to name it. A template with no names inside can be used without a name any
+number of times.
+
+### Template rules
+
+- A template is declared directly inside `<screen>`, nowhere else.
+- Its name can't be an existing element name such as `button`, and two templates
+  can't share a name.
+- It contains exactly one element and no text.
+- That element must be a built-in element. It can contain instances of other
+  templates, but can't itself be one.
+- A template can't contain itself, directly or through other templates.
+- Templates can be nested up to eight deep.
+- Every template is checked by the cook even if nothing uses it. An error inside
+  one is reported at its line; if the error only appears in a particular
+  instance, the message also gives the instance's line.
+
+## Screens at run time
+
+### Lifetime
+
+`LoadScreen` gives the screen to a world, and the world destroys it when the
+world is destroyed. When the game travels to another level, the old level's
+screens are destroyed with it and the new level creates its own. (In the demo
+level, press **M** to travel and see this happen.) Screens never need to be
+cleaned up by hand.
+
+### Finding a screen and its nodes
+
+`FindScreen` returns a world's screen by its name:
+
+```cpp
+Assisi::Mondrian::Screen *const menu =
+    Assisi::App::FindScreen(ctx.world, "TutorialMenu");
+```
+
+Systems can't keep pointers between frames, so calling `FindScreen` every frame
+is normal. A world has only a few screens, so the lookup is cheap.
+
+`Screen::Find` returns a node by its name. It searches every node on the
+screen, so call it once while setting up and keep the result rather than
+calling it every frame.
+
+### Screens stacked on each other
+
+Screens that consume input form a **back-stack**. If a settings screen is opened
+over the pause menu, Back closes only the settings screen and returns to the
+pause menu, and the pause menu's focus returns to the button that had it.
+
+## Using a screen in many levels
+
+In the tutorial you added `TutorialMenuScreen` to one level by hand. To give
+many levels the same screens, put the systems in a blueprint that has no
+entities, only a list of systems. Create `assets/blueprints/BaseGameplay.abp`:
 
 ```json
 {
@@ -478,10 +725,8 @@ Put it in a blueprint that has no entities — nothing but a list of systems.
 }
 ```
 
-Place that blueprint in every level that should have a pause menu. A level's
-list then says what's particular to that level, and the blueprint says what
-kind of level it is. Your main menu is a level too, and leaving the blueprint
-out is how it doesn't get a pause menu.
+Place this blueprint in every level that should have the pause menu. A level
+that shouldn't, such as a main menu, simply doesn't include it.
 
 <details>
 <summary>What the level file looks like</summary>
@@ -502,104 +747,40 @@ A placed blueprint is an entry in the level's `instances` array:
 }
 ```
 
-The transform is required by the format and means nothing here — the blueprint
-places no entities.
+The transform is required by the format but has no effect here, because the
+blueprint places no entities.
 
 </details>
 
-## Finding a screen again
+## Building a screen in C++
 
-`FindScreen` searches the world's screens by the `name` the file gave:
+When a compiled screen is loaded, its nodes are created through the node API, so
+a screen file can describe nothing the API can't. Anything a file describes can
+be built in C++ with `Screen::Add`,
+`AddText`, `AddButton` and the control functions such as `AddContinuousSlider`.
+Use C++ for screens whose content isn't known until the game is running.
 
-```cpp
-Assisi::Mondrian::Screen *const menu =
-    Assisi::App::FindScreen(ctx.world, "TutorialMenu");
-```
+## What the cook checks
 
-A system is a plain function with nowhere to keep a pointer between frames, so
-looking it up each frame is the normal thing to do — a world has a handful of
-screens, and this is a short walk over them.
+Every one of these fails the cook with the file, line and column:
 
-`Screen::Find`, which looks up a **node** by the `name` you gave it in the file,
-is not the same: it walks every node on the screen. Use it while building, not
-every frame.
-
-**A name means one node on its screen.** Two nodes carrying the same name fail
-the cook, with the line of each. A name is optional — give one to anything you
-will look up or point a verb at, and leave the rest unnamed. A button's label is
-not its name: two buttons may both read "Back", and you find either by the
-`name` you gave it.
-
-## Templates
-
-When two parts of a screen look alike, write the look once. A `<template>` sits
-directly inside `<screen>`, has a name, and holds exactly one element:
-
-```xml
-<template name="menu_button">
-  <button padding="28 10 28 10" text_size="28"
-          corner_radius="10" corner_style="rounded" />
-</template>
-```
-
-Its name is now an element you can write anywhere on that screen, above or
-below the declaration:
-
-```xml
-<menu_button name="resume" on_click="hide()" background="#e63319">Resume</menu_button>
-<menu_button name="quit" on_click="Assisi::App::QuitRequested"
-             border_width="2" border_color="#ffffff">Quit</menu_button>
-```
-
-Each use is the template's element with three things laid over it:
-
-- **Its attributes win.** `background` on the instance replaces the template's,
-  and anything the instance doesn't say comes from the template.
-- **Its words replace the template's**, when it has any.
-- **Its children come after the template's**, when the template holds some.
-
-The cook expands every use into ordinary elements, so a screen using templates
-is byte-for-byte the screen you'd get writing them out by hand. Nothing at run
-time knows a template was involved.
-
-**Names inside a template get the instance's name in front.** A template can
-name its parts and wire them together:
-
-```xml
-<template name="labelled_slider">
-  <row>
-    <text name="label" />
-    <button name="down" on_click="step(slider, -1)">-</button>
-    <slider name="slider" min="0" max="100" step="5" />
-  </row>
-</template>
-
-<labelled_slider name="music" />
-<labelled_slider name="effects" />
-```
-
-That makes `music.label`, `music.slider`, `effects.slider` and so on, and each
-`-` button moves the slider in its own instance. From outside, reach a part by
-its full name: `step(music.slider, 1)`. Because `.` joins the names, you can't
-write one in a name yourself.
-
-An instance with no name leaves the names inside as they're written. That's
-fine once, but a second unnamed instance would make them twice, so the cook
-tells you to name it. A template that names nothing inside can be used unnamed
-as often as you like.
-
-> **Every template is checked, used or not.** A misspelt attribute inside one
-> fails the cook where it's written, even if nothing on the screen uses it yet.
-> So does a template that holds itself, directly or through another, and
-> templates nested more than eight deep. A template is built on an element the
-> markup has — it can use other templates inside, but not be one.
+- An unknown element, attribute or value.
+- Text or child elements inside an element that can't hold them.
+- A `slider` without a `step`, or with `step="0"`.
+- A pattern name that doesn't exist, or an expression that isn't valid.
+- Two nodes with the same name, or a name containing `.`.
+- More than one element with `focus="true"`.
+- An `on_click` on anything other than a button.
+- An event that no header under `apps/game/src/` declares.
+- An action that doesn't exist, has the wrong number of arguments, or is written
+  without parentheses.
+- A `step` target that doesn't exist on the screen or isn't a slider, or a
+  `step` of 0 moves.
+- A template that is declared in the wrong place, is badly formed, contains
+  itself, or nests more than eight deep.
+- An unnamed instance that would repeat names made by another.
 
 ## What's next
 
-Markup is a loader on top of the node API, and adds nothing that API lacks —
-anything a file can say, C++ can say by calling `Screen::Add`, `AddText` and
-`AddButton` directly. Building a screen by hand is how you'd make one whose
-shape isn't known until it's built.
-
-Themes for keeping colours out of the layout arrive next, and data bindings for
-showing what the world holds.
+Themes, for keeping colours and sizes out of the layout, and data bindings, for
+showing values from the world, are planned next.
