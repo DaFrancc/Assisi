@@ -23,7 +23,7 @@ namespace
 {
 
 /// The ring around the focused node while keys were used last: its thickness,
-/// and the space between it and the node, in logical pixels.
+/// and the space between it and the node, in UI pixels.
 constexpr float kFocusRingWidth = 3.f;
 constexpr float kFocusRingGap = 3.f;
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.f};
@@ -405,7 +405,7 @@ void Ui::Announce(Screen *screen)
 
 void Ui::AdvanceScrolling(double seconds)
 {
-    // Within half a logical pixel is arrived: the rest would creep for frames
+    // Within half a UI pixel is arrived: the rest would creep for frames
     // nobody can see, and layout snaps to whole pixels anyway.
     constexpr float kSettled = 0.5f;
 
@@ -800,7 +800,7 @@ void Ui::Sync(Extent viewport)
     _nextStep = FrameStep::AwaitingInput;
 
     _drawList.Clear();
-    const float scale = UiScale(viewport, _userScale);
+    const float scale = UiScale(viewport, _userScale, _scaleMatch);
     if (scale > 0.f)
     {
         for (Screen *screen : DrawOrder())

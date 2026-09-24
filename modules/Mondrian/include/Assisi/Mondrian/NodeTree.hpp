@@ -81,7 +81,7 @@ struct Node
     /// node there; null to take the nearest.
     std::array<NodeId, kNavDirectionCount> navOverride{};
     Rect imageUv{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
-    Point scrollOffset; ///< logical pixels scrolled into the content, per axis
+    Point scrollOffset; ///< UI pixels scrolled into the content, per axis
     /// Where the scrolling is headed, which the offset reaches at once unless
     /// the style asks it to take its time.
     Point scrollTarget;

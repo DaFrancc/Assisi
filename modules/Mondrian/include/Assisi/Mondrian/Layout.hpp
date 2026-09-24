@@ -14,6 +14,7 @@
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
+#include <Assisi/Mondrian/ScaleMatch.hpp>
 #include <Assisi/Mondrian/Text.hpp>
 
 #include <cstdint>
@@ -23,13 +24,14 @@
 namespace Assisi::Mondrian
 {
 
-/// The screen that logical pixels are measured against.
+/// The screen UI pixels are measured against. Its height is also the length a
+/// shorter side is measured against.
 inline constexpr float kReferenceWidth = 1920.f;
 inline constexpr float kReferenceHeight = 1080.f;
 
-/// @brief Device pixels per logical pixel for @p viewport: the reference screen
-/// fitted inside it, times the player's @p userScale.
-[[nodiscard]] float UiScale(Extent viewport, float userScale);
+/// @brief Device pixels per UI pixel for @p viewport: the side @p match names,
+/// measured against the reference, times the player's @p userScale.
+[[nodiscard]] float UiScale(Extent viewport, float userScale, ScaleMatch match);
 
 /// @brief One node's result.
 struct LayoutNode

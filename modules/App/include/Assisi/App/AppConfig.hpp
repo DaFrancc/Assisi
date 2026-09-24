@@ -13,6 +13,7 @@
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Math/Color.hpp>
+#include <Assisi/Mondrian/ScaleMatch.hpp>
 #include <Assisi/Window/InputEvent.hpp>
 
 #include <cstdint>
@@ -104,6 +105,11 @@ struct AppConfig
     /// @brief Whether the pointer moving over a UI node focuses it, so the keys
     /// act on what is pointed at. Off leaves focus where the keys or a click put it.
     AFIELD() bool uiHoverFocuses = false;
+
+    /// @brief Which side of the screen a UI pixel is measured against: the
+    /// shorter side, so text reads the same on any shape of screen, or the width
+    /// or height for a game designed for one orientation.
+    AFIELD() Mondrian::ScaleMatch uiScaleMatch = Mondrian::ScaleMatch::ShorterSide;
 
     /// @brief The OS window title.
     ///

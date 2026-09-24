@@ -680,11 +680,26 @@ class Layouter
 
 } // namespace
 
-float UiScale(Extent viewport, float userScale)
+float UiScale(Extent viewport, float userScale, ScaleMatch match)
 {
-    const float fit = std::min(static_cast<float>(viewport.width) / kReferenceWidth,
-                               static_cast<float>(viewport.height) / kReferenceHeight);
-    return fit * userScale;
+    const float width = static_cast<float>(viewport.width);
+    const float height = static_cast<float>(viewport.height);
+    float matched = 0.f;
+    switch (match)
+    {
+    case ScaleMatch::ShorterSide:
+        matched = std::min(width, height) / kReferenceHeight;
+        break;
+    case ScaleMatch::Width:
+        matched = width / kReferenceWidth;
+        break;
+    case ScaleMatch::Height:
+        matched = height / kReferenceHeight;
+        break;
+    case ScaleMatch::Count:
+        break;
+    }
+    return matched * userScale;
 }
 
 float TextWrapWidth(const LayoutNode &placed, const Style &style, float scale)

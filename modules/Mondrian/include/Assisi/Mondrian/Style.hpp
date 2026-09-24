@@ -4,8 +4,9 @@
 /// @file Style.hpp
 /// @brief How a node sizes, arranges its children and looks.
 ///
-/// Every length is in logical pixels, measured against a 1920×1080 screen;
-/// layout multiplies by the UI scale to reach device pixels.
+/// Every length is in UI pixels, each 1/1080 of the viewport's shorter side
+/// unless the game matches another (UiScale); layout multiplies by the UI scale
+/// to reach device pixels.
 
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Text.hpp>
@@ -23,11 +24,11 @@ namespace Assisi::Mondrian
 /// A maximum that never binds.
 inline constexpr float kUnbounded = std::numeric_limits<float>::max();
 
-/// Text size a style starts with, in logical pixels.
+/// Text size a style starts with, in UI pixels.
 inline constexpr float kDefaultTextSize = 24.f;
 
 /// How short a scroll bar's thumb may draw before it stops shrinking, in
-/// logical pixels: enough to see, and enough to take hold of.
+/// UI pixels: enough to see, and enough to take hold of.
 inline constexpr float kDefaultScrollBarMinLength = 24.f;
 
 /// @brief The two directions a size is resolved in, and what arrays of per-axis
@@ -157,7 +158,7 @@ struct Style
     /// How long a scrolling node takes to reach where it was sent, in seconds.
     /// Zero arrives at once; a small fraction glides instead of jumping.
     float scrollSmoothing = 0.f;
-    /// The shortest its scroll bar's thumb draws, in logical pixels, so a long
+    /// The shortest its scroll bar's thumb draws, in UI pixels, so a long
     /// list keeps something to see and to grab.
     float scrollBarMinLength = kDefaultScrollBarMinLength;
     /// Scrolling on an axis lets children overflow on it rather than shrink,

@@ -36,6 +36,7 @@ The main settings file:
 | `keepLogs` | How many old log files to keep. `0` keeps only the current one. |
 | `keepDumps` | How many old crash reports to keep. |
 | `simulateFrom` | `"Begin"`: the game starts running as soon as the level is set up, while textures and meshes may still be loading in. `"Loaded"`: the game waits until everything has loaded, which suits a game with a loading screen. |
+| `uiScaleMatch` | How big a UI pixel is. `"ShorterSide"` (default): 1/1080 of the screen's shorter side, so the UI reads the same on landscape, portrait, square and ultrawide screens. `"Width"`: 1/1920 of the screen's width. `"Height"`: 1/1080 of the screen's height. See [User interface](user-interface.md#layout-and-appearance). |
 
 Any setting you leave out keeps its default.
 

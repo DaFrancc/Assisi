@@ -17,7 +17,7 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kTrackColor{0.24f, 0.26f, 0.32f, 
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFillColor{0.90f, 0.20f, 0.10f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kKnobColor{0.92f, 0.93f, 0.96f, 1.f};
 
-/// Sizes in logical pixels.
+/// Sizes in UI pixels.
 constexpr float kToggleWidth = 56.f;
 constexpr float kToggleHeight = 28.f;
 constexpr float kSliderWidth = 220.f;
@@ -26,18 +26,18 @@ constexpr float kSliderTrackHeight = 6.f;
 constexpr float kSliderThumbWidth = 16.f;
 
 /// A slider's end buttons: how far they sit from its track, how round they are,
-/// and the marks across them, all in logical pixels.
+/// and the marks across them, all in UI pixels.
 constexpr float kSliderButtonGap = 6.f;
 constexpr float kSliderButtonRadius = 6.f;
 constexpr float kSliderMarkLength = 12.f;
 constexpr float kSliderMarkThickness = 2.f;
 
-/// How far one notch of the wheel scrolls, in logical pixels, and how far one
+/// How far one notch of the wheel scrolls, in UI pixels, and how far one
 /// press of a key does.
 constexpr float kWheelStep = 48.f;
 constexpr float kScrollKeyStep = 40.f;
 
-/// How wide the bar showing where a scrolling node is sits, in logical pixels.
+/// How wide the bar showing where a scrolling node is sits, in UI pixels.
 constexpr float kScrollBarThickness = 6.f;
 
 /// @p value as a fraction, or zero when the node holds something else.
@@ -424,7 +424,7 @@ ScrollBarPlace PlaceScrollBar(const WidgetView &view, Axis axis)
     return place;
 }
 
-/// Moves @p node's content along @p axis by @p logical pixels, stopping where
+/// Moves @p node's content along @p axis by @p logical UI pixels, stopping where
 /// its content does. @p glides says whether the style's smoothing applies, or
 /// the content arrives at once.
 WidgetResponse Scroll(const WidgetView &view, Node &node, Axis axis, float logical, bool glides = true)

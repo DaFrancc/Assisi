@@ -12,7 +12,7 @@ namespace Assisi::Mondrian
 namespace
 {
 
-/// The look a text field has until a game restyles it, in logical pixels. A
+/// The look a text field has until a game restyles it, in UI pixels. A
 /// field made with no style at all would be an invisible box, and a player
 /// cannot type into what they cannot see.
 constexpr float kFieldWidth = 220.f;

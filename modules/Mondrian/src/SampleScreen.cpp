@@ -22,7 +22,7 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kBodyText{0.80f, 0.82f, 0.86f, 1.
 constexpr Math::Color4<Math::ColorSpace::Srgb> kListColor{0.06f, 0.07f, 0.09f, 1.f};
 constexpr Rect kWholeTexture{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
 
-/// Lengths in logical pixels.
+/// Lengths in UI pixels.
 constexpr float kPanelWidth = 720.f;
 constexpr float kPanelPadding = 32.f;
 constexpr float kPanelGap = 20.f;

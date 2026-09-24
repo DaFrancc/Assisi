@@ -282,8 +282,21 @@ take keyboard focus when the screen opens. Only one element per screen may have
 
 These attributes work on every element, including `<screen>` and the controls.
 
-All lengths are in logical pixels on a 1920×1080 screen. The engine scales them
-to the actual window size.
+All lengths are in **UI pixels**. A UI pixel is 1/1080 of the screen's shorter
+side, multiplied by the player's UI scale setting:
+
+| Screen | One UI pixel is |
+|---|---|
+| 1920×1080 | 1 screen pixel |
+| 3840×2160 | 2 screen pixels |
+| 3440×1440 (ultrawide) | 1.33 screen pixels |
+| 1080×1920 (portrait) | 1 screen pixel |
+
+So a design made for 1920×1080 looks the same size on any screen that is 1080
+pixels on its shorter side, whatever its shape, and wider or taller screens
+get extra space rather than a smaller UI. A game designed for only one
+orientation can measure against the width or the height instead, with the
+`uiScaleMatch` setting in [Game settings](game-settings.md).
 
 ### Size
 

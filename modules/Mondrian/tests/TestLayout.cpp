@@ -83,19 +83,40 @@ Sizing WithMax(Sizing sizing, float max)
 
 } // namespace
 
-TEST_CASE("Layout: the UI scale fits the reference screen inside the viewport, times the player's setting")
+TEST_CASE("Layout: a UI pixel is 1/1080 of the viewport's shorter side, times the player's setting")
 {
-    CHECK(UiScale({960, 540}, 1.f) == 0.5f);
-    CHECK(UiScale({1920, 540}, 1.f) == 0.5f); // the tighter axis decides
-    CHECK(UiScale({1920, 1080}, 2.f) == 2.f);
-    CHECK(UiScale({0, 1080}, 1.f) == 0.f);
+    // 16:9 landscape is unchanged from the reference.
+    CHECK(UiScale({1920, 1080}, 1.f, ScaleMatch::ShorterSide) == 1.f);
+    CHECK(UiScale({960, 540}, 1.f, ScaleMatch::ShorterSide) == 0.5f);
+    CHECK(UiScale({1920, 1080}, 2.f, ScaleMatch::ShorterSide) == 2.f);
+
+    // Wider, square and portrait screens all scale by the side that is shorter,
+    // so text is as readable on each as on a landscape monitor of that height.
+    CHECK(UiScale({3440, 1440}, 1.f, ScaleMatch::ShorterSide) == doctest::Approx(1440.f / 1080.f));
+    CHECK(UiScale({1440, 1440}, 1.f, ScaleMatch::ShorterSide) == doctest::Approx(1440.f / 1080.f));
+    CHECK(UiScale({1080, 1920}, 1.f, ScaleMatch::ShorterSide) == 1.f);
+
+    CHECK(UiScale({0, 1080}, 1.f, ScaleMatch::ShorterSide) == 0.f);
 }
 
-TEST_CASE("Layout: logical lengths are scaled to device pixels")
+TEST_CASE("Layout: a game may match the reference's width or height instead")
+{
+    // Against 1920 across: a portrait screen 1080 across is a little over half.
+    CHECK(UiScale({1920, 1080}, 1.f, ScaleMatch::Width) == 1.f);
+    CHECK(UiScale({1080, 1920}, 1.f, ScaleMatch::Width) == doctest::Approx(1080.f / 1920.f));
+
+    // Against 1080 down: the same portrait screen is almost twice as tall.
+    CHECK(UiScale({1920, 1080}, 1.f, ScaleMatch::Height) == 1.f);
+    CHECK(UiScale({1080, 1920}, 1.f, ScaleMatch::Height) == doctest::Approx(1920.f / 1080.f));
+
+    CHECK(UiScale({1920, 1080}, 2.f, ScaleMatch::Width) == 2.f);
+}
+
+TEST_CASE("Layout: UI lengths are scaled to device pixels")
 {
     Scene scene;
     const NodeId box = scene.Add(scene.tree.Root(), Box(Sizing::Fixed(100.f), Sizing::Fixed(40.f)));
-    scene.Run({960, 540}, UiScale({960, 540}, 1.f));
+    scene.Run({960, 540}, UiScale({960, 540}, 1.f, ScaleMatch::ShorterSide));
     CHECK(scene.RectOf(box).width == 50.f);
     CHECK(scene.RectOf(box).height == 20.f);
 }
