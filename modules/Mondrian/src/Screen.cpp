@@ -339,6 +339,11 @@ void Screen::SetSelectable(NodeId id, bool selectable)
     _tree.SetFocusable(id, selectable);
 }
 
+void Screen::Step(NodeId slider, int32_t moves)
+{
+    _ui.Step(*this, slider, moves);
+}
+
 void Screen::SetRange(ContinuousSliderId slider, SliderRange range)
 {
     _tree.SetRange(slider.node, range);

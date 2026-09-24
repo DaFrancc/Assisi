@@ -242,6 +242,17 @@ class Screen
     /// @brief Which step a stepped slider rests on, clamped to the steps it has.
     void SetValue(SteppedSliderId slider, int32_t step);
 
+    /// @brief Moves the slider @p slider as @p moves presses of an arrow key
+    /// would, Right for positive and Left for negative, and announces the move
+    /// as those presses would.
+    ///
+    /// One move is the slider's own: its step on a continuous slider, one
+    /// position on a stepped one. A slider a player could not move — disabled,
+    /// hidden, or on a screen that does not have the keys — is not moved.
+    /// Announced in the frame's own announcing when called from a node's
+    /// callback, and in the next frame's otherwise.
+    void Step(NodeId slider, int32_t moves);
+
     /// @brief Makes @p slider push the event @p recipe builds from its new
     /// value, every time that value moves. A recipe that does not take a float
     /// does not compile.

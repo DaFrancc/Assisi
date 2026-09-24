@@ -11,8 +11,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 using namespace Assisi::Mondrian;
@@ -179,6 +181,76 @@ ScreenDocument EveryControl()
     return document;
 }
 
+/// What a stepped slider pushes when it moves, carrying where it moved to.
+struct QualityChanged
+{
+    int32_t step = 0;
+};
+
+struct VolumeChanged
+{
+    float value = 0.f;
+};
+
+/// A button that steps the node at @p target by @p moves.
+ScreenNode Stepper(std::string_view name, uint32_t target, int32_t moves)
+{
+    ScreenNode button;
+    button.parent = 0;
+    button.name = name;
+    button.widget = BuiltinWidget::Button;
+    button.action = ActionKind::Verb;
+    button.verb = ScreenVerb::Step;
+    button.target = target;
+    button.moves = moves;
+    button.style.sizing = {Sizing::Fixed(kButtonWidth), Sizing::Fixed(kButtonHeight)};
+    return button;
+}
+
+/// Where the sliders below sit in the table. The first buttons come before the
+/// sliders they move, which is the order a file writing `−` to the left of a
+/// slider produces.
+constexpr uint32_t kQualityIndex = 3;
+constexpr uint32_t kVolumeIndex = 4;
+
+/// Where Sliders() starts the volume, and how far one press of an arrow key
+/// moves it.
+constexpr float kVolumeStart = 60.f;
+constexpr float kVolumeStep = 5.f;
+
+/// A stepped and a continuous slider, each with buttons stepping it.
+ScreenDocument Sliders()
+{
+    ScreenDocument document;
+    document.name = "Sliders";
+    document.traits.input = ScreenInput::ConsumeInput;
+    document.nodes.emplace_back();
+
+    document.nodes.push_back(Stepper("better", kQualityIndex, 1));
+    document.nodes.push_back(Stepper("worse", kQualityIndex, -1));
+
+    ScreenNode quality;
+    quality.parent = 0;
+    quality.name = "quality";
+    quality.widget = BuiltinWidget::SteppedSlider;
+    quality.range = {.min = 0.f, .max = 3.f, .step = 1.f};
+    quality.steps = 4;
+    quality.step = 1;
+    document.nodes.push_back(quality);
+
+    ScreenNode volume;
+    volume.parent = 0;
+    volume.name = "volume";
+    volume.widget = BuiltinWidget::ContinuousSlider;
+    volume.range = {.min = 0.f, .max = 100.f, .step = kVolumeStep};
+    volume.value = kVolumeStart;
+    document.nodes.push_back(volume);
+
+    document.nodes.push_back(Stepper("louder", kVolumeIndex, 2));
+    document.nodes.push_back(Stepper("mute", kVolumeIndex, -100));
+    return document;
+}
+
 /// The centre of the node called @p name, as the last frame placed it.
 Point CentreOf(const Screen &screen, std::string_view name)
 {
@@ -207,6 +279,43 @@ void Click(Ui &ui, const Screen &screen, std::string_view name)
     release.primaryReleased = true;
     ui.ProcessInput(release);
     ui.Sync(kViewport);
+}
+
+/// Sliders(), loaded, shown and laid out, with each slider announcing its
+/// moves.
+struct SliderScreen
+{
+    EventQueue events;
+    Ui ui{events};
+    std::unique_ptr<Screen> screen;
+    SteppedSliderId quality;
+    ContinuousSliderId volume;
+
+    explicit SliderScreen(const ScreenDocument &document)
+    {
+        std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, TwoEvents());
+        REQUIRE(loaded.has_value());
+        screen = std::move(loaded->screen);
+        quality = {.node = screen->Find("quality")};
+        volume = {.node = screen->Find("volume")};
+        screen->OnChange(quality, [](int32_t step) { return QualityChanged{.step = step}; });
+        screen->OnChange(volume, [](float value) { return VolumeChanged{.value = value}; });
+        screen->Show();
+        ui.ProcessInput({});
+        ui.Sync(kViewport);
+    }
+};
+
+/// The load error @p document gives, which the case expects it to give.
+ScreenLoadError Refusal(const ScreenDocument &document)
+{
+    EventQueue events;
+    Ui ui{events};
+    const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, document, TwoEvents());
+    REQUIRE_FALSE(loaded.has_value());
+    // Nothing was built, so nothing is left behind taking input.
+    CHECK(ui.InputScreen() == nullptr);
+    return loaded.error();
 }
 
 } // namespace
@@ -541,4 +650,124 @@ TEST_CASE("ScreenLoader: a pattern this build cannot compile leaves no screen be
 
     CHECK(ui.InputScreen() == nullptr);
     CHECK_FALSE(ui.TakesInput());
+}
+
+namespace
+{
+
+/// Presses Right once with @p slider focused: the move a step verb must match.
+void PressRight(SliderScreen &sliders, NodeId slider)
+{
+    sliders.ui.SetFocus(*sliders.screen, slider);
+    UiInput input;
+    input.grant = InputGrant::Everything;
+    input.actionPressed[static_cast<std::size_t>(UiAction::Right)] = true;
+    sliders.ui.ProcessInput(input);
+    sliders.ui.Sync(kViewport);
+}
+
+} // namespace
+
+TEST_CASE("ScreenLoader: a step button moves a stepped slider as an arrow key does, and says so that frame")
+{
+    SliderScreen sliders{Sliders()};
+    PressRight(sliders, sliders.quality.node);
+    const int32_t byKey = sliders.screen->GetValue(sliders.quality);
+    REQUIRE(byKey == 2);
+
+    sliders.screen->SetValue(sliders.quality, 1);
+    sliders.events.Flush();
+    Click(sliders.ui, *sliders.screen, "better");
+
+    CHECK(sliders.screen->GetValue(sliders.quality) == byKey);
+    // Announced within the frame the button was released in, as a key's move
+    // is: a game bound to the slider hears about a press of its + button.
+    REQUIRE(sliders.events.Read<QualityChanged>().size() == 1);
+    CHECK(sliders.events.Read<QualityChanged>()[0].step == byKey);
+}
+
+TEST_CASE("ScreenLoader: a step counts moves, each the size of one arrow-key press")
+{
+    SliderScreen sliders{Sliders()};
+    PressRight(sliders, sliders.volume.node);
+    const float oneMove = sliders.screen->GetValue(sliders.volume) - kVolumeStart;
+    REQUIRE(oneMove == kVolumeStep);
+
+    sliders.screen->SetValue(sliders.volume, kVolumeStart);
+    sliders.events.Flush();
+    Click(sliders.ui, *sliders.screen, "louder");
+
+    // Two moves, announced once: one change of value, however many moves made it.
+    CHECK(sliders.screen->GetValue(sliders.volume) == kVolumeStart + (2.f * oneMove));
+    REQUIRE(sliders.events.Read<VolumeChanged>().size() == 1);
+    CHECK(sliders.events.Read<VolumeChanged>()[0].value == kVolumeStart + (2.f * oneMove));
+}
+
+TEST_CASE("ScreenLoader: a step stops at the slider's end, and a step that moves nothing says nothing")
+{
+    SliderScreen sliders{Sliders()};
+    Click(sliders.ui, *sliders.screen, "mute");
+    CHECK(sliders.screen->GetValue(sliders.volume) == 0.f);
+
+    sliders.events.Flush();
+    Click(sliders.ui, *sliders.screen, "mute");
+    CHECK(sliders.screen->GetValue(sliders.volume) == 0.f);
+    CHECK(sliders.events.Read<VolumeChanged>().empty());
+}
+
+TEST_CASE("ScreenLoader: a step leaves a slider the player could not move")
+{
+    SliderScreen sliders{Sliders()};
+
+    SUBCASE("a disabled one")
+    {
+        sliders.screen->Tree().SetEnabled(sliders.volume.node, false);
+    }
+
+    SUBCASE("a hidden one")
+    {
+        sliders.screen->Tree().SetVisible(sliders.volume.node, false);
+        sliders.ui.ProcessInput({});
+        sliders.ui.Sync(kViewport);
+    }
+
+    sliders.events.Flush();
+    Click(sliders.ui, *sliders.screen, "louder");
+    CHECK(sliders.screen->GetValue(sliders.volume) == kVolumeStart);
+    CHECK(sliders.events.Read<VolumeChanged>().empty());
+}
+
+TEST_CASE("ScreenLoader: a verb whose target cannot be what it acts on leaves no screen behind")
+{
+    // The cook refuses each of these, so each is a stale package or a document
+    // built by hand.
+    ScreenDocument document = Sliders();
+    ScreenNode &better = document.nodes[1];
+
+    SUBCASE("a step with no target")
+    {
+        better.target = kNoNode;
+    }
+
+    SUBCASE("a step whose target is past the table")
+    {
+        better.target = static_cast<uint32_t>(document.nodes.size());
+    }
+
+    SUBCASE("a step whose target is no slider")
+    {
+        better.target = 2; // the other button
+    }
+
+    SUBCASE("a step that moves nothing")
+    {
+        better.moves = 0;
+    }
+
+    SUBCASE("a hide given a target")
+    {
+        better.verb = ScreenVerb::Hide;
+    }
+
+    CHECK(Refusal(document) == ScreenLoadError::BadTarget);
 }

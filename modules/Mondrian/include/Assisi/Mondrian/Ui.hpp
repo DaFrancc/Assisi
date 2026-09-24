@@ -212,6 +212,9 @@ class Ui
     /// Hands @p event to the control on @p id, if it is one, and remembers a
     /// value that changed so Announce can tell the game.
     WidgetResponse Dispatch(Screen &screen, NodeId id, const WidgetEvent &event);
+    /// What Screen::Step does: @p moves arrow-key presses handed to @p target
+    /// through Dispatch, so a move is the one a key makes.
+    void Step(Screen &screen, NodeId target, int32_t moves);
     /// The wheel, to the control under the pointer or the nearest above it that
     /// takes it. True when one did.
     bool DispatchWheel(Screen &screen, NodeId hit, const UiInput &input);

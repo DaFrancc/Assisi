@@ -47,6 +47,24 @@ bool IsWalkable(const ScreenDocument &document)
     return true;
 }
 
+/// Whether @p node's verb has what it takes: a target it can act on when it
+/// takes one and none when it does not, and a count of moves that moves.
+bool VerbFits(const ScreenDocument &document, const ScreenNode &node)
+{
+    if (VerbTakesTarget(node.verb))
+    {
+        if (node.target >= document.nodes.size() || !VerbActsOn(node.verb, document.nodes[node.target].widget))
+        {
+            return false;
+        }
+    }
+    else if (node.target != kNoNode)
+    {
+        return false;
+    }
+    return !VerbTakesMoves(node.verb) || node.moves != 0;
+}
+
 /// Whether every name in @p document resolves, and every node's contents suit
 /// where it sits — and the patterns, compiled, for the caller to apply.
 ///
@@ -91,6 +109,11 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
         if (node.action == ActionKind::Event && catalog.Find(node.eventName) == nullptr)
         {
             return std::unexpected(ScreenLoadError::UnknownEvent);
+        }
+
+        if (node.action == ActionKind::Verb && !VerbFits(document, node))
+        {
+            return std::unexpected(ScreenLoadError::BadTarget);
         }
 
         if (node.widget == BuiltinWidget::TextField && !node.pattern.empty())
@@ -169,8 +192,14 @@ void ApplyFlags(NodeTree &tree, NodeId id, const ScreenNode &node)
     tree.SetTakesKeyboard(id, node.takesKeyboard);
 }
 
-void ApplyAction(Screen &screen, NodeId id, const ScreenNode &node, const Core::EventCatalog &catalog)
+/// What node @p index does when it fires. @p ids is every node's id by its
+/// place in the document, so a verb's target is one lookup here and none per
+/// click.
+void ApplyAction(Screen &screen, const std::vector<NodeId> &ids, std::size_t index, const ScreenDocument &document,
+                 const Core::EventCatalog &catalog)
 {
+    const ScreenNode &node = document.nodes[index];
+    const NodeId id = ids[index];
     switch (node.action)
     {
     case ActionKind::None:
@@ -183,6 +212,11 @@ void ApplyAction(Screen &screen, NodeId id, const ScreenNode &node, const Core::
             // touches nothing but the UI, so it works wherever the screen is
             // shown with nothing named anywhere.
             screen.OnActivate(id, [](Screen &self) { self.Hide(); });
+            return;
+        case ScreenVerb::Step:
+            // Resolve checked the target is a slider in the table.
+            screen.OnActivate(id, [target = ids[node.target], moves = node.moves](Screen &self)
+                              { self.Step(target, moves); });
             return;
         case ScreenVerb::Count:
             return;
@@ -215,6 +249,8 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "puts a control or an action where one cannot go";
     case ScreenLoadError::DuplicateName:
         return "gives two nodes one name";
+    case ScreenLoadError::BadTarget:
+        return "gives a verb a target it cannot act on";
     case ScreenLoadError::Count:
         break;
     }
@@ -287,8 +323,14 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, const Scr
         {
             screen.SetSelectable(id, true);
         }
-        ApplyAction(screen, id, node, catalog);
         ids.push_back(id);
+    }
+
+    // After every node exists: a verb's target may come later in the document
+    // than the button naming it.
+    for (std::size_t index = 0; index < document.nodes.size(); ++index)
+    {
+        ApplyAction(screen, ids, index, document, catalog);
     }
 
     if (document.focus != kNoNode)

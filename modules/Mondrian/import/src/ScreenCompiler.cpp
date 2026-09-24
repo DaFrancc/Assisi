@@ -25,8 +25,22 @@ namespace
 /// The element every file's root is.
 constexpr std::string_view kScreenElement = "screen";
 
-/// The verb an `on_click` names when it acts on the screen and nothing else.
-constexpr std::string_view kHideVerb = "hide";
+/// How a file spells each verb. One entry per ScreenVerb, which the assert
+/// below holds the table to: a verb with no spelling is one no file can call.
+constexpr std::array<NamedEnum<ScreenVerb>, 2> kVerbs{{
+    {"hide", ScreenVerb::Hide},
+    {"step", ScreenVerb::Step},
+}};
+static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count), "every verb needs a spelling");
+
+/// What separates a call's name from its arguments, the arguments from each
+/// other, and ends the call.
+constexpr char kCallOpen = '(';
+constexpr char kCallSeparator = ',';
+constexpr char kCallClose = ')';
+
+/// The whitespace an author may put around a call's name and arguments.
+constexpr std::string_view kCallSpace = " \t\r\n";
 
 /// What an element makes: a control, and the direction it lays its children out
 /// in. `column` and `row` are one node with one field different, which is why
@@ -409,30 +423,6 @@ Applied ApplyScreenAttribute(ScreenDocument &document, std::string_view name, st
     return Applied::Unknown;
 }
 
-/// What a control does when it fires. A verb is a closed set; anything else has
-/// to be an event this build declares, which is the check the whole catalog
-/// exists for.
-std::expected<void, MarkupError> ApplyAction(ScreenNode &node, const MarkupAttribute &attribute,
-                                             const Core::EventCatalog &catalog)
-{
-    if (attribute.value == kHideVerb)
-    {
-        node.action = ActionKind::Verb;
-        node.verb = ScreenVerb::Hide;
-        return {};
-    }
-    if (catalog.Find(attribute.value) == nullptr)
-    {
-        return std::unexpected(At(attribute, "'" + attribute.value + "' is not '" + std::string{kHideVerb} +
-                                                 "' and names no event this build declares. An event is a "
-                                                 "struct marked AEVENT() in a reflected header, named here "
-                                                 "by its full C++ name."));
-    }
-    node.action = ActionKind::Event;
-    node.eventName = attribute.value;
-    return {};
-}
-
 /// The expression `pattern` names or spells, compiled once here to find out
 /// whether it would.
 ///
@@ -553,14 +543,34 @@ std::string KnownElements()
     return names;
 }
 
+/// A node a name was given to: where it sits in the table, and the line the
+/// name was written on.
+struct NamedNode
+{
+    uint32_t index = kNoNode;
+    uint32_t line = 0;
+};
+
+/// A target a verb names, waiting for the walk to finish: a button may come
+/// before the control it acts on, so a name can only be looked up once every
+/// node has been read.
+struct PendingTarget
+{
+    std::string name;
+    uint32_t node = kNoNode; ///< the button whose verb names it
+    uint32_t line = 0;
+    uint32_t column = 0;
+};
+
 /// What compiling one element needs to know about the file around it.
 struct Walk
 {
     ScreenDocument &document;
     const Core::EventCatalog &catalog;
-    /// Every node name written so far, and the line it was written on, so a
-    /// second node carrying one is refused with the first's place in hand.
-    std::unordered_map<std::string, uint32_t> names;
+    /// Every node name written so far, so a second node carrying one is
+    /// refused with the first's place in hand, and a target can be resolved.
+    std::unordered_map<std::string, NamedNode> names;
+    std::vector<PendingTarget> targets;
     /// Whether some node has already claimed focus, so a second can be refused
     /// rather than quietly winning.
     bool focusClaimed = false;
@@ -573,16 +583,228 @@ std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &at
 {
     if (!attribute.value.empty())
     {
-        const std::unordered_map<std::string, uint32_t>::const_iterator first = walk.names.find(attribute.value);
+        const std::unordered_map<std::string, NamedNode>::const_iterator first = walk.names.find(attribute.value);
         if (first != walk.names.end())
         {
             return std::unexpected(At(attribute, "'" + attribute.value +
                                                      "' is already the name of a node on this screen (line " +
-                                                     std::to_string(first->second) + "). A name means one node."));
+                                                     std::to_string(first->second.line) + "). A name means one node."));
         }
-        walk.names.emplace(attribute.value, attribute.line);
+        walk.names.emplace(attribute.value, NamedNode{.index = index, .line = attribute.line});
     }
     walk.document.nodes[index].name = attribute.value;
+    return {};
+}
+
+/// @p text without the whitespace around it.
+std::string_view Trimmed(std::string_view text)
+{
+    const std::size_t first = text.find_first_not_of(kCallSpace);
+    if (first == std::string_view::npos)
+    {
+        return {};
+    }
+    const std::size_t last = text.find_last_not_of(kCallSpace);
+    return text.substr(first, last - first + 1);
+}
+
+/// A call as a file writes it: the verb's name, and its arguments as written.
+struct Call
+{
+    std::vector<std::string_view> arguments;
+    std::string_view name;
+};
+
+/// @p value read as a call, or nullopt when it is a bare name. A call that
+/// opens and does not close, or has anything after it, is refused rather than
+/// read as the part that parsed.
+std::expected<std::optional<Call>, MarkupError> ParseCall(const MarkupAttribute &attribute)
+{
+    const std::string_view value = attribute.value;
+    const std::size_t open = value.find(kCallOpen);
+    if (open == std::string_view::npos)
+    {
+        return std::optional<Call>{};
+    }
+    const std::size_t close = value.find(kCallClose, open);
+    if (close == std::string_view::npos)
+    {
+        return std::unexpected(
+            At(attribute, "'" + attribute.value + "' opens a call and never closes it with " + kCallClose + "."));
+    }
+    const std::string_view after = Trimmed(value.substr(close + 1));
+    if (!after.empty())
+    {
+        return std::unexpected(At(attribute, "'" + std::string{after} + "' follows the call in '" + attribute.value +
+                                                 "'. on_click holds one call."));
+    }
+
+    Call call;
+    call.name = Trimmed(value.substr(0, open));
+    const std::string_view inside = Trimmed(value.substr(open + 1, close - open - 1));
+    // Nothing between the parens is no arguments, not one empty one.
+    std::size_t start = 0;
+    while (!inside.empty() && start <= inside.size())
+    {
+        std::size_t end = inside.find(kCallSeparator, start);
+        end = end == std::string_view::npos ? inside.size() : end;
+        call.arguments.push_back(Trimmed(inside.substr(start, end - start)));
+        start = end + 1;
+    }
+    return std::optional<Call>{call};
+}
+
+/// How a file spells @p verb.
+std::string_view VerbName(ScreenVerb verb)
+{
+    for (const NamedEnum<ScreenVerb> &entry : kVerbs)
+    {
+        if (entry.value == verb)
+        {
+            return entry.name;
+        }
+    }
+    return {};
+}
+
+/// How @p verb is written with everything it takes, for a message saying so.
+std::string Signature(ScreenVerb verb)
+{
+    std::string signature{VerbName(verb)};
+    signature += kCallOpen;
+    signature += VerbTakesTarget(verb) ? "target" : "";
+    signature += VerbTakesMoves(verb) ? ", moves" : "";
+    signature += kCallClose;
+    return signature;
+}
+
+/// Every verb as it is written, for the message an unknown one prints.
+std::string KnownVerbs()
+{
+    std::string verbs;
+    for (const NamedEnum<ScreenVerb> &entry : kVerbs)
+    {
+        verbs += verbs.empty() ? "" : ", ";
+        verbs += Signature(entry.value);
+    }
+    return verbs;
+}
+
+/// A bare name: an event this build declares. A verb's name written bare is
+/// refused, so a verb has one spelling and it is a call.
+std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttribute &attribute,
+                                            const Core::EventCatalog &catalog)
+{
+    if (const std::optional<ScreenVerb> verb = LookUpEnum(attribute.value, kVerbs))
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' is a verb, and a verb is written as a call: " +
+                                                 Signature(*verb) + "."));
+    }
+    if (catalog.Find(attribute.value) == nullptr)
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value +
+                                                 "' names no event this build declares. An event is a struct marked "
+                                                 "AEVENT() in a reflected header, named here by its full C++ name; "
+                                                 "a verb is a call, one of: " +
+                                                 KnownVerbs() + "."));
+    }
+    node.action = ActionKind::Event;
+    node.eventName = attribute.value;
+    return {};
+}
+
+/// A call: a verb, checked against what it takes. A target is kept by name
+/// until the walk is done, since the node it names may not have been read yet.
+std::expected<void, MarkupError> ApplyVerb(Walk &walk, uint32_t index, const MarkupAttribute &attribute,
+                                           const Call &call)
+{
+    const std::optional<ScreenVerb> verb = LookUpEnum(call.name, kVerbs);
+    if (!verb)
+    {
+        return std::unexpected(At(attribute, "'" + std::string{call.name} +
+                                                 "' is not a verb this markup has. It has: " + KnownVerbs() + "."));
+    }
+
+    const std::size_t wanted =
+        static_cast<std::size_t>(VerbTakesTarget(*verb)) + static_cast<std::size_t>(VerbTakesMoves(*verb));
+    if (call.arguments.size() != wanted)
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' gives " + std::string{call.name} + " " +
+                                                 std::to_string(call.arguments.size()) + " arguments; it is written " +
+                                                 Signature(*verb) + "."));
+    }
+
+    ScreenNode &node = walk.document.nodes[index];
+    node.action = ActionKind::Verb;
+    node.verb = *verb;
+
+    std::size_t next = 0;
+    if (VerbTakesTarget(*verb))
+    {
+        walk.targets.push_back(PendingTarget{.name = std::string{call.arguments[next]},
+                                             .node = index,
+                                             .line = attribute.line,
+                                             .column = attribute.column});
+        ++next;
+    }
+    if (VerbTakesMoves(*verb))
+    {
+        const std::string_view written = call.arguments[next];
+        const std::optional<int32_t> moves = ParseInt(written);
+        if (!moves)
+        {
+            return std::unexpected(At(attribute, "'" + std::string{written} + "' is not a whole number of moves."));
+        }
+        // A move of none swallows the press and changes nothing, which nobody
+        // writes on purpose.
+        if (*moves == 0)
+        {
+            return std::unexpected(At(attribute, "'" + attribute.value + "' makes 0 moves, which moves nothing."));
+        }
+        node.moves = *moves;
+    }
+    return {};
+}
+
+/// What a control does when it fires: a call is a verb, and a bare name is an
+/// event.
+std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &attribute)
+{
+    const std::expected<std::optional<Call>, MarkupError> call = ParseCall(attribute);
+    if (!call)
+    {
+        return std::unexpected(call.error());
+    }
+    if (!call->has_value())
+    {
+        return ApplyEvent(walk.document.nodes[index], attribute, walk.catalog);
+    }
+    return ApplyVerb(walk, index, attribute, **call);
+}
+
+/// Every target a verb named, looked up now that every node has been read.
+std::expected<void, MarkupError> ResolveTargets(Walk &walk)
+{
+    for (const PendingTarget &pending : walk.targets)
+    {
+        const MarkupError where{.message = {}, .line = pending.line, .column = pending.column};
+        const std::unordered_map<std::string, NamedNode>::const_iterator named = walk.names.find(pending.name);
+        if (named == walk.names.end())
+        {
+            MarkupError error = where;
+            error.message = "'" + pending.name + "' names no node on this screen.";
+            return std::unexpected(std::move(error));
+        }
+
+        ScreenNode &node = walk.document.nodes[pending.node];
+        if (!VerbActsOn(node.verb, walk.document.nodes[named->second.index].widget))
+        {
+            MarkupError error = where;
+            error.message = "'" + pending.name + "' is not a slider, and " + Signature(node.verb) + " moves a slider.";
+            return std::unexpected(std::move(error));
+        }
+        node.target = named->second.index;
+    }
     return {};
 }
 
@@ -610,7 +832,7 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
                                                      "press itself, and what it holds is read rather than "
                                                      "announced."));
             }
-            if (const std::expected<void, MarkupError> action = ApplyAction(node, attribute, walk.catalog); !action)
+            if (const std::expected<void, MarkupError> action = ApplyAction(walk, index, attribute); !action)
             {
                 return std::unexpected(action.error());
             }
@@ -773,7 +995,7 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     screenNode.style.direction = Direction::Column;
     document.nodes.push_back(std::move(screenNode));
 
-    Walk walk{.document = document, .catalog = catalog, .names = {}};
+    Walk walk{.document = document, .catalog = catalog, .names = {}, .targets = {}};
     if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, root, 0); !attributes)
     {
         return std::unexpected(attributes.error());
@@ -781,6 +1003,10 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     if (const std::expected<void, MarkupError> children = CompileChildren(walk, root, 0); !children)
     {
         return std::unexpected(children.error());
+    }
+    if (const std::expected<void, MarkupError> targets = ResolveTargets(walk); !targets)
+    {
+        return std::unexpected(targets.error());
     }
     return document;
 }

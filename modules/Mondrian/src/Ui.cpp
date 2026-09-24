@@ -12,6 +12,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <span>
 #include <string_view>
 
@@ -359,7 +361,7 @@ void Ui::Announce(Screen *screen)
     // screen and that clears these very lists. Walking the members instead
     // would be walking a vector something else is emptying.
     const NodeId activatedId = _session.interaction.activated;
-    const std::vector<NodeId> changed = std::exchange(_changed, {});
+    std::vector<NodeId> changed = std::exchange(_changed, {});
     const std::vector<NodeId> submitted = std::exchange(_submitted, {});
 
     // Destroying a screen from here is the one thing that cannot be made safe:
@@ -370,6 +372,17 @@ void Ui::Announce(Screen *screen)
     if (const Node *activated = tree.Get(activatedId); activated != nullptr && activated->onActivate)
     {
         activated->onActivate(_events);
+    }
+    // What the activation moved is this frame's change too: a button that
+    // steps a slider is heard in the frame it was pressed in, as the key it
+    // stands for would be. Taken again rather than taken once, later, because
+    // a callback that hid this screen has already emptied the list.
+    for (const NodeId id : std::exchange(_changed, {}))
+    {
+        if (std::ranges::find(changed, id) == changed.end())
+        {
+            changed.push_back(id);
+        }
     }
     for (const NodeId id : changed)
     {
@@ -473,6 +486,35 @@ WidgetResponse Ui::Dispatch(Screen &screen, NodeId id, const WidgetEvent &event)
         _submitted.push_back(id);
     }
     return response;
+}
+
+void Ui::Step(Screen &screen, NodeId target, int32_t moves)
+{
+    // Only the screen with the keys records changes, since a node id means
+    // nothing on another; and a key press could not reach a slider anywhere
+    // else either.
+    const Node *node = screen.Tree().Get(target);
+    if (&screen != _inputScreen || node == nullptr || !node->enabled)
+    {
+        return;
+    }
+
+    WidgetEvent press;
+    press.gesture = WidgetGesture::Action;
+    press.action = moves > 0 ? UiAction::Right : UiAction::Left;
+    // Widened first: the magnitude of INT32_MIN does not fit an int32_t.
+    const int64_t count = std::abs(static_cast<int64_t>(moves));
+    for (int64_t move = 0; move < count; ++move)
+    {
+        // A hidden slider has no layout, so Dispatch hands it nothing. A move
+        // that changed nothing was at the slider's end, and every one after it
+        // would be too, so this is bounded by the slider's range and not by
+        // however large a count the file wrote.
+        if (Dispatch(screen, target, press) != WidgetResponse::Changed)
+        {
+            return;
+        }
+    }
 }
 
 bool Ui::DispatchWheel(Screen &screen, NodeId hit, const UiInput &input)

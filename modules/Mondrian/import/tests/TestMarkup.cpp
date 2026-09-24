@@ -42,7 +42,7 @@ TEST_CASE("Markup: elements, attributes, text and nesting reach the tree")
     const MarkupElement root = Parsed("<screen name=\"Pause\" pause='true'>\n"
                                       "  <column gap=\"12\">\n"
                                       "    <text>Paused</text>\n"
-                                      "    <button on_click=\"hide\">Resume</button>\n"
+                                      "    <button on_click=\"hide()\">Resume</button>\n"
                                       "  </column>\n"
                                       "</screen>\n");
 
@@ -61,7 +61,7 @@ TEST_CASE("Markup: elements, attributes, text and nesting reach the tree")
     CHECK(column.children[0].name == "text");
     CHECK(column.children[0].text == "Paused");
     CHECK(column.children[1].text == "Resume");
-    CHECK(column.children[1].Find("on_click")->value == "hide");
+    CHECK(column.children[1].Find("on_click")->value == "hide()");
 }
 
 TEST_CASE("Markup: an element's own line and column are where its name starts")

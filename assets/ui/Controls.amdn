@@ -15,7 +15,17 @@
 
     <row name="controls" width="grow" gap="20" align="start center">
       <toggle name="fullscreen" on="true" />
+
+      <!-- Ordinary buttons moving the slider beside them: each press is what
+           one arrow key does to it, whatever its range. The quieter one comes
+           first in the file, which is fine; a target is looked up once the
+           whole file has been read. -->
+      <button name="quieter" on_click="step(volume, -1)"
+              padding="12 4 12 4" text_size="28">-</button>
       <slider name="volume" min="0" max="100" step="5" value="60" />
+      <button name="louder" on_click="step(volume, 1)"
+              padding="12 4 12 4" text_size="28">+</button>
+
       <stepped_slider name="quality" min="0" max="3" steps="4" value="1" />
     </row>
 
