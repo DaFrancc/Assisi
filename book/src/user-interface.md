@@ -586,8 +586,9 @@ several parts of a screen share a look or a structure.
 
 ### Declaring and using a template
 
-A template is declared directly inside `<screen>`. It has a name and contains
-exactly one element:
+A template is declared directly inside `<screen>`. It has a name and one **root
+element**, which can hold any number of elements inside it (see the
+`labelled_slider` example below). Here the root is a single button:
 
 ```xml
 <template name="menu_button">
@@ -656,7 +657,10 @@ number of times.
 - A template is declared directly inside `<screen>`, nowhere else.
 - Its name can't be an existing element name such as `button`, and two templates
   can't share a name.
-- It contains exactly one element and no text.
+- It has exactly one root element and no text of its own. The root can hold
+  any number of elements. There is one root because an instance becomes one
+  node, and the instance's attributes, text and children apply to that root.
+  To group several elements, wrap them in a `<row>` or `<column>`.
 - That element must be a built-in element. It can contain instances of other
   templates, but can't itself be one.
 - A template can't contain itself, directly or through other templates.
