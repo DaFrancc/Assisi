@@ -190,7 +190,7 @@ std::expected<void, MarkupError> ResolveTargets(Walk &walk)
 {
     for (const PendingTarget &pending : walk.targets)
     {
-        const MarkupError where{.message = {}, .file = {}, .line = pending.line, .column = pending.column};
+        const MarkupError where{.message = {}, .line = pending.line, .column = pending.column};
         const std::unordered_map<std::string, NamedNode>::const_iterator named = walk.names.find(pending.name);
         if (named == walk.names.end())
         {

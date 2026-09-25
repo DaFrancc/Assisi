@@ -13,7 +13,6 @@
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
-#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -39,18 +38,56 @@ struct ElementKind
     bool carriesChildren;
 };
 
-/// What applying one attribute did.
-enum class Applied : uint8_t
+/// Which elements an attribute belongs to. In the order a name is looked up in:
+/// a screen's own attributes first, then a control's, then those every node
+/// shares, so a control spells its own arguments its own way.
+enum class AttributeOwner : uint8_t
 {
-    Unknown,  ///< not an attribute of this kind; the caller tries the next table
-    Yes,      ///< read and applied
-    BadValue, ///< the right name holding something it cannot read
+    Screen,  ///< the root only: what the screen is
+    Control, ///< one kind of control: the arguments its own call takes
+    AnyNode, ///< every node, the root included
     Count
 };
 
-/// The attributes ApplyAttributes reads itself rather than through a table.
-/// The colours are the other such set, and ColorField answers for them.
-inline constexpr std::array<std::string_view, 4> kDirectAttributes{"on_click", "pattern", "name", "focus"};
+/// An attribute ApplyAttributes reads itself, because what it does needs more
+/// than one field and a value: the file around it, or a message of its own.
+/// Every enumerator has a table entry and a case in ApplyAttributes, which the
+/// compiler holds both to.
+enum class HandledAttribute : uint8_t
+{
+    None,        ///< read through the entry's own function
+    Action,      ///< `on_click`: reads the file's templates and names
+    Name,        ///< `name`: qualified by the instance it is in, and unique
+    Focus,       ///< `focus`: at most one node on a screen
+    Pattern,     ///< `pattern`: a failed compile has a message of its own
+    Background,  ///< a colour: each likely mistake has a message of its own
+    BorderColor, ///< as Background
+    TextColor,   ///< as Background
+    Count
+};
+
+/// What an attribute is written onto: the screen, and the node it is on, which
+/// for the root is the screen's first node.
+struct AttributeTarget
+{
+    ScreenDocument &document;
+    ScreenNode &node;
+};
+
+/// Reads @p value into what @p target holds, saying whether it could.
+using ApplyAttribute = bool (*)(const AttributeTarget &target, std::string_view value);
+
+/// One attribute the markup has.
+struct AttributeSpec
+{
+    std::string_view name;
+    /// How it is read, for one ApplyAttributes does not handle itself.
+    ApplyAttribute apply = nullptr;
+    AttributeOwner owner = AttributeOwner::AnyNode;
+    /// The control it belongs to, for AttributeOwner::Control.
+    BuiltinWidget widget = BuiltinWidget::None;
+    HandledAttribute handled = HandledAttribute::None;
+};
 
 /// An error about @p attribute, placed where it was written.
 [[nodiscard]] MarkupError At(const MarkupAttribute &attribute, std::string message);
@@ -64,28 +101,15 @@ inline constexpr std::array<std::string_view, 4> kDirectAttributes{"on_click", "
 /// Every element this build knows, for the message an unknown one prints.
 [[nodiscard]] std::string KnownElements();
 
-/// The style half of the attribute table: everything about how a node looks and
-/// how it places what is inside it.
-[[nodiscard]] Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_view value);
+/// The attribute @p name means on a node of @p widget, or null when it means
+/// nothing there. @p isRoot adds the screen's own.
+[[nodiscard]] const AttributeSpec *FindAttribute(std::string_view name, BuiltinWidget widget, bool isRoot);
 
-/// The attributes that belong to one kind of control and to no other: the
-/// arguments its own call takes. Tried before the tables every node shares, so
-/// a control spells its own arguments its own way.
-[[nodiscard]] Applied ApplyWidgetAttribute(ScreenNode &node, std::string_view name, std::string_view value);
-
-/// Everything about a node that is not its style and not its behaviour.
-[[nodiscard]] Applied ApplyNodeAttribute(ScreenNode &node, std::string_view name, std::string_view value);
-
-/// The attributes only the root carries: what the screen is, rather than what
-/// any one node looks like.
-[[nodiscard]] Applied ApplyScreenAttribute(ScreenDocument &document, std::string_view name, std::string_view value);
-
-/// The colour field @p name sets, or null when @p name is no colour attribute.
-[[nodiscard]] Color *ColorField(Style &style, std::string_view name);
-
-/// Whether @p name is an attribute some element has, found by offering it to
-/// every table as each kind of control would.
+/// Whether @p name is an attribute any element has.
 [[nodiscard]] bool IsMarkupAttribute(std::string_view name);
+
+/// The colour field a colour attribute sets.
+[[nodiscard]] Color &ColorField(Style &style, HandledAttribute colour);
 
 /// The expression `pattern` names or spells, compiled once here to find out
 /// whether it would.

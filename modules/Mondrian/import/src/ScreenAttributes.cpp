@@ -7,6 +7,7 @@
 #include <Assisi/Mondrian/Pattern.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <utility>
@@ -51,101 +52,330 @@ constexpr char kPatternDelimiter = '/';
 /// not an empty expression, it is half a pair.
 constexpr std::size_t kDelimitedPatternLength = 2;
 
-/// Reads @p value into @p field through @p parse, saying which of the three
-/// things happened. Every style attribute is one of these.
-template <typename T, typename Parse> Applied Read(T &field, std::string_view value, Parse parse)
+constexpr std::array<NamedEnum<ScreenInput>, 3> kInputs{{{"none", ScreenInput::NoConsume},
+                                                         {"consume", ScreenInput::ConsumeInput},
+                                                         {"locked", ScreenInput::LockedConsumeInput}}};
+constexpr std::array<NamedEnum<ScreenBeneath>, 2> kBeneaths{
+    {{"show", ScreenBeneath::NoHide}, {"hide", ScreenBeneath::HidesBeneath}}};
+
+/// Reads @p value into @p field through @p parse, saying whether it could.
+/// Most attributes are one of these.
+template <typename T, typename Parse> bool Read(T &field, std::string_view value, Parse parse)
 {
     const std::optional<T> parsed = parse(value);
     if (!parsed)
     {
-        return Applied::BadValue;
+        return false;
     }
     field = *parsed;
-    return Applied::Yes;
+    return true;
 }
 
-/// What a continuous slider's ends mean, how far one press moves it, and where
-/// it starts.
-Applied ApplySliderAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+bool ReadPause(const AttributeTarget &target, std::string_view value)
 {
-    if (name == "min")
+    const std::optional<bool> pauses = ParseBool(value);
+    if (!pauses)
     {
-        return Read(node.range.min, value, ParseFloat);
+        return false;
     }
-    if (name == "max")
-    {
-        return Read(node.range.max, value, ParseFloat);
-    }
-    if (name == "step")
-    {
-        return Read(node.range.step, value, ParseFloat);
-    }
-    if (name == "value")
-    {
-        return Read(node.value, value, ParseFloat);
-    }
-    return Applied::Unknown;
+    target.document.traits.pause = *pauses ? ScreenPause::Pause : ScreenPause::Run;
+    return true;
 }
 
-/// The same for a stepped one, which has no step: it moves one position per
-/// press whatever its ends are, so `value` is which position it starts on.
-Applied ApplySteppedAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+bool ReadNeeds(const AttributeTarget &target, std::string_view value)
 {
-    if (name == "min")
+    for (const std::string_view system : SplitWords(value))
     {
-        return Read(node.range.min, value, ParseFloat);
+        target.document.systems.emplace_back(system);
     }
-    if (name == "max")
-    {
-        return Read(node.range.max, value, ParseFloat);
-    }
-    if (name == "steps")
-    {
-        return Read(node.steps, value, ParseInt);
-    }
-    if (name == "value")
-    {
-        return Read(node.step, value, ParseInt);
-    }
-    return Applied::Unknown;
+    return true;
 }
 
-/// Everything a field carries beyond being one. `pattern` is missing on
-/// purpose: it is the one attribute whose value can fail to compile, so it is
-/// read where the line and column are still to hand.
-Applied ApplyFieldAttribute(ScreenNode &node, std::string_view name, std::string_view value)
+/// How many and how tall at once, since one word can say both.
+bool ReadLines(const AttributeTarget &target, std::string_view value)
 {
-    if (name == "lines")
+    const std::optional<LinesValue> lines = ParseLines(value);
+    if (!lines)
     {
-        const std::optional<LinesValue> lines = ParseLines(value);
-        if (!lines)
+        return false;
+    }
+    target.node.lines = lines->kind;
+    target.node.height = lines->height;
+    target.node.lineLimit = lines->lines;
+    return true;
+}
+
+bool ReadFloatOffset(const AttributeTarget &target, std::string_view value)
+{
+    const std::vector<std::string_view> words = SplitWords(value);
+    if (words.size() != kAxisCount)
+    {
+        return false;
+    }
+    const std::optional<Length> x = ParseLength(words[0]);
+    const std::optional<Length> y = ParseLength(words[1]);
+    if (!x || !y)
+    {
+        return false;
+    }
+    target.node.style.floating.offset = {*x, *y};
+    return true;
+}
+
+/// An attribute only the root has: what the screen is.
+constexpr AttributeSpec ForScreen(std::string_view name, ApplyAttribute apply)
+{
+    return AttributeSpec{.name = name, .apply = apply, .owner = AttributeOwner::Screen};
+}
+
+/// An attribute only @p widget has: an argument its own call takes.
+constexpr AttributeSpec ForControl(BuiltinWidget widget, std::string_view name, ApplyAttribute apply)
+{
+    return AttributeSpec{.name = name, .apply = apply, .owner = AttributeOwner::Control, .widget = widget};
+}
+
+/// An attribute every node has.
+constexpr AttributeSpec ForAny(std::string_view name, ApplyAttribute apply)
+{
+    return AttributeSpec{.name = name, .apply = apply};
+}
+
+/// An attribute ApplyAttributes reads itself, on @p widget alone, or on every
+/// node when @p widget is None.
+constexpr AttributeSpec Handled(std::string_view name, HandledAttribute handled,
+                                BuiltinWidget widget = BuiltinWidget::None)
+{
+    return AttributeSpec{.name = name,
+                         .owner = widget == BuiltinWidget::None ? AttributeOwner::AnyNode : AttributeOwner::Control,
+                         .widget = widget,
+                         .handled = handled};
+}
+
+/// Every attribute the markup has, in the order FindAttribute looks through
+/// them. The one list: what a file may write, what a parameter may not be
+/// named, and how each is read all come from here.
+constexpr std::array kAttributes = std::to_array<AttributeSpec>({
+    ForScreen("input",
+              [](const AttributeTarget &t, std::string_view v) {
+                  return Read(t.document.traits.input, v,
+                              [](std::string_view text) { return LookUpEnum(text, kInputs); });
+              }),
+    ForScreen("beneath",
+              [](const AttributeTarget &t, std::string_view v) {
+                  return Read(t.document.traits.beneath, v,
+                              [](std::string_view text) { return LookUpEnum(text, kBeneaths); });
+              }),
+    ForScreen("pause", ReadPause),
+    ForScreen("sort",
+              [](const AttributeTarget &t, std::string_view v) { return Read(t.document.sortKey, v, ParseSortKey); }),
+    ForScreen("needs", ReadNeeds),
+
+    ForControl(BuiltinWidget::Toggle, "on",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.on, v, ParseBool); }),
+    // A continuous slider: what its ends mean, how far one press moves it, and
+    // where it starts.
+    ForControl(BuiltinWidget::ContinuousSlider, "min",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.range.min, v, ParseFloat); }),
+    ForControl(BuiltinWidget::ContinuousSlider, "max",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.range.max, v, ParseFloat); }),
+    ForControl(BuiltinWidget::ContinuousSlider, "step",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.range.step, v, ParseFloat); }),
+    ForControl(BuiltinWidget::ContinuousSlider, "value",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.value, v, ParseFloat); }),
+    // A stepped one has no step: it moves one position per press whatever its
+    // ends are, so `value` is which position it starts on.
+    ForControl(BuiltinWidget::SteppedSlider, "min",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.range.min, v, ParseFloat); }),
+    ForControl(BuiltinWidget::SteppedSlider, "max",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.range.max, v, ParseFloat); }),
+    ForControl(BuiltinWidget::SteppedSlider, "steps",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.steps, v, ParseInt); }),
+    ForControl(BuiltinWidget::SteppedSlider, "value",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.step, v, ParseInt); }),
+    // Which axes scroll is a style field, so this writes the same place
+    // `scroll_bars` does — and ApplyAttributes refuses that spelling on a
+    // scroll, so the two can never disagree on one node.
+    ForControl(BuiltinWidget::Scroll, "axes",
+               [](const AttributeTarget &t, std::string_view v) {
+                   return Read(t.node.style.enabledScrollBars, v, ParseAxes);
+               }),
+    ForControl(BuiltinWidget::TextField, "lines", ReadLines),
+    ForControl(BuiltinWidget::TextField, "placeholder",
+               [](const AttributeTarget &t, std::string_view v) {
+                   t.node.placeholder = v;
+                   return true;
+               }),
+    ForControl(BuiltinWidget::TextField, "mask",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.mask, v, ParseTextMask); }),
+    ForControl(BuiltinWidget::TextField, "max_length",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.maxLength, v, ParseUInt); }),
+    ForControl(BuiltinWidget::TextField, "check",
+               [](const AttributeTarget &t, std::string_view v) { return Read(t.node.check, v, ParseTextCheck); }),
+    Handled("pattern", HandledAttribute::Pattern, BuiltinWidget::TextField),
+
+    Handled("on_click", HandledAttribute::Action),
+    Handled("name", HandledAttribute::Name),
+    Handled("focus", HandledAttribute::Focus),
+    Handled("background", HandledAttribute::Background),
+    Handled("border_color", HandledAttribute::BorderColor),
+    Handled("text_color", HandledAttribute::TextColor),
+
+    ForAny("style",
+           [](const AttributeTarget &t, std::string_view v) {
+               // Carried and not resolved: there is nowhere for a name to
+               // resolve to yet, and a file written today should not need an
+               // edit when there is.
+               t.node.styleName = v;
+               return true;
+           }),
+    ForAny("visible", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.visible, v, ParseBool); }),
+    ForAny("enabled", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.enabled, v, ParseBool); }),
+    ForAny("blocks_pointer",
+           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.blocksPointer, v, ParseBool); }),
+    ForAny("takes_keyboard",
+           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.takesKeyboard, v, ParseBool); }),
+    ForAny("selectable",
+           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.selectable, v, ParseBool); }),
+
+    // Style: how a node looks, and how it places what is inside it.
+    ForAny("width",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.sizing[static_cast<std::size_t>(Axis::X)], v, ParseSizing);
+           }),
+    ForAny("height",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.sizing[static_cast<std::size_t>(Axis::Y)], v, ParseSizing);
+           }),
+    ForAny("padding",
+           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.padding, v, ParsePadding); }),
+    ForAny("gap", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.gap, v, ParseLength); }),
+    ForAny("text_size",
+           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.textSize, v, ParseLength); }),
+    ForAny("border_width",
+           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.borderWidth, v, ParseLength); }),
+    ForAny("corner_radius",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.cornerRadius, v, ParseLength);
+           }),
+    ForAny("corner_style",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.cornerStyle, v, ParseCornerStyle);
+           }),
+    ForAny("direction",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.direction, v, ParseDirection);
+           }),
+    ForAny("align",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.childAlign, v, ParseAlignPair);
+           }),
+    ForAny("text_align",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.textAlign, v, ParseTextAlign);
+           }),
+    ForAny("scroll_smoothing",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.scrollSmoothing, v, ParseFloat);
+           }),
+    ForAny("scroll_bar_min_length",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.scrollBarMinLength, v, ParseLength);
+           }),
+    ForAny("scroll_bars",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.enabledScrollBars, v, ParseAxes);
+           }),
+    ForAny("scroll_bar_visibility",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.scrollBarVisibility, v, ParseScrollBarVisibility);
+           }),
+    ForAny("scroll_bar_drag",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.scrollBarDrag, v, ParseScrollBarDrag);
+           }),
+    ForAny("float",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.floating.enabled, v, ParseBool);
+           }),
+    ForAny("float_offset", ReadFloatOffset),
+    ForAny("float_anchor",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.floating.anchor, v, ParseAlignPair);
+           }),
+    ForAny("float_attach",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.floating.attach, v, ParseAlignPair);
+           }),
+    ForAny("float_target",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.floating.target, v, ParseFloatAnchor);
+           }),
+    ForAny("float_clip",
+           [](const AttributeTarget &t, std::string_view v) {
+               return Read(t.node.style.floating.clipToParent, v, ParseBool);
+           }),
+});
+
+/// Each entry is read one way: through its own function, or by ApplyAttributes.
+constexpr bool EachReadOneWay()
+{
+    return std::ranges::all_of(kAttributes, [](const AttributeSpec &spec)
+                               { return (spec.handled == HandledAttribute::None) == (spec.apply != nullptr); });
+}
+static_assert(EachReadOneWay(), "an attribute has a function to read it or is handled, never both or neither");
+
+/// A control's attribute names the control, and no other does.
+constexpr bool ControlsNamed()
+{
+    return std::ranges::all_of(
+        kAttributes, [](const AttributeSpec &spec)
+        { return (spec.owner == AttributeOwner::Control) == (spec.widget != BuiltinWidget::None); });
+}
+static_assert(ControlsNamed(), "a control's attribute names its control, and only a control's does");
+
+/// Whether the entries run screen, then control, then every node, which is
+/// the precedence FindAttribute gets by taking the first that applies.
+constexpr bool InLookupOrder()
+{
+    return std::ranges::is_sorted(kAttributes, {}, &AttributeSpec::owner);
+}
+static_assert(InLookupOrder(), "the table runs screen, then control, then every node");
+
+/// Whether any two entries could both be what one name means on one node.
+constexpr bool NoTwoAlike()
+{
+    for (std::size_t first = 0; first < kAttributes.size(); ++first)
+    {
+        for (std::size_t second = first + 1; second < kAttributes.size(); ++second)
         {
-            return Applied::BadValue;
+            const AttributeSpec &one = kAttributes[first];
+            const AttributeSpec &other = kAttributes[second];
+            if (one.name == other.name && one.owner == other.owner && one.widget == other.widget)
+            {
+                return false;
+            }
         }
-        node.lines = lines->kind;
-        node.height = lines->height;
-        node.lineLimit = lines->lines;
-        return Applied::Yes;
     }
-    if (name == "placeholder")
-    {
-        node.placeholder = value;
-        return Applied::Yes;
-    }
-    if (name == "mask")
-    {
-        return Read(node.mask, value, ParseTextMask);
-    }
-    if (name == "max_length")
-    {
-        return Read(node.maxLength, value, ParseUInt);
-    }
-    if (name == "check")
-    {
-        return Read(node.check, value, ParseTextCheck);
-    }
-    return Applied::Unknown;
+    return true;
 }
+static_assert(NoTwoAlike(), "an attribute is listed once for each place it applies");
+
+/// Whether every attribute ApplyAttributes handles has exactly one entry, so no
+/// case there is unreachable and none is reachable two ways.
+constexpr bool EveryHandledOnce()
+{
+    for (uint32_t handled = 1; handled < static_cast<uint32_t>(HandledAttribute::Count); ++handled)
+    {
+        const std::ptrdiff_t entries =
+            std::ranges::count(kAttributes, static_cast<HandledAttribute>(handled), &AttributeSpec::handled);
+        if (entries != 1)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(EveryHandledOnce(), "every handled attribute has exactly one entry");
 
 /// How a file spells @p verb.
 std::string_view VerbName(ScreenVerb verb)
@@ -164,12 +394,12 @@ std::string_view VerbName(ScreenVerb verb)
 
 MarkupError At(const MarkupAttribute &attribute, std::string message)
 {
-    return MarkupError{.message = std::move(message), .file = {}, .line = attribute.line, .column = attribute.column};
+    return MarkupError{.message = std::move(message), .line = attribute.line, .column = attribute.column};
 }
 
 MarkupError At(const MarkupElement &element, std::string message)
 {
-    return MarkupError{.message = std::move(message), .file = {}, .line = element.line, .column = element.column};
+    return MarkupError{.message = std::move(message), .line = element.line, .column = element.column};
 }
 
 const ElementKind *FindElement(std::string_view name)
@@ -195,250 +425,48 @@ std::string KnownElements()
     return names;
 }
 
-Applied ApplyStyleAttribute(Style &style, std::string_view name, std::string_view value)
+const AttributeSpec *FindAttribute(std::string_view name, BuiltinWidget widget, bool isRoot)
 {
-    if (name == "width")
+    for (const AttributeSpec &spec : kAttributes)
     {
-        return Read(style.sizing[static_cast<std::size_t>(Axis::X)], value, ParseSizing);
-    }
-    if (name == "height")
-    {
-        return Read(style.sizing[static_cast<std::size_t>(Axis::Y)], value, ParseSizing);
-    }
-    if (name == "padding")
-    {
-        return Read(style.padding, value, ParsePadding);
-    }
-    if (name == "gap")
-    {
-        return Read(style.gap, value, ParseLength);
-    }
-    if (name == "text_size")
-    {
-        return Read(style.textSize, value, ParseLength);
-    }
-    if (name == "border_width")
-    {
-        return Read(style.borderWidth, value, ParseLength);
-    }
-    if (name == "corner_radius")
-    {
-        return Read(style.cornerRadius, value, ParseLength);
-    }
-    if (name == "corner_style")
-    {
-        return Read(style.cornerStyle, value, ParseCornerStyle);
-    }
-    if (name == "direction")
-    {
-        return Read(style.direction, value, ParseDirection);
-    }
-    if (name == "align")
-    {
-        return Read(style.childAlign, value, ParseAlignPair);
-    }
-    if (name == "text_align")
-    {
-        return Read(style.textAlign, value, ParseTextAlign);
-    }
-    if (name == "scroll_smoothing")
-    {
-        return Read(style.scrollSmoothing, value, ParseFloat);
-    }
-    if (name == "scroll_bar_min_length")
-    {
-        return Read(style.scrollBarMinLength, value, ParseLength);
-    }
-    if (name == "scroll_bars")
-    {
-        return Read(style.enabledScrollBars, value, ParseAxes);
-    }
-    if (name == "scroll_bar_visibility")
-    {
-        return Read(style.scrollBarVisibility, value, ParseScrollBarVisibility);
-    }
-    if (name == "scroll_bar_drag")
-    {
-        return Read(style.scrollBarDrag, value, ParseScrollBarDrag);
-    }
-    if (name == "float")
-    {
-        return Read(style.floating.enabled, value, ParseBool);
-    }
-    if (name == "float_offset")
-    {
-        const std::vector<std::string_view> words = SplitWords(value);
-        if (words.size() != kAxisCount)
+        if (spec.name != name)
         {
-            return Applied::BadValue;
+            continue;
         }
-        const std::optional<Length> x = ParseLength(words[0]);
-        const std::optional<Length> y = ParseLength(words[1]);
-        if (!x || !y)
+        const bool applies = spec.owner == AttributeOwner::AnyNode ||
+                             (spec.owner == AttributeOwner::Screen && isRoot) ||
+                             (spec.owner == AttributeOwner::Control && spec.widget == widget);
+        if (applies)
         {
-            return Applied::BadValue;
+            return &spec;
         }
-        style.floating.offset = {*x, *y};
-        return Applied::Yes;
-    }
-    if (name == "float_anchor")
-    {
-        return Read(style.floating.anchor, value, ParseAlignPair);
-    }
-    if (name == "float_attach")
-    {
-        return Read(style.floating.attach, value, ParseAlignPair);
-    }
-    if (name == "float_target")
-    {
-        return Read(style.floating.target, value, ParseFloatAnchor);
-    }
-    if (name == "float_clip")
-    {
-        return Read(style.floating.clipToParent, value, ParseBool);
-    }
-    return Applied::Unknown;
-}
-
-Applied ApplyWidgetAttribute(ScreenNode &node, std::string_view name, std::string_view value)
-{
-    switch (node.widget)
-    {
-    case BuiltinWidget::Toggle:
-        return name == "on" ? Read(node.on, value, ParseBool) : Applied::Unknown;
-    case BuiltinWidget::ContinuousSlider:
-        return ApplySliderAttribute(node, name, value);
-    case BuiltinWidget::SteppedSlider:
-        return ApplySteppedAttribute(node, name, value);
-    case BuiltinWidget::Scroll:
-        // Which axes scroll is a style field, so this writes the same place
-        // `scroll_bars` does — and the element refuses that spelling, so the
-        // two can never disagree on one node.
-        return name == "axes" ? Read(node.style.enabledScrollBars, value, ParseAxes) : Applied::Unknown;
-    case BuiltinWidget::TextField:
-        return ApplyFieldAttribute(node, name, value);
-    case BuiltinWidget::None:
-    case BuiltinWidget::Button:
-    case BuiltinWidget::Count:
-        break;
-    }
-    return Applied::Unknown;
-}
-
-Applied ApplyNodeAttribute(ScreenNode &node, std::string_view name, std::string_view value)
-{
-    if (name == "style")
-    {
-        // Carried and not resolved: there is nowhere for a name to resolve to
-        // yet, and a file written today should not need an edit when there is.
-        node.styleName = value;
-        return Applied::Yes;
-    }
-    if (name == "visible")
-    {
-        return Read(node.visible, value, ParseBool);
-    }
-    if (name == "enabled")
-    {
-        return Read(node.enabled, value, ParseBool);
-    }
-    if (name == "blocks_pointer")
-    {
-        return Read(node.blocksPointer, value, ParseBool);
-    }
-    if (name == "takes_keyboard")
-    {
-        return Read(node.takesKeyboard, value, ParseBool);
-    }
-    if (name == "selectable")
-    {
-        return Read(node.selectable, value, ParseBool);
-    }
-    return Applied::Unknown;
-}
-
-Applied ApplyScreenAttribute(ScreenDocument &document, std::string_view name, std::string_view value)
-{
-    static constexpr std::array<NamedEnum<ScreenInput>, 3> kInputs{{{"none", ScreenInput::NoConsume},
-                                                                    {"consume", ScreenInput::ConsumeInput},
-                                                                    {"locked", ScreenInput::LockedConsumeInput}}};
-    static constexpr std::array<NamedEnum<ScreenBeneath>, 2> kBeneaths{
-        {{"show", ScreenBeneath::NoHide}, {"hide", ScreenBeneath::HidesBeneath}}};
-
-    if (name == "input")
-    {
-        return Read(document.traits.input, value, [](std::string_view text) { return LookUpEnum(text, kInputs); });
-    }
-    if (name == "beneath")
-    {
-        return Read(document.traits.beneath, value, [](std::string_view text) { return LookUpEnum(text, kBeneaths); });
-    }
-    if (name == "pause")
-    {
-        const std::optional<bool> pauses = ParseBool(value);
-        if (!pauses)
-        {
-            return Applied::BadValue;
-        }
-        document.traits.pause = *pauses ? ScreenPause::Pause : ScreenPause::Run;
-        return Applied::Yes;
-    }
-    if (name == "sort")
-    {
-        return Read(document.sortKey, value, ParseSortKey);
-    }
-    if (name == "needs")
-    {
-        for (std::string_view system : SplitWords(value))
-        {
-            document.systems.emplace_back(system);
-        }
-        return Applied::Yes;
-    }
-    return Applied::Unknown;
-}
-
-Color *ColorField(Style &style, std::string_view name)
-{
-    if (name == "background")
-    {
-        return &style.background;
-    }
-    if (name == "border_color")
-    {
-        return &style.borderColor;
-    }
-    if (name == "text_color")
-    {
-        return &style.textColor;
     }
     return nullptr;
 }
 
 bool IsMarkupAttribute(std::string_view name)
 {
-    Style style;
-    if (std::ranges::find(kDirectAttributes, name) != kDirectAttributes.end() || ColorField(style, name) != nullptr)
+    return std::ranges::find(kAttributes, name, &AttributeSpec::name) != kAttributes.end();
+}
+
+Color &ColorField(Style &style, HandledAttribute colour)
+{
+    switch (colour)
     {
-        return true;
+    case HandledAttribute::BorderColor:
+        return style.borderColor;
+    case HandledAttribute::TextColor:
+        return style.textColor;
+    case HandledAttribute::Background:
+    case HandledAttribute::None:
+    case HandledAttribute::Action:
+    case HandledAttribute::Name:
+    case HandledAttribute::Focus:
+    case HandledAttribute::Pattern:
+    case HandledAttribute::Count:
+        break;
     }
-    ScreenDocument screen;
-    if (ApplyScreenAttribute(screen, name, {}) != Applied::Unknown ||
-        ApplyStyleAttribute(style, name, {}) != Applied::Unknown)
-    {
-        return true;
-    }
-    for (uint32_t widget = 0; widget < static_cast<uint32_t>(BuiltinWidget::Count); ++widget)
-    {
-        ScreenNode node;
-        node.widget = static_cast<BuiltinWidget>(widget);
-        if (ApplyWidgetAttribute(node, name, {}) != Applied::Unknown ||
-            ApplyNodeAttribute(node, name, {}) != Applied::Unknown)
-        {
-            return true;
-        }
-    }
-    return false;
+    return style.background;
 }
 
 std::expected<void, MarkupError> ApplyPattern(ScreenNode &node, const MarkupAttribute &attribute)

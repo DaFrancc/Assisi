@@ -68,7 +68,6 @@ std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &at
                     .message = "template '" + std::string{scope.templateName} + "' names '" + attribute.value +
                                "' inside it, and an unnamed instance keeps the names it makes as they are written, "
                                "so a second one makes them twice. Name the instance.",
-                    .file = {},
                     .line = scope.line,
                     .column = scope.column});
             }
@@ -248,6 +247,115 @@ std::expected<void, MarkupError> CompileTemplatePart(Walk &walk, const MarkupEle
     return CompileChildren(walk, root, index);
 }
 
+/// `on_click`, which only a button carries.
+std::expected<void, MarkupError> ApplyOnClick(Walk &walk, uint32_t index, const MarkupAttribute &written)
+{
+    if (index == 0)
+    {
+        return std::unexpected(At(written, "the screen itself cannot be clicked; put on_click on a "
+                                           "control inside it."));
+    }
+    if (walk.document.nodes[index].widget != BuiltinWidget::Button)
+    {
+        return std::unexpected(At(written, "only a button is clicked. Every other control answers a "
+                                           "press itself, and what it holds is read rather than "
+                                           "announced."));
+    }
+    return ApplyAction(walk, index, written);
+}
+
+/// Refuses the spellings an attribute had before, or has on another element,
+/// each with the one fix to name.
+std::expected<void, MarkupError> RefuseMisspelling(const ScreenNode &node, const MarkupAttribute &attribute)
+{
+    // `scroll_bars` and `axes` write the same field, and a scroll spells it
+    // `axes` after the argument its own call takes. Two spellings for one
+    // thing is how a file comes to say two different things at once.
+    if (attribute.name == "scroll_bars" && node.widget == BuiltinWidget::Scroll)
+    {
+        return std::unexpected(At(attribute, "a scroll says which axes it scrolls with 'axes', not "
+                                             "'scroll_bars'."));
+    }
+
+    // The size keywords a length replaced.
+    if (attribute.name == "width" || attribute.name == "height")
+    {
+        const std::vector<std::string_view> words = SplitWords(attribute.value);
+        if (!words.empty() && (words[0] == kFixedWord || words[0] == kPercentWord))
+        {
+            const std::string example = words[0] == kFixedWord ? "420" : "50%";
+            return std::unexpected(At(attribute, "'" + std::string{words[0]} + "' is not a size: write the length " +
+                                                     "itself, such as " + attribute.name + "=\"" + example +
+                                                     "\". A percentage is written with %, from 0 to 100."));
+        }
+    }
+    return {};
+}
+
+/// `focus`, which one node on a screen may ask for.
+std::expected<void, MarkupError> ApplyFocus(Walk &walk, uint32_t index, const MarkupAttribute &attribute)
+{
+    const std::optional<bool> focused = ParseBool(attribute.value);
+    if (!focused)
+    {
+        return std::unexpected(At(attribute, "focus is written true or false."));
+    }
+    if (*focused)
+    {
+        if (walk.focusClaimed)
+        {
+            return std::unexpected(At(attribute, "a second node asks for focus; a screen starts with "
+                                                 "the keys on one node."));
+        }
+        walk.focusClaimed = true;
+        walk.document.focus = index;
+    }
+    return {};
+}
+
+/// An attribute the table leaves to this file, with its parameters replaced.
+std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, HandledAttribute handled,
+                                              const MarkupAttribute &attribute)
+{
+    ScreenNode &node = walk.document.nodes[index];
+    switch (handled)
+    {
+    case HandledAttribute::Name:
+        // A name written in the file would say again what its path says, and
+        // the two drift the moment the file is renamed.
+        if (index == 0)
+        {
+            return std::unexpected(At(attribute, "a screen is found by the path it is loaded from, such as "
+                                                 "\"ui/Pause.amdn\", and names itself nowhere. Remove 'name'."));
+        }
+        return ApplyName(walk, attribute, index);
+    case HandledAttribute::Focus:
+        return ApplyFocus(walk, index, attribute);
+    case HandledAttribute::Pattern:
+        return ApplyPattern(node, attribute);
+    case HandledAttribute::Background:
+    case HandledAttribute::BorderColor:
+    case HandledAttribute::TextColor:
+    {
+        // A colour's likeliest mistakes each have one fix to name, which a
+        // table entry saying only "bad value" could not.
+        const ParsedColor read = ParseColor(attribute.value);
+        if (!read)
+        {
+            return std::unexpected(At(attribute, read.error()));
+        }
+        ColorField(node.style, handled) = *read;
+        return {};
+    }
+    case HandledAttribute::Action:
+        // Read before its parameters are replaced, so never reaches here.
+    case HandledAttribute::None:
+    case HandledAttribute::Count:
+        break;
+    }
+    return {};
+}
+
 } // namespace
 
 std::string_view CurrentPrefix(const Walk &walk)
@@ -309,7 +417,6 @@ std::expected<Substituted, MarkupError> Substitute(const Walk &walk, std::string
                                                           "' that begins no parameter name. Inside a template, " +
                                                           "a literal one is written '" + kParameterMark +
                                                           kParameterMark + "'.",
-                                               .file = {},
                                                .line = line,
                                                .column = column});
         }
@@ -320,7 +427,6 @@ std::expected<Substituted, MarkupError> Substitute(const Walk &walk, std::string
             return std::unexpected(MarkupError{.message = "template '" + std::string{scope.templateName} +
                                                           "' declares no parameter '" + name +
                                                           "'. A template lists what it takes in params=\"...\".",
-                                               .file = {},
                                                .line = line,
                                                .column = column});
         }
@@ -344,22 +450,19 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
 
     for (const MarkupAttribute &written : element.attributes)
     {
-        if (written.name == "on_click")
+        const AttributeSpec *const spec = FindAttribute(written.name, node.widget, isRoot);
+        if (spec == nullptr)
         {
-            if (isRoot)
+            return std::unexpected(At(written, "'" + written.name + "' is not an attribute this markup has."));
+        }
+
+        // Read as written: which parts of a call came from parameters decides
+        // where each target is resolved.
+        if (spec->handled == HandledAttribute::Action)
+        {
+            if (const std::expected<void, MarkupError> action = ApplyOnClick(walk, index, written); !action)
             {
-                return std::unexpected(At(written, "the screen itself cannot be clicked; put on_click on a "
-                                                   "control inside it."));
-            }
-            if (node.widget != BuiltinWidget::Button)
-            {
-                return std::unexpected(At(written, "only a button is clicked. Every other control answers a "
-                                                   "press itself, and what it holds is read rather than "
-                                                   "announced."));
-            }
-            if (const std::expected<void, MarkupError> action = ApplyAction(walk, index, written); !action)
-            {
-                return std::unexpected(action.error());
+                return action;
             }
             continue;
         }
@@ -378,112 +481,23 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         MarkupAttribute attribute = written;
         attribute.value = substituted->text;
 
-        // Read here rather than through the style table, which only says a
-        // value was bad: a colour's likeliest mistakes each have one fix to name.
-        if (Color *const colour = ColorField(node.style, attribute.name))
+        if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
-            const ParsedColor read = ParseColor(attribute.value);
-            if (!read)
-            {
-                return std::unexpected(At(attribute, read.error()));
-            }
-            *colour = *read;
-            continue;
+            return refused;
         }
-
-        if (attribute.name == "pattern" && node.widget == BuiltinWidget::TextField)
+        if (spec->handled != HandledAttribute::None)
         {
-            if (const std::expected<void, MarkupError> pattern = ApplyPattern(node, attribute); !pattern)
+            if (const std::expected<void, MarkupError> handled = ApplyHandled(walk, index, spec->handled, attribute);
+                !handled)
             {
-                return std::unexpected(pattern.error());
+                return handled;
             }
             continue;
         }
-
-        // `scroll_bars` and `axes` write the same field, and a scroll spells it
-        // `axes` after the argument its own call takes. Two spellings for one
-        // thing is how a file comes to say two different things at once.
-        if (attribute.name == "scroll_bars" && node.widget == BuiltinWidget::Scroll)
-        {
-            return std::unexpected(At(attribute, "a scroll says which axes it scrolls with 'axes', not "
-                                                 "'scroll_bars'."));
-        }
-
-        // The size keywords a length replaced, each with one fix to name.
-        if (attribute.name == "width" || attribute.name == "height")
-        {
-            const std::vector<std::string_view> words = SplitWords(attribute.value);
-            if (!words.empty() && (words[0] == kFixedWord || words[0] == kPercentWord))
-            {
-                const std::string example = words[0] == kFixedWord ? "420" : "50%";
-                return std::unexpected(At(attribute, "'" + std::string{words[0]} +
-                                                         "' is not a size: write the length " + "itself, such as " +
-                                                         attribute.name + "=\"" + example +
-                                                         "\". A percentage is written with %, from 0 to 100."));
-            }
-        }
-
-        if (attribute.name == "name")
-        {
-            // A name written in the file would say again what its path says,
-            // and the two drift the moment the file is renamed.
-            if (isRoot)
-            {
-                return std::unexpected(At(attribute, "a screen is found by the path it is loaded from, such as "
-                                                     "\"ui/Pause.amdn\", and names itself nowhere. Remove 'name'."));
-            }
-            if (const std::expected<void, MarkupError> named = ApplyName(walk, attribute, index); !named)
-            {
-                return std::unexpected(named.error());
-            }
-            continue;
-        }
-
-        if (attribute.name == "focus")
-        {
-            const std::optional<bool> focused = ParseBool(attribute.value);
-            if (!focused)
-            {
-                return std::unexpected(At(attribute, "focus is written true or false."));
-            }
-            if (*focused)
-            {
-                if (walk.focusClaimed)
-                {
-                    return std::unexpected(At(attribute, "a second node asks for focus; a screen starts with "
-                                                         "the keys on one node."));
-                }
-                walk.focusClaimed = true;
-                walk.document.focus = index;
-            }
-            continue;
-        }
-
-        Applied applied =
-            isRoot ? ApplyScreenAttribute(walk.document, attribute.name, attribute.value) : Applied::Unknown;
-        if (applied == Applied::Unknown)
-        {
-            applied = ApplyWidgetAttribute(node, attribute.name, attribute.value);
-        }
-        if (applied == Applied::Unknown)
-        {
-            applied = ApplyNodeAttribute(node, attribute.name, attribute.value);
-        }
-        if (applied == Applied::Unknown)
-        {
-            applied = ApplyStyleAttribute(node.style, attribute.name, attribute.value);
-        }
-
-        if (applied == Applied::BadValue)
+        if (!spec->apply(AttributeTarget{.document = walk.document, .node = node}, attribute.value))
         {
             return std::unexpected(
                 At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name + "' can hold."));
-        }
-        if (applied == Applied::Unknown)
-        {
-            return std::unexpected(At(attribute, "'" + attribute.name +
-                                                     "' is not an attribute this markup "
-                                                     "has."));
         }
     }
     return {};

@@ -38,8 +38,10 @@ struct MarkupError
 {
     std::string message;
     /// The file the line and column are in, when it is not the one being
-    /// compiled: a template library a screen imports.
-    std::string file;
+    /// compiled: a template library a screen imports. The `{}` is what lets an
+    /// error be built without naming it: GCC's missing-initializer warning
+    /// passes over a member that has an initializer of its own.
+    std::string file{};
     uint32_t line = 1;
     uint32_t column = 1;
 };
