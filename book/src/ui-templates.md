@@ -86,9 +86,79 @@ a second unnamed instance would create the same names again, so the cook asks
 you to name it. A template with no names inside can be used without a name any
 number of times.
 
+## Parameters
+
+A template can take **parameters**: values each instance passes in. Use them
+when the template needs something only the instance knows, such as which slider
+a button moves.
+
+```xml
+<template name="stepper" params="target moves=1">
+  <button padding="12 4 12 4" text_size="28" on_click="step(@target, @moves)" />
+</template>
+
+<slider name="volume" min="0" max="100" step="5" />
+<stepper target="volume" moves="-1">-</stepper>
+<stepper target="volume">+</stepper>
+```
+
+### Declaring
+
+`params` lists the parameter names, separated by spaces. `name=value` gives a
+parameter a default, which makes it optional. A default is one word, with no
+spaces in it.
+
+A parameter name is made of letters, digits and `_`, and doesn't start with a
+digit. It can't be the name of an attribute the markup has, such as `name`,
+`width` or `on_click`, so an attribute on an instance is always either a
+parameter or an override of the template's root.
+
+### Passing
+
+An instance passes a parameter as an attribute of the same name. A parameter
+without a default must be passed by every instance.
+
+### Using
+
+Inside the template, `@name` stands for the parameter's value. It can be used in
+any attribute value or text, on its own or as part of a longer value:
+
+```xml
+<template name="caption" params="size label">
+  <text text_size="@size">The @label here</text>
+</template>
+```
+
+Inside a template, `@` is a special character, like `\` in a C string: it
+always starts a parameter name, so it can't stand for itself. To write an
+actual `@` character, such as in an email address, write it twice:
+
+```xml
+<template name="contact">
+  <text>support@@example.com</text>   <!-- shows support@example.com -->
+</template>
+```
+
+A single `@` that isn't followed by a parameter name fails the cook. Outside
+templates, `@` has no special meaning and is written as it is.
+
+The cook replaces every `@name` with its value, so the compiled screen is the
+same as one written out by hand.
+
+### Which node a passed name means
+
+A node name in a parameter's value is looked up where the value was written:
+
+- **A value passed by the instance** was written where the instance is, so it
+  means a node there. In the example above, `target="volume"` means the
+  screen's `volume`, not a node called `volume` inside the instance.
+- **A default** was written in the template, so it means a node inside the same
+  instance, like any other name the template writes.
+
 ## Template rules
 
-- A template is declared directly inside `<screen>`, nowhere else.
+- A template is declared directly inside `<screen>`, nowhere else. To share one
+  between screens, declare it in a [template library](ui-template-libraries.md).
 - Its name can't be an existing element name such as `button`, and two templates
   can't share a name.
 - It has exactly one root element and no text of its own. The root can hold
@@ -102,3 +172,5 @@ number of times.
 - Every template is checked by the cook even if nothing uses it. An error inside
   one is reported at its line; if the error only appears in a particular
   instance, the message also gives the instance's line.
+- An attribute that uses a parameter without a default can only be checked once
+  an instance passes a value, so it is checked for each instance.

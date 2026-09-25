@@ -23,6 +23,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -39,16 +41,37 @@ namespace Assisi::Mondrian::Import
 /// a template using itself is refused outright, whatever the count.
 inline constexpr uint32_t kMaxTemplateNesting = 8;
 
+/// @brief Reads the text of the file at an asset path, or says why it cannot.
+///
+/// How a compile reaches the template libraries a file imports. Taken rather
+/// than reached for, so a test can serve files from memory.
+using SourceReader = std::function<std::expected<std::string, std::string>(std::string_view vpath)>;
+
 /// @brief Compiles a parsed screen into its document.
 ///
 /// @p catalog is what an `on_click` naming an event is checked against — taken
 /// rather than reached for, so a test can hand over exactly the events its case
-/// is about.
+/// is about. @p read reaches the libraries the screen imports.
 [[nodiscard]] std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root,
-                                                                       const Core::EventCatalog &catalog);
+                                                                       const Core::EventCatalog &catalog,
+                                                                       const SourceReader &read);
 
 /// @brief Parses and compiles @p text, and writes the cooked blob.
 [[nodiscard]] std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string_view text,
-                                                                                   const Core::EventCatalog &catalog);
+                                                                                   const Core::EventCatalog &catalog,
+                                                                                   const SourceReader &read);
+
+/// @brief Checks the template library at @p vpath: its form, its imports, and
+/// every template it declares, used or not. A library cooks to nothing, so this
+/// is the whole of its cook.
+[[nodiscard]] std::expected<void, MarkupError> CheckLibrary(std::string_view vpath, const Core::EventCatalog &catalog,
+                                                            const SourceReader &read);
+
+/// @brief Every library the file @p text imports, directly or through another
+/// library, sorted: what its cooked bytes depend on besides itself.
+///
+/// A path that cannot be read or parsed is listed and not followed; compiling
+/// the file reports it.
+[[nodiscard]] std::vector<std::string> ImportedLibraries(std::string_view text, const SourceReader &read);
 
 } // namespace Assisi::Mondrian::Import

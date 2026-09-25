@@ -13,6 +13,7 @@ it describe each part of the system in reference form:
 | [Controls](ui-controls.md) | Toggles, sliders, scroll areas and text fields. |
 | [Button actions](ui-actions.md) | What a button does when clicked: an action or an event. |
 | [Templates](ui-templates.md) | Declaring an element once and reusing it. |
+| [Template libraries](ui-template-libraries.md) | Sharing templates between screens. |
 | [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, and sharing screens between levels. |
 | [What the cook checks](ui-cook-checks.md) | Every mistake that fails the cook. |
 

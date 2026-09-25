@@ -1,4 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include "ScreenTesting.hpp"
+
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 
 #include <Assisi/Mondrian/Pattern.hpp>
@@ -19,28 +21,18 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace Assisi::Mondrian;
 using namespace Assisi::Mondrian::Import;
 using Assisi::Core::EventCatalog;
 using Assisi::Core::EventQueue;
+using namespace ScreenTesting;
 
 namespace
 {
-
-struct QuitRequested
-{
-};
-
-/// The events a file may name here. Built per case rather than linked, so what
-/// an `on_click` resolves against is what this file says it is.
-EventCatalog OneEvent()
-{
-    EventCatalog catalog;
-    catalog.Register({.name = "Game::QuitRequested", .push = [](EventQueue &events) { events.Push(QuitRequested{}); }});
-    return catalog;
-}
 
 /// The pause menu as a file: every element and most of the attribute table.
 constexpr std::string_view kPauseMenu = R"amdn(<screen input="consume" beneath="hide" pause="true"
@@ -84,35 +76,6 @@ constexpr std::string_view kEveryControl = R"amdn(<screen>
   </column>
 </screen>
 )amdn";
-
-/// The reason @p result failed, or empty. Its own function because `*` binds
-/// tighter than `?:` inside doctest's message macro, so a ternary written at
-/// the call would be parsed as part of the stream expression.
-template <typename T, typename E> std::string Why(const std::expected<T, E> &result)
-{
-    return result.has_value() ? std::string{} : std::string{result.error().message};
-}
-
-ScreenDocument Compiled(std::string_view text)
-{
-    const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
-    REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-
-    std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
-    REQUIRE_MESSAGE(document.has_value(), Why(document));
-    return *document;
-}
-
-/// The error from compiling @p text, which the case expects to fail.
-MarkupError Refused(std::string_view text)
-{
-    const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
-    REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
-    REQUIRE_FALSE(document.has_value());
-    return document.error();
-}
 
 /// The controls the shipped Controls.amdn holds, by the names it gives them.
 /// Its containers are left out: what they compile to is already covered, and
@@ -243,32 +206,6 @@ void CheckSame(const NodeTree &fromFile, const NodeTree &byHand, std::string_vie
     {
         CHECK(one->edit.abilities[ability] == other->edit.abilities[ability]);
     }
-}
-
-/// The node called @p name, which the case expects to exist.
-const ScreenNode &NodeNamed(const ScreenDocument &document, std::string_view name)
-{
-    for (const ScreenNode &node : document.nodes)
-    {
-        if (node.name == name)
-        {
-            return node;
-        }
-    }
-    REQUIRE_MESSAGE(false, "no node called " << name);
-    return document.nodes[0];
-}
-
-uint32_t IndexOf(const ScreenDocument &document, std::string_view name)
-{
-    for (uint32_t index = 0; index < document.nodes.size(); ++index)
-    {
-        if (document.nodes[index].name == name)
-        {
-            return index;
-        }
-    }
-    return kNoNode;
 }
 
 } // namespace
@@ -847,7 +784,8 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
 {
     // The two halves of the format, against each other: what the cooker writes
     // is what a shipped game reads.
-    const std::expected<std::vector<std::byte>, MarkupError> bytes = CompileScreenText(kPauseMenu, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> bytes =
+        CompileScreenText(kPauseMenu, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
@@ -862,7 +800,8 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     // The two halves of the format against each other, over the fields this
     // issue adds: a write and a read that disagree by one field would shift
     // everything after it and still frame correctly.
-    const std::expected<std::vector<std::byte>, MarkupError> bytes = CompileScreenText(kEveryControl, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> bytes =
+        CompileScreenText(kEveryControl, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
@@ -924,7 +863,7 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog);
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, NoFiles());
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     // Everything the C++ builder this file replaced set, so a difference shows
@@ -1196,7 +1135,7 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     EventQueue events;
@@ -1316,8 +1255,8 @@ TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-ex
   </row>
 </screen>)amdn";
 
-    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent());
-    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent(), NoFiles());
+    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(one.has_value(), Why(one));
     REQUIRE_MESSAGE(other.has_value(), Why(other));
     CHECK(*one == *other);
@@ -1535,10 +1474,218 @@ TEST_CASE("ScreenCompiler: an unknown element names the templates beside the ele
     CHECK(error.message.find("menu_button") != std::string::npos);
 }
 
+namespace
+{
+
+/// A button that steps whichever slider an instance points it at.
+constexpr std::string_view kStepper = R"amdn(
+  <template name="stepper" params="target moves=1">
+    <button padding="12 4 12 4" on_click="step(@target, @moves)" />
+  </template>)amdn";
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: each instance steps the slider it is pointed at, by its own moves")
+{
+    const ScreenDocument document =
+        Compiled(ScreenWith("  <slider name=\"music\" step=\"5\" />\n"
+                            "  <slider name=\"sfx\" step=\"5\" />\n"
+                            "  <stepper name=\"quieter\" target=\"music\" moves=\"-1\">-</stepper>\n"
+                            "  <stepper name=\"louder\" target=\"sfx\">+</stepper>\n",
+                            kStepper));
+
+    const ScreenNode &quieter = NodeNamed(document, "quieter");
+    CHECK(quieter.action == ActionKind::Verb);
+    CHECK(quieter.verb == ScreenVerb::Step);
+    CHECK(quieter.target == IndexOf(document, "music"));
+    CHECK(quieter.moves == -1);
+    CHECK(quieter.text == "-");
+
+    // The default, where the instance passes nothing.
+    const ScreenNode &louder = NodeNamed(document, "louder");
+    CHECK(louder.target == IndexOf(document, "sfx"));
+    CHECK(louder.moves == 1);
+}
+
+TEST_CASE("ScreenCompiler: a passed name means a node where the instance was written")
+{
+    SUBCASE("not the template's part of the same name")
+    {
+        const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="panel" params="target">
+    <row>
+      <slider name="volume" step="1" />
+      <button name="up" on_click="step(@target, 1)" />
+    </row>
+  </template>
+  <slider name="volume" step="5" />
+  <panel name="box" target="volume" />
+</screen>)amdn");
+        CHECK(NodeNamed(document, "box.up").target == IndexOf(document, "volume"));
+    }
+
+    SUBCASE("through a parameter another template passed on")
+    {
+        const ScreenDocument document = Compiled(ScreenWith("  <slider name=\"volume\" step=\"5\" />\n"
+                                                            "  <pair name=\"both\" which=\"volume\" />\n",
+                                                            std::string{kStepper} + R"amdn(
+  <template name="pair" params="which">
+    <row>
+      <slider name="volume" step="1" />
+      <stepper name="up" target="@which" />
+    </row>
+  </template>)amdn"));
+        CHECK(NodeNamed(document, "both.up").target == IndexOf(document, "volume"));
+    }
+
+    SUBCASE("while a default is written in the template, so means its part")
+    {
+        const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="panel" params="target=volume">
+    <row>
+      <slider name="volume" step="1" />
+      <button name="up" on_click="step(@target, 1)" />
+    </row>
+  </template>
+  <slider name="volume" step="5" />
+  <panel name="box" />
+</screen>)amdn");
+        CHECK(NodeNamed(document, "box.up").target == IndexOf(document, "box.volume"));
+    }
+}
+
+TEST_CASE("ScreenCompiler: a parameter fills attributes and text, whole or in part")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="caption" params="size label">
+    <column gap="@size">
+      <text name="line" text_size="@size">The @label here</text>
+    </column>
+  </template>
+  <caption name="c" size="30" label="word" />
+</screen>)amdn");
+    CHECK(NodeNamed(document, "c").style.gap == Px(30.f));
+    CHECK(NodeNamed(document, "c.line").style.textSize == Px(30.f));
+    CHECK(NodeNamed(document, "c.line").text == "The word here");
+}
+
+TEST_CASE("ScreenCompiler: @@ inside a template is a literal @, and @ outside one is plain text")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="mail"><text>me@@example.com</text></template>
+  <mail name="m" />
+  <text name="plain">you@example.com</text>
+  <text_field name="who" pattern="/[^@ ]+@[^@ ]+/" />
+</screen>)amdn");
+    CHECK(NodeNamed(document, "m").text == "me@example.com");
+    CHECK(NodeNamed(document, "plain").text == "you@example.com");
+    CHECK(NodeNamed(document, "who").pattern == "[^@ ]+@[^@ ]+");
+}
+
+TEST_CASE("ScreenCompiler: a file using parameters cooks to the bytes its hand-expanded twin does")
+{
+    const std::string templated = ScreenWith("  <slider name=\"volume\" step=\"5\" />\n"
+                                             "  <stepper name=\"down\" target=\"volume\" moves=\"-1\">-</stepper>\n"
+                                             "  <stepper name=\"up\" target=\"volume\">+</stepper>\n",
+                                             kStepper);
+    const std::string_view expanded = R"amdn(<screen>
+  <slider name="volume" step="5" />
+  <button name="down" padding="12 4 12 4" on_click="step(volume, -1)">-</button>
+  <button name="up" padding="12 4 12 4" on_click="step(volume, 1)">+</button>
+</screen>)amdn";
+
+    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent(), NoFiles());
+    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent(), NoFiles());
+    REQUIRE_MESSAGE(one.has_value(), Why(one));
+    REQUIRE_MESSAGE(other.has_value(), Why(other));
+    CHECK(*one == *other);
+}
+
+TEST_CASE("ScreenCompiler: a parameter is declared, passed and used one way")
+{
+    SUBCASE("a required parameter left out is refused at the instance")
+    {
+        const MarkupError error =
+            Refused(ScreenWith("  <slider name=\"volume\" step=\"5\" />\n  <stepper />\n", kStepper));
+        CHECK(error.line == 3);
+        CHECK(error.message.find("target") != std::string::npos);
+    }
+
+    SUBCASE("a use of one the template does not declare is refused where it is used, used or not")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <template name=\"t\" params=\"size\">\n"
+                                          "    <text text_size=\"@sise\" />\n"
+                                          "  </template>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("sise") != std::string::npos);
+    }
+
+    SUBCASE("a lone @ is refused, saying how a literal one is written")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <template name=\"t\">\n"
+                                          "    <text>a @ b</text>\n"
+                                          "  </template>\n"
+                                          "</screen>\n");
+        CHECK(error.message.find("@@") != std::string::npos);
+    }
+
+    SUBCASE("one named like an attribute is refused at the declaration")
+    {
+        for (const std::string_view taken : {"width", "min", "on_click", "name", "background", "pattern", "params"})
+        {
+            CAPTURE(taken);
+            const MarkupError error = Refused("<screen>\n  <row />\n  <template name=\"t\" params=\"" +
+                                              std::string{taken} + "\"><row /></template>\n</screen>\n");
+            CHECK(error.line == 3);
+            CHECK(error.message.find(std::string{taken}) != std::string::npos);
+        }
+    }
+
+    SUBCASE("one declared twice is refused at the declaration")
+    {
+        CHECK(Refused("<screen>\n  <row />\n  <template name=\"t\" params=\"a a=1\"><row /></template>\n</screen>\n")
+                  .line == 3);
+    }
+
+    SUBCASE("a value that makes a bad attribute gives the template's line and the instance's")
+    {
+        const MarkupError error = Refused(ScreenWith("  <slider name=\"volume\" step=\"5\" />\n"
+                                                     "  <stepper target=\"volume\" moves=\"0\" />\n",
+                                                     kStepper));
+        // The use is on line 6; the instance on line 3.
+        CHECK(error.line == 6);
+        CHECK(error.message.find("line 3") != std::string::npos);
+    }
+
+    SUBCASE("a default that makes a bad attribute is refused with no instance at all")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <template name=\"t\" params=\"moves=0\">\n"
+                                          "    <row><slider name=\"s\" step=\"1\" /><button on_click=\"step(s, "
+                                          "@moves)\" /></row>\n"
+                                          "  </template>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+    }
+}
+
+TEST_CASE("ScreenCompiler: an attribute using a required parameter is checked per instance, not on its own")
+{
+    // Checked on its own, `step` has no value, and a slider without one would
+    // be refused.
+    CHECK(Compiled(R"amdn(<screen>
+  <template name="ranged" params="s"><slider step="@s" /></template>
+</screen>)amdn")
+              .nodes.size() == 1);
+}
+
 TEST_CASE("ScreenCompiler: a file that does not parse fails before it compiles")
 {
     const std::expected<std::vector<std::byte>, MarkupError> bytes =
-        CompileScreenText("<screen>\n  <column>\n</screen>\n", OneEvent());
+        CompileScreenText("<screen>\n  <column>\n</screen>\n", OneEvent(), NoFiles());
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().line == 3);
     CHECK(bytes.error().message.find("never closed") != std::string::npos);

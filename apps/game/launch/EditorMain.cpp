@@ -394,11 +394,23 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
         return std::unexpected(Assisi::Mondrian::ScreenReadError::Missing);
     }
 
+    const Assisi::Mondrian::Import::SourceReader read =
+        [](std::string_view library) -> std::expected<std::string, std::string>
+    {
+        std::expected<std::string, Assisi::Core::AssetError> source = Assisi::Core::AssetSystem::ReadText(library);
+        if (!source)
+        {
+            return std::unexpected(std::string{"there is no such file in the asset tree"});
+        }
+        return std::move(*source);
+    };
     const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
-        Assisi::Mondrian::Import::CompileScreenText(*text, Assisi::Core::EventCatalog::Instance());
+        Assisi::Mondrian::Import::CompileScreenText(*text, Assisi::Core::EventCatalog::Instance(), read);
     if (!cooked)
     {
-        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+        // An error inside a library the screen imports names that file.
+        const std::string_view file = cooked.error().file.empty() ? vpath : std::string_view{cooked.error().file};
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", file, cooked.error().line, cooked.error().column,
                                  cooked.error().message);
         return std::unexpected(Assisi::Mondrian::ScreenReadError::Invalid);
     }
