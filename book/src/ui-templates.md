@@ -157,7 +157,8 @@ A node name in a parameter's value is looked up where the value was written:
 
 ## Template rules
 
-- A template is declared directly inside `<screen>`, nowhere else.
+- A template is declared directly inside `<screen>`, nowhere else. To share one
+  between screens, declare it in a [template library](ui-template-libraries.md).
 - Its name can't be an existing element name such as `button`, and two templates
   can't share a name.
 - It has exactly one root element and no text of its own. The root can hold

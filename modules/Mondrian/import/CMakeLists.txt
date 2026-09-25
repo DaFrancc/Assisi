@@ -43,7 +43,15 @@ target_sources(Assisi-MondrianImport
     "src/Markup.cpp"
     "src/MarkupValues.cpp"
     "src/MarkupValues.hpp"
+    "src/ScreenActions.cpp"
+    "src/ScreenAttributes.cpp"
+    "src/ScreenAttributes.hpp"
     "src/ScreenCompiler.cpp"
+    "src/ScreenLibraries.cpp"
+    "src/ScreenLibraries.hpp"
+    "src/ScreenTemplates.cpp"
+    "src/ScreenWalk.cpp"
+    "src/ScreenWalk.hpp"
 )
 
 target_include_directories(Assisi-MondrianImport

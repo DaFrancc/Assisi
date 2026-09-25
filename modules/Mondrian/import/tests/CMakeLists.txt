@@ -37,8 +37,10 @@ set_target_properties(Assisi-FontImport-Tests PROPERTIES FOLDER "tests")
 # is and not whatever this binary happens to have linked.
 add_executable(Assisi-MondrianImport-Tests
   main.cpp
+  ScreenTesting.hpp
   TestMarkup.cpp
   TestScreenCompiler.cpp
+  TestTemplateLibraries.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-MondrianImport-Tests)

@@ -135,6 +135,13 @@ TEST_CASE("Font files and their licences are claimed and produce nothing of thei
     CHECK(ClaimFor("fonts/OFL.txt") == Claim::SourceOnly);
 }
 
+TEST_CASE("Template libraries are claimed and produce nothing of their own")
+{
+    // What a library holds reaches the cooked tree inside the screens built
+    // from it.
+    CHECK(ClaimFor("ui/common/Controls.amdt") == Claim::SourceOnly);
+}
+
 TEST_CASE("Shader sources are claimed and produce nothing")
 {
     // A third answer, not a missing one: GLSL is content in the tree and absent
@@ -537,6 +544,75 @@ TEST_CASE("A font description cooks to a font the runtime reads, and its font fi
         Assisi::Mondrian::ReadCookedFont(std::as_bytes(std::span{chars}));
     REQUIRE(read.has_value());
     CHECK(read->GlyphFor('A').has_value());
+}
+
+namespace
+{
+
+/// Writes @p text to @p path under @p root, with a sidecar carrying @p guid.
+void WriteAsset(const std::filesystem::path &root, const std::string &path, std::string_view text,
+                std::string_view guid)
+{
+    std::error_code code;
+    std::filesystem::create_directories((root / path).parent_path(), code);
+    std::ofstream(root / path) << text;
+    std::ofstream(root / (path + ".aast"))
+        << R"({ "guid": ")" << guid << R"(", "type": "AssetSidecar", "version": 1 })";
+}
+
+/// A copy of the fixture tree with a template library and two screens built
+/// from it.
+void AddLibrary(const std::filesystem::path &root)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    WriteAsset(root, "ui/common/Controls.amdt",
+               "<templates>\n  <template name=\"menu_button\"><button padding=\"8\" /></template>\n</templates>\n",
+               "2f6a1c9e-7b3d-4e58-a0c2-9d4e6b8f1a37");
+    WriteAsset(root, "ui/Menu.amdn",
+               "<screen>\n  <import path=\"ui/common/Controls.amdt\" />\n  <menu_button>Play</menu_button>\n"
+               "</screen>\n",
+               "8c1e5a3f-2d7b-4f96-b4a8-6e0c3d9f5b12");
+    WriteAsset(root, "ui/Options.amdn",
+               "<screen>\n  <import path=\"ui/common/Controls.amdt\" />\n  <menu_button>Back</menu_button>\n"
+               "</screen>\n",
+               "4d9b7e2a-6c1f-4a83-9e5d-0b7a2c8f4e61");
+}
+
+} // namespace
+
+TEST_CASE("Changing a template library re-cooks every screen built from it")
+{
+    const ScratchDir source("library-src");
+    const ScratchDir out("library-out");
+    AddLibrary(source.Path());
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+    CHECK(EntryFor(*first, "ui/common/Controls.amdt") == nullptr);
+
+    std::ofstream(source.Path() / "ui" / "common" / "Controls.amdt", std::ios::app) << "<!-- edited -->\n";
+
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 2);
+}
+
+TEST_CASE("A broken template library fails the cook though no screen uses it")
+{
+    const ScratchDir source("broken-library-src");
+    const ScratchDir out("broken-library-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    WriteAsset(source.Path(), "ui/Unused.amdt",
+               "<templates>\n  <template name=\"t\">\n    <button colour=\"#ff0000\" />\n  </template>\n</templates>\n",
+               "a3e7c1d9-5f2b-4c86-8d0e-7b9f1a4c6e23");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Unused.amdt");
+    CHECK(report.error().reason.find("3:") != std::string::npos);
+    CHECK(report.error().reason.find("colour") != std::string::npos);
 }
 
 TEST_CASE("Changing a font file re-cooks the description that names it")

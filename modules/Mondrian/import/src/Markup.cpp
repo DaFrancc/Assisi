@@ -113,7 +113,7 @@ class Scanner
 
     [[nodiscard]] MarkupError Fail(std::string message) const
     {
-        return MarkupError{.message = std::move(message), .line = _line, .column = _column};
+        return MarkupError{.message = std::move(message), .file = {}, .line = _line, .column = _column};
     }
 
   private:
@@ -138,6 +138,7 @@ std::expected<void, MarkupError> TakeEntity(Scanner &scanner, std::string &out)
     {
         return std::unexpected(MarkupError{.message = "'&' starts an entity that is never closed with ';'. "
                                                       "A literal ampersand is written &amp;.",
+                                           .file = {},
                                            .line = where.line,
                                            .column = where.column});
     }
@@ -154,6 +155,7 @@ std::expected<void, MarkupError> TakeEntity(Scanner &scanner, std::string &out)
     return std::unexpected(MarkupError{.message = "'&" + name +
                                                   ";' is not one of the five entities this "
                                                   "markup knows: &lt; &gt; &amp; &quot; &apos;.",
+                                       .file = {},
                                        .line = where.line,
                                        .column = where.column});
 }
@@ -188,8 +190,8 @@ std::expected<void, MarkupError> SkipComment(Scanner &scanner)
         }
         (void)scanner.Take();
     }
-    return std::unexpected(
-        MarkupError{.message = "a comment is never closed with '-->'.", .line = where.line, .column = where.column});
+    return std::unexpected(MarkupError{
+        .message = "a comment is never closed with '-->'.", .file = {}, .line = where.line, .column = where.column});
 }
 
 /// Whitespace and comments, which may sit anywhere an element may.
@@ -303,6 +305,7 @@ std::expected<void, MarkupError> ParseAttributes(Scanner &scanner, MarkupElement
             {
                 return std::unexpected(
                     MarkupError{.message = "attribute '" + attribute.name + "' is written twice on the same element.",
+                                .file = {},
                                 .line = attribute.line,
                                 .column = attribute.column});
             }
@@ -320,6 +323,7 @@ std::expected<void, MarkupError> ParseContent(Scanner &scanner, MarkupElement &e
         if (scanner.Done())
         {
             return std::unexpected(MarkupError{.message = "'<" + element.name + ">' is never closed.",
+                                               .file = {},
                                                .line = element.line,
                                                .column = element.column});
         }
@@ -338,6 +342,7 @@ std::expected<void, MarkupError> ParseContent(Scanner &scanner, MarkupElement &e
                 return std::unexpected(MarkupError{.message = "'<" + element.name + ">', opened on line " +
                                                               std::to_string(element.line) + ", is never closed: '</" +
                                                               closing + ">' was found first.",
+                                                   .file = {},
                                                    .line = line,
                                                    .column = column});
             }

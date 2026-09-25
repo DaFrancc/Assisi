@@ -573,6 +573,10 @@ class FontCooker final : public Cooker
 /// and against the events it linked. `Assisi-Cook-Tool` links `Assisi-GameLib`
 /// and every generated registration, so the catalog a screen is checked against
 /// is the one the game will have.
+///
+/// A `.amdt` template library cooks to nothing: what it holds reaches the
+/// cooked tree inside the screens that import it. It is still checked whole
+/// here, so a mistake in one no screen uses yet fails the cook.
 class ScreenCooker final : public Cooker
 {
   public:
@@ -586,7 +590,42 @@ class ScreenCooker final : public Cooker
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
-        return HasExtension(vpath, ".amdn") ? Claim::Output : Claim::None;
+        if (HasExtension(vpath, ".amdn"))
+        {
+            return Claim::Output;
+        }
+        return HasExtension(vpath, ".amdt") ? Claim::SourceOnly : Claim::None;
+    }
+
+    [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
+    {
+        // Editing a library changes every screen built from it without
+        // touching the screen this is keyed on.
+        if (!HasExtension(vpath, ".amdn"))
+        {
+            return {};
+        }
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return {};
+        }
+        return Mondrian::Import::ImportedLibraries(*text, ReadMarkup);
+    }
+
+    [[nodiscard]] std::expected<void, CookError> CheckSource(std::string_view vpath) const override
+    {
+        if (!HasExtension(vpath, ".amdt"))
+        {
+            return {};
+        }
+        const std::expected<void, Mondrian::Import::MarkupError> checked =
+            Mondrian::Import::CheckLibrary(vpath, Core::EventCatalog::Instance(), ReadMarkup);
+        if (!checked)
+        {
+            return std::unexpected(Failure(vpath, Where(checked.error())));
+        }
+        return {};
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
@@ -599,15 +638,32 @@ class ScreenCooker final : public Cooker
         }
 
         const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
-            Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance());
+            Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance(), ReadMarkup);
         if (!cooked)
         {
-            // Line and column first, so the message reads as a compiler's does
-            // and an editor can jump to it.
-            return std::unexpected(Failure(
-                vpath, std::format("{}:{}: {}", cooked.error().line, cooked.error().column, cooked.error().message)));
+            return std::unexpected(Failure(vpath, Where(cooked.error())));
         }
         return *cooked;
+    }
+
+  private:
+    /// A library's text, by the asset path an import names it by.
+    static std::expected<std::string, std::string> ReadMarkup(std::string_view vpath)
+    {
+        std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(std::string{"there is no such file in the asset tree"});
+        }
+        return std::move(*text);
+    }
+
+    /// @p error as a compiler prints one: line and column first, so an editor
+    /// can jump to it, after the file when it is not the one being cooked.
+    static std::string Where(const Mondrian::Import::MarkupError &error)
+    {
+        const std::string place = std::format("{}:{}: {}", error.line, error.column, error.message);
+        return error.file.empty() ? place : error.file + ":" + place;
     }
 };
 

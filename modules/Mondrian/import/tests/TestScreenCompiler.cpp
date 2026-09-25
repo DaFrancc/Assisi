@@ -1,4 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include "ScreenTesting.hpp"
+
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 
 #include <Assisi/Mondrian/Pattern.hpp>
@@ -19,28 +21,18 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace Assisi::Mondrian;
 using namespace Assisi::Mondrian::Import;
 using Assisi::Core::EventCatalog;
 using Assisi::Core::EventQueue;
+using namespace ScreenTesting;
 
 namespace
 {
-
-struct QuitRequested
-{
-};
-
-/// The events a file may name here. Built per case rather than linked, so what
-/// an `on_click` resolves against is what this file says it is.
-EventCatalog OneEvent()
-{
-    EventCatalog catalog;
-    catalog.Register({.name = "Game::QuitRequested", .push = [](EventQueue &events) { events.Push(QuitRequested{}); }});
-    return catalog;
-}
 
 /// The pause menu as a file: every element and most of the attribute table.
 constexpr std::string_view kPauseMenu = R"amdn(<screen input="consume" beneath="hide" pause="true"
@@ -84,35 +76,6 @@ constexpr std::string_view kEveryControl = R"amdn(<screen>
   </column>
 </screen>
 )amdn";
-
-/// The reason @p result failed, or empty. Its own function because `*` binds
-/// tighter than `?:` inside doctest's message macro, so a ternary written at
-/// the call would be parsed as part of the stream expression.
-template <typename T, typename E> std::string Why(const std::expected<T, E> &result)
-{
-    return result.has_value() ? std::string{} : std::string{result.error().message};
-}
-
-ScreenDocument Compiled(std::string_view text)
-{
-    const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
-    REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-
-    std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
-    REQUIRE_MESSAGE(document.has_value(), Why(document));
-    return *document;
-}
-
-/// The error from compiling @p text, which the case expects to fail.
-MarkupError Refused(std::string_view text)
-{
-    const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
-    REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
-    REQUIRE_FALSE(document.has_value());
-    return document.error();
-}
 
 /// The controls the shipped Controls.amdn holds, by the names it gives them.
 /// Its containers are left out: what they compile to is already covered, and
@@ -243,32 +206,6 @@ void CheckSame(const NodeTree &fromFile, const NodeTree &byHand, std::string_vie
     {
         CHECK(one->edit.abilities[ability] == other->edit.abilities[ability]);
     }
-}
-
-/// The node called @p name, which the case expects to exist.
-const ScreenNode &NodeNamed(const ScreenDocument &document, std::string_view name)
-{
-    for (const ScreenNode &node : document.nodes)
-    {
-        if (node.name == name)
-        {
-            return node;
-        }
-    }
-    REQUIRE_MESSAGE(false, "no node called " << name);
-    return document.nodes[0];
-}
-
-uint32_t IndexOf(const ScreenDocument &document, std::string_view name)
-{
-    for (uint32_t index = 0; index < document.nodes.size(); ++index)
-    {
-        if (document.nodes[index].name == name)
-        {
-            return index;
-        }
-    }
-    return kNoNode;
 }
 
 } // namespace
@@ -847,7 +784,8 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
 {
     // The two halves of the format, against each other: what the cooker writes
     // is what a shipped game reads.
-    const std::expected<std::vector<std::byte>, MarkupError> bytes = CompileScreenText(kPauseMenu, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> bytes =
+        CompileScreenText(kPauseMenu, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
@@ -862,7 +800,8 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     // The two halves of the format against each other, over the fields this
     // issue adds: a write and a read that disagree by one field would shift
     // everything after it and still frame correctly.
-    const std::expected<std::vector<std::byte>, MarkupError> bytes = CompileScreenText(kEveryControl, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> bytes =
+        CompileScreenText(kEveryControl, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
@@ -924,7 +863,7 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog);
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, NoFiles());
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     // Everything the C++ builder this file replaced set, so a difference shows
@@ -1196,7 +1135,7 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent());
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     EventQueue events;
@@ -1316,8 +1255,8 @@ TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-ex
   </row>
 </screen>)amdn";
 
-    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent());
-    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent(), NoFiles());
+    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(one.has_value(), Why(one));
     REQUIRE_MESSAGE(other.has_value(), Why(other));
     CHECK(*one == *other);
@@ -1655,8 +1594,8 @@ TEST_CASE("ScreenCompiler: a file using parameters cooks to the bytes its hand-e
   <button name="up" padding="12 4 12 4" on_click="step(volume, 1)">+</button>
 </screen>)amdn";
 
-    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent());
-    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent());
+    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent(), NoFiles());
+    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent(), NoFiles());
     REQUIRE_MESSAGE(one.has_value(), Why(one));
     REQUIRE_MESSAGE(other.has_value(), Why(other));
     CHECK(*one == *other);
@@ -1746,7 +1685,7 @@ TEST_CASE("ScreenCompiler: an attribute using a required parameter is checked pe
 TEST_CASE("ScreenCompiler: a file that does not parse fails before it compiles")
 {
     const std::expected<std::vector<std::byte>, MarkupError> bytes =
-        CompileScreenText("<screen>\n  <column>\n</screen>\n", OneEvent());
+        CompileScreenText("<screen>\n  <column>\n</screen>\n", OneEvent(), NoFiles());
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().line == 3);
     CHECK(bytes.error().message.find("never closed") != std::string::npos);

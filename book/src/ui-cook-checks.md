@@ -22,6 +22,14 @@ Every one of these fails the cook with the file, line and column:
 - A template parameter named like an attribute or declared twice, an instance
   that leaves out a parameter with no default, an `@name` the template doesn't
   declare, or an `@` inside a template that isn't `@@` or a parameter.
+- An import whose path names no file or isn't a `.amdt` library, a name in
+  `names` that the library doesn't declare, a template name used that nothing
+  imported, an imported name the file already has, two imports sharing an `as`
+  prefix, or a library that imports itself.
+- A screen file whose root isn't `<screen>`, or a library whose root isn't
+  `<templates>` or that holds anything but templates and imports.
+
+An error inside a template library names the library's file.
 
 ## What's next
 
