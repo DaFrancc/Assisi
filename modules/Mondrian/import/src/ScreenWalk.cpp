@@ -92,6 +92,100 @@ std::expected<void, MarkupError> CompileChildren(Walk &walk, const MarkupElement
     return {};
 }
 
+/// Where an error about a node's text points.
+struct TextPlace
+{
+    /// "text" or "placeholder", for the message.
+    std::string_view slot;
+    uint32_t line = 1;
+    uint32_t column = 1;
+};
+
+MarkupError At(const TextPlace &where, std::string message)
+{
+    return MarkupError{.message = std::move(message), .line = where.line, .column = where.column};
+}
+
+/// Reads @p text as a key or as literal text, leaving it as the key without its
+/// mark or as the text it stands for. True when it is a key.
+std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text, const TextPlace &where)
+{
+    // Nothing written is nothing to translate, and a template checked on its
+    // own leaves a parameter's text empty until an instance gives it one.
+    if (text.empty())
+    {
+        return false;
+    }
+    if (text.size() > 1 && text[0] == kKeyMark && text[1] == kKeyMark)
+    {
+        text.erase(0, 1);
+    }
+    else if (text[0] == kKeyMark)
+    {
+        std::string qualified = text.substr(1);
+        const std::optional<TableKey> split = SplitKey(qualified);
+        if (!split)
+        {
+            return std::unexpected(At(where, "'" + text + "' names no string table. Write the table before the key, " +
+                                                 "such as #pause:title. A # that is not a key is written ##."));
+        }
+        const std::unordered_map<std::string, StringTable>::const_iterator table =
+            walk.rules.tables.byName.find(std::string{split->table});
+        if (table == walk.rules.tables.byName.end())
+        {
+            return std::unexpected(At(where, "there is no string table '" + std::string{split->table} +
+                                                 "'. List its file in " + std::string{kUiConfigPath} + "."));
+        }
+        if (!table->second.entries.contains(std::string{split->key}))
+        {
+            return std::unexpected(At(where, "the string table '" + std::string{split->table} + "' has no key '" +
+                                                 std::string{split->key} + "'."));
+        }
+        text = std::move(qualified);
+        return true;
+    }
+    if (walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly)
+    {
+        return std::unexpected(At(where, "the " + std::string{where.slot} + " '" + text +
+                                             "' is written as it is, and this project requires text a player reads "
+                                             "to come from a string table. Write a key such as #pause:title, or mark "
+                                             "the screen debug_only=\"true\" if players never see it."));
+    }
+    return false;
+}
+
+/// Resolves node @p index's text and placeholder, each once, now that every
+/// attribute and parameter has settled what they say. @p textFrom and
+/// @p placeholderFrom are the elements that wrote each: the node's own, or the
+/// root of the template it is an instance of.
+std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, const MarkupElement &textFrom,
+                                                 const MarkupElement &placeholderFrom)
+{
+    ScreenNode &node = walk.document.nodes[index];
+    const std::expected<bool, MarkupError> text =
+        ResolveText(walk, node.text, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column});
+    if (!text)
+    {
+        return std::unexpected(text.error());
+    }
+    node.textIsKey = *text;
+
+    // At the attribute where one was written, and at the element otherwise.
+    TextPlace placeAt{.slot = "placeholder", .line = placeholderFrom.line, .column = placeholderFrom.column};
+    if (const MarkupAttribute *const written = placeholderFrom.Find("placeholder"); written != nullptr)
+    {
+        placeAt.line = written->line;
+        placeAt.column = written->column;
+    }
+    const std::expected<bool, MarkupError> placeholder = ResolveText(walk, node.placeholder, placeAt);
+    if (!placeholder)
+    {
+        return std::unexpected(placeholder.error());
+    }
+    node.placeholderIsKey = *placeholder;
+    return {};
+}
+
 /// The template names that can be written where the walk is: the file's own,
 /// or, inside a template's body, those of the file the template came from.
 const Namespace &Here(const Walk &walk)
@@ -606,6 +700,14 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     {
         return std::unexpected(required.error());
     }
+    // Once the template's text and the instance's have settled which wins, and
+    // pointing at whichever wrote it.
+    const MarkupElement &textFrom = instance.text.empty() ? root : instance;
+    const MarkupElement &placeholderFrom = overrides.Find("placeholder") != nullptr ? instance : root;
+    if (const std::expected<void, MarkupError> text = ResolveNodeText(walk, index, textFrom, placeholderFrom); !text)
+    {
+        return text;
+    }
     // After the template's, so an instance adds to what the template holds.
     return CompileChildren(walk, instance, index);
 }
@@ -680,6 +782,10 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
         !required)
     {
         return std::unexpected(required.error());
+    }
+    if (const std::expected<void, MarkupError> resolved = ResolveNodeText(walk, index, element, element); !resolved)
+    {
+        return resolved;
     }
     return CompileChildren(walk, element, index);
 }

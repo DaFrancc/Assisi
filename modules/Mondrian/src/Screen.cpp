@@ -236,6 +236,21 @@ void Screen::SetPlaceholder(TextFieldId field, std::string_view text)
     if (Node *node = _tree.Editable(field.node))
     {
         node->edit.placeholder = text;
+        node->edit.placeholderKey.clear();
+    }
+}
+
+void Screen::SetTextKey(NodeId id, std::string_view key)
+{
+    _tree.SetKeyedText(id, key, _ui.StringFor(key));
+}
+
+void Screen::SetPlaceholderKey(TextFieldId field, std::string_view key)
+{
+    if (Node *node = _tree.Editable(field.node))
+    {
+        node->edit.placeholder = _ui.StringFor(key);
+        node->edit.placeholderKey = key;
     }
 }
 

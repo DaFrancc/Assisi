@@ -16,9 +16,10 @@ Each element becomes one node. There are nine:
 | `scroll` | A container that scrolls its children instead of shrinking them | No | Yes |
 | `text_field` | A box the player types into; its text is what it starts with | Yes | No |
 
-Text goes between the tags: `<text>Paused</text>`. Text inside an element that
-doesn't hold text, such as a `<row>`, fails the cook. So does an element inside
-one that doesn't hold elements.
+Text goes between the tags: `<text>Paused</text>`. Text that starts with `#` is
+looked up in a string table instead (see [String tables](ui-string-tables.md)).
+Text inside an element that doesn't hold text, such as a `<row>`, fails the
+cook. So does an element inside one that doesn't hold elements.
 
 Any element can also have a `name` (see [Names](#names)) and `focus="true"` to
 take keyboard focus when the screen opens. Only one element per screen may have

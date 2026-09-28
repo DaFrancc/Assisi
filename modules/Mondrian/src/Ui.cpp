@@ -14,7 +14,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace Assisi::Mondrian
@@ -819,6 +821,46 @@ void Ui::Sync(Extent viewport)
         }
     }
     _drawList.Finalize();
+}
+
+void Ui::SetStringTables(const StringTables *tables)
+{
+    _tables = tables;
+    for (Screen *screen : _screens)
+    {
+        NodeTree &tree = screen->Tree();
+        for (uint32_t index = 0; index < tree.Slots().size(); ++index)
+        {
+            Node *const node = tree.Editable(tree.IdOf(index));
+            if (node == nullptr)
+            {
+                continue;
+            }
+            if (!node->textKey.empty())
+            {
+                node->text = StringFor(node->textKey);
+            }
+            if (!node->edit.placeholderKey.empty())
+            {
+                node->edit.placeholder = StringFor(node->edit.placeholderKey);
+            }
+        }
+    }
+}
+
+std::string Ui::StringFor(std::string_view qualified) const
+{
+    if (_tables != nullptr)
+    {
+        if (const std::optional<TableKey> split = SplitKey(qualified))
+        {
+            if (const std::string *const text = _tables->Find(split->table, split->key))
+            {
+                return *text;
+            }
+        }
+    }
+    return kKeyMark + std::string{qualified};
 }
 
 } // namespace Assisi::Mondrian

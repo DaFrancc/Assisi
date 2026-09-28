@@ -17,7 +17,7 @@ namespace Assisi::Mondrian::Import
 {
 
 std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root, const Core::EventCatalog &catalog,
-                                                         const SourceReader &read)
+                                                         const SourceReader &read, const TextRules &rules)
 {
     if (root.name == kTemplatesElement)
     {
@@ -45,9 +45,10 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     document.nodes.push_back(std::move(screenNode));
 
     TemplateFile screen;
-    Libraries libraries{.read = read, .catalog = catalog, .loaded = {}, .chain = {}};
+    Libraries libraries{.read = read, .catalog = catalog, .rules = rules, .loaded = {}, .chain = {}};
     Walk walk{.document = document,
               .catalog = catalog,
+              .rules = rules,
               .names = {},
               .targets = {},
               .scopes = {},
@@ -65,7 +66,10 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     {
         return std::unexpected(imported.error());
     }
-    if (const std::expected<void, MarkupError> checked = CheckTemplates(screen, root, catalog); !checked)
+    // After the screen's attributes, which say whether it is debug-only.
+    if (const std::expected<void, MarkupError> checked =
+            CheckTemplates(screen, root, catalog, rules, document.debugOnly);
+        !checked)
     {
         return std::unexpected(checked.error());
     }
@@ -90,7 +94,7 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
 
 std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string_view text,
                                                                      const Core::EventCatalog &catalog,
-                                                                     const SourceReader &read)
+                                                                     const SourceReader &read, const TextRules &rules)
 {
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     if (!parsed)
@@ -98,7 +102,7 @@ std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string
         return std::unexpected(parsed.error());
     }
 
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, read);
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, read, rules);
     if (!document)
     {
         return std::unexpected(document.error());

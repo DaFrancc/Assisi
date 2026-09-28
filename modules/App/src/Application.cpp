@@ -25,6 +25,10 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/SampleScreen.hpp>
+#include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/UiConfig.hpp>
+
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
@@ -335,6 +339,7 @@ bool Application::InitializePresentation()
         {
             _ui->SetFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
         }
+        LoadUiStrings();
 
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
@@ -1145,6 +1150,27 @@ void Application::RenderFrame()
     {
         (void)requestedCapture.Write(vulkanContext->GetDevice(), requestedPath);
     }
+}
+
+void Application::LoadUiStrings()
+{
+    // A project with no UI settings has no tables, which is not an error.
+    Mondrian::UiConfig settings;
+    if (const std::expected<void, Core::ConfigError> read = Core::ReadConfig(Mondrian::kUiConfigPath, settings); !read)
+    {
+        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables.", Mondrian::kUiConfigPath,
+                        Core::ToString(read.error()));
+        return;
+    }
+    std::expected<Mondrian::StringTables, Mondrian::StringTableLoadError> tables = Mondrian::LoadStringTables(settings);
+    if (!tables)
+    {
+        Core::Log::Error("UI: the string table '{}' did not load ({}); keyed text shows its key.", tables.error().vpath,
+                         Mondrian::ToString(tables.error().error));
+        return;
+    }
+    _uiStrings = std::move(*tables);
+    _ui->SetStringTables(&_uiStrings);
 }
 
 void Application::ConfigurePostProcess()

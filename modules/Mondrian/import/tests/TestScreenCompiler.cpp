@@ -785,7 +785,7 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
     // The two halves of the format, against each other: what the cooker writes
     // is what a shipped game reads.
     const std::expected<std::vector<std::byte>, MarkupError> bytes =
-        CompileScreenText(kPauseMenu, OneEvent(), NoFiles());
+        CompileScreenText(kPauseMenu, OneEvent(), NoFiles(), {});
     REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
@@ -801,7 +801,7 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     // issue adds: a write and a read that disagree by one field would shift
     // everything after it and still frame correctly.
     const std::expected<std::vector<std::byte>, MarkupError> bytes =
-        CompileScreenText(kEveryControl, OneEvent(), NoFiles());
+        CompileScreenText(kEveryControl, OneEvent(), NoFiles(), {});
     REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
@@ -861,9 +861,19 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     catalog.Register(
         {.name = "Assisi::App::QuitRequested", .push = [](EventQueue &events) { events.Push(QuitRequested{}); }});
 
+    // The table the shipped file's keys name, read in place like the file.
+    std::ifstream tableFile{ASSISI_PAUSE_TABLE_PATH};
+    REQUIRE(tableFile.is_open());
+    const std::string csv{std::istreambuf_iterator<char>{tableFile}, std::istreambuf_iterator<char>{}};
+    const std::expected<StringTable, MarkupError> table = CompileStringTable(csv, EmptyText::Refuse);
+    REQUIRE_MESSAGE(table.has_value(), Why(table));
+    TextRules rules;
+    rules.tables.byName["pause"] = *table;
+    rules.literals = LiteralText::RequiresKey;
+
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, NoFiles());
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, NoFiles(), rules);
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     // Everything the C++ builder this file replaced set, so a difference shows
@@ -890,18 +900,23 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     CHECK(panel.style.cornerStyle == CornerStyle::Rounded);
     CHECK(panel.style.direction == Direction::Column);
 
-    CHECK(NodeNamed(*document, "title").text == "Paused");
-    CHECK(NodeNamed(*document, "title").style.textSize == Px(48.f));
+    // Every word from the table, which RequiresKey above holds the file to.
+    const ScreenNode &title = NodeNamed(*document, "title");
+    CHECK(title.textIsKey);
+    CHECK(*rules.tables.Find("pause", "title") == "Paused");
+    CHECK(title.style.textSize == Px(48.f));
 
     const ScreenNode &resume = NodeNamed(*document, "resume");
-    CHECK(resume.text == "Resume");
+    CHECK(resume.textIsKey);
+    CHECK(*rules.tables.Find("pause", "resume") == "Resume");
     CHECK(resume.action == ActionKind::Verb);
     CHECK(resume.verb == ScreenVerb::Hide);
     CHECK(resume.style.textSize == Px(28.f));
     CHECK(resume.style.cornerRadius == Px(10.f));
 
     const ScreenNode &quit = NodeNamed(*document, "quit");
-    CHECK(quit.text == "Quit");
+    CHECK(quit.textIsKey);
+    CHECK(*rules.tables.Find("pause", "quit") == "Quit");
     CHECK(quit.action == ActionKind::Event);
     CHECK(quit.eventName == "Assisi::App::QuitRequested");
 
@@ -1135,7 +1150,7 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent(), NoFiles());
+    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, OneEvent(), NoFiles(), {});
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     EventQueue events;
@@ -1255,8 +1270,10 @@ TEST_CASE("ScreenCompiler: a file using templates cooks to the bytes its hand-ex
   </row>
 </screen>)amdn";
 
-    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent(), NoFiles());
-    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent(), NoFiles());
+    const std::expected<std::vector<std::byte>, MarkupError> one =
+        CompileScreenText(templated, OneEvent(), NoFiles(), {});
+    const std::expected<std::vector<std::byte>, MarkupError> other =
+        CompileScreenText(expanded, OneEvent(), NoFiles(), {});
     REQUIRE_MESSAGE(one.has_value(), Why(one));
     REQUIRE_MESSAGE(other.has_value(), Why(other));
     CHECK(*one == *other);
@@ -1594,8 +1611,10 @@ TEST_CASE("ScreenCompiler: a file using parameters cooks to the bytes its hand-e
   <button name="up" padding="12 4 12 4" on_click="step(volume, 1)">+</button>
 </screen>)amdn";
 
-    const std::expected<std::vector<std::byte>, MarkupError> one = CompileScreenText(templated, OneEvent(), NoFiles());
-    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(expanded, OneEvent(), NoFiles());
+    const std::expected<std::vector<std::byte>, MarkupError> one =
+        CompileScreenText(templated, OneEvent(), NoFiles(), {});
+    const std::expected<std::vector<std::byte>, MarkupError> other =
+        CompileScreenText(expanded, OneEvent(), NoFiles(), {});
     REQUIRE_MESSAGE(one.has_value(), Why(one));
     REQUIRE_MESSAGE(other.has_value(), Why(other));
     CHECK(*one == *other);
@@ -1685,8 +1704,146 @@ TEST_CASE("ScreenCompiler: an attribute using a required parameter is checked pe
 TEST_CASE("ScreenCompiler: a file that does not parse fails before it compiles")
 {
     const std::expected<std::vector<std::byte>, MarkupError> bytes =
-        CompileScreenText("<screen>\n  <column>\n</screen>\n", OneEvent(), NoFiles());
+        CompileScreenText("<screen>\n  <column>\n</screen>\n", OneEvent(), NoFiles(), {});
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().line == 3);
     CHECK(bytes.error().message.find("never closed") != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: text starting with # is a key into a table")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <text name="title">#pause:title</text>
+  <button name="resume" on_click="hide()">#pause:resume</button>
+  <text_field name="field" placeholder="#pause:hint">#pause:quit</text_field>
+  <text name="literal">Paused</text>
+</screen>)amdn",
+                                             {}, PauseTable());
+
+    const ScreenNode &title = NodeNamed(document, "title");
+    CHECK(title.textIsKey);
+    CHECK(title.text == "pause:title");
+    CHECK(NodeNamed(document, "resume").textIsKey);
+
+    const ScreenNode &field = NodeNamed(document, "field");
+    CHECK(field.textIsKey);
+    CHECK(field.placeholderIsKey);
+    CHECK(field.placeholder == "pause:hint");
+
+    const ScreenNode &literal = NodeNamed(document, "literal");
+    CHECK_FALSE(literal.textIsKey);
+    CHECK(literal.text == "Paused");
+}
+
+TEST_CASE("ScreenCompiler: ## writes a # and a # anywhere else is itself")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <text name="hash">##1 fan</text>
+  <text name="middle">Level #3</text>
+</screen>)amdn");
+
+    const ScreenNode &hash = NodeNamed(document, "hash");
+    CHECK_FALSE(hash.textIsKey);
+    CHECK(hash.text == "#1 fan");
+
+    const ScreenNode &middle = NodeNamed(document, "middle");
+    CHECK_FALSE(middle.textIsKey);
+    CHECK(middle.text == "Level #3");
+}
+
+TEST_CASE("ScreenCompiler: a key that names nothing is refused where it is written")
+{
+    SUBCASE("no table before the key")
+    {
+        const MarkupError error = Refused("<screen>\n  <text>#title</text>\n</screen>\n", {}, PauseTable());
+        CHECK(error.line == 2);
+        CHECK(error.message.find("#pause:title") != std::string::npos);
+    }
+    SUBCASE("a table the project does not list")
+    {
+        const MarkupError error = Refused("<screen>\n  <text>#quests:title</text>\n</screen>\n", {}, PauseTable());
+        CHECK(error.line == 2);
+        CHECK(error.message.find("quests") != std::string::npos);
+        CHECK(error.message.find("config/ui.json") != std::string::npos);
+    }
+    SUBCASE("a key the table does not have")
+    {
+        const MarkupError error = Refused("<screen>\n  <text>#pause:missing</text>\n</screen>\n", {}, PauseTable());
+        CHECK(error.line == 2);
+        CHECK(error.message.find("missing") != std::string::npos);
+    }
+    SUBCASE("a placeholder's key is checked too")
+    {
+        const MarkupError error =
+            Refused("<screen>\n  <text_field placeholder=\"#pause:missing\" />\n</screen>\n", {}, PauseTable());
+        CHECK(error.line == 2);
+    }
+}
+
+TEST_CASE("ScreenCompiler: when keys are required, literal text a player reads is refused")
+{
+    const TextRules strict = PauseTable(LiteralText::RequiresKey);
+
+    CHECK(Refused("<screen>\n  <text>Paused</text>\n</screen>\n", {}, strict).line == 2);
+    CHECK(Refused("<screen>\n  <button on_click=\"hide()\">Resume</button>\n</screen>\n", {}, strict).line == 2);
+    CHECK(Refused("<screen>\n  <text_field>start</text_field>\n</screen>\n", {}, strict).line == 2);
+    CHECK(Refused("<screen>\n  <text_field placeholder=\"Name\" />\n</screen>\n", {}, strict).line == 2);
+    // No letters is no exemption: digits and signs differ between languages too.
+    CHECK(Refused("<screen>\n  <text>100%</text>\n</screen>\n", {}, strict).line == 2);
+
+    // Nothing written is nothing to translate.
+    CHECK(Compiled("<screen>\n  <text />\n  <text_field />\n</screen>\n", {}, strict).nodes.size() == 3);
+    CHECK(Compiled("<screen>\n  <text>#pause:title</text>\n</screen>\n", {}, strict).nodes.size() == 2);
+}
+
+TEST_CASE("ScreenCompiler: a debug-only screen may write text as it is")
+{
+    const TextRules strict = PauseTable(LiteralText::RequiresKey);
+    const ScreenDocument document =
+        Compiled("<screen debug_only=\"true\">\n  <text>frame time</text>\n</screen>\n", {}, strict);
+    CHECK(document.debugOnly);
+    CHECK_FALSE(Compiled("<screen>\n</screen>\n").debugOnly);
+}
+
+TEST_CASE("ScreenCompiler: a key passed to a template is a key where the template uses it")
+{
+    constexpr std::string_view kLabelled = R"amdn(<screen>
+  <labelled name="resume" label="#pause:resume" />
+  <template name="labelled" params="label">
+    <button on_click="hide()">@label</button>
+  </template>
+</screen>)amdn";
+    // Required keys, and the template itself holds no literal: checked on its
+    // own, @label has no value, and that is not literal text.
+    const ScreenDocument document = Compiled(kLabelled, {}, PauseTable(LiteralText::RequiresKey));
+    const ScreenNode &resume = NodeNamed(document, "resume");
+    CHECK(resume.textIsKey);
+    CHECK(resume.text == "pause:resume");
+}
+
+TEST_CASE("ScreenCompiler: a template library's literal text has no screen to exempt it")
+{
+    const Files files{{"ui/Debug.amdt", "<templates>\n  <template name=\"label\">\n    <text>fps</text>\n"
+                                        "  </template>\n</templates>\n"}};
+    const std::expected<void, MarkupError> checked =
+        CheckLibrary("ui/Debug.amdt", OneEvent(), Serving(files), PauseTable(LiteralText::RequiresKey));
+    REQUIRE_FALSE(checked.has_value());
+    CHECK(checked.error().file == "ui/Debug.amdt");
+    CHECK(checked.error().line == 3);
+}
+
+TEST_CASE("ScreenCompiler: keys and debug_only survive the round trip")
+{
+    const std::expected<std::vector<std::byte>, MarkupError> bytes = CompileScreenText(
+        "<screen debug_only=\"true\">\n  <text_field name=\"field\" placeholder=\"#pause:hint\">#pause:quit"
+        "</text_field>\n</screen>\n",
+        OneEvent(), NoFiles(), PauseTable());
+    REQUIRE_MESSAGE(bytes.has_value(), Why(bytes));
+
+    const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(*bytes);
+    REQUIRE(read.has_value());
+    CHECK(read->debugOnly);
+    const ScreenNode &field = NodeNamed(*read, "field");
+    CHECK(field.textIsKey);
+    CHECK(field.placeholderIsKey);
 }

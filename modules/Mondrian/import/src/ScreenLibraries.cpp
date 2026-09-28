@@ -87,7 +87,11 @@ std::expected<const TemplateFile *, MarkupError> BuildLibrary(Libraries &librari
     {
         return std::unexpected(InFile(std::move(imported.error()), vpath));
     }
-    if (std::expected<void, MarkupError> checked = CheckTemplates(library.templates, root, libraries.catalog); !checked)
+    // A library belongs to no screen, so none of its text is a debug-only
+    // screen's.
+    if (std::expected<void, MarkupError> checked =
+            CheckTemplates(library.templates, root, libraries.catalog, libraries.rules, false);
+        !checked)
     {
         return std::unexpected(InFile(std::move(checked.error()), vpath));
     }
@@ -289,7 +293,7 @@ std::expected<void, MarkupError> ApplyImports(TemplateFile &into, Libraries &lib
 }
 
 std::expected<void, MarkupError> CheckLibrary(std::string_view vpath, const Core::EventCatalog &catalog,
-                                              const SourceReader &read)
+                                              const SourceReader &read, const TextRules &rules)
 {
     const std::expected<std::string, std::string> text = read(vpath);
     if (!text)
@@ -297,7 +301,7 @@ std::expected<void, MarkupError> CheckLibrary(std::string_view vpath, const Core
         return std::unexpected(MarkupError{
             .message = "could not be read: " + text.error(), .file = std::string{vpath}, .line = 1, .column = 1});
     }
-    Libraries libraries{.read = read, .catalog = catalog, .loaded = {}, .chain = {std::string{vpath}}};
+    Libraries libraries{.read = read, .catalog = catalog, .rules = rules, .loaded = {}, .chain = {std::string{vpath}}};
     const std::expected<const TemplateFile *, MarkupError> built = BuildLibrary(libraries, vpath, *text);
     if (!built)
     {

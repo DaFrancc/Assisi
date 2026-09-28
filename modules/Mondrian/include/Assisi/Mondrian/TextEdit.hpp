@@ -146,6 +146,9 @@ struct TextEdit
     /// example of it. Never part of the text, so it is not returned, not
     /// selected, and not carried to the clipboard.
     std::string placeholder;
+    /// The string table key the placeholder came from, so new tables can
+    /// rewrite it; empty when the placeholder is the field's own.
+    std::string placeholderKey;
     /// What the text must look like to be acceptable; null for no pattern,
     /// which is a field that accepts anything. Shared, because a pattern is
     /// read-only once compiled and several fields may want the same one.

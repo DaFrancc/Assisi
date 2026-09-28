@@ -8,6 +8,7 @@
 /// Internal to the import library.
 
 #include <Assisi/Mondrian/Import/Markup.hpp>
+#include <Assisi/Mondrian/Import/TextRules.hpp>
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
@@ -159,6 +160,8 @@ struct Walk
 {
     ScreenDocument &document;
     const Core::EventCatalog &catalog;
+    /// What a node's text is checked against.
+    const TextRules &rules;
     /// Every node name written so far, so a second node carrying one is
     /// refused with the first's place in hand, and a target can be resolved.
     std::unordered_map<std::string, NamedNode> names;
@@ -242,7 +245,11 @@ struct Substituted
 /// unnamed instance of it stood where it is declared, so a mistake in one
 /// nothing uses still fails the cook. What it builds is thrown away. @p root is
 /// the file's parsed root, walked for the order the file declares them in.
+///
+/// @p debugOnly is whether the file is a debug-only screen, whose literal text
+/// @p rules do not refuse; a library is never one.
 [[nodiscard]] std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const MarkupElement &root,
-                                                              const Core::EventCatalog &catalog);
+                                                              const Core::EventCatalog &catalog, const TextRules &rules,
+                                                              bool debugOnly);
 
 } // namespace Assisi::Mondrian::Import

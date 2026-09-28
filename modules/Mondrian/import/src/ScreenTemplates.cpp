@@ -201,7 +201,8 @@ std::expected<void, MarkupError> CollectTemplates(TemplateFile &into, const Mark
 }
 
 std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const MarkupElement &root,
-                                                const Core::EventCatalog &catalog)
+                                                const Core::EventCatalog &catalog, const TextRules &rules,
+                                                bool debugOnly)
 {
     for (const MarkupElement &declaration : root.children)
     {
@@ -220,8 +221,10 @@ std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const 
 
         ScreenDocument scratch;
         scratch.nodes.emplace_back();
+        scratch.debugOnly = debugOnly;
         Walk check{.document = scratch,
                    .catalog = catalog,
+                   .rules = rules,
                    .names = {},
                    .targets = {},
                    .scopes = {},

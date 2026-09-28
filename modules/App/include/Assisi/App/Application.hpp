@@ -379,6 +379,10 @@ class Application
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
+    /// Loads every string table the UI settings list and hands them to the UI.
+    /// A game whose tables do not load still runs, showing keys where the text
+    /// would be.
+    void LoadUiStrings();
     /// Puts the window in the menu mode while a screen is taking input, and
     /// takes it out again when none is.
     ///
@@ -402,9 +406,10 @@ class Application
     std::unique_ptr<Window::InputContext> _input;
     Window::ActionMap _actions;
 
-    /// The UI's font. Declared before the UI, which points at it, so it is
-    /// destroyed after.
+    /// The UI's font and string tables. Declared before the UI, which points at
+    /// them, so they are destroyed after.
     Mondrian::Font _uiFont;
+    Mondrian::StringTables _uiStrings;
 
     /// The game UI and the pass that draws it. Created with the window, so a
     /// headless process has neither. Driven by Run, not by the ECS: it has to

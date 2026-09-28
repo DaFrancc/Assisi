@@ -38,8 +38,10 @@ set_target_properties(Assisi-FontImport-Tests PROPERTIES FOLDER "tests")
 add_executable(Assisi-MondrianImport-Tests
   main.cpp
   ScreenTesting.hpp
+  TestCsv.cpp
   TestMarkup.cpp
   TestScreenCompiler.cpp
+  TestStringTables.cpp
   TestTemplateLibraries.cpp
 )
 
@@ -47,6 +49,11 @@ Assisi_apply_test_defaults(Assisi-MondrianImport-Tests)
 
 target_include_directories(Assisi-MondrianImport-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"
+)
+
+# UiConfig's registration, which reading the UI settings looks the type up by.
+target_sources(Assisi-MondrianImport-Tests PRIVATE
+  $<TARGET_OBJECTS:Assisi-Mondrian-Generated>
 )
 
 target_link_libraries(Assisi-MondrianImport-Tests
@@ -60,6 +67,7 @@ target_link_libraries(Assisi-MondrianImport-Tests
 # which no test runs.
 target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
   ASSISI_PAUSE_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Pause.amdn"
+  ASSISI_PAUSE_TABLE_PATH="${CMAKE_SOURCE_DIR}/assets/ui/pause.csv"
   ASSISI_CONTROLS_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Controls.amdn"
 )
 

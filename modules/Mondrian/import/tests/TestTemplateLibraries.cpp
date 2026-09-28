@@ -79,8 +79,9 @@ TEST_CASE("Template libraries: an imported template cooks to the bytes a local o
   </template>)amdn");
 
     const std::expected<std::vector<std::byte>, MarkupError> one =
-        CompileScreenText(imported, OneEvent(), Serving(ControlsOnly()));
-    const std::expected<std::vector<std::byte>, MarkupError> other = CompileScreenText(local, OneEvent(), NoFiles());
+        CompileScreenText(imported, OneEvent(), Serving(ControlsOnly()), {});
+    const std::expected<std::vector<std::byte>, MarkupError> other =
+        CompileScreenText(local, OneEvent(), NoFiles(), {});
     REQUIRE_MESSAGE(one.has_value(), Why(one));
     REQUIRE_MESSAGE(other.has_value(), Why(other));
     CHECK(*one == *other);
@@ -292,21 +293,21 @@ TEST_CASE("Template libraries: a library may not import itself, however far down
     // And a library checked on its own is on the chain from the start.
     const Files self{{"ui/Self.amdt", "<templates>\n  <import path=\"ui/Self.amdt\" />\n"
                                       "  <template name=\"s\"><row /></template>\n</templates>\n"}};
-    const std::expected<void, MarkupError> checked = CheckLibrary("ui/Self.amdt", OneEvent(), Serving(self));
+    const std::expected<void, MarkupError> checked = CheckLibrary("ui/Self.amdt", OneEvent(), Serving(self), {});
     REQUIRE_FALSE(checked.has_value());
     CHECK(checked.error().line == 2);
 }
 
 TEST_CASE("Template libraries: a library is checked whole on its own")
 {
-    CHECK(CheckLibrary(kControlsPath, OneEvent(), Serving(ControlsOnly())).has_value());
+    CHECK(CheckLibrary(kControlsPath, OneEvent(), Serving(ControlsOnly()), {}).has_value());
 
     const Files empty{{"ui/Empty.amdt", "<templates>\n</templates>\n"}};
-    CHECK_FALSE(CheckLibrary("ui/Empty.amdt", OneEvent(), Serving(empty)).has_value());
+    CHECK_FALSE(CheckLibrary("ui/Empty.amdt", OneEvent(), Serving(empty), {}).has_value());
 
     const Files broken{{"ui/Broken.amdt", "<templates>\n  <template name=\"t\">\n    <button colour=\"#ff0000\" />\n"
                                           "  </template>\n</templates>\n"}};
-    const std::expected<void, MarkupError> checked = CheckLibrary("ui/Broken.amdt", OneEvent(), Serving(broken));
+    const std::expected<void, MarkupError> checked = CheckLibrary("ui/Broken.amdt", OneEvent(), Serving(broken), {});
     REQUIRE_FALSE(checked.has_value());
     CHECK(checked.error().file == "ui/Broken.amdt");
     CHECK(checked.error().line == 3);

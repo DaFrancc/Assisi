@@ -117,7 +117,8 @@ struct ScreenNode
     /// What Screen::Find looks this node up by. Empty for an unnamed node.
     std::string name;
 
-    /// Text content: a text node's words, a button's label.
+    /// Text content: a text node's words, a button's label. A key into a string
+    /// table, `table:key`, when textIsKey.
     std::string text;
 
     /// The named style this node asks for, or empty. Carried and not resolved:
@@ -128,7 +129,7 @@ struct ScreenNode
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     std::string eventName;
 
-    /// What a field shows while it holds nothing.
+    /// What a field shows while it holds nothing. A key when placeholderIsKey.
     std::string placeholder;
 
     /// The expression a field's text must match, or empty for no rule. The
@@ -193,6 +194,11 @@ struct ScreenNode
     /// Plain text a player may select and copy.
     bool selectable = false;
 
+    /// Whether text and placeholder are keys into a string table, looked up
+    /// where the screen is built and again whenever the tables change.
+    bool textIsKey = false;
+    bool placeholderIsKey = false;
+
     [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
 };
 
@@ -215,6 +221,10 @@ struct ScreenDocument
     int32_t sortKey = kSortMenu;
 
     ScreenTraits traits;
+
+    /// Whether players never see this screen, which exempts its text from a
+    /// project's requirement that text come from string tables.
+    bool debugOnly = false;
 
     [[nodiscard]] friend bool operator==(const ScreenDocument &, const ScreenDocument &) = default;
 };
