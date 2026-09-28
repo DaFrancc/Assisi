@@ -2030,7 +2030,7 @@ class ContainerFieldTest(unittest.TestCase):
 
     def test_a_std_string_element_is_refused_with_the_alternative_named(self):
         self._assert_refused("AFIELD() std::vector<std::string> names;",
-                             "use Core::ShortString")
+                             "use Core::InternedString")
 
     def test_an_unsupported_element_type_is_refused(self):
         self._assert_refused("AFIELD() std::vector<glm::vec3> points;",
@@ -2043,6 +2043,65 @@ class ContainerFieldTest(unittest.TestCase):
         cpp = self._generate("AFIELD() std::vector<Assisi::Core::AssetId> overrides;")
         self.assertIn(".type = Assisi::Core::Reflect::FieldType::AssetIdVector", cpp)
         self.assertNotIn("ContainerSpecFor<decltype(T::overrides)>", cpp)
+
+
+class StringFieldTest(unittest.TestCase):
+    """The string types: each has its field type and its JSON helper, and a
+    PooledString is refused unless its struct holds exactly one pool to index."""
+
+    def _generate(self, fields: str) -> str:
+        components = _parse_source("namespace N {\nACOMP()\nstruct C { " + fields + " };\n}\n")
+        return reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def _assert_refused(self, fields: str, expected_text: str):
+        components = _parse_source("namespace N {\nACOMP()\nstruct C { " + fields + " };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn(expected_text, str(caught.exception))
+
+    def test_an_interned_string_is_written_as_its_text(self):
+        cpp = self._generate("AFIELD() Core::InternedString style;")
+        self.assertIn('"style", .type = Assisi::Core::Reflect::FieldType::InternedString', cpp)
+        self.assertIn("std::string(c.style.View())", cpp)
+        self.assertIn('ReadInternedString(j, _comp, "style", comp.style)', cpp)
+        self.assertIn("#include <Assisi/Core/Reflect/StringJson.hpp>", cpp)
+
+    def test_a_displayed_string_is_written_as_its_source(self):
+        cpp = self._generate("AFIELD() Assisi::Core::DisplayedString label;")
+        self.assertIn('"label", .type = Assisi::Core::Reflect::FieldType::DisplayedString', cpp)
+        self.assertIn("c.label.Source()", cpp)
+        self.assertIn('ReadDisplayedString(j, _comp, "label", comp.label)', cpp)
+
+    def test_a_pooled_string_beside_one_pool_generates(self):
+        cpp = self._generate("AFIELD() Core::StringPool pool; AFIELD() Core::PooledString title;")
+        self.assertIn('"title", .type = Assisi::Core::Reflect::FieldType::PooledString', cpp)
+        self.assertIn('"pool", .type = Assisi::Core::Reflect::FieldType::StringPool', cpp)
+        self.assertIn("PooledStringToJson(c.title)", cpp)
+        self.assertIn('ReadStringPool(j, _comp, "pool", comp.pool)', cpp)
+
+    def test_a_list_of_pooled_strings_beside_one_pool_generates(self):
+        cpp = self._generate("AFIELD() Core::StringPool pool; AFIELD() std::vector<Core::PooledString> rows;")
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::rows)>()", cpp)
+
+    def test_a_pooled_string_with_no_pool_is_refused(self):
+        self._assert_refused("AFIELD() Core::PooledString title;", "exactly one Core::StringPool")
+
+    def test_a_list_of_pooled_strings_with_no_pool_is_refused(self):
+        self._assert_refused("AFIELD() std::vector<Core::PooledString> rows;", "exactly one Core::StringPool")
+
+    def test_a_pooled_string_with_two_pools_is_refused(self):
+        self._assert_refused(
+            "AFIELD() Core::StringPool a; AFIELD() Core::StringPool b; AFIELD() Core::PooledString title;",
+            "it holds 'a', 'b'")
+
+    def test_a_list_of_pools_is_refused(self):
+        self._assert_refused("AFIELD() std::vector<Core::StringPool> pools;", "holds elements of type")
+
+    def test_an_interned_string_cannot_key_a_map(self):
+        # Its only cheap order is its index, which differs between runs, so a map
+        # keyed by one would encode differently every time.
+        self._assert_refused("AFIELD() std::map<Core::InternedString, int32_t> counts;",
+                             "which cannot key a reflected map")
 
 
 class IncludePathTest(unittest.TestCase):

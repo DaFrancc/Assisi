@@ -8,13 +8,20 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 
 #include <cstring>
+#include <limits>
+#include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/DisplayedString.hpp>
+#include <Assisi/Core/InternedString.hpp>
+#include <Assisi/Core/StringPool.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -164,6 +171,52 @@ bool ReadElementCount(BitReader &reader, std::size_t minElementBits, std::size_t
     }
     out = static_cast<std::size_t>(count);
     return true;
+}
+
+/// One PooledString's offset and length, or nothing when either does not fit 32
+/// bits, which only a stream disagreeing with its writer can produce. Whether the
+/// handle lies inside its pool is StringPool::View's check, since the pool may
+/// decode after the handle.
+std::optional<PooledString> ReadPooledHandle(BitReader &reader)
+{
+    const std::uint64_t offset = reader.ReadVarUInt64();
+    const std::uint64_t length = reader.ReadVarUInt64();
+    if (reader.Failed())
+    {
+        return std::nullopt;
+    }
+    if (offset > std::numeric_limits<std::uint32_t>::max() || length > std::numeric_limits<std::uint32_t>::max())
+    {
+        reader.Invalidate();
+        return std::nullopt;
+    }
+    return PooledString{.offset = static_cast<std::uint32_t>(offset), .length = static_cast<std::uint32_t>(length)};
+}
+
+/// A pool's bytes. The count is checked against kMaxPoolBytes and against the
+/// bytes actually left before anything is allocated, as ReadElementCount does for
+/// a list — whose element cap is far too small for a pool to share.
+void ReadPoolBytes(BitReader &reader, StringPool &out)
+{
+    /// Bits in one byte of pool text.
+    static constexpr std::size_t kBitsPerByte = 8;
+
+    const std::uint64_t count = reader.ReadVarUInt64();
+    if (reader.Failed())
+    {
+        return;
+    }
+    if (count > kMaxPoolBytes || count * kBitsPerByte > reader.BitsRemaining())
+    {
+        reader.Invalidate();
+        return;
+    }
+    std::string bytes(static_cast<std::size_t>(count), '\0');
+    reader.ReadBytes(std::as_writable_bytes(std::span{bytes.data(), bytes.size()}));
+    if (reader.Ok())
+    {
+        (void)out.Assign(bytes);
+    }
 }
 
 std::uint64_t ApplyRemap(const std::function<std::uint64_t(std::uint64_t)> &hook, std::uint64_t value)
@@ -438,6 +491,27 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::EntityName:
         writer.WriteString(reinterpret_cast<const EntityName *>(address)->View());
         return true;
+    case FieldType::InternedString:
+        // The text, never the index: indices are numbered per run.
+        writer.WriteString(reinterpret_cast<const InternedString *>(address)->View());
+        return true;
+    case FieldType::DisplayedString:
+        writer.WriteString(reinterpret_cast<const DisplayedString *>(address)->Source());
+        return true;
+    case FieldType::PooledString:
+    {
+        const PooledString handle = LoadPod<PooledString>(address);
+        writer.WriteVarUInt64(handle.offset);
+        writer.WriteVarUInt64(handle.length);
+        return true;
+    }
+    case FieldType::StringPool:
+    {
+        const std::string_view bytes = reinterpret_cast<const StringPool *>(address)->Bytes();
+        writer.WriteVarUInt64(bytes.size());
+        writer.WriteBytes(std::as_bytes(std::span{bytes.data(), bytes.size()}));
+        return true;
+    }
     case FieldType::EntityRef:
     {
         // The raw handle, optionally translated by the caller's hook. The codec
@@ -584,6 +658,36 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     case FieldType::EntityName:
         ReadTrivialString(reader, *reinterpret_cast<EntityName *>(address));
         return true;
+    case FieldType::InternedString:
+    {
+        const std::string text = reader.ReadString();
+        if (reader.Ok())
+        {
+            *reinterpret_cast<InternedString *>(address) = InternedString{text};
+        }
+        return true;
+    }
+    case FieldType::DisplayedString:
+    {
+        const std::string source = reader.ReadString();
+        if (reader.Ok())
+        {
+            *reinterpret_cast<DisplayedString *>(address) = DisplayedString::FromSource(source);
+        }
+        return true;
+    }
+    case FieldType::PooledString:
+    {
+        const std::optional<PooledString> handle = ReadPooledHandle(reader);
+        if (handle)
+        {
+            StorePod(address, *handle);
+        }
+        return true;
+    }
+    case FieldType::StringPool:
+        ReadPoolBytes(reader, *reinterpret_cast<StringPool *>(address));
+        return true;
     case FieldType::EntityRef:
     {
         const std::uint64_t wire = reader.ReadBits64(kEntityRefBits);
@@ -708,6 +812,12 @@ const char *FieldTypeName(FieldType type)
     // Distinct from "str": same bytes on the wire, different buffer capacity, so
     // a build that swapped one for the other would truncate rather than fail.
     case FieldType::EntityName: return "ename";
+    // Each distinct from "str" and from each other: a field retyped between any
+    // two of them is a change two builds must agree on.
+    case FieldType::InternedString: return "iname";
+    case FieldType::DisplayedString: return "dtext";
+    case FieldType::PooledString: return "pstr";
+    case FieldType::StringPool: return "spool";
     // Bare, because a container's real spelling carries its key and element and
     // is built by AppendContainerTypeName. Reaching these means a container field
     // arrived without a shape, which is a reflection bug.

@@ -23,6 +23,7 @@ add_executable(Assisi-ECS-Tests
   TestScene.cpp
   TestChangeDetection.cpp
   TestReflectHooks.cpp
+  TestStringFields.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-ECS-Tests)

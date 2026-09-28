@@ -25,7 +25,7 @@ from typing import NamedTuple, Optional
 
 import reflect_events
 from reflect_parser import FieldInfo, ComponentInfo, MessageInfo, MAX_CONTAINER_DEPTH
-from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
+from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES, STRING_JSON_FIELD_TYPES,
                            _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
 
 
@@ -810,6 +810,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     _check_no_instance_views(messages, include_path)
     _check_unsupported(components, include_path)
     _check_unsupported(messages, include_path)
+    _check_string_pools([*components, *messages], include_path)
     _check_asset_fields(components, include_path)
     _check_replication(components, include_path)
     _check_messages(messages, include_path)
@@ -844,6 +845,16 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         if not comp.args.has('transient')
         for f in comp.fields
         if not f.args.has('transient')
+    )
+
+    # The string types read through the Reflect::StringJson helpers. A container
+    # of one reaches them through ContainerJson.hpp, which includes them itself.
+    has_string_types = any(
+        _string_type_of(f) is not None
+        for comp in [*components, *messages]
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient') and f.container is None
     )
 
     # Enum fields (de)serialize through a std::int64_t cast, which needs <cstdint>.
@@ -908,6 +919,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
         includes.append('#include <Assisi/Core/Reflect/ComponentMaskJson.hpp>')
+    if has_string_types:
+        includes.append('#include <Assisi/Core/Reflect/StringJson.hpp>')
     if has_containers:
         includes.append('#include <Assisi/Core/Reflect/ContainerJson.hpp>')
         includes.append('#include <Assisi/Core/Reflect/ContainerOps.hpp>')
@@ -1159,6 +1172,7 @@ def _check_no_instance_views(components: list[ComponentInfo], header_name: str) 
 _CONTAINER_LEAF_TYPES = {
     'Float', 'Double', 'Int8', 'UInt8', 'Int16', 'UInt16',
     'Int32', 'UInt32', 'Int64', 'UInt64', 'Bool', 'String', 'EntityName',
+    'InternedString', 'DisplayedString', 'PooledString',
 }
 
 # What may key a map. Narrower than the leaf set: a JSON object's keys are text,
@@ -1223,7 +1237,42 @@ def _check_container(f, owner: str, header_name: str) -> None:
         raise ValueError(
             f"{where} holds elements of type '{leaf}' ({reason}). A reflected "
             f"container holds integers, floats, bool, Core::ShortString, "
-            f"Core::EntityName, an AENUM enum, or one container of those.")
+            f"Core::EntityName, Core::InternedString, Core::DisplayedString, "
+            f"Core::PooledString, an AENUM enum, or one container of those.")
+
+
+def _string_type_of(f) -> Optional[str]:
+    """The string FieldType a field is, or holds at its leaf, or None."""
+    spelling = f.container.leaf if f.container is not None else f.cpp_type
+    tc = _element_tc(spelling)
+    if tc is not None and tc.enum_value in STRING_JSON_FIELD_TYPES:
+        return tc.enum_value
+    return None
+
+
+def _check_string_pools(owners: list, header_name: str) -> None:
+    """Refuses a struct whose PooledStrings have no one pool to index.
+
+    A PooledString is an offset and a length into its struct's StringPool, and
+    nothing on the handle says which pool that is. So a struct holding any —
+    alone or in a container — holds exactly one StringPool: with none the numbers
+    index nothing, and with two nothing says which they index.
+    """
+    for owner in owners:
+        if owner.args.has('transient'):
+            continue
+        fields = [f for f in owner.fields if not f.args.has('transient')]
+        pooled = [f for f in fields if _string_type_of(f) == 'PooledString']
+        if not pooled:
+            continue
+        pools = [f.name for f in fields if f.container is None and _string_type_of(f) == 'StringPool']
+        if len(pools) == 1:
+            continue
+        found = 'none' if not pools else ', '.join(f"'{name}'" for name in pools)
+        raise ValueError(
+            f"{header_name}: '{owner.name}' holds the PooledString field "
+            f"'{pooled[0].name}', so it must hold exactly one Core::StringPool for its "
+            f"handles to index, and it holds {found}.")
 
 
 # The inline-string capacities TYPES has a FieldType for. The binary codec reads

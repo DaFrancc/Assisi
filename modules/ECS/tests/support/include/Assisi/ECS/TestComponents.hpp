@@ -11,6 +11,12 @@
 
 #include <Assisi/Prelude.hpp>
 
+#include <Assisi/Core/DisplayedString.hpp>
+#include <Assisi/Core/InternedString.hpp>
+#include <Assisi/Core/StringPool.hpp>
+
+#include <vector>
+
 namespace Assisi::ECS
 {
 
@@ -46,6 +52,18 @@ struct Tracked
 ACOMP(transient)
 struct TransientTag
 {
+};
+
+/// @brief One of each reflected string type, so the generated JSON and the
+/// binary codec are exercised through the code reflectgen actually writes.
+ACOMP()
+struct Captions
+{
+    AFIELD() Core::StringPool pool;
+    AFIELD() std::vector<Core::PooledString> rows;
+    AFIELD() Core::DisplayedString label;
+    AFIELD() Core::InternedString style;
+    AFIELD() Core::PooledString title;
 };
 
 } // namespace Assisi::ECS

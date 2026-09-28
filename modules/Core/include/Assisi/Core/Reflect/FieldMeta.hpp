@@ -79,6 +79,21 @@ enum class FieldType : std::uint8_t
     /// than as light. Appended rather than inserted, so no existing value shifts.
     SrgbColor3,
     SrgbColor4,
+    /// Core::InternedString — encoded as its text in every codec, never as its
+    /// index, which is numbered per run. Appended rather than inserted, so no
+    /// existing value shifts.
+    InternedString,
+    /// Core::DisplayedString — encoded as its written form, `#table:key` or
+    /// literal text. Appended rather than inserted, so no existing value shifts.
+    DisplayedString,
+    /// Core::PooledString — encoded as its offset and length. It means nothing
+    /// without the one StringPool field its struct also holds, which encodes the
+    /// bytes those numbers index. Appended rather than inserted, so no existing
+    /// value shifts.
+    PooledString,
+    /// Core::StringPool — encoded as its whole buffer. Appended rather than
+    /// inserted, so no existing value shifts.
+    StringPool,
     /// Number of field types, for a table indexed by FieldType.
     ///
     /// Safe to move, unlike every enumerator above it: nothing serializes this and

@@ -20,10 +20,13 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/DisplayedString.hpp>
+#include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Core/StringPool.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
@@ -109,6 +112,43 @@ std::int64_t ReadEnumValue(const void *fp, std::uint8_t size, bool signed_)
     default:
         return 0;
     }
+}
+
+/// Grows @p data's std::string as ImGui types past its capacity. The return type
+/// is ImGui's callback signature.
+int ResizeString(ImGuiInputTextCallbackData *data)
+{
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
+    {
+        std::string *text = static_cast<std::string *>(data->UserData);
+        text->resize(static_cast<std::size_t>(data->BufTextLen));
+        data->Buf = text->data();
+    }
+    return 0;
+}
+
+/// @brief A text box over a std::string of any length, for the string types
+/// that have no fixed capacity to size a buffer by.
+bool InputString(const char *label, std::string &text)
+{
+    // capacity() + 1: a std::string always has room for its terminator past its
+    // capacity, which is the buffer size ImGui is told.
+    return ImGui::InputText(label, text.data(), text.capacity() + 1, ImGuiInputTextFlags_CallbackResize,
+                            &ResizeString, &text);
+}
+
+/// @brief The one StringPool field of the component at @p component, or null
+/// when it has none. reflectgen refuses a PooledString without exactly one.
+Assisi::Core::StringPool *FindStringPool(void *component, const Assisi::Core::Reflect::ComponentMeta &meta)
+{
+    for (const Assisi::Core::Reflect::FieldMeta &field : meta.fields)
+    {
+        if (field.type == Assisi::Core::Reflect::FieldType::StringPool)
+        {
+            return reinterpret_cast<Assisi::Core::StringPool *>(static_cast<std::byte *>(component) + field.offset);
+        }
+    }
+    return nullptr;
 }
 
 /// @brief Write @p value into a reflected enum at @p fp at its underlying width.
@@ -408,6 +448,51 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
             name->Assign(buf);
             edited = true;
         }
+        break;
+    }
+    case FieldType::InternedString:
+    {
+        // Every edit interns the text typed so far. The table only grows, but
+        // what a person types into one box is a handful of names.
+        Assisi::Core::InternedString *name = static_cast<Assisi::Core::InternedString *>(fp);
+        std::string text{name->View()};
+        if (InputString(field.name.c_str(), text))
+        {
+            *name  = Assisi::Core::InternedString{text};
+            edited = true;
+        }
+        break;
+    }
+    case FieldType::DisplayedString:
+    {
+        // Edited in its written form, `#table:key` or literal text, with the
+        // words a player would see beneath a key.
+        Assisi::Core::DisplayedString *words = static_cast<Assisi::Core::DisplayedString *>(fp);
+        std::string source = words->Source();
+        if (InputString(field.name.c_str(), source))
+        {
+            *words = Assisi::Core::DisplayedString::FromSource(source);
+            edited = true;
+        }
+        if (words->Key().has_value())
+        {
+            ImGui::TextDisabled("%s", words->Resolve().c_str());
+        }
+        break;
+    }
+    case FieldType::PooledString:
+    {
+        // Reached only without the owning component, so without its pool: the
+        // handle is all there is to show.
+        const Assisi::Core::PooledString *handle = static_cast<const Assisi::Core::PooledString *>(fp);
+        ImGui::LabelText(field.name.c_str(), "offset %u, length %u", handle->offset, handle->length);
+        break;
+    }
+    case FieldType::StringPool:
+    {
+        // Edited through the PooledStrings that index it, never as raw bytes.
+        const Assisi::Core::StringPool *pool = static_cast<const Assisi::Core::StringPool *>(fp);
+        ImGui::LabelText(field.name.c_str(), "%zu bytes", pool->Size());
         break;
     }
     case FieldType::Vec2:
@@ -749,6 +834,26 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                     }
                 }
                 ImGui::EndCombo();
+            }
+            break;
+        }
+        case FieldType::PooledString:
+        {
+            // Edited as the text it names in the component's one pool. A new
+            // text is appended and the handle repointed; the old bytes stay,
+            // since another handle may share them.
+            Assisi::Core::StringPool *pool = FindStringPool(mut, meta);
+            Assisi::Core::PooledString *handle = static_cast<Assisi::Core::PooledString *>(fp);
+            if (pool == nullptr)
+            {
+                edited = EditFieldValue(fp, field, ResolveFieldBounds(field, meta.fields, mut));
+                break;
+            }
+            std::string text{pool->View(*handle)};
+            if (InputString(field.name.c_str(), text))
+            {
+                *handle = pool->Add(text);
+                edited  = true;
             }
             break;
         }

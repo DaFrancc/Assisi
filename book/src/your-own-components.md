@@ -94,7 +94,7 @@ header and wrote that code for you.
 | Numbers | `float`, `double`, `bool`, `int8_t` … `int64_t`, `uint8_t` … `uint64_t` |
 | Math | `glm::vec2`, `glm::vec3`, `glm::vec4`, `glm::quat`, `glm::mat4` |
 | Colors | `Math::Color3`, `Math::Color4` (shown as a color picker) |
-| Text | `Core::ShortString` (up to 32 bytes), `Core::EntityName` (up to 64) |
+| Text | `Core::InternedString` (a name), `Core::DisplayedString` (words a player reads), `Core::PooledString` with one `Core::StringPool`, `Core::ShortString` (up to 32 bytes), `Core::EntityName` (up to 64). See [Strings](strings.md) |
 | Other entities | `ECS::Entity` |
 | Assets | `Core::AssetId` (a reference to a mesh, material or other asset) |
 | Choices | Your own `enum class` marked `AENUM()` (shown as a dropdown) |
@@ -108,7 +108,7 @@ instead:
 | `int`, `unsigned` | `int32_t`, `uint32_t` |
 | `long`, `short` | `int64_t`, `int16_t` |
 | `char` | `int8_t` for a number, `Core::ShortString` for text |
-| `std::string` | `Core::ShortString` or `Core::EntityName` |
+| `std::string` | The string type for the job; see [Strings](strings.md) |
 
 This is so a level saved on one machine loads the same on another: `int` and
 `long` can be different sizes on different platforms.

@@ -135,6 +135,16 @@ std::string DescribeValue(const FieldMeta &field, FieldType type, const std::byt
         return std::string(reinterpret_cast<const ShortString *>(address)->View());
     case FieldType::EntityName:
         return std::string(reinterpret_cast<const EntityName *>(address)->View());
+    case FieldType::InternedString:
+        return std::string(reinterpret_cast<const InternedString *>(address)->View());
+    case FieldType::DisplayedString: return reinterpret_cast<const DisplayedString *>(address)->Source();
+    case FieldType::PooledString:
+    {
+        // The pool is the struct's, and a container element has no way to reach
+        // it, so the handle is shown as the numbers it is.
+        const PooledString handle = LoadPod<PooledString>(address);
+        return std::to_string(handle.offset) + ":" + std::to_string(handle.length);
+    }
     case FieldType::Enum: return DescribeEnum(field, LoadEnumValue(field, address));
     default: return "?";
     }

@@ -10,6 +10,7 @@
 #include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/App/UiInputBridge.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -410,6 +411,9 @@ class Application
     /// them, so they are destroyed after.
     Mondrian::Font _uiFont;
     Mondrian::StringTables _uiStrings;
+    /// The DisplayedString resolver installed before this app's own, put back
+    /// when the app goes: the one it installs points at _uiStrings.
+    Core::DisplayedStringResolver _previousStringResolver;
 
     /// The game UI and the pass that draws it. Created with the window, so a
     /// headless process has neither. Driven by Run, not by the ECS: it has to
@@ -420,6 +424,9 @@ class Application
     Render::Texture _uiFontAtlas;
     /// ShowsGameUi's answer for the current frame.
     bool _uiShown = false;
+    /// Whether this app installed a DisplayedString resolver, and so owes the
+    /// previous one back.
+    bool _stringResolverInstalled = false;
     /// Seconds the UI has run, for timing held directions. Its own clock rather
     /// than the frame's clamped step, so a long frame still counts in full.
     double _uiTime = 0.0;
