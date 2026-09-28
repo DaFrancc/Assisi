@@ -47,6 +47,7 @@ struct ShapedText
 };
 
 /// @brief Where a line's slack goes.
+AENUM()
 enum class TextAlign : uint8_t
 {
     Left,

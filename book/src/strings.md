@@ -86,9 +86,12 @@ A `StringPool` keeps its strings end to end in one buffer, and each
 `PooledString` is an offset and a length into it. Reading every name in
 `credits.names` reads one block of memory, not one allocation per name.
 
-- **A struct with any `PooledString` holds exactly one `StringPool`.** The
-  handle doesn't say which pool it belongs to, so the build refuses a struct
-  with none or with two.
+- **A `PooledString` uses the nearest `StringPool` above it.** That's the pool
+  in its own struct, or, for a struct marked `ASTRUCT()`, the pool of whatever
+  holds that struct. A struct holds at most one pool. A component, asset or
+  message with a `PooledString` anywhere inside it must hold a pool, unless a
+  struct in between holds one. The build refuses anything else, because the
+  handle doesn't say which pool it belongs to.
 - Strings are only added. Changing one adds its new text and points the handle
   at it, leaving the old bytes in the pool.
 - A handle that points outside its pool reads as an empty string.

@@ -12,7 +12,9 @@
 /// expression per element type, and keeps the two directions honest by giving
 /// each a single definition.
 ///
-/// A vector is a JSON array. A map is a JSON **object**, so its keys are text —
+/// A vector is a JSON array, and so is a fixed array, which must hold exactly its
+/// length. An ASTRUCT element is a JSON object of its own fields. A map is a JSON
+/// **object**, so its keys are text —
 /// which is why a key must be an integer or one of the inline strings, and why a
 /// float or an enum cannot be one.
 ///
@@ -20,6 +22,7 @@
 /// leaves the destination alone, a present-but-wrong value is reported against
 /// its component and field and returns false, and nothing throws.
 
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -36,6 +39,7 @@
 
 #include <Assisi/Core/Reflect/JsonRead.hpp>
 #include <Assisi/Core/Reflect/StringJson.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Core/TrivialString.hpp>
 
@@ -61,6 +65,14 @@ template <typename T, typename A> struct IsReflectedContainer<std::vector<T, A>>
 {
 };
 
+template <typename T, std::size_t N> struct IsReflectedContainer<std::array<T, N>> : std::true_type
+{
+};
+
+template <typename T, std::size_t N> struct IsReflectedContainer<T[N]> : std::true_type
+{
+};
+
 template <typename K, typename V, typename C, typename A>
 struct IsReflectedContainer<std::map<K, V, C, A>> : std::true_type
 {
@@ -74,14 +86,19 @@ struct IsReflectedContainer<std::unordered_map<K, V, H, E, A>> : std::true_type
 // Declared before the element overloads, which recurse into them for a nested
 // element and would otherwise not see them.
 template <typename T, typename A> nlohmann::json ContainerToJson(const std::vector<T, A> &values);
+template <typename T, std::size_t N> nlohmann::json ContainerToJson(const std::array<T, N> &values);
+template <typename T, std::size_t N> nlohmann::json ContainerToJson(const T (&values)[N]);
 template <typename K, typename V, typename C, typename A>
 nlohmann::json ContainerToJson(const std::map<K, V, C, A> &entries);
 template <typename K, typename V, typename H, typename E, typename A>
 nlohmann::json ContainerToJson(const std::unordered_map<K, V, H, E, A> &entries);
 
 template <typename T, typename A>
-bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field,
-                       std::vector<T, A> &out);
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, std::vector<T, A> &out);
+template <typename T, std::size_t N>
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, std::array<T, N> &out);
+template <typename T, std::size_t N>
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, T (&out)[N]);
 template <typename K, typename V, typename C, typename A>
 bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field,
                        std::map<K, V, C, A> &out);
@@ -109,14 +126,13 @@ bool ReadIntegerElement(const nlohmann::json &value, const char *component, cons
     constexpr bool isSigned = std::is_signed_v<T>;
     if (isSigned ? !value.is_number_integer() : !value.is_number_unsigned())
     {
-        ReportBadField(component, field,
-                       isSigned ? "whole numbers" : "whole numbers that are not negative", value);
+        ReportBadField(component, field, isSigned ? "whole numbers" : "whole numbers that are not negative", value);
         return false;
     }
 
     const std::int64_t raw = value.get<std::int64_t>();
-    if (raw < static_cast<std::int64_t>(std::numeric_limits<T>::min())
-        || raw > static_cast<std::int64_t>(std::numeric_limits<T>::max()))
+    if (raw < static_cast<std::int64_t>(std::numeric_limits<T>::min()) ||
+        raw > static_cast<std::int64_t>(std::numeric_limits<T>::max()))
     {
         ReportBadField(component, field, "whole numbers small enough for this element", value);
         return false;
@@ -146,6 +162,10 @@ template <typename T> nlohmann::json ElementToJson(const T &value)
     else if constexpr (std::is_same_v<T, PooledString>)
     {
         return PooledStringToJson(value);
+    }
+    else if constexpr (StructTraits<T>::reflected)
+    {
+        return StructTraits<T>::ToJson(&value);
     }
     else if constexpr (IsReflectedContainer<T>::value)
     {
@@ -207,6 +227,17 @@ bool ElementFromJson(const nlohmann::json &value, const char *component, const c
     {
         return PooledStringFromJson(value, component, field, out);
     }
+    else if constexpr (StructTraits<T>::reflected)
+    {
+        // Checked here rather than left to the struct's reader, which would
+        // find none of its fields in a non-object and quietly keep defaults.
+        if (!value.is_object())
+        {
+            ReportBadField(component, field, "objects", value);
+            return false;
+        }
+        return StructTraits<T>::FromJson(value, &out);
+    }
     else if constexpr (std::is_same_v<T, bool>)
     {
         if (!value.is_boolean())
@@ -254,8 +285,7 @@ template <typename K> std::string KeyToText(const K &key)
     }
 }
 
-template <typename K>
-bool KeyFromText(std::string_view text, const char *component, const char *field, K &out)
+template <typename K> bool KeyFromText(std::string_view text, const char *component, const char *field, K &out)
 {
     if constexpr (IsTrivialString<K>::value)
     {
@@ -269,7 +299,7 @@ bool KeyFromText(std::string_view text, const char *component, const char *field
     else
     {
         const char *begin = text.data();
-        const char *end   = text.data() + text.size();
+        const char *end = text.data() + text.size();
 
         K value{};
         const std::from_chars_result parsed = std::from_chars(begin, end, value);
@@ -295,6 +325,53 @@ template <typename T, typename A> nlohmann::json ContainerToJson(const std::vect
     return array;
 }
 
+template <typename T, std::size_t N> nlohmann::json ContainerToJson(const std::array<T, N> &values)
+{
+    nlohmann::json array = nlohmann::json::array();
+    for (const T &value : values)
+    {
+        array.push_back(ElementToJson(value));
+    }
+    return array;
+}
+
+template <typename T, std::size_t N> nlohmann::json ContainerToJson(const T (&values)[N])
+{
+    nlohmann::json array = nlohmann::json::array();
+    for (const T &value : values)
+    {
+        array.push_back(ElementToJson(value));
+    }
+    return array;
+}
+
+namespace Detail
+{
+
+/// Both array flavours read the same list. The length is the type's, so a list
+/// of any other length is refused rather than truncated or padded: either would
+/// be a value the file does not contain. Elements are read in place, since a C
+/// array element that is itself an array cannot be assigned.
+template <typename T, std::size_t N>
+bool FixedArrayFromJson(const nlohmann::json &value, const char *component, const char *field, T *out)
+{
+    if (!value.is_array() || value.size() != N)
+    {
+        ReportBadField(component, field, "an array of exactly " + std::to_string(N) + " values", value);
+        return false;
+    }
+    for (std::size_t i = 0; i < N; ++i)
+    {
+        if (!ElementFromJson(value[i], component, field, out[i]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace Detail
+
 namespace Detail
 {
 
@@ -318,8 +395,7 @@ template <typename M> nlohmann::json MapToJson(const M &entries)
     return object;
 }
 
-template <typename M>
-bool MapFromJson(const nlohmann::json &value, const char *component, const char *field, M &out)
+template <typename M> bool MapFromJson(const nlohmann::json &value, const char *component, const char *field, M &out)
 {
     if (!value.is_object())
     {
@@ -361,8 +437,7 @@ nlohmann::json ContainerToJson(const std::unordered_map<K, V, H, E, A> &entries)
 }
 
 template <typename T, typename A>
-bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field,
-                       std::vector<T, A> &out)
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, std::vector<T, A> &out)
 {
     if (!value.is_array())
     {
@@ -384,9 +459,20 @@ bool ContainerFromJson(const nlohmann::json &value, const char *component, const
     return true;
 }
 
+template <typename T, std::size_t N>
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, std::array<T, N> &out)
+{
+    return Detail::FixedArrayFromJson<T, N>(value, component, field, out.data());
+}
+
+template <typename T, std::size_t N>
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, T (&out)[N])
+{
+    return Detail::FixedArrayFromJson<T, N>(value, component, field, out);
+}
+
 template <typename K, typename V, typename C, typename A>
-bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field,
-                       std::map<K, V, C, A> &out)
+bool ContainerFromJson(const nlohmann::json &value, const char *component, const char *field, std::map<K, V, C, A> &out)
 {
     return Detail::MapFromJson(value, component, field, out);
 }
@@ -403,8 +489,7 @@ bool ContainerFromJson(const nlohmann::json &value, const char *component, const
 /// The entry point generated deserializers call. An absent key leaves @p out
 /// untouched and succeeds, which is what lets a component gain a container field
 /// without refusing every file written before it.
-template <typename C>
-bool ReadContainer(const nlohmann::json &j, const char *component, const char *field, C &out)
+template <typename C> bool ReadContainer(const nlohmann::json &j, const char *component, const char *field, C &out)
 {
     const nlohmann::json *value = nullptr;
     if (!FindField(j, field, value))
@@ -412,6 +497,28 @@ bool ReadContainer(const nlohmann::json &j, const char *component, const char *f
         return true;
     }
     return ContainerFromJson(*value, component, field, out);
+}
+
+/// @brief An ASTRUCT field as a JSON object of its own fields. What generated
+/// serializers write for a field whose type is a struct.
+template <typename T> nlohmann::json StructToJson(const T &value)
+{
+    return StructTraits<T>::ToJson(&value);
+}
+
+/// @brief Reads an ASTRUCT field out of its owner's JSON object.
+///
+/// An absent key leaves @p out alone and succeeds, as every other field does.
+/// Inside the object, the struct's own fields follow the same rule, so a struct
+/// that gains a field still reads every file written before it.
+template <typename T> bool ReadStructField(const nlohmann::json &j, const char *component, const char *field, T &out)
+{
+    const nlohmann::json *value = nullptr;
+    if (!FindField(j, field, value))
+    {
+        return true;
+    }
+    return ElementFromJson(*value, component, field, out);
 }
 
 } // namespace Assisi::Core::Reflect

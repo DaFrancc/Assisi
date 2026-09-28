@@ -2,7 +2,7 @@
 """reflect_parser — header scanning and the parse-time data model for reflectgen.
 
 Reads a C++ header: strips comments, tracks the namespace stack, extracts the
-ACOMP/AASSET/AENUM/AFIELD/AMSG/AMSG_HANDLER/ASYSTEM annotations, and resolves
+ACOMP/AASSET/ASTRUCT/AENUM/AFIELD/AMSG/AMSG_HANDLER/ASYSTEM annotations, and resolves
 enum-typed fields and the AFIELD(radio ...) references (with cycle detection).
 Everything here is about *understanding* the header; nothing emits C++ (that is
 reflect_codegen). The dataclasses below are the contract between the two.
@@ -64,9 +64,11 @@ class ContainerInfo:
     and a type spelling otherwise — so the chain ends where the nesting does, the
     same way the C++ ContainerSpec's does.
     """
-    kind:    str                 # 'Vector' | 'Map'
-    key:     str  = ''           # key spelling; '' for a vector
+    kind:    str                 # 'Vector' | 'Map' | 'Array'
+    key:     str  = ''           # key spelling; '' for a vector or an array
     element: object = ''         # str spelling, or a nested ContainerInfo
+    count:   str  = ''           # an array's length as written: `3`, `kAxisCount`
+    c_array: bool = False        # an array written `T name[N]`, not `std::array<T, N>`
 
     @property
     def depth(self) -> int:
@@ -79,6 +81,12 @@ class ContainerInfo:
         """The innermost element spelling — where the enum sits, if there is one."""
         inner = self.element
         return inner.leaf if isinstance(inner, ContainerInfo) else inner
+
+    @property
+    def has_c_array(self) -> bool:
+        """Whether this level or any level beneath it is a C array."""
+        inner = self.element
+        return self.c_array or (isinstance(inner, ContainerInfo) and inner.has_c_array)
 
 
 @dataclass
@@ -95,11 +103,30 @@ class FieldInfo:
     # The AENUM E of a Core::Bitmask<E> field. Distinct from enum_info: the field
     # stores a set of enumerators, not one of them.
     bitmask_info: Optional[EnumInfo] = None
+    # Set when cpp_type names an ASTRUCT, which the field holds inline.
+    struct_info: Optional['StructInfo'] = None
+    # The ASTRUCT a container's leaf element names, resolved as leaf_enum is.
+    leaf_struct: Optional['StructInfo'] = None
     radio:     Optional[RadioInfo] = None  # set by _resolve_radio after parsing
     # Why this field's type reaches an InstanceView without spelling one — an
     # alias, an alias of an alias, a struct that holds one. Set from
     # find_view_spellings below; read by reflectgen's storage ban, which quotes it.
     view_via:  Optional[str]       = None
+
+
+@dataclass
+class StructInfo:
+    """An ASTRUCT, as a field in any header may name it.
+
+    Its fields are the declared ones, with their own struct and pool facts
+    resolved in the scope of the header that declares it — which is what the
+    checks that walk a struct's whole tree (cycles, string pools) need, and all
+    they need: the field table itself is generated only in that header's file.
+    """
+    name:   str     # unqualified, e.g. 'Length'
+    fqn:    str     # fully-qualified, e.g. 'Assisi::Mondrian::Length'
+    fields: list    # list[FieldInfo]
+    header: str     # the declaring header's name, for diagnostics
 
 
 @dataclass
@@ -109,6 +136,11 @@ class ComponentInfo:
     args:       AnnotArgs
     fields:     list   # list[FieldInfo]
     is_asset:   bool = False  # True for AASSET (standalone asset), False for ACOMP
+    is_struct:  bool = False  # True for ASTRUCT (a value struct others hold inline)
+
+    @property
+    def fqn(self) -> str:
+        return '::'.join(self.namespaces + [self.name]) if self.namespaces else self.name
 
 
 @dataclass
@@ -286,6 +318,7 @@ def strip_comments(text: str) -> str:
 
 _ACOMP_RE  = re.compile(r'\bACOMP\s*\(([^)]*)\)')
 _AASSET_RE = re.compile(r'\bAASSET\s*\(([^)]*)\)')
+_ASTRUCT_RE = re.compile(r'\bASTRUCT\s*\(([^)]*)\)')
 _AENUM_RE  = re.compile(r'\bAENUM\s*\(([^)]*)\)')
 _AFIELD_RE = re.compile(r'\bAFIELD\s*\(([^)]*)\)')
 _AMSG_RE   = re.compile(r'\bAMSG\s*\(([^)]*)\)')
@@ -632,6 +665,7 @@ _FIELD_HEAD_RE = re.compile(
 _FIELD_TAIL_RE = re.compile(
     r'(\s*[*&])?'          # optional ptr/ref, kept with the type
     r'\s*(\w+)'            # variable name
+    r'((?:\s*\[[^\]]*\])*)'  # C array extents, outermost first: `grid[2][3]`
     r'\s*(?:[={][^;]*)?\s*;'  # optional default + semicolon
 )
 
@@ -688,7 +722,11 @@ def _match_field_decl(text: str):
         return None
 
     raw_type = text[:end] + (tail.group(1) or '')
-    return raw_type.strip(), tail.group(2).strip()
+    # A C array's extents follow the name in C++ and the type everywhere else,
+    # so they move onto the type: `float grid[2][3]` becomes `float[2][3]`,
+    # which is how decltype spells it too.
+    extents = ''.join(tail.group(3).split())
+    return raw_type.strip() + extents, tail.group(2).strip()
 
 
 # Deepest nesting a reflected field may declare — one container inside another,
@@ -705,6 +743,7 @@ _CONTAINER_KINDS = {
     'std::vector':        'Vector',
     'std::map':           'Map',
     'std::unordered_map': 'Map',
+    'std::array':         'Array',
 }
 
 
@@ -731,7 +770,19 @@ def split_container(cpp_type: str) -> Optional[ContainerInfo]:
     Whitespace inside the arguments is normalised, so `std::vector< float >` and
     `std::vector<float>` decompose identically — unlike the flat TYPES lookup,
     where the two are different keys.
+
+    A C array, `T[2][3]` as _match_field_decl spells one, is an array of two
+    `T[3]`s: the first extent is the outer level.
     """
+    stripped = cpp_type.rstrip()
+    if stripped.endswith(']'):
+        open_extent  = stripped.find('[')
+        close_extent = stripped.find(']', open_extent)
+        count        = stripped[open_extent + 1:close_extent].strip()
+        element      = stripped[:open_extent].strip() + stripped[close_extent + 1:]
+        return ContainerInfo(kind='Array', element=split_container(element) or element,
+                             count=count, c_array=True)
+
     open_bracket = cpp_type.find('<')
     if open_bracket < 0 or not cpp_type.rstrip().endswith('>'):
         return None
@@ -751,6 +802,13 @@ def split_container(cpp_type: str) -> Optional[ContainerInfo]:
             return None
         element = normalise(args[0])
         return ContainerInfo(kind='Vector', key='', element=split_container(element) or element)
+
+    if kind == 'Array':
+        if len(args) != 2:
+            return None
+        element = normalise(args[0])
+        return ContainerInfo(kind='Array', element=split_container(element) or element,
+                             count=normalise(args[1]))
 
     if len(args) < 2:
         return None
@@ -1245,6 +1303,119 @@ def _collect_enums(text: str, path: Path) -> dict[str, EnumInfo]:
     return enums
 
 
+def _collect_structs(text: str, path: Path) -> dict[str, StructInfo]:
+    """Every ASTRUCT @p text declares, keyed by each spelling of its name, with
+    its fields as declared and not yet resolved against anything."""
+    text = _DIRECTIVE_RE.sub('', text)
+    structs: dict[str, StructInfo] = {}
+    ns_stack:       list[str] = []
+    ns_open_depths: list[int] = []
+    brace_depth = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ns_m = _NS_RE.match(text, i)
+        if ns_m:
+            j = ns_m.end()
+            while j < n and text[j] in ' \t\n\r':
+                j += 1
+            if j < n and text[j] == '{':
+                for p in ns_m.group(1).split('::'):
+                    ns_stack.append(p)
+                    ns_open_depths.append(brace_depth)
+                brace_depth += 1
+                i = j + 1
+                continue
+
+        astruct_m = _ASTRUCT_RE.match(text, i)
+        if astruct_m:
+            j = astruct_m.end()
+            while j < n and text[j] in ' \t\n\r':
+                j += 1
+            struct_m = _STRUCT_RE.match(text, j)
+            if struct_m:
+                body, end = _extract_brace_body(text, struct_m.end())
+                if body is not None:
+                    name = struct_m.group(1)
+                    fqn  = '::'.join(ns_stack + [name]) if ns_stack else name
+                    info = StructInfo(name=name, fqn=fqn, fields=_find_fields_in_body(body, str(path)),
+                                      header=path.name)
+                    for key in _enum_keys(fqn):
+                        structs[key] = info
+                    i = end
+                    continue
+
+        ch = text[i]
+        if ch == '{':
+            brace_depth += 1
+        elif ch == '}':
+            brace_depth -= 1
+            while ns_open_depths and ns_open_depths[-1] >= brace_depth:
+                ns_stack.pop()
+                ns_open_depths.pop()
+        i += 1
+    return structs
+
+
+class _StructScope:
+    """The ASTRUCTs a header's fields may name: its own first, then those of
+    every header it includes. Resolved the way _EnumScope resolves enums, and
+    an ambiguous spelling is refused the same way."""
+
+    def __init__(self, local: dict, path: Path, include_dirs):
+        self._local = local
+        self._path = path
+        self._included: dict[str, list[StructInfo]] = {}
+        if not include_dirs:
+            return
+        for header in headers_read(path, include_dirs):
+            for key, info in _collect_structs(strip_comments(header.read_text(encoding='utf-8')), header).items():
+                known = self._included.setdefault(key, [])
+                if all(other.fqn != info.fqn for other in known):
+                    known.append(info)
+
+    def get(self, spelling: str) -> Optional[StructInfo]:
+        key = spelling.removeprefix('::')
+        if key in self._local:
+            return self._local[key]
+        found = self._included.get(key)
+        if not found:
+            return None
+        if len(found) > 1:
+            names = ', '.join(sorted(info.fqn for info in found))
+            raise ValueError(
+                f"{self._path.name}: '{spelling}' names more than one struct the header can see "
+                f"({names}). Write the full name.")
+        return found[0]
+
+    def included(self) -> list[StructInfo]:
+        """Every struct found in an included header, once each."""
+        unique: dict[str, StructInfo] = {}
+        for infos in self._included.values():
+            for info in infos:
+                unique[info.fqn] = info
+        return list(unique.values())
+
+
+def _resolve_struct_fields(fields: list, structs: _StructScope) -> None:
+    """Attach the container shape and the ASTRUCT, if any, each field names.
+
+    A spelling already in TYPES keeps its own enumerator, so the AssetPath and
+    AssetId vectors are untouched by this and their wire format does not move.
+    A transient field serializes nowhere, so it needs no descriptor — and it is
+    the one place a container of something unreflectable is legal, like the
+    resolved material pointers a MeshRenderer caches.
+    """
+    for f in fields:
+        if f.args.has('transient') or f.cpp_type in TYPES:
+            continue
+        f.container = split_container(f.cpp_type)
+        if f.container is not None:
+            f.leaf_struct = structs.get(f.container.leaf)
+        else:
+            f.struct_info = structs.get(f.cpp_type)
+
+
 def _included_headers(text: str, path: Path, include_dirs) -> list[Path]:
     """The headers @p text includes that can hold an AENUM: the engine's own,
     found through @p include_dirs, and quoted ones, found beside @p path first."""
@@ -1342,6 +1513,7 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
     n               = len(text)
     pending_acomp: Optional[AnnotArgs] = None
     pending_is_asset = False
+    pending_is_struct = False
     pending_amsg: Optional[str] = None  # the raw AMSG(...) argument text
 
     while i < n:
@@ -1364,13 +1536,27 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
         if acomp_m:
             pending_acomp = parse_annot_args(acomp_m.group(1), f"{path.name}: ACOMP({acomp_m.group(1).strip()})")
             pending_is_asset = False
+            pending_is_struct = False
             i = acomp_m.end()
             continue
         aasset_m = _AASSET_RE.match(text, i)
         if aasset_m:
             pending_acomp = parse_annot_args(aasset_m.group(1), f"{path.name}: AASSET({aasset_m.group(1).strip()})")
             pending_is_asset = True
+            pending_is_struct = False
             i = aasset_m.end()
+            continue
+        astruct_m = _ASTRUCT_RE.match(text, i)
+        if astruct_m:
+            pending_acomp = parse_annot_args(astruct_m.group(1), f"{path.name}: ASTRUCT({astruct_m.group(1).strip()})")
+            if pending_acomp.flags or pending_acomp.kvs:
+                raise ValueError(
+                    f"{path.name}: ASTRUCT takes no arguments (got 'ASTRUCT({astruct_m.group(1).strip()})'). "
+                    f"A struct is a value inside whatever holds it, so how it is saved and sent "
+                    f"is decided there.")
+            pending_is_asset = False
+            pending_is_struct = True
+            i = astruct_m.end()
             continue
         amsg_m = _AMSG_RE.match(text, i)
         if amsg_m:
@@ -1409,7 +1595,7 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
                     f"(got: '{snippet}...'). A message is a plain reflected struct — see "
                     f"Assisi/Core/Reflect/MessageMeta.hpp for why it is not a function.")
 
-        # ── Struct (only matters after ACOMP/AASSET) ────────────────────────
+        # ── Struct (only matters after ACOMP/AASSET/ASTRUCT) ────────────────
         if pending_acomp is not None:
             struct_m = _STRUCT_RE.match(text, i)
             if struct_m:
@@ -1423,15 +1609,18 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
                         args=pending_acomp,
                         fields=fields,
                         is_asset=pending_is_asset,
+                        is_struct=pending_is_struct,
                     ))
                     pending_acomp = None
                     pending_is_asset = False
+                    pending_is_struct = False
                     brace_depth += body.count('{') - body.count('}')
                     i = end
                     continue
                 else:
                     pending_acomp = None
                     pending_is_asset = False
+                    pending_is_struct = False
 
         # ── Brace / namespace tracking ───────────────────────────────────────
         ch = text[i]
@@ -1452,19 +1641,26 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
         for f in msg.fields:
             f.enum_info = enums.get(f.cpp_type)
 
-    # Container fields, and the enum their leaf element names if it names one. A
-    # spelling already in TYPES keeps its own enumerator, so the AssetPath and
-    # AssetId vectors are untouched by this and their wire format does not move.
+    # Container fields, the ASTRUCTs fields name, and the enum a container's
+    # leaf element names if it names one. The structs this header declares come
+    # first, so a field may name one declared further down.
+    local_structs: dict[str, StructInfo] = {}
+    for comp in components:
+        if comp.is_struct:
+            info = StructInfo(name=comp.name, fqn=comp.fqn, fields=comp.fields, header=path.name)
+            for key in _enum_keys(comp.fqn):
+                local_structs[key] = info
+    structs = _StructScope(local_structs, path, include_dirs)
+
     for owner in (*components, *messages):
+        _resolve_struct_fields(owner.fields, structs)
         for f in owner.fields:
-            # A transient field serializes nowhere, so it needs no descriptor —
-            # and it is the one place a container of something unreflectable is
-            # legal, like the resolved material pointers a MeshRenderer caches.
-            if f.args.has('transient') or f.cpp_type in TYPES:
-                continue
-            f.container = split_container(f.cpp_type)
             if f.container is not None:
                 f.leaf_enum = enums.get(f.container.leaf)
+    # An included struct's fields are resolved too, so the checks that walk a
+    # whole tree of structs — cycles, string pools — can walk past this header.
+    for info in structs.included():
+        _resolve_struct_fields(info.fields, structs)
 
     for owner in (*components, *messages):
         for f in owner.fields:

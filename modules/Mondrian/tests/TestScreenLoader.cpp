@@ -21,6 +21,7 @@
 using namespace Assisi::Mondrian;
 using Assisi::Core::EventCatalog;
 using Assisi::Core::EventQueue;
+using Assisi::Core::InternedString;
 
 namespace
 {
@@ -61,7 +62,7 @@ ScreenDocument PauseMenu()
     document.sortKey = kSortMenu;
     document.traits = {
         .input = ScreenInput::ConsumeInput, .beneath = ScreenBeneath::HidesBeneath, .pause = ScreenPause::Pause};
-    document.systems = {"PauseMenu"};
+    document.systems = {InternedString{"PauseMenu"}};
 
     ScreenNode root;
     root.blocksPointer = true;
@@ -70,22 +71,22 @@ ScreenDocument PauseMenu()
 
     ScreenNode panel;
     panel.parent = 0;
-    panel.name = "panel";
+    panel.name = InternedString{"panel"};
     panel.style.direction = Direction::Column;
     panel.style.gap = Px(20.f);
     document.nodes.push_back(panel);
 
     ScreenNode title;
     title.parent = 1;
-    title.name = "title";
-    title.text = "Paused";
+    title.name = InternedString{"title"};
+    title.text = document.AddText("Paused");
     title.style.textSize = Px(48.f);
     document.nodes.push_back(title);
 
     ScreenNode resume;
     resume.parent = 1;
-    resume.name = "resume";
-    resume.text = "Resume";
+    resume.name = InternedString{"resume"};
+    resume.text = document.AddText("Resume");
     resume.widget = BuiltinWidget::Button;
     resume.action = ActionKind::Verb;
     resume.verb = ScreenVerb::Hide;
@@ -94,11 +95,11 @@ ScreenDocument PauseMenu()
 
     ScreenNode quit;
     quit.parent = 1;
-    quit.name = "quit";
-    quit.text = "Quit";
+    quit.name = InternedString{"quit"};
+    quit.text = document.AddText("Quit");
     quit.widget = BuiltinWidget::Button;
     quit.action = ActionKind::Event;
-    quit.eventName = "Game::QuitRequested";
+    quit.eventName = InternedString{"Game::QuitRequested"};
     quit.style.sizing = {Sizing::Fixed(Px(kButtonWidth)), Sizing::Fixed(Px(kButtonHeight))};
     document.nodes.push_back(quit);
 
@@ -118,14 +119,14 @@ ScreenDocument EveryControl()
 
     ScreenNode toggle;
     toggle.parent = 0;
-    toggle.name = "fullscreen";
+    toggle.name = InternedString{"fullscreen"};
     toggle.widget = BuiltinWidget::Toggle;
     toggle.on = true;
     document.nodes.push_back(toggle);
 
     ScreenNode volume;
     volume.parent = 0;
-    volume.name = "volume";
+    volume.name = InternedString{"volume"};
     volume.widget = BuiltinWidget::ContinuousSlider;
     volume.range = {.min = 0.f, .max = 100.f, .step = 5.f};
     volume.value = 60.f;
@@ -133,7 +134,7 @@ ScreenDocument EveryControl()
 
     ScreenNode quality;
     quality.parent = 0;
-    quality.name = "quality";
+    quality.name = InternedString{"quality"};
     quality.widget = BuiltinWidget::SteppedSlider;
     quality.range = {.min = 0.f, .max = 3.f, .step = 1.f};
     quality.steps = 4;
@@ -142,29 +143,29 @@ ScreenDocument EveryControl()
 
     ScreenNode list;
     list.parent = 0;
-    list.name = "list";
+    list.name = InternedString{"list"};
     list.widget = BuiltinWidget::Scroll;
     list.style.enabledScrollBars = {false, true};
     document.nodes.push_back(list);
 
     ScreenNode player;
     player.parent = 0;
-    player.name = "player";
+    player.name = InternedString{"player"};
     player.widget = BuiltinWidget::TextField;
-    player.placeholder = "Name";
+    player.placeholder = document.AddText("Name");
     player.maxLength = 24;
     document.nodes.push_back(player);
 
     ScreenNode secret;
     secret.parent = 0;
-    secret.name = "secret";
+    secret.name = InternedString{"secret"};
     secret.widget = BuiltinWidget::TextField;
     secret.mask = TextMask::Dots;
     document.nodes.push_back(secret);
 
     ScreenNode notes;
     notes.parent = 0;
-    notes.name = "notes";
+    notes.name = InternedString{"notes"};
     notes.widget = BuiltinWidget::TextField;
     notes.lines = TextLines::Multi;
     notes.height = TextHeight::UpTo;
@@ -173,10 +174,10 @@ ScreenDocument EveryControl()
 
     ScreenNode port;
     port.parent = 0;
-    port.name = "port";
+    port.name = InternedString{"port"};
     port.widget = BuiltinWidget::TextField;
-    port.text = "8080";
-    port.pattern = "[0-9]+";
+    port.text = document.AddText("8080");
+    port.pattern = document.AddText("[0-9]+");
     port.check = TextCheck::Refuse;
     document.nodes.push_back(port);
 
@@ -199,7 +200,7 @@ ScreenNode Stepper(std::string_view name, uint32_t target, int32_t moves)
 {
     ScreenNode button;
     button.parent = 0;
-    button.name = name;
+    button.name = InternedString{name};
     button.widget = BuiltinWidget::Button;
     button.action = ActionKind::Verb;
     button.verb = ScreenVerb::Step;
@@ -232,7 +233,7 @@ ScreenDocument Sliders()
 
     ScreenNode quality;
     quality.parent = 0;
-    quality.name = "quality";
+    quality.name = InternedString{"quality"};
     quality.widget = BuiltinWidget::SteppedSlider;
     quality.range = {.min = 0.f, .max = 3.f, .step = 1.f};
     quality.steps = 4;
@@ -241,7 +242,7 @@ ScreenDocument Sliders()
 
     ScreenNode volume;
     volume.parent = 0;
-    volume.name = "volume";
+    volume.name = InternedString{"volume"};
     volume.widget = BuiltinWidget::ContinuousSlider;
     volume.range = {.min = 0.f, .max = 100.f, .step = kVolumeStep};
     volume.value = kVolumeStart;
@@ -432,7 +433,7 @@ TEST_CASE("ScreenLoader: an unknown event leaves no screen behind")
     const EventCatalog catalog = TwoEvents();
 
     ScreenDocument document = PauseMenu();
-    document.nodes[4].eventName = "Game::Misspelt";
+    document.nodes[4].eventName = InternedString{"Game::Misspelt"};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
@@ -453,7 +454,7 @@ TEST_CASE("ScreenLoader: a name two nodes carry leaves no screen behind")
     const EventCatalog catalog = TwoEvents();
 
     ScreenDocument document = PauseMenu();
-    document.nodes[4].name = "resume";
+    document.nodes[4].name = InternedString{"resume"};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
@@ -471,7 +472,7 @@ TEST_CASE("ScreenLoader: a button is found by its name, not its label")
     ScreenDocument document = PauseMenu();
     // Two buttons reading the same thing are no collision: a label is what a
     // player reads, and a name is what code and markup refer to.
-    document.nodes[4].text = "Resume";
+    document.nodes[4].text = document.AddText("Resume");
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
@@ -489,7 +490,7 @@ TEST_CASE("ScreenLoader: a named style is carried and ignored")
     const EventCatalog catalog = TwoEvents();
 
     ScreenDocument document = PauseMenu();
-    document.nodes[1].styleName = "Panel";
+    document.nodes[1].styleName = InternedString{"Panel"};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
@@ -650,9 +651,9 @@ TEST_CASE("ScreenLoader: a pattern this build cannot compile leaves no screen be
     ScreenDocument document = EveryControl();
     for (ScreenNode &node : document.nodes)
     {
-        if (node.name == "port")
+        if (node.name.View() == "port")
         {
-            node.pattern = "[0-9";
+            node.pattern = document.AddText("[0-9");
         }
     }
 
@@ -794,20 +795,20 @@ ScreenDocument KeyedPauseMenu()
     ScreenDocument document = PauseMenu();
     for (ScreenNode &node : document.nodes)
     {
-        if (!node.text.empty())
+        if (!document.Text(node.text).empty())
         {
-            node.text = "pause:" + node.name;
+            node.text = document.AddText("pause:" + std::string{node.name.View()});
             node.textIsKey = true;
         }
     }
 
     ScreenNode field;
     field.parent = 1;
-    field.name = "field";
+    field.name = InternedString{"field"};
     field.widget = BuiltinWidget::TextField;
-    field.text = "pause:start";
+    field.text = document.AddText("pause:start");
     field.textIsKey = true;
-    field.placeholder = "pause:hint";
+    field.placeholder = document.AddText("pause:hint");
     field.placeholderIsKey = true;
     document.nodes.push_back(field);
     return document;

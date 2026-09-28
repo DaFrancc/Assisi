@@ -20,8 +20,12 @@
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
+#include <Assisi/Core/InternedString.hpp>
+#include <Assisi/Core/Reflect/Annotations.hpp>
+#include <Assisi/Core/StringPool.hpp>
+
 #include <cstdint>
-#include <string>
+#include <string_view>
 #include <vector>
 
 namespace Assisi::Mondrian
@@ -31,6 +35,7 @@ namespace Assisi::Mondrian
 inline constexpr uint32_t kNoNode = UINT32_MAX;
 
 /// @brief What a node does when it is clicked or accepted.
+AENUM()
 enum class ActionKind : uint8_t
 {
     None,  ///< nothing; the node is not a control, or is one nobody bound
@@ -45,6 +50,7 @@ enum class ActionKind : uint8_t
 /// A closed set rather than a name looked up somewhere: these reach nothing
 /// outside the UI, so there is nothing for a game to register and nothing a
 /// file can get wrong beyond misspelling one, which the cook catches.
+AENUM()
 enum class ScreenVerb : uint8_t
 {
     Hide, ///< hides the screen this node is on
@@ -104,127 +110,143 @@ enum class ScreenVerb : uint8_t
 }
 
 /// @brief One node of a screen, as the file described it.
+///
+/// Its text lives in the document's pool, so a node alone names its words but
+/// cannot read them: ScreenDocument::Text does.
+ASTRUCT()
 struct ScreenNode
 {
     /// Fully resolved: every attribute the file wrote, over the defaults.
     ///
     /// Which fields were *written* is not recorded, because nothing yet reads a
     /// style from anywhere else. When a named style supplies a base for these to
-    /// override, this table gains that set — and the payload version is what
-    /// makes it a change rather than a migration.
-    Style style;
+    /// override, this table gains that set — and the layout hash is what makes
+    /// it a change rather than a migration.
+    AFIELD() Style style;
 
-    /// What Screen::Find looks this node up by. Empty for an unnamed node.
-    std::string name;
+    /// What a slider's ends mean, and how far one press moves it. A stepped
+    /// slider moves a whole step at a time and ignores the step here.
+    AFIELD() SliderRange range;
 
     /// Text content: a text node's words, a button's label. A key into a string
     /// table, `table:key`, when textIsKey.
-    std::string text;
-
-    /// The named style this node asks for, or empty. Carried and not resolved:
-    /// there is nowhere yet for a name to resolve to, and a file written today
-    /// should not have to be edited when there is.
-    std::string styleName;
-
-    /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
-    std::string eventName;
+    AFIELD() Core::PooledString text;
 
     /// What a field shows while it holds nothing. A key when placeholderIsKey.
-    std::string placeholder;
+    AFIELD() Core::PooledString placeholder;
 
     /// The expression a field's text must match, or empty for no rule. The
     /// expression itself and never a name for one: a file may write either, and
     /// a name is expanded where it is read, so nothing downstream needs a table
     /// to look one up in.
-    std::string pattern;
+    AFIELD() Core::PooledString pattern;
 
-    /// What a slider's ends mean, and how far one press moves it. A stepped
-    /// slider moves a whole step at a time and ignores the step here.
-    SliderRange range;
+    /// What Screen::Find looks this node up by. Empty for an unnamed node.
+    AFIELD() Core::InternedString name;
+
+    /// The named style this node asks for, or empty. Carried and not resolved:
+    /// there is nowhere yet for a name to resolve to, and a file written today
+    /// should not have to be edited when there is.
+    AFIELD() Core::InternedString styleName;
+
+    /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
+    AFIELD() Core::InternedString eventName;
 
     /// Where a continuous slider starts, within its range.
-    float value = 0.f;
+    AFIELD() float value = 0.f;
 
-    uint32_t maxLength = kUnlimitedLength;
+    AFIELD() uint32_t maxLength = kUnlimitedLength;
 
     /// How many lines UpTo and Exactly mean; unused while Unbounded.
-    uint32_t lineLimit = 1;
+    AFIELD() uint32_t lineLimit = 1;
 
     /// How many positions a stepped slider has, and which it starts on.
-    int32_t steps = 1;
-    int32_t step = 0;
+    AFIELD() int32_t steps = 1;
+    AFIELD() int32_t step = 0;
 
     /// How many moves ScreenVerb::Step makes, and which way: negative moves
     /// down the range. A move is whatever one arrow-key press does to the
     /// target, so the file need not know which kind of slider it aims at.
-    int32_t moves = 0;
+    AFIELD() int32_t moves = 0;
 
     /// Index into the document's own table. kNoNode on the root alone.
-    uint32_t parent = kNoNode;
+    AFIELD() uint32_t parent = kNoNode;
 
     /// The node a verb acts on, as an index into the document's own table, or
     /// kNoNode for a verb that acts on the screen. May point past this node: a
     /// button can come before the control it moves.
-    uint32_t target = kNoNode;
+    AFIELD() uint32_t target = kNoNode;
 
     /// Which control this node is, or None for a plain box. It decides which of
     /// the fields above mean anything; the rest ride at their defaults, as they
     /// do on the live node this becomes.
-    BuiltinWidget widget = BuiltinWidget::None;
+    AFIELD() BuiltinWidget widget = BuiltinWidget::None;
 
-    ActionKind action = ActionKind::None;
+    AFIELD() ActionKind action = ActionKind::None;
 
     /// Meaningful only for ActionKind::Verb.
-    ScreenVerb verb = ScreenVerb::Hide;
+    AFIELD() ScreenVerb verb = ScreenVerb::Hide;
 
-    TextLines lines = TextLines::Single;
-    TextMask mask = TextMask::None;
-    TextCheck check = TextCheck::OnCommit;
-    TextHeight height = TextHeight::Unbounded;
+    AFIELD() TextLines lines = TextLines::Single;
+    AFIELD() TextMask mask = TextMask::None;
+    AFIELD() TextCheck check = TextCheck::OnCommit;
+    AFIELD() TextHeight height = TextHeight::Unbounded;
 
     /// Whether a toggle starts on.
-    bool on = false;
+    AFIELD() bool on = false;
 
-    bool visible = true;
-    bool enabled = true;
+    AFIELD() bool visible = true;
+    AFIELD() bool enabled = true;
     /// Stops the pointer without taking focus: a panel's background, or a sheet
     /// over the whole screen.
-    bool blocksPointer = false;
-    bool takesKeyboard = false;
+    AFIELD() bool blocksPointer = false;
+    AFIELD() bool takesKeyboard = false;
     /// Plain text a player may select and copy.
-    bool selectable = false;
+    AFIELD() bool selectable = false;
 
     /// Whether text and placeholder are keys into a string table, looked up
     /// where the screen is built and again whenever the tables change.
-    bool textIsKey = false;
-    bool placeholderIsKey = false;
+    AFIELD() bool textIsKey = false;
+    AFIELD() bool placeholderIsKey = false;
 
     [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
 };
 
 /// @brief A whole screen: its nodes, its traits, and what it needs installed.
+ASTRUCT()
 struct ScreenDocument
 {
+    /// Every node's text, placeholder and pattern, end to end: a cooked screen's
+    /// words are one block rather than an allocation each.
+    AFIELD() Core::StringPool pool;
+
     /// Preorder, parent before child. Index 0 is the root, which every document
     /// has and which the loader applies to the tree's existing root rather than
     /// creating.
-    std::vector<ScreenNode> nodes;
+    AFIELD() std::vector<ScreenNode> nodes;
 
     /// The systems this screen needs installed to work. Handed back by the
     /// loader for whoever owns the world to install; the UI cannot install
     /// anything and does not try.
-    std::vector<std::string> systems;
+    AFIELD() std::vector<Core::InternedString> systems;
 
     /// Which node takes focus when the screen is shown, or kNoNode.
-    uint32_t focus = kNoNode;
+    AFIELD() uint32_t focus = kNoNode;
 
-    int32_t sortKey = kSortMenu;
+    AFIELD() int32_t sortKey = kSortMenu;
 
-    ScreenTraits traits;
+    AFIELD() ScreenTraits traits;
 
     /// Whether players never see this screen, which exempts its text from a
     /// project's requirement that text come from string tables.
-    bool debugOnly = false;
+    AFIELD() bool debugOnly = false;
+
+    /// @brief @p handle's text in this document's pool; empty for a handle that
+    /// points outside it.
+    [[nodiscard]] std::string_view Text(Core::PooledString handle) const { return pool.View(handle); }
+
+    /// @brief Stores @p text in this document's pool and returns its handle.
+    [[nodiscard]] Core::PooledString AddText(std::string_view text) { return pool.Add(text); }
 
     [[nodiscard]] friend bool operator==(const ScreenDocument &, const ScreenDocument &) = default;
 };

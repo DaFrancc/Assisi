@@ -21,13 +21,14 @@
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/InternedString.hpp>
-#include <Assisi/Core/StringPool.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Core/StringPool.hpp>
 
 namespace Assisi::Core::Reflect
 {
@@ -52,7 +53,7 @@ constexpr std::uint32_t kMat4Floats = 16;
 /// before anything is allocated. An AssetPath's minimum is its 1-byte
 /// zero-length varint; an AssetId is a fixed 16 bytes.
 constexpr std::size_t kMinAssetPathBits = 8;
-constexpr std::size_t kMinAssetIdBits   = 128;
+constexpr std::size_t kMinAssetIdBits = 128;
 
 /// Mask of the low @p bitCount bits, defined at bitCount == 64.
 constexpr FieldMask LowFieldMask(std::size_t bitCount)
@@ -108,23 +109,71 @@ bool LoadEnum(const std::byte *address, std::uint8_t size, std::uint64_t &out)
 {
     switch (size)
     {
-    case 1: out = LoadPod<std::uint8_t>(address); return true;
-    case 2: out = LoadPod<std::uint16_t>(address); return true;
-    case 4: out = LoadPod<std::uint32_t>(address); return true;
-    case 8: out = LoadPod<std::uint64_t>(address); return true;
-    default: return false;
+    case 1:
+        out = LoadPod<std::uint8_t>(address);
+        return true;
+    case 2:
+        out = LoadPod<std::uint16_t>(address);
+        return true;
+    case 4:
+        out = LoadPod<std::uint32_t>(address);
+        return true;
+    case 8:
+        out = LoadPod<std::uint64_t>(address);
+        return true;
+    default:
+        return false;
     }
+}
+
+/// Whether @p raw, read at the field's width, is one of its enumerators. A
+/// signed enum's bits are sign-extended first, so -1 read as one byte is -1
+/// rather than 255. A field that lists no enumerators accepts nothing: every
+/// real enum field has a list, and one that lost it should fail the first read
+/// rather than pass every value.
+bool IsListedEnumerator(const FieldMeta &field, std::uint64_t raw)
+{
+    /// Bits per byte of enum storage.
+    static constexpr std::uint32_t kBitsPerByte = 8;
+    /// Widest enum storage, in bits; nothing wider needs extending.
+    static constexpr std::uint32_t kWidestBits = 64;
+
+    const std::uint32_t bits = static_cast<std::uint32_t>(field.enumSize) * kBitsPerByte;
+    std::int64_t value = static_cast<std::int64_t>(raw);
+    if (field.enumSigned && bits < kWidestBits)
+    {
+        const std::uint64_t sign = std::uint64_t{1} << (bits - 1u);
+        value = static_cast<std::int64_t>((raw ^ sign) - sign);
+    }
+
+    for (const EnumConstant &constant : field.enumConstants)
+    {
+        if (constant.value == value)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool StoreEnum(std::byte *address, std::uint8_t size, std::uint64_t value)
 {
     switch (size)
     {
-    case 1: StorePod(address, static_cast<std::uint8_t>(value)); return true;
-    case 2: StorePod(address, static_cast<std::uint16_t>(value)); return true;
-    case 4: StorePod(address, static_cast<std::uint32_t>(value)); return true;
-    case 8: StorePod(address, value); return true;
-    default: return false;
+    case 1:
+        StorePod(address, static_cast<std::uint8_t>(value));
+        return true;
+    case 2:
+        StorePod(address, static_cast<std::uint16_t>(value));
+        return true;
+    case 4:
+        StorePod(address, static_cast<std::uint32_t>(value));
+        return true;
+    case 8:
+        StorePod(address, value);
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -132,7 +181,7 @@ bool StoreEnum(std::byte *address, std::uint8_t size, std::uint64_t value)
 /// index low, generation high (see kEntityRefBits).
 std::uint64_t PackEntity(const std::byte *address)
 {
-    const std::uint32_t index      = LoadPod<std::uint32_t>(address);
+    const std::uint32_t index = LoadPod<std::uint32_t>(address);
     const std::uint32_t generation = LoadPod<std::uint32_t>(address + sizeof(std::uint32_t));
     return static_cast<std::uint64_t>(index) | (static_cast<std::uint64_t>(generation) << 32u);
 }
@@ -232,13 +281,46 @@ std::uint64_t ApplyRemap(const std::function<std::uint64_t(std::uint64_t)> &hook
 /// byte-aligned and cannot be shorter than a byte. A nested container's own
 /// count prefix is at least a byte, and its contents are checked again when the
 /// recursion reaches them.
-std::size_t MinWireBits(FieldType type)
+std::size_t MinWireBits(FieldType type, const StructSpec *structSpec);
+
+/// The fewest bits a whole ASTRUCT can occupy: the sum of its fields' floors.
+/// Only ever an underestimate, which is the direction MinWireBits must err in.
+std::size_t MinStructBits(const StructSpec &spec)
+{
+    std::size_t bits = 0;
+    for (const FieldMeta &field : spec.fields)
+    {
+        if (field.transient)
+        {
+            continue;
+        }
+        // An array's elements are all there, so they count; a growing
+        // container's count prefix is its floor, which MinWireBits gives.
+        const ContainerSpec *array = field.type == FieldType::Array ? field.container : nullptr;
+        if (array != nullptr)
+        {
+            const FieldType element = array->element != nullptr ? FieldType::Vector : array->elementType;
+            bits += array->fixedCount * MinWireBits(element, field.structSpec);
+        }
+        else
+        {
+            bits += MinWireBits(field.type, field.structSpec);
+        }
+    }
+    return bits;
+}
+
+std::size_t MinWireBits(FieldType type, const StructSpec *structSpec)
 {
     /// One bit: the only field type that encodes narrower than a byte.
     static constexpr std::size_t kBoolBits = 1;
     /// A byte: the floor for a length prefix, a varint, or any payload.
     static constexpr std::size_t kByteBits = 8;
 
+    if (type == FieldType::Struct)
+    {
+        return structSpec != nullptr ? MinStructBits(*structSpec) : 0;
+    }
     return type == FieldType::Bool ? kBoolBits : kByteBits;
 }
 
@@ -251,23 +333,66 @@ std::size_t MinWireBits(FieldType type)
 FieldMeta ElementMeta(const FieldMeta &field, const ContainerSpec &spec, bool key)
 {
     FieldMeta element;
-    element.name      = field.name;
-    element.type      = key ? spec.keyType : spec.elementType;
+    element.name = field.name;
+    element.type = key ? spec.keyType : spec.elementType;
     element.container = key ? nullptr : spec.element;
 
-    // The enum metadata on a container field describes its leaf element, and a
-    // key is never an enum — so it travels down the value side only.
+    // The enum and struct metadata on a container field describe its leaf
+    // element, and a key is never either — so they travel down the value side
+    // only.
     if (!key)
     {
+        element.structSpec = field.structSpec;
         element.enumConstants = field.enumConstants;
-        element.enumSize      = field.enumSize;
-        element.enumSigned    = field.enumSigned;
+        element.enumSize = field.enumSize;
+        element.enumSigned = field.enumSigned;
     }
     return element;
 }
 
 bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &writer, const CodecContext *context);
 bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, const CodecContext *context);
+
+/// Every field of an ASTRUCT at @p address, in order. Only `transient` is
+/// skipped: a struct's fields are one value, and reflectgen refuses `norep`
+/// inside one, so the wire and a cooked file carry the same fields.
+bool WriteStructFields(const StructSpec &spec, const std::byte *address, BitWriter &writer, const CodecContext *context)
+{
+    for (const FieldMeta &field : spec.fields)
+    {
+        if (field.transient)
+        {
+            continue;
+        }
+        if (!WriteField(field, address + field.offset, writer, context))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// The read side of WriteStructFields. Stops at the first field that will not
+/// decode or the first overrun, as the top-level readers do.
+bool ReadStructFields(const StructSpec &spec, std::byte *address, BitReader &reader, const CodecContext *context)
+{
+    for (const FieldMeta &field : spec.fields)
+    {
+        if (field.transient)
+        {
+            continue;
+        }
+        if (!ReadField(field, address + field.offset, reader, context))
+        {
+            return false;
+        }
+        if (reader.Failed())
+        {
+            return true; // the reader carries the failure
+        }
+    }
+    return true;
+}
 
 /// Carries one container traversal into the visitor, which is a plain function
 /// pointer and cannot capture.
@@ -303,8 +428,7 @@ void WriteOneElement(void *context, const std::byte *key, const std::byte *value
 
 /// Writes a container's entry count and then each entry. A map writes key then
 /// value per entry, in the sorted order its ops impose.
-bool WriteContainer(const FieldMeta &field, const std::byte *address, BitWriter &writer,
-                    const CodecContext *context)
+bool WriteContainer(const FieldMeta &field, const std::byte *address, BitWriter &writer, const CodecContext *context)
 {
     const ContainerSpec *spec = field.container;
     if (spec == nullptr || spec->ops == nullptr)
@@ -312,16 +436,17 @@ bool WriteContainer(const FieldMeta &field, const std::byte *address, BitWriter 
         return false; // a container FieldType with no shape is a reflection bug
     }
 
-    writer.WriteVarUInt64(spec->ops->size(address));
+    // An array's length is its type's, so both ends already know it.
+    if (spec->fixedCount == 0)
+    {
+        writer.WriteVarUInt64(spec->ops->size(address));
+    }
 
-    const FieldMeta keyMeta     = ElementMeta(field, *spec, true);
+    const FieldMeta keyMeta = ElementMeta(field, *spec, true);
     const FieldMeta elementMeta = ElementMeta(field, *spec, false);
 
-    WriteElementContext state{.keyMeta     = &keyMeta,
-                              .elementMeta = &elementMeta,
-                              .writer      = &writer,
-                              .codec       = context,
-                              .ok          = true};
+    WriteElementContext state{
+        .keyMeta = &keyMeta, .elementMeta = &elementMeta, .writer = &writer, .codec = context, .ok = true};
     spec->ops->visit(address, &state, &WriteOneElement);
     return state.ok;
 }
@@ -344,8 +469,7 @@ bool ReadOneKey(void *context, std::byte *key)
 /// Reads a container back. The count is checked against the bits actually
 /// remaining before anything is allocated, at every level, so a hostile count
 /// nested inside a valid one is refused on its own terms.
-bool ReadContainerField(const FieldMeta &field, std::byte *address, BitReader &reader,
-                        const CodecContext *context)
+bool ReadContainerField(const FieldMeta &field, std::byte *address, BitReader &reader, const CodecContext *context)
 {
     const ContainerSpec *spec = field.container;
     if (spec == nullptr || spec->ops == nullptr)
@@ -353,12 +477,36 @@ bool ReadContainerField(const FieldMeta &field, std::byte *address, BitReader &r
         return false;
     }
 
-    const FieldMeta keyMeta     = ElementMeta(field, *spec, true);
+    const FieldMeta keyMeta = ElementMeta(field, *spec, true);
     const FieldMeta elementMeta = ElementMeta(field, *spec, false);
 
+    // An array is read in place, element by element: its length is fixed, so
+    // there is no count to check and nothing to clear or grow.
+    if (spec->fixedCount != 0)
+    {
+        if (spec->ops->at == nullptr)
+        {
+            return false;
+        }
+        for (std::size_t i = 0; i < spec->fixedCount; ++i)
+        {
+            if (!ReadField(elementMeta, spec->ops->at(address, i), reader, context))
+            {
+                return false;
+            }
+            if (reader.Failed())
+            {
+                return true;
+            }
+        }
+        return true;
+    }
+
     const bool isMap = field.type == FieldType::Map;
+    // A struct's floor comes from its fields, which only the leaf carries.
+    const StructSpec *leafStruct = spec->element == nullptr ? field.structSpec : nullptr;
     const std::size_t minBits =
-        MinWireBits(spec->elementType) + (isMap ? MinWireBits(spec->keyType) : 0);
+        MinWireBits(spec->elementType, leafStruct) + (isMap ? MinWireBits(spec->keyType, nullptr) : 0);
 
     std::size_t count = 0;
     if (!ReadElementCount(reader, minBits, count))
@@ -437,8 +585,7 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
         // the number means nothing on the other machine. A null hook writes it
         // through, which is right for every same-process round trip.
         const std::uint32_t local = LoadPod<std::uint32_t>(address);
-        writer.WriteUInt32(context != nullptr && context->instanceToWire ? context->instanceToWire(local)
-                                                                        : local);
+        writer.WriteUInt32(context != nullptr && context->instanceToWire ? context->instanceToWire(local) : local);
         return true;
     }
     case FieldType::Int64:
@@ -541,7 +688,7 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
         // builds can hash equal and still number their ordinals differently —
         // one id-only registration apart is enough. Raw bits would silently
         // re-aim; names cannot.
-        const auto &mask       = *reinterpret_cast<const ComponentMask *>(address);
+        const auto &mask = *reinterpret_cast<const ComponentMask *>(address);
         const std::span<const ComponentMeta *const> replicable = ComponentRegistry::Instance().ReplicableComponents();
 
         std::size_t count = 0;
@@ -569,7 +716,11 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     }
     case FieldType::Vector:
     case FieldType::Map:
+    case FieldType::Array:
         return WriteContainer(field, address, writer, context);
+    case FieldType::Struct:
+        // A struct with no table is a reflection bug, refused as Unknown is.
+        return field.structSpec != nullptr && WriteStructFields(*field.structSpec, address, writer, context);
     default:
         break;
     }
@@ -609,8 +760,7 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     case FieldType::InstanceRef:
     {
         const std::uint32_t wire = reader.ReadUInt32();
-        StorePod(address, context != nullptr && context->instanceFromWire ? context->instanceFromWire(wire)
-                                                                         : wire);
+        StorePod(address, context != nullptr && context->instanceFromWire ? context->instanceFromWire(wire) : wire);
         return true;
     }
     case FieldType::Int64:
@@ -650,6 +800,11 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
         const std::uint64_t value = reader.ReadBits64(static_cast<std::uint32_t>(field.enumSize) * 8u);
         if (reader.Failed())
             return true; // overrun: reported through the reader, not as a type error
+        // A value with no enumerator is refused rather than stored, so nothing
+        // downstream switches over a case no branch covers. The bytes framed
+        // correctly, so this is the field's failure, not the reader's.
+        if (!IsListedEnumerator(field, value))
+            return false;
         return StoreEnum(address, field.enumSize, value);
     }
     case FieldType::String:
@@ -718,7 +873,7 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
             return true; // the reader carries the failure
 
         auto &mask = *reinterpret_cast<ComponentMask *>(address);
-        mask       = ComponentMask{};
+        mask = ComponentMask{};
 
         const ComponentRegistry &registry = ComponentRegistry::Instance();
         for (std::size_t i = 0; i < count; ++i)
@@ -758,7 +913,10 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     }
     case FieldType::Vector:
     case FieldType::Map:
+    case FieldType::Array:
         return ReadContainerField(field, address, reader, context);
+    case FieldType::Struct:
+        return field.structSpec != nullptr && ReadStructFields(*field.structSpec, address, reader, context);
     default:
         break;
     }
@@ -773,70 +931,121 @@ const char *FieldTypeName(FieldType type)
 {
     switch (type)
     {
-    case FieldType::Float: return "f32";
-    case FieldType::Double: return "f64";
-    case FieldType::Int8: return "i8";
-    case FieldType::UInt8: return "u8";
-    case FieldType::Int16: return "i16";
-    case FieldType::UInt16: return "u16";
-    case FieldType::Int32: return "i32";
-    case FieldType::UInt32: return "u32";
-    case FieldType::Int64: return "i64";
-    case FieldType::UInt64: return "u64";
-    case FieldType::Bool: return "bool";
-    case FieldType::Vec2: return "vec2";
-    case FieldType::Vec3: return "vec3";
-    case FieldType::Vec4: return "vec4";
+    case FieldType::Float:
+        return "f32";
+    case FieldType::Double:
+        return "f64";
+    case FieldType::Int8:
+        return "i8";
+    case FieldType::UInt8:
+        return "u8";
+    case FieldType::Int16:
+        return "i16";
+    case FieldType::UInt16:
+        return "u16";
+    case FieldType::Int32:
+        return "i32";
+    case FieldType::UInt32:
+        return "u32";
+    case FieldType::Int64:
+        return "i64";
+    case FieldType::UInt64:
+        return "u64";
+    case FieldType::Bool:
+        return "bool";
+    case FieldType::Vec2:
+        return "vec2";
+    case FieldType::Vec3:
+        return "vec3";
+    case FieldType::Vec4:
+        return "vec4";
     // Distinct from "vec3"/"vec4" on purpose. The bytes are identical, but the
     // name is hashed, so a field that changes between a vector and a colour is a
     // protocol change two builds must agree on rather than a silent reinterpret.
     // The same holds between the two colour spaces.
-    case FieldType::LinearColor3: return "color3";
-    case FieldType::LinearColor4: return "color4";
-    case FieldType::SrgbColor3: return "srgbcolor3";
-    case FieldType::SrgbColor4: return "srgbcolor4";
-    case FieldType::Quat: return "quat";
-    case FieldType::Mat4: return "mat4";
-    case FieldType::Enum: return "enum";
-    case FieldType::String: return "str";
-    case FieldType::EntityRef: return "entity";
-    case FieldType::AssetPath: return "assetpath";
-    case FieldType::AssetPathVector: return "assetpath[]";
-    case FieldType::AssetId: return "assetid";
-    case FieldType::AssetIdVector: return "assetid[]";
-    case FieldType::ComponentMask: return "compmask";
+    case FieldType::LinearColor3:
+        return "color3";
+    case FieldType::LinearColor4:
+        return "color4";
+    case FieldType::SrgbColor3:
+        return "srgbcolor3";
+    case FieldType::SrgbColor4:
+        return "srgbcolor4";
+    case FieldType::Quat:
+        return "quat";
+    case FieldType::Mat4:
+        return "mat4";
+    case FieldType::Enum:
+        return "enum";
+    case FieldType::String:
+        return "str";
+    case FieldType::EntityRef:
+        return "entity";
+    case FieldType::AssetPath:
+        return "assetpath";
+    case FieldType::AssetPathVector:
+        return "assetpath[]";
+    case FieldType::AssetId:
+        return "assetid";
+    case FieldType::AssetIdVector:
+        return "assetid[]";
+    case FieldType::ComponentMask:
+        return "compmask";
     // Distinct from "uint32" on purpose: the bytes are the same width and mean
     // different things — one is a number, the other is a baseNetId a peer has to
     // translate. This name is hashed, so two builds that disagree refuse to pair.
-    case FieldType::InstanceRef: return "instance";
+    case FieldType::InstanceRef:
+        return "instance";
     // Distinct from "str": same bytes on the wire, different buffer capacity, so
     // a build that swapped one for the other would truncate rather than fail.
-    case FieldType::EntityName: return "ename";
+    case FieldType::EntityName:
+        return "ename";
     // Each distinct from "str" and from each other: a field retyped between any
     // two of them is a change two builds must agree on.
-    case FieldType::InternedString: return "iname";
-    case FieldType::DisplayedString: return "dtext";
-    case FieldType::PooledString: return "pstr";
-    case FieldType::StringPool: return "spool";
+    case FieldType::InternedString:
+        return "iname";
+    case FieldType::DisplayedString:
+        return "dtext";
+    case FieldType::PooledString:
+        return "pstr";
+    case FieldType::StringPool:
+        return "spool";
     // Bare, because a container's real spelling carries its key and element and
     // is built by AppendContainerTypeName. Reaching these means a container field
     // arrived without a shape, which is a reflection bug.
-    case FieldType::Vector: return "vector";
-    case FieldType::Map: return "map";
-    default: break;
+    case FieldType::Vector:
+        return "vector";
+    case FieldType::Map:
+        return "map";
+    case FieldType::Array:
+        return "array";
+    // Followed by the struct's name and then its fields, one line each.
+    case FieldType::Struct:
+        return "struct";
+    default:
+        break;
     }
     return "unknown";
 }
 
-/// Spells a container for the layout text: `vector<i32>`, `map<str,vector<i32>>`.
+/// Spells a container for the layout text: `vector<i32>`, `map<str,vector<i32>>`,
+/// `array<f32,3>`, `vector<struct<Length>>`.
 ///
 /// Recursive over the spec chain, so a nested element reads as what it is. No
 /// spaces, and no primitive name contains `<` or `,`, so the result parses back
 /// by eye and two different shapes can never produce the same text — which is
-/// what stops `vector<i32>` and `vector<f32>` hashing alike.
-void AppendContainerTypeName(std::string &text, FieldType type, const ContainerSpec *spec)
+/// what stops `vector<i32>` and `vector<f32>` hashing alike. @p leafStruct names
+/// the struct at the end of the chain, when there is one.
+void AppendContainerTypeName(std::string &text, FieldType type, const ContainerSpec *spec, const StructSpec *leafStruct)
 {
     text += FieldTypeName(type);
+    if (type == FieldType::Struct)
+    {
+        text += '<';
+        text += leafStruct != nullptr ? leafStruct->name : "?";
+        text += '>';
+        return;
+    }
     if (spec == nullptr)
     {
         return;
@@ -848,7 +1057,13 @@ void AppendContainerTypeName(std::string &text, FieldType type, const ContainerS
         text += FieldTypeName(spec->keyType);
         text += ',';
     }
-    AppendContainerTypeName(text, spec->elementType, spec->element);
+    AppendContainerTypeName(text, spec->elementType, spec->element, leafStruct);
+    // The length is part of an array's type, and so part of the layout.
+    if (spec->fixedCount != 0)
+    {
+        text += ',';
+        text += std::to_string(spec->fixedCount);
+    }
     text += '>';
 }
 
@@ -879,7 +1094,14 @@ FieldType LeafElementType(const FieldMeta &field)
 /// and a cooked asset — see IsAssetField.
 using FieldFilter = bool (*)(const FieldMeta &);
 
-void AppendFields(std::string &text, const std::vector<FieldMeta> &fields, FieldFilter keep)
+/// How far one level of struct nesting indents its fields in the layout text.
+constexpr std::string_view kNestIndent = "  ";
+
+/// AppendFields at a nesting depth: a struct's fields follow the line of the
+/// field that holds it, one indent further in, so a field added anywhere in a
+/// nested struct moves the text of every type that holds it.
+void AppendFieldLines(std::string &text, const std::vector<FieldMeta> &fields, FieldFilter keep,
+                      std::string_view indent)
 {
     std::size_t codecIndex = 0;
     for (const FieldMeta &field : fields)
@@ -887,12 +1109,12 @@ void AppendFields(std::string &text, const std::vector<FieldMeta> &fields, Field
         if (!keep(field))
             continue;
 
-        text += "  ";
+        text += indent;
         text += std::to_string(codecIndex);
         text += ' ';
         text += field.name;
         text += ' ';
-        AppendContainerTypeName(text, field.type, field.container);
+        AppendContainerTypeName(text, field.type, field.container, field.structSpec);
 
         // Only what changes the meaning of the bits belongs here. The AFIELD
         // min/max bounds deliberately do not: they clamp what an inspector will
@@ -921,8 +1143,23 @@ void AppendFields(std::string &text, const std::vector<FieldMeta> &fields, Field
             }
         }
         text += '\n';
+
+        // The struct's own fields, whether it is held alone or at the end of a
+        // container: renaming or retyping one of them is as much a layout change
+        // as doing it to a top-level field. reflectgen refuses a struct that
+        // holds itself, so this ends.
+        if (LeafElementType(field) == FieldType::Struct && field.structSpec != nullptr)
+        {
+            const std::string deeper = std::string(indent) + std::string(kNestIndent);
+            AppendFieldLines(text, field.structSpec->fields, keep, deeper);
+        }
         ++codecIndex;
     }
+}
+
+void AppendFields(std::string &text, const std::vector<FieldMeta> &fields, FieldFilter keep)
+{
+    AppendFieldLines(text, fields, keep, kNestIndent);
 }
 
 } // namespace
@@ -942,7 +1179,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     if (meta.id == kInvalidComponentId)
     {
         ASSISI_ASSERT(false, "WriteComponent: component id is not finalized - the registry finalizes "
-                      "lazily on first query, so call this only after startup registration.");
+                             "lazily on first query, so call this only after startup registration.");
         Log::Error("BinaryCodec: refusing to encode '{}' - its ComponentId is not finalized", meta.name);
         return false;
     }
@@ -979,7 +1216,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
                 // component (and a log line naming the field) than a stream that
                 // decodes into garbage.
                 ASSISI_ASSERT(false, "WriteComponent: unencodable field type (FieldType::Unknown, or an enum "
-                              "with a width that is not 1/2/4/8 bytes)");
+                                     "with a width that is not 1/2/4/8 bytes)");
                 Log::Error("BinaryCodec: cannot encode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
                            FieldTypeName(field.type), field.enumSize);
                 return false;
@@ -996,7 +1233,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
     if (meta.id == kInvalidMessageId)
     {
         ASSISI_ASSERT(false, "WriteMessage: message id is not finalized - the registry finalizes lazily on "
-                      "first query, so call this only after startup registration.");
+                             "first query, so call this only after startup registration.");
         Log::Error("BinaryCodec: refusing to encode message '{}' - its MessageId is not finalized", meta.name);
         return false;
     }
@@ -1185,6 +1422,43 @@ std::uint64_t AssetLayoutHash(const AssetTypeMeta &meta)
     return ContentHash64(std::as_bytes(std::span{text}));
 }
 
+std::string StructLayoutDescription(const StructSpec &spec)
+{
+    std::string text;
+    text += "assisi-struct codec=";
+    text += std::to_string(kCodecVersion);
+    text += ' ';
+    text += spec.name;
+    text += '\n';
+
+    AppendFields(text, spec.fields, IsAssetField);
+    return text;
+}
+
+std::uint64_t StructLayoutHash(const StructSpec &spec)
+{
+    const std::string text = StructLayoutDescription(spec);
+    return ContentHash64(std::as_bytes(std::span{text}));
+}
+
+bool WriteStruct(const StructSpec &spec, const void *instance, BitWriter &writer)
+{
+    if (!WriteStructFields(spec, static_cast<const std::byte *>(instance), writer, nullptr))
+    {
+        // Refused, as WriteAsset does: a field left out would shift every field
+        // after it onto the wrong one when read back.
+        ASSISI_ASSERT(false, "WriteStruct: unencodable field type");
+        Log::Error("BinaryCodec: cannot encode struct '{}'", spec.name);
+        return false;
+    }
+    return true;
+}
+
+bool ReadStruct(const StructSpec &spec, void *instance, BitReader &reader)
+{
+    return ReadStructFields(spec, static_cast<std::byte *>(instance), reader, nullptr) && !reader.Failed();
+}
+
 bool WriteAsset(const AssetTypeMeta &meta, const void *instance, BitWriter &writer)
 {
     writer.WriteUInt64(AssetLayoutHash(meta));
@@ -1200,7 +1474,7 @@ bool WriteAsset(const AssetTypeMeta &meta, const void *instance, BitWriter &writ
             // out shifts everything after it, so the reader would decode the
             // rest of the document into the wrong fields.
             ASSISI_ASSERT(false, "WriteAsset: unencodable field type (FieldType::Unknown, or an enum with a "
-                          "width that is not 1/2/4/8 bytes)");
+                                 "width that is not 1/2/4/8 bytes)");
             Log::Error("BinaryCodec: cannot encode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
                        FieldTypeName(field.type), field.enumSize);
             return false;

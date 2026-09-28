@@ -119,7 +119,8 @@ struct AttributeSpec
 /// delimited is refused rather than taken for an expression: a misspelt name
 /// would otherwise compile into a rule matching its own letters, which accepts
 /// nothing a player could type and looks like the field is simply broken.
-[[nodiscard]] std::expected<void, MarkupError> ApplyPattern(ScreenNode &node, const MarkupAttribute &attribute);
+[[nodiscard]] std::expected<void, MarkupError> ApplyPattern(ScreenDocument &document, ScreenNode &node,
+                                                            const MarkupAttribute &attribute);
 
 /// What a control's own call would have set before a file says anything.
 ///

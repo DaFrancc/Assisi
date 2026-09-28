@@ -61,7 +61,7 @@ std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttrib
                                                  KnownVerbs() + "."));
     }
     node.action = ActionKind::Event;
-    node.eventName = attribute.value;
+    node.eventName = Core::InternedString{attribute.value};
     return {};
 }
 

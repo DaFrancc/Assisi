@@ -96,6 +96,8 @@ target_sources(Assisi-App-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Window-Generated>
   # MaterialData, which the cooked asset source reads back through the registry.
   $<TARGET_OBJECTS:Assisi-Geometry-Generated>
+  # The screen document's field table, which reading a cooked screen walks.
+  $<TARGET_OBJECTS:Assisi-Mondrian-Generated>
   # Replicated is an ACOMP in NetSync; without its registrations the loader has
   # no ComponentId for it and a blueprint declaring one silently gets an entity
   # that never replicates.

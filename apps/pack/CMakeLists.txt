@@ -13,4 +13,11 @@ target_link_libraries(Assisi-Pack-Tool
     Assisi::Cook
 )
 
+# The screen document's field table. The packer cooks nothing, but the cook
+# library it links keys the screen cooker by that table's layout, so the link
+# needs it defined.
+target_sources(Assisi-Pack-Tool PRIVATE
+  $<TARGET_OBJECTS:Assisi-Mondrian-Generated>
+)
+
 set_target_properties(Assisi-Pack-Tool PROPERTIES OUTPUT_NAME "assisi-pack")

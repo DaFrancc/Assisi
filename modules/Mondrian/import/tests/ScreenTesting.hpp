@@ -114,7 +114,7 @@ inline const Assisi::Mondrian::ScreenNode &NodeNamed(const Assisi::Mondrian::Scr
 {
     for (const Assisi::Mondrian::ScreenNode &node : document.nodes)
     {
-        if (node.name == name)
+        if (node.name.View() == name)
         {
             return node;
         }
@@ -123,12 +123,20 @@ inline const Assisi::Mondrian::ScreenNode &NodeNamed(const Assisi::Mondrian::Scr
     return document.nodes[0];
 }
 
+/// The pattern the first node under the root of @p text compiles to.
+inline std::string FirstPattern(std::string_view text)
+{
+    const Assisi::Mondrian::ScreenDocument document = Compiled(text);
+    REQUIRE(document.nodes.size() > 1);
+    return std::string{document.Text(document.nodes[1].pattern)};
+}
+
 /// The index of the node called @p name, or kNoNode.
 inline uint32_t IndexOf(const Assisi::Mondrian::ScreenDocument &document, std::string_view name)
 {
     for (uint32_t index = 0; index < document.nodes.size(); ++index)
     {
-        if (document.nodes[index].name == name)
+        if (document.nodes[index].name.View() == name)
         {
             return index;
         }

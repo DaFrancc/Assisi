@@ -60,9 +60,47 @@ std::int64_t LoadEnumValue(const FieldMeta &field, const std::byte *address)
 }
 
 std::string DescribeValue(const FieldMeta &field, FieldType type, const std::byte *address);
+std::string DescribeLevel(const FieldMeta &field, const ContainerSpec &spec, const std::byte *address);
 
-/// Walks one container level. @p field carries the leaf's enum table, which is
-/// why it travels all the way down rather than being resolved at the top.
+/// An ASTRUCT as `{ name: value, ... }`, each field described as it would be on
+/// its own, so a struct inside a list reads as what it holds.
+std::string DescribeStruct(const StructSpec *spec, const std::byte *address)
+{
+    if (spec == nullptr)
+    {
+        return "?";
+    }
+
+    std::string text;
+    for (const FieldMeta &member : spec->fields)
+    {
+        if (member.transient)
+        {
+            continue;
+        }
+        if (!text.empty())
+        {
+            text += ", ";
+        }
+        text += member.name;
+        text += ": ";
+
+        const std::byte *at = address + member.offset;
+        if (member.container != nullptr && member.container->ops != nullptr)
+        {
+            text += DescribeLevel(member, *member.container, at);
+        }
+        else
+        {
+            text += DescribeValue(member, member.type, at);
+        }
+    }
+    return "{ " + text + " }";
+}
+
+/// Walks one container level. @p field carries the leaf's enum table and struct
+/// fields, which is why it travels all the way down rather than being resolved
+/// at the top.
 std::string DescribeLevel(const FieldMeta &field, const ContainerSpec &spec, const std::byte *address)
 {
     const bool isMap = spec.keyType != FieldType::Unknown;
@@ -102,8 +140,7 @@ std::string DescribeLevel(const FieldMeta &field, const ContainerSpec &spec, con
                         }
                         else
                         {
-                            collector.text +=
-                                DescribeValue(*collector.field, collector.spec->elementType, value);
+                            collector.text += DescribeValue(*collector.field, collector.spec->elementType, value);
                         }
                         ++collector.seen;
                     });
@@ -120,24 +157,36 @@ std::string DescribeValue(const FieldMeta &field, FieldType type, const std::byt
 {
     switch (type)
     {
-    case FieldType::Bool: return LoadPod<bool>(address) ? "true" : "false";
-    case FieldType::Float: return std::to_string(LoadPod<float>(address));
-    case FieldType::Double: return std::to_string(LoadPod<double>(address));
-    case FieldType::Int8: return std::to_string(LoadPod<std::int8_t>(address));
-    case FieldType::UInt8: return std::to_string(LoadPod<std::uint8_t>(address));
-    case FieldType::Int16: return std::to_string(LoadPod<std::int16_t>(address));
-    case FieldType::UInt16: return std::to_string(LoadPod<std::uint16_t>(address));
-    case FieldType::Int32: return std::to_string(LoadPod<std::int32_t>(address));
-    case FieldType::UInt32: return std::to_string(LoadPod<std::uint32_t>(address));
-    case FieldType::Int64: return std::to_string(LoadPod<std::int64_t>(address));
-    case FieldType::UInt64: return std::to_string(LoadPod<std::uint64_t>(address));
+    case FieldType::Bool:
+        return LoadPod<bool>(address) ? "true" : "false";
+    case FieldType::Float:
+        return std::to_string(LoadPod<float>(address));
+    case FieldType::Double:
+        return std::to_string(LoadPod<double>(address));
+    case FieldType::Int8:
+        return std::to_string(LoadPod<std::int8_t>(address));
+    case FieldType::UInt8:
+        return std::to_string(LoadPod<std::uint8_t>(address));
+    case FieldType::Int16:
+        return std::to_string(LoadPod<std::int16_t>(address));
+    case FieldType::UInt16:
+        return std::to_string(LoadPod<std::uint16_t>(address));
+    case FieldType::Int32:
+        return std::to_string(LoadPod<std::int32_t>(address));
+    case FieldType::UInt32:
+        return std::to_string(LoadPod<std::uint32_t>(address));
+    case FieldType::Int64:
+        return std::to_string(LoadPod<std::int64_t>(address));
+    case FieldType::UInt64:
+        return std::to_string(LoadPod<std::uint64_t>(address));
     case FieldType::String:
         return std::string(reinterpret_cast<const ShortString *>(address)->View());
     case FieldType::EntityName:
         return std::string(reinterpret_cast<const EntityName *>(address)->View());
     case FieldType::InternedString:
         return std::string(reinterpret_cast<const InternedString *>(address)->View());
-    case FieldType::DisplayedString: return reinterpret_cast<const DisplayedString *>(address)->Source();
+    case FieldType::DisplayedString:
+        return reinterpret_cast<const DisplayedString *>(address)->Source();
     case FieldType::PooledString:
     {
         // The pool is the struct's, and a container element has no way to reach
@@ -145,8 +194,12 @@ std::string DescribeValue(const FieldMeta &field, FieldType type, const std::byt
         const PooledString handle = LoadPod<PooledString>(address);
         return std::to_string(handle.offset) + ":" + std::to_string(handle.length);
     }
-    case FieldType::Enum: return DescribeEnum(field, LoadEnumValue(field, address));
-    default: return "?";
+    case FieldType::Enum:
+        return DescribeEnum(field, LoadEnumValue(field, address));
+    case FieldType::Struct:
+        return DescribeStruct(field.structSpec, address);
+    default:
+        return "?";
     }
 }
 

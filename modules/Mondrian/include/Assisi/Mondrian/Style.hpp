@@ -13,6 +13,7 @@
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Text.hpp>
 
+#include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Math/Color.hpp>
 
 #include <array>
@@ -30,6 +31,7 @@ inline constexpr float kUnbounded = std::numeric_limits<float>::max();
 inline constexpr float kPercentOf = 100.f;
 
 /// @brief What a length is measured in.
+AENUM()
 enum class LengthUnit : uint8_t
 {
     Px,      ///< UI pixels
@@ -48,10 +50,11 @@ enum class LengthUnit : uint8_t
 /// their own (border width, corner radius, scroll bar length) take `%` of the
 /// node's own shorter side, so a corner radius of 50% makes a pill. A text
 /// size's own `%` and `em` are of its parent's text size, as in CSS.
+ASTRUCT()
 struct Length
 {
-    float value = 0.f;
-    LengthUnit unit = LengthUnit::Px;
+    AFIELD() float value = 0.f;
+    AFIELD() LengthUnit unit = LengthUnit::Px;
 
     [[nodiscard]] friend constexpr bool operator==(const Length &, const Length &) = default;
 };
@@ -97,6 +100,7 @@ enum class Axis : uint8_t
 inline constexpr std::size_t kAxisCount = static_cast<std::size_t>(Axis::Count);
 
 /// @brief How a node's size on one axis is decided.
+AENUM()
 enum class SizingKind : uint8_t
 {
     Fit,   ///< just large enough for its content
@@ -106,12 +110,13 @@ enum class SizingKind : uint8_t
 };
 
 /// @brief A node's size on one axis, clamped to [min, max] whatever its kind.
+ASTRUCT()
 struct Sizing
 {
-    Length value; ///< Fixed: the length. Otherwise unused.
-    Length min;
-    Length max = Px(kUnbounded);
-    SizingKind kind = SizingKind::Fit;
+    AFIELD() Length value; ///< Fixed: the length. Otherwise unused.
+    AFIELD() Length min;
+    AFIELD() Length max = Px(kUnbounded);
+    AFIELD() SizingKind kind = SizingKind::Fit;
 
     [[nodiscard]] static constexpr Sizing Fit() { return {}; }
     [[nodiscard]] static constexpr Sizing Grow()
@@ -127,6 +132,7 @@ struct Sizing
 };
 
 /// @brief Which axis a container places its children along.
+AENUM()
 enum class Direction : uint8_t
 {
     Row,    ///< left to right
@@ -135,6 +141,7 @@ enum class Direction : uint8_t
 };
 
 /// @brief Where on an axis something sits within the space it has.
+AENUM()
 enum class Alignment : uint8_t
 {
     Start,
@@ -144,12 +151,13 @@ enum class Alignment : uint8_t
 };
 
 /// @brief Space inside a node's edges, around its content.
+ASTRUCT()
 struct Padding
 {
-    Length left;
-    Length top;
-    Length right;
-    Length bottom;
+    AFIELD() Length left;
+    AFIELD() Length top;
+    AFIELD() Length right;
+    AFIELD() Length bottom;
 
     [[nodiscard]] static constexpr Padding All(Length length) { return {length, length, length, length}; }
 
@@ -158,6 +166,7 @@ struct Padding
 
 /// @brief When a scrolling node shows the bar that says where in its content it
 /// is, and which a player may drag.
+AENUM()
 enum class ScrollBarVisibility : uint8_t
 {
     Never,
@@ -167,6 +176,7 @@ enum class ScrollBarVisibility : uint8_t
 };
 
 /// @brief How the content keeps up with a scroll bar being dragged.
+AENUM()
 enum class ScrollBarDrag : uint8_t
 {
     FollowsPointer, ///< the content is where the thumb is, so the hand moving it never leads
@@ -175,6 +185,7 @@ enum class ScrollBarDrag : uint8_t
 };
 
 /// @brief What a floating node is placed against.
+AENUM()
 enum class FloatAnchor : uint8_t
 {
     Parent,
@@ -186,48 +197,50 @@ enum class FloatAnchor : uint8_t
 /// lands on the point @p anchor of what it floats against, then moves by
 /// @p offset. A floating node takes no space in its parent and draws over its
 /// siblings.
+ASTRUCT()
 struct Floating
 {
     /// Across, then down.
-    std::array<Length, kAxisCount> offset{};
-    std::array<Alignment, kAxisCount> anchor{Alignment::Start, Alignment::Start};
-    std::array<Alignment, kAxisCount> attach{Alignment::Start, Alignment::Start};
-    FloatAnchor target = FloatAnchor::Parent;
-    bool enabled = false;
+    AFIELD() std::array<Length, kAxisCount> offset {};
+    AFIELD() std::array<Alignment, kAxisCount> anchor { Alignment::Start, Alignment::Start };
+    AFIELD() std::array<Alignment, kAxisCount> attach { Alignment::Start, Alignment::Start };
+    AFIELD() FloatAnchor target = FloatAnchor::Parent;
+    AFIELD() bool enabled = false;
     /// Clipped by its parent's clip as an in-flow child is; otherwise unclipped.
-    bool clipToParent = false;
+    AFIELD() bool clipToParent = false;
 
     [[nodiscard]] friend constexpr bool operator==(const Floating &, const Floating &) = default;
 };
 
 /// @brief Everything about a node that is not its content.
+ASTRUCT()
 struct Style
 {
-    Math::Color4<Math::ColorSpace::Srgb> background{0.f, 0.f, 0.f, 0.f};
-    Math::Color4<Math::ColorSpace::Srgb> borderColor{0.f, 0.f, 0.f, 0.f};
-    Math::Color4<Math::ColorSpace::Srgb> textColor{1.f, 1.f, 1.f, 1.f};
-    std::array<Sizing, kAxisCount> sizing{};
-    Padding padding;
-    Floating floating;
-    Length gap; ///< between consecutive in-flow children
-    Length textSize = Px(kDefaultTextSize);
-    Length borderWidth; ///< at least one device pixel once resolved, unless zero
-    Length cornerRadius;
-    CornerStyle cornerStyle = CornerStyle::Square;
-    Direction direction = Direction::Row;
-    std::array<Alignment, kAxisCount> childAlign{Alignment::Start, Alignment::Start};
-    TextAlign textAlign = TextAlign::Left;
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> background { 0.f, 0.f, 0.f, 0.f };
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> borderColor { 0.f, 0.f, 0.f, 0.f };
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> textColor { 1.f, 1.f, 1.f, 1.f };
+    AFIELD() std::array<Sizing, kAxisCount> sizing {};
+    AFIELD() Padding padding;
+    AFIELD() Floating floating;
+    AFIELD() Length gap; ///< between consecutive in-flow children
+    AFIELD() Length textSize = Px(kDefaultTextSize);
+    AFIELD() Length borderWidth; ///< at least one device pixel once resolved, unless zero
+    AFIELD() Length cornerRadius;
+    AFIELD() CornerStyle cornerStyle = CornerStyle::Square;
+    AFIELD() Direction direction = Direction::Row;
+    AFIELD() std::array<Alignment, kAxisCount> childAlign { Alignment::Start, Alignment::Start };
+    AFIELD() TextAlign textAlign = TextAlign::Left;
     /// How long a scrolling node takes to reach where it was sent, in seconds.
     /// Zero arrives at once; a small fraction glides instead of jumping.
-    float scrollSmoothing = 0.f;
+    AFIELD() float scrollSmoothing = 0.f;
     /// The shortest its scroll bar's thumb draws, so a long list keeps
     /// something to see and to grab.
-    Length scrollBarMinLength = Px(kDefaultScrollBarMinLength);
+    AFIELD() Length scrollBarMinLength = Px(kDefaultScrollBarMinLength);
     /// Scrolling on an axis lets children overflow on it rather than shrink,
     /// clips them to the node, and gives it a bar on that axis.
-    std::array<bool, kAxisCount> enabledScrollBars{false, false};
-    ScrollBarVisibility scrollBarVisibility = ScrollBarVisibility::Never;
-    ScrollBarDrag scrollBarDrag = ScrollBarDrag::FollowsPointer;
+    AFIELD() std::array<bool, kAxisCount> enabledScrollBars { false, false };
+    AFIELD() ScrollBarVisibility scrollBarVisibility = ScrollBarVisibility::Never;
+    AFIELD() ScrollBarDrag scrollBarDrag = ScrollBarDrag::FollowsPointer;
 
     /// Member by member, so a field added here is compared without anyone
     /// remembering to.

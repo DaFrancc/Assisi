@@ -81,6 +81,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/Reflect/ComponentRegistry.hpp"
     "include/Assisi/Core/Reflect/AssetTypeMeta.hpp"
     "include/Assisi/Core/Reflect/AssetTypeRegistry.hpp"
+    "include/Assisi/Core/Reflect/StructMeta.hpp"
     "include/Assisi/Prelude.hpp"
     "include/Assisi/ShortNames.hpp"
 )

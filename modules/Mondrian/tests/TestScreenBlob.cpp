@@ -17,6 +17,7 @@ namespace
 {
 
 using Color = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>;
+using Assisi::Core::InternedString;
 
 /// A document with nothing left at its default, so a field the writer and the
 /// reader disagree about shows up as a difference rather than as two defaults
@@ -27,11 +28,11 @@ ScreenDocument Everything()
     document.sortKey = kSortPopup + 7;
     document.traits = {
         .input = ScreenInput::LockedConsumeInput, .beneath = ScreenBeneath::HidesBeneath, .pause = ScreenPause::Pause};
-    document.systems = {"PauseMenu", "Options"};
+    document.systems = {InternedString{"PauseMenu"}, InternedString{"Options"}};
     document.focus = 2;
 
     ScreenNode root;
-    root.name = "root";
+    root.name = InternedString{"root"};
     root.style.background = Color{0.1f, 0.2f, 0.3f, 0.55f};
     root.style.childAlign = {Alignment::Center, Alignment::End};
     root.style.direction = Direction::Column;
@@ -49,8 +50,8 @@ ScreenDocument Everything()
 
     ScreenNode panel;
     panel.parent = 0;
-    panel.name = "panel";
-    panel.styleName = "Panel";
+    panel.name = InternedString{"panel"};
+    panel.styleName = InternedString{"Panel"};
     // Every unit appears at least once, so a unit the writer and the reader
     // number differently shows up as a difference.
     panel.style.sizing[0] = Sizing::Fixed(Px(420.f));
@@ -81,8 +82,8 @@ ScreenDocument Everything()
 
     ScreenNode resume;
     resume.parent = 1;
-    resume.name = "resume";
-    resume.text = "Resume";
+    resume.name = InternedString{"resume"};
+    resume.text = document.AddText("Resume");
     resume.widget = BuiltinWidget::Button;
     resume.action = ActionKind::Verb;
     resume.verb = ScreenVerb::Hide;
@@ -90,17 +91,17 @@ ScreenDocument Everything()
 
     ScreenNode quit;
     quit.parent = 1;
-    quit.name = "quit";
-    quit.text = "Quit";
+    quit.name = InternedString{"quit"};
+    quit.text = document.AddText("Quit");
     quit.widget = BuiltinWidget::Button;
     quit.action = ActionKind::Event;
-    quit.eventName = "Assisi::App::QuitRequested";
+    quit.eventName = InternedString{"Assisi::App::QuitRequested"};
     document.nodes.push_back(quit);
 
     // Before the slider it moves, so the target points forward.
     ScreenNode quieter;
     quieter.parent = 1;
-    quieter.name = "quieter";
+    quieter.name = InternedString{"quieter"};
     quieter.widget = BuiltinWidget::Button;
     quieter.action = ActionKind::Verb;
     quieter.verb = ScreenVerb::Step;
@@ -110,12 +111,38 @@ ScreenDocument Everything()
 
     ScreenNode volume;
     volume.parent = 1;
-    volume.name = "volume";
+    volume.name = InternedString{"volume"};
     volume.widget = BuiltinWidget::ContinuousSlider;
     volume.range = {.min = 0.f, .max = 100.f, .step = 5.f};
     document.nodes.push_back(volume);
 
+    ScreenNode port;
+    port.parent = 1;
+    port.name = InternedString{"port"};
+    port.widget = BuiltinWidget::TextField;
+    port.text = document.AddText("8080");
+    port.placeholder = document.AddText("pause:hint");
+    port.placeholderIsKey = true;
+    port.pattern = document.AddText("[0-9]+");
+    port.lines = TextLines::Multi;
+    port.height = TextHeight::Exactly;
+    port.lineLimit = 3;
+    port.maxLength = 5;
+    port.mask = TextMask::Dots;
+    port.check = TextCheck::Refuse;
+    document.nodes.push_back(port);
+
     return document;
+}
+
+/// Where the layout hash starts: past the envelope and the version byte.
+std::size_t LayoutHashOffset(std::span<const std::byte> bytes)
+{
+    Assisi::Core::BitReader reader{bytes};
+    const std::expected<Assisi::Core::CookedKind, Assisi::Core::CookedBlobError> kind =
+        Assisi::Core::ReadCookedHeader(reader);
+    REQUIRE(kind.has_value());
+    return reader.BitsRead() / 8 + sizeof(kScreenPayloadVersion);
 }
 
 std::vector<std::byte> Cook(const ScreenDocument &document)
@@ -135,6 +162,35 @@ TEST_CASE("ScreenBlob: a document survives the round trip field for field")
 
     REQUIRE(read.has_value());
     CHECK(*read == written);
+    // And each text reads back through the pool it was written into.
+    CHECK(read->Text(read->nodes[3].text) == "Quit");
+    CHECK(read->Text(read->nodes[6].pattern) == "[0-9]+");
+}
+
+TEST_CASE("ScreenBlob: a blob cooked against another field layout is refused")
+{
+    // What a field added to Style or ScreenNode does to every blob cooked
+    // before it: the fields that follow would be read into the wrong places.
+    std::vector<std::byte> bytes = Cook(Everything());
+    const std::size_t offset = LayoutHashOffset(bytes);
+    bytes[offset] ^= std::byte{1};
+
+    const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(bytes);
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == CookedScreenError::UnsupportedVersion);
+}
+
+TEST_CASE("ScreenBlob: a text handle past the pool is refused")
+{
+    // It would read as empty, hiding a blob that disagrees with itself as a
+    // blank label.
+    ScreenDocument document;
+    document.nodes.emplace_back();
+    document.nodes[0].text = Assisi::Core::PooledString{.offset = 0, .length = 4};
+
+    const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == CookedScreenError::Invalid);
 }
 
 TEST_CASE("ScreenBlob: an unbounded maximum comes back unbounded")

@@ -49,6 +49,7 @@ enum class TextEditing : uint8_t
 };
 
 /// @brief Whether a field holds one line or many.
+AENUM()
 enum class TextLines : uint8_t
 {
     Single, ///< never wraps, scrolls sideways, and submits on Enter
@@ -61,6 +62,7 @@ enum class TextLines : uint8_t
 /// A field never scrolls its own content: a box that has to hold more than it
 /// shows goes inside a scrolling node, which is where bars, the wheel and
 /// dragging already live. So a field either grows, or is full.
+AENUM()
 enum class TextHeight : uint8_t
 {
     Unbounded, ///< grows with what is in it, for as long as that goes on
@@ -70,6 +72,7 @@ enum class TextHeight : uint8_t
 };
 
 /// @brief Whether a field shows what it holds.
+AENUM()
 enum class TextMask : uint8_t
 {
     None,
@@ -92,6 +95,7 @@ enum class TextAbility : uint8_t
 inline constexpr std::size_t kTextAbilityCount = static_cast<std::size_t>(TextAbility::Count);
 
 /// @brief When a field's pattern is consulted, and what a mismatch costs.
+AENUM()
 enum class TextCheck : uint8_t
 {
     /// An edit whose result the pattern could never accept does not happen.

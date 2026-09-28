@@ -40,6 +40,7 @@ class Ui;
 /// game sees neither. Back is the one way a player hands them back without the
 /// game saying so, which is why it is answered here rather than on its own: a
 /// screen that consumes nothing has nothing for Back to return.
+AENUM()
 enum class ScreenInput : uint8_t
 {
     NoConsume,          ///< the game reads them as though nothing were shown
@@ -53,6 +54,7 @@ enum class ScreenInput : uint8_t
 /// Answered among the screens sharing a target and nowhere else: a screen drawn
 /// onto a surface in the world hides nothing on the player's display, however
 /// it sorts.
+AENUM()
 enum class ScreenBeneath : uint8_t
 {
     NoHide,       ///< what is below is laid out and drawn as usual
@@ -65,6 +67,7 @@ enum class ScreenBeneath : uint8_t
 /// The UI runs either way — it is stepped by the application rather than by a
 /// world phase — so the menu that stopped the world is still worked while it is
 /// stopped.
+AENUM()
 enum class ScreenPause : uint8_t
 {
     Pause, ///< the world's fixed step is skipped, and its physics with it
@@ -80,11 +83,12 @@ enum class ScreenPause : uint8_t
 /// name would not have reached are the point: an inventory that consumes input
 /// without stopping the world, a cutscene letterbox that hides what is beneath
 /// and consumes nothing.
+ASTRUCT()
 struct ScreenTraits
 {
-    ScreenInput input = ScreenInput::NoConsume;
-    ScreenBeneath beneath = ScreenBeneath::NoHide;
-    ScreenPause pause = ScreenPause::Run;
+    AFIELD() ScreenInput input = ScreenInput::NoConsume;
+    AFIELD() ScreenBeneath beneath = ScreenBeneath::NoHide;
+    AFIELD() ScreenPause pause = ScreenPause::Run;
 
     [[nodiscard]] friend constexpr bool operator==(const ScreenTraits &, const ScreenTraits &) = default;
 };

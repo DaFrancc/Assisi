@@ -55,6 +55,7 @@
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/MessageMeta.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 
 namespace Assisi::Core::Reflect
 {
@@ -163,8 +164,8 @@ struct CodecContext
 ///         reflection bug, not a runtime condition to recover from, and silently
 ///         shipping a component whose fields the receiver will misparse is the
 ///         one outcome worse than refusing.
-bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter &writer,
-                    FieldMask mask = kAllFields, const CodecContext *context = nullptr);
+bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter &writer, FieldMask mask = kAllFields,
+                    const CodecContext *context = nullptr);
 
 /// @brief Reads the `ComponentId` prefix of a block.
 ///
@@ -187,8 +188,8 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
 /// @return false if the reader failed at any point, or a field type could not be
 ///         decoded. On failure the component holds whatever was patched before
 ///         the failure — the caller drops the connection rather than trusting it.
-bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader,
-                   FieldMask *appliedMask = nullptr, const CodecContext *context = nullptr);
+bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader, FieldMask *appliedMask = nullptr,
+                   const CodecContext *context = nullptr);
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 // A message is a reflected struct, so it encodes through the same field walk a
@@ -225,8 +226,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
 ///
 /// Unlike ReadComponent this is not a patch: a message has no baseline, so
 /// every field on the wire is written and the caller starts from a fresh value.
-bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader,
-                 const CodecContext *context = nullptr);
+bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader, const CodecContext *context = nullptr);
 
 /// @brief Step over the body of a message whose id this build does not know.
 ///
@@ -292,6 +292,34 @@ bool WriteAsset(const AssetTypeMeta &meta, const void *instance, BitWriter &writ
 /// @return false if the reader failed, a field could not be decoded, or the
 ///         leading layout hash is not this build's for @p meta.
 bool ReadAsset(const AssetTypeMeta &meta, void *instance, BitReader &reader);
+
+// ── Structs ───────────────────────────────────────────────────────────────────
+// An ASTRUCT on its own, for a format that is one struct inside an envelope it
+// owns — a cooked screen, say. Only the fields: the caller writes whatever
+// identifies the layout, because the envelope is where it decides what a
+// mismatch is called.
+
+/// @brief The canonical layout text for one struct: its name, then every
+/// non-transient field, with nested structs' fields indented beneath the field
+/// that holds them.
+[[nodiscard]] std::string StructLayoutDescription(const StructSpec &spec);
+
+/// @brief FNV-1a 64 of StructLayoutDescription. Moves when any field anywhere
+/// beneath the struct is added, removed, renamed, retyped or reordered.
+[[nodiscard]] std::uint64_t StructLayoutHash(const StructSpec &spec);
+
+/// @brief Writes every non-transient field of @p instance, nested structs and
+/// containers included, in declaration order.
+///
+/// @return false if a field's type cannot be encoded — loud, as WriteAsset is.
+bool WriteStruct(const StructSpec &spec, const void *instance, BitWriter &writer);
+
+/// @brief Reads what WriteStruct wrote into @p instance.
+///
+/// @return false if the bytes ran out (the reader's Failed() says so) or a field
+/// would not decode — an enumerator this build does not have, say — with the
+/// reader still Ok(). Fields before the failure are already written.
+bool ReadStruct(const StructSpec &spec, void *instance, BitReader &reader);
 
 // ── Protocol identity ─────────────────────────────────────────────────────────
 // Two builds must agree on the component table and every field's wire encoding

@@ -2092,7 +2092,7 @@ class StringFieldTest(unittest.TestCase):
     def test_a_pooled_string_with_two_pools_is_refused(self):
         self._assert_refused(
             "AFIELD() Core::StringPool a; AFIELD() Core::StringPool b; AFIELD() Core::PooledString title;",
-            "it holds 'a', 'b'")
+            "more than one Core::StringPool ('a', 'b')")
 
     def test_a_list_of_pools_is_refused(self):
         self._assert_refused("AFIELD() std::vector<Core::StringPool> pools;", "holds elements of type")
@@ -2102,6 +2102,136 @@ class StringFieldTest(unittest.TestCase):
         # keyed by one would encode differently every time.
         self._assert_refused("AFIELD() std::map<Core::InternedString, int32_t> counts;",
                              "which cannot key a reflected map")
+
+
+class StructFieldTest(unittest.TestCase):
+    """ASTRUCT value structs: declared in one generated file, reached from every
+    other through StructTraits, and refused where they could not mean anything."""
+
+    _INNER = ("namespace N {\n"
+              "AENUM()\nenum class Colour : std::uint8_t { Red = 0, Green = 7 };\n"
+              "ASTRUCT()\nstruct Inner { AFIELD() float weight = 0.f; AFIELD() Colour colour; };\n")
+
+    def _generate(self, source: str, allow_c_arrays: bool = False) -> str:
+        return reflectgen.generate_cpp(_parse_source(source), "N/C.hpp", allow_c_arrays=allow_c_arrays)
+
+    def _assert_refused(self, source: str, expected_text: str):
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(source), "N/C.hpp")
+        self.assertIn(expected_text, str(caught.exception))
+
+    def test_a_struct_declares_and_defines_its_table(self):
+        cpp = self._generate(self._INNER + "}\n")
+        self.assertIn("ASSISI_REFLECTED_STRUCT(::N::Inner);", cpp)
+        self.assertIn("const StructSpec *StructTraits<::N::Inner>::Spec()", cpp)
+        self.assertIn('"weight", .type = Assisi::Core::Reflect::FieldType::Float', cpp)
+        # A struct is not a component and not an asset.
+        self.assertNotIn("ComponentRegistry", cpp)
+        self.assertNotIn("AssetTypeRegistry", cpp)
+
+    def test_the_trait_is_declared_before_anything_uses_it(self):
+        cpp = self._generate(self._INNER + "ACOMP()\nstruct C { AFIELD() Inner inner; };\n}\n")
+        declared = cpp.index("ASSISI_REFLECTED_STRUCT(::N::Inner);")
+        used     = cpp.index("StructTraits<::N::Inner>::Spec()")
+        self.assertLess(declared, used)
+
+    def test_a_struct_field_in_a_component_nests_its_table_and_its_json(self):
+        cpp = self._generate(self._INNER + "ACOMP()\nstruct C { AFIELD() Inner inner; };\n}\n")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Struct", cpp)
+        self.assertIn(".structSpec = Assisi::Core::Reflect::StructTraits<::N::Inner>::Spec()", cpp)
+        self.assertIn("Assisi::Core::Reflect::StructToJson(c.inner)", cpp)
+        self.assertIn('Assisi::Core::Reflect::ReadStructField(j, _comp, "inner", comp.inner)', cpp)
+
+    def test_structs_in_containers_carry_the_leaf_table(self):
+        cpp = self._generate(self._INNER + "AASSET()\nstruct A { "
+                             "AFIELD() std::vector<Inner> list; AFIELD() std::array<Inner, 2> pair; };\n}\n")
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Vector", cpp)
+        self.assertIn(".type = Assisi::Core::Reflect::FieldType::Array", cpp)
+        self.assertEqual(cpp.count(".structSpec = Assisi::Core::Reflect::StructTraits<::N::Inner>::Spec()"), 2)
+
+    def test_an_array_length_may_be_a_named_constant(self):
+        cpp = self._generate("namespace N {\nACOMP()\nstruct C { "
+                             "AFIELD() std::array<float, kAxisCount> sizes{}; };\n}\n")
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::sizes)>()", cpp)
+
+    def test_a_struct_declared_in_an_included_header_is_declared_not_defined(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "include"
+            (root / "Assisi" / "N").mkdir(parents=True)
+            (root / "Assisi" / "N" / "Inner.hpp").write_text(self._INNER + "}\n", encoding="utf-8")
+            (root / "Assisi" / "N" / "C.hpp").write_text(
+                "#include <Assisi/N/Inner.hpp>\nnamespace N {\nACOMP()\nstruct C { AFIELD() Inner inner; };\n}\n",
+                encoding="utf-8")
+            components = reflect_parser.parse_header(root / "Assisi" / "N" / "C.hpp", include_dirs=[root])
+            cpp = reflectgen.generate_cpp(components, "Assisi/N/C.hpp")
+        self.assertIn("ASSISI_REFLECTED_STRUCT(::N::Inner);", cpp)
+        self.assertNotIn("StructTraits<::N::Inner>::Spec()\n{", cpp)
+
+    def test_norep_inside_a_struct_is_refused(self):
+        self._assert_refused("namespace N {\nASTRUCT()\nstruct S { AFIELD(norep) float x; };\n}\n",
+                             "is an ASTRUCT")
+
+    def test_an_entity_inside_a_struct_is_refused(self):
+        self._assert_refused("namespace N {\nASTRUCT()\nstruct S { AFIELD() ECS::Entity who; };\n}\n",
+                             "no scene to resolve one against")
+
+    def test_a_struct_that_holds_itself_is_refused(self):
+        self._assert_refused("namespace N {\nASTRUCT()\nstruct S { AFIELD() std::vector<S> children; };\n}\n",
+                             "holds itself")
+
+    def test_astruct_takes_no_arguments(self):
+        with self.assertRaises(ValueError) as caught:
+            _parse_source("namespace N {\nASTRUCT(replicable)\nstruct S { AFIELD() float x; };\n}\n")
+        self.assertIn("ASTRUCT takes no arguments", str(caught.exception))
+
+    def test_a_pooled_string_in_a_struct_uses_its_holders_pool(self):
+        source = ("namespace N {\nASTRUCT()\nstruct Row { AFIELD() Core::PooledString text; };\n"
+                  "ACOMP()\nstruct C { AFIELD() Core::StringPool pool; AFIELD() std::vector<Row> rows; };\n}\n")
+        self.assertIn("FieldType::PooledString", self._generate(source))
+
+    def test_a_pooled_string_in_a_struct_with_no_pool_above_is_refused(self):
+        self._assert_refused("namespace N {\nASTRUCT()\nstruct Row { AFIELD() Core::PooledString text; };\n"
+                             "ACOMP()\nstruct C { AFIELD() Row row; };\n}\n",
+                             "holds the PooledString 'row.text'")
+
+    def test_a_struct_holding_its_own_pool_covers_its_strings(self):
+        source = ("namespace N {\nASTRUCT()\nstruct Doc { AFIELD() Core::StringPool pool; "
+                  "AFIELD() Core::PooledString text; };\n"
+                  "ACOMP()\nstruct C { AFIELD() Doc doc; };\n}\n")
+        self.assertIn("FieldType::Struct", self._generate(source))
+
+
+class CArrayFieldTest(unittest.TestCase):
+    """C array fields: forbidden unless the build allows them, and when allowed,
+    reflected as the same Array field type std::array is."""
+
+    _SOURCE = "namespace N {\nACOMP()\nstruct C { AFIELD() float weights[3]{}; AFIELD() int16_t grid[2][3]; };\n}\n"
+
+    def test_a_c_array_is_refused_by_default_with_the_fix(self):
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(self._SOURCE), "N/C.hpp")
+        message = str(caught.exception)
+        self.assertIn("is a C array (float[3])", message)
+        self.assertIn("std::array<T, N>", message)
+        self.assertIn("ASSISI_FORBID_C_ARRAYS=OFF", message)
+
+    def test_an_allowed_c_array_is_an_array_field(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._SOURCE), "N/C.hpp", allow_c_arrays=True)
+        self.assertIn('"weights", .type = Assisi::Core::Reflect::FieldType::Array', cpp)
+        self.assertIn(".container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::grid)>()", cpp)
+
+    def test_the_extents_move_onto_the_type(self):
+        fields = _parse_source(self._SOURCE)[0].fields
+        self.assertEqual(fields[0].cpp_type, "float[3]")
+        self.assertEqual(fields[1].container.count, "2")
+        self.assertEqual(fields[1].container.element.count, "3")
+
+    def test_a_vector_of_c_arrays_is_refused_even_when_allowed(self):
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(
+                _parse_source("namespace N {\nACOMP()\nstruct C { AFIELD() std::vector<float[3]> rows; };\n}\n"),
+                "N/C.hpp", allow_c_arrays=True)
+        self.assertIn("cannot store", str(caught.exception))
 
 
 class IncludePathTest(unittest.TestCase):

@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -27,9 +28,9 @@ namespace
 
 enum class Colour : std::uint8_t
 {
-    Red   = 0,
+    Red = 0,
     Green = 7,
-    Blue  = 9,
+    Blue = 9,
 };
 
 ShortString Str(std::string_view text)
@@ -48,6 +49,37 @@ TEST_CASE("ContainerJson: a vector is an array and round-trips")
     std::vector<std::int32_t> decoded;
     REQUIRE(ContainerFromJson(encoded, "C", "numbers", decoded));
     CHECK(decoded == source);
+}
+
+TEST_CASE("ContainerJson: a fixed array is a list of exactly its length")
+{
+    const std::array<std::int16_t, 3> source{-2, 0, 5};
+    const nlohmann::json encoded = ContainerToJson(source);
+    CHECK(encoded.dump() == "[-2,0,5]");
+
+    std::array<std::int16_t, 3> decoded{};
+    REQUIRE(ContainerFromJson(encoded, "C", "values", decoded));
+    CHECK(decoded == source);
+
+    // Neither truncated nor padded: either would be a value the file does not
+    // hold. The destination is refused as it stands.
+    std::array<std::int16_t, 3> shorter{};
+    CHECK_FALSE(ContainerFromJson(nlohmann::json::parse("[1,2]"), "C", "values", shorter));
+    CHECK_FALSE(ContainerFromJson(nlohmann::json::parse("[1,2,3,4]"), "C", "values", shorter));
+}
+
+TEST_CASE("ContainerJson: a C array of arrays is a list of lists, read in place")
+{
+    const std::int32_t source[2][3]{{1, 2, 3}, {4, 5, 6}};
+    const nlohmann::json encoded = ContainerToJson(source);
+    CHECK(encoded.dump() == "[[1,2,3],[4,5,6]]");
+
+    std::int32_t decoded[2][3]{};
+    REQUIRE(ContainerFromJson(encoded, "C", "grid", decoded));
+    CHECK(decoded[1][2] == 6);
+    CHECK(decoded[0][1] == 2);
+
+    CHECK_FALSE(ContainerFromJson(nlohmann::json::parse("[[1,2,3],[4,5]]"), "C", "grid", decoded));
 }
 
 TEST_CASE("ContainerJson: an enum element is its underlying value, as a scalar enum field is")
@@ -93,7 +125,7 @@ TEST_CASE("ContainerJson: a nested list-per-key round-trips, empty lists include
 {
     std::unordered_map<ShortString, std::vector<Colour>> bindings;
     bindings[Str("MoveForward")] = {Colour::Red, Colour::Blue};
-    bindings[Str("Crouch")]      = {};
+    bindings[Str("Crouch")] = {};
 
     const nlohmann::json encoded = ContainerToJson(bindings);
     CHECK(encoded.dump() == R"({"Crouch":[],"MoveForward":[0,9]})");
