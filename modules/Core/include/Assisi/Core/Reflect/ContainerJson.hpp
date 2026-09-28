@@ -35,6 +35,7 @@
 #include <nlohmann/json.hpp>
 
 #include <Assisi/Core/Reflect/JsonRead.hpp>
+#include <Assisi/Core/Reflect/StringJson.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Core/TrivialString.hpp>
 
@@ -134,9 +135,17 @@ template <typename T> nlohmann::json ElementToJson(const T &value)
         // so an enum inside a container reads the same as one beside it.
         return static_cast<std::int64_t>(value);
     }
-    else if constexpr (IsTrivialString<T>::value)
+    else if constexpr (IsTrivialString<T>::value || std::is_same_v<T, InternedString>)
     {
         return std::string(value.View());
+    }
+    else if constexpr (std::is_same_v<T, DisplayedString>)
+    {
+        return value.Source();
+    }
+    else if constexpr (std::is_same_v<T, PooledString>)
+    {
+        return PooledStringToJson(value);
     }
     else if constexpr (IsReflectedContainer<T>::value)
     {
@@ -176,6 +185,27 @@ bool ElementFromJson(const nlohmann::json &value, const char *component, const c
             return false;
         }
         return true;
+    }
+    else if constexpr (std::is_same_v<T, InternedString> || std::is_same_v<T, DisplayedString>)
+    {
+        if (!value.is_string())
+        {
+            ReportBadField(component, field, "strings", value);
+            return false;
+        }
+        if constexpr (std::is_same_v<T, InternedString>)
+        {
+            out = InternedString{value.get<std::string>()};
+        }
+        else
+        {
+            out = DisplayedString::FromSource(value.get<std::string>());
+        }
+        return true;
+    }
+    else if constexpr (std::is_same_v<T, PooledString>)
+    {
+        return PooledStringFromJson(value, component, field, out);
     }
     else if constexpr (std::is_same_v<T, bool>)
     {

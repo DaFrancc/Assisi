@@ -13,6 +13,7 @@
 /// load reads through ReadCookedStringTable, in the game and in the editor.
 
 #include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/DisplayedString.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -26,16 +27,12 @@
 namespace Assisi::Mondrian
 {
 
-/// @brief What marks screen text as a key into a string table, at the start of
-/// it: `#pause:title`. Written twice at the start, it is itself; anywhere else
-/// it is an ordinary character. Also what a key no table gives anything shows
-/// behind, so it reads as the key it is.
-inline constexpr char kKeyMark = '#';
-
-/// @brief What separates a table's name from a key in it: `pause:title`.
-///
-/// Not '.', so a key can be dotted to group its own strings: `pause:menu.title`.
-inline constexpr char kTableSeparator = ':';
+// A screen writes a key the way a DisplayedString does, so the spelling has one
+// definition, in Core, below every module that reads it.
+using Core::kKeyMark;
+using Core::kTableSeparator;
+using Core::SplitKey;
+using Core::TableKey;
 
 /// @brief Version of the string table payload's layout, separate from the blob
 /// envelope's.
@@ -68,17 +65,6 @@ struct StringTables
     /// there is no such table or it has no such key.
     [[nodiscard]] const std::string *Find(std::string_view table, std::string_view key) const;
 };
-
-/// @brief A key as a screen writes it, split at kTableSeparator.
-struct TableKey
-{
-    std::string_view table;
-    std::string_view key;
-};
-
-/// @brief @p qualified split into its table and its key, or nothing when it has
-/// no separator or either side of it is empty.
-[[nodiscard]] std::optional<TableKey> SplitKey(std::string_view qualified);
 
 /// @brief The name the table at @p vpath is known by: the file's name without
 /// its folder or its last extension. `text/strings.fr.csv` is `strings.fr`.

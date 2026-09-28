@@ -76,6 +76,36 @@ _INLINE_STRING_64 = TypeCodegen(
     '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}')
 
 
+# The string types, each read through its Reflect::StringJson helper. An
+# InternedString is written as its text, never its index, which is numbered per
+# run; a DisplayedString as its written form; a PooledString as its offset and
+# length, beside the one StringPool of its struct, written as its bytes.
+_INTERNED_STRING = TypeCodegen(
+    'InternedString',
+    'std::string({a}.View())',
+    'if (!Assisi::Core::Reflect::ReadInternedString(j, _comp, "{f}", {a})) return false;')
+
+_DISPLAYED_STRING = TypeCodegen(
+    'DisplayedString',
+    '{a}.Source()',
+    'if (!Assisi::Core::Reflect::ReadDisplayedString(j, _comp, "{f}", {a})) return false;')
+
+_POOLED_STRING = TypeCodegen(
+    'PooledString',
+    'Assisi::Core::Reflect::PooledStringToJson({a})',
+    'if (!Assisi::Core::Reflect::ReadPooledString(j, _comp, "{f}", {a})) return false;')
+
+_STRING_POOL = TypeCodegen(
+    'StringPool',
+    'std::string({a}.Bytes())',
+    'if (!Assisi::Core::Reflect::ReadStringPool(j, _comp, "{f}", {a})) return false;')
+
+
+def _core_spellings(name: str, codegen: TypeCodegen) -> dict[str, TypeCodegen]:
+    """@p name under every qualification a Core type can be written with."""
+    return {name: codegen, f'Core::{name}': codegen, f'Assisi::Core::{name}': codegen}
+
+
 # Serialize expressions produce values for json initializer lists.
 # Deserialize statements read from j.at("{f}") and assign to comp.{f}.
 #
@@ -285,6 +315,14 @@ def _colour_spellings() -> dict[str, TypeCodegen]:
 
 
 TYPES.update(_colour_spellings())
+TYPES.update(_core_spellings('InternedString', _INTERNED_STRING))
+TYPES.update(_core_spellings('DisplayedString', _DISPLAYED_STRING))
+TYPES.update(_core_spellings('PooledString', _POOLED_STRING))
+TYPES.update(_core_spellings('StringPool', _STRING_POOL))
+
+# The FieldTypes whose codegen calls the Reflect::StringJson helpers; a generated
+# file with any such field, or a container of one, must include that header.
+STRING_JSON_FIELD_TYPES = {'InternedString', 'DisplayedString', 'PooledString', 'StringPool'}
 
 # Field types whose codegen calls the Core AssetId JSON helpers; a generated file
 # with any such field must include the helper header.
@@ -326,10 +364,12 @@ UNSUPPORTED_TYPES: dict[str, str] = {
     'short':              'use int16_t — short has an implementation-defined width',
     'unsigned short':     'use uint16_t — unsigned short has an implementation-defined width',
     'char':               'use int8_t/uint8_t for a number, or Core::ShortString for text',
-    # std::string allocates, so it cannot sit in a component the ECS moves and
-    # copies, and it has no capacity for the binary codec to read back into. The
-    # engine's reflected strings are the fixed-capacity inline ones.
-    'std::string':        'use Core::ShortString (32 bytes) or Core::EntityName (64)',
+    # A std::string says nothing about what its text is for, and each role has a
+    # type that stores it better.
+    'std::string':        'use Core::InternedString for a name that is compared, '
+                          'Core::DisplayedString for words a player reads, Core::PooledString '
+                          'for one of many strings an asset owns, or Core::ShortString (32 bytes) '
+                          '/ Core::EntityName (64) for short text that must stay inline',
     # An unsupported TrivialString capacity is diagnosed by rule rather than
     # listed here: the capacities are a number, so a table would name a few and
     # leave the rest on the generic message. See _inline_string_reason.

@@ -38,16 +38,6 @@ const std::string *StringTables::Find(std::string_view table, std::string_view k
     return entry == named->second.entries.end() ? nullptr : &entry->second;
 }
 
-std::optional<TableKey> SplitKey(std::string_view qualified)
-{
-    const std::size_t separator = qualified.find(kTableSeparator);
-    if (separator == std::string_view::npos || separator == 0 || separator + 1 == qualified.size())
-    {
-        return std::nullopt;
-    }
-    return TableKey{.table = qualified.substr(0, separator), .key = qualified.substr(separator + 1)};
-}
-
 std::string_view TableName(std::string_view vpath)
 {
     const std::size_t folder = vpath.rfind(kFolderMark);

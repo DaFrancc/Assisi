@@ -32,8 +32,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include <Assisi/Core/DisplayedString.hpp>
+#include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Core/StringPool.hpp>
 #include <Assisi/Core/TrivialString.hpp>
 
 namespace Assisi::Core::Reflect
@@ -163,6 +166,20 @@ template <typename T> constexpr FieldType FieldTypeOf()
     else if constexpr (std::is_same_v<T, EntityName>)
     {
         return FieldType::EntityName;
+    }
+    else if constexpr (std::is_same_v<T, InternedString>)
+    {
+        return FieldType::InternedString;
+    }
+    else if constexpr (std::is_same_v<T, DisplayedString>)
+    {
+        return FieldType::DisplayedString;
+    }
+    // A StringPool has no branch: a list of pools would leave its handles with no
+    // one pool to index, so it is left Unknown and refused as an element.
+    else if constexpr (std::is_same_v<T, PooledString>)
+    {
+        return FieldType::PooledString;
     }
     else if constexpr (ContainerDepth<T>::value > 0)
     {

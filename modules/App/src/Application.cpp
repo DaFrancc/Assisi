@@ -388,6 +388,11 @@ Window::InputContext &Application::GetInput() const
 
 Application::~Application()
 {
+    if (_stringResolverInstalled)
+    {
+        (void)Core::SetDisplayedStringResolver(std::move(_previousStringResolver));
+    }
+
     // Render teardown only ran meaningful bring-up if the presentation
     // half was brought up — which a headless process skips entirely, while still
     // reporting a successful Initialize(). Tear the GPU stack down in order and
@@ -1171,6 +1176,22 @@ void Application::LoadUiStrings()
     }
     _uiStrings = std::move(*tables);
     _ui->SetStringTables(&_uiStrings);
+
+    const Core::DisplayedStringResolver resolver =
+        [this](std::string_view table, std::string_view key) -> std::optional<std::string_view>
+    {
+        if (const std::string *const words = _uiStrings.Find(table, key))
+        {
+            return *words;
+        }
+        return std::nullopt;
+    };
+    Core::DisplayedStringResolver previous = Core::SetDisplayedStringResolver(resolver);
+    if (!_stringResolverInstalled)
+    {
+        _previousStringResolver  = std::move(previous);
+        _stringResolverInstalled = true;
+    }
 }
 
 void Application::ConfigurePostProcess()

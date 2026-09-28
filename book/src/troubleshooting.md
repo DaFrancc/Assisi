@@ -23,8 +23,9 @@ reflectgen reads the `ASYSTEM`, `ACOMP` and `AFIELD` annotations, and its
 message says what's wrong. The usual causes:
 
 - A field of type `int`, `long`, `char` or `std::string`. Use `int32_t`,
-  `int64_t` or `Core::ShortString`. See
-  [Your own components](your-own-components.md).
+  `int64_t`, or the string type for the job. See
+  [Your own components](your-own-components.md) and [Strings](strings.md).
+- A `Core::PooledString` in a struct without exactly one `Core::StringPool`.
 - An `ASYSTEM` without `name = "..."`, or two systems with the same name.
 - An `after =` or `before =` naming a system that doesn't exist.
 - A system that isn't a plain function returning `void` and taking

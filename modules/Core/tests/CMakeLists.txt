@@ -28,15 +28,19 @@ add_executable(Assisi-Core-Tests
   TestCookedBlob.cpp
   TestCookedPayload.cpp
   TestDiagnostics.cpp
+  TestDisplayedString.cpp
   TestEventCatalog.cpp
   TestEventQueue.cpp
   TestFieldBounds.cpp
+  TestInternedString.cpp
   TestJobSystem.cpp
   TestPakCodec.cpp
   TestPakFormat.cpp
   TestPakProvider.cpp
   TestRandomAccessFile.cpp
   TestLogger.cpp
+  TestStringCodec.cpp
+  TestStringPool.cpp
   TestTrivialString.cpp
 )
 
