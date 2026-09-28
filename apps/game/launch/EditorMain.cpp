@@ -26,8 +26,13 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
+#include <Assisi/Mondrian/Import/TextRules.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstddef>
@@ -380,6 +385,48 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
     return true;
 }
 
+/// A source file's text, by asset path: the libraries a screen imports, the
+/// string tables and the UI settings.
+std::expected<std::string, std::string> ReadSourceText(std::string_view vpath)
+{
+    std::expected<std::string, Assisi::Core::AssetError> source = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!source)
+    {
+        return std::unexpected(std::string{"there is no such file in the asset tree"});
+    }
+    return std::move(*source);
+}
+
+/// Compiles the string table at @p vpath and reads the bytes back, as the cook
+/// would, so a table that would fail the cook fails here too.
+std::expected<Assisi::Mondrian::StringTable, Assisi::Mondrian::StringTableReadError> CompileSourceStringTable(
+    std::string_view vpath)
+{
+    const std::expected<std::string, Assisi::Core::AssetError> text = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(Assisi::Mondrian::StringTableReadError::Missing);
+    }
+    const std::expected<Assisi::Mondrian::UiConfig, Assisi::Mondrian::Import::MarkupError> settings =
+        Assisi::Mondrian::Import::LoadUiConfig(&ReadSourceText);
+    const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
+        Assisi::Mondrian::Import::CompileStringTableText(
+            *text, Assisi::Mondrian::Import::EmptyTextFor(settings.value_or(Assisi::Mondrian::UiConfig{})));
+    if (!cooked)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+                                 cooked.error().message);
+        return std::unexpected(Assisi::Mondrian::StringTableReadError::Invalid);
+    }
+    std::expected<Assisi::Mondrian::StringTable, Assisi::Mondrian::CookedStringTableError> table =
+        Assisi::Mondrian::ReadCookedStringTable(*cooked);
+    if (!table)
+    {
+        return std::unexpected(Assisi::Mondrian::StringTableReadError::Invalid);
+    }
+    return std::move(*table);
+}
+
 /// Compiles the screen file at @p vpath and reads the bytes back.
 ///
 /// The compile and the read are the same two calls the cook makes, in the same
@@ -394,18 +441,17 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
         return std::unexpected(Assisi::Mondrian::ScreenReadError::Missing);
     }
 
-    const Assisi::Mondrian::Import::SourceReader read =
-        [](std::string_view library) -> std::expected<std::string, std::string>
+    const Assisi::Mondrian::Import::SourceReader read = &ReadSourceText;
+    const std::expected<Assisi::Mondrian::Import::TextRules, Assisi::Mondrian::Import::MarkupError> rules =
+        Assisi::Mondrian::Import::LoadTextRules(read);
+    if (!rules)
     {
-        std::expected<std::string, Assisi::Core::AssetError> source = Assisi::Core::AssetSystem::ReadText(library);
-        if (!source)
-        {
-            return std::unexpected(std::string{"there is no such file in the asset tree"});
-        }
-        return std::move(*source);
-    };
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", rules.error().file, rules.error().line, rules.error().column,
+                                 rules.error().message);
+        return std::unexpected(Assisi::Mondrian::ScreenReadError::Invalid);
+    }
     const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
-        Assisi::Mondrian::Import::CompileScreenText(*text, Assisi::Core::EventCatalog::Instance(), read);
+        Assisi::Mondrian::Import::CompileScreenText(*text, Assisi::Core::EventCatalog::Instance(), read, *rules);
     if (!cooked)
     {
         // An error inside a library the screen imports names that file.
@@ -440,6 +486,9 @@ int main(int argc, char **argv)
     // those, so what an author sees is what a player gets, and a file that
     // would fail the cook fails here too.
     (void)Assisi::Mondrian::SetScreenReader(&CompileSourceScreen);
+    // String tables the same way: compiled from the file an author edits into
+    // the bytes the cook would write, and read back.
+    (void)Assisi::Mondrian::SetStringTableReader(&CompileSourceStringTable);
 
     EditorArgs args;
     args.capture.frames = 0; // 0 means "not a capture run"; --capture sets it

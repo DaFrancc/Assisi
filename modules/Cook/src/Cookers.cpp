@@ -22,7 +22,11 @@
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
+#include <Assisi/Mondrian/Import/TextRules.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
+#include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -566,6 +570,81 @@ class FontCooker final : public Cooker
 
 // ── Screens ───────────────────────────────────────────────────────────────────
 
+/// A source file's text, by asset path: how a screen compile reaches the
+/// libraries it imports, the string tables and the UI settings.
+std::expected<std::string, std::string> ReadMarkup(std::string_view vpath)
+{
+    std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(std::string{"there is no such file in the asset tree"});
+    }
+    return std::move(*text);
+}
+
+/// @p error as a compiler prints one: line and column first, so an editor can
+/// jump to it, after the file when it is not the one being cooked.
+std::string Where(const Mondrian::Import::MarkupError &error)
+{
+    const std::string place = std::format("{}:{}: {}", error.line, error.column, error.message);
+    return error.file.empty() ? place : error.file + ":" + place;
+}
+
+/// The string tables `config/ui.json` lists, each a `.csv` compiled to the table
+/// a screen's keys are looked up in.
+///
+/// Only the listed files are its: a `.csv` listed nowhere is some other kind of
+/// data, and not this cooker's to guess at.
+class StringTableCooker final : public Cooker
+{
+  public:
+    /// Reads the UI settings once: cookers are made per cook run, so the list
+    /// cannot go stale under one. Settings that do not parse list no tables,
+    /// and the reflected cooker reports them.
+    StringTableCooker() : _config(Mondrian::Import::LoadUiConfig(ReadMarkup).value_or(Mondrian::UiConfig{})) {}
+
+    [[nodiscard]] std::string_view Name() const override { return "string table"; }
+    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::StringTable; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        return Mondrian::kStringTablePayloadVersion;
+    }
+
+    [[nodiscard]] Claim Claims(std::string_view vpath) const override
+    {
+        const bool listed = std::ranges::any_of(_config.stringTables, [vpath](const Core::AssetPath &table)
+                                                { return table.View() == vpath; });
+        return listed ? Claim::Output : Claim::None;
+    }
+
+    /// The settings say whether an empty text is allowed.
+    [[nodiscard]] std::vector<std::string> Dependencies(std::string_view) const override
+    {
+        return {std::string{Mondrian::kUiConfigPath}};
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+        const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
+            Mondrian::Import::CompileStringTableText(*text, Mondrian::Import::EmptyTextFor(_config));
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, Where(cooked.error())));
+        }
+        return *cooked;
+    }
+
+  private:
+    Mondrian::UiConfig _config;
+};
+
 /// `.amdn` markup, compiled to the flat node table a screen loads from, so the
 /// game reads no source text and links no parser.
 ///
@@ -600,7 +679,9 @@ class ScreenCooker final : public Cooker
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
         // Editing a library changes every screen built from it without
-        // touching the screen this is keyed on.
+        // touching the screen this is keyed on; so does editing a string
+        // table, or the settings that say which tables there are. A file not
+        // there yet counts for nothing, so listing one later re-cooks too.
         if (!HasExtension(vpath, ".amdn"))
         {
             return {};
@@ -610,7 +691,18 @@ class ScreenCooker final : public Cooker
         {
             return {};
         }
-        return Mondrian::Import::ImportedLibraries(*text, ReadMarkup);
+        std::vector<std::string> dependencies = Mondrian::Import::ImportedLibraries(*text, ReadMarkup);
+        dependencies.emplace_back(Mondrian::kUiConfigPath);
+        const std::expected<Mondrian::UiConfig, Mondrian::Import::MarkupError> config =
+            Mondrian::Import::LoadUiConfig(ReadMarkup);
+        if (config)
+        {
+            for (const Core::AssetPath &table : config->stringTables)
+            {
+                dependencies.emplace_back(table.View());
+            }
+        }
+        return dependencies;
     }
 
     [[nodiscard]] std::expected<void, CookError> CheckSource(std::string_view vpath) const override
@@ -619,8 +711,14 @@ class ScreenCooker final : public Cooker
         {
             return {};
         }
+        const std::expected<Mondrian::Import::TextRules, Mondrian::Import::MarkupError> rules =
+            Mondrian::Import::LoadTextRules(ReadMarkup);
+        if (!rules)
+        {
+            return std::unexpected(Failure(vpath, Where(rules.error())));
+        }
         const std::expected<void, Mondrian::Import::MarkupError> checked =
-            Mondrian::Import::CheckLibrary(vpath, Core::EventCatalog::Instance(), ReadMarkup);
+            Mondrian::Import::CheckLibrary(vpath, Core::EventCatalog::Instance(), ReadMarkup, *rules);
         if (!checked)
         {
             return std::unexpected(Failure(vpath, Where(checked.error())));
@@ -637,33 +735,19 @@ class ScreenCooker final : public Cooker
             return std::unexpected(Failure(vpath, "could not be read"));
         }
 
+        const std::expected<Mondrian::Import::TextRules, Mondrian::Import::MarkupError> rules =
+            Mondrian::Import::LoadTextRules(ReadMarkup);
+        if (!rules)
+        {
+            return std::unexpected(Failure(vpath, Where(rules.error())));
+        }
         const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
-            Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance(), ReadMarkup);
+            Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance(), ReadMarkup, *rules);
         if (!cooked)
         {
             return std::unexpected(Failure(vpath, Where(cooked.error())));
         }
         return *cooked;
-    }
-
-  private:
-    /// A library's text, by the asset path an import names it by.
-    static std::expected<std::string, std::string> ReadMarkup(std::string_view vpath)
-    {
-        std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
-        if (!text)
-        {
-            return std::unexpected(std::string{"there is no such file in the asset tree"});
-        }
-        return std::move(*text);
-    }
-
-    /// @p error as a compiler prints one: line and column first, so an editor
-    /// can jump to it, after the file when it is not the one being cooked.
-    static std::string Where(const Mondrian::Import::MarkupError &error)
-    {
-        const std::string place = std::format("{}:{}: {}", error.line, error.column, error.message);
-        return error.file.empty() ? place : error.file + ":" + place;
     }
 };
 
@@ -761,6 +845,7 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<TextureCooker>());
     cookers.push_back(std::make_unique<ShaderCooker>());
     cookers.push_back(std::make_unique<FontCooker>());
+    cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
     return cookers;

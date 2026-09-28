@@ -28,6 +28,8 @@ std::string_view ToString(CookedKind kind) noexcept
         return "font";
     case CookedKind::Screen:
         return "screen";
+    case CookedKind::StringTable:
+        return "string table";
     default:
         ASSISI_ASSERT(false, "ToString reached a CookedKind with no name");
         Log::Error("CookedBlob: no name for this kind");

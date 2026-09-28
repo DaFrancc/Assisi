@@ -299,6 +299,14 @@ class Screen
     /// is typed.
     void SetPlaceholder(TextFieldId field, std::string_view text);
 
+    /// @brief Shows what the UI's string tables give @p key, `table:key`, on
+    /// @p id, and again whenever the tables change — until something sets the
+    /// node's text itself.
+    void SetTextKey(NodeId id, std::string_view key);
+
+    /// @brief The same for what @p field shows while it is empty.
+    void SetPlaceholderKey(TextFieldId field, std::string_view key);
+
     /// @brief Whether @p field shows what it holds or stands in marks for it.
     /// Masking a field also stops copy and cut, which can be turned back on
     /// afterwards for a field where seeing the text is the only worry.

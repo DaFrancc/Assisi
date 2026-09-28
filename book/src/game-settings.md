@@ -44,6 +44,11 @@ Any setting you leave out keeps its default.
 
 The default key bindings for named actions. See [Input](input.md).
 
+## `ui.json`
+
+Which `.csv` files are string tables, and how strictly the cook checks the text
+screens show. See [String tables](ui-string-tables.md#listing-tables).
+
 ## `network.json`
 
 Multiplayer settings: which components are never sent, and how precisely

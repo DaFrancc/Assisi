@@ -56,6 +56,9 @@ struct Node
     Style style;
     std::string text;
     std::string name;
+    /// The string table key the text came from, `table:key`, so new tables can
+    /// rewrite it; empty when the text is the node's own.
+    std::string textKey;
     /// What this node does when it is clicked or accepted; empty for none. Set
     /// through Screen::OnActivate, which is what knows whether it pushes an
     /// event or acts on the screen — one that acts on the screen ignores the
@@ -125,7 +128,12 @@ class NodeTree
     /// @brief Destroys @p id and everything under it. The root may not be destroyed.
     void Destroy(NodeId id);
 
+    /// @brief @p text, as the node's own: whatever key it came from before, a
+    /// change of string tables leaves it alone.
     void SetText(NodeId id, std::string_view text);
+    /// @brief @p text, which a string table gives @p key, so a change of tables
+    /// rewrites it.
+    void SetKeyedText(NodeId id, std::string_view key, std::string_view text);
     /// @brief What Find looks @p id up by, replacing the name it had. Refused,
     /// leaving the old name, when another live node has @p name; an empty name
     /// takes the name off.

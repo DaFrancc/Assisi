@@ -28,8 +28,24 @@ Every one of these fails the cook with the file, line and column:
   prefix, or a library that imports itself.
 - A screen file whose root isn't `<screen>`, or a library whose root isn't
   `<templates>` or that holds anything but templates and imports.
+- A key with no table before it, a table `config/ui.json` doesn't list, or an
+  entry the table doesn't have.
+- Text written as it is, when `requireStringKeys` is on and the screen isn't
+  `debug_only`.
 
-An error inside a template library names the library's file.
+An error inside a template library names the library's file. An error about a
+node's text points at the element that wrote it, or at the `placeholder`
+attribute.
+
+These fail the cook of a string table, with the line:
+
+- A first row that isn't a header starting with `key`, or has no text column.
+- A row with no text column, no key, or a key already in the table.
+- An entry with no text, unless `allowEmptyStrings` is on.
+- A quote that is never closed, or text after a closing quote.
+
+Two listed tables with the same file name, or a listed table that isn't
+there, fail the cook of every screen.
 
 ## What's next
 

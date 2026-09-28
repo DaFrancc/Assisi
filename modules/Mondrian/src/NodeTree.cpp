@@ -144,6 +144,16 @@ void NodeTree::SetText(NodeId id, std::string_view text)
     if (Node *node = GetMutable(id))
     {
         node->text = text;
+        node->textKey.clear();
+    }
+}
+
+void NodeTree::SetKeyedText(NodeId id, std::string_view key, std::string_view text)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->text = text;
+        node->textKey = key;
     }
 }
 

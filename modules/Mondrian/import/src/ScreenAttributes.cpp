@@ -169,6 +169,8 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForScreen("sort",
               [](const AttributeTarget &t, std::string_view v) { return Read(t.document.sortKey, v, ParseSortKey); }),
     ForScreen("needs", ReadNeeds),
+    ForScreen("debug_only",
+              [](const AttributeTarget &t, std::string_view v) { return Read(t.document.debugOnly, v, ParseBool); }),
 
     ForControl(BuiltinWidget::Toggle, "on",
                [](const AttributeTarget &t, std::string_view v) { return Read(t.node.on, v, ParseBool); }),

@@ -42,14 +42,15 @@ inline constexpr std::uint8_t kCookedFormatVersion = 1;
 ///        rather than on where the bytes were found.
 enum class CookedKind : std::uint8_t
 {
-    Reflected, ///< A reflected asset type's fields (`.amat`, the config files).
-    Scene,     ///< A level or a blueprint: entities, components, instances.
-    Mesh,      ///< Vertex and index arenas with the submesh, LOD and slot tables.
-    Texture,   ///< Block-compressed mips, ready for upload with no decode.
-    Shader,    ///< SPIR-V, exactly as the compiler emitted it.
-    Verbatim,  ///< Bytes with no cooker of their own — an animated WebP, a licence text.
-    Font,      ///< A glyph atlas with its metrics and kerning.
-    Screen,    ///< A flat node table: one UI screen, with the markup compiled away.
+    Reflected,   ///< A reflected asset type's fields (`.amat`, the config files).
+    Scene,       ///< A level or a blueprint: entities, components, instances.
+    Mesh,        ///< Vertex and index arenas with the submesh, LOD and slot tables.
+    Texture,     ///< Block-compressed mips, ready for upload with no decode.
+    Shader,      ///< SPIR-V, exactly as the compiler emitted it.
+    Verbatim,    ///< Bytes with no cooker of their own — an animated WebP, a licence text.
+    Font,        ///< A glyph atlas with its metrics and kerning.
+    Screen,      ///< A flat node table: one UI screen, with the markup compiled away.
+    StringTable, ///< One table of UI strings, by key.
     Count,
 };
 

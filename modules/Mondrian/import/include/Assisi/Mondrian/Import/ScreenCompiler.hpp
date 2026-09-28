@@ -17,13 +17,14 @@
 /// Cook-side only. The shipped game parses no source text.
 
 #include <Assisi/Mondrian/Import/Markup.hpp>
+#include <Assisi/Mondrian/Import/SourceReader.hpp>
+#include <Assisi/Mondrian/Import/TextRules.hpp>
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,31 +42,31 @@ namespace Assisi::Mondrian::Import
 /// a template using itself is refused outright, whatever the count.
 inline constexpr uint32_t kMaxTemplateNesting = 8;
 
-/// @brief Reads the text of the file at an asset path, or says why it cannot.
-///
-/// How a compile reaches the template libraries a file imports. Taken rather
-/// than reached for, so a test can serve files from memory.
-using SourceReader = std::function<std::expected<std::string, std::string>(std::string_view vpath)>;
-
 /// @brief Compiles a parsed screen into its document.
 ///
 /// @p catalog is what an `on_click` naming an event is checked against — taken
 /// rather than reached for, so a test can hand over exactly the events its case
-/// is about. @p read reaches the libraries the screen imports.
+/// is about. @p read reaches the libraries the screen imports, and @p rules is
+/// what its text is checked against.
 [[nodiscard]] std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root,
                                                                        const Core::EventCatalog &catalog,
-                                                                       const SourceReader &read);
+                                                                       const SourceReader &read,
+                                                                       const TextRules &rules);
 
 /// @brief Parses and compiles @p text, and writes the cooked blob.
 [[nodiscard]] std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string_view text,
                                                                                    const Core::EventCatalog &catalog,
-                                                                                   const SourceReader &read);
+                                                                                   const SourceReader &read,
+                                                                                   const TextRules &rules);
 
 /// @brief Checks the template library at @p vpath: its form, its imports, and
 /// every template it declares, used or not. A library cooks to nothing, so this
 /// is the whole of its cook.
+///
+/// A library belongs to no screen, so none of its text is exempt from
+/// @p rules as a debug-only screen's would be.
 [[nodiscard]] std::expected<void, MarkupError> CheckLibrary(std::string_view vpath, const Core::EventCatalog &catalog,
-                                                            const SourceReader &read);
+                                                            const SourceReader &read, const TextRules &rules);
 
 /// @brief Every library the file @p text imports, directly or through another
 /// library, sorted: what its cooked bytes depend on besides itself.

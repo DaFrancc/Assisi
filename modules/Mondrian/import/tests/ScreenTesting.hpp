@@ -67,29 +67,43 @@ template <typename T, typename E> std::string Why(const std::expected<T, E> &res
     return result.has_value() ? std::string{} : std::string{result.error().message};
 }
 
-/// @p text compiled, importing from @p files.
-inline Assisi::Mondrian::ScreenDocument Compiled(std::string_view text, const Files &files = {})
+/// The rules a screen's text meets with the one table `pause`, holding a title,
+/// the two button labels and a field's hint, and literal text as @p literals says.
+inline Assisi::Mondrian::Import::TextRules PauseTable(
+    Assisi::Mondrian::Import::LiteralText literals = Assisi::Mondrian::Import::LiteralText::Allowed)
+{
+    Assisi::Mondrian::Import::TextRules rules;
+    rules.tables.byName["pause"].entries = {
+        {"title", "Paused"}, {"resume", "Resume"}, {"quit", "Quit"}, {"hint", "Type here"}};
+    rules.literals = literals;
+    return rules;
+}
+
+/// @p text compiled, importing from @p files, its text checked against @p rules.
+inline Assisi::Mondrian::ScreenDocument Compiled(std::string_view text, const Files &files = {},
+                                                 const Assisi::Mondrian::Import::TextRules &rules = {})
 {
     using namespace Assisi::Mondrian::Import;
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
 
     std::expected<Assisi::Mondrian::ScreenDocument, MarkupError> document =
-        CompileScreen(*parsed, OneEvent(), Serving(files));
+        CompileScreen(*parsed, OneEvent(), Serving(files), rules);
     REQUIRE_MESSAGE(document.has_value(), Why(document));
     return *document;
 }
 
-/// The error from compiling @p text, importing from @p files, which the case
-/// expects to fail.
-inline Assisi::Mondrian::Import::MarkupError Refused(std::string_view text, const Files &files = {})
+/// The error from compiling @p text, importing from @p files, its text checked
+/// against @p rules, which the case expects to fail.
+inline Assisi::Mondrian::Import::MarkupError Refused(std::string_view text, const Files &files = {},
+                                                     const Assisi::Mondrian::Import::TextRules &rules = {})
 {
     using namespace Assisi::Mondrian::Import;
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
 
     const std::expected<Assisi::Mondrian::ScreenDocument, MarkupError> document =
-        CompileScreen(*parsed, OneEvent(), Serving(files));
+        CompileScreen(*parsed, OneEvent(), Serving(files), rules);
     REQUIRE_FALSE(document.has_value());
     return document.error();
 }

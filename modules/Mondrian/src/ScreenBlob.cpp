@@ -88,12 +88,12 @@ template <typename Archive, FieldOf<ScreenNode> N> void Fields(Archive &archive,
     // State
     archive(node.visible, node.enabled, node.blocksPointer, node.takesKeyboard, node.selectable);
     // Control and what it does
-    archive(node.widget, node.text, node.action, node.verb, node.target, node.moves, node.eventName);
+    archive(node.widget, node.text, node.textIsKey, node.action, node.verb, node.target, node.moves, node.eventName);
     // Sliders and toggles
     archive(node.range, node.value, node.steps, node.step, node.on);
     // Text fields
-    archive(node.placeholder, node.pattern, node.maxLength, node.lineLimit, node.lines, node.mask, node.check,
-            node.height);
+    archive(node.placeholder, node.placeholderIsKey, node.pattern, node.maxLength, node.lineLimit, node.lines,
+            node.mask, node.check, node.height);
 }
 
 /// Writes each field it is handed, in the order handed.
@@ -291,7 +291,7 @@ void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
     writer.WriteUInt8(kScreenPayloadVersion);
 
     PayloadWriter payload{writer};
-    payload(document.sortKey, document.traits, document.focus);
+    payload(document.sortKey, document.traits, document.focus, document.debugOnly);
 
     writer.WriteVarUInt32(static_cast<uint32_t>(document.systems.size()));
     for (const std::string &system : document.systems)
@@ -332,7 +332,7 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
 
     ScreenDocument document;
     PayloadReader payload{reader};
-    payload(document.sortKey, document.traits, document.focus);
+    payload(document.sortKey, document.traits, document.focus, document.debugOnly);
 
     const std::optional<uint32_t> systemCount = ReadCount(reader, kMinSystemBytes);
     if (!systemCount)

@@ -632,3 +632,65 @@ TEST_CASE("Changing a font file re-cooks the description that names it")
     REQUIRE_MESSAGE(second.has_value(), Explain(second));
     CHECK(second->cooked == 1);
 }
+
+namespace
+{
+
+/// A copy of the fixture tree with UI settings listing one string table, the
+/// table, and a screen whose title comes from it. @p screenText is the title's
+/// text as the screen writes it.
+void AddStringTable(const std::filesystem::path &root, std::string_view screenText)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    WriteAsset(root, "config/ui.json", R"({ "version": 1, "type": "UiConfig", "stringTables": ["ui/menu.csv"] })",
+               "4c2e8a6f-1d3b-4f5a-9e7c-0b2d4f6a8c1e");
+    WriteAsset(root, "ui/menu.csv", "key,en\ntitle,Main menu\n", "7e1a3c5b-9d2f-4a6e-8c0b-3f5d7a9c1e2b");
+    WriteAsset(root, "ui/Menu.amdn", "<screen>\n  <text>" + std::string{screenText} + "</text>\n</screen>\n",
+               "2b4d6f8a-0c1e-4a3c-8e5f-7a9b1d3f5e6c");
+}
+
+} // namespace
+
+TEST_CASE("A listed string table cooks, and changing it re-cooks every screen")
+{
+    const ScratchDir source("table-src");
+    const ScratchDir out("table-out");
+    AddStringTable(source.Path(), "#menu:title");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+    REQUIRE(EntryFor(*first, "ui/menu.csv") != nullptr);
+
+    std::ofstream(source.Path() / "ui" / "menu.csv", std::ios::app) << "subtitle,Choose\n";
+
+    // The table, and both screens: each is checked against every table.
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 3);
+}
+
+TEST_CASE("A key its table does not have fails the screen's cook")
+{
+    const ScratchDir source("table-key-src");
+    const ScratchDir out("table-key-out");
+    AddStringTable(source.Path(), "#menu:missing");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Menu.amdn");
+    CHECK(report.error().reason.starts_with("2:"));
+}
+
+TEST_CASE("A .csv the UI settings do not list is no string table")
+{
+    const ScratchDir source("table-unlisted-src");
+    const ScratchDir out("table-unlisted-out");
+    AddStringTable(source.Path(), "#menu:title");
+    WriteAsset(source.Path(), "data/spawns.csv", "x,y\n1,2\n", "8f0b2d4e-6a1c-4e3f-9b5d-1c3e5a7f9b0d");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "data/spawns.csv");
+    CHECK(report.error().reason.find("no cooker") != std::string::npos);
+}

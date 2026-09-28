@@ -2,6 +2,7 @@
 #include <Assisi/Mondrian/ScreenLoader.hpp>
 
 #include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/EventCatalog.hpp>
@@ -781,4 +782,98 @@ TEST_CASE("ScreenLoader: a verb whose target cannot be what it acts on leaves no
     }
 
     CHECK(Refusal(document) == ScreenLoadError::BadTarget);
+}
+
+namespace
+{
+
+/// The pause menu with its words keyed into the `pause` table, and a field
+/// whose starting text and hint are keyed too.
+ScreenDocument KeyedPauseMenu()
+{
+    ScreenDocument document = PauseMenu();
+    for (ScreenNode &node : document.nodes)
+    {
+        if (!node.text.empty())
+        {
+            node.text = "pause:" + node.name;
+            node.textIsKey = true;
+        }
+    }
+
+    ScreenNode field;
+    field.parent = 1;
+    field.name = "field";
+    field.widget = BuiltinWidget::TextField;
+    field.text = "pause:start";
+    field.textIsKey = true;
+    field.placeholder = "pause:hint";
+    field.placeholderIsKey = true;
+    document.nodes.push_back(field);
+    return document;
+}
+
+/// The `pause` table in one language, the words prefixed by @p language.
+StringTables PauseTables(std::string_view language)
+{
+    StringTables tables;
+    StringTable &pause = tables.byName["pause"];
+    for (const std::string_view key : {"title", "resume", "quit", "start", "hint"})
+    {
+        pause.entries[std::string{key}] = std::string{language} + " " + std::string{key};
+    }
+    return tables;
+}
+
+std::string_view TextOf(const Screen &screen, std::string_view name)
+{
+    return screen.Tree().Get(screen.Find(name))->text;
+}
+
+} // namespace
+
+TEST_CASE("ScreenLoader: a keyed node shows its table's words, and new tables change them")
+{
+    EventQueue events;
+    Ui ui{events};
+    const StringTables english = PauseTables("en");
+    const StringTables french = PauseTables("fr");
+    ui.SetStringTables(&english);
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, KeyedPauseMenu(), TwoEvents());
+    REQUIRE(loaded.has_value());
+    Screen &screen = *loaded->screen;
+
+    CHECK(TextOf(screen, "title") == "en title");
+    CHECK(TextOf(screen, "resume") == "en resume");
+    CHECK(TextOf(screen, "field") == "en start");
+    CHECK(screen.Tree().Get(screen.Find("field"))->edit.placeholder == "en hint");
+
+    // Text game code sets is its own, and no longer the table's.
+    screen.Tree().SetText(screen.Find("quit"), "Leave");
+
+    ui.SetStringTables(&french);
+    CHECK(TextOf(screen, "title") == "fr title");
+    CHECK(TextOf(screen, "resume") == "fr resume");
+    CHECK(screen.Tree().Get(screen.Find("field"))->edit.placeholder == "fr hint");
+    CHECK(TextOf(screen, "quit") == "Leave");
+    // A field's starting text was the player's from the moment it loaded.
+    CHECK(TextOf(screen, "field") == "en start");
+}
+
+TEST_CASE("ScreenLoader: a key with no table shows the key, until a table arrives")
+{
+    EventQueue events;
+    Ui ui{events};
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, kScreenPath, KeyedPauseMenu(), TwoEvents());
+    REQUIRE(loaded.has_value());
+    Screen &screen = *loaded->screen;
+    CHECK(TextOf(screen, "title") == "#pause:title");
+
+    const StringTables english = PauseTables("en");
+    ui.SetStringTables(&english);
+    CHECK(TextOf(screen, "title") == "en title");
 }

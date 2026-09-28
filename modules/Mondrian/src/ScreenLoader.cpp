@@ -159,10 +159,19 @@ NodeId Create(Screen &screen, NodeId parent, const ScreenNode &node)
 }
 
 /// Everything a field carries beyond being a field. @p pattern is the one
-/// Resolve compiled for this node, or null.
-void ApplyTextField(Screen &screen, TextFieldId field, const ScreenNode &node, std::shared_ptr<const Pattern> pattern)
+/// Resolve compiled for this node, or null. @p ui gives what a keyed text or
+/// placeholder says.
+void ApplyTextField(Screen &screen, TextFieldId field, const ScreenNode &node, std::shared_ptr<const Pattern> pattern,
+                    const Ui &ui)
 {
-    screen.SetPlaceholder(field, node.placeholder);
+    if (node.placeholderIsKey)
+    {
+        screen.SetPlaceholderKey(field, node.placeholder);
+    }
+    else
+    {
+        screen.SetPlaceholder(field, node.placeholder);
+    }
     screen.SetMaxLength(field, node.maxLength);
     // Only where the file asked for one. A field is unbounded already, and
     // saying so again would leave it holding a line count that an unbounded
@@ -174,9 +183,11 @@ void ApplyTextField(Screen &screen, TextFieldId field, const ScreenNode &node, s
     // Before the text, because setting text settles the field against whatever
     // pattern it has by then.
     screen.SetPattern(field, std::move(pattern), node.check);
+    // A keyed starting text is looked up once: from then on it is the player's
+    // to change, and new string tables leave it alone.
     if (!node.text.empty())
     {
-        screen.SetText(field, node.text);
+        screen.SetText(field, node.textIsKey ? ui.StringFor(node.text) : node.text);
     }
     // Last: masking a field also turns copy and cut off, so anything after it
     // that touched the abilities would quietly turn them back on.
@@ -303,15 +314,20 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, std::stri
             id = Create(screen, ids[node.parent], node);
             tree.SetStyle(id, node.style);
 
-            if (node.widget == BuiltinWidget::None)
+            // A control took its text where it was created, from the label or
+            // the starting contents its call takes. A keyed label is set again
+            // through its key, so new string tables rewrite it.
+            if (node.widget == BuiltinWidget::None && !node.textIsKey)
             {
-                // A control took its text where it was created, from the label
-                // or the starting contents its call takes.
                 tree.SetText(id, node.text);
+            }
+            if ((node.widget == BuiltinWidget::None || node.widget == BuiltinWidget::Button) && node.textIsKey)
+            {
+                screen.SetTextKey(id, node.text);
             }
             if (node.widget == BuiltinWidget::TextField)
             {
-                ApplyTextField(screen, {.node = id}, node, (*patterns)[index]);
+                ApplyTextField(screen, {.node = id}, node, (*patterns)[index], ui);
             }
         }
 

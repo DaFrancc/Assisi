@@ -12,6 +12,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/StringTableReader.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -26,10 +27,10 @@
 #include <expected>
 #include <filesystem>
 #include <format>
-#include <system_error>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <typeindex>
 #include <utility>
 #include <vector>
@@ -83,6 +84,7 @@ GameApp::~GameApp()
         (void)Core::SetConfigReader({});
         (void)Mondrian::SetFontReader({});
         (void)Mondrian::SetScreenReader({});
+        (void)Mondrian::SetStringTableReader({});
     }
 }
 
@@ -119,6 +121,8 @@ bool GameApp::MountContent()
     // which is the point: the markup never reaches the shipped binary.
     (void)Mondrian::SetScreenReader([&provider](std::string_view vpath)
                                     { return Mondrian::ReadCookedScreen(provider, vpath); });
+    (void)Mondrian::SetStringTableReader([&provider](std::string_view vpath)
+                                         { return Mondrian::ReadCookedStringTable(provider, vpath); });
     return true;
 }
 
@@ -268,8 +272,8 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StopChiaraSession();
-            Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.",
-                            _benchmark->ElapsedSeconds(), LastChiaraDump().path);
+            Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.", _benchmark->ElapsedSeconds(),
+                            LastChiaraDump().path);
         }
         else
         {
@@ -359,7 +363,7 @@ void GameApp::StepWorlds(float dt)
             // system lands on; ordering within a phase cannot substitute for it.
             world.systems.Run(SystemPhase::FixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
@@ -375,7 +379,7 @@ void GameApp::StepWorlds(float dt)
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
         });
 }
 
@@ -469,7 +473,7 @@ void GameApp::OnUpdate(float dt)
             {
                 if (world.state != WorldState::Loading)
                 {
-                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/false);
                 }
             });
     }
@@ -502,7 +506,7 @@ void GameApp::OnUpdate(float dt)
                                     HasPresentation() ? &GetInput() : nullptr,
                                     &GetActions(),
                                     GetEvents(),
-                                    /*isActiveWorld=*/ &world == _worlds.Active(),
+                                    /*isActiveWorld=*/&world == _worlds.Active(),
                                     &_worlds,
                                     GetUi()};
             world.systems.Run(SystemPhase::PreUpdate, ctx);

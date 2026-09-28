@@ -9,18 +9,19 @@
           background="#1a1c24f0" border_width="2" border_color="#575f7a"
           corner_radius="16" corner_style="rounded" align="center start">
 
-    <text name="title" width="grow" text_size="48">Paused</text>
+    <!-- Every word comes from the table ui/pause.csv. -->
+    <text name="title" width="grow" text_size="48">#pause:title</text>
 
     <row name="buttons" width="grow" gap="20" align="center center">
 
       <!-- Resume closes the menu and reaches nothing outside the UI, so it
            needs no event, no system and nothing named in a level. -->
       <menu_button name="resume" on_click="hide()" focus="true"
-                   background="#e63319">Resume</menu_button>
+                   background="#e63319">#pause:resume</menu_button>
 
       <!-- Quit leaves the UI, so it goes through an event a system answers. -->
       <menu_button name="quit" on_click="Assisi::App::QuitRequested"
-                   border_width="2" border_color="#ffffff">Quit</menu_button>
+                   border_width="2" border_color="#ffffff">#pause:quit</menu_button>
 
     </row>
   </column>

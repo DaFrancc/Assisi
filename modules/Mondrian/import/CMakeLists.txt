@@ -37,9 +37,14 @@ Assisi_apply_defaults(Assisi-MondrianImport)
 
 target_sources(Assisi-MondrianImport
   PUBLIC
+    "include/Assisi/Mondrian/Import/Csv.hpp"
     "include/Assisi/Mondrian/Import/Markup.hpp"
     "include/Assisi/Mondrian/Import/ScreenCompiler.hpp"
+    "include/Assisi/Mondrian/Import/SourceReader.hpp"
+    "include/Assisi/Mondrian/Import/StringTableCompiler.hpp"
+    "include/Assisi/Mondrian/Import/TextRules.hpp"
   PRIVATE
+    "src/Csv.cpp"
     "src/Markup.cpp"
     "src/MarkupValues.cpp"
     "src/MarkupValues.hpp"
@@ -52,6 +57,8 @@ target_sources(Assisi-MondrianImport
     "src/ScreenTemplates.cpp"
     "src/ScreenWalk.cpp"
     "src/ScreenWalk.hpp"
+    "src/StringTableCompiler.cpp"
+    "src/TextRules.cpp"
 )
 
 target_include_directories(Assisi-MondrianImport

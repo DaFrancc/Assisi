@@ -23,6 +23,7 @@
 #include <Assisi/Mondrian/Navigation.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/StringTable.hpp>
 
 #include <Assisi/Core/Assert.hpp>
 
@@ -155,6 +156,17 @@ class Ui
     void SetScaleMatch(ScaleMatch match) { _scaleMatch = match; }
     [[nodiscard]] ScaleMatch GetScaleMatch() const { return _scaleMatch; }
 
+    /// @brief The string tables keyed text is looked up in, and the text every
+    /// keyed node on every screen shows, rewritten from them now. The tables
+    /// must outlive the Ui or be replaced first; null takes them away.
+    void SetStringTables(const StringTables *tables);
+    [[nodiscard]] const StringTables *GetStringTables() const { return _tables; }
+
+    /// @brief What the string tables give @p qualified, `table:key`. The key
+    /// itself behind a #, when no table gives it anything: a missing string is
+    /// something to see and fix, not a reason for a screen not to load.
+    [[nodiscard]] std::string StringFor(std::string_view qualified) const;
+
   private:
     friend class Screen;
 
@@ -263,6 +275,7 @@ class Ui
     Screen *_inputScreen = nullptr;
     Core::EventQueue &_events;
     const Font *_font = nullptr;
+    const StringTables *_tables = nullptr;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;

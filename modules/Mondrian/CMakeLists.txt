@@ -26,10 +26,13 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/ScreenDocument.hpp"
     "include/Assisi/Mondrian/ScreenLoader.hpp"
     "include/Assisi/Mondrian/ScreenReader.hpp"
+    "include/Assisi/Mondrian/StringTable.hpp"
+    "include/Assisi/Mondrian/StringTableReader.hpp"
     "include/Assisi/Mondrian/Style.hpp"
     "include/Assisi/Mondrian/Text.hpp"
     "include/Assisi/Mondrian/TextEdit.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
+    "include/Assisi/Mondrian/UiConfig.hpp"
     "include/Assisi/Mondrian/Utf8.hpp"
     "include/Assisi/Mondrian/Widget.hpp"
   PRIVATE
@@ -47,6 +50,8 @@ target_sources(Assisi-Mondrian
     "src/ScreenBlob.cpp"
     "src/ScreenLoader.cpp"
     "src/ScreenReader.cpp"
+    "src/StringTable.cpp"
+    "src/StringTableReader.cpp"
     "src/Text.cpp"
     "src/TextField.cpp"
     "src/Ui.cpp"
@@ -76,6 +81,7 @@ assisi_reflect(
   TARGET Assisi-Mondrian
   HEADERS
     include/Assisi/Mondrian/FontDescription.hpp
+    include/Assisi/Mondrian/UiConfig.hpp
 )
 
 # The boundary above, held by the configure rather than by review: an edge from
