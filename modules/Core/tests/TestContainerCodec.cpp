@@ -48,9 +48,9 @@ namespace
 
 enum class Colour : std::uint8_t
 {
-    Red   = 0,
+    Red = 0,
     Green = 7,
-    Blue  = 9,
+    Blue = 9,
 };
 
 using BindingTable = std::unordered_map<ShortString, std::vector<Colour>>;
@@ -79,53 +79,49 @@ template <typename T, typename M> std::size_t OffsetOf(M T::*member)
 template <typename C> FieldMeta ContainerField(const char *name, std::size_t offset)
 {
     FieldMeta field;
-    field.name      = name;
+    field.name = name;
     field.container = ContainerSpecFor<C>();
-    field.offset    = offset;
-    field.type      = Assisi::Core::Reflect::ContainerDepth<C>::kind;
+    field.offset = offset;
+    field.type = Assisi::Core::Reflect::ContainerDepth<C>::kind;
     return field;
 }
 
 /// Enum metadata rides on the container field and describes its leaf element.
 FieldMeta ColourField(const char *name, std::size_t offset, FieldMeta field)
 {
-    field.name          = name;
-    field.offset        = offset;
-    field.enumSize      = sizeof(Colour);
-    field.enumSigned    = false;
+    field.name = name;
+    field.offset = offset;
+    field.enumSize = sizeof(Colour);
+    field.enumSigned = false;
     field.enumConstants = {{"Red", 0}, {"Green", 7}, {"Blue", 9}};
     return field;
 }
 
 ComponentMeta MakeContainersMeta()
 {
-    ComponentMeta meta{.name            = "Containers",
-                       .typeIndex       = std::type_index(typeid(Containers)),
-                       .fields          = {},
-                       .serialize       = {},
-                       .addToScene      = {},
+    ComponentMeta meta{.name = "Containers",
+                       .typeIndex = std::type_index(typeid(Containers)),
+                       .fields = {},
+                       .serialize = {},
+                       .addToScene = {},
                        .iterateEntities = {},
-                       .getByEntity     = {},
-                       .construct       = {},
-                       .getMutable      = {},
-                       .serializable    = true,
-                       .tracksChanges   = true,
-                       .replicable      = true,
-                       .id              = ComponentId{11}};
+                       .getByEntity = {},
+                       .construct = {},
+                       .getMutable = {},
+                       .serializable = true,
+                       .tracksChanges = true,
+                       .replicable = true,
+                       .id = ComponentId{11}};
 
+    meta.fields.push_back(ContainerField<std::vector<std::int32_t>>("numbers", OffsetOf(&Containers::numbers)));
     meta.fields.push_back(
-        ContainerField<std::vector<std::int32_t>>("numbers", OffsetOf(&Containers::numbers)));
-    meta.fields.push_back(ColourField("colours", OffsetOf(&Containers::colours),
-                                      ContainerField<std::vector<Colour>>("colours", 0)));
+        ColourField("colours", OffsetOf(&Containers::colours), ContainerField<std::vector<Colour>>("colours", 0)));
+    meta.fields.push_back(ContainerField<std::vector<ShortString>>("labels", OffsetOf(&Containers::labels)));
+    meta.fields.push_back(ContainerField<std::map<std::int32_t, float>>("weights", OffsetOf(&Containers::weights)));
     meta.fields.push_back(
-        ContainerField<std::vector<ShortString>>("labels", OffsetOf(&Containers::labels)));
+        ContainerField<std::unordered_map<ShortString, std::int32_t>>("counts", OffsetOf(&Containers::counts)));
     meta.fields.push_back(
-        ContainerField<std::map<std::int32_t, float>>("weights", OffsetOf(&Containers::weights)));
-    meta.fields.push_back(
-        ContainerField<std::unordered_map<ShortString, std::int32_t>>("counts",
-                                                                      OffsetOf(&Containers::counts)));
-    meta.fields.push_back(ColourField("bindings", OffsetOf(&Containers::bindings),
-                                      ContainerField<BindingTable>("bindings", 0)));
+        ColourField("bindings", OffsetOf(&Containers::bindings), ContainerField<BindingTable>("bindings", 0)));
     return meta;
 }
 
@@ -139,14 +135,14 @@ Containers MakePopulated()
     Containers value;
     value.numbers = {-7, 0, 13, 2147483647};
     value.colours = {Colour::Blue, Colour::Red, Colour::Green};
-    value.labels  = {Str("alpha"), Str(""), Str("omega")};
+    value.labels = {Str("alpha"), Str(""), Str("omega")};
     value.weights = {{-1, 0.5f}, {4, -2.25f}, {9, 1024.f}};
-    value.counts  = {{Str("one"), 1}, {Str("two"), 2}};
+    value.counts = {{Str("one"), 1}, {Str("two"), 2}};
 
     // The shape the whole nesting level exists for: one action, several inputs.
     value.bindings[Str("MoveForward")] = {Colour::Red, Colour::Blue};
-    value.bindings[Str("Jump")]        = {Colour::Green};
-    value.bindings[Str("Crouch")]      = {};
+    value.bindings[Str("Jump")] = {Colour::Green};
+    value.bindings[Str("Crouch")] = {};
     return value;
 }
 
@@ -178,7 +174,7 @@ std::vector<std::byte> Encode(const ComponentMeta &meta, const Containers &value
 TEST_CASE("ContainerCodec: every permitted container shape round-trips")
 {
     const ComponentMeta meta = MakeContainersMeta();
-    const Containers source  = MakePopulated();
+    const Containers source = MakePopulated();
     Containers decoded;
 
     REQUIRE(RoundTrip(meta, source, decoded));
@@ -201,15 +197,15 @@ TEST_CASE("ContainerCodec: every permitted container shape round-trips")
 TEST_CASE("ContainerCodec: decoding clears what was there rather than appending")
 {
     const ComponentMeta meta = MakeContainersMeta();
-    const Containers source  = MakePopulated();
+    const Containers source = MakePopulated();
 
     // A destination already holding more entries than the stream carries. Without
     // the clear, the tail of the old value survives and the decoded vector is
     // longer than the one that was sent.
     Containers decoded;
     decoded.numbers = {1, 2, 3, 4, 5, 6, 7, 8};
-    decoded.labels  = {Str("stale"), Str("stale"), Str("stale")};
-    decoded.counts  = {{Str("gone"), 99}};
+    decoded.labels = {Str("stale"), Str("stale"), Str("stale")};
+    decoded.counts = {{Str("gone"), 99}};
 
     REQUIRE(RoundTrip(meta, source, decoded));
 
@@ -277,10 +273,7 @@ TEST_CASE("ContainerCodec: a container describes itself for a reader holding onl
     value.bindings[Str("Jump")] = {Colour::Blue};
 
     const auto describe = [&](std::size_t fieldIndex, const void *address)
-                          {
-                              return Assisi::Core::Reflect::DescribeContainer(meta.fields[fieldIndex],
-                                                                              address);
-                          };
+    { return Assisi::Core::Reflect::DescribeContainer(meta.fields[fieldIndex], address); };
 
     CHECK(describe(0, &value.numbers) == "[1, -2, 3]");
 
@@ -353,6 +346,242 @@ TEST_CASE("ContainerCodec: an element type change moves the protocol layout")
     CHECK(ProtocolLayoutDescription(ints) != ProtocolLayoutDescription(floats));
 }
 
+// ── Structs and arrays ────────────────────────────────────────────────────────
+
+namespace
+{
+
+/// A value struct as reflectgen would describe it: a float, an enum, and a
+/// transient field no codec may carry.
+struct Inner
+{
+    float weight = 0.f;
+    Colour colour = Colour::Red;
+    float scratch = 0.f; ///< transient
+
+    bool operator==(const Inner &) const = default;
+};
+
+} // namespace
+
+/// What reflectgen declares at the top of a generated file that names Inner.
+/// Only `reflected` is needed here: the codec reaches the fields through the
+/// FieldMeta, and JSON is not under test.
+template <> struct Assisi::Core::Reflect::StructTraits<Inner>
+{
+    static constexpr bool reflected = true;
+};
+
+namespace
+{
+
+using Assisi::Core::Reflect::StructSpec;
+
+/// Every shape a struct and a fixed array can take: alone, in a vector, in an
+/// array, and arrays of plain values, including a C array of arrays.
+struct Nested
+{
+    Inner single;
+    std::vector<Inner> list;
+    std::array<Inner, 2> pair{};
+    std::array<std::uint8_t, 3> bytes{};
+    bool flags[2]{};
+    std::int16_t grid[2][3]{};
+};
+
+const StructSpec &InnerSpec(bool renamed = false)
+{
+    static const StructSpec spec = []
+    {
+        StructSpec built{.name = "Inner", .fields = {}};
+        FieldMeta weight;
+        weight.name = "weight";
+        weight.type = FieldType::Float;
+        weight.offset = OffsetOf(&Inner::weight);
+        built.fields.push_back(weight);
+        built.fields.push_back(ColourField("colour", OffsetOf(&Inner::colour), FieldMeta{.type = FieldType::Enum}));
+        FieldMeta scratch;
+        scratch.name = "scratch";
+        scratch.type = FieldType::Float;
+        scratch.offset = OffsetOf(&Inner::scratch);
+        scratch.transient = true;
+        built.fields.push_back(scratch);
+        return built;
+    }();
+    static const StructSpec other = []
+    {
+        StructSpec copy = spec;
+        copy.fields[0].name = "mass";
+        return copy;
+    }();
+    return renamed ? other : spec;
+}
+
+template <typename C> FieldMeta StructContainerField(const char *name, std::size_t offset, const StructSpec &spec)
+{
+    FieldMeta field = ContainerField<C>(name, offset);
+    field.structSpec = &spec;
+    return field;
+}
+
+ComponentMeta MakeNestedMeta(const StructSpec &inner = InnerSpec())
+{
+    ComponentMeta meta{.name = "Nested",
+                       .typeIndex = std::type_index(typeid(Nested)),
+                       .fields = {},
+                       .serialize = {},
+                       .addToScene = {},
+                       .iterateEntities = {},
+                       .getByEntity = {},
+                       .construct = {},
+                       .getMutable = {},
+                       .serializable = true,
+                       .tracksChanges = true,
+                       .replicable = true,
+                       .id = ComponentId{12}};
+
+    FieldMeta single;
+    single.name = "single";
+    single.type = FieldType::Struct;
+    single.offset = OffsetOf(&Nested::single);
+    single.structSpec = &inner;
+    meta.fields.push_back(single);
+    meta.fields.push_back(StructContainerField<std::vector<Inner>>("list", OffsetOf(&Nested::list), inner));
+    meta.fields.push_back(StructContainerField<std::array<Inner, 2>>("pair", OffsetOf(&Nested::pair), inner));
+    meta.fields.push_back(ContainerField<std::array<std::uint8_t, 3>>("bytes", OffsetOf(&Nested::bytes)));
+    meta.fields.push_back(ContainerField<bool[2]>("flags", OffsetOf(&Nested::flags)));
+    meta.fields.push_back(ContainerField<std::int16_t[2][3]>("grid", OffsetOf(&Nested::grid)));
+    return meta;
+}
+
+bool SameNested(const Nested &a, const Nested &b)
+{
+    for (std::size_t row = 0; row < 2; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            if (a.grid[row][column] != b.grid[row][column])
+            {
+                return false;
+            }
+        }
+    }
+    return a.single == b.single && a.list == b.list && a.pair == b.pair && a.bytes == b.bytes &&
+           a.flags[0] == b.flags[0] && a.flags[1] == b.flags[1];
+}
+
+} // namespace
+
+TEST_CASE("ContainerCodec: a struct round-trips alone, in a vector and in an array")
+{
+    const ComponentMeta meta = MakeNestedMeta();
+
+    Nested source;
+    source.single = Inner{.weight = 1.5f, .colour = Colour::Blue, .scratch = 9.f};
+    source.list = {Inner{.weight = -2.f, .colour = Colour::Green, .scratch = 0.f},
+                   Inner{.weight = 4.f, .colour = Colour::Red, .scratch = 0.f}};
+    source.pair = {Inner{.weight = 7.f, .colour = Colour::Green, .scratch = 0.f},
+                   Inner{.weight = 8.f, .colour = Colour::Blue, .scratch = 0.f}};
+    source.bytes = {1, 2, 255};
+    source.flags[1] = true;
+    source.grid[1][2] = -300;
+    source.grid[0][1] = 12;
+
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
+    BitReader reader(writer.Data());
+    REQUIRE(ReadComponentId(reader) == meta.id);
+    Nested decoded;
+    REQUIRE(ReadComponent(meta, &decoded, reader));
+    REQUIRE(reader.Ok());
+
+    // The transient field inside the struct stays behind, as one on the
+    // component itself would.
+    source.single.scratch = 0.f;
+    CHECK(SameNested(decoded, source));
+}
+
+TEST_CASE("ContainerCodec: an array's length is its type's, so the wire carries no count")
+{
+    struct Bytes
+    {
+        std::array<std::uint8_t, 3> values{};
+    };
+    ComponentMeta meta{.name = "Bytes",
+                       .typeIndex = std::type_index(typeid(Bytes)),
+                       .fields = {},
+                       .serialize = {},
+                       .addToScene = {},
+                       .iterateEntities = {},
+                       .getByEntity = {},
+                       .construct = {},
+                       .getMutable = {},
+                       .serializable = true,
+                       .tracksChanges = true,
+                       .replicable = true,
+                       .id = ComponentId{13}};
+    meta.fields.push_back(ContainerField<std::array<std::uint8_t, 3>>("values", 0));
+
+    const Bytes source{.values = {1, 2, 3}};
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
+
+    /// The id varint (one byte for 13), the one-bit mask, then the three bytes.
+    constexpr std::size_t kExpectedBits = 8 + 1 + 3 * 8;
+    CHECK(writer.BitsWritten() == kExpectedBits);
+}
+
+TEST_CASE("ContainerCodec: a nested struct's fields are in the layout text")
+{
+    const std::array<ComponentMeta, 1> table{MakeNestedMeta()};
+    const std::string text = ProtocolLayoutDescription(table);
+
+    CHECK(text.find("single struct<Inner>") != std::string::npos);
+    CHECK(text.find("list vector<struct<Inner>>") != std::string::npos);
+    CHECK(text.find("pair array<struct<Inner>,2>") != std::string::npos);
+    CHECK(text.find("grid array<array<i16,3>,2>") != std::string::npos);
+    CHECK(text.find("weight f32") != std::string::npos);
+    CHECK(text.find("Green=7") != std::string::npos);
+    CHECK(text.find("scratch") == std::string::npos); // transient
+
+    // Renaming a field inside the struct is a protocol change, though nothing
+    // on the component itself moved.
+    const std::array<ComponentMeta, 1> renamed{MakeNestedMeta(InnerSpec(true))};
+    CHECK(ProtocolLayoutDescription(renamed) != text);
+}
+
+TEST_CASE("ContainerCodec: an enum inside a struct is range-checked too")
+{
+    const ComponentMeta meta = MakeNestedMeta();
+    Nested source;
+    source.single.colour = static_cast<Colour>(3); // between Red=0 and Green=7
+
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
+    BitReader reader(writer.Data());
+    REQUIRE(ReadComponentId(reader) == meta.id);
+    Nested decoded;
+    CHECK_FALSE(ReadComponent(meta, &decoded, reader));
+    CHECK(reader.Ok());
+}
+
+TEST_CASE("ContainerCodec: a struct written alone reads back through its own table")
+{
+    const Inner source{.weight = 3.25f, .colour = Colour::Green, .scratch = 5.f};
+    BitWriter writer;
+    REQUIRE(Assisi::Core::Reflect::WriteStruct(InnerSpec(), &source, writer));
+
+    Inner decoded;
+    BitReader reader(writer.Data());
+    REQUIRE(Assisi::Core::Reflect::ReadStruct(InnerSpec(), &decoded, reader));
+    CHECK(decoded.weight == source.weight);
+    CHECK(decoded.colour == source.colour);
+    CHECK(decoded.scratch == 0.f);
+
+    CHECK(Assisi::Core::Reflect::StructLayoutHash(InnerSpec()) !=
+          Assisi::Core::Reflect::StructLayoutHash(InnerSpec(true)));
+}
+
 /// A block naming only the first field (`numbers`), whose payload the caller
 /// supplies — so a test can hand the decoder a count it never wrote.
 std::vector<std::byte> BlockWithFirstFieldCount(const ComponentMeta &meta, std::uint64_t count,
@@ -416,7 +645,7 @@ TEST_CASE("ContainerCodec: a count larger than the bytes present is refused")
 TEST_CASE("ContainerCodec: a truncated stream leaves the reader failed, not the container wrong")
 {
     const ComponentMeta meta = MakeContainersMeta();
-    const Containers source  = MakePopulated();
+    const Containers source = MakePopulated();
 
     const std::vector<std::byte> whole = Encode(meta, source);
 
@@ -432,7 +661,7 @@ TEST_CASE("ContainerCodec: a truncated stream leaves the reader failed, not the 
         {
             continue; // the id itself was cut; nothing further to test here
         }
-        const bool ok       = ReadComponent(meta, &decoded, reader);
+        const bool ok = ReadComponent(meta, &decoded, reader);
         const bool accepted = ok && reader.Ok();
         CHECK_FALSE(accepted);
     }

@@ -80,8 +80,7 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
     std::vector<std::shared_ptr<const Pattern>> patterns;
     patterns.resize(document.nodes.size());
 
-    // Views into the document, which outlives this function.
-    std::unordered_set<std::string_view> names;
+    std::unordered_set<Core::InternedString> names;
 
     for (std::size_t index = 0; index < document.nodes.size(); ++index)
     {
@@ -89,7 +88,7 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
 
         // Checked here rather than left to the tree, which would refuse the
         // second one only after the first half of the screen was built.
-        if (!node.name.empty() && !names.insert(node.name).second)
+        if (!node.name.Empty() && !names.insert(node.name).second)
         {
             return std::unexpected(ScreenLoadError::DuplicateName);
         }
@@ -106,7 +105,7 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
             return std::unexpected(ScreenLoadError::UnsupportedWidget);
         }
 
-        if (node.action == ActionKind::Event && catalog.Find(node.eventName) == nullptr)
+        if (node.action == ActionKind::Event && catalog.Find(node.eventName.View()) == nullptr)
         {
             return std::unexpected(ScreenLoadError::UnknownEvent);
         }
@@ -116,9 +115,10 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
             return std::unexpected(ScreenLoadError::BadTarget);
         }
 
-        if (node.widget == BuiltinWidget::TextField && !node.pattern.empty())
+        const std::string_view pattern = document.Text(node.pattern);
+        if (node.widget == BuiltinWidget::TextField && !pattern.empty())
         {
-            std::expected<std::shared_ptr<const Pattern>, PatternError> compiled = CompilePattern(node.pattern);
+            std::expected<std::shared_ptr<const Pattern>, PatternError> compiled = CompilePattern(pattern);
             if (!compiled)
             {
                 return std::unexpected(ScreenLoadError::BadPattern);
@@ -133,12 +133,12 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
 /// would make. Every control gives its node a style of its own, which the
 /// caller replaces whole with the document's: a document is fully resolved, so
 /// what it carries is the answer and not an override.
-NodeId Create(Screen &screen, NodeId parent, const ScreenNode &node)
+NodeId Create(Screen &screen, NodeId parent, const ScreenDocument &document, const ScreenNode &node)
 {
     switch (node.widget)
     {
     case BuiltinWidget::Button:
-        return screen.AddButton(parent, node.text).node;
+        return screen.AddButton(parent, document.Text(node.text)).node;
     case BuiltinWidget::Toggle:
         return screen.AddToggle(parent, node.on).node;
     case BuiltinWidget::ContinuousSlider:
@@ -158,19 +158,18 @@ NodeId Create(Screen &screen, NodeId parent, const ScreenNode &node)
     return screen.Add(parent, node.style);
 }
 
-/// Everything a field carries beyond being a field. @p pattern is the one
-/// Resolve compiled for this node, or null. @p ui gives what a keyed text or
-/// placeholder says.
-void ApplyTextField(Screen &screen, TextFieldId field, const ScreenNode &node, std::shared_ptr<const Pattern> pattern,
-                    const Ui &ui)
+/// What a field shows and how it grows: everything it carries that no pattern
+/// or text depends on, so it can come first.
+void ApplyTextFieldShape(Screen &screen, TextFieldId field, const ScreenDocument &document, const ScreenNode &node)
 {
+    const std::string_view placeholder = document.Text(node.placeholder);
     if (node.placeholderIsKey)
     {
-        screen.SetPlaceholderKey(field, node.placeholder);
+        screen.SetPlaceholderKey(field, placeholder);
     }
     else
     {
-        screen.SetPlaceholder(field, node.placeholder);
+        screen.SetPlaceholder(field, placeholder);
     }
     screen.SetMaxLength(field, node.maxLength);
     // Only where the file asked for one. A field is unbounded already, and
@@ -180,14 +179,20 @@ void ApplyTextField(Screen &screen, TextFieldId field, const ScreenNode &node, s
     {
         screen.SetHeight(field, node.height, node.lineLimit);
     }
-    // Before the text, because setting text settles the field against whatever
-    // pattern it has by then.
-    screen.SetPattern(field, std::move(pattern), node.check);
+}
+
+/// A field's starting text and its mask, once its pattern is set: setting text
+/// settles the field against whatever pattern it has by then. @p ui gives what
+/// a keyed text says.
+void ApplyTextFieldText(Screen &screen, TextFieldId field, const ScreenDocument &document, const ScreenNode &node,
+                        const Ui &ui)
+{
     // A keyed starting text is looked up once: from then on it is the player's
     // to change, and new string tables leave it alone.
-    if (!node.text.empty())
+    const std::string_view text = document.Text(node.text);
+    if (!text.empty())
     {
-        screen.SetText(field, node.textIsKey ? ui.StringFor(node.text) : node.text);
+        screen.SetText(field, node.textIsKey ? ui.StringFor(text) : text);
     }
     // Last: masking a field also turns copy and cut off, so anything after it
     // that touched the abilities would quietly turn them back on.
@@ -235,7 +240,7 @@ void ApplyAction(Screen &screen, const std::vector<NodeId> &ids, std::size_t ind
         return;
     case ActionKind::Event:
         // Resolved in Resolve, which ran before anything was built.
-        screen.Tree().SetOnActivate(id, catalog.Find(node.eventName)->push);
+        screen.Tree().SetOnActivate(id, catalog.Find(node.eventName.View())->push);
         return;
     case ActionKind::Count:
         return;
@@ -285,7 +290,10 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, std::stri
 
     LoadedScreen loaded;
     loaded.screen = std::make_unique<Screen>(ui, document.traits, document.sortKey, std::string{name});
-    loaded.systems = document.systems;
+    for (const Core::InternedString &system : document.systems)
+    {
+        loaded.systems.emplace_back(system.View());
+    }
 
     Screen &screen = *loaded.screen;
     NodeTree &tree = screen.Tree();
@@ -311,7 +319,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, std::stri
         {
             // Created by the call its control names, then styled — the same
             // order a screen built in C++ uses.
-            id = Create(screen, ids[node.parent], node);
+            id = Create(screen, ids[node.parent], document, node);
             tree.SetStyle(id, node.style);
 
             // A control took its text where it was created, from the label or
@@ -319,21 +327,24 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, std::stri
             // through its key, so new string tables rewrite it.
             if (node.widget == BuiltinWidget::None && !node.textIsKey)
             {
-                tree.SetText(id, node.text);
+                tree.SetText(id, document.Text(node.text));
             }
             if ((node.widget == BuiltinWidget::None || node.widget == BuiltinWidget::Button) && node.textIsKey)
             {
-                screen.SetTextKey(id, node.text);
+                screen.SetTextKey(id, document.Text(node.text));
             }
             if (node.widget == BuiltinWidget::TextField)
             {
-                ApplyTextField(screen, {.node = id}, node, (*patterns)[index], ui);
+                const TextFieldId field{.node = id};
+                ApplyTextFieldShape(screen, field, document, node);
+                screen.SetPattern(field, std::move((*patterns)[index]), node.check);
+                ApplyTextFieldText(screen, field, document, node, ui);
             }
         }
 
         // Resolve refused any name two nodes carry, and every node on this
         // screen came from this document.
-        const std::expected<void, NameError> named = tree.SetName(id, node.name);
+        const std::expected<void, NameError> named = tree.SetName(id, node.name.View());
         ASSISI_ASSERT(named.has_value(), "a name Resolve passed was already taken on a screen it built");
         ApplyFlags(tree, id, node);
         if (node.selectable)

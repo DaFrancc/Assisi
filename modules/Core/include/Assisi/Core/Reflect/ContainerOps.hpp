@@ -21,8 +21,13 @@
 /// itself a container, so a reader walks the chain instead of branching on a
 /// depth. The depth *limit* is a check in one place rather than a shape anything
 /// else assumes.
+///
+/// A fixed array — `std::array<T, N>` or `T[N]` — goes through the same table
+/// with its length in `fixedCount`. It is read in place through `at`, since it
+/// can be neither cleared to empty nor grown.
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -35,6 +40,7 @@
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Core/StringPool.hpp>
 #include <Assisi/Core/TrivialString.hpp>
@@ -52,8 +58,9 @@ using ContainerReadKeyFn = bool (*)(void *context, std::byte *key);
 /// @brief The operations a container supports, erased of its concrete type.
 ///
 /// Every pointer takes the container's own address as raw bytes. `pushDefault`
-/// is null for a map and `insert` is null for a vector; nothing else is ever
-/// null on a spec that names a real container.
+/// is null for a map and an array, `insert` is null for everything but a map,
+/// and `at` is null for a map; nothing else is ever null on a spec that names a
+/// real container.
 struct ContainerOps
 {
     /// Entry count.
@@ -76,18 +83,25 @@ struct ContainerOps
     /// was already present — a duplicate key means the stream disagrees with
     /// itself, and silently keeping one of the two would hide that.
     std::byte *(*insert)(std::byte *container, void *context, ContainerReadKeyFn readKey);
+
+    /// The element at @p index, which the caller keeps below `size`. How an
+    /// array is filled, since its length is fixed and nothing can be pushed.
+    std::byte *(*at)(std::byte *container, std::size_t index);
 };
 
 /// @brief What a container field holds, and — when its element is itself a
 /// container — what that holds, and so on down the chain.
 struct ContainerSpec
 {
-    const ContainerOps *ops      = nullptr;
+    const ContainerOps *ops = nullptr;
     /// Non-null when the element is itself a container. The chain ends at the
     /// first null, where `elementType` names a primitive.
     const ContainerSpec *element = nullptr;
+    /// An array's length, which its type fixes; zero for a container that
+    /// grows. A fixed length is never written, only checked.
+    std::size_t fixedCount = 0;
     /// `FieldType::Unknown` for a vector, which has no key.
-    FieldType keyType     = FieldType::Unknown;
+    FieldType keyType = FieldType::Unknown;
     FieldType elementType = FieldType::Unknown;
 };
 
@@ -181,6 +195,10 @@ template <typename T> constexpr FieldType FieldTypeOf()
     {
         return FieldType::PooledString;
     }
+    else if constexpr (StructTraits<T>::reflected)
+    {
+        return FieldType::Struct;
+    }
     else if constexpr (ContainerDepth<T>::value > 0)
     {
         return ContainerDepth<T>::kind;
@@ -198,10 +216,10 @@ template <typename T> constexpr FieldType FieldTypeOf()
 template <typename T> constexpr bool IsValidMapKey()
 {
     constexpr FieldType type = FieldTypeOf<T>();
-    return type == FieldType::Int8 || type == FieldType::UInt8 || type == FieldType::Int16
-           || type == FieldType::UInt16 || type == FieldType::Int32 || type == FieldType::UInt32
-           || type == FieldType::Int64 || type == FieldType::UInt64 || type == FieldType::String
-           || type == FieldType::EntityName;
+    return type == FieldType::Int8 || type == FieldType::UInt8 || type == FieldType::Int16 ||
+           type == FieldType::UInt16 || type == FieldType::Int32 || type == FieldType::UInt32 ||
+           type == FieldType::Int64 || type == FieldType::UInt64 || type == FieldType::String ||
+           type == FieldType::EntityName;
 }
 
 template <typename T> const ContainerSpec *ContainerSpecFor();
@@ -261,36 +279,100 @@ template <typename T, typename A> struct ContainerAccess<std::vector<T, A>>
         return reinterpret_cast<std::byte *>(&values.back());
     }
 
+    static std::byte *At(std::byte *container, std::size_t index)
+    {
+        return reinterpret_cast<std::byte *>(&(*reinterpret_cast<Container *>(container))[index]);
+    }
+
     static const ContainerOps *Ops()
     {
-        static constexpr ContainerOps ops{.size        = &Size,
-                                          .clear       = &Clear,
-                                          .visit       = &Visit,
-                                          .pushDefault = &PushDefault,
-                                          .insert      = nullptr};
+        static constexpr ContainerOps ops{
+            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = &PushDefault, .insert = nullptr, .at = &At};
         return &ops;
     }
 
-    static constexpr FieldType kKeyType     = FieldType::Unknown;
+    static constexpr FieldType kKeyType = FieldType::Unknown;
     static constexpr FieldType kElementType = FieldTypeOf<T>();
-    using Element                           = T;
+    static constexpr std::size_t kFixedCount = 0;
+    using Element = T;
+};
+
+/// @brief Shared body for `std::array<T, N>` and the C array `T[N]`: both are N
+///        elements laid out in a row, with a length the type fixes.
+template <typename C, typename T, std::size_t N> struct FixedArrayAccess
+{
+    using Container = C;
+
+    // A zero-length array holds nothing to reflect, and a fixedCount of zero is
+    // what marks a container that grows.
+    static_assert(N > 0, "a reflected array holds at least one element");
+
+    static std::size_t Size(const std::byte *) { return N; }
+
+    /// Every element back to its default: the length is the type's, so
+    /// clearing an array cannot shorten it. Element by element, because a C
+    /// array element may itself be a C array, which cannot be assigned.
+    static void Clear(std::byte *container)
+    {
+        for (std::size_t i = 0; i < N; ++i)
+        {
+            std::byte *element = At(container, i);
+            if constexpr (std::is_array_v<T>)
+            {
+                ContainerAccess<T>::Clear(element);
+            }
+            else
+            {
+                *reinterpret_cast<T *>(element) = T{};
+            }
+        }
+    }
+
+    static void Visit(const std::byte *container, void *context, ContainerVisitFn visitor)
+    {
+        for (const T &element : *reinterpret_cast<const Container *>(container))
+        {
+            visitor(context, nullptr, reinterpret_cast<const std::byte *>(&element));
+        }
+    }
+
+    static std::byte *At(std::byte *container, std::size_t index)
+    {
+        return reinterpret_cast<std::byte *>(&(*reinterpret_cast<Container *>(container))[index]);
+    }
+
+    static const ContainerOps *Ops()
+    {
+        static constexpr ContainerOps ops{
+            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = nullptr, .insert = nullptr, .at = &At};
+        return &ops;
+    }
+
+    static constexpr FieldType kKeyType = FieldType::Unknown;
+    static constexpr FieldType kElementType = FieldTypeOf<T>();
+    static constexpr std::size_t kFixedCount = N;
+    using Element = T;
+};
+
+template <typename T, std::size_t N> struct ContainerAccess<std::array<T, N>> : FixedArrayAccess<std::array<T, N>, T, N>
+{
+};
+
+template <typename T, std::size_t N> struct ContainerAccess<T[N]> : FixedArrayAccess<T[N], T, N>
+{
 };
 
 /// @brief Shared body for both map flavours — they differ only in their template
 ///        parameter list, and nothing here depends on how they store entries.
 template <typename M> struct MapAccess
 {
-    using Key     = typename M::key_type;
-    using Mapped  = typename M::mapped_type;
+    using Key = typename M::key_type;
+    using Mapped = typename M::mapped_type;
     using Element = Mapped;
 
-    static_assert(IsValidMapKey<Key>(),
-                  "a reflected map key must be an integer width, ShortString or EntityName");
+    static_assert(IsValidMapKey<Key>(), "a reflected map key must be an integer width, ShortString or EntityName");
 
-    static std::size_t Size(const std::byte *container)
-    {
-        return reinterpret_cast<const M *>(container)->size();
-    }
+    static std::size_t Size(const std::byte *container) { return reinterpret_cast<const M *>(container)->size(); }
 
     static void Clear(std::byte *container) { reinterpret_cast<M *>(container)->clear(); }
 
@@ -339,16 +421,14 @@ template <typename M> struct MapAccess
 
     static const ContainerOps *Ops()
     {
-        static constexpr ContainerOps ops{.size        = &Size,
-                                          .clear       = &Clear,
-                                          .visit       = &Visit,
-                                          .pushDefault = nullptr,
-                                          .insert      = &Insert};
+        static constexpr ContainerOps ops{
+            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = nullptr, .insert = &Insert, .at = nullptr};
         return &ops;
     }
 
-    static constexpr FieldType kKeyType     = FieldTypeOf<Key>();
+    static constexpr FieldType kKeyType = FieldTypeOf<Key>();
     static constexpr FieldType kElementType = FieldTypeOf<Mapped>();
+    static constexpr std::size_t kFixedCount = 0;
 };
 
 template <typename K, typename V, typename C, typename A>
@@ -357,8 +437,7 @@ struct ContainerAccess<std::map<K, V, C, A>> : MapAccess<std::map<K, V, C, A>>
 };
 
 template <typename K, typename V, typename H, typename E, typename A>
-struct ContainerAccess<std::unordered_map<K, V, H, E, A>>
-    : MapAccess<std::unordered_map<K, V, H, E, A>>
+struct ContainerAccess<std::unordered_map<K, V, H, E, A>> : MapAccess<std::unordered_map<K, V, H, E, A>>
 {
 };
 
@@ -367,20 +446,34 @@ struct ContainerAccess<std::unordered_map<K, V, H, E, A>>
 template <typename T, typename A> struct ContainerDepth<std::vector<T, A>>
 {
     static constexpr std::size_t value = 1 + ContainerDepth<T>::value;
-    static constexpr FieldType kind    = FieldType::Vector;
+    static constexpr FieldType kind = FieldType::Vector;
+};
+
+template <typename T, std::size_t N> struct ContainerDepth<std::array<T, N>>
+{
+    static constexpr std::size_t value = 1 + ContainerDepth<T>::value;
+    static constexpr FieldType kind = FieldType::Array;
+};
+
+/// A C array is the same field type as a `std::array`: N elements in a row,
+/// with the length in the type. `T[2][3]` is an array of arrays, two levels.
+template <typename T, std::size_t N> struct ContainerDepth<T[N]>
+{
+    static constexpr std::size_t value = 1 + ContainerDepth<T>::value;
+    static constexpr FieldType kind = FieldType::Array;
 };
 
 template <typename K, typename V, typename C, typename A> struct ContainerDepth<std::map<K, V, C, A>>
 {
     static constexpr std::size_t value = 1 + ContainerDepth<V>::value;
-    static constexpr FieldType kind    = FieldType::Map;
+    static constexpr FieldType kind = FieldType::Map;
 };
 
 template <typename K, typename V, typename H, typename E, typename A>
 struct ContainerDepth<std::unordered_map<K, V, H, E, A>>
 {
     static constexpr std::size_t value = 1 + ContainerDepth<V>::value;
-    static constexpr FieldType kind    = FieldType::Map;
+    static constexpr FieldType kind = FieldType::Map;
 };
 
 /// @brief A container's contents as one line of text, for a reader that has only
@@ -403,15 +496,15 @@ template <typename T> const ContainerSpec *ContainerSpecFor()
     using Access = Detail::ContainerAccess<T>;
 
     static_assert(ContainerDepth<T>::value > 0, "ContainerSpecFor names a container type");
-    static_assert(ContainerDepth<T>::value <= kMaxContainerDepth,
-                  "a reflected container nests at most one level deep");
+    static_assert(ContainerDepth<T>::value <= kMaxContainerDepth, "a reflected container nests at most one level deep");
     static_assert(Access::kElementType != FieldType::Unknown,
-                  "a reflected container's element must be a primitive, an AENUM enum, or one "
-                  "container of those");
+                  "a reflected container's element must be a primitive, an AENUM enum, an ASTRUCT, "
+                  "or one container of those");
 
-    static const ContainerSpec spec{.ops         = Access::Ops(),
-                                    .element     = Detail::ElementSpec<typename Access::Element>(),
-                                    .keyType     = Access::kKeyType,
+    static const ContainerSpec spec{.ops = Access::Ops(),
+                                    .element = Detail::ElementSpec<typename Access::Element>(),
+                                    .fixedCount = Access::kFixedCount,
+                                    .keyType = Access::kKeyType,
                                     .elementType = Access::kElementType};
     return &spec;
 }

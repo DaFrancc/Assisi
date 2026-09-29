@@ -33,8 +33,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <format>
+#include <span>
 #include <string>
 
 namespace Assisi::Cook
@@ -664,7 +666,12 @@ class ScreenCooker final : public Cooker
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
-        return Mondrian::kScreenPayloadVersion;
+        // The document's field layout as well as the framing version: a field
+        // added to Style or ScreenNode changes what every screen cooks to while
+        // no source changes, and a blob cooked before it is one the reader now
+        // refuses.
+        const std::array<std::uint64_t, 2> parts{Mondrian::kScreenPayloadVersion, Mondrian::ScreenLayoutHash()};
+        return Core::ContentHash64(std::as_bytes(std::span{parts}));
     }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override

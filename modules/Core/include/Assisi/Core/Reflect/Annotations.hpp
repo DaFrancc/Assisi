@@ -112,6 +112,18 @@
 /// resolve them against).
 #define AASSET(...)
 
+/// ASTRUCT() — marks a struct as a reflected value struct: a field of an ACOMP,
+/// AASSET, AMSG or another ASTRUCT may hold one inline, alone or in a container,
+/// and every codec walks its AFIELDs in place. It registers nothing of its own
+/// that a scene or a file names; a cooked format that is one struct reaches its
+/// table through Core::Reflect::FindStruct<T>().
+///
+/// Takes no arguments. Inside one, AFIELD(norep) and entity or instance
+/// references are refused — the struct has no wire or scene of its own — and a
+/// struct may not hold itself at any depth. A PooledString inside one indexes the
+/// nearest StringPool above it: its own struct's, or its holder's.
+#define ASTRUCT(...)
+
 /// AEVENT() — marks a struct as an event type.
 /// Compiles to nothing today; reserved for future reflectgen support
 /// (serialization, network replication interception).

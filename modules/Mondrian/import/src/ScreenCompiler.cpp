@@ -15,6 +15,26 @@
 
 namespace Assisi::Mondrian::Import
 {
+namespace
+{
+
+/// Rebuilds the pool from what the nodes point at, in node order: text, then
+/// placeholder, then pattern. The walk adds text as it settles it, and a text
+/// resolved twice leaves its first spelling behind; this drops those, so a
+/// screen cooks to the same bytes however the walk got there.
+void PackText(ScreenDocument &document)
+{
+    Core::StringPool packed;
+    for (ScreenNode &node : document.nodes)
+    {
+        node.text = packed.Add(document.Text(node.text));
+        node.placeholder = packed.Add(document.Text(node.placeholder));
+        node.pattern = packed.Add(document.Text(node.pattern));
+    }
+    document.pool = std::move(packed);
+}
+
+} // namespace
 
 std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root, const Core::EventCatalog &catalog,
                                                          const SourceReader &read, const TextRules &rules)
@@ -89,6 +109,13 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     {
         return std::unexpected(targets.error());
     }
+    if (document.nodes.size() > kMaxScreenNodes)
+    {
+        return std::unexpected(At(root, "the screen makes " + std::to_string(document.nodes.size()) +
+                                            " nodes, and a screen holds at most " + std::to_string(kMaxScreenNodes) +
+                                            ". Split it into screens shown together."));
+    }
+    PackText(document);
     return document;
 }
 

@@ -65,7 +65,7 @@ enum class FieldType : std::uint8_t
     UInt8,
     Int16,
     UInt16,
-    /// A `std::vector` of primitives, or of one container of them. The element
+    /// A `std::vector` of primitives or ASTRUCTs, or of one container of them. The element
     /// type — and, for a nested element, its own container shape — lives on the
     /// FieldMeta's `container` descriptor rather than in this enumerator, so a new
     /// element type costs no value here.
@@ -94,6 +94,14 @@ enum class FieldType : std::uint8_t
     /// Core::StringPool — encoded as its whole buffer. Appended rather than
     /// inserted, so no existing value shifts.
     StringPool,
+    /// An ASTRUCT value held inline: its own fields, in order, where the field
+    /// sits. The fields come from FieldMeta::structSpec. Appended rather than
+    /// inserted, so no existing value shifts.
+    Struct,
+    /// A `std::array`: a container whose length is part of its type, so the
+    /// wire carries no count. The shape lives on `container`, as a vector's
+    /// does. Appended rather than inserted, so no existing value shifts.
+    Array,
     /// Number of field types, for a table indexed by FieldType.
     ///
     /// Safe to move, unlike every enumerator above it: nothing serializes this and
@@ -103,6 +111,7 @@ enum class FieldType : std::uint8_t
 };
 
 struct ContainerSpec;
+struct StructSpec;
 
 /// @brief One enumerator of a reflected `enum class` (FieldType::Enum).
 ///
@@ -132,8 +141,8 @@ enum class RadioBehavior : std::uint8_t
 struct FieldMeta
 {
     std::string name{};
-    FieldType type      = FieldType::Unknown;
-    std::size_t offset    = 0;
+    FieldType type = FieldType::Unknown;
+    std::size_t offset = 0;
 
     /// @brief Shape of a `Vector` or `Map` field: its key and element types, the
     /// operations that reach its storage, and the same again for a nested element.
@@ -147,7 +156,15 @@ struct FieldMeta
     /// because a key is never an enum.
     const ContainerSpec *container = nullptr;
 
-    bool transient = false;        ///< If true, excluded from serialization.
+    /// @brief The fields of an ASTRUCT this field holds: the field itself for a
+    /// `Struct`, or the leaf element of a container of one. Null otherwise.
+    ///
+    /// Beside `container` for the reason the enum metadata below is: it
+    /// describes the leaf, at whatever depth it sits. Points at static storage
+    /// the generated code owns.
+    const StructSpec *structSpec = nullptr;
+
+    bool transient = false; ///< If true, excluded from serialization.
 
     /// @brief AFIELD(norep): saved to disk, never sent over the network.
     ///
@@ -166,10 +183,10 @@ struct FieldMeta
     // Editor hints from AFIELD(min=..., max=...): inclusive bounds an editor
     // must clamp numeric edits to (e.g. a light radius that must not go
     // negative). Hints only — serialization does not enforce them.
-    bool hasMin   = false;  ///< True when AFIELD supplied min=...
-    bool hasMax   = false;  ///< True when AFIELD supplied max=...
-    float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin and minField is empty.
-    float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax and maxField is empty.
+    bool hasMin = false;  ///< True when AFIELD supplied min=...
+    bool hasMax = false;  ///< True when AFIELD supplied max=...
+    float minValue = 0.f; ///< Inclusive lower bound; meaningful when hasMin and minField is empty.
+    float maxValue = 0.f; ///< Inclusive upper bound; meaningful when hasMax and maxField is empty.
 
     /// A sibling numeric field this bound is read from instead of minValue /
     /// maxValue, named by AFIELD(min = otherField) / AFIELD(max = otherField).
@@ -205,8 +222,8 @@ struct FieldMeta
     // true width instead of assuming a 4-byte int (which would corrupt neighbours
     // for an 8/16-bit enum). enumSize is the byte width (1/2/4/8); 0 marks a
     // non-enum field. enumSigned selects sign-extension when reading.
-    std::uint8_t enumSize   = 0;     ///< Underlying byte width; 0 = not an enum.
-    bool enumSigned = false;         ///< Underlying type is signed (sign-extend on read).
+    std::uint8_t enumSize = 0; ///< Underlying byte width; 0 = not an enum.
+    bool enumSigned = false;   ///< Underlying type is signed (sign-extend on read).
 
     // Radio: declarative editor visibility driven by a sibling enum's value. A
     // field annotated AFIELD(radioListen = { source = enumField, value = ...,
@@ -218,9 +235,10 @@ struct FieldMeta
     // listeners hide unconditionally, so the editor resolves visibility by
     // walking radioSource up the chain (reflectgen rejects cycles). radioSource is
     // empty for every non-listener field.
-    std::string radioSource{};                                      ///< Sibling enum field this field's visibility follows ("" = not a listener).
-    std::vector<std::int64_t> radioValues{};                        ///< Enum values at which this field is active; meaningful when radioSource set.
-    RadioBehavior radioBehavior = RadioBehavior::None;               ///< Editor treatment while inactive.
+    std::string radioSource{}; ///< Sibling enum field this field's visibility follows ("" = not a listener).
+    std::vector<std::int64_t>
+        radioValues{}; ///< Enum values at which this field is active; meaningful when radioSource set.
+    RadioBehavior radioBehavior = RadioBehavior::None; ///< Editor treatment while inactive.
 
     /// @brief AFIELD(controlled): this message field must name an entity the
     /// sender controls.

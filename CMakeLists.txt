@@ -26,6 +26,11 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # old commit or building with a compiler whose new diagnostics we haven't met.
 option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 
+# A reflected C array field fails generation with a request to write std::array,
+# which reflects the same way and behaves like every other value. OFF lets
+# reflectgen reflect C arrays too.
+option(ASSISI_FORBID_C_ARRAYS "Refuse reflected C array fields; std::array reflects the same way" ON)
+
 # Sanitizers: primarily valuable on Linux; MSVC support is limited.
 option(ASSISI_ENABLE_SANITIZERS "Enable sanitizers for this build" OFF)
 set(ASSISI_SANITIZER_SET "address;undefined" CACHE STRING

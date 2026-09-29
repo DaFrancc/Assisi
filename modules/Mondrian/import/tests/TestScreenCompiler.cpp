@@ -219,7 +219,7 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
     CHECK(document.traits.beneath == ScreenBeneath::HidesBeneath);
     CHECK(document.traits.pause == ScreenPause::Pause);
     REQUIRE(document.systems.size() == 1);
-    CHECK(document.systems[0] == "PauseMenu");
+    CHECK(document.systems[0].View() == "PauseMenu");
 
     // Five nodes: the screen, the panel, the title, the row and two buttons.
     REQUIRE(document.nodes.size() == 6);
@@ -241,7 +241,7 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
     CHECK(panel.style.cornerRadius == Px(16.f));
 
     const ScreenNode &title = NodeNamed(document, "title");
-    CHECK(title.text == "Paused");
+    CHECK(document.Text(title.text) == "Paused");
     CHECK(title.style.textSize == Px(48.f));
     CHECK(title.parent == IndexOf(document, "panel"));
 
@@ -250,7 +250,7 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
 
     const ScreenNode &resume = NodeNamed(document, "resume");
     CHECK(resume.widget == BuiltinWidget::Button);
-    CHECK(resume.text == "Resume");
+    CHECK(document.Text(resume.text) == "Resume");
     CHECK(resume.action == ActionKind::Verb);
     CHECK(resume.verb == ScreenVerb::Hide);
     CHECK(resume.parent == IndexOf(document, "buttons"));
@@ -259,7 +259,7 @@ TEST_CASE("ScreenCompiler: the pause menu file compiles to the tree it describes
 
     const ScreenNode &quit = NodeNamed(document, "quit");
     CHECK(quit.action == ActionKind::Event);
-    CHECK(quit.eventName == "Game::QuitRequested");
+    CHECK(quit.eventName.View() == "Game::QuitRequested");
 
     CHECK(document.focus == IndexOf(document, "resume"));
 }
@@ -664,7 +664,7 @@ TEST_CASE("ScreenCompiler: a verb is a call, and an event is a bare name")
     {
         const ScreenNode quit = Compiled(R"(<screen><button on_click="Game::QuitRequested" /></screen>)").nodes[1];
         CHECK(quit.action == ActionKind::Event);
-        CHECK(quit.eventName == "Game::QuitRequested");
+        CHECK(quit.eventName.View() == "Game::QuitRequested");
     }
 }
 
@@ -776,7 +776,7 @@ TEST_CASE("ScreenCompiler: a named style is carried and checked against nothing"
     // There is nowhere for a style name to resolve to yet. A file written today
     // should cook, and start resolving when there is.
     const ScreenDocument document = Compiled(R"(<screen><column style="Panel" gap="4" /></screen>)");
-    CHECK(document.nodes[1].styleName == "Panel");
+    CHECK(document.nodes[1].styleName.View() == "Panel");
     CHECK(document.nodes[1].style.gap == Px(4.f));
 }
 
@@ -792,7 +792,36 @@ TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
     REQUIRE(read.has_value());
     CHECK(read->nodes.size() == 6);
     CHECK(read->systems.size() == 1);
-    CHECK(NodeNamed(*read, "quit").eventName == "Game::QuitRequested");
+    CHECK(NodeNamed(*read, "quit").eventName.View() == "Game::QuitRequested");
+}
+
+TEST_CASE("ScreenCompiler: a screen with more nodes than a cooked screen can hold is refused at the cook")
+{
+    // The reader caps every list it reads, so a screen past the cap would cook
+    // and then never load. Refused here, where the file can still be fixed.
+    std::string text = "<screen>\n";
+    for (std::size_t node = 0; node < kMaxScreenNodes; ++node)
+    {
+        text += "<column />\n";
+    }
+    text += "</screen>\n";
+
+    const MarkupError error = Refused(text);
+    CHECK(error.message.find(std::to_string(kMaxScreenNodes)) != std::string::npos);
+}
+
+TEST_CASE("ScreenCompiler: text settled twice leaves nothing behind in the pool")
+{
+    // A keyed placeholder is written as its attribute and settled again as a
+    // key. The cooked pool holds what the nodes point at and nothing more, so a
+    // screen cooks to the same bytes however the walk got there.
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <text_field name="field" placeholder="#pause:hint">#pause:quit</text_field>
+</screen>)amdn",
+                                             {}, PauseTable());
+    const ScreenNode &field = NodeNamed(document, "field");
+    CHECK(document.Text(field.placeholder) == "pause:hint");
+    CHECK(document.pool.Bytes() == "pause:quitpause:hint");
 }
 
 TEST_CASE("ScreenCompiler: every construction attribute survives the round trip")
@@ -822,7 +851,7 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     CHECK(NodeNamed(*read, "list").style.enabledScrollBars[static_cast<std::size_t>(Axis::Y)]);
 
     const ScreenNode &player = NodeNamed(*read, "player");
-    CHECK(player.placeholder == "Name");
+    CHECK(read->Text(player.placeholder) == "Name");
     CHECK(player.maxLength == 24);
     CHECK(player.lines == TextLines::Single);
 
@@ -833,10 +862,10 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     CHECK(notes.lineLimit == 3);
 
     const ScreenNode &port = NodeNamed(*read, "port");
-    CHECK(port.pattern == "[0-9]+");
+    CHECK(read->Text(port.pattern) == "[0-9]+");
     CHECK(port.check == TextCheck::Refuse);
 
-    CHECK(NodeNamed(*read, "who").pattern == Patterns::kEmail);
+    CHECK(read->Text(NodeNamed(*read, "who").pattern) == Patterns::kEmail);
 
     // A verb with a target: the name the file wrote, resolved to the node the
     // table holds, survives the binary as that node's place.
@@ -883,7 +912,7 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     CHECK(document->traits.beneath == ScreenBeneath::HidesBeneath);
     CHECK(document->traits.pause == ScreenPause::Pause);
     REQUIRE(document->systems.size() == 1);
-    CHECK(document->systems[0] == "PauseMenu");
+    CHECK(document->systems[0].View() == "PauseMenu");
 
     CHECK(document->nodes[0].blocksPointer);
     CHECK(document->nodes[0].style.childAlign[0] == Alignment::Center);
@@ -918,7 +947,7 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     CHECK(quit.textIsKey);
     CHECK(*rules.tables.Find("pause", "quit") == "Quit");
     CHECK(quit.action == ActionKind::Event);
-    CHECK(quit.eventName == "Assisi::App::QuitRequested");
+    CHECK(quit.eventName.View() == "Assisi::App::QuitRequested");
 
     // Focus starts on Resume, so a player reaching for the keyboard is one
     // press from carrying on rather than one press from leaving.
@@ -960,7 +989,7 @@ TEST_CASE("ScreenCompiler: every control compiles to the node that builds it")
     const ScreenNode &player = NodeNamed(document, "player");
     CHECK(player.widget == BuiltinWidget::TextField);
     CHECK(player.lines == TextLines::Single);
-    CHECK(player.placeholder == "Name");
+    CHECK(document.Text(player.placeholder) == "Name");
     CHECK(player.maxLength == 24);
     // A field made with no style of its own is an invisible box, and a player
     // cannot type into what they cannot see: the document carries the look the
@@ -978,27 +1007,25 @@ TEST_CASE("ScreenCompiler: every control compiles to the node that builds it")
 
     const ScreenNode &port = NodeNamed(document, "port");
     // The delimiters mark it as a regex and are not part of it.
-    CHECK(port.pattern == "[0-9]+");
+    CHECK(document.Text(port.pattern) == "[0-9]+");
     CHECK(port.check == TextCheck::Refuse);
     // A field's text content is what it starts holding.
-    CHECK(port.text == "8080");
+    CHECK(document.Text(port.text) == "8080");
 
     // A preset is expanded here, so the loader knows nothing of presets and the
     // shipped game has no table to look one up in.
-    CHECK(NodeNamed(document, "who").pattern == Patterns::kEmail);
+    CHECK(document.Text(NodeNamed(document, "who").pattern) == Patterns::kEmail);
 }
 
 TEST_CASE("ScreenCompiler: a pattern is a name or a marked regex, never guessed between")
 {
     SUBCASE("every built-in preset resolves")
     {
-        CHECK(Compiled(R"(<screen><text_field pattern="alphabetic" /></screen>)").nodes[1].pattern ==
-              Patterns::kAlphabetic);
-        CHECK(Compiled(R"(<screen><text_field pattern="alphanumeric" /></screen>)").nodes[1].pattern ==
-              Patterns::kAlphanumeric);
-        CHECK(Compiled(R"(<screen><text_field pattern="integer" /></screen>)").nodes[1].pattern == Patterns::kInteger);
-        CHECK(Compiled(R"(<screen><text_field pattern="real" /></screen>)").nodes[1].pattern == Patterns::kReal);
-        CHECK(Compiled(R"(<screen><text_field pattern="email" /></screen>)").nodes[1].pattern == Patterns::kEmail);
+        CHECK(FirstPattern(R"(<screen><text_field pattern="alphabetic" /></screen>)") == Patterns::kAlphabetic);
+        CHECK(FirstPattern(R"(<screen><text_field pattern="alphanumeric" /></screen>)") == Patterns::kAlphanumeric);
+        CHECK(FirstPattern(R"(<screen><text_field pattern="integer" /></screen>)") == Patterns::kInteger);
+        CHECK(FirstPattern(R"(<screen><text_field pattern="real" /></screen>)") == Patterns::kReal);
+        CHECK(FirstPattern(R"(<screen><text_field pattern="email" /></screen>)") == Patterns::kEmail);
     }
 
     SUBCASE("a name nothing declares")
@@ -1021,7 +1048,7 @@ TEST_CASE("ScreenCompiler: a pattern is a name or a marked regex, never guessed 
 
     SUBCASE("an empty pattern takes the rule off")
     {
-        CHECK(Compiled(R"(<screen><text_field pattern="" /></screen>)").nodes[1].pattern.empty());
+        CHECK(FirstPattern(R"(<screen><text_field pattern="" /></screen>)").empty());
     }
 }
 
@@ -1222,11 +1249,11 @@ TEST_CASE("ScreenCompiler: an instance is its template's root, with the instance
     CHECK(quit.style.textSize == Px(28.f));
     // The instance's, where both do.
     CHECK(quit.style.background.r == doctest::Approx(1.f));
-    CHECK(quit.text == "Quit");
+    CHECK(document.Text(quit.text) == "Quit");
 
     const ScreenNode &plain = NodeNamed(document, "plain");
     CHECK(plain.style.background.r == doctest::Approx(0.f));
-    CHECK(plain.text == "Label");
+    CHECK(document.Text(plain.text) == "Label");
 }
 
 TEST_CASE("ScreenCompiler: an instance's children follow its template's")
@@ -1516,7 +1543,7 @@ TEST_CASE("ScreenCompiler: each instance steps the slider it is pointed at, by i
     CHECK(quieter.verb == ScreenVerb::Step);
     CHECK(quieter.target == IndexOf(document, "music"));
     CHECK(quieter.moves == -1);
-    CHECK(quieter.text == "-");
+    CHECK(document.Text(quieter.text) == "-");
 
     // The default, where the instance passes nothing.
     const ScreenNode &louder = NodeNamed(document, "louder");
@@ -1583,7 +1610,7 @@ TEST_CASE("ScreenCompiler: a parameter fills attributes and text, whole or in pa
 </screen>)amdn");
     CHECK(NodeNamed(document, "c").style.gap == Px(30.f));
     CHECK(NodeNamed(document, "c.line").style.textSize == Px(30.f));
-    CHECK(NodeNamed(document, "c.line").text == "The word here");
+    CHECK(document.Text(NodeNamed(document, "c.line").text) == "The word here");
 }
 
 TEST_CASE("ScreenCompiler: @@ inside a template is a literal @, and @ outside one is plain text")
@@ -1594,9 +1621,9 @@ TEST_CASE("ScreenCompiler: @@ inside a template is a literal @, and @ outside on
   <text name="plain">you@example.com</text>
   <text_field name="who" pattern="/[^@ ]+@[^@ ]+/" />
 </screen>)amdn");
-    CHECK(NodeNamed(document, "m").text == "me@example.com");
-    CHECK(NodeNamed(document, "plain").text == "you@example.com");
-    CHECK(NodeNamed(document, "who").pattern == "[^@ ]+@[^@ ]+");
+    CHECK(document.Text(NodeNamed(document, "m").text) == "me@example.com");
+    CHECK(document.Text(NodeNamed(document, "plain").text) == "you@example.com");
+    CHECK(document.Text(NodeNamed(document, "who").pattern) == "[^@ ]+@[^@ ]+");
 }
 
 TEST_CASE("ScreenCompiler: a file using parameters cooks to the bytes its hand-expanded twin does")
@@ -1722,17 +1749,17 @@ TEST_CASE("ScreenCompiler: text starting with # is a key into a table")
 
     const ScreenNode &title = NodeNamed(document, "title");
     CHECK(title.textIsKey);
-    CHECK(title.text == "pause:title");
+    CHECK(document.Text(title.text) == "pause:title");
     CHECK(NodeNamed(document, "resume").textIsKey);
 
     const ScreenNode &field = NodeNamed(document, "field");
     CHECK(field.textIsKey);
     CHECK(field.placeholderIsKey);
-    CHECK(field.placeholder == "pause:hint");
+    CHECK(document.Text(field.placeholder) == "pause:hint");
 
     const ScreenNode &literal = NodeNamed(document, "literal");
     CHECK_FALSE(literal.textIsKey);
-    CHECK(literal.text == "Paused");
+    CHECK(document.Text(literal.text) == "Paused");
 }
 
 TEST_CASE("ScreenCompiler: ## writes a # and a # anywhere else is itself")
@@ -1744,11 +1771,11 @@ TEST_CASE("ScreenCompiler: ## writes a # and a # anywhere else is itself")
 
     const ScreenNode &hash = NodeNamed(document, "hash");
     CHECK_FALSE(hash.textIsKey);
-    CHECK(hash.text == "#1 fan");
+    CHECK(document.Text(hash.text) == "#1 fan");
 
     const ScreenNode &middle = NodeNamed(document, "middle");
     CHECK_FALSE(middle.textIsKey);
-    CHECK(middle.text == "Level #3");
+    CHECK(document.Text(middle.text) == "Level #3");
 }
 
 TEST_CASE("ScreenCompiler: a key that names nothing is refused where it is written")
@@ -1818,7 +1845,7 @@ TEST_CASE("ScreenCompiler: a key passed to a template is a key where the templat
     const ScreenDocument document = Compiled(kLabelled, {}, PauseTable(LiteralText::RequiresKey));
     const ScreenNode &resume = NodeNamed(document, "resume");
     CHECK(resume.textIsKey);
-    CHECK(resume.text == "pause:resume");
+    CHECK(document.Text(resume.text) == "pause:resume");
 }
 
 TEST_CASE("ScreenCompiler: a template library's literal text has no screen to exempt it")

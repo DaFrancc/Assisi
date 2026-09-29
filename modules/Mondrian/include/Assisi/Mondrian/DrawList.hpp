@@ -13,6 +13,7 @@
 /// Colours are sRGB, the values a colour picker shows, with straight alpha. The
 /// shader premultiplies, so authored colours read the way they are written.
 
+#include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Math/Color.hpp>
 
 #include <array>
@@ -89,6 +90,7 @@ enum class QuadKind : uint32_t
 };
 
 /// The shape of one corner. The values are read by the shader.
+AENUM()
 enum class CornerStyle : uint32_t
 {
     Square,

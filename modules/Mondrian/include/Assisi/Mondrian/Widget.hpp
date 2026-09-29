@@ -15,6 +15,7 @@
 #include <Assisi/Mondrian/NodeId.hpp>
 
 #include <Assisi/Core/CursorShape.hpp>
+#include <Assisi/Core/Reflect/Annotations.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -197,6 +198,7 @@ class WidgetRegistry
 };
 
 /// @brief The controls every UI has, registered first so their ids are fixed.
+AENUM()
 enum class BuiltinWidget : uint32_t
 {
     None,
@@ -230,11 +232,12 @@ struct ToggleId
 
 /// @brief What a slider's ends mean, and how far one press of a key or a button
 /// moves it. A stepped slider moves a step at a time and ignores @p step.
+ASTRUCT()
 struct SliderRange
 {
-    float min = 0.f;
-    float max = 1.f;
-    float step = 0.1f;
+    AFIELD() float min = 0.f;
+    AFIELD() float max = 1.f;
+    AFIELD() float step = 0.1f;
 
     [[nodiscard]] friend constexpr bool operator==(const SliderRange &, const SliderRange &) = default;
 };

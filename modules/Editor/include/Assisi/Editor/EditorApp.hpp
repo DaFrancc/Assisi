@@ -32,6 +32,8 @@
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
+#include <Assisi/Core/StringPool.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Editor/Overlay/OverlayRenderer.hpp>
@@ -188,15 +190,17 @@ class EditorOptionsPanel;
 /// intermediate value, and the scene is told about it.
 struct BoundBaseline
 {
-    Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
-    Assisi::Core::Reflect::ComponentId component{};
+    /// Index into the field list, and the value it held. Only fields whose bound
+    /// names a sibling are here, so this is empty for almost every component.
+    std::vector<std::pair<std::size_t, double>> values;
+    /// The object whose fields these are — a component, or a struct inside one —
+    /// and the field list they index. Identity only, for the length of one
+    /// gesture: never read through.
+    const void *owner = nullptr;
+    const Assisi::Core::Reflect::FieldMeta *fields = nullptr;
     /// The field being edited, which is the one value never restored — that would
     /// be writing over what is being typed.
     std::size_t editedField = 0;
-    /// Index into the component's field list, and the value it held. Only fields
-    /// whose bound names a sibling are here, so this is empty for almost every
-    /// component.
-    std::vector<std::pair<std::size_t, double>> values;
     bool active = false;
 };
 
@@ -743,6 +747,16 @@ class EditorApp : public Assisi::App::Application
     /// one field's address.
     bool EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
                         const Assisi::Core::Reflect::FieldBounds &bounds);
+
+    /// @brief Draw every field of the ASTRUCT at @p object, as a component's
+    /// fields are drawn, and return whether any changed. Bounds, radio and the
+    /// bound-settle work against the struct's own fields, which is what they
+    /// name. @p pool is the nearest StringPool above the struct, or null.
+    bool EditStructFields(void *object, const Assisi::Core::Reflect::StructSpec &spec, Assisi::Core::StringPool *pool);
+
+    /// @brief Draw a PooledString at @p fp as the text it names in @p pool, and
+    /// return whether it changed. Without a pool, only the handle can be shown.
+    bool EditPooledString(void *fp, const Assisi::Core::Reflect::FieldMeta &field, Assisi::Core::StringPool *pool);
     // The inspector's replication surfaces. Every one reads or writes a
     // NetSync::Replicated marker, so without networking there is no component
     // for them to be about and the inspector has no replication block.

@@ -15,6 +15,7 @@
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/StringPool.hpp>
 
+#include <array>
 #include <vector>
 
 namespace Assisi::ECS
@@ -64,6 +65,43 @@ struct Captions
     AFIELD() Core::DisplayedString label;
     AFIELD() Core::InternedString style;
     AFIELD() Core::PooledString title;
+};
+
+AENUM()
+enum class Tone : uint8_t
+{
+    Plain,
+    Loud = 4,
+    Count
+};
+
+/// @brief A value struct holding a pooled string it leaves to its holder's pool,
+/// an enum, and an array.
+ASTRUCT()
+struct Line
+{
+    AFIELD() Core::PooledString text;
+    AFIELD() std::array<uint8_t, 2> marks {};
+    AFIELD() Tone tone = Tone::Plain;
+    AFIELD(transient) float scratch = 0.f;
+};
+
+/// @brief Structs held every way a component can hold one: alone, in a list,
+/// in an array, and in a struct that holds them in turn.
+ASTRUCT()
+struct Verse
+{
+    AFIELD() Line first;
+    AFIELD() std::vector<Line> rest;
+};
+
+ACOMP()
+struct Poem
+{
+    AFIELD() Core::StringPool pool;
+    AFIELD() Line title;
+    AFIELD() std::array<Line, 2> epigraphs {};
+    AFIELD() std::vector<Verse> verses;
 };
 
 } // namespace Assisi::ECS

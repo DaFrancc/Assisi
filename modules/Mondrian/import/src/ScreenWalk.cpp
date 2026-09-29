@@ -76,7 +76,7 @@ std::expected<void, MarkupError> ApplyName(Walk &walk, const MarkupAttribute &at
         }
         walk.names.emplace(name, NamedNode{.index = index, .line = attribute.line, .column = attribute.column});
     }
-    walk.document.nodes[index].name = name;
+    walk.document.nodes[index].name = Core::InternedString{name};
     return {};
 }
 
@@ -162,12 +162,14 @@ std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, con
                                                  const MarkupElement &placeholderFrom)
 {
     ScreenNode &node = walk.document.nodes[index];
+    std::string words{walk.document.Text(node.text)};
     const std::expected<bool, MarkupError> text =
-        ResolveText(walk, node.text, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column});
+        ResolveText(walk, words, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column});
     if (!text)
     {
         return std::unexpected(text.error());
     }
+    node.text = walk.document.AddText(words);
     node.textIsKey = *text;
 
     // At the attribute where one was written, and at the element otherwise.
@@ -177,11 +179,13 @@ std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, con
         placeAt.line = written->line;
         placeAt.column = written->column;
     }
-    const std::expected<bool, MarkupError> placeholder = ResolveText(walk, node.placeholder, placeAt);
+    std::string shown{walk.document.Text(node.placeholder)};
+    const std::expected<bool, MarkupError> placeholder = ResolveText(walk, shown, placeAt);
     if (!placeholder)
     {
         return std::unexpected(placeholder.error());
     }
+    node.placeholder = walk.document.AddText(shown);
     node.placeholderIsKey = *placeholder;
     return {};
 }
@@ -332,7 +336,7 @@ std::expected<void, MarkupError> CompileTemplatePart(Walk &walk, const MarkupEle
         {
             return std::unexpected(rootText.error());
         }
-        walk.document.nodes[index].text = rootText->known ? rootText->text : std::string{};
+        walk.document.nodes[index].text = walk.document.AddText(rootText->known ? rootText->text : std::string{});
     }
     if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, base, index); !attributes)
     {
@@ -426,7 +430,7 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::Focus:
         return ApplyFocus(walk, index, attribute);
     case HandledAttribute::Pattern:
-        return ApplyPattern(node, attribute);
+        return ApplyPattern(walk.document, node, attribute);
     case HandledAttribute::Background:
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
@@ -645,7 +649,7 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
         {
             return std::unexpected(ownText.error());
         }
-        walk.document.nodes[index].text = ownText->known ? ownText->text : std::string{};
+        walk.document.nodes[index].text = walk.document.AddText(ownText->known ? ownText->text : std::string{});
     }
     const std::expected<std::string, MarkupError> prefix = InstancePrefix(walk, instance);
     if (!prefix)
@@ -764,7 +768,7 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     ScreenNode node;
     node.parent = parent;
     node.widget = kind->widget;
-    node.text = text->known ? text->text : std::string{};
+    node.text = walk.document.AddText(text->known ? text->text : std::string{});
     // Seeded first, because a control's own look is what a file's attributes
     // are written over.
     Seed(node);

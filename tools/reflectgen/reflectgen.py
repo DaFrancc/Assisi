@@ -413,6 +413,10 @@ def main():
                         help='A directory an #include in a reflected header is resolved '
                              'against, so a field may name an AENUM declared in a header it '
                              'includes. Repeatable.')
+    parser.add_argument('--allow-c-arrays', dest='allow_c_arrays', action='store_true',
+                        help='Reflect C array fields. Without it a reflected C array fails '
+                             'generation with a request to write std::array instead; the build '
+                             'passes it when configured with ASSISI_FORBID_C_ARRAYS=OFF.')
     args = parser.parse_args()
 
     if args.views_out is not None:
@@ -528,7 +532,8 @@ def main():
             for event in events:
                 print(f'  found: {event.catalog_name} (event)')
 
-            cpp = generate_cpp(components, include_path, messages, handlers, systems, events)
+            cpp = generate_cpp(components, include_path, messages, handlers, systems, events,
+                               allow_c_arrays=args.allow_c_arrays)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False

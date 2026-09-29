@@ -86,7 +86,7 @@ bool ReadNeeds(const AttributeTarget &target, std::string_view value)
 {
     for (const std::string_view system : SplitWords(value))
     {
-        target.document.systems.emplace_back(system);
+        target.document.systems.emplace_back(Core::InternedString{system});
     }
     return true;
 }
@@ -204,7 +204,7 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForControl(BuiltinWidget::TextField, "lines", ReadLines),
     ForControl(BuiltinWidget::TextField, "placeholder",
                [](const AttributeTarget &t, std::string_view v) {
-                   t.node.placeholder = v;
+                   t.node.placeholder = t.document.AddText(v);
                    return true;
                }),
     ForControl(BuiltinWidget::TextField, "mask",
@@ -227,7 +227,7 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
                // Carried and not resolved: there is nowhere for a name to
                // resolve to yet, and a file written today should not need an
                // edit when there is.
-               t.node.styleName = v;
+               t.node.styleName = Core::InternedString{v};
                return true;
            }),
     ForAny("visible", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.visible, v, ParseBool); }),
@@ -471,12 +471,13 @@ Color &ColorField(Style &style, HandledAttribute colour)
     return style.background;
 }
 
-std::expected<void, MarkupError> ApplyPattern(ScreenNode &node, const MarkupAttribute &attribute)
+std::expected<void, MarkupError> ApplyPattern(ScreenDocument &document, ScreenNode &node,
+                                              const MarkupAttribute &attribute)
 {
     const std::string_view value = attribute.value;
     if (value.empty())
     {
-        node.pattern.clear();
+        node.pattern = {};
         return {};
     }
 
@@ -503,7 +504,7 @@ std::expected<void, MarkupError> ApplyPattern(ScreenNode &node, const MarkupAttr
     {
         return std::unexpected(At(attribute, "the pattern " + compiled.error().message));
     }
-    node.pattern = expression;
+    node.pattern = document.AddText(expression);
     return {};
 }
 

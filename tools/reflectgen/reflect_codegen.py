@@ -24,7 +24,7 @@ import re
 from typing import NamedTuple, Optional
 
 import reflect_events
-from reflect_parser import FieldInfo, ComponentInfo, MessageInfo, MAX_CONTAINER_DEPTH
+from reflect_parser import FieldInfo, ComponentInfo, MessageInfo, StructInfo, MAX_CONTAINER_DEPTH
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES, STRING_JSON_FIELD_TYPES,
                            _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
 
@@ -168,7 +168,19 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
             f.container.kind,
             'Assisi::Core::Reflect::ContainerToJson({a})',
             'if (!Assisi::Core::Reflect::ReadContainer(j, _comp, "{f}", {a})) return false;')
+    if f.struct_info is not None:
+        # A nested object of the struct's own fields, through the struct's own
+        # generated reader and writer, which StructTraits reaches.
+        return TypeCodegen(
+            'Struct',
+            'Assisi::Core::Reflect::StructToJson({a})',
+            'if (!Assisi::Core::Reflect::ReadStructField(j, _comp, "{f}", {a})) return false;')
     return TYPES.get(f.cpp_type)
+
+
+def _struct_of(f: FieldInfo) -> Optional[StructInfo]:
+    """The ASTRUCT a field holds, alone or at the leaf of a container."""
+    return f.struct_info if f.struct_info is not None else f.leaf_struct
 
 
 def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
@@ -202,6 +214,12 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
     if f.container is not None:
         parts.append(
             f'.container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::{f.name})>()')
+
+    # The struct's field table, from the file that generates it. Describes the
+    # leaf of a container, as the enum metadata below does.
+    held = _struct_of(f)
+    if held is not None and not f.args.has('transient'):
+        parts.append(f'.structSpec = Assisi::Core::Reflect::StructTraits<::{held.fqn}>::Spec()')
 
     if f.args.has('transient'):
         parts.append('.transient = true')
@@ -793,9 +811,81 @@ static const bool _reflectgen_system_{system.function} = []() -> bool
 """
 
 
+def _referenced_structs(owners: list) -> list:
+    """Every ASTRUCT a field of @p owners names, once each, in first-use order —
+    the ones this file must declare a StructTraits specialization for."""
+    found: dict[str, StructInfo] = {}
+    for owner in owners:
+        if getattr(owner, 'is_struct', False):
+            found.setdefault(owner.fqn, StructInfo(name=owner.name, fqn=owner.fqn, fields=owner.fields,
+                                                   header=''))
+        for f in owner.fields:
+            held = _struct_of(f)
+            if held is not None and not f.args.has('transient'):
+                found.setdefault(held.fqn, held)
+    return list(found.values())
+
+
+def _gen_struct_declarations(structs: list) -> str:
+    """The StructTraits specialization for each struct this file names.
+
+    Declared through the one macro every declaration shares, so each is
+    identical, and before anything uses it — a use of the primary template first
+    would be a different type — while its members are defined only in the
+    declaring header's own file.
+    """
+    if not structs:
+        return ''
+    return '\n' + ''.join(f'ASSISI_REFLECTED_STRUCT(::{info.fqn});\n' for info in structs)
+
+
+def _gen_struct_definitions(structs: list) -> str:
+    """Spec(), ToJson() and FromJson() for each ASTRUCT this header declares.
+
+    The table is a function-local static, so it is built on first use in
+    whatever order files initialise, and a struct holding another builds the
+    inner one's table first.
+    """
+    if not structs:
+        return ''
+    blocks = []
+    for comp in structs:
+        field_metas = ',\n            '.join(_gen_field_meta(f, comp.fields) for f in comp.fields)
+        serialize   = _indent(_gen_serialize(comp.fields), 4)
+        deserialize = _indent(_gen_deserialize_asset(comp.fields, comp.name), 4)
+        blocks.append(f"""\
+// ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
+// ASTRUCT: a value struct other reflected types hold inline.
+const StructSpec *StructTraits<::{comp.fqn}>::Spec()
+{{
+    using T = ::{comp.fqn};
+    static const StructSpec spec{{
+        "{comp.name}",
+        {{
+            {field_metas}
+        }},
+    }};
+    return &spec;
+}}
+
+nlohmann::json StructTraits<::{comp.fqn}>::ToJson(const void *ptr)
+{{
+    using T = ::{comp.fqn};
+{serialize}
+}}
+
+bool StructTraits<::{comp.fqn}>::FromJson(const nlohmann::json &j, void *out_ptr)
+{{
+    using T = ::{comp.fqn};
+{deserialize}
+}}
+""")
+    return '\nnamespace Assisi::Core::Reflect\n{\n\n' + '\n'.join(blocks) + '\n} // namespace Assisi::Core::Reflect\n'
+
+
 def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
                  handlers: Optional[list] = None, systems: Optional[list] = None,
-                 events: Optional[list] = None) -> str:
+                 events: Optional[list] = None, allow_c_arrays: bool = False) -> str:
     messages = messages or []
     handlers = handlers or []
     systems  = systems or []
@@ -810,14 +900,19 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     _check_no_instance_views(messages, include_path)
     _check_unsupported(components, include_path)
     _check_unsupported(messages, include_path)
+    _check_c_arrays([*components, *messages], include_path, allow_c_arrays)
+    _check_structs(components, include_path)
+    _check_struct_cycles([*components, *messages], include_path)
     _check_string_pools([*components, *messages], include_path)
     _check_asset_fields(components, include_path)
-    _check_replication(components, include_path)
+    _check_replication([c for c in components if not c.is_struct], include_path)
     _check_messages(messages, include_path)
     _check_controlled_outside_messages(components, include_path)
 
-    component_infos = [c for c in components if not c.is_asset]
+    component_infos = [c for c in components if not c.is_asset and not c.is_struct]
     asset_infos     = [c for c in components if c.is_asset]
+    struct_infos    = [c for c in components if c.is_struct]
+    referenced      = _referenced_structs([*components, *messages])
 
     has_entity_refs = any(
         f.cpp_type in _ENTITY_REF_TYPES
@@ -921,9 +1016,14 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/Reflect/ComponentMaskJson.hpp>')
     if has_string_types:
         includes.append('#include <Assisi/Core/Reflect/StringJson.hpp>')
-    if has_containers:
+    if has_containers or referenced:
         includes.append('#include <Assisi/Core/Reflect/ContainerJson.hpp>')
         includes.append('#include <Assisi/Core/Reflect/ContainerOps.hpp>')
+    if referenced:
+        includes.append('#include <Assisi/Core/Reflect/StructMeta.hpp>')
+    if struct_infos:
+        # A struct's table is built with offsetof.
+        includes.append('#include <cstddef>')
     if has_enums:
         includes.append('#include <cstdint>')
     includes.append(f'#include <{include_path}>')
@@ -960,7 +1060,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
 // Source: {include_path}
 
 {include_block}
-{view_fwd}{offsetof_push}
+{view_fwd}{offsetof_push}{_gen_struct_declarations(referenced)}{_gen_struct_definitions(struct_infos)}
 namespace
 {{
 {view_ban}""")
@@ -1216,6 +1316,14 @@ def _check_container(f, owner: str, header_name: str) -> None:
     # Keys are checked at every level a map appears, not just the outer one.
     shape = f.container
     while shape is not None:
+        inner = shape.element
+        # C++ has no vector or map of C arrays: an element that cannot be
+        # assigned cannot be stored in either. Refused here with the fix rather
+        # than left to a template error in the generated file.
+        if shape.kind != 'Array' and hasattr(inner, 'kind') and inner.c_array:
+            raise ValueError(
+                f"{where} holds C arrays, which a std::vector or map cannot store. Write the "
+                f"element as std::array<T, N>.")
         if shape.kind == 'Map':
             key_tc = _element_tc(shape.key)
             key_ok = key_tc is not None and key_tc.enum_value in _CONTAINER_KEY_TYPES
@@ -1230,6 +1338,8 @@ def _check_container(f, owner: str, header_name: str) -> None:
     leaf = f.container.leaf
     if f.leaf_enum is not None:
         return  # an AENUM element, encoded as its underlying integer
+    if f.leaf_struct is not None:
+        return  # an ASTRUCT element, encoded as its own fields
 
     leaf_tc = _element_tc(leaf)
     if leaf_tc is None or leaf_tc.enum_value not in _CONTAINER_LEAF_TYPES:
@@ -1238,7 +1348,79 @@ def _check_container(f, owner: str, header_name: str) -> None:
             f"{where} holds elements of type '{leaf}' ({reason}). A reflected "
             f"container holds integers, floats, bool, Core::ShortString, "
             f"Core::EntityName, Core::InternedString, Core::DisplayedString, "
-            f"Core::PooledString, an AENUM enum, or one container of those.")
+            f"Core::PooledString, an AENUM enum, an ASTRUCT, or one container of those.")
+
+
+def _check_c_arrays(owners: list, header_name: str, allow_c_arrays: bool) -> None:
+    """Refuses a reflected C array unless the build allows them.
+
+    The build forbids them by default (ASSISI_FORBID_C_ARRAYS), because a
+    std::array says the same thing and behaves like every other value: it can
+    be assigned, compared, returned and passed without decaying to a pointer.
+    """
+    if allow_c_arrays:
+        return
+    for owner in owners:
+        for f in owner.fields:
+            if f.args.has('transient') or f.container is None or not f.container.has_c_array:
+                continue
+            raise ValueError(
+                f"{header_name}: field '{owner.name}::{f.name}' is a C array ({f.cpp_type}). "
+                f"Write it as std::array<T, N>, which reflects the same way. To allow C arrays, "
+                f"configure the build with -DASSISI_FORBID_C_ARRAYS=OFF.")
+
+
+def _check_structs(components: list, header_name: str) -> None:
+    """Refuses what an ASTRUCT's fields cannot hold.
+
+    A struct is one value inside whatever holds it, and it has no scene and no
+    wire of its own. So `norep` inside one would split a single value between
+    disk and network, and an entity or instance reference inside one has no
+    scene to resolve against when the struct is saved or sent on its own.
+    """
+    for comp in components:
+        if not comp.is_struct:
+            continue
+        for f in comp.fields:
+            where = f"{header_name}: field '{comp.name}::{f.name}'"
+            if f.args.has('norep'):
+                raise ValueError(
+                    f"{where} is marked AFIELD(norep), but '{comp.name}' is an ASTRUCT: it "
+                    f"travels as one value wherever it is held, so part of it cannot stay off the "
+                    f"wire. Put the field on the component that holds the struct.")
+            if f.args.has('transient'):
+                continue
+            spelling = f.container.leaf if f.container is not None else f.cpp_type
+            if spelling in _ENTITY_REF_TYPES or spelling.rsplit('::', 1)[-1] == 'InstanceId':
+                raise ValueError(
+                    f"{where} names an entity or a blueprint instance ({f.cpp_type}), but "
+                    f"'{comp.name}' is an ASTRUCT, which has no scene to resolve one against. "
+                    f"Put the field on the component that holds the struct.")
+
+
+def _check_struct_cycles(owners: list, header_name: str) -> None:
+    """Refuses a struct that holds itself, directly or through other structs.
+
+    Such a type either cannot exist in C++ or, through a container, recurses
+    without end: its field table would build itself while being built, and its
+    layout text would never finish.
+    """
+    def walk(info: StructInfo, path: list) -> None:
+        if any(seen.fqn == info.fqn for seen in path):
+            chain = ' -> '.join(seen.name for seen in [*path, info])
+            raise ValueError(
+                f"{header_name}: ASTRUCT '{info.name}' holds itself ({chain}). A reflected struct "
+                f"may not contain itself at any depth.")
+        for f in info.fields:
+            held = _struct_of(f)
+            if held is not None:
+                walk(held, [*path, info])
+
+    for owner in owners:
+        for f in owner.fields:
+            held = _struct_of(f)
+            if held is not None:
+                walk(held, [])
 
 
 def _string_type_of(f) -> Optional[str]:
@@ -1250,29 +1432,60 @@ def _string_type_of(f) -> Optional[str]:
     return None
 
 
-def _check_string_pools(owners: list, header_name: str) -> None:
-    """Refuses a struct whose PooledStrings have no one pool to index.
+def _pools_of(fields: list) -> list:
+    """The names of the StringPool fields among @p fields, directly held."""
+    return [f.name for f in fields
+            if not f.args.has('transient') and f.container is None and _string_type_of(f) == 'StringPool']
 
-    A PooledString is an offset and a length into its struct's StringPool, and
-    nothing on the handle says which pool that is. So a struct holding any —
-    alone or in a container — holds exactly one StringPool: with none the numbers
-    index nothing, and with two nothing says which they index.
+
+def _unpooled_string(fields: list) -> Optional[str]:
+    """A PooledString beneath @p fields that no pool below them covers, named by
+    its path, or None.
+
+    A handle indexes the nearest pool above it: a struct that holds a pool
+    covers every handle beneath it, and one that does not hands its handles up
+    to whatever holds it.
+    """
+    for f in fields:
+        if f.args.has('transient'):
+            continue
+        if _string_type_of(f) == 'PooledString':
+            return f.name
+        held = _struct_of(f)
+        if held is None or _pools_of(held.fields):
+            continue
+        inner = _unpooled_string(held.fields)
+        if inner is not None:
+            return f'{f.name}.{inner}'
+    return None
+
+
+def _check_string_pools(owners: list, header_name: str) -> None:
+    """Refuses a type whose PooledStrings have no one pool to index.
+
+    A PooledString is an offset and a length into a StringPool, and nothing on
+    the handle says which pool that is: it is the nearest one above it — its own
+    struct's, or the one held by whatever holds that struct. So any type holds at
+    most one pool, and a component, asset or message, which nothing holds, holds
+    one whenever a handle beneath it has no nearer pool. An ASTRUCT may leave its
+    handles to its holder.
     """
     for owner in owners:
         if owner.args.has('transient'):
             continue
-        fields = [f for f in owner.fields if not f.args.has('transient')]
-        pooled = [f for f in fields if _string_type_of(f) == 'PooledString']
-        if not pooled:
+        pools = _pools_of(owner.fields)
+        if len(pools) > 1:
+            names = ', '.join(f"'{name}'" for name in pools)
+            raise ValueError(
+                f"{header_name}: '{owner.name}' holds more than one Core::StringPool ({names}), "
+                f"so nothing says which one its PooledStrings index. Keep one.")
+        if pools or getattr(owner, 'is_struct', False):
             continue
-        pools = [f.name for f in fields if f.container is None and _string_type_of(f) == 'StringPool']
-        if len(pools) == 1:
-            continue
-        found = 'none' if not pools else ', '.join(f"'{name}'" for name in pools)
-        raise ValueError(
-            f"{header_name}: '{owner.name}' holds the PooledString field "
-            f"'{pooled[0].name}', so it must hold exactly one Core::StringPool for its "
-            f"handles to index, and it holds {found}.")
+        unpooled = _unpooled_string(owner.fields)
+        if unpooled is not None:
+            raise ValueError(
+                f"{header_name}: '{owner.name}' holds the PooledString '{unpooled}', so it must "
+                f"hold exactly one Core::StringPool for the handle to index, and it holds none.")
 
 
 # The inline-string capacities TYPES has a FieldType for. The binary codec reads

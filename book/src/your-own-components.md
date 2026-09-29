@@ -98,7 +98,9 @@ header and wrote that code for you.
 | Other entities | `ECS::Entity` |
 | Assets | `Core::AssetId` (a reference to a mesh, material or other asset) |
 | Choices | Your own `enum class` marked `AENUM()` (shown as a dropdown) |
+| Groups of fields | Your own struct marked `ASTRUCT()` (shown as a section you can open) |
 | Lists and maps | `std::vector`, `std::map`, `std::unordered_map` of the above |
+| Fixed-length lists | `std::array<T, N>` of the above |
 
 Some common types are **not allowed**, and the build tells you what to use
 instead:
@@ -131,6 +133,62 @@ struct TeamMember
 ```
 
 The enum must be in the **same header** as the component that uses it.
+
+### Groups of fields with a struct
+
+When several fields belong together, put them in a struct marked `ASTRUCT()`
+and use it as a field:
+
+```cpp
+ASTRUCT()
+struct Range
+{
+    AFIELD() float low = 0.f;
+    AFIELD() float high = 1.f;
+};
+
+ACOMP()
+struct Flicker
+{
+    AFIELD() Range brightness;
+    AFIELD() std::vector<Range> steps;
+};
+```
+
+- A struct can be a field on its own, or the element of a list, a map or an
+  array. It can hold other structs.
+- In a level file it's saved as an object of its own fields:
+  `"brightness": { "low": 0.2, "high": 0.9 }`.
+- In the editor it shows as a section you can open. A struct inside a list
+  shows as text and can't be edited yet.
+- The struct must be in the **same header** as the component, or in a header it
+  includes.
+- `ASTRUCT()` takes no options. Inside the struct, `AFIELD(min = ..., max = ...)`
+  and the radio options can only name the struct's own fields.
+- A struct can't hold `ECS::Entity`, `ECS::InstanceId` or an `AFIELD(norep)`
+  field, and it can't hold itself, even through a list. The build says so.
+
+### Fixed-length arrays
+
+`std::array<T, N>` holds exactly `N` values, and a level file holds it as a list
+of exactly `N`:
+
+```cpp
+ACOMP()
+struct LapTimes
+{
+    AFIELD() std::array<float, 3> bestSeconds{};
+};
+```
+
+`N` may be a number or a named constant. A file whose list has a different
+length is refused, rather than cut short or padded.
+
+A C array, such as `float weights[3]`, is refused by default. The build names
+the field and asks for `std::array<float, 3>`, which saves and loads the same
+way. A project that needs C arrays can allow them by configuring with
+`-DASSISI_FORBID_C_ARRAYS=OFF`. Even then, a `std::vector` or map of C arrays
+is refused, because C++ can't store one.
 
 ## Options
 

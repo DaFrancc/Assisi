@@ -56,6 +56,11 @@ function(assisi_reflect)
 
     set(_generated_sources "")
 
+    set(_array_args "")
+    if(NOT ASSISI_FORBID_C_ARRAYS)
+        set(_array_args --allow-c-arrays)
+    endif()
+
     foreach(_header ${_ARG_HEADERS})
         # Resolve to absolute path.
         if(IS_ABSOLUTE "${_header}")
@@ -94,6 +99,7 @@ function(assisi_reflect)
                     --depfile "${_out}.d"
                     "$<LIST:TRANSFORM,$<TARGET_PROPERTY:${_ARG_TARGET},INCLUDE_DIRECTORIES>,PREPEND,--include-dir=>"
                     ${_include_args}
+                    ${_array_args}
             DEPENDS "${_abs}" "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
             DEPFILE "${_out}.d"
             COMMENT "reflectgen: ${_header}"

@@ -12,13 +12,11 @@
 /// this file may close a gesture itself — an early return would then skip the
 /// close on exactly the frame it mattered.
 
-#include <Assisi/Editor/EditorApp.hpp>
 #include "ImGuiQueries.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetId.hpp>
-#include <Assisi/ECS/BlueprintMember.hpp>
-#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/InternedString.hpp>
@@ -27,9 +25,11 @@
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Core/StringPool.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #if defined(ASSISI_NETWORKING)
-#    include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #endif
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -51,6 +51,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -76,10 +77,10 @@ using Assisi::Core::Reflect::IsComponent;
 using Assisi::Editor::RadioVisibility;
 using Assisi::Editor::ScopedFieldChrome;
 
-const Assisi::Core::Reflect::FieldMeta *FindField(const Assisi::Core::Reflect::ComponentMeta &meta,
+const Assisi::Core::Reflect::FieldMeta *FindField(std::span<const Assisi::Core::Reflect::FieldMeta> fields,
                                                   const std::string &name)
 {
-    for (const auto &candidate : meta.fields)
+    for (const Assisi::Core::Reflect::FieldMeta &candidate : fields)
     {
         if (candidate.name == name)
         {
@@ -133,19 +134,19 @@ bool InputString(const char *label, std::string &text)
 {
     // capacity() + 1: a std::string always has room for its terminator past its
     // capacity, which is the buffer size ImGui is told.
-    return ImGui::InputText(label, text.data(), text.capacity() + 1, ImGuiInputTextFlags_CallbackResize,
-                            &ResizeString, &text);
+    return ImGui::InputText(label, text.data(), text.capacity() + 1, ImGuiInputTextFlags_CallbackResize, &ResizeString,
+                            &text);
 }
 
-/// @brief The one StringPool field of the component at @p component, or null
-/// when it has none. reflectgen refuses a PooledString without exactly one.
-Assisi::Core::StringPool *FindStringPool(void *component, const Assisi::Core::Reflect::ComponentMeta &meta)
+/// @brief The one StringPool among @p fields of the object at @p object, or
+/// null when it holds none. reflectgen allows at most one per struct.
+Assisi::Core::StringPool *FindStringPool(void *object, std::span<const Assisi::Core::Reflect::FieldMeta> fields)
 {
-    for (const Assisi::Core::Reflect::FieldMeta &field : meta.fields)
+    for (const Assisi::Core::Reflect::FieldMeta &field : fields)
     {
         if (field.type == Assisi::Core::Reflect::FieldType::StringPool)
         {
-            return reinterpret_cast<Assisi::Core::StringPool *>(static_cast<std::byte *>(component) + field.offset);
+            return reinterpret_cast<Assisi::Core::StringPool *>(static_cast<std::byte *>(object) + field.offset);
         }
     }
     return nullptr;
@@ -185,7 +186,7 @@ void WriteEnumValue(void *fp, std::uint8_t size, std::int64_t value)
 ///
 /// reflectgen already validates that the chain exists and is acyclic, so the
 /// bound on the walk and the lookup misses handled below are defensive only.
-RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect::ComponentMeta &meta,
+RadioVisibility EvaluateRadio(const void *component, std::span<const Assisi::Core::Reflect::FieldMeta> fields,
                               const Assisi::Core::Reflect::FieldMeta &field)
 {
     using Assisi::Core::Reflect::FieldMeta;
@@ -199,14 +200,14 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
     // field, its source, its source's source, ... up to the root broadcaster (a
     // field with no radioSource). Bounded by the field count.
     std::vector<const FieldMeta *> chain;
-    for (const FieldMeta *cur = &field; cur != nullptr && chain.size() <= meta.fields.size();)
+    for (const FieldMeta *cur = &field; cur != nullptr && chain.size() <= fields.size();)
     {
         chain.push_back(cur);
         if (cur->radioSource.empty())
         {
             break;
         }
-        cur = FindField(meta, cur->radioSource);
+        cur = FindField(fields, cur->radioSource);
     }
 
     // A broadcaster is an enum or a bool, and a bool is read as the 0 or 1 the
@@ -214,14 +215,14 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
     // ReadEnumValue: a bool field carries no enumSize, so that would read a
     // zero-width integer rather than the byte.
     const auto readSource = [component](const FieldMeta *fm) -> std::int64_t
-                            {
-                                const void *fp = static_cast<const char *>(component) + fm->offset;
-                                if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
-                                {
-                                    return *static_cast<const bool *>(fp) ? 1 : 0;
-                                }
-                                return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
-                            };
+    {
+        const void *fp = static_cast<const char *>(component) + fm->offset;
+        if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
+        {
+            return *static_cast<const bool *>(fp) ? 1 : 0;
+        }
+        return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
+    };
 
     // Fold from the root down toward `field` (chain front). `state` holds the
     // resolved visibility of the source one level up.
@@ -229,14 +230,14 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
     for (std::size_t i = chain.size(); i-- > 1;)
     {
         const FieldMeta *listener = chain[i - 1];
-        const FieldMeta *source   = chain[i];
+        const FieldMeta *source = chain[i];
         if (state != RadioVisibility::Active)
         {
             state = RadioVisibility::Hidden; // an inactive source hides its listeners
             continue;
         }
         const std::int64_t current = readSource(source);
-        bool match   = false;
+        bool match = false;
         for (const std::int64_t value : listener->radioValues)
         {
             if (current == value)
@@ -270,8 +271,8 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         // makes the bounds hold for Ctrl+click text entry too.
         const float minBound = bounds.hasMin ? static_cast<float>(bounds.minValue) : -FLT_MAX;
         const float maxBound = bounds.hasMax ? static_cast<float>(bounds.maxValue) : FLT_MAX;
-        edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
-                                  "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound, "%.3f",
+                                  ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::Double:
@@ -298,40 +299,40 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         // range, so these casts are exact.
         const int32_t minBound = bounds.hasMin ? static_cast<int32_t>(bounds.minValue) : INT32_MIN;
         const int32_t maxBound = bounds.hasMax ? static_cast<int32_t>(bounds.maxValue) : INT32_MAX;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::Int8:
     {
         const int8_t minBound = bounds.hasMin ? static_cast<int8_t>(bounds.minValue) : INT8_MIN;
         const int8_t maxBound = bounds.hasMax ? static_cast<int8_t>(bounds.maxValue) : INT8_MAX;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S8, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S8, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::UInt8:
     {
         const uint8_t minBound = bounds.hasMin ? static_cast<uint8_t>(bounds.minValue) : 0u;
         const uint8_t maxBound = bounds.hasMax ? static_cast<uint8_t>(bounds.maxValue) : UINT8_MAX;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U8, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U8, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::Int16:
     {
         const int16_t minBound = bounds.hasMin ? static_cast<int16_t>(bounds.minValue) : INT16_MIN;
         const int16_t maxBound = bounds.hasMax ? static_cast<int16_t>(bounds.maxValue) : INT16_MAX;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S16, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S16, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::UInt16:
     {
         const uint16_t minBound = bounds.hasMin ? static_cast<uint16_t>(bounds.minValue) : 0u;
         const uint16_t maxBound = bounds.hasMax ? static_cast<uint16_t>(bounds.maxValue) : UINT16_MAX;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U16, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U16, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::UInt32:
@@ -351,7 +352,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
                     bool set = (mask & bit) != 0u;
                     if (ImGui::Checkbox(constant.name.c_str(), &set))
                     {
-                        mask   = set ? (mask | bit) : (mask & ~bit);
+                        mask = set ? (mask | bit) : (mask & ~bit);
                         edited = true;
                     }
                 }
@@ -362,8 +363,8 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
 
         const uint32_t minBound = bounds.hasMin ? static_cast<uint32_t>(bounds.minValue) : 0u;
         const uint32_t maxBound = bounds.hasMax ? static_cast<uint32_t>(bounds.maxValue) : UINT32_MAX;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::Int64:
@@ -371,20 +372,20 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         // Bounds arrive as double, exact only to 2^53. Past that a bound would
         // silently round, so the open range stops at what is representable
         // rather than pretending to honour it.
-        constexpr int64_t kExact   = 1LL << 53;
+        constexpr int64_t kExact = 1LL << 53;
         const int64_t minBound = bounds.hasMin ? static_cast<int64_t>(bounds.minValue) : -kExact;
         const int64_t maxBound = bounds.hasMax ? static_cast<int64_t>(bounds.maxValue) : kExact;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::UInt64:
     {
-        constexpr uint64_t kExact   = 1ULL << 53;
+        constexpr uint64_t kExact = 1ULL << 53;
         const uint64_t minBound = bounds.hasMin ? static_cast<uint64_t>(bounds.minValue) : 0u;
         const uint64_t maxBound = bounds.hasMax ? static_cast<uint64_t>(bounds.maxValue) : kExact;
-        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
-                                   nullptr, ImGuiSliderFlags_AlwaysClamp);
+        edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound, nullptr,
+                                   ImGuiSliderFlags_AlwaysClamp);
         break;
     }
     case FieldType::Bool:
@@ -458,7 +459,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         std::string text{name->View()};
         if (InputString(field.name.c_str(), text))
         {
-            *name  = Assisi::Core::InternedString{text};
+            *name = Assisi::Core::InternedString{text};
             edited = true;
         }
         break;
@@ -514,7 +515,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::LinearColor4:
         edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
                                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
-                                   ImGuiColorEditFlags_AlphaPreviewHalf);
+                                       ImGuiColorEditFlags_AlphaPreviewHalf);
         break;
     // sRGB colours are display values, which the picker's own 0-1 range is.
     case FieldType::SrgbColor3:
@@ -526,11 +527,11 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         break;
     case FieldType::Quat:
     {
-        auto *quat  = static_cast<glm::quat *>(fp);
+        auto *quat = static_cast<glm::quat *>(fp);
         glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
         if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
         {
-            *quat  = glm::normalize(glm::quat(glm::radians(euler)));
+            *quat = glm::normalize(glm::quat(glm::radians(euler)));
             edited = true;
         }
         break;
@@ -538,11 +539,12 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     // Shown, not editable. Editing one in place needs a list widget with per-row
     // identity, add and remove, and a nested list for a nested element — and
     // nothing authors a container by hand yet. A field that simply vanished from
-    // the inspector would read as a bug, so it reads as what it holds.
+    // the inspector would read as a bug, so it reads as what it holds. A struct
+    // inside one reads as its fields.
     case FieldType::Vector:
     case FieldType::Map:
-        ImGui::LabelText(field.name.c_str(), "%s",
-                         Assisi::Core::Reflect::DescribeContainer(field, fp).c_str());
+    case FieldType::Array:
+        ImGui::LabelText(field.name.c_str(), "%s", Assisi::Core::Reflect::DescribeContainer(field, fp).c_str());
         break;
     default:
         // Either a type only an owning component can draw (the caller handles
@@ -556,11 +558,12 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
 namespace
 {
 
-/// @brief Whether @p baseline is the one for this field's current edit.
-bool BoundBaselineMatches(const BoundBaseline &baseline, Assisi::ECS::Entity entity,
-                          const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t editedField)
+/// @brief Whether @p baseline is the one for this field's current edit: the same
+/// field of the same object, a component or a struct inside one.
+bool BoundBaselineMatches(const BoundBaseline &baseline, std::span<const Assisi::Core::Reflect::FieldMeta> fields,
+                          const void *object, std::size_t editedField)
 {
-    return baseline.active && baseline.entity == entity && baseline.component == meta.id &&
+    return baseline.active && baseline.owner == object && baseline.fields == fields.data() &&
            baseline.editedField == editedField;
 }
 
@@ -569,19 +572,18 @@ bool BoundBaselineMatches(const BoundBaseline &baseline, Assisi::ECS::Entity ent
 ///
 /// Only fields whose bound *names* a sibling: a literal bound is not something
 /// another field's edit can push against, so there is nothing to restore.
-void CaptureBoundBaseline(BoundBaseline &baseline, Assisi::ECS::Entity entity,
-                          const Assisi::Core::Reflect::ComponentMeta &meta, const void *object,
-                          std::size_t editedField)
+void CaptureBoundBaseline(BoundBaseline &baseline, std::span<const Assisi::Core::Reflect::FieldMeta> fields,
+                          const void *object, std::size_t editedField)
 {
     baseline.values.clear();
-    baseline.entity      = entity;
-    baseline.component   = meta.id;
+    baseline.owner = object;
+    baseline.fields = fields.data();
     baseline.editedField = editedField;
-    baseline.active      = true;
+    baseline.active = true;
 
-    for (std::size_t i = 0; i < meta.fields.size(); ++i)
+    for (std::size_t i = 0; i < fields.size(); ++i)
     {
-        const Assisi::Core::Reflect::FieldMeta &field = meta.fields[i];
+        const Assisi::Core::Reflect::FieldMeta &field = fields[i];
         if (field.minField.empty() && field.maxField.empty())
         {
             continue;
@@ -598,15 +600,14 @@ void CaptureBoundBaseline(BoundBaseline &baseline, Assisi::ECS::Entity entity,
 /// against what the fields were rather than what the last keystroke left them.
 ///
 /// The field being edited is skipped — restoring it would write over what is
-/// being typed. A baseline belonging to another entity or component is ignored
-/// rather than applied, since its indices mean nothing here.
+/// being typed. A baseline belonging to another object is ignored rather than
+/// applied, since its indices mean nothing here.
 /// @return Whether any field's value actually changed, which the caller owes the
 /// scene as a change notification.
-bool RestoreBoundBaseline(const BoundBaseline &baseline, Assisi::ECS::Entity entity,
-                          const Assisi::Core::Reflect::ComponentMeta &meta, void *object,
-                          std::size_t editedField)
+bool RestoreBoundBaseline(const BoundBaseline &baseline, std::span<const Assisi::Core::Reflect::FieldMeta> fields,
+                          void *object, std::size_t editedField)
 {
-    if (!BoundBaselineMatches(baseline, entity, meta, editedField))
+    if (!BoundBaselineMatches(baseline, fields, object, editedField))
     {
         return false;
     }
@@ -614,11 +615,11 @@ bool RestoreBoundBaseline(const BoundBaseline &baseline, Assisi::ECS::Entity ent
     bool moved = false;
     for (const auto &[index, value] : baseline.values)
     {
-        if (index == editedField || index >= meta.fields.size())
+        if (index == editedField || index >= fields.size())
         {
             continue;
         }
-        const Assisi::Core::Reflect::FieldMeta &field = meta.fields[index];
+        const Assisi::Core::Reflect::FieldMeta &field = fields[index];
         double current = 0.0;
         if (Assisi::Core::Reflect::ReadNumericField(field, object, current) && current != value &&
             Assisi::Core::Reflect::WriteNumericField(field, object, value))
@@ -629,13 +630,136 @@ bool RestoreBoundBaseline(const BoundBaseline &baseline, Assisi::ECS::Entity ent
     return moved;
 }
 
+/// @brief Keeps a field that caps another consistent with it after an edit.
+///
+/// Run on every frame a field is edited and on the frame its widget lets go,
+/// whether or not it reported an edit: Escape reverts a text field's own value
+/// silently, and without a settle there the capped field keeps the half-typed
+/// number.
+/// @return Whether a settle moved another field, which the caller owes the
+/// scene as a change notification.
+bool SettleAfterEdit(BoundBaseline &baseline, std::span<const Assisi::Core::Reflect::FieldMeta> fields, void *object,
+                     std::size_t editedField)
+{
+    // Captured on this field's *first* edit of the gesture, not on ImGui's
+    // activation edge. Ctrl+clicking a drag box turns it into a text box, which
+    // deactivates and reactivates mid-gesture — a baseline keyed to that edge is
+    // dropped exactly when the typing starts, which is the one case it exists
+    // for. Here the capped fields are still pristine, since no settle has run
+    // for this gesture yet, so it is the same snapshot the activation edge would
+    // have taken.
+    if (!BoundBaselineMatches(baseline, fields, object, editedField))
+    {
+        CaptureBoundBaseline(baseline, fields, object, editedField);
+    }
+
+    // A field that caps another has just moved, so the capped one may be out
+    // of range — and its own widget will not run again until the next frame,
+    // by which point the drag has moved on. Settling here keeps the pair
+    // consistent every frame of the drag, and inside the same gesture, so one
+    // undo puts both back.
+    const bool restored = RestoreBoundBaseline(baseline, fields, object, editedField);
+    return Assisi::Core::Reflect::SettleDependentBounds(fields, object) || restored;
+}
+
 } // namespace
+
+bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::StructSpec &spec,
+                                 Assisi::Core::StringPool *pool)
+{
+    using namespace Assisi::Core::Reflect;
+
+    // The nearest pool above a handle is the one it indexes, so a struct that
+    // holds its own takes over from its holder's.
+    if (Assisi::Core::StringPool *own = FindStringPool(object, spec.fields); own != nullptr)
+    {
+        pool = own;
+    }
+
+    bool anyFieldEdited = false;
+    for (std::size_t fieldIndex = 0; fieldIndex < spec.fields.size(); ++fieldIndex)
+    {
+        const FieldMeta &field = spec.fields[fieldIndex];
+        if (field.transient)
+        {
+            continue;
+        }
+
+        // Bounds and radio name siblings in the struct itself, which is where
+        // reflectgen resolved them.
+        const RadioVisibility radio = EvaluateRadio(object, spec.fields, field);
+        ScopedFieldChrome chrome{radio, false};
+        if (!chrome.Visible())
+        {
+            continue;
+        }
+        const bool greyed = chrome.Greyed();
+
+        void *fp = static_cast<char *>(object) + field.offset;
+        ImGui::PushID(field.name.c_str());
+        if (greyed)
+        {
+            ImGui::BeginDisabled();
+        }
+
+        bool edited = false;
+        switch (field.type)
+        {
+        case FieldType::Struct:
+            if (field.structSpec != nullptr && ImGui::TreeNode(field.name.c_str()))
+            {
+                edited = EditStructFields(fp, *field.structSpec, pool);
+                ImGui::TreePop();
+            }
+            break;
+        case FieldType::PooledString:
+            edited = EditPooledString(fp, field, pool);
+            break;
+        default:
+            edited = EditFieldValue(fp, field, ResolveFieldBounds(field, spec.fields, object));
+            break;
+        }
+
+        if (greyed)
+        {
+            ImGui::EndDisabled();
+        }
+
+        bool settled = false;
+        if (edited || ImGui::IsItemDeactivated())
+        {
+            settled = SettleAfterEdit(_boundBaseline, spec.fields, object, fieldIndex);
+        }
+        anyFieldEdited |= edited || settled;
+        ImGui::PopID();
+    }
+    return anyFieldEdited;
+}
+
+bool EditorApp::EditPooledString(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                                 Assisi::Core::StringPool *pool)
+{
+    // Edited as the text it names in its pool. A new text is appended and the
+    // handle repointed; the old bytes stay, since another handle may share them.
+    Assisi::Core::PooledString *handle = static_cast<Assisi::Core::PooledString *>(fp);
+    if (pool == nullptr)
+    {
+        return EditFieldValue(fp, field, {});
+    }
+    std::string text{pool->View(*handle)};
+    if (!InputString(field.name.c_str(), text))
+    {
+        return false;
+    }
+    *handle = pool->Add(text);
+    return true;
+}
 
 bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     using namespace Assisi::Core::Reflect;
 
-    bool anyEditable   = false;
+    bool anyEditable = false;
     bool anyFieldEdited = false;
 
     // By index, because the bound baseline names fields by position: it has to
@@ -652,8 +776,8 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         // of its active values, then scope the AFIELD(norep) dimming to what is
         // actually drawn — the verdict first, so the `continue` below has no
         // colour push to unwind.
-        const RadioVisibility radio = EvaluateRadio(mut, meta, field);
-        const bool serverOnly       = field.norep;
+        const RadioVisibility radio = EvaluateRadio(mut, meta.fields, field);
+        const bool serverOnly = field.norep;
         ScopedFieldChrome chrome{radio, serverOnly};
         if (!chrome.Visible())
         {
@@ -707,7 +831,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Stored as a GUID, shown and edited as its resolved virtual path —
             // the database translates both ways. Same [ input ][…] label layout
             // as AssetPath above.
-            auto *id      = static_cast<Assisi::Core::AssetId *>(fp);
+            auto *id = static_cast<Assisi::Core::AssetId *>(fp);
             const std::string inputId = "##" + field.name;
             if (AssetIdPathField(inputId.c_str(), *id))
                 edited = true;
@@ -722,7 +846,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         }
         case FieldType::EntityRef:
         {
-            auto *ref   = static_cast<Assisi::ECS::Entity *>(fp);
+            auto *ref = static_cast<Assisi::ECS::Entity *>(fp);
             const bool empty = (*ref == Assisi::ECS::NullEntity);
 
             std::string preview;
@@ -733,9 +857,9 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             else
                 preview = DescribeEntity(*ref);
 
-            const bool armedForThis = _eyedropperArmed && _eyedropperMeta == &meta &&
-                                      _eyedropperFieldOffset == field.offset;
-            const char *pickLabel    = armedForThis ? "Cancel" : "Pick";
+            const bool armedForThis =
+                _eyedropperArmed && _eyedropperMeta == &meta && _eyedropperFieldOffset == field.offset;
+            const char *pickLabel = armedForThis ? "Cancel" : "Pick";
 
             /* Eyedropper first, then the combo: drawn the other way round, the
                combo's trailing label pushes the button off the window's right
@@ -745,13 +869,13 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                 if (armedForThis)
                 {
                     _eyedropperArmed = false;
-                    _eyedropperMeta  = nullptr;
+                    _eyedropperMeta = nullptr;
                 }
                 else
                 {
-                    _eyedropperArmed       = true;
-                    _eyedropperEntity      = _selectedEntity;
-                    _eyedropperMeta        = &meta;
+                    _eyedropperArmed = true;
+                    _eyedropperEntity = _selectedEntity;
+                    _eyedropperMeta = &meta;
                     _eyedropperFieldOffset = field.offset;
                 }
             }
@@ -764,22 +888,22 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             {
                 if (ImGui::Selectable("(none)", empty))
                 {
-                    *ref   = Assisi::ECS::NullEntity;
+                    *ref = Assisi::ECS::NullEntity;
                     edited = true;
                 }
                 _scene->ForEachEntity(
                     [&](Assisi::ECS::Entity e)
+                    {
+                        const std::string label = DescribeEntity(e);
+                        const bool selected = (e == *ref);
+                        if (ImGui::Selectable(label.c_str(), selected))
                         {
-                            const std::string label    = DescribeEntity(e);
-                            const bool selected = (e == *ref);
-                            if (ImGui::Selectable(label.c_str(), selected))
-                            {
-                                *ref   = e;
-                                edited = true;
-                            }
-                            if (selected)
-                                ImGui::SetItemDefaultFocus();
-                        });
+                            *ref = e;
+                            edited = true;
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    });
                 ImGui::EndCombo();
             }
             break;
@@ -801,22 +925,22 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Named by source and id rather than by id alone: the number is a
             // per-world counter and means nothing to the author on its own.
             const auto describe = [this](Assisi::ECS::InstanceId id) -> std::string
-                                  {
-                                      if (!id.IsValid())
-                                          return "(none)";
-                                      if (_world == nullptr)
-                                          return std::format("instance {}", id.value);
-                                      const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
-                                      if (row == nullptr)
-                                          return std::format("instance {} (missing)", id.value);
-                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
-                                  };
+            {
+                if (!id.IsValid())
+                    return "(none)";
+                if (_world == nullptr)
+                    return std::format("instance {}", id.value);
+                const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
+                if (row == nullptr)
+                    return std::format("instance {} (missing)", id.value);
+                return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+            };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
             {
                 if (ImGui::Selectable("(none)", !ref->IsValid()))
                 {
-                    *ref   = Assisi::ECS::NullInstance;
+                    *ref = Assisi::ECS::NullInstance;
                     edited = true;
                 }
                 if (_world != nullptr)
@@ -826,7 +950,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                         const bool selected = (id == *ref);
                         if (ImGui::Selectable(describe(id).c_str(), selected))
                         {
-                            *ref   = id;
+                            *ref = id;
                             edited = true;
                         }
                         if (selected)
@@ -838,25 +962,17 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             break;
         }
         case FieldType::PooledString:
-        {
-            // Edited as the text it names in the component's one pool. A new
-            // text is appended and the handle repointed; the old bytes stay,
-            // since another handle may share them.
-            Assisi::Core::StringPool *pool = FindStringPool(mut, meta);
-            Assisi::Core::PooledString *handle = static_cast<Assisi::Core::PooledString *>(fp);
-            if (pool == nullptr)
+            edited = EditPooledString(fp, field, FindStringPool(mut, meta.fields));
+            break;
+        case FieldType::Struct:
+            // Its fields beneath it, each edited as one on the component would
+            // be. The component's pool is handed down for the strings inside.
+            if (field.structSpec != nullptr && ImGui::TreeNode(field.name.c_str()))
             {
-                edited = EditFieldValue(fp, field, ResolveFieldBounds(field, meta.fields, mut));
-                break;
-            }
-            std::string text{pool->View(*handle)};
-            if (InputString(field.name.c_str(), text))
-            {
-                *handle = pool->Add(text);
-                edited  = true;
+                edited = EditStructFields(fp, *field.structSpec, FindStringPool(mut, meta.fields));
+                ImGui::TreePop();
             }
             break;
-        }
         default:
             // Resolved here, against the component being drawn: a bound naming a
             // sibling is only a number once there is an object to read it from.
@@ -906,32 +1022,10 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             }
         }
 
-        // Also on the frame the widget lets go, whether or not it reported an
-        // edit: Escape reverts a text field's own value silently, and without a
-        // settle there the capped field keeps the half-typed number.
-        const bool finishing = ImGui::IsItemDeactivated();
         bool settled = false;
-        if (edited || finishing)
+        if (edited || ImGui::IsItemDeactivated())
         {
-            // Captured on this field's *first* edit of the gesture, not on
-            // ImGui's activation edge. Ctrl+clicking a drag box turns it into a
-            // text box, which deactivates and reactivates mid-gesture — a
-            // baseline keyed to that edge is dropped exactly when the typing
-            // starts, which is the one case it exists for. Here the capped fields
-            // are still pristine, since no settle has run for this gesture yet,
-            // so it is the same snapshot the activation edge would have taken.
-            if (!BoundBaselineMatches(_boundBaseline, _selectedEntity, meta, fieldIndex))
-            {
-                CaptureBoundBaseline(_boundBaseline, _selectedEntity, meta, mut, fieldIndex);
-            }
-
-            // A field that caps another has just moved, so the capped one may be
-            // out of range — and its own widget will not run again until the next
-            // frame, by which point the drag has moved on. Settling here keeps the
-            // pair consistent every frame of the drag, and inside the same gesture,
-            // so one undo puts both back.
-            settled = RestoreBoundBaseline(_boundBaseline, _selectedEntity, meta, mut, fieldIndex);
-            settled = SettleDependentBounds(meta.fields, mut) || settled;
+            settled = SettleAfterEdit(_boundBaseline, meta.fields, mut, fieldIndex);
         }
 
         anyFieldEdited |= edited || settled;
@@ -944,8 +1038,8 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
     return anyFieldEdited;
 }
 
-bool EditorApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
-                                  const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
+bool EditorApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc, const Assisi::Core::Reflect::ComponentMeta &meta,
+                                  std::size_t fieldOffset)
 {
     ImGui::TextUnformatted("materialOverrides");
 
@@ -1066,8 +1160,7 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
     // combo or the Save-As field would otherwise freeze the selected body to
     // Static. The IsWindowFocused test scopes it to the Inspector — this runs
     // inside the Inspector's Begin/End, so "current window" means this panel.
-    const bool nowDragging =
-        ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    const bool nowDragging = ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if (nowDragging)
         RequestPhysicsFreeze(); // the release is handled at end of frame, not here
 }
@@ -1092,8 +1185,7 @@ void EditorApp::RequestPhysicsFreeze()
     // Everything below goes through _world, not the _scene/_physics shortcuts, so
     // the hold is taken in exactly the world ThawEditedBody will look up by name.
     // They track the same world today; not relying on that is cheap insurance.
-    if (_world == nullptr || _selectedEntity == Assisi::ECS::NullEntity ||
-        !_world->scene.IsAlive(_selectedEntity))
+    if (_world == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_world->scene.IsAlive(_selectedEntity))
         return;
 
     // Nothing to hold if the entity has no physics; one added mid-gesture is
@@ -1106,7 +1198,7 @@ void EditorApp::RequestPhysicsFreeze()
 
     _world->physics.SetEntityPhysicsFrozen(_world->scene, _selectedEntity, true);
     _frozenBodyEntity = _selectedEntity;
-    _frozenBodyWorld  = _world->name;
+    _frozenBodyWorld = _world->name;
 }
 
 void EditorApp::ThawEditedBody()
@@ -1129,7 +1221,7 @@ void EditorApp::ThawEditedBody()
     if (world == nullptr || !world->scene.IsAlive(entity))
         return; // world or entity is gone; its body went with it
 
-    const auto *rbc       = world->scene.Get<Assisi::Physics::RigidBody>(entity);
+    const auto *rbc = world->scene.Get<Assisi::Physics::RigidBody>(entity);
     const auto *character = world->scene.Get<Assisi::Physics::Character>(entity);
     if (rbc == nullptr && character == nullptr)
     {
@@ -1144,7 +1236,7 @@ void EditorApp::ThawEditedBody()
     // the author sees rather than the pre-drag one. A static body is skipped
     // because its Transform *is* where it already is, and re-placing a trigger
     // volume would wake everything around it for nothing.
-    const auto *desc    = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
+    const auto *desc = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
     const bool isStatic = rbc != nullptr && desc != nullptr && desc->isStatic;
     if (!isStatic)
     {
@@ -1181,8 +1273,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     // empty object, so no component needs a bespoke "make default" hook. Nothing
     // in an empty object can be rejected, so the failure branch is unreachable
     // today; it is kept because that is a property of the argument, not the call.
-    if (!meta.addToScene(_scene, _selectedEntity.index, _selectedEntity.generation,
-                         nlohmann::json::object()))
+    if (!meta.addToScene(_scene, _selectedEntity.index, _selectedEntity.generation, nlohmann::json::object()))
     {
         Assisi::Core::Log::Error("Editor: could not add a default '{}'.", meta.name);
         return;
@@ -1200,8 +1291,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         if (auto *tc = _scene->GetMut<Assisi::Runtime::Transform>(_selectedEntity))
         {
             RefreshCameraMatrix();
-            const glm::vec3 forward =
-                glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
+            const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
             constexpr float kSpawnDistance = 5.f;
             tc->position = _cameraTransform.position + forward * kSpawnDistance;
         }
@@ -1216,8 +1306,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         // Rebuild rather than add: the entity may already have the other kind of
         // physics, and building both would have a character collide with its own
         // inner body. The rebuild refuses that pair and says so.
-        if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity,
-                                            Assisi::App::ParentWorldResolver(*_scene)))
+        if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity, Assisi::App::ParentWorldResolver(*_scene)))
         {
             Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics - it already has a "
                                     "collider of the other kind, or no Transform.",
@@ -1254,8 +1343,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
     // MeshRenderer needs nothing: its transient pointers are non-owning, the
     // AssetCache owns the GPU resources.
     if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) ||
-        IsComponent<Assisi::Physics::CharacterDescriptor>(meta) ||
-        IsComponent<Assisi::Runtime::Transform>(meta))
+        IsComponent<Assisi::Physics::CharacterDescriptor>(meta) || IsComponent<Assisi::Runtime::Transform>(meta))
     {
         _physics->RemoveEntityPhysics(*_scene, _selectedEntity);
     }
@@ -1306,9 +1394,9 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(bodied ? "Simulated locally and re-anchored by the host's corrections. Renders at "
-                              "host time minus transit."
+                                       "host time minus transit."
                                      : "No local simulation, so it is interpolated between received snapshots — "
-                              "about two snapshot intervals behind.");
+                                       "about two snapshot intervals behind.");
         }
 
         // Derived from the components that arrived, **never** from this mirror's
@@ -1389,7 +1477,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
             if (hasChildren)
                 return;
             const auto *parent = _scene->Get<Assisi::Runtime::Parent>(candidate);
-            hasChildren        = parent != nullptr && parent->parent == _selectedEntity;
+            hasChildren = parent != nullptr && parent->parent == _selectedEntity;
         });
     if (hasChildren)
     {
@@ -1406,15 +1494,13 @@ void EditorApp::DrawReplicationSection(bool mirrored)
     {
         const std::size_t transformOrdinal =
             ComponentRegistry::Instance().ReplicableOrdinalOf(ComponentIdOf<Assisi::ECS::Transform>());
-        const bool placementDependent =
-            _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity) != nullptr ||
-            _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity) != nullptr;
+        const bool placementDependent = _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity) != nullptr ||
+                                        _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity) != nullptr;
 
         if (marker->excluded.Test(transformOrdinal) && placementDependent)
         {
-            ImGui::TextColored(kWarnColor,
-                               "Transform is unticked, but this entity is placed — mirrors will sit at the "
-                               "level file's pose and never move.");
+            ImGui::TextColored(kWarnColor, "Transform is unticked, but this entity is placed — mirrors will sit at the "
+                                           "level file's pose and never move.");
         }
     }
 
@@ -1457,8 +1543,7 @@ void EditorApp::SetSelectedEntitySends(const Assisi::Core::Reflect::ComponentMet
     // Replicated marker; the end-of-frame sweep commits it.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
-        history->RecordBefore(_selectedEntity,
-                              Assisi::Core::Reflect::ComponentIdOf<Assisi::NetSync::Replicated>(),
+        history->RecordBefore(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Assisi::NetSync::Replicated>(),
                               EditLabel("Replication policy", _selectedEntity), _selectedEntity);
     }
 
@@ -1491,8 +1576,7 @@ void EditorApp::DrawRelevancePolicy()
         // Undoable like any other edit; the sweep at end of frame commits it.
         if (Assisi::Editor::EditHistory *history = ActiveHistory())
         {
-            history->RecordBefore(_selectedEntity,
-                                  Assisi::Core::Reflect::ComponentIdOf<Assisi::NetSync::Replicated>(),
+            history->RecordBefore(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Assisi::NetSync::Replicated>(),
                                   EditLabel("Relevance", _selectedEntity), _selectedEntity);
         }
         if (Assisi::NetSync::Replicated *mutable_ = _scene->GetMut<Assisi::NetSync::Replicated>(_selectedEntity))
@@ -1540,7 +1624,7 @@ void EditorApp::DrawReplicationPolicy()
     for (const ComponentMeta *meta : present)
     {
         const bool gameVeto = IsComponentGameVetoed(*meta);
-        bool sends    = SelectedEntitySends(*meta);
+        bool sends = SelectedEntitySends(*meta);
 
         // A component the network config forbids gets a dead switch with a reason, not a
         // live one that silently does nothing.
@@ -1605,8 +1689,8 @@ void EditorApp::DrawInstanceInspector()
     // Re-read from the row every frame, never cached: the gizmo writes the same
     // fields, and a cached copy would fight it for a frame on every drag.
     glm::vec3 position = row->transform.position;
-    glm::vec3 euler    = glm::degrees(glm::eulerAngles(row->transform.rotation));
-    float scale    = row->transform.scale.x;
+    glm::vec3 euler = glm::degrees(glm::eulerAngles(row->transform.rotation));
+    float scale = row->transform.scale.x;
 
     bool edited = false;
     edited |= ImGui::DragFloat3("position", &position.x, 0.01f);
@@ -1637,7 +1721,7 @@ void EditorApp::DrawInstanceInspector()
         Assisi::Runtime::Transform placement;
         placement.position = position;
         placement.rotation = glm::normalize(glm::quat(glm::radians(euler)));
-        placement.scale    = glm::vec3(scale);
+        placement.scale = glm::vec3(scale);
         ApplyInstancePlacement(_selectedInstance, placement);
     }
     // No close here: SweepInstanceGesture owns that, after every panel has had its
@@ -1648,8 +1732,7 @@ void EditorApp::DrawInstanceInspector()
     if (!row->overrides.empty() || !row->removed.empty())
     {
         ImGui::Separator();
-        ImGui::TextDisabled("%zu member(s) overridden, %zu removed", row->overrides.size(),
-                            row->removed.size());
+        ImGui::TextDisabled("%zu member(s) overridden, %zu removed", row->overrides.size(), row->removed.size());
     }
 
     ImGui::EndDisabled();
@@ -1679,9 +1762,9 @@ void EditorApp::DrawLightShadowVerdict()
 
     const bool shadowed = report->state == Assisi::Render::LocalShadowState::Shadowed;
     ImGui::PushStyleColor(ImGuiCol_Text, shadowed ? ImVec4{0.65f, 0.85f, 0.65f, 1.f}
-                          : report->state == Assisi::Render::LocalShadowState::Demoted
-                              ? ImVec4{1.f, 0.82f, 0.4f, 1.f}
-                              : ImVec4{1.f, 0.5f, 0.4f, 1.f});
+                                         : report->state == Assisi::Render::LocalShadowState::Demoted
+                                             ? ImVec4{1.f, 0.82f, 0.4f, 1.f}
+                                             : ImVec4{1.f, 0.5f, 0.4f, 1.f});
     if (report->resolution == 0u)
     {
         ImGui::Text("Shadow: %s", Assisi::Render::LocalShadowStateName(report->state));
@@ -1722,7 +1805,9 @@ void EditorApp::DrawLodVerdict()
     // The range rather than a count: levels are numbered from 0, so "of 5"
     // beside the coarsest level reads as one short.
     ImGui::Text("LOD%u (LOD0-LOD%u)%s", lod.level, lod.levelCount - 1u,
-                pinned >= 0 ? "  pinned" : lod.forced ? "  forced" : "");
+                pinned >= 0  ? "  pinned"
+                : lod.forced ? "  forced"
+                             : "");
     ImGui::SameLine();
 
     // The measurement first, which is a fraction of the screen and so never
@@ -1921,8 +2006,8 @@ void EditorApp::DrawTimeOfDayControls()
     }
     if (ButtonRow("Season", {"Spring eq.", "Summer", "Autumn eq.", "Winter"}, pressed))
     {
-        edited |= Assisi::Runtime::JumpSeason(
-            *clock, 0.25 * static_cast<double>(pressed) * static_cast<double>(clock->yearLengthDays));
+        edited |= Assisi::Runtime::JumpSeason(*clock, 0.25 * static_cast<double>(pressed) *
+                                                          static_cast<double>(clock->yearLengthDays));
     }
     ImGui::SetItemTooltip("Northern names. A southern latitude gets the opposite season, which is correct.");
 
@@ -1941,8 +2026,8 @@ void EditorApp::DrawTimeOfDayControls()
 
     const int32_t hourPart = static_cast<int32_t>(clock->hour);
     const int32_t minutePart = static_cast<int32_t>((clock->hour - static_cast<double>(hourPart)) * 60.0);
-    ImGui::TextDisabled("Day %d, %02d:%02d — day %.1f of %.0f (%s)", clock->day, hourPart, minutePart,
-                        clock->dayOfYear, static_cast<double>(clock->yearLengthDays),
+    ImGui::TextDisabled("Day %d, %02d:%02d — day %.1f of %.0f (%s)", clock->day, hourPart, minutePart, clock->dayOfYear,
+                        static_cast<double>(clock->yearLengthDays),
                         SeasonName(clock->dayOfYear, clock->yearLengthDays));
     ImGui::TextDisabled("declination %+.1f deg", static_cast<double>(sky.declinationDegrees));
 
@@ -2110,12 +2195,10 @@ void EditorApp::DrawInspector()
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
         {
-            const Assisi::Runtime::BlueprintResult definition =
-                Assisi::Runtime::GetBlueprintDefinition(row->source);
-            const std::string memberPath =
-                definition && tag->memberIndex < (*definition)->members.size()
-                    ? (*definition)->members[tag->memberIndex].name
-                    : std::format("#{}", tag->memberIndex);
+            const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(row->source);
+            const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
+                                               ? (*definition)->members[tag->memberIndex].name
+                                               : std::format("#{}", tag->memberIndex);
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.65f, 0.85f, 0.65f, 1.f});
             ImGui::Text("%s of %s", memberPath.c_str(), row->source.c_str());
@@ -2129,7 +2212,7 @@ void EditorApp::DrawInspector()
             if (ImGui::SmallButton("Select instance"))
             {
                 _selectedInstance = tag->instanceId;
-                _selectedEntity   = Assisi::ECS::NullEntity;
+                _selectedEntity = Assisi::ECS::NullEntity;
             }
             ImGui::SameLine();
             ImGui::TextDisabled("%s", row->name.empty() ? "(spawned at runtime)" : row->name.c_str());
@@ -2156,8 +2239,7 @@ void EditorApp::DrawInspector()
         // the sweep would drop the no-op anyway, but "a mirror never enters edit
         // history" is a rule worth stating where it applies.
         if (Assisi::Editor::EditHistory *history = editable ? ActiveHistory() : nullptr)
-            history->RecordBefore(_selectedEntity,
-                                  Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(),
+            history->RecordBefore(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(),
                                   EditLabel("Rename", _selectedEntity), _selectedEntity);
 
         char nameBuf[Assisi::Core::kEntityNameMax + 1] = {};
@@ -2191,8 +2273,7 @@ void EditorApp::DrawInspector()
             // keystroke that made it bad. The box still shows what was typed, so a
             // one-shot message would leave the author staring at a name the entity
             // does not have with no reason given.
-            ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%.*s", static_cast<int>(refusal.size()),
-                               refusal.data());
+            ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%.*s", static_cast<int>(refusal.size()), refusal.data());
         }
     }
     ImGui::Separator();
@@ -2213,8 +2294,7 @@ void EditorApp::DrawInspector()
         if (IsComponent<Assisi::Runtime::Name>(*meta))
             continue;
 
-        const void *compPtr =
-            meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
+        const void *compPtr = meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
 
         if (!compPtr)
             continue;
@@ -2231,7 +2311,7 @@ void EditorApp::DrawInspector()
             {
                 RemoveComponentFromSelected(*meta);
                 _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
-                deleted                 = true;
+                deleted = true;
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Cancel"))
@@ -2240,7 +2320,7 @@ void EditorApp::DrawInspector()
         else if (ImGui::SmallButton("X"))
         {
             _pendingDeleteComponent = meta->id;
-            _pendingDeleteEntity    = _selectedEntity;
+            _pendingDeleteEntity = _selectedEntity;
         }
         else if (ImGui::IsItemHovered())
         {
@@ -2259,8 +2339,8 @@ void EditorApp::DrawInspector()
         // over it with SameLine() is visible but never receives the click — the
         // header's hit box swallows it first. The send-toggle glyph below sits
         // exactly there.
-        const bool headerOpen = ImGui::CollapsingHeader(
-            meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+        const bool headerOpen = ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen |
+                                                                                ImGuiTreeNodeFlags_AllowOverlap);
 
         // The per-component send toggle, on the header. Drawn only on an entity
         // that replicates at all — nothing travels from a local entity, so the
@@ -2274,7 +2354,7 @@ void EditorApp::DrawInspector()
         if (meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
         {
             const bool gameVeto = IsComponentGameVetoed(*meta);
-            const bool sends    = SelectedEntitySends(*meta);
+            const bool sends = SelectedEntitySends(*meta);
 
             ImGui::SameLine();
             // A button, not a label. The idle frame is transparent so it still
@@ -2327,7 +2407,7 @@ void EditorApp::DrawInspector()
             ImGui::SameLine();
             ImGui::BeginDisabled(!editable);
             if (ImGui::SmallButton("Reset##component"))
-                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/ {}};
+                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/{}};
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Drop this instance's claim and follow the blueprint again.");
@@ -2453,17 +2533,16 @@ void EditorApp::DrawInspector()
     ImGui::SetNextItemWidth(-1.f);
 
     ImGuiSuggestionNav nav;
-    const bool entered =
-        ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
-                         ImGuiInputTextFlags_EnterReturnsTrue | kImGuiSuggestionNavFlags,
-                         ImGuiSuggestionNavCallback, &nav);
+    const bool entered = ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
+                                          ImGuiInputTextFlags_EnterReturnsTrue | kImGuiSuggestionNavFlags,
+                                          ImGuiSuggestionNavCallback, &nav);
 
     const auto toLower = [](std::string text)
-                         {
-                             std::transform(text.begin(), text.end(), text.begin(),
-                                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                             return text;
-                         };
+    {
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    };
     const std::string queryLower = toLower(_addComponentBuf);
 
     if (queryLower.empty())
@@ -2489,23 +2568,23 @@ void EditorApp::DrawInspector()
             if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
                 continue;
             const std::string nameLower = toLower(meta->name);
-            const std::size_t pos       = nameLower.find(queryLower);
+            const std::size_t pos = nameLower.find(queryLower);
             if (pos == std::string::npos)
                 continue;
             matches.push_back(Match{meta, pos});
         }
         std::sort(matches.begin(), matches.end(),
                   [](const Match &a, const Match &b)
-            {
-                if (a.pos != b.pos)
-                    return a.pos < b.pos;
-                if (a.meta->name.size() != b.meta->name.size())
-                    return a.meta->name.size() < b.meta->name.size();
-                return a.meta->name < b.meta->name;
-            });
+                  {
+                      if (a.pos != b.pos)
+                          return a.pos < b.pos;
+                      if (a.meta->name.size() != b.meta->name.size())
+                          return a.meta->name.size() < b.meta->name.size();
+                      return a.meta->name < b.meta->name;
+                  });
 
         constexpr std::size_t kMaxSuggestions = 8;
-        const std::size_t shown           = std::min(matches.size(), kMaxSuggestions);
+        const std::size_t shown = std::min(matches.size(), kMaxSuggestions);
 
         _addComponentSelected = ImGuiAdvanceSuggestion(_addComponentSelected, nav, shown);
         if (shown == 0)
@@ -2518,7 +2597,7 @@ void EditorApp::DrawInspector()
             if (entered)
             {
                 AddComponentToSelected(*matches[static_cast<std::size_t>(_addComponentSelected)].meta);
-                _addComponentBuf[0]   = '\0';
+                _addComponentBuf[0] = '\0';
                 _addComponentSelected = 0;
                 // -1 re-focuses the previous widget, the input itself, so the
                 // author can add another component without re-clicking it.
@@ -2533,7 +2612,7 @@ void EditorApp::DrawInspector()
                                           static_cast<int32_t>(i) == _addComponentSelected))
                     {
                         AddComponentToSelected(*matches[i].meta);
-                        _addComponentBuf[0]   = '\0';
+                        _addComponentBuf[0] = '\0';
                         _addComponentSelected = 0;
                     }
                     ImGui::PopID();

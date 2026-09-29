@@ -82,6 +82,10 @@ assisi_reflect(
   HEADERS
     include/Assisi/Mondrian/FontDescription.hpp
     include/Assisi/Mondrian/UiConfig.hpp
+    include/Assisi/Mondrian/Style.hpp
+    include/Assisi/Mondrian/Widget.hpp
+    include/Assisi/Mondrian/Screen.hpp
+    include/Assisi/Mondrian/ScreenDocument.hpp
 )
 
 # The boundary above, held by the configure rather than by review: an edge from
