@@ -13,6 +13,7 @@
 
 #include <ostream>
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +30,7 @@
 #include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 #include <Assisi/Image/Compress.hpp>
 #include <Assisi/Mondrian/Font.hpp>
+#include <Assisi/Testing/TestAssetKinds.hpp>
 
 using Assisi::Cook::Claim;
 using Assisi::Cook::CookReport;
@@ -109,6 +111,12 @@ std::map<std::string, std::vector<char>> ReadCookedTree(const std::filesystem::p
     return files;
 }
 
+std::vector<char> ReadFile(const std::filesystem::path &path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<char>{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
 } // namespace
 
 TEST_CASE("Each asset kind is claimed by the cooker that owns it")
@@ -160,6 +168,65 @@ TEST_CASE("A file no cooker knows is claimed by nobody")
     CHECK(ClaimFor("models/Coffee_Machine.zip") == Claim::None);
     CHECK(ClaimFor("models/scene.blend") == Claim::None);
     CHECK(ClaimFor("notes.md") == Claim::None);
+}
+
+TEST_CASE("A kind a module registered is claimed by a cooker nothing in the cook names")
+{
+    CHECK(ClaimFor("things/sample.tbytes") == Claim::Output);
+    CHECK(ClaimFor("things/sample.traw") == Claim::Output);
+    // Matched exactly, as the engine's own cookers match their extensions.
+    CHECK(ClaimFor("things/sample.TBYTES") == Claim::None);
+
+    const std::vector<std::unique_ptr<Assisi::Cook::Cooker>> cookers = MakeCookers();
+    const std::vector<std::unique_ptr<Assisi::Cook::Cooker>>::const_iterator owner =
+        std::ranges::find_if(cookers, [](const std::unique_ptr<Assisi::Cook::Cooker> &cooker)
+                             { return cooker->Claims("things/sample.tbytes") != Claim::None; });
+    REQUIRE(owner != cookers.end());
+    CHECK((*owner)->Kind() == Assisi::Testing::kReversedKind);
+    CHECK((*owner)->Name() == "test reversed bytes");
+}
+
+TEST_CASE("A registered kind's file cooks through the kind's own step")
+{
+    const ScratchDir out("registered-kind");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    REQUIRE_MESSAGE(report.has_value(), Explain(report));
+
+    const std::vector<Assisi::Cook::ManifestEntry>::const_iterator entry =
+        std::ranges::find(report->entries, std::string{"things/sample.tbytes"}, &Assisi::Cook::ManifestEntry::vpath);
+    REQUIRE(entry != report->entries.end());
+
+    // The fixture holds "abc", and the test kind's step reverses it.
+    const std::vector<char> cooked = ReadFile(out.Path() / (entry->guid + ".cooked"));
+    REQUIRE(cooked.size() == Assisi::Core::kCookedHeaderBytes + 3);
+    CHECK(std::string{cooked.begin() + Assisi::Core::kCookedHeaderBytes, cooked.end()} == "cba");
+}
+
+TEST_CASE("A registered kind's cook step refusing a file fails the cook, naming the path and the reason")
+{
+    const ScratchDir source("refused-kind-src");
+    const ScratchDir out("refused-kind-out");
+
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    // Written here rather than kept in the fixture tree, which every other case
+    // cooks whole. The test kind's step refuses a source that starts with 'X'.
+    {
+        std::ofstream refused(source.Path() / "things" / "refused.tbytes", std::ios::binary);
+        refused << "Xyz";
+    }
+    {
+        std::ofstream sidecar(source.Path() / "things" / "refused.tbytes.aast");
+        sidecar << R"({"guid":"2bc56ba6-b801-47f0-b6bc-5b866a8c5e96","type":"AssetSidecar","version":1})";
+    }
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "things/refused.tbytes");
+    CHECK(report.error().reason == "the source asks the cook to fail");
 }
 
 TEST_CASE("Cooking the fixture tree twice produces identical bytes")
@@ -407,7 +474,7 @@ TEST_CASE("A cooker's kind is the kind its blobs say they are")
         std::ifstream in(out.Path() / (entry.guid + ".cooked"), std::ios::binary);
         const std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
         Assisi::Core::BitReader reader(std::as_bytes(std::span{chars}));
-        const std::expected<Assisi::Core::CookedKind, Assisi::Core::CookedBlobError> written =
+        const std::expected<Assisi::Core::AssetKindId, Assisi::Core::CookedBlobError> written =
             Assisi::Core::ReadCookedHeader(reader);
         REQUIRE(written.has_value());
 

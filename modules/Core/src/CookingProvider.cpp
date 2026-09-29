@@ -1,0 +1,50 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include <Assisi/Core/CookingProvider.hpp>
+
+#include <Assisi/Core/AssetKind.hpp>
+#include <Assisi/Core/Logger.hpp>
+
+#include <utility>
+
+namespace Assisi::Core
+{
+
+CookingProvider::CookingProvider(const AssetProvider &source, PathOf pathOf)
+    : _pathOf(std::move(pathOf)), _source(&source)
+{
+}
+
+std::expected<std::vector<std::byte>, AssetError> CookingProvider::Open(AssetId id) const
+{
+    const std::optional<std::string> path = _pathOf(id);
+    if (!path)
+    {
+        return std::unexpected(AssetError::UnknownAssetId);
+    }
+    const AssetKind *kind = AssetKindRegistry::Instance().ForPath(*path);
+    if (kind == nullptr)
+    {
+        return std::unexpected(AssetError::UnknownAssetId);
+    }
+
+    const std::expected<std::vector<std::byte>, AssetError> source = _source->Open(id);
+    if (!source)
+    {
+        return std::unexpected(source.error());
+    }
+    std::expected<std::vector<std::byte>, std::string> cooked = CookAssetBytes(*kind, *source);
+    if (!cooked)
+    {
+        // The reason is only here: the caller sees an encoding it cannot read.
+        Log::Warn("CookingProvider: '{}' does not cook as {}: {}", *path, kind->name, cooked.error());
+        return std::unexpected(AssetError::UnsupportedEncoding);
+    }
+    return std::move(*cooked);
+}
+
+std::expected<AssetId, AssetError> CookingProvider::Resolve(std::string_view vpath) const
+{
+    return _source->Resolve(vpath);
+}
+
+} // namespace Assisi::Core

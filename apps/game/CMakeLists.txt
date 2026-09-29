@@ -153,6 +153,8 @@ foreach(_exe Assisi-Game Assisi-GameEditor)
   endif()
   assisi_link_reflections("${_exe}")
 endforeach()
+# The editor cooks source files as it loads them; the game reads cooked ones.
+assisi_link_asset_cook_steps(Assisi-GameEditor)
 
 # A refused start has to reach the exit code. Driven as a real process because
 # that is the whole claim — `StartupFailed()` returning true is not the property

@@ -31,7 +31,7 @@ PakEntry FilledEntry()
     entry.archive          = 0;
     entry.codec            = PakCodec::Zstd;
     entry.flags            = static_cast<std::uint8_t>(PakSliceFlag::Encrypted);
-    entry.kind             = CookedKind::Scene;
+    entry.kind             = kSceneKind;
     return entry;
 }
 
@@ -117,15 +117,18 @@ TEST_CASE("A short header or entry is refused")
     CHECK_FALSE(ReadPakEntry(reader).has_value());
 }
 
-TEST_CASE("An entry naming a kind no writer produces is refused")
+TEST_CASE("An entry of a kind this build has never heard of reads back as written")
 {
-    BitWriter writer;
-    WritePakEntry(writer, FilledEntry());
-    std::vector<std::byte> bytes = ToVector(writer.Data());
-    bytes.back() = std::byte{static_cast<std::uint8_t>(CookedKind::Count)};
+    // A module can add a kind the engine does not know, and the pak index must
+    // carry it rather than refuse the whole package.
+    constexpr AssetKindId kUnheardOf{"a kind no module in this build registers"};
+    PakEntry entry = FilledEntry();
+    entry.kind = kUnheardOf;
 
-    BitReader reader{bytes};
+    BitWriter writer;
+    WritePakEntry(writer, entry);
+    BitReader reader{writer.Data()};
     const std::expected<PakEntry, PakFormatError> read = ReadPakEntry(reader);
-    REQUIRE_FALSE(read.has_value());
-    CHECK(read.error() == PakFormatError::Corrupt);
+    REQUIRE(read.has_value());
+    CHECK(read->kind == kUnheardOf);
 }

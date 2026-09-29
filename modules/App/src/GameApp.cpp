@@ -111,6 +111,7 @@ bool GameApp::MountContent()
 
     const Core::PakProvider &provider = *_pak;
     (void)Render::SetAssetSource(&*_assetSource);
+    LoadAssetsFrom(provider);
     (void)Runtime::SceneSerializer::SetDocumentReader([&provider](std::string_view vpath)
                                                       { return Runtime::ReadCookedDocument(provider, vpath); });
     (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)

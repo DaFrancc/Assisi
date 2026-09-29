@@ -161,7 +161,7 @@ std::expected<AssetId, AssetError> PakProvider::Resolve(std::string_view vpath) 
     return _entries[found->second].id;
 }
 
-std::vector<PakEntry> PakProvider::EntriesOfKind(CookedKind kind) const
+std::vector<PakEntry> PakProvider::EntriesOfKind(AssetKindId kind) const
 {
     std::vector<PakEntry> matching;
     for (const PakEntry &entry : _entries)

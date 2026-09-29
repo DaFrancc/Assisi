@@ -53,7 +53,7 @@ public:
 
     /// @brief Every entry of @p kind, ordered by id so the order is a property of
     ///        the pak rather than of how the index was hashed.
-    [[nodiscard]] std::vector<PakEntry> EntriesOfKind(CookedKind kind) const;
+    [[nodiscard]] std::vector<PakEntry> EntriesOfKind(AssetKindId kind) const;
 
     /// @brief Every entry, in index order: what a packer lays the next release out from.
     [[nodiscard]] std::span<const PakEntry> Entries() const { return _entries; }

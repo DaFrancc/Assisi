@@ -42,5 +42,6 @@
 # Going further
 
 - [Multiple worlds](multiple-worlds.md)
+- [Your own asset kinds](asset-kinds.md)
 - [Multiplayer basics](multiplayer.md)
 - [Troubleshooting and FAQ](troubleshooting.md)

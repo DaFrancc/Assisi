@@ -81,7 +81,7 @@ TEST_CASE("A truncated texture blob is refused rather than half-read")
 TEST_CASE("A blob of another kind is not read as a texture")
 {
     Core::BitWriter writer;
-    Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
+    Core::WriteCookedHeader(writer, Core::kMeshKind);
     writer.WriteUInt8(Image::kTexturePayloadVersion);
 
     const std::expected<Image::DecodedImage, Image::CookedTextureError> read = Image::ReadCookedTexture(writer.Data());
@@ -93,7 +93,7 @@ TEST_CASE("A texture blob of a version this build does not read is refused")
 {
     std::vector<std::byte> bytes = Cook(Bc7Chain());
     Core::BitWriter header;
-    Core::WriteCookedHeader(header, Core::CookedKind::Texture);
+    Core::WriteCookedHeader(header, Core::kTextureKind);
     bytes[header.Data().size()] = std::byte{Image::kTexturePayloadVersion + 1};
 
     const std::expected<Image::DecodedImage, Image::CookedTextureError> read = Image::ReadCookedTexture(bytes);

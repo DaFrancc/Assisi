@@ -143,7 +143,7 @@ TEST_CASE("A truncated mesh blob is refused rather than half-read")
 TEST_CASE("A blob of another kind is not read as a mesh")
 {
     Core::BitWriter writer;
-    Core::WriteCookedHeader(writer, Core::CookedKind::Texture);
+    Core::WriteCookedHeader(writer, Core::kTextureKind);
     writer.WriteUInt8(Geometry::kMeshPayloadVersion);
 
     const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> read =
@@ -156,7 +156,7 @@ TEST_CASE("A mesh blob of a version this build does not read is refused")
 {
     std::vector<std::byte> bytes = Cook(TwoLodQuad());
     Core::BitWriter header;
-    Core::WriteCookedHeader(header, Core::CookedKind::Mesh);
+    Core::WriteCookedHeader(header, Core::kMeshKind);
     bytes[header.Data().size()] = std::byte{Geometry::kMeshPayloadVersion + 1};
 
     const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> read = Geometry::ReadCookedMesh(bytes);

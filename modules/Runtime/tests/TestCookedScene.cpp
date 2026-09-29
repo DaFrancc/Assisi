@@ -244,7 +244,7 @@ TEST_CASE("A cooked scene is a Scene blob this build's protocol matches")
     Core::BitReader reader{*bytes};
     const auto kind = Core::ReadCookedHeader(reader);
     REQUIRE(kind.has_value());
-    CHECK(*kind == Core::CookedKind::Scene);
+    CHECK(*kind == Core::kSceneKind);
     CHECK(reader.ReadUInt8() == Runtime::kScenePayloadVersion);
     CHECK(reader.ReadBits64(64) == Core::Reflect::ProtocolHash());
 }
@@ -368,7 +368,7 @@ TEST_CASE("Cooking the same scene twice produces identical bytes")
 TEST_CASE("A blob of another kind is refused")
 {
     Core::BitWriter writer;
-    Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
+    Core::WriteCookedHeader(writer, Core::kMeshKind);
     writer.WriteUInt8(Runtime::kScenePayloadVersion);
     writer.WriteUInt64(Core::Reflect::ProtocolHash());
 
@@ -390,7 +390,7 @@ TEST_CASE("A blob written against another component table is refused whole")
 
     std::vector<std::byte> tampered = *bytes;
     Core::BitWriter header;
-    Core::WriteCookedHeader(header, Core::CookedKind::Scene);
+    Core::WriteCookedHeader(header, Core::kSceneKind);
     header.WriteUInt8(Runtime::kScenePayloadVersion);
     const std::size_t hashOffset = header.Data().size();
     // Flip one bit of the stored protocol hash.
@@ -582,7 +582,7 @@ TEST_CASE("A scene blob of a version this build does not read is refused")
 
     std::vector<std::byte> newer = *bytes;
     Core::BitWriter header;
-    Core::WriteCookedHeader(header, Core::CookedKind::Scene);
+    Core::WriteCookedHeader(header, Core::kSceneKind);
     newer[header.Data().size()] = std::byte{Runtime::kScenePayloadVersion + 1};
 
     const auto cooked = DecodeCookedScene(newer);

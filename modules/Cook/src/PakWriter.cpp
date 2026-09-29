@@ -99,7 +99,7 @@ std::expected<PackedSlice, CookError> PackSlice(const std::filesystem::path &coo
     }
 
     Core::BitReader headerReader{*blob};
-    const std::expected<Core::CookedKind, Core::CookedBlobError> kind = Core::ReadCookedHeader(headerReader);
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> kind = Core::ReadCookedHeader(headerReader);
     if (!kind)
     {
         return std::unexpected(Failure(

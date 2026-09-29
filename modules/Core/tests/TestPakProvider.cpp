@@ -33,7 +33,7 @@ struct TestSlice
     std::string vpath;
     std::vector<std::byte> bytes;
     PakCodec codec     = PakCodec::None;
-    CookedKind kind    = CookedKind::Verbatim;
+    AssetKindId kind   = kVerbatimKind;
     std::uint8_t flags = 0;
     std::uint16_t archive = 0;
 };
@@ -275,20 +275,20 @@ TEST_CASE("Workers opening different slices of one pak at once each get their ow
 TEST_CASE("A pak lists its slices of one kind")
 {
     const std::vector<TestSlice> slices{
-        {.vpath = "levels/a.alvl", .bytes = Pattern(1, 1), .kind = CookedKind::Scene},
-        {.vpath = "textures/t.png", .bytes = Pattern(1, 2), .kind = CookedKind::Texture},
-        {.vpath = "levels/b.alvl", .bytes = Pattern(1, 3), .kind = CookedKind::Scene},
+        {.vpath = "levels/a.alvl", .bytes = Pattern(1, 1), .kind = kSceneKind},
+        {.vpath = "textures/t.png", .bytes = Pattern(1, 2), .kind = kTextureKind},
+        {.vpath = "levels/b.alvl", .bytes = Pattern(1, 3), .kind = kSceneKind},
     };
     const TempPak pak("assisi-pak-list.pak", slices);
     const std::expected<PakProvider, AssetError> mounted = PakProvider::Mount(pak.Path());
     REQUIRE(mounted.has_value());
 
-    const std::vector<PakEntry> scenes = mounted->EntriesOfKind(CookedKind::Scene);
+    const std::vector<PakEntry> scenes = mounted->EntriesOfKind(kSceneKind);
     REQUIRE(scenes.size() == 2);
     // By id, so two machines holding the same pak list it in the same order.
     CHECK(scenes[0].id < scenes[1].id);
     for (const PakEntry &entry : scenes)
     {
-        CHECK(entry.kind == CookedKind::Scene);
+        CHECK(entry.kind == kSceneKind);
     }
 }

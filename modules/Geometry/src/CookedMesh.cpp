@@ -90,7 +90,7 @@ std::string_view ToString(CookedMeshError error) noexcept
 
 void WriteCookedMesh(Core::BitWriter &writer, const MeshData &mesh, std::span<const Core::AssetId> slotMaterials)
 {
-    Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
+    Core::WriteCookedHeader(writer, Core::kMeshKind);
     writer.WriteUInt8(kMeshPayloadVersion);
 
     writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh.Vertices.size()));
@@ -142,8 +142,8 @@ std::expected<CookedMesh, CookedMeshError> ReadCookedMesh(std::span<const std::b
 {
     Core::BitReader reader{bytes};
 
-    const std::expected<Core::CookedKind, Core::CookedBlobError> kind = Core::ReadCookedHeader(reader);
-    if (!kind || *kind != Core::CookedKind::Mesh)
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> kind = Core::ReadCookedHeader(reader);
+    if (!kind || *kind != Core::kMeshKind)
     {
         if (!kind && kind.error() == Core::CookedBlobError::Truncated)
         {

@@ -3,6 +3,7 @@
 #include <Assisi/Cook/Cooker.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/ContentHash.hpp>
@@ -81,7 +82,7 @@ class ReflectedCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "reflected"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Reflected; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kReflectedKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -183,7 +184,7 @@ class SceneCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "scene"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Scene; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kSceneKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Runtime::kScenePayloadVersion; }
 
@@ -236,7 +237,7 @@ class MeshCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kMeshKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Geometry::kMeshPayloadVersion; }
 
@@ -332,7 +333,7 @@ class TextureCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "texture"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Texture; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kTextureKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &context) const override
     {
@@ -408,7 +409,7 @@ class ShaderCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "shader"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Shader; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kShaderKind; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -488,7 +489,7 @@ class FontCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "font"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Font; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kFontKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -606,7 +607,7 @@ class StringTableCooker final : public Cooker
     StringTableCooker() : _config(Mondrian::Import::LoadUiConfig(ReadMarkup).value_or(Mondrian::UiConfig{})) {}
 
     [[nodiscard]] std::string_view Name() const override { return "string table"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::StringTable; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kStringTableKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -662,7 +663,7 @@ class ScreenCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "screen"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Screen; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kScreenKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -758,6 +759,50 @@ class ScreenCooker final : public Cooker
     }
 };
 
+// ── Kinds registered by modules ───────────────────────────────────────────────
+
+/// A kind a module registered with AssetKindRegistry: its files cook through
+/// its own step, or ship as they are when it has none. One of these is made per
+/// registered kind, so nothing here names any of them.
+class KindCooker final : public Cooker
+{
+  public:
+    explicit KindCooker(const Core::AssetKind &kind) : _kind(&kind) {}
+
+    [[nodiscard]] std::string_view Name() const override { return _kind->name; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return _kind->id; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        const Core::AssetCookStep *step = Core::AssetKindRegistry::Instance().CookStepFor(_kind->id);
+        return step != nullptr ? step->version : 0;
+    }
+
+    [[nodiscard]] Claim Claims(std::string_view vpath) const override
+    {
+        return Core::AssetKindRegistry::Instance().ForPath(vpath) == _kind ? Claim::Output : Claim::None;
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::vector<std::byte>, CookError> source = ReadSource(vpath);
+        if (!source)
+        {
+            return std::unexpected(source.error());
+        }
+        std::expected<std::vector<std::byte>, std::string> cooked = Core::CookAssetBytes(*_kind, *source);
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, std::move(cooked.error())));
+        }
+        return std::move(*cooked);
+    }
+
+  private:
+    const Core::AssetKind *_kind;
+};
+
 // ── Everything else that is still content ─────────────────────────────────────
 
 /// Animated WebP: bytes with no transformation to apply, wrapped in the
@@ -770,7 +815,7 @@ class VerbatimCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "verbatim"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Verbatim; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kVerbatimKind; }
 
     [[nodiscard]] Claim Claims(std::string_view vpath) const override
     {
@@ -854,6 +899,12 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<FontCooker>());
     cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
+    // After the engine's own, so a registered kind cannot take a file one of
+    // them claims; before the verbatim copy, which would otherwise take it.
+    for (const Core::AssetKind &kind : Core::AssetKindRegistry::Instance().All())
+    {
+        cookers.push_back(std::make_unique<KindCooker>(kind));
+    }
     cookers.push_back(std::make_unique<VerbatimCooker>());
     return cookers;
 }

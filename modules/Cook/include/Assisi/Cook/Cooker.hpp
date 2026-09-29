@@ -103,7 +103,7 @@ public:
     ///
     /// Answered without cooking, so an asset can be listed by kind from its path
     /// alone.
-    [[nodiscard]] virtual Core::CookedKind Kind() const = 0;
+    [[nodiscard]] virtual Core::AssetKindId Kind() const = 0;
 
     /// @brief What besides the source changes this cooker's output, folded into
     ///        the cache key.

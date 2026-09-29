@@ -25,6 +25,7 @@ target_link_libraries(Assisi-Cook-Tool
 # already includes the game's own generated objects, so they are not listed
 # again — a second copy would be a duplicate definition of every registrar.
 assisi_link_reflections(Assisi-Cook-Tool)
+assisi_link_asset_cook_steps(Assisi-Cook-Tool)
 
 set_target_properties(Assisi-Cook-Tool PROPERTIES OUTPUT_NAME "assisi-cook")
 

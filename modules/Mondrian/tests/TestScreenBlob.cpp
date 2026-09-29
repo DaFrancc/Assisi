@@ -139,7 +139,7 @@ ScreenDocument Everything()
 std::size_t LayoutHashOffset(std::span<const std::byte> bytes)
 {
     Assisi::Core::BitReader reader{bytes};
-    const std::expected<Assisi::Core::CookedKind, Assisi::Core::CookedBlobError> kind =
+    const std::expected<Assisi::Core::AssetKindId, Assisi::Core::CookedBlobError> kind =
         Assisi::Core::ReadCookedHeader(reader);
     REQUIRE(kind.has_value());
     return reader.BitsRead() / 8 + sizeof(kScreenPayloadVersion);
@@ -232,7 +232,7 @@ TEST_CASE("ScreenBlob: a payload version this build does not read is refused")
     // The version sits directly after the envelope, which is the one byte this
     // test has to know about.
     Assisi::Core::BitReader reader{bytes};
-    const std::expected<Assisi::Core::CookedKind, Assisi::Core::CookedBlobError> kind =
+    const std::expected<Assisi::Core::AssetKindId, Assisi::Core::CookedBlobError> kind =
         Assisi::Core::ReadCookedHeader(reader);
     REQUIRE(kind.has_value());
     const std::size_t versionOffset = reader.BitsRead() / 8;
@@ -247,7 +247,7 @@ TEST_CASE("ScreenBlob: a payload version this build does not read is refused")
 TEST_CASE("ScreenBlob: a blob of another kind is not a screen")
 {
     Assisi::Core::BitWriter writer;
-    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::CookedKind::Font);
+    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::kFontKind);
     writer.WriteUInt8(kScreenPayloadVersion);
     const std::span<const std::byte> bytes = writer.Data();
 

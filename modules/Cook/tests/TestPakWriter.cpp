@@ -17,6 +17,7 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <set>
 #include <span>
 #include <string>
@@ -24,10 +25,13 @@
 
 #include <Assisi/Cook/CookTree.hpp>
 #include <Assisi/Cook/PakWriter.hpp>
+#include <Assisi/Core/AssetStore.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Core/PakFormat.hpp>
 #include <Assisi/Core/PakProvider.hpp>
+#include <Assisi/Testing/TestAssetKinds.hpp>
 
 using Assisi::Cook::CookError;
 using Assisi::Cook::CookReport;
@@ -99,7 +103,7 @@ constexpr std::uint64_t kMiB = kKiB * kKiB;
 ManifestEntry WriteBlob(const std::filesystem::path &cookedRoot, const std::string &vpath, std::uint64_t totalBytes)
 {
     Assisi::Core::BitWriter writer;
-    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::CookedKind::Verbatim);
+    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::kVerbatimKind);
     const std::uint64_t headerBytes = writer.Data().size();
     REQUIRE(totalBytes >= headerBytes);
 
@@ -262,6 +266,36 @@ TEST_CASE("A packed tree serves every manifest asset's cooked bytes, by id and b
                              [](char c, std::byte b) { return static_cast<std::byte>(c) == b; }));
         }
     }
+}
+
+TEST_CASE("A registered kind's asset is loaded by id from a pak, as a game loads it")
+{
+    // End to end for a kind nothing in the engine names: cooked by its own step,
+    // packed, then read back by id through the store a game reads through.
+    const ScratchDir cooked("kind-cooked");
+    const ScratchDir packed("kind-packed");
+    const std::vector<ManifestEntry> manifest = CookFixture(cooked.Path());
+    const std::filesystem::path pakPath = packed.Path() / "assets.pak";
+    REQUIRE(WritePak(cooked.Path(), manifest, pakPath, PakCodec::Zstd, {}).has_value());
+
+    const std::expected<PakProvider, AssetError> pak = PakProvider::Mount(pakPath);
+    REQUIRE(pak.has_value());
+    const std::expected<AssetId, AssetError> id = pak->Resolve("things/sample.tbytes");
+    REQUIRE(id.has_value());
+
+    constexpr std::uint32_t kWorkers = 2;
+    Assisi::Core::JobSystem jobs(kWorkers);
+    Assisi::Core::AssetStore store;
+    store.Initialize(jobs, *pak);
+    (void)store.Resolve<Assisi::Testing::TestBytes>(*id);
+    jobs.HelpUntil([&store] { return !store.HasPendingLoads(); }, true);
+
+    const std::shared_ptr<const Assisi::Testing::TestBytes> loaded = store.Resolve<Assisi::Testing::TestBytes>(*id);
+    REQUIRE(loaded != nullptr);
+    // The fixture holds "abc", which the kind's cook step reversed.
+    const std::string text{reinterpret_cast<const char *>(loaded->bytes.data()), loaded->bytes.size()};
+    CHECK(text == "cba");
+    CHECK(loaded->finished);
 }
 
 TEST_CASE("A blob the manifest does not list is left out of the pak")

@@ -43,7 +43,7 @@ std::string_view ToString(CookedTextureError error) noexcept
 
 void WriteCookedTexture(Core::BitWriter &writer, const DecodedImage &image)
 {
-    Core::WriteCookedHeader(writer, Core::CookedKind::Texture);
+    Core::WriteCookedHeader(writer, Core::kTextureKind);
     writer.WriteUInt8(kTexturePayloadVersion);
     writer.WriteUInt32(image.width);
     writer.WriteUInt32(image.height);
@@ -61,8 +61,8 @@ std::expected<DecodedImage, CookedTextureError> ReadCookedTexture(std::span<cons
 {
     Core::BitReader reader{bytes};
 
-    const std::expected<Core::CookedKind, Core::CookedBlobError> kind = Core::ReadCookedHeader(reader);
-    if (!kind || *kind != Core::CookedKind::Texture)
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> kind = Core::ReadCookedHeader(reader);
+    if (!kind || *kind != Core::kTextureKind)
     {
         if (!kind && kind.error() == Core::CookedBlobError::Truncated)
         {
