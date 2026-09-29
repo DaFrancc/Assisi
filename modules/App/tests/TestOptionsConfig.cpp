@@ -266,6 +266,20 @@ TEST_CASE("A fresh install pins neither the window size nor the bindings")
     CHECK(text == "{}");
 }
 
+TEST_CASE("Bus volumes the player set survive a write and a read, and none are written until one is set")
+{
+    CHECK(OptionsConfig{}.ToJsonText().find("audio") == std::string::npos);
+
+    OptionsConfig written;
+    written.busVolumes["Music"]     = 0.5f;
+    written.busVolumes["Footsteps"] = 0.25f;
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    REQUIRE(read.busVolumes.size() == 2);
+    CHECK(read.busVolumes.at("Music") == doctest::Approx(0.5f));
+    CHECK(read.busVolumes.at("Footsteps") == doctest::Approx(0.25f));
+}
+
 TEST_CASE("A chosen window size and a rebound action survive a write and a read")
 {
     OptionsConfig written;

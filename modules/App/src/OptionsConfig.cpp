@@ -291,6 +291,16 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             cfg.multiTapSeconds = json.at("controls").at("multiTapSeconds").get<double>();
         }
 
+        // Present means chosen: a bus the file does not name plays at the game's volume.
+        if (json.contains("audio") && json.at("audio").contains("volumes"))
+        {
+            const nlohmann::json &volumes = json.at("audio").at("volumes");
+            for (nlohmann::json::const_iterator entry = volumes.begin(); entry != volumes.end(); ++entry)
+            {
+                cfg.busVolumes[entry.key()] = entry.value().get<float>();
+            }
+        }
+
         if (json.contains("input"))
         {
             // Through the registry rather than by hand: the bindings are a
@@ -502,6 +512,15 @@ nlohmann::json FullJson(const OptionsConfig &options)
     if (options.multiTapSeconds)
     {
         json["controls"]["multiTapSeconds"] = *options.multiTapSeconds;
+    }
+
+    // Written even when empty, so the defaults hold the same empty object and
+    // ChangedFrom drops it: only a volume the player set is ever saved.
+    nlohmann::json &volumes = json["audio"]["volumes"];
+    volumes                 = nlohmann::json::object();
+    for (const std::pair<const std::string, float> &entry : options.busVolumes)
+    {
+        volumes[entry.first] = entry.second;
     }
 
     // Same: nothing rebound is nothing to write.

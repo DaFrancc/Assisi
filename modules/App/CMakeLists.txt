@@ -60,6 +60,8 @@ target_include_directories(Assisi-App
 target_link_libraries(Assisi-App
   PUBLIC
     Assisi::Core
+    # Every windowed game has a mixer: Application owns it.
+    Assisi::Audio
     Assisi::Window
     Assisi::Render
     Assisi::ECS

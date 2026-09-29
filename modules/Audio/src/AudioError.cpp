@@ -22,6 +22,20 @@ std::string_view ToString(AudioError error) noexcept
         return "the audio could not be decoded";
     case AudioError::EnumerationFailed:
         return "the audio devices could not be listed";
+    case AudioError::MixerInitFailed:
+        return "the mixer could not be built";
+    case AudioError::TooManySounds:
+        return "every sound slot is playing";
+    case AudioError::UnknownBus:
+        return "no bus with that id";
+    case AudioError::NoClip:
+        return "no clip to play";
+    case AudioError::TooManyBuses:
+        return "more buses are declared than the mixer holds";
+    case AudioError::DuplicateBus:
+        return "a bus is declared twice, or declared with a default bus's name";
+    case AudioError::UnknownParentBus:
+        return "a bus's parent is not a default bus or one declared before it";
     case AudioError::Count:
         break;
     }
