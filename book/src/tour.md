@@ -87,6 +87,7 @@ need to change them to make a game.
 | `Window` | The window, keyboard and mouse. |
 | `Geometry` | Mesh and material data, and model import (glTF). |
 | `Image` | Image loading. |
+| `Audio` | Sound output (miniaudio): listing and choosing devices, decoding sound files, and moving to the default device when one is unplugged. |
 | `Render` | Drawing, with Vulkan. |
 | `ECS` | Entities, components and queries. |
 | `Runtime` | Built-in components like `Transform`, `Camera` and lights, and level loading/saving. |

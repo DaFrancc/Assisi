@@ -562,6 +562,40 @@ FetchContent_Declare(zstd
 FetchContent_MakeAvailable(zstd)
 add_library(zstd::zstd ALIAS libzstd_static)
 
+# --- miniaudio (audio device output, capture and decoding; Assisi::Audio)
+#
+# Built from upstream's miniaudio.c rather than a header compiled in one of ours,
+# so the move to a separate .c/.h pair upstream is a tag bump. Its own CMake
+# builds examples and tests this build never runs.
+#
+# The engine layer and resource manager are compiled out: they start loading
+# threads of their own, and loading here goes through the job system. The
+# defines are PUBLIC because they change struct layouts, so every file that
+# includes the header must see the ones the library was built with.
+#
+# Linux backends (ALSA, PulseAudio, JACK) are opened with dlopen at run time,
+# which keeps them out of the game's needed libraries. MA_NO_RUNTIME_LINKING
+# would link them directly and must stay undefined.
+FetchContent_Declare(miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG        0.11.25
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
+)
+FetchContent_MakeAvailable(miniaudio)
+add_library(miniaudio STATIC "${miniaudio_SOURCE_DIR}/miniaudio.c")
+target_include_directories(miniaudio SYSTEM PUBLIC "${miniaudio_SOURCE_DIR}")
+target_compile_definitions(miniaudio PUBLIC MA_NO_ENGINE MA_NO_RESOURCE_MANAGER)
+set_target_properties(miniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (MSVC)
+    target_compile_options(miniaudio PRIVATE /w)
+else()
+    target_compile_options(miniaudio PRIVATE -w)
+    find_package(Threads REQUIRED)
+    target_link_libraries(miniaudio PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+endif()
+add_library(miniaudio::miniaudio ALIAS miniaudio)
+
 # --- Assimp (deferred catch-all import backend; off by default, see ASSISI_ENABLE_ASSIMP)
 if (ASSISI_ENABLE_ASSIMP)
     # Vendor zlib+minizip rather than picking up a system minizip. On distros that
@@ -1222,6 +1256,9 @@ add_subdirectory(modules/Math)
 # pixel format is a property of what the channel is for, so it belongs beside
 # MaterialData rather than in the renderer that happens to upload it.
 add_subdirectory(modules/Image)
+# Audio needs only Core: it plays samples and decodes files, and knows nothing
+# about entities. The layer that turns components into sound sits above ECS.
+add_subdirectory(modules/Audio)
 # Geometry sits above Core+Math+Image and below Render: CPU-side mesh data and
 # the mesh-file importer (glTF via fastgltf), with no GPU dependency.
 add_subdirectory(modules/Geometry)
