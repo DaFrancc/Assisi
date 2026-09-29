@@ -43,7 +43,8 @@ public:
     struct Impl;
 
     /// @brief Open @p chosen on @p context's backend, or the system default
-    /// device when @p chosen is empty. The device is silent until Start.
+    /// device when @p chosen is empty or no longer listed. The device is silent
+    /// until Start.
     [[nodiscard]] static std::expected<AudioDevice, AudioError> Open(const AudioContext &context,
                                                                      std::optional<DeviceId> chosen);
 

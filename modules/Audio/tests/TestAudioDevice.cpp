@@ -117,6 +117,21 @@ TEST_CASE("A device opened on a listed device remembers which one it was asked f
     CHECK(WaitForFrames(renderer, clip.Frames()));
 }
 
+TEST_CASE("Opening a device that is no longer listed opens the default device instead")
+{
+    const AudioContext context = NullContext();
+    DeviceId gone;
+    gone.bytes.fill(std::byte{0x5A});
+
+    const PcmClip clip = MakeRampClip();
+    CountingRenderer renderer(clip);
+    AudioDevice device = OpenOn(context, gone);
+    CHECK_FALSE(device.ChosenDevice().has_value());
+
+    REQUIRE(device.Start(renderer).has_value());
+    CHECK(WaitForFrames(renderer, 1));
+}
+
 TEST_CASE("Update leaves a healthy device alone")
 {
     const AudioContext context = NullContext();
@@ -256,8 +271,6 @@ TEST_CASE("Manual: unplug the device mid-beep and the beep carries on elsewhere"
 {
     std::expected<AudioContext, AudioError> context = AudioContext::Create(AudioBackend::Default);
     REQUIRE(context.has_value());
-    const std::expected<std::vector<DeviceInfo>, AudioError> outputs = context->ListDevices(DeviceKind::Output);
-    REQUIRE(outputs.has_value());
 
     const PcmClip beep = DecodedBeep(kUnplugBeepFrames);
     for (const bool explicitDevice : {false, true})
@@ -265,6 +278,10 @@ TEST_CASE("Manual: unplug the device mid-beep and the beep carries on elsewhere"
         std::optional<DeviceId> chosen;
         if (explicitDevice)
         {
+            // Listed again, since the first run may have unplugged the default.
+            const std::expected<std::vector<DeviceInfo>, AudioError> outputs =
+                context->ListDevices(DeviceKind::Output);
+            REQUIRE(outputs.has_value());
             for (const DeviceInfo &output : *outputs)
             {
                 if (output.isDefault)

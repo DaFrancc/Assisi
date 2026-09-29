@@ -583,6 +583,45 @@ FetchContent_Declare(miniaudio
     SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
 )
 FetchContent_MakeAvailable(miniaudio)
+
+# Two fixes for losing a device mid-game, both reached on PulseAudio:
+#
+# miniaudio-pulse-device-info-error.patch: PulseAudio answers a failed device
+# lookup, such as a sink unplugged a moment ago, with a null info and a negative
+# end-of-list. miniaudio's lookup callbacks only stop on a positive one and
+# dereference the null, so opening a device as it disappears crashes.
+#
+# miniaudio-uninit-wakes-data-loop.patch: ma_device_uninit waits for the worker
+# thread without waking the PulseAudio loop it is blocked in, as ma_device_stop
+# does. A stream whose device has gone never wakes it, so closing a lost device
+# hangs forever.
+#
+# Applied the way the NVRHI patches are, for the reason given there: the shared
+# source cache skips a FetchContent patch step. Each touches a different part of
+# the file, so they apply in either order.
+find_package(Git REQUIRED)
+foreach(_miniaudio_patch_name miniaudio-pulse-device-info-error.patch miniaudio-uninit-wakes-data-loop.patch)
+    set(_miniaudio_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/${_miniaudio_patch_name}")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_miniaudio_patch}"
+        WORKING_DIRECTORY "${miniaudio_SOURCE_DIR}"
+        RESULT_VARIABLE _miniaudio_patched
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if (NOT _miniaudio_patched EQUAL 0)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" apply "${_miniaudio_patch}"
+            WORKING_DIRECTORY "${miniaudio_SOURCE_DIR}"
+            RESULT_VARIABLE _miniaudio_patch_rc
+        )
+        if (NOT _miniaudio_patch_rc EQUAL 0)
+            message(FATAL_ERROR "Could not apply ${_miniaudio_patch} to ${miniaudio_SOURCE_DIR}. "
+                                "Refresh the patch against the pinned miniaudio tag.")
+        endif()
+        message(STATUS "miniaudio: applied ${_miniaudio_patch_name}")
+    endif()
+endforeach()
+
 add_library(miniaudio STATIC "${miniaudio_SOURCE_DIR}/miniaudio.c")
 target_include_directories(miniaudio SYSTEM PUBLIC "${miniaudio_SOURCE_DIR}")
 target_compile_definitions(miniaudio PUBLIC MA_NO_ENGINE MA_NO_RESOURCE_MANAGER)

@@ -14,6 +14,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Audio
 {
@@ -52,7 +53,10 @@ struct AudioDevice::Impl
     /// starting and stopping the device order those writes against the reads.
     AudioRenderer *renderer = nullptr;
     DeviceState state       = DeviceState::Stopped;
-    bool deviceInitialised  = false;
+    /// Set on a backend thread when the system moves the stream to another
+    /// device by itself; Update refreshes the name from it.
+    std::atomic<bool> rerouted{false};
+    bool deviceInitialised = false;
 
     Impl()                        = default;
     Impl(const Impl &)            = delete;
@@ -64,6 +68,7 @@ struct AudioDevice::Impl
     [[nodiscard]] bool StartBackendDevice();
     void MarkLost() noexcept;
     void TryReopenOnDefault();
+    void RefreshNameAfterReroute();
 };
 
 namespace
@@ -80,6 +85,33 @@ void OnData(ma_device *device, void *output, const void * /*input*/, ma_uint32 f
     }
 }
 
+void OnNotification(const ma_device_notification *notification)
+{
+    if (notification->type == ma_device_notification_type_rerouted)
+    {
+        AudioDevice::Impl *impl = static_cast<AudioDevice::Impl *>(notification->pDevice->pUserData);
+        impl->rerouted.store(true, std::memory_order_relaxed);
+    }
+}
+
+/// @brief Whether @p id is among the output devices @p context lists now.
+bool IsListed(const AudioContext &context, const DeviceId &id)
+{
+    const std::expected<std::vector<DeviceInfo>, AudioError> outputs = context.ListDevices(DeviceKind::Output);
+    if (!outputs.has_value())
+    {
+        return false;
+    }
+    for (const DeviceInfo &output : *outputs)
+    {
+        if (output.id == id)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 std::expected<void, AudioError> AudioDevice::Impl::OpenBackendDevice(const std::optional<DeviceId> &id)
@@ -88,8 +120,9 @@ std::expected<void, AudioError> AudioDevice::Impl::OpenBackendDevice(const std::
     config.playback.format   = ma_format_f32;
     config.playback.channels = kChannelCount;
     config.sampleRate        = kSampleRate;
-    config.dataCallback      = OnData;
-    config.pUserData         = this;
+    config.dataCallback         = OnData;
+    config.notificationCallback = OnNotification;
+    config.pUserData            = this;
 
     ma_device_id backendId{};
     if (id.has_value())
@@ -154,6 +187,17 @@ void AudioDevice::Impl::TryReopenOnDefault()
     Core::Log::Warn("Audio output lost; now playing on {}", currentName);
 }
 
+void AudioDevice::Impl::RefreshNameAfterReroute()
+{
+    ma_device_info info{};
+    if (ma_device_get_info(&device, ma_device_type_playback, &info) != MA_SUCCESS)
+    {
+        return;
+    }
+    currentName = info.name;
+    Core::Log::Info("Audio output moved by the system to {}", currentName);
+}
+
 AudioDevice::AudioDevice(std::unique_ptr<Impl> impl) noexcept : _impl(std::move(impl)) {}
 AudioDevice::AudioDevice(AudioDevice &&) noexcept            = default;
 AudioDevice &AudioDevice::operator=(AudioDevice &&) noexcept = default;
@@ -161,6 +205,14 @@ AudioDevice::~AudioDevice()                                  = default;
 
 std::expected<AudioDevice, AudioError> AudioDevice::Open(const AudioContext &context, std::optional<DeviceId> chosen)
 {
+    // Checked first because a device that disappeared since it was listed can
+    // fail inside the backend in ways it does not report cleanly.
+    if (chosen.has_value() && !IsListed(context, *chosen))
+    {
+        Core::Log::Warn("The chosen audio output is no longer available; opening the default device");
+        chosen.reset();
+    }
+
     std::unique_ptr<Impl> impl = std::make_unique<Impl>();
     impl->context              = context.Backend();
     impl->chosen               = chosen;
@@ -211,6 +263,11 @@ void AudioDevice::Stop() noexcept
 
 void AudioDevice::Update()
 {
+    if (_impl->rerouted.exchange(false, std::memory_order_relaxed) && _impl->deviceInitialised)
+    {
+        _impl->RefreshNameAfterReroute();
+    }
+
     if (_impl->state == DeviceState::Running)
     {
         const Clock::time_point now = Clock::now();
