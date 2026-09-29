@@ -8,6 +8,7 @@
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/App/PerfCapture.hpp>
+#include <Assisi/App/PlayerSettings.hpp>
 #include <Assisi/App/UiInputBridge.hpp>
 #include <Assisi/Audio/AudioContext.hpp>
 #include <Assisi/Audio/AudioDevice.hpp>
@@ -360,9 +361,12 @@ protected:
     /// FramebufferInfo actually changed). Call after editing those options.
     void ApplyDisplayOptions() { ConfigurePostProcess(); }
 
-    /// @brief Sets every bus the options name to the player's volume. Call after
-    /// editing OptionsConfig::busVolumes. Does nothing without a mixer.
-    void ApplyAudioOptions();
+    /// @brief The player's options with ways to apply and save them, as systems
+    /// reach them through `ctx.settings`. Null before Initialize().
+    [[nodiscard]] PlayerSettings *GetPlayerSettings()
+    {
+        return _playerSettings.has_value() ? &*_playerSettings : nullptr;
+    }
 
     /// @brief A read-only view of the rolling per-frame timing history, for an
     /// app-side debug overlay. Each array is a ring buffer of FrameHistory()
@@ -445,6 +449,9 @@ private:
     std::optional<Audio::AudioContext> _audioContext;
     std::unique_ptr<Audio::Mixer> _mixer;
     std::optional<Audio::AudioDevice> _audioDevice;
+
+    /// Built at the end of Initialize(), over _options and the mixer.
+    std::optional<PlayerSettings> _playerSettings;
 
     /// ShowsGameUi's answer for the current frame.
     bool _uiShown = false;

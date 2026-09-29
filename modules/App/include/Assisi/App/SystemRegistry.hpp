@@ -70,6 +70,8 @@ class Mixer;
 namespace Assisi::App
 {
 
+class PlayerSettings;
+
 struct World;
 class WorldManager;
 
@@ -133,6 +135,10 @@ struct SystemContext
     /// The mixer every sound plays through. Null in headless hosts, which have
     /// no audio, for the same reason `ui` is.
     Audio::Mixer *mixer = nullptr;
+
+    /// The player's options, and applying and saving them. Null in hosts that
+    /// run systems without an application (tests).
+    PlayerSettings *settings = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).

@@ -416,6 +416,7 @@ class WorldManager
         Window::ActionMap *actions = nullptr;
         Mondrian::Ui *ui = nullptr;
         Audio::Mixer *mixer = nullptr;
+        PlayerSettings *settings = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
 

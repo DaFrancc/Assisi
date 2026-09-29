@@ -92,30 +92,38 @@ back at the player's saved volume, or the one `buses.json` gives it.
 
 ## Volumes the player sets
 
-A player's volume is saved in their options. Saving takes three steps, done
-from your `Application` subclass, which owns the options:
+A volume the player chooses in a settings screen is kept in their options.
+Systems reach the options through `ctx.settings`:
 
 ```cpp
-GetOptions().busVolumes["Music"] = 0.5f;
-ApplyAudioOptions();
-GetOptions().SaveToJson();
+void SetMusicVolumeSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.settings == nullptr)
+    {
+        return;
+    }
+    ctx.settings->Options().busVolumes["Music"] = 0.5f;
+    ctx.settings->ApplyAudio();
+    ctx.settings->Save();
+}
 ```
 
-1. `GetOptions().busVolumes["Music"] = 0.5f;` records the choice in the options
-   held in memory. `busVolumes` maps bus names to volumes, and holds only the
-   buses the player has set. Nothing sounds different yet.
-2. `ApplyAudioOptions();` hands every volume in `busVolumes` to the mixer, which
-   fades each bus to it. A name the game has no bus for is skipped, and logged.
-3. `GetOptions().SaveToJson();` writes the options to `options.json`, so the
-   volume survives a restart. When the game starts, it reads the file and
-   applies the volumes itself.
+1. `ctx.settings->Options().busVolumes["Music"] = 0.5f;` records the choice in
+   the options held in memory. `busVolumes` maps bus names to volumes, and holds
+   only the buses the player has set. Nothing sounds different yet.
+2. `ctx.settings->ApplyAudio();` hands every volume in `busVolumes` to the mixer,
+   which fades each bus to it. A name the game has no bus for is skipped and
+   logged. In a dedicated server, which has no audio, this does nothing.
+3. `ctx.settings->Save();` writes the options to `options.json`, so the volume
+   survives a restart. When the game starts, it reads the file and applies the
+   volumes itself.
 
-The steps are separate so a menu can change several settings and apply them
+The steps are separate so a screen can change several settings and apply them
 together, try a volume while a slider moves without saving it, and save once
-when the menu closes.
+when the screen closes.
 
-Systems can't reach the options yet, so a settings screen built from systems
-can change volumes through `ctx.mixer` but can't save them.
+`ctx.settings` is null only where systems run without a game around them, such
+as in tests.
 
 Volumes are saved in `options.json` by bus name, and only for buses the player
 has changed. Every other bus keeps the volume `buses.json` gives it, even if you

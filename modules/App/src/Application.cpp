@@ -159,6 +159,11 @@ bool Application::Initialize()
         return false;
     }
 
+    // After the mixer exists, so the saved volumes reach it; a headless process
+    // still gets settings, with no mixer behind them.
+    _playerSettings.emplace(_options, _mixer.get());
+    _playerSettings->ApplyAudio();
+
     _initialized = true;
     return true;
 }
@@ -1229,29 +1234,6 @@ void Application::InitializeAudio()
     {
         Core::Log::Error("Audio: no device would open, not even a silent one; the game has no audio.");
         _mixer.reset();
-        return;
-    }
-
-    ApplyAudioOptions();
-}
-
-void Application::ApplyAudioOptions()
-{
-    if (_mixer == nullptr)
-    {
-        return;
-    }
-    for (const std::pair<const std::string, float> &setting : _options.busVolumes)
-    {
-        const std::optional<Audio::BusId> bus = _mixer->Layout().FindBus(setting.first);
-        if (!bus)
-        {
-            // Kept in the options: the bus may come back with the next build of the game.
-            Core::Log::Info("Audio: the options set a volume for '{}', which this game has no bus for.",
-                            setting.first);
-            continue;
-        }
-        _mixer->SetBusVolume(*bus, setting.second);
     }
 }
 

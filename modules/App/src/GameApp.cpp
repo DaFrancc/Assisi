@@ -138,7 +138,8 @@ void GameApp::OnStart()
                          .input = HasPresentation() ? &GetInput() : nullptr,
                          .actions = &GetActions(),
                          .ui = GetUi(),
-                         .mixer = GetMixer()});
+                         .mixer = GetMixer(),
+                         .settings = GetPlayerSettings()});
 
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
@@ -340,7 +341,8 @@ SystemContext GameApp::WorldStartContext(World &world)
             .isActiveWorld = &world == _worlds.Active(),
             .worldManager = &_worlds,
             .ui = GetUi(),
-            .mixer = GetMixer()};
+            .mixer = GetMixer(),
+            .settings = GetPlayerSettings()};
 }
 
 void GameApp::StepWorlds(float dt)
