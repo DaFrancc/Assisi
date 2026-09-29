@@ -310,7 +310,9 @@ void EditorApp::OnStart()
                          .events = &GetEvents(),
                          .input = &GetInput(),
                          .actions = &GetActions(),
-                         .ui = GetUi()});
+                         .ui = GetUi(),
+                         .mixer = GetMixer(),
+                         .settings = GetPlayerSettings()});
 
     // Editor travel is the game's path, so it honours the game's policy: a level
     // that waits for its assets in the shipped game waits here too, or testing a
@@ -1396,7 +1398,9 @@ Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &worl
             .events = GetEvents(),
             .isActiveWorld = &world == _worlds.Active(),
             .worldManager = &_worlds,
-            .ui = GetUi()};
+            .ui = GetUi(),
+            .mixer = GetMixer(),
+            .settings = GetPlayerSettings()};
 }
 
 void EditorApp::InstallQueuedSystems()

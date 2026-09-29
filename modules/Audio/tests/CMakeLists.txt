@@ -2,7 +2,9 @@ add_executable(Assisi-Audio-Tests
   main.cpp
   TestAudioContext.cpp
   TestAudioDevice.cpp
+  TestBusLayout.cpp
   TestClipDecode.cpp
+  TestMixer.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Audio-Tests)

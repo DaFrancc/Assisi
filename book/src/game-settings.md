@@ -49,6 +49,11 @@ The default key bindings for named actions. See [Input](input.md).
 Which `.csv` files are string tables, and how strictly the cook checks the text
 screens show. See [String tables](ui-string-tables.md#listing-tables).
 
+## `buses.json`
+
+The audio buses your game adds to the default ones. See
+[Your own buses](audio.md#your-own-buses).
+
 ## `network.json`
 
 Multiplayer settings: which components are never sent, and how precisely
@@ -63,6 +68,7 @@ The player's settings are saved in `options.json`, next to the executable:
 - Graphics: anti-aliasing mode, VSync, frame rate limit. The editor's **F11**
   window edits these.
 - Rebound keys.
+- Audio bus volumes. See [Volumes the player sets](audio.md#volumes-the-player-sets).
 
 Only settings the player actually changed are stored. Everything else keeps
 following your defaults, even when you change them in a later version.

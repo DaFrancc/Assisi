@@ -159,6 +159,11 @@ bool Application::Initialize()
         return false;
     }
 
+    // After the mixer exists, so the saved volumes reach it; a headless process
+    // still gets settings, with no mixer behind them.
+    _playerSettings.emplace(_options, _mixer.get());
+    _playerSettings->ApplyAudio();
+
     _initialized = true;
     return true;
 }
@@ -352,6 +357,8 @@ bool Application::InitializePresentation()
         }
     }
 
+    InitializeAudio();
+
     _presentationInitialized = true;
     return true;
 }
@@ -359,7 +366,7 @@ bool Application::InitializePresentation()
 Window::WindowContext &Application::GetWindow() const
 {
     ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process - there is no window. Guard with "
-                                      "IsHeadless()/HasPresentation().");
+                  "IsHeadless()/HasPresentation().");
     return *_window;
 }
 
@@ -382,7 +389,7 @@ void Application::SyncUiInputMode()
 Window::InputContext &Application::GetInput() const
 {
     ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process - there are no input devices. Guard with "
-                                     "IsHeadless()/HasPresentation().");
+                  "IsHeadless()/HasPresentation().");
     return *_input;
 }
 
@@ -680,7 +687,7 @@ void Application::Run()
         // Per-phase stopwatches for the slow-frame diagnostic below. Cheap
         // (steady_clock reads), and only reported when a frame actually spikes.
         const auto phaseMs = [](Clock::time_point from, Clock::time_point to)
-        { return Seconds(to - from).count() * 1000.0; };
+                             { return Seconds(to - from).count() * 1000.0; };
 
         const Clock::time_point inputStart = Clock::now();
         {
@@ -763,6 +770,14 @@ void Application::Run()
             // running this one. Through the app, which is what owns the worlds the
             // queues live on.
             InstallQueuedSystems();
+        }
+        if (_audioDevice.has_value())
+        {
+            ASSISI_PROFILE_SCOPE("audio");
+            // A device unplugged since last frame moves to the default one here,
+            // and sounds that finished give their slots back.
+            _audioDevice->Update();
+            _mixer->Update();
         }
         const Clock::time_point drainEnd = Clock::now();
 
@@ -1157,6 +1172,71 @@ void Application::RenderFrame()
     }
 }
 
+void Application::InitializeAudio()
+{
+    // A game that declares no buses of its own has the defaults, which is not an error.
+    Audio::BusLayout layout = Audio::BusLayout::Defaults();
+    Audio::BusConfig declared;
+    if (const std::expected<void, Core::ConfigError> read = Core::ReadConfig(Audio::kBusConfigPath, declared); !read)
+    {
+        Core::Log::Info("Audio: no bus declarations at '{}' ({}); only the default buses exist.",
+                        Audio::kBusConfigPath, Core::ToString(read.error()));
+    }
+    else if (std::expected<Audio::BusLayout, Audio::AudioError> fromConfig = Audio::BusLayout::FromConfig(declared);
+             !fromConfig)
+    {
+        Core::Log::Warn("Audio: the buses in '{}' were refused ({}); only the default buses exist.",
+                        Audio::kBusConfigPath, Audio::ToString(fromConfig.error()));
+    }
+    else
+    {
+        layout = std::move(*fromConfig);
+    }
+
+    std::expected<std::unique_ptr<Audio::Mixer>, Audio::AudioError> mixer = Audio::Mixer::Create(layout);
+    if (!mixer)
+    {
+        Core::Log::Error("Audio: the mixer could not be built ({}); the game has no audio.",
+                         Audio::ToString(mixer.error()));
+        return;
+    }
+    _mixer = std::move(*mixer);
+
+    // Silence on the null backend rather than no device at all, so sounds still
+    // start and finish and nothing that waits on one waits forever.
+    for (const Audio::AudioBackend backend : {Audio::AudioBackend::Default, Audio::AudioBackend::Null})
+    {
+        std::expected<Audio::AudioContext, Audio::AudioError> context = Audio::AudioContext::Create(backend);
+        if (!context)
+        {
+            Core::Log::Warn("Audio: no backend ({}).", Audio::ToString(context.error()));
+            continue;
+        }
+        std::expected<Audio::AudioDevice, Audio::AudioError> device = Audio::AudioDevice::Open(*context, std::nullopt);
+        if (!device)
+        {
+            Core::Log::Warn("Audio: {} would not open a device ({}).", context->BackendName(),
+                            Audio::ToString(device.error()));
+            continue;
+        }
+        if (const std::expected<void, Audio::AudioError> started = device->Start(*_mixer); !started)
+        {
+            Core::Log::Warn("Audio: {} would not start ({}).", context->BackendName(),
+                            Audio::ToString(started.error()));
+            continue;
+        }
+        Core::Log::Info("Audio: playing on {} through {}.", device->CurrentDeviceName(), context->BackendName());
+        _audioContext = std::move(*context);
+        _audioDevice  = std::move(*device);
+        break;
+    }
+    if (!_audioDevice.has_value())
+    {
+        Core::Log::Error("Audio: no device would open, not even a silent one; the game has no audio.");
+        _mixer.reset();
+    }
+}
+
 void Application::LoadUiStrings()
 {
     // A project with no UI settings has no tables, which is not an error.
@@ -1179,13 +1259,13 @@ void Application::LoadUiStrings()
 
     const Core::DisplayedStringResolver resolver =
         [this](std::string_view table, std::string_view key) -> std::optional<std::string_view>
-    {
-        if (const std::string *const words = _uiStrings.Find(table, key))
         {
-            return *words;
-        }
-        return std::nullopt;
-    };
+            if (const std::string *const words = _uiStrings.Find(table, key))
+            {
+                return *words;
+            }
+            return std::nullopt;
+        };
     Core::DisplayedStringResolver previous = Core::SetDisplayedStringResolver(resolver);
     if (!_stringResolverInstalled)
     {

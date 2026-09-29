@@ -8,7 +8,11 @@
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/App/PerfCapture.hpp>
+#include <Assisi/App/PlayerSettings.hpp>
 #include <Assisi/App/UiInputBridge.hpp>
+#include <Assisi/Audio/AudioContext.hpp>
+#include <Assisi/Audio/AudioDevice.hpp>
+#include <Assisi/Audio/Mixer.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -26,6 +30,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -56,7 +61,7 @@ namespace Assisi::App
 ///   - OnShutdown()              — called after the loop exits
 class Application
 {
-  public:
+public:
     Application();
     virtual ~Application();
 
@@ -142,7 +147,7 @@ class Application
     /// because it finished.
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
-  protected:
+protected:
     /// @brief Refuse the launch: close the app and make Run exit with failure.
     ///
     /// For OnStart to call once it has logged what is wrong. Every app that can
@@ -243,6 +248,10 @@ class Application
     /// show it in. Unlike GetInput this does not assert: null is how code that
     /// runs in both modes learns there is no UI.
     [[nodiscard]] Mondrian::Ui *GetUi() const { return _ui.get(); }
+
+    /// @brief What sounds are started and stopped through, or null in a headless
+    /// process, which has no audio. Bus volumes go through GetPlayerSettings.
+    [[nodiscard]] Audio::SoundOutput *GetMixer() const { return _mixer.get(); }
 
     /// @brief Whether the window/renderer half of the engine was brought up.
     /// False in a headless process, and false before Initialize().
@@ -352,6 +361,13 @@ class Application
     /// FramebufferInfo actually changed). Call after editing those options.
     void ApplyDisplayOptions() { ConfigurePostProcess(); }
 
+    /// @brief The player's options with ways to apply and save them, as systems
+    /// reach them through `ctx.settings`. Null before Initialize().
+    [[nodiscard]] PlayerSettings *GetPlayerSettings()
+    {
+        return _playerSettings.has_value() ? &*_playerSettings : nullptr;
+    }
+
     /// @brief A read-only view of the rolling per-frame timing history, for an
     /// app-side debug overlay. Each array is a ring buffer of FrameHistory()
     /// samples; `offset` is the oldest sample / next slot to overwrite, and
@@ -370,7 +386,7 @@ class Application
     }
     static constexpr int32_t FrameHistory() { return kFrameHistory; }
 
-  private:
+private:
     /// Everything a dedicated server needs: assets, config, options, jobs.
     [[nodiscard]] bool InitializeCore();
     /// Everything only a windowed process needs: window, renderer, debug UI,
@@ -384,6 +400,10 @@ class Application
     /// A game whose tables do not load still runs, showing keys where the text
     /// would be.
     void LoadUiStrings();
+    /// Builds the mixer from the game's bus declarations and starts a device on
+    /// it. A game that cannot open a sound device still runs, silently, with
+    /// sounds starting and finishing as they would.
+    void InitializeAudio();
     /// Puts the window in the menu mode while a screen is taking input, and
     /// takes it out again when none is.
     ///
@@ -422,6 +442,17 @@ class Application
     Mondrian::Engine::QuadPass _uiPass;
     Render::Texture _uiPlaceholderTexture;
     Render::Texture _uiFontAtlas;
+
+    /// Audio, created with the window, so a headless process has none. The
+    /// device is declared after the mixer it plays, so it is destroyed first and
+    /// never calls a mixer that is gone.
+    std::optional<Audio::AudioContext> _audioContext;
+    std::unique_ptr<Audio::Mixer> _mixer;
+    std::optional<Audio::AudioDevice> _audioDevice;
+
+    /// Built at the end of Initialize(), over _options and the mixer.
+    std::optional<PlayerSettings> _playerSettings;
+
     /// ShowsGameUi's answer for the current frame.
     bool _uiShown = false;
     /// Whether this app installed a DisplayedString resolver, and so owes the
@@ -528,7 +559,7 @@ class Application
     /// scheduled syscall, never a walk of anything.
     void PumpChiaraCounters();
 
-  public:
+public:
     /// @brief What the last capture written to disk did, and whether one is
     /// being written right now.
     ///
@@ -576,7 +607,7 @@ class Application
     /// @brief Ends the session and closes its file. Harmless if none is running.
     void StopChiaraSession();
 
-  private:
+private:
     /// Running Jolt allocation totals as of the previous frame, so the counters
     /// can report a per-frame rate rather than an ever-climbing total.
     uint64_t _lastJoltAllocCount = 0;

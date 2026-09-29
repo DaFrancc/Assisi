@@ -12,6 +12,8 @@
 #include <Assisi/Window/InputBindings.hpp>
 
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -52,6 +54,11 @@ struct OptionsConfig
     /// Applied over the shipped bindings per action, so an action absent here
     /// keeps what shipped. Empty on a fresh install.
     Window::InputBindings bindings;
+
+    /// @brief The bus volumes the player set, by bus name, and only those. A bus
+    /// absent here plays at the volume the game gives it. Keyed by name because
+    /// the game declares its own buses, so the set is not known here.
+    std::map<std::string, float, std::less<>> busVolumes;
 
     Render::AaMode aaMode = Render::AaMode::None;
     int32_t msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
