@@ -162,6 +162,30 @@ change that volume in a later version:
 A saved volume for a bus the game no longer has is kept in the file but not
 used, so it comes back if the bus does.
 
+## Sound files
+
+The engine reads three formats:
+
+| Format | Good for |
+|---|---|
+| `.wav` | Short sounds played often, such as clicks and footsteps. It is not compressed, so it plays with no decoding cost but takes the most space. |
+| `.ogg` (Ogg Vorbis) | Long sounds such as music and ambience, where size matters most. |
+| `.flac` | Long sounds that must stay lossless. |
+
+A file ships in the format you authored it in; the engine never converts one.
+The extension must be lowercase.
+
+MP3 is not supported. Convert an MP3 to Ogg Vorbis or FLAC first, with a tool
+such as [ffmpeg](https://ffmpeg.org) or [Audacity](https://www.audacityteam.org):
+
+```sh
+ffmpeg -i music.mp3 -c:a libvorbis -q:a 6 music.ogg
+```
+
+Decoding is done by [miniaudio](https://github.com/mackron/miniaudio), and Ogg
+Vorbis by the [stb_vorbis](https://github.com/nothings/stb) copy that ships
+with it.
+
 ## Playing sounds
 
 Sounds are played by entities with an audio emitter. `ctx.mixer` is what the

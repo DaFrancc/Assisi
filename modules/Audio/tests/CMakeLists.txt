@@ -18,6 +18,10 @@ target_include_directories(Assisi-Audio-Tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
 
+target_compile_definitions(Assisi-Audio-Tests PRIVATE
+  ASSISI_AUDIO_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+
 target_link_libraries(Assisi-Audio-Tests
   PRIVATE
     Assisi::Audio
