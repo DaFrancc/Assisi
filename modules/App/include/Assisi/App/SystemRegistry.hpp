@@ -62,6 +62,11 @@ namespace Assisi::Mondrian
 class Ui;
 } // namespace Assisi::Mondrian
 
+namespace Assisi::Audio
+{
+class Mixer;
+} // namespace Assisi::Audio
+
 namespace Assisi::App
 {
 
@@ -124,6 +129,10 @@ struct SystemContext
     /// The game UI. Null in headless hosts for the same reason `input` is: there
     /// is no window to draw it in or take input from.
     Mondrian::Ui *ui = nullptr;
+
+    /// The mixer every sound plays through. Null in headless hosts, which have
+    /// no audio, for the same reason `ui` is.
+    Audio::Mixer *mixer = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).
