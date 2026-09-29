@@ -88,24 +88,45 @@ for (const std::string_view bus : ctx.settings->Buses())
 
 ### Changing a volume
 
-When the player moves a slider:
+A volume changes when the player chooses one, so the system that changes it
+reacts to an [event](events.md) rather than doing work every frame. Your
+settings screen pushes the event when the player confirms a volume:
 
 ```cpp
-void SetMusicVolumeSystem(Assisi::App::SystemContext &ctx)
+AEVENT()
+struct BusVolumeChosen
 {
-    if (ctx.settings == nullptr)
+    Assisi::Core::InternedString bus;
+    float volume = 1.0f;
+};
+```
+
+and a system applies and saves whatever was chosen:
+
+```cpp
+void ApplyChosenVolumesSystem(Assisi::App::SystemContext &ctx)
+{
+    const Assisi::Core::EventSpan<BusVolumeChosen> chosen = ctx.events.Read<BusVolumeChosen>();
+    if (chosen.size() == 0 || ctx.settings == nullptr)
     {
         return;
     }
-    ctx.settings->Options().busVolumes["Music"] = 0.5f;
+    for (const BusVolumeChosen &choice : chosen)
+    {
+        ctx.settings->Options().busVolumes[std::string{choice.bus.View()}] = choice.volume;
+    }
     ctx.settings->ApplyAudio();
     ctx.settings->Save();
 }
 ```
 
-1. `ctx.settings->Options().busVolumes["Music"] = 0.5f;` records the choice in
-   the options held in memory. `busVolumes` maps bus names to volumes, and holds
-   only the buses the player has set. Nothing sounds different yet.
+On a frame where nothing was chosen, which is almost every frame, the system
+returns at once. Otherwise it takes three steps:
+
+1. `ctx.settings->Options().busVolumes[...] = choice.volume;` records each
+   choice in the options held in memory. `busVolumes` maps bus names to
+   volumes, and holds only the buses the player has set. Nothing sounds
+   different yet.
 2. `ctx.settings->ApplyAudio();` hands every volume in `busVolumes` to the mixer,
    which fades each bus to it. A name the game has no bus for is skipped and
    logged. In a dedicated server, which has no audio, this does nothing.
