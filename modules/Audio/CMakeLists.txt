@@ -13,6 +13,7 @@ target_sources(Assisi-Audio
     "include/Assisi/Audio/BusLayout.hpp"
     "include/Assisi/Audio/Clip.hpp"
     "include/Assisi/Audio/Mixer.hpp"
+    "include/Assisi/Audio/SoundOutput.hpp"
   PRIVATE
     "src/AudioContext.cpp"
     "src/AudioContextImpl.hpp"

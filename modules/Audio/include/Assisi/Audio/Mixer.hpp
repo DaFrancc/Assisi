@@ -9,12 +9,15 @@
 #include <Assisi/Audio/AudioRenderer.hpp>
 #include <Assisi/Audio/BusLayout.hpp>
 #include <Assisi/Audio/Clip.hpp>
+#include <Assisi/Audio/SoundOutput.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string_view>
 
 namespace Assisi::Audio
 {
@@ -33,16 +36,6 @@ inline constexpr std::uint32_t kSoundFadeFrames = kSampleRate / 100;
 /// attaching a sound never allocates.
 inline constexpr std::size_t kMaxSounds = 256;
 
-/// @brief One attached sound. Once it finishes its slot is reused, and this
-/// handle reads as finished from then on.
-struct SoundHandle
-{
-    std::uint32_t index      = 0;
-    std::uint32_t generation = 0;
-
-    [[nodiscard]] bool operator==(const SoundHandle &) const = default;
-};
-
 /// @brief Mixes clips through buses into what an AudioDevice plays.
 ///
 /// Threading: Render runs on the audio thread; every other method is called
@@ -52,9 +45,9 @@ struct SoundHandle
 ///
 /// Neither copied nor moved, so a device playing it can hold it by reference.
 ///
-/// Attach is the building block emitters play through, not the way game code
-/// plays a sound.
-class Mixer final : public AudioRenderer
+/// Systems see it only as a SoundOutput; bus volumes are set through the
+/// player's settings, which hold the whole mixer.
+class Mixer final : public AudioRenderer, public SoundOutput
 {
 public:
     struct Impl;
@@ -72,14 +65,17 @@ public:
     [[nodiscard]] float BusVolume(BusId bus) const;
     [[nodiscard]] const BusLayout &Layout() const noexcept;
 
+    [[nodiscard]] std::optional<BusId> FindBus(std::string_view name) const override;
+
     /// @brief Start @p clip on @p bus. The mixer holds the clip until the sound
     /// finishes and Update releases it.
-    [[nodiscard]] std::expected<SoundHandle, AudioError> Attach(std::shared_ptr<const PcmClip> clip, BusId bus);
+    [[nodiscard]] std::expected<SoundHandle, AudioError> Attach(std::shared_ptr<const PcmClip> clip,
+                                                                BusId bus) override;
 
     /// @brief Fade @p sound out over kSoundFadeFrames. Does nothing to a finished sound.
-    void Stop(SoundHandle sound);
+    void Stop(SoundHandle sound) override;
 
-    [[nodiscard]] bool IsFinished(SoundHandle sound) const;
+    [[nodiscard]] bool IsFinished(SoundHandle sound) const override;
 
     /// @brief Release every finished sound's slot and clip. Call once per frame.
     void Update();

@@ -282,6 +282,11 @@ const BusLayout &Mixer::Layout() const noexcept
     return _impl->layout;
 }
 
+std::optional<BusId> Mixer::FindBus(std::string_view name) const
+{
+    return _impl->layout.FindBus(name);
+}
+
 std::expected<SoundHandle, AudioError> Mixer::Attach(std::shared_ptr<const PcmClip> clip, BusId bus)
 {
     if (bus.index >= _impl->buses.size())

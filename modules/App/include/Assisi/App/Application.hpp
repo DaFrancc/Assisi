@@ -249,9 +249,9 @@ protected:
     /// runs in both modes learns there is no UI.
     [[nodiscard]] Mondrian::Ui *GetUi() const { return _ui.get(); }
 
-    /// @brief The mixer every sound plays through, or null in a headless
-    /// process, which has no audio. Null for the same reason GetUi can be.
-    [[nodiscard]] Audio::Mixer *GetMixer() const { return _mixer.get(); }
+    /// @brief What sounds are started and stopped through, or null in a headless
+    /// process, which has no audio. Bus volumes go through GetPlayerSettings.
+    [[nodiscard]] Audio::SoundOutput *GetMixer() const { return _mixer.get(); }
 
     /// @brief Whether the window/renderer half of the engine was brought up.
     /// False in a headless process, and false before Initialize().

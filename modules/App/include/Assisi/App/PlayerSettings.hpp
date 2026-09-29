@@ -6,6 +6,10 @@
 
 #include <Assisi/App/OptionsConfig.hpp>
 
+#include <optional>
+#include <string_view>
+#include <vector>
+
 namespace Assisi::Audio
 {
 class Mixer;
@@ -28,6 +32,14 @@ public:
     PlayerSettings(OptionsConfig &options, Audio::Mixer *mixer) noexcept;
 
     [[nodiscard]] OptionsConfig &Options() noexcept { return _options; }
+
+    /// @brief Every bus the game has, defaults and its own, parents before
+    /// children. Empty without a mixer.
+    [[nodiscard]] std::vector<std::string_view> Buses() const;
+
+    /// @brief The volume a slider for @p bus shows: the player's if they set
+    /// one, the game's otherwise. Empty for a bus the game does not have.
+    [[nodiscard]] std::optional<float> BusVolume(std::string_view bus) const;
 
     /// @brief Sets every bus the options name to the player's volume. A name the
     /// game has no bus for is skipped, and kept in the options.

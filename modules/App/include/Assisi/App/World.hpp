@@ -415,7 +415,7 @@ class WorldManager
         Window::InputContext *input = nullptr;
         Window::ActionMap *actions = nullptr;
         Mondrian::Ui *ui = nullptr;
-        Audio::Mixer *mixer = nullptr;
+        Audio::SoundOutput *mixer = nullptr;
         PlayerSettings *settings = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }

@@ -64,7 +64,7 @@ class Ui;
 
 namespace Assisi::Audio
 {
-class Mixer;
+class SoundOutput;
 } // namespace Assisi::Audio
 
 namespace Assisi::App
@@ -132,9 +132,10 @@ struct SystemContext
     /// is no window to draw it in or take input from.
     Mondrian::Ui *ui = nullptr;
 
-    /// The mixer every sound plays through. Null in headless hosts, which have
-    /// no audio, for the same reason `ui` is.
-    Audio::Mixer *mixer = nullptr;
+    /// Starts and stops sounds on the mixer's buses. Bus volumes are not here:
+    /// they are the player's, and set through `settings`. Null in headless
+    /// hosts, which have no audio, for the same reason `ui` is.
+    Audio::SoundOutput *mixer = nullptr;
 
     /// The player's options, and applying and saving them. Null in hosts that
     /// run systems without an application (tests).

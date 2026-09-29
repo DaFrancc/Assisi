@@ -62,38 +62,33 @@ To give a group of sounds its own volume, declare a bus in
 If the file breaks one of these rules, the game logs a warning and uses only
 the default buses. A game can declare up to 58 buses of its own.
 
-## Changing a volume from a system
+## Volumes the player sets
 
-Systems reach the mixer through `ctx.mixer`. It's null in a dedicated server,
-which has no audio, so check it first, as you would `ctx.ui`:
+A bus's volume is the player's: there is one way to set it, through the
+player's settings, so nothing in the game can overwrite what they chose.
+Systems reach the settings through `ctx.settings`.
+
+### Showing the volumes
+
+A settings screen lists the buses and shows each at its current volume:
 
 ```cpp
-void DuckMusicSystem(Assisi::App::SystemContext &ctx)
+for (const std::string_view bus : ctx.settings->Buses())
 {
-    if (ctx.mixer == nullptr)
-    {
-        return;
-    }
-    const std::optional<Assisi::Audio::BusId> music = ctx.mixer->Layout().FindBus("Music");
-    if (music)
-    {
-        ctx.mixer->SetBusVolume(*music, 0.2f);
-    }
+    const float volume = ctx.settings->BusVolume(bus).value_or(1.0f);
+    // Show a slider named `bus`, set to `volume`.
 }
 ```
 
-- `ctx.mixer->Layout().FindBus("Music")` looks the bus up by name and gives
-  back its id, or nothing if the game has no bus with that name.
-- `SetBusVolume` fades the bus to its new volume over a fiftieth of a second.
-  Volumes outside 0 to 1 are clamped.
+- `Buses()` gives every bus the game has, the default ones and your own, each
+  parent before the buses under it.
+- `BusVolume(bus)` gives the player's volume for that bus if they set one, and
+  the volume `buses.json` gives it otherwise. It's empty for a name the game has
+  no bus for.
 
-This lasts for the current run only. The next time the game starts, the bus is
-back at the player's saved volume, or the one `buses.json` gives it.
+### Changing a volume
 
-## Volumes the player sets
-
-A volume the player chooses in a settings screen is kept in their options.
-Systems reach the options through `ctx.settings`:
+When the player moves a slider:
 
 ```cpp
 void SetMusicVolumeSystem(Assisi::App::SystemContext &ctx)
@@ -123,7 +118,11 @@ together, try a volume while a slider moves without saving it, and save once
 when the screen closes.
 
 `ctx.settings` is null only where systems run without a game around them, such
-as in tests.
+as in tests. Check it first, as you would `ctx.ui`.
+
+Lowering the music for a cutscene is the game's choice, not the player's, so it
+isn't done by changing a bus's volume. A way to do that on top of the player's
+volume, without changing it, is planned.
 
 Volumes are saved in `options.json` by bus name, and only for buses the player
 has changed. Every other bus keeps the volume `buses.json` gives it, even if you
@@ -144,5 +143,6 @@ used, so it comes back if the bus does.
 
 ## Playing sounds
 
-Sounds themselves are played by entities with an audio emitter, not by calling
-the mixer directly.
+Sounds are played by entities with an audio emitter. `ctx.mixer` is what the
+engine's emitter system plays them through; it starts and stops sounds, and
+has no way to change a bus's volume.
