@@ -1,11 +1,11 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestAssetKind.cpp
-/// @brief A kind registered from outside the engine is found by its files and
-/// its id, cooks through its own step, and cannot take a name or an extension
-/// something else already has.
+/// @brief Kinds, the engine's own and those registered from outside it: which
+/// formats each reads, which kind a new file is given, and how a kind cooks.
 
 #include <Assisi/Core/AssetKind.hpp>
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Testing/TestAssetKinds.hpp>
@@ -16,6 +16,7 @@
 #include <expected>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace Assisi;
@@ -42,22 +43,67 @@ std::expected<Testing::TestBytes, std::string> LoadNothing(std::span<const std::
 
 } // namespace
 
-TEST_CASE("A registered kind is found by the extension of its files and by its id")
+TEST_CASE("Every engine kind is in the registry, so every file can say it is one")
 {
     const Core::AssetKindRegistry &registry = Core::AssetKindRegistry::Instance();
+    for (const Core::AssetKindId kind :
+         {Core::kReflectedKind, Core::kSceneKind, Core::kMeshKind, Core::kTextureKind, Core::kShaderKind,
+          Core::kVerbatimKind, Core::kFontKind, Core::kScreenKind, Core::kStringTableKind})
+    {
+        CAPTURE(Core::DescribeKind(kind));
+        CHECK(registry.Find(kind) != nullptr);
+    }
+    CHECK(registry.Reads(Core::kTextureKind, ".png"));
+    CHECK_FALSE(registry.Reads(Core::kTextureKind, ".wav"));
+}
 
-    const Core::AssetKind *byPath = registry.ForPath("things/sample.tbytes");
-    REQUIRE(byPath != nullptr);
-    CHECK(byPath->id == Testing::kReversedKind);
-    CHECK(registry.Find(Testing::kReversedKind) == byPath);
-    CHECK(byPath->valueType == typeid(Testing::TestBytes));
+TEST_CASE("Several kinds can read one format, listed by name")
+{
+    const std::vector<const Core::AssetKind *> readers = Core::AssetKindRegistry::Instance().KindsReading(".png");
+    REQUIRE(readers.size() == 2);
+    CHECK(readers[0]->id == Testing::kRawKind);
+    CHECK(readers[1]->id == Core::kTextureKind);
+}
 
-    CHECK(registry.ForPath("things/sample.unregistered") == nullptr);
-    // Matched as the engine's own cookers match theirs: exactly.
-    CHECK(registry.ForPath("things/sample.TBYTES") == nullptr);
-    // A file called only its extension has no name to be a file of that kind.
-    CHECK(registry.ForPath(".tbytes") == nullptr);
-    CHECK(registry.Find(Core::AssetKindId{"no such kind"}) == nullptr);
+TEST_CASE("A new file is given the kind that prefers its format, not the first by name")
+{
+    const Core::AssetKindRegistry &registry = Core::AssetKindRegistry::Instance();
+    // "test raw bytes" sorts before "texture" and also reads .png, but only the
+    // texture kind prefers it.
+    CHECK(registry.KindForNewFile(".png")->id == Core::kTextureKind);
+    CHECK(registry.KindForNewFile(".traw")->id == Testing::kRawKind);
+    CHECK(registry.KindForNewFile(".unheardof") == nullptr);
+}
+
+TEST_CASE("A new file's sidecar states its kind; a format no kind reads gets none")
+{
+    const Core::AssetId id = Core::DerivedAssetId("any");
+
+    const Core::AssetSidecar image = Core::NewFileSidecar(id, "textures/photo.png");
+    REQUIRE(image.uses.size() == 1);
+    CHECK(image.uses.front().kind == "texture");
+
+    // Part of another asset rather than an asset: nothing to state.
+    CHECK(Core::NewFileSidecar(id, "shaders/mesh.vert").uses.empty());
+    CHECK(Core::NewFileSidecar(id, "notes.unheardof").uses.empty());
+}
+
+TEST_CASE("Files that are parts of other assets, and compiled shaders, are named by their extension")
+{
+    const Core::AssetKindRegistry &registry = Core::AssetKindRegistry::Instance();
+    CHECK(registry.ConsumerOf(".bin")->id == Core::kMeshKind);
+    CHECK(registry.ConsumerOf(".ttf")->id == Core::kFontKind);
+    CHECK(registry.ConsumerOf(".png") == nullptr);
+    CHECK(registry.GeneratorOf(".spv")->id == Core::kShaderKind);
+    CHECK(registry.GeneratorOf(".png") == nullptr);
+}
+
+TEST_CASE("A file's extension is its last one")
+{
+    CHECK(Core::ExtensionOf("shaders/mesh.vert.spv") == ".spv");
+    CHECK(Core::ExtensionOf("sounds/click.wav") == ".wav");
+    CHECK(Core::ExtensionOf("dir.with.dots/file") == "");
+    CHECK(Core::ExtensionOf(".assisiignore") == "");
 }
 
 TEST_CASE("A registered kind has a name in logs")
@@ -66,19 +112,26 @@ TEST_CASE("A registered kind has a name in logs")
     CHECK(Core::DescribeKind(Core::AssetKindId{"no such kind"}).starts_with("unknown kind"));
 }
 
-TEST_CASE("A kind cannot take a name or an extension another kind has, or a built-in name")
+TEST_CASE("A kind cannot take a name that is taken, come without a loader, or claim a generated format")
 {
     Core::AssetKindRegistry &registry = Core::AssetKindRegistry::Instance();
+    const Core::AssetFormat format{.extension = ".somethingelse"};
 
-    CHECK_FALSE(registry.Register(
-        Core::MakeAssetKind<Testing::TestBytes>("test reversed bytes", {".somethingelse"}, LoadNothing)));
-    CHECK_FALSE(registry.Register(Core::MakeAssetKind<Testing::TestBytes>("another name", {".tbytes"}, LoadNothing)));
-    CHECK_FALSE(registry.Register(Core::MakeAssetKind<Testing::TestBytes>("mesh", {".notamesh"}, LoadNothing)));
+    CHECK_FALSE(
+        registry.Register(Core::MakeAssetKind<Testing::TestBytes>("test reversed bytes", {format}, LoadNothing)));
+    CHECK_FALSE(registry.Register(Core::MakeAssetKind<Testing::TestBytes>("mesh", {format}, LoadNothing)));
 
-    // None of the refusals took the extension it asked for.
-    CHECK(registry.ForPath("a.somethingelse") == nullptr);
-    CHECK(registry.ForPath("a.notamesh") == nullptr);
-    CHECK(registry.ForPath("a.tbytes")->id == Testing::kReversedKind);
+    Core::AssetKind unloadable;
+    unloadable.name = "no loader";
+    unloadable.id = Core::AssetKindId{unloadable.name};
+    CHECK_FALSE(registry.Register(unloadable));
+
+    CHECK_FALSE(registry.Register(Core::MakeAssetKind<Testing::TestBytes>(
+        "generated", {Core::AssetFormat{.extension = ".gen", .role = Core::FormatRole::Generated}}, LoadNothing)));
+
+    // None of the refusals left a reader behind.
+    CHECK(registry.KindsReading(".somethingelse").empty());
+    CHECK(registry.GeneratorOf(".gen") == nullptr);
 }
 
 TEST_CASE("A kind with no cook step ships its source unchanged behind the envelope")
@@ -114,4 +167,28 @@ TEST_CASE("A cook step's refusal comes back with its reason")
     const std::expected<std::vector<std::byte>, std::string> blob = Core::CookAssetBytes(*reversed, refused);
     REQUIRE_FALSE(blob.has_value());
     CHECK(blob.error() == "the source asks the cook to fail");
+}
+
+TEST_CASE("A sidecar's uses round-trip, a sidecar without them still reads, and two are refused")
+{
+    Core::AssetSidecar written = Core::AssetSidecar::Leaf(Core::DerivedAssetId("terrain.png"));
+    written.uses.push_back(Core::AssetUse{.kind = "heightmap"});
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> read =
+        Core::DeserializeSidecar(Core::SerializeSidecar(written));
+    REQUIRE(read.has_value());
+    REQUIRE(read->uses.size() == 1);
+    CHECK(read->uses.front().kind == "heightmap");
+
+    const Core::AssetSidecar leaf = Core::AssetSidecar::Leaf(Core::DerivedAssetId("old.png"));
+    const std::string leafText = Core::SerializeSidecar(leaf);
+    CHECK(leafText.find("uses") == std::string::npos);
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> old = Core::DeserializeSidecar(leafText);
+    REQUIRE(old.has_value());
+    CHECK(old->uses.empty());
+
+    written.uses.push_back(Core::AssetUse{.kind = "texture"});
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> two =
+        Core::DeserializeSidecar(Core::SerializeSidecar(written));
+    REQUIRE_FALSE(two.has_value());
+    CHECK(two.error() == Core::AssetSidecarError::TooManyUses);
 }

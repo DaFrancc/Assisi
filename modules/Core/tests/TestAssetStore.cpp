@@ -89,6 +89,48 @@ void Finish(Core::JobSystem &jobs, const Core::AssetStore &store)
     jobs.HelpUntil([&store] { return !store.HasPendingLoads(); }, true);
 }
 
+/// Source files by id with the path and kind each one's sidecar would give it,
+/// held in memory: a source tree without the files.
+class SourceTree
+{
+  public:
+    /// @param kind empty for a sidecar that names none.
+    Core::AssetId Add(const std::string &path, const std::string &kind, std::string_view contents)
+    {
+        const Core::AssetId id = Core::DerivedAssetId(path);
+        _files.Add(id, Bytes(contents));
+        _paths[id] = path;
+        if (!kind.empty())
+        {
+            _kinds[id] = kind;
+        }
+        return id;
+    }
+
+    [[nodiscard]] Core::CookingProvider Provider() const
+    {
+        return Core::CookingProvider{_files, [this](Core::AssetId id) { return Lookup(_paths, id); },
+                                     [this](Core::AssetId id) { return Lookup(_kinds, id); }};
+    }
+
+  private:
+    using TextById = std::unordered_map<Core::AssetId, std::string>;
+
+    static std::optional<std::string> Lookup(const TextById &table, Core::AssetId id)
+    {
+        const TextById::const_iterator found = table.find(id);
+        if (found == table.end())
+        {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+
+    MemoryProvider _files;
+    TextById _paths;
+    TextById _kinds;
+};
+
 /// A type no kind loads as.
 struct NotLoadedByAnyKind
 {
@@ -236,18 +278,9 @@ TEST_CASE("A load that lands after a Clear is dropped, and the next request load
 
 TEST_CASE("Source files cook on demand and load through the same store")
 {
-    const Core::AssetId kSource = Core::DerivedAssetId("things/sample.tbytes");
-    MemoryProvider sources;
-    sources.Add(kSource, Bytes("abc"));
-    const Core::CookingProvider cooking(sources,
-                                        [&kSource](Core::AssetId id) -> std::optional<std::string>
-                                        {
-                                            if (id == kSource)
-                                            {
-                                                return std::string{"things/sample.tbytes"};
-                                            }
-                                            return std::nullopt;
-                                        });
+    SourceTree tree;
+    const Core::AssetId kSource = tree.Add("things/sample.tbytes", "test reversed bytes", "abc");
+    const Core::CookingProvider cooking = tree.Provider();
 
     Core::JobSystem jobs(kWorkers);
     Core::AssetStore store;
@@ -264,12 +297,10 @@ TEST_CASE("Source files cook on demand and load through the same store")
 
 TEST_CASE("An asset whose finishing step fails stays null")
 {
-    const Core::AssetId kSource = Core::DerivedAssetId("things/finish-fails.tbytes");
-    MemoryProvider sources;
+    SourceTree tree;
     // Reversed by the cook, so the payload starts with the 'F' that fails the finish.
-    sources.Add(kSource, Bytes("abF"));
-    const Core::CookingProvider cooking(sources, [](Core::AssetId) -> std::optional<std::string>
-                                        { return std::string{"things/finish-fails.tbytes"}; });
+    const Core::AssetId kSource = tree.Add("things/finish-fails.tbytes", "test reversed bytes", "abF");
+    const Core::CookingProvider cooking = tree.Provider();
 
     Core::JobSystem jobs(kWorkers);
     Core::AssetStore store;
@@ -279,29 +310,43 @@ TEST_CASE("An asset whose finishing step fails stays null")
     CHECK(store.Resolve<Testing::TestBytes>(kSource) == nullptr);
 }
 
-TEST_CASE("The cooking provider refuses a file that is no registered kind, or that its cook step refuses")
+TEST_CASE("A PNG whose sidecar says it is another kind loads as that kind")
 {
-    const Core::AssetId kUnregistered = Core::DerivedAssetId("things/notes.md");
-    const Core::AssetId kRefused = Core::DerivedAssetId("things/refused.tbytes");
-    const Core::AssetId kNoPath = Core::DerivedAssetId("things/nowhere.tbytes");
-    MemoryProvider sources;
-    sources.Add(kUnregistered, Bytes("text"));
-    sources.Add(kRefused, Bytes("Xyz"));
-    const Core::CookingProvider cooking(sources,
-                                        [&](Core::AssetId id) -> std::optional<std::string>
-                                        {
-                                            if (id == kUnregistered)
-                                            {
-                                                return std::string{"things/notes.md"};
-                                            }
-                                            if (id == kRefused)
-                                            {
-                                                return std::string{"things/refused.tbytes"};
-                                            }
-                                            return std::nullopt;
-                                        });
+    SourceTree tree;
+    const Core::AssetId kPhoto = tree.Add("things/photo.png", "test raw bytes", "not really a png");
+    const Core::CookingProvider cooking = tree.Provider();
 
-    CHECK(cooking.Open(kUnregistered).error() == Core::AssetError::UnknownAssetId);
+    Core::JobSystem jobs(kWorkers);
+    Core::AssetStore store;
+    store.Initialize(jobs, cooking);
+    (void)store.Resolve<Testing::TestBytes>(kPhoto);
+    Finish(jobs, store);
+
+    const std::shared_ptr<const Testing::TestBytes> loaded = store.Resolve<Testing::TestBytes>(kPhoto);
+    REQUIRE(loaded != nullptr);
+    CHECK(loaded->bytes == Bytes("not really a png"));
+}
+
+TEST_CASE("The cooking provider takes a file's kind from its sidecar and nowhere else")
+{
+    SourceTree tree;
+    // A .tbytes with no kind is refused, although only one kind reads .tbytes.
+    const Core::AssetId kNoKind = tree.Add("things/unstated.tbytes", "", "abc");
+    // A kind that does not read the file's format.
+    const Core::AssetId kWrongFormat = tree.Add("things/wrong.traw", "test reversed bytes", "abc");
+    // A kind this build does not have.
+    const Core::AssetId kUnknownKind = tree.Add("things/unknown.tbytes", "no such kind", "abc");
+    // An engine kind, which has its own loaders and is not served here.
+    const Core::AssetId kTexture = tree.Add("things/plain.png", "texture", "abc");
+    // A kind whose cook step refuses the file.
+    const Core::AssetId kRefused = tree.Add("things/refused.tbytes", "test reversed bytes", "Xyz");
+    const Core::AssetId kNoPath = Core::DerivedAssetId("things/nowhere.tbytes");
+    const Core::CookingProvider cooking = tree.Provider();
+
+    CHECK(cooking.Open(kNoKind).error() == Core::AssetError::UnknownAssetId);
+    CHECK(cooking.Open(kWrongFormat).error() == Core::AssetError::UnknownAssetId);
+    CHECK(cooking.Open(kUnknownKind).error() == Core::AssetError::UnknownAssetId);
+    CHECK(cooking.Open(kTexture).error() == Core::AssetError::UnknownAssetId);
     CHECK(cooking.Open(kNoPath).error() == Core::AssetError::UnknownAssetId);
     CHECK(cooking.Open(kRefused).error() == Core::AssetError::UnsupportedEncoding);
 }

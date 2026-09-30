@@ -125,7 +125,11 @@ public:
     ///        in any gap; empty when the mesh has no manifest.
     [[nodiscard]] std::vector<AssetId> SlotMaterials(AssetId meshId) const;
 
-private:
+    /// @brief The kind @p id's sidecar says it is, by name, or nullopt when the
+    ///        sidecar names none or the id is not indexed.
+    [[nodiscard]] std::optional<std::string> KindNameOf(AssetId id) const;
+
+  private:
     AssetIgnoreList _ignore;
 
     std::unordered_map<AssetId, std::string> _idToPath;
@@ -134,6 +138,9 @@ private:
     // Composite manifests: mesh id → slot-indexed default material ids (index =
     // slot; nil fills any gap). Read from each sidecar's `subAssets` on Rebuild.
     std::unordered_map<AssetId, std::vector<AssetId>> _manifests;
+
+    // What each id's sidecar says it is. Ids whose sidecar names no kind are absent.
+    std::unordered_map<AssetId, std::string> _kinds;
 };
 
 } // namespace Assisi::Core

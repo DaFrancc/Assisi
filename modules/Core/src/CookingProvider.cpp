@@ -9,8 +9,8 @@
 namespace Assisi::Core
 {
 
-CookingProvider::CookingProvider(const AssetProvider &source, PathOf pathOf)
-    : _pathOf(std::move(pathOf)), _source(&source)
+CookingProvider::CookingProvider(const AssetProvider &source, TextOf pathOf, TextOf kindOf)
+    : _pathOf(std::move(pathOf)), _kindOf(std::move(kindOf)), _source(&source)
 {
 }
 
@@ -21,9 +21,23 @@ std::expected<std::vector<std::byte>, AssetError> CookingProvider::Open(AssetId 
     {
         return std::unexpected(AssetError::UnknownAssetId);
     }
-    const AssetKind *kind = AssetKindRegistry::Instance().ForPath(*path);
-    if (kind == nullptr)
+    const std::optional<std::string> kindName = _kindOf(id);
+    if (!kindName)
     {
+        Log::Warn("CookingProvider: '{}' has no kind in its sidecar.", *path);
+        return std::unexpected(AssetError::UnknownAssetId);
+    }
+    const AssetKindRegistry &registry = AssetKindRegistry::Instance();
+    const AssetKind *kind = registry.FindByName(*kindName);
+    // The engine's own kinds have no load function here: they are read by their
+    // own loaders, never through this provider.
+    if (kind == nullptr || !kind->load)
+    {
+        return std::unexpected(AssetError::UnknownAssetId);
+    }
+    if (!registry.Reads(kind->id, ExtensionOf(*path)))
+    {
+        Log::Warn("CookingProvider: '{}' is used as {}, which does not read its format.", *path, kind->name);
         return std::unexpected(AssetError::UnknownAssetId);
     }
 

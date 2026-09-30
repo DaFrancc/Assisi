@@ -53,11 +53,6 @@ bool HasExtension(std::string_view vpath, std::string_view extension)
     return vpath.size() > extension.size() && vpath.ends_with(extension);
 }
 
-bool HasAnyExtension(std::string_view vpath, std::span<const std::string_view> extensions)
-{
-    return std::ranges::any_of(extensions, [vpath](std::string_view ext) { return HasExtension(vpath, ext); });
-}
-
 CookError Failure(std::string_view vpath, std::string reason)
 {
     return CookError{.vpath = std::string{vpath}, .reason = std::move(reason)};
@@ -96,12 +91,6 @@ class ReflectedCooker final : public Cooker
         }
         std::ranges::sort(layouts);
         return Core::ContentHash64(std::as_bytes(std::span{layouts}));
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".amat"}, std::string_view{".json"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
@@ -188,12 +177,6 @@ class SceneCooker final : public Cooker
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Runtime::kScenePayloadVersion; }
 
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".alvl"}, std::string_view{".abp"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
-    }
-
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
                                                                         const CookContext &context) const override
     {
@@ -240,19 +223,6 @@ class MeshCooker final : public Cooker
     [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kMeshKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Geometry::kMeshPayloadVersion; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".gltf"}, std::string_view{".glb"}};
-        if (HasAnyExtension(vpath, kExtensions))
-        {
-            return Claim::Output;
-        }
-        // A glTF's external buffer. Content, and consumed whole into the mesh
-        // blob beside it rather than cooked on its own — the same relationship a
-        // shader source has to its .spv.
-        return HasExtension(vpath, ".bin") ? Claim::SourceOnly : Claim::None;
-    }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
@@ -344,13 +314,6 @@ class TextureCooker final : public Cooker
                static_cast<std::uint64_t>(context.textureQuality);
     }
 
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".png"}, std::string_view{".jpg"},
-                                                std::string_view{".jpeg"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
-    }
-
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
                                                                         const CookContext &context) const override
     {
@@ -410,20 +373,6 @@ class ShaderCooker final : public Cooker
   public:
     [[nodiscard]] std::string_view Name() const override { return "shader"; }
     [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kShaderKind; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        if (HasExtension(vpath, ".spv"))
-        {
-            return Claim::Output;
-        }
-        // Source, which the build compiles and a shipped tree never carries. A
-        // `.glsl` is a fragment another shader includes and is not compiled on
-        // its own, so it has no `.spv` of its own either.
-        static constexpr std::array kSources{std::string_view{".vert"}, std::string_view{".frag"},
-                                             std::string_view{".comp"}, std::string_view{".glsl"}};
-        return HasAnyExtension(vpath, kSources) ? Claim::SourceOnly : Claim::None;
-    }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
@@ -498,19 +447,6 @@ class FontCooker final : public Cooker
         constexpr std::uint32_t kComponentBits = 8;
         return (static_cast<std::uint64_t>(Mondrian::kFontPayloadVersion) << (3 * kComponentBits)) |
                Mondrian::Import::RasterizerVersion();
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        if (HasExtension(vpath, ".afont"))
-        {
-            return Claim::Output;
-        }
-        // A font's licence text travels with the font file, so it stays with it
-        // in the source tree; the game ships neither.
-        static constexpr std::array kSources{std::string_view{".ttf"}, std::string_view{".otf"},
-                                             std::string_view{".txt"}};
-        return HasAnyExtension(vpath, kSources) ? Claim::SourceOnly : Claim::None;
     }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
@@ -593,11 +529,8 @@ std::string Where(const Mondrian::Import::MarkupError &error)
     return error.file.empty() ? place : error.file + ":" + place;
 }
 
-/// The string tables `config/ui.json` lists, each a `.csv` compiled to the table
-/// a screen's keys are looked up in.
-///
-/// Only the listed files are its: a `.csv` listed nowhere is some other kind of
-/// data, and not this cooker's to guess at.
+/// String tables: each a `.csv` whose sidecar says it is one, compiled to the
+/// table a screen's keys are looked up in.
 class StringTableCooker final : public Cooker
 {
   public:
@@ -612,13 +545,6 @@ class StringTableCooker final : public Cooker
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
         return Mondrian::kStringTablePayloadVersion;
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        const bool listed = std::ranges::any_of(_config.stringTables, [vpath](const Core::AssetPath &table)
-                                                { return table.View() == vpath; });
-        return listed ? Claim::Output : Claim::None;
     }
 
     /// The settings say whether an empty text is allowed.
@@ -673,15 +599,6 @@ class ScreenCooker final : public Cooker
         // refuses.
         const std::array<std::uint64_t, 2> parts{Mondrian::kScreenPayloadVersion, Mondrian::ScreenLayoutHash()};
         return Core::ContentHash64(std::as_bytes(std::span{parts}));
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        if (HasExtension(vpath, ".amdn"))
-        {
-            return Claim::Output;
-        }
-        return HasExtension(vpath, ".amdt") ? Claim::SourceOnly : Claim::None;
     }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
@@ -778,11 +695,6 @@ class KindCooker final : public Cooker
         return step != nullptr ? step->version : 0;
     }
 
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        return Core::AssetKindRegistry::Instance().ForPath(vpath) == _kind ? Claim::Output : Claim::None;
-    }
-
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
                                                                         const CookContext &) const override
     {
@@ -807,21 +719,11 @@ class KindCooker final : public Cooker
 
 /// Animated WebP: bytes with no transformation to apply, wrapped in the
 /// envelope so a cooked tree is uniformly readable.
-///
-/// Last in the list and explicit about what it takes. A catch-all that claimed
-/// anything would turn the cook's best property — a file nobody handles is a
-/// build failure — into a silent copy.
 class VerbatimCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "verbatim"; }
     [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kVerbatimKind; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".webp"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
-    }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
                                                                         const CookContext &) const override
@@ -888,6 +790,12 @@ std::pair<std::string, std::string> TextureRoles::Conflict(Core::AssetId texture
     return {found->second.material, found->second.conflictingMaterial};
 }
 
+std::string TextureRoles::BoundBy(Core::AssetId texture) const
+{
+    const std::unordered_map<Core::AssetId, Binding>::const_iterator found = _bindings.find(texture);
+    return found == _bindings.end() ? std::string{} : found->second.material;
+}
+
 std::vector<std::unique_ptr<Cooker>> MakeCookers()
 {
     std::vector<std::unique_ptr<Cooker>> cookers;
@@ -899,13 +807,16 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<FontCooker>());
     cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
-    // After the engine's own, so a registered kind cannot take a file one of
-    // them claims; before the verbatim copy, which would otherwise take it.
+    cookers.push_back(std::make_unique<VerbatimCooker>());
+    // One per kind a module registered. The engine's own kinds have no load
+    // function in the registry, and their cookers are the ones above.
     for (const Core::AssetKind &kind : Core::AssetKindRegistry::Instance().All())
     {
-        cookers.push_back(std::make_unique<KindCooker>(kind));
+        if (kind.load)
+        {
+            cookers.push_back(std::make_unique<KindCooker>(kind));
+        }
     }
-    cookers.push_back(std::make_unique<VerbatimCooker>());
     return cookers;
 }
 

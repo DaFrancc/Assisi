@@ -7,13 +7,44 @@ have several **formats**, the file types that encode it: a sound can be a
 
 The engine has kinds of its own: meshes, textures, materials, levels, shaders,
 fonts and screens. A module can add more without changing the engine. This page
-shows how.
+shows how to add one, and how a file says which kind it is.
+
+## Which kind a file is
+
+A format is not a use. A `.png` can be a colour texture, a heightmap or a table
+of data, so the engine never decides a file's kind from its extension. Every
+file's `.aast` sidecar states it:
+
+```json
+{
+  "guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d",
+  "type": "AssetSidecar",
+  "uses": [{ "kind": "texture" }],
+  "version": 1
+}
+```
+
+- **New files get their kind written for them.** When the editor creates a
+  sidecar, it writes the kind that reads that format. Where several kinds read
+  it, it writes the one that prefers the format, or the first by name when none
+  or several do. A later change to that choice only affects files imported
+  afterwards.
+- **You change it with "Use as".** Right-click a file in the asset browser. The
+  menu lists only the kinds that can read its format, with the current one
+  marked, and appears only when there is more than one.
+- **The cook refuses a file it cannot place,** naming the file: a sidecar with
+  no kind, a kind this build does not have, a kind that cannot read the file's
+  format, or a texture a material binds whose sidecar names another kind.
+- **One kind per file.** A file needed as two kinds is two files for now.
+
+Two sorts of file have no kind of their own and need none: parts of another
+asset, such as a glTF's `.bin`, a font's `.ttf` or a shader's GLSL source, and
+compiled `.spv` shaders, which are build outputs with no committed sidecar.
 
 ## What the engine does for a kind
 
-Once a kind is registered, every file with one of its extensions:
+Once a kind is registered, every file whose sidecar names it:
 
-- gets an id and a `.aast` sidecar, like any other asset;
 - is cooked into the game's package, through the kind's own cook step if it has
   one, or as it is if not;
 - loads by id in the background, in the game from the package and in the editor
@@ -36,8 +67,8 @@ struct PcmClip
 
 ## Step 2: register the kind
 
-Add a source file to your module that registers the kind: its name, its
-extensions, and a function that turns the file's bytes into the value. The
+Add a source file to your module that registers the kind: its name, the formats
+it reads, and a function that turns the file's bytes into the value. The
 function runs on a worker thread, so it must not touch anything the main thread
 changes.
 
@@ -57,17 +88,24 @@ std::expected<PcmClip, std::string> LoadSound(std::span<const std::byte> bytes)
     return std::move(*clip);
 }
 
+using Assisi::Core::AssetFormat;
+
 [[maybe_unused]] const bool kRegistered = Assisi::Core::AssetKindRegistry::Instance().Register(
-    Assisi::Core::MakeAssetKind<PcmClip>("sound", {".wav", ".flac", ".ogg"}, LoadSound));
+    Assisi::Core::MakeAssetKind<PcmClip>("sound",
+                                         {AssetFormat{.extension = ".wav", .preferred = true},
+                                          AssetFormat{.extension = ".flac", .preferred = true},
+                                          AssetFormat{.extension = ".ogg", .preferred = true}},
+                                         LoadSound));
 
 } // namespace
 ```
 
-- **The name is the kind's identity.** Two kinds cannot share one, and it cannot
-  be the name of one of the engine's own kinds.
-- **Extensions are matched exactly.** `.WAV` is not `.wav`. Two kinds cannot
-  claim the same extension, and the engine's own extensions (`.png`, `.gltf`,
-  `.amat` and the rest) are already taken.
+- **The name is the kind's identity.** It is what sidecars write, so two kinds
+  cannot share one, and it cannot be the name of one of the engine's own kinds.
+- **Extensions are matched exactly.** `.WAV` is not `.wav`.
+- **`preferred` says what new files get.** Several kinds may read one format. A
+  heightmap kind would read `.png` without preferring it, so new `.png` files
+  stay textures and a designer marks the heightmaps with "Use as".
 - **The error is the reason.** It goes into the warning a failed load logs.
 
 If the value needs work on the main thread before it can be used, such as

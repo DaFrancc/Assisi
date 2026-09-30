@@ -642,6 +642,13 @@ class EditorApp : public Assisi::App::Application
     /// @brief Reads _assetBrowserDir into the cached dirs/images/meshes/materials
     /// lists. Called only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
+    /// @brief The right-click "Use as" menu on the last tile drawn: the kinds that
+    /// read @p vpath's format, the one its sidecar names marked. Nothing when only
+    /// one kind reads it, or in a restricted viewer.
+    void DrawUseAsMenu(const std::string &vpath);
+    /// @brief Rewrite @p vpath's sidecar to say it is a @p kindName, keeping the
+    /// rest of it, then reindex and forget what the store loaded.
+    void UseFileAs(const std::string &vpath, const std::string &kindName);
 
     // --- Material authoring ---
     /// @brief Load @p vpath into the material editor and open it. A material
@@ -1582,8 +1589,9 @@ class EditorApp : public Assisi::App::Application
     // each kind's own step as they are read, so the editor loads exactly what
     // the game will. Declared after the database both read through.
     Assisi::Core::LooseFileProvider _sourceFiles{_assetDatabase};
-    Assisi::Core::CookingProvider _cookedSources{_sourceFiles, [this](Assisi::Core::AssetId id)
-                                                 { return _assetDatabase.PathFor(id); }};
+    Assisi::Core::CookingProvider _cookedSources{
+        _sourceFiles, [this](Assisi::Core::AssetId id) { return _assetDatabase.PathFor(id); },
+        [this](Assisi::Core::AssetId id) { return _assetDatabase.KindNameOf(id); }};
 
     // Mesh assets (by virtual path) the last reconcile left stale: their glTF
     // source changed in a way the conservative classifier couldn't auto-resolve.

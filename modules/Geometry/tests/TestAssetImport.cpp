@@ -227,7 +227,7 @@ fs::path WriteMaterialAssets(AssetId gltfId)
     }
     {
         std::ofstream aast(root / "model.gltf.aast", std::ios::binary);
-        const std::string text = SerializeSidecar(AssetSidecar::Leaf(gltfId));
+        const std::string text = SerializeSidecar(Assisi::Core::NewFileSidecar(gltfId, "model.gltf"));
         aast.write(text.data(), static_cast<std::streamsize>(text.size()));
     }
 
@@ -265,11 +265,17 @@ TEST_CASE("ExplodeGltfMaterials writes a .amat + sidecar and the glTF manifest")
     CHECK(gltfSidecar->sourceHash.has_value()); // stamped for S4 stale detection
     REQUIRE(gltfSidecar->subAssets.size() == 1);
     CHECK(gltfSidecar->subAssets[0].slot == 0);
+    // The manifest is written into the sidecar that was there, so its kind survives.
+    REQUIRE(gltfSidecar->uses.size() == 1);
+    CHECK(gltfSidecar->uses.front().kind == "mesh");
 
     const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> amatSidecar =
         DeserializeSidecar(ReadFile(root / "model_Wood.amat.aast"));
     REQUIRE(amatSidecar.has_value());
     CHECK(gltfSidecar->subAssets[0].material == amatSidecar->guid); // manifest points at the real file
+    // A new material's sidecar states its kind like any new file's.
+    REQUIRE(amatSidecar->uses.size() == 1);
+    CHECK(amatSidecar->uses.front().kind == "reflected");
 
     // The written material carries the glTF's factors and the resolved channel.
     const std::expected<Assisi::Geometry::MaterialData, Assisi::Geometry::MaterialFileError> material =
@@ -637,6 +643,13 @@ TEST_CASE("RegenerateGltfMaterials: overwrites the material from source, keeping
 
     // The conflict is cleared — a follow-up reconcile is up to date.
     CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
+
+    // The rewritten manifest kept the glTF's kind.
+    const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> gltfSidecar =
+        DeserializeSidecar(ReadFile(root / "model.gltf.aast"));
+    REQUIRE(gltfSidecar.has_value());
+    REQUIRE(gltfSidecar->uses.size() == 1);
+    CHECK(gltfSidecar->uses.front().kind == "mesh");
 
     fs::remove_all(root);
 }

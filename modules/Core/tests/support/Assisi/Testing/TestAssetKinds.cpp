@@ -30,7 +30,8 @@ std::expected<TestBytes, std::string> Load(std::span<const std::byte> payload)
 
 bool RegisterReversed()
 {
-    Core::AssetKind kind = Core::MakeAssetKind<TestBytes>("test reversed bytes", {".tbytes"}, Load);
+    Core::AssetKind kind = Core::MakeAssetKind<TestBytes>(
+        "test reversed bytes", {Core::AssetFormat{.extension = ".tbytes", .preferred = true}}, Load);
     kind.finish = [](void *value) -> std::expected<void, std::string>
     {
         TestBytes &loaded = *static_cast<TestBytes *>(value);
@@ -61,8 +62,11 @@ bool RegisterReversed()
 
 bool RegisterRaw()
 {
-    return Core::AssetKindRegistry::Instance().Register(
-        Core::MakeAssetKind<TestBytes>("test raw bytes", {".traw"}, Load));
+    // Also reads `.png` without preferring it: a PNG can be chosen as this kind,
+    // and a new one is still a texture.
+    return Core::AssetKindRegistry::Instance().Register(Core::MakeAssetKind<TestBytes>(
+        "test raw bytes",
+        {Core::AssetFormat{.extension = ".traw", .preferred = true}, Core::AssetFormat{.extension = ".png"}}, Load));
 }
 
 [[maybe_unused]] const bool kReversedRegistered = RegisterReversed();

@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Core/AssetSidecar.hpp>
 
+#include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 
 #include <nlohmann/json.hpp>
@@ -18,8 +19,20 @@ std::string_view ToString(AssetSidecarError error) noexcept
         return "wrong asset type";
     case AssetSidecarError::MissingGuid:
         return "missing or malformed guid";
+    case AssetSidecarError::TooManyUses:
+        return "more than one use, and a file has one";
     }
     return "unknown error";
+}
+
+AssetSidecar NewFileSidecar(AssetId id, std::string_view vpath)
+{
+    AssetSidecar sidecar = AssetSidecar::Leaf(id);
+    if (const AssetKind *kind = AssetKindRegistry::Instance().KindForNewFile(ExtensionOf(vpath)); kind != nullptr)
+    {
+        sidecar.uses.push_back(AssetUse{.kind = kind->name});
+    }
+    return sidecar;
 }
 
 std::string SerializeSidecar(const AssetSidecar &sidecar)
@@ -30,6 +43,18 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
     document["version"] = kAssetSidecarVersion;
     document["type"]    = std::string(kAssetSidecarType);
     document["guid"]    = sidecar.guid.ToString();
+
+    if (!sidecar.uses.empty())
+    {
+        nlohmann::json uses = nlohmann::json::array();
+        for (const AssetUse &use : sidecar.uses)
+        {
+            nlohmann::json object;
+            object["kind"] = use.kind;
+            uses.push_back(std::move(object));
+        }
+        document["uses"] = std::move(uses);
+    }
 
     // Composite manifest: emitted only when present, so a leaf asset's sidecar
     // stays a plain `{version,type,guid}`.
@@ -87,6 +112,29 @@ std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_vi
     }
 
     AssetSidecar sidecar = AssetSidecar::Leaf(*guid);
+
+    // Uses (optional here, required by the cook): an entry without a string kind
+    // is skipped, which leaves the file with no kind and fails its cook by name.
+    if (const auto found = document.find("uses"); found != document.end() && found->is_array())
+    {
+        for (const nlohmann::json &entry : *found)
+        {
+            if (!entry.is_object())
+            {
+                continue;
+            }
+            const auto kindIt = entry.find("kind");
+            if (kindIt == entry.end() || !kindIt->is_string())
+            {
+                continue;
+            }
+            sidecar.uses.push_back(AssetUse{.kind = kindIt->get<std::string>()});
+        }
+        if (sidecar.uses.size() > kMaxAssetUses)
+        {
+            return std::unexpected(AssetSidecarError::TooManyUses);
+        }
+    }
 
     // Composite manifest (optional). A malformed entry is skipped rather than
     // failing the whole sidecar: identity (the guid) already validated, and the

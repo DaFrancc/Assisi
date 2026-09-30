@@ -30,8 +30,8 @@ struct TestBytes
 ///        that starts with 'F' fails the finish.
 inline constexpr Core::AssetKindId kReversedKind{"test reversed bytes"};
 
-/// @brief `.traw`: no cook step and no finish, so its payload is its source.
-///        An empty payload fails to load.
+/// @brief `.traw`, and `.png` when a sidecar chooses it: no cook step and no
+///        finish, so its payload is its source. An empty payload fails to load.
 inline constexpr Core::AssetKindId kRawKind{"test raw bytes"};
 
 /// @brief How many times either kind's load has run, for tests that check a

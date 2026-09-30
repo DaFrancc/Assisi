@@ -96,7 +96,69 @@ TEST_CASE("AssetDatabase leaves an existing sidecar untouched (reconcile-not-clo
 {
     const fs::path root = MakeTree();
 
-    // Pre-write a sidecar with a known id for crate.png.
+    // Pre-write a sidecar with a known id for crate.png, used as something other
+    // than what a new .png would be given.
+    const AssetId knownId = *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    const fs::path sidecar = root / "textures" / "crate.png.aast";
+    AssetSidecar chosen = AssetSidecar::Leaf(knownId);
+    chosen.uses.push_back(AssetUse{.kind = "heightmap"});
+    const std::string original = SerializeSidecar(chosen);
+    WriteFile(sidecar, original);
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    // The id and the kind are honored, and the file's bytes are exactly as written.
+    CHECK(db.IdFor("textures/crate.png") == knownId);
+    CHECK(db.PathFor(knownId) == "textures/crate.png");
+    CHECK(db.KindNameOf(knownId) == "heightmap");
+    CHECK(ReadFile(sidecar) == original);
+}
+
+TEST_CASE("A new file's sidecar states the kind a new file of its format is given")
+{
+    const fs::path root = MakeTree();
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    const std::optional<AssetId> crate = db.IdFor("textures/crate.png");
+    REQUIRE(crate.has_value());
+    CHECK(db.KindNameOf(*crate) == "texture");
+
+    // Written into the file, not only remembered: a later change to which kind
+    // new .png files get leaves this one alone.
+    const std::expected<AssetSidecar, AssetSidecarError> written =
+        DeserializeSidecar(ReadFile(root / "textures" / "crate.png.aast"));
+    REQUIRE(written.has_value());
+    REQUIRE(written->uses.size() == 1);
+    CHECK(written->uses.front().kind == "texture");
+}
+
+TEST_CASE("A sidecar from before files stated their kind gains one and keeps its id")
+{
+    const fs::path root = MakeTree();
+    const AssetId knownId = *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    const fs::path sidecar = root / "textures" / "crate.png.aast";
+    WriteFile(sidecar, SerializeSidecar(AssetSidecar::Leaf(knownId)));
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    CHECK(db.IdFor("textures/crate.png") == knownId);
+    CHECK(db.KindNameOf(knownId) == "texture");
+    const std::expected<AssetSidecar, AssetSidecarError> upgraded = DeserializeSidecar(ReadFile(sidecar));
+    REQUIRE(upgraded.has_value());
+    CHECK(upgraded->guid == knownId);
+    REQUIRE(upgraded->uses.size() == 1);
+    CHECK(upgraded->uses.front().kind == "texture");
+}
+
+TEST_CASE("A read-only scan writes no kind into a sidecar that has none")
+{
+    const fs::path root = MakeTree();
     const AssetId knownId = *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     const fs::path sidecar = root / "textures" / "crate.png.aast";
     const std::string original = SerializeSidecar(AssetSidecar::Leaf(knownId));
@@ -104,12 +166,10 @@ TEST_CASE("AssetDatabase leaves an existing sidecar untouched (reconcile-not-clo
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
     AssetDatabase db;
-    REQUIRE(db.Rebuild().has_value());
+    REQUIRE(db.Rebuild(RebuildMode::ReadOnly).has_value());
 
-    // The id is honored, and the file's bytes are exactly as written.
-    CHECK(db.IdFor("textures/crate.png") == knownId);
-    CHECK(db.PathFor(knownId) == "textures/crate.png");
     CHECK(ReadFile(sidecar) == original);
+    CHECK_FALSE(db.KindNameOf(knownId).has_value());
 }
 
 TEST_CASE("AssetDatabase skips a malformed sidecar without clobbering it")

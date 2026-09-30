@@ -2,14 +2,15 @@
 #pragma once
 
 /// @file AssetKind.hpp
-/// @brief Kinds of asset a module adds without editing the engine: what a kind
-///        loads into, which files are its, and how it is cooked.
+/// @brief Kinds of asset, and the ones a module adds without editing the engine:
+///        what a kind loads into, which formats it reads, and how it is cooked.
 ///
 /// A kind is what the data represents — a sound — and each of its file
-/// extensions is one format of it: `.wav`, `.flac`, `.ogg`. A module registers
-/// its kind once, and from then on the cook claims its files, a package carries
-/// them, and AssetStore loads them by id, with nothing in Core, the cook or an
-/// app naming the kind.
+/// extensions is one format of it: `.wav`, `.flac`, `.ogg`. One format can be
+/// several kinds (a `.png` can be a texture or a heightmap); a file's sidecar
+/// says which it is. A module registers its kind once, and from then on the
+/// cook cooks its files, a package carries them, and AssetStore loads them by
+/// id, with nothing in Core, the cook or an app naming the kind.
 ///
 /// Registration has two halves, because a shipped game must not link cook code:
 /// the kind itself, which every executable that loads it needs, and its cook
@@ -54,19 +55,49 @@ using AssetFinishFunction = std::function<std::expected<void, std::string>(void 
 using AssetCookFunction =
     std::function<std::expected<std::vector<std::byte>, std::string>(std::span<const std::byte> source)>;
 
-/// @brief One registered kind.
+/// @brief What a kind does with files of one format.
+enum class FormatRole : std::uint8_t
+{
+    /// A file of this format can be an asset of the kind, when its sidecar says so.
+    Reads,
+
+    /// A file of this format is part of an asset of the kind and never an asset
+    /// of its own: a glTF's `.bin`, a font's `.ttf`, a shader's GLSL source.
+    Consumes,
+
+    /// A build output with no sidecar of its own, named by its path instead of an
+    /// id. Only the engine's compiled shaders; a module cannot declare one.
+    Generated,
+
+    Count,
+};
+
+/// @brief One format a kind handles.
+struct AssetFormat
+{
+    /// Dot included, matched case-sensitively: `.WAV` is not `.wav`.
+    std::string extension;
+
+    FormatRole role = FormatRole::Reads;
+
+    /// Whether a new file of this format is given this kind when several kinds
+    /// read the format. The choice is written into the file's sidecar, so
+    /// changing it later changes only files imported afterwards.
+    bool preferred = false;
+};
+
+/// @brief One kind: what its files are, and how they load.
 struct AssetKind
 {
     std::string name;
 
+    /// Empty for the engine's own kinds, which have loaders of their own.
     AssetLoadFunction load;
 
     /// Empty when the loaded value is ready as it is.
     AssetFinishFunction finish;
 
-    /// Source file extensions, dot included, matched case-sensitively as the
-    /// engine's own cookers match theirs.
-    std::vector<std::string> extensions;
+    std::vector<AssetFormat> formats;
 
     std::type_index valueType = typeid(void);
     AssetKindId id;
@@ -83,14 +114,18 @@ struct AssetCookStep
     std::uint32_t version = 0;
 };
 
-/// @brief Every registered kind and cook step.
+/// @brief Every kind, the engine's own included, and every cook step.
+///
+/// Which kind a file is comes from its sidecar, never from its extension; the
+/// formats here say which kinds a file *can* be, which new files are given, and
+/// which files are parts of other assets.
 class AssetKindRegistry
 {
   public:
     static AssetKindRegistry &Instance();
 
-    /// @brief Add @p kind. Refused, with an error logged, when its name or one of
-    ///        its extensions is already registered, or it names a built-in kind.
+    /// @brief Add @p kind. Refused, with an error logged, when its name is taken,
+    ///        it has no load function, or it declares a Generated format.
     bool Register(AssetKind kind);
 
     /// @brief Add @p step. Refused, with an error logged, when its kind already
@@ -99,34 +134,58 @@ class AssetKindRegistry
 
     [[nodiscard]] const AssetKind *Find(AssetKindId id) const;
 
-    /// @brief The kind whose extensions @p vpath ends with, or null.
-    [[nodiscard]] const AssetKind *ForPath(std::string_view vpath) const;
+    /// @brief The kind called @p name, or null.
+    [[nodiscard]] const AssetKind *FindByName(std::string_view name) const;
+
+    /// @brief Whether @p kind can be an asset in the format of @p extension.
+    [[nodiscard]] bool Reads(AssetKindId kind, std::string_view extension) const;
+
+    /// @brief Every kind that reads @p extension, ordered by name.
+    [[nodiscard]] std::vector<const AssetKind *> KindsReading(std::string_view extension) const;
+
+    /// @brief The kind a new file of @p extension is given: the one that prefers
+    ///        the format, or the first by name when none or several do. Null when
+    ///        no kind reads it.
+    [[nodiscard]] const AssetKind *KindForNewFile(std::string_view extension) const;
+
+    /// @brief The kind that consumes @p extension as part of its assets, or null.
+    [[nodiscard]] const AssetKind *ConsumerOf(std::string_view extension) const;
+
+    /// @brief The kind whose build outputs have @p extension, or null.
+    [[nodiscard]] const AssetKind *GeneratorOf(std::string_view extension) const;
 
     [[nodiscard]] const AssetCookStep *CookStepFor(AssetKindId id) const;
 
-    /// @brief Every kind, in registration order. A deque, so a pointer to one
-    ///        stays valid as later ones register.
+    /// @brief Every kind, in registration order, the engine's own first. A deque,
+    ///        so a pointer to one stays valid as later ones register.
     [[nodiscard]] const std::deque<AssetKind> &All() const { return _kinds; }
 
   private:
-    AssetKindRegistry() = default;
+    /// Declares the engine's own kinds, so they are there before any module's.
+    AssetKindRegistry();
+
+    [[nodiscard]] const AssetKind *WithRole(std::string_view extension, FormatRole role) const;
 
     std::deque<AssetKind> _kinds;
     std::deque<AssetCookStep> _cookSteps;
 };
+
+/// @brief The extension of the file at @p vpath, dot included, or empty. Only
+///        the last one: `mesh.vert.spv` is a `.spv`.
+[[nodiscard]] std::string_view ExtensionOf(std::string_view vpath);
 
 /// @brief A kind whose load returns a @p T, ready to register.
 ///
 /// Takes the load typed and stores it erased, so the value type recorded for the
 /// kind is always the one its load produces.
 template <typename T>
-[[nodiscard]] AssetKind MakeAssetKind(std::string name, std::vector<std::string> extensions,
+[[nodiscard]] AssetKind MakeAssetKind(std::string name, std::vector<AssetFormat> formats,
                                       std::function<std::expected<T, std::string>(std::span<const std::byte>)> load)
 {
     AssetKind kind;
     kind.id = AssetKindId{name};
     kind.name = std::move(name);
-    kind.extensions = std::move(extensions);
+    kind.formats = std::move(formats);
     kind.valueType = typeid(T);
     kind.load = [typed = std::move(load)](
                     std::span<const std::byte> payload) -> std::expected<std::shared_ptr<void>, std::string>

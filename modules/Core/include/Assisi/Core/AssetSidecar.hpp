@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file AssetSidecar.hpp
-/// @brief The `.aast` sidecar payload — an asset's stable identity (and, later,
-///        its import settings and sub-asset manifest).
+/// @brief The `.aast` sidecar payload — an asset's stable identity, the kind of
+///        asset it is, and a composite's sub-asset manifest.
 ///
 /// Every file under the asset root gets a `<file>.aast` sidecar carrying that
 /// file's `AssetId` (the Unity `.meta` model). The reconcile pass generates
@@ -21,6 +21,7 @@
 /// (it deserializes ids); the *writer* is editor-only (only the reconcile pass
 /// mints and writes sidecars).
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -43,10 +44,27 @@ struct AssetSubAsset
     AssetId material;        ///< The `.amat` GUID exploded for that slot.
 };
 
+/// @brief One use of a file: the kind of asset it is.
+struct AssetUse
+{
+    /// The kind's registered name, such as "texture" or "sound".
+    std::string kind;
+};
+
+/// @brief How many uses a file may have. One today; the sidecar keeps them in a
+///        list so a file can gain a second later without rewriting sidecars.
+inline constexpr std::size_t kMaxAssetUses = 1;
+
 /// @brief The deserialized contents of a `.aast` sidecar.
 struct AssetSidecar
 {
     AssetId guid; ///< The asset's stable identity.
+
+    /// @brief What the file is used as. Every file with a sidecar states its
+    ///        kind here; nothing infers one from the extension. Empty only on a
+    ///        sidecar from before kinds were written, or one whose format no
+    ///        kind reads.
+    std::vector<AssetUse> uses;
 
     /// @brief Composite manifest: `slot → material GUID`. Empty for a leaf
     ///        asset. Order is not significant — each entry names its own slot.
@@ -70,6 +88,12 @@ struct AssetSidecar
     }
 };
 
+/// @brief The sidecar a new file at @p vpath is written with: @p id, and the
+///        kind AssetKindRegistry gives new files of its format, written out so
+///        a later change to that choice leaves this file alone. No use when no
+///        kind reads the format.
+[[nodiscard]] AssetSidecar NewFileSidecar(AssetId id, std::string_view vpath);
+
 /// @brief Mint a fresh random UUIDv4. Editor-only (asset authoring). The version
 ///        and variant nibbles are set per RFC 4122, so a minted id can never
 ///        collide with the reserved built-in range. Declared here (beside the
@@ -83,6 +107,7 @@ enum class AssetSidecarError : std::uint8_t
     ParseFailed, ///< Not valid JSON, or not a JSON object.
     WrongType,   ///< The envelope `type` is not the sidecar type.
     MissingGuid, ///< No `guid` field, or it is not a parseable UUID string.
+    TooManyUses, ///< More uses than kMaxAssetUses.
 };
 
 /// @brief Human-readable description of a sidecar error (for logs).

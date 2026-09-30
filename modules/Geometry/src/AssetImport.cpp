@@ -78,17 +78,30 @@ std::string SanitizeName(std::string_view name)
     return safe;
 }
 
+/// @brief The sidecar at @p sidecarPath as it is on disk, or nullopt if it is
+///        missing or malformed. A rewrite starts from this, so fields the writer
+///        does not touch are kept.
+std::optional<Core::AssetSidecar> ExistingSidecar(const fs::path &sidecarPath)
+{
+    const std::optional<std::string> text = ReadWholeFile(sidecarPath);
+    if (!text.has_value())
+    {
+        return std::nullopt;
+    }
+    std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*text);
+    if (!sidecar.has_value())
+    {
+        return std::nullopt;
+    }
+    return std::move(*sidecar);
+}
+
 /// @brief The GUID already recorded in @p sidecarPath, or nil if it is missing
 ///        or malformed. Used both to read a glTF's own id and to reuse the id of
 ///        a `.amat` that already exists (reconcile-not-clobber).
 Core::AssetId ExistingSidecarId(const fs::path &sidecarPath)
 {
-    const std::optional<std::string> text = ReadWholeFile(sidecarPath);
-    if (!text.has_value())
-    {
-        return {};
-    }
-    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*text);
+    const std::optional<Core::AssetSidecar> sidecar = ExistingSidecar(sidecarPath);
     return sidecar.has_value() ? sidecar->guid : Core::AssetId{};
 }
 
@@ -113,7 +126,8 @@ Core::AssetId WriteMaterialFile(const fs::path &amatAbs, const MaterialData &mat
 
     const Core::AssetId id = Core::MintAssetId();
     if (!WriteWholeFile(amatAbs, *amatText) ||
-        !WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar::Leaf(id))))
+        !WriteWholeFile(amatSidecar,
+                        Core::SerializeSidecar(Core::NewFileSidecar(id, amatAbs.filename().generic_string()))))
     {
         Core::Log::Warn("AssetImport: failed to write '{}'.", amatAbs.generic_string());
         return {};
@@ -223,7 +237,8 @@ Core::AssetId OverwriteMaterialFile(const fs::path &amatAbs, const MaterialData 
         return ExistingSidecarId(amatSidecar);
     }
     const Core::AssetId id = Core::MintAssetId();
-    if (!WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar::Leaf(id))))
+    if (!WriteWholeFile(amatSidecar,
+                        Core::SerializeSidecar(Core::NewFileSidecar(id, amatAbs.filename().generic_string()))))
     {
         Core::Log::Warn("AssetImport: failed to write sidecar for '{}'.", amatAbs.generic_string());
         return {};
@@ -378,7 +393,8 @@ std::expected<std::size_t, MeshImportError> ExplodeGltfMaterials(std::string_vie
 
     // The reconcile pass minted the glTF's sidecar before this pass ran; without
     // it we have no id to hang the manifest on, so this is a hard stop.
-    const Core::AssetId gltfId = ExistingSidecarId(gltfSidecar);
+    const std::optional<Core::AssetSidecar> existing = ExistingSidecar(gltfSidecar);
+    const Core::AssetId gltfId = existing.has_value() ? existing->guid : Core::AssetId{};
     if (gltfId.IsNil())
     {
         Core::Log::Warn("ExplodeGltfMaterials: '{}' has no readable sidecar; skipping material explosion.",
@@ -418,8 +434,10 @@ std::expected<std::size_t, MeshImportError> ExplodeGltfMaterials(std::string_vie
     // sidecar, preserving its id. This is additive relationship data, not a
     // clobber of identity — the one deliberate write to an existing sidecar the
     // reconcile rule allows.
-    const Core::AssetSidecar gltfSidecarData{
-        .guid = gltfId, .subAssets = std::move(manifest), .sourceHash = HashGltfSource(gltfVirtualPath)};
+    // From the sidecar as it was, so the file's kind survives the rewrite.
+    Core::AssetSidecar gltfSidecarData = *existing;
+    gltfSidecarData.subAssets = std::move(manifest);
+    gltfSidecarData.sourceHash = HashGltfSource(gltfVirtualPath);
     if (!WriteWholeFile(gltfSidecar, Core::SerializeSidecar(gltfSidecarData)))
     {
         Core::Log::Warn("ExplodeGltfMaterials: wrote '{}' materials but failed to write its manifest.",
@@ -712,7 +730,11 @@ RegenerateGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver 
         manifest.push_back(Core::AssetSubAsset{.slot = static_cast<std::uint32_t>(slot), .material = materialId});
     }
 
-    Core::AssetSidecar updated{.guid = sidecar->guid, .subAssets = std::move(manifest), .sourceHash = *currentHash};
+    // From the sidecar as it was, so what the manifest does not cover — the
+    // file's kind — survives the rewrite.
+    Core::AssetSidecar updated = *sidecar;
+    updated.subAssets = std::move(manifest);
+    updated.sourceHash = *currentHash;
     if (!WriteWholeFile(gltfSidecarPath, Core::SerializeSidecar(updated)))
     {
         Core::Log::Warn("RegenerateGltfMaterials: rewrote materials but failed to write the manifest for '{}'.",

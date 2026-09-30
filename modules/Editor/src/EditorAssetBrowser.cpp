@@ -5,6 +5,7 @@
 #include <Assisi/Core/AssetIgnore.hpp>
 #include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
@@ -19,7 +20,11 @@
 #include <cfloat>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -83,13 +88,6 @@ bool IsThumbnailableImage(const std::filesystem::path &path)
 bool IsMaterialFile(const std::filesystem::path &path)
 {
     return LowerExtension(path) == ".amat";
-}
-
-/// @brief True for mesh-file extensions Geometry::ImportMesh can load.
-bool IsMeshFile(const std::filesystem::path &path)
-{
-    const std::string ext = LowerExtension(path);
-    return ext == ".glb" || ext == ".gltf";
 }
 
 /// @brief Paints a tabbed folder glyph filling a @p size square at screen-space
@@ -496,20 +494,34 @@ void EditorApp::RescanAssetBrowser()
             continue;
         }
 
-        if (IsThumbnailableImage(entry.path()))
+        // What a file is comes from its sidecar, so a file with none yet — one
+        // dropped in since the last reimport — is not listed until it has one.
+        const std::optional<Assisi::Core::AssetId> id = _assetDatabase.IdFor(vpath);
+        const std::optional<std::string> kindName =
+            id.has_value() ? _assetDatabase.KindNameOf(*id) : std::optional<std::string>{};
+        if (!kindName.has_value())
+        {
+            continue;
+        }
+        const Assisi::Core::AssetKind *kind = Assisi::Core::AssetKindRegistry::Instance().FindByName(*kindName);
+        if (kind == nullptr)
+        {
+            continue;
+        }
+
+        if (kind->id == Assisi::Core::kTextureKind && IsThumbnailableImage(entry.path()))
         {
             _assetBrowserImages.push_back(name);
         }
-        else if (IsMeshFile(entry.path()))
+        else if (kind->id == Assisi::Core::kMeshKind)
         {
             _assetBrowserMeshes.push_back(name);
         }
-        else if (IsMaterialFile(entry.path()))
+        else if (kind->id == Assisi::Core::kReflectedKind && IsMaterialFile(entry.path()))
         {
             _assetBrowserMaterials.push_back(name);
         }
-        else if (const Assisi::Core::AssetKind *kind = Assisi::Core::AssetKindRegistry::Instance().ForPath(vpath);
-                 kind != nullptr)
+        else if (kind->load)
         {
             _assetBrowserKindFiles.emplace_back(name, kind->name);
         }
@@ -519,6 +531,82 @@ void EditorApp::RescanAssetBrowser()
     std::sort(_assetBrowserImages.begin(), _assetBrowserImages.end());
     std::sort(_assetBrowserMeshes.begin(), _assetBrowserMeshes.end());
     std::sort(_assetBrowserMaterials.begin(), _assetBrowserMaterials.end());
+}
+
+void EditorApp::DrawUseAsMenu(const std::string &vpath)
+{
+    // Writing a sidecar is authoring, which a restricted viewer never does.
+    if (IsRestrictedViewer())
+    {
+        return;
+    }
+    // A choice needs two kinds that read the format; with one there is none.
+    const std::vector<const Assisi::Core::AssetKind *> readers =
+        Assisi::Core::AssetKindRegistry::Instance().KindsReading(Assisi::Core::ExtensionOf(vpath));
+    if (readers.size() < 2)
+    {
+        return;
+    }
+    if (!ImGui::BeginPopupContextItem("##useas"))
+    {
+        return;
+    }
+    const std::optional<Assisi::Core::AssetId> id = _assetDatabase.IdFor(vpath);
+    const std::optional<std::string> current =
+        id.has_value() ? _assetDatabase.KindNameOf(*id) : std::optional<std::string>{};
+
+    ImGui::TextDisabled("Use as");
+    for (const Assisi::Core::AssetKind *kind : readers)
+    {
+        const bool chosen = current.has_value() && *current == kind->name;
+        if (ImGui::MenuItem(kind->name.c_str(), nullptr, chosen) && !chosen)
+        {
+            UseFileAs(vpath, kind->name);
+        }
+    }
+    ImGui::EndPopup();
+}
+
+void EditorApp::UseFileAs(const std::string &vpath, const std::string &kindName)
+{
+    const std::expected<std::filesystem::path, Assisi::Core::AssetError> file =
+        Assisi::Core::AssetSystem::Resolve(vpath);
+    if (!file)
+    {
+        return;
+    }
+    std::filesystem::path sidecarPath = *file;
+    sidecarPath += ".aast";
+
+    // Read, change the use, write back: everything else the sidecar holds — its
+    // id above all — is kept.
+    std::ifstream in(sidecarPath, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+    in.close();
+    std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError> sidecar =
+        Assisi::Core::DeserializeSidecar(text);
+    if (!sidecar)
+    {
+        Assisi::Core::Log::Warn("Use as: '{}' has no readable sidecar ({}).", vpath,
+                                Assisi::Core::ToString(sidecar.error()));
+        return;
+    }
+    sidecar->uses = {Assisi::Core::AssetUse{.kind = kindName}};
+
+    std::ofstream out(sidecarPath, std::ios::binary | std::ios::trunc);
+    out << Assisi::Core::SerializeSidecar(*sidecar);
+    if (!out.good())
+    {
+        Assisi::Core::Log::Warn("Use as: could not write the sidecar of '{}'.", vpath);
+        return;
+    }
+    out.close();
+    Assisi::Core::Log::Info("'{}' is now used as {}.", vpath, kindName);
+
+    // The database holds the old kind, and the store may hold the file loaded as it.
+    ReimportAssets();
+    GetAssets().Clear();
+    _assetBrowserDirty = true;
 }
 
 void EditorApp::DrawAssetBrowser()
@@ -665,6 +753,7 @@ void EditorApp::DrawAssetBrowser()
             ImGui::TextWrapped("%s", img.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
+            DrawUseAsMenu(vpath);
             ImGui::PopID();
 
             if (clicked)
@@ -692,6 +781,7 @@ void EditorApp::DrawAssetBrowser()
             ImGui::TextWrapped("%s", mesh.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
+            DrawUseAsMenu(vpath);
             ImGui::PopID();
 
             if (stale && hovered)
@@ -728,6 +818,7 @@ void EditorApp::DrawAssetBrowser()
             ImGui::TextDisabled("%s", file.second.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
+            DrawUseAsMenu(vpath);
             ImGui::PopID();
 
             if (clicked)

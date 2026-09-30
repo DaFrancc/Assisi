@@ -296,6 +296,19 @@ TEST_CASE("A registered kind's asset is loaded by id from a pak, as a game loads
     const std::string text{reinterpret_cast<const char *>(loaded->bytes.data()), loaded->bytes.size()};
     CHECK(text == "cba");
     CHECK(loaded->finished);
+
+    // A PNG whose sidecar says it is the raw test kind loads as that kind, not
+    // as a texture: its payload is the PNG file's bytes.
+    const std::expected<AssetId, AssetError> photoId = pak->Resolve("things/photo.png");
+    REQUIRE(photoId.has_value());
+    (void)store.Resolve<Assisi::Testing::TestBytes>(*photoId);
+    jobs.HelpUntil([&store] { return !store.HasPendingLoads(); }, true);
+    const std::shared_ptr<const Assisi::Testing::TestBytes> photo = store.Resolve<Assisi::Testing::TestBytes>(*photoId);
+    REQUIRE(photo != nullptr);
+    const std::vector<char> png = ReadFile(std::filesystem::path{ASSISI_COOK_FIXTURE_ROOT} / "things" / "photo.png");
+    REQUIRE_FALSE(png.empty());
+    CHECK(photo->bytes.size() == png.size());
+    CHECK(std::ranges::equal(photo->bytes, std::as_bytes(std::span{png})));
 }
 
 TEST_CASE("A blob the manifest does not list is left out of the pak")
