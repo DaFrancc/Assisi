@@ -37,7 +37,8 @@
 namespace Assisi::Core
 {
 class AssetDatabase;
-}
+class AssetStore;
+} // namespace Assisi::Core
 namespace Assisi::Render
 {
 class AssetCache;
@@ -417,6 +418,7 @@ class WorldManager
         Mondrian::Ui *ui = nullptr;
         Audio::SoundOutput *mixer = nullptr;
         PlayerSettings *settings = nullptr;
+        Core::AssetStore *assets = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
 

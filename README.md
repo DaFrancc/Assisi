@@ -409,6 +409,8 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 | [stb](https://github.com/nothings/stb) | Image decoding (PNG, JPEG, …) |
 | [libwebp](https://github.com/webmproject/libwebp) | WebP decoding, including animated |
 | [FreeType](https://github.com/freetype/freetype) | Font rasterization |
+| [miniaudio](https://github.com/mackron/miniaudio) | Audio device output, device listing, and WAV/FLAC decoding |
+| [stb_vorbis](https://github.com/nothings/stb) | Ogg Vorbis decoding, through the copy miniaudio ships with |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON for configs and level files |
 | [doctest](https://github.com/doctest/doctest) | Unit-test framework |
 | [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | UDP transport for the networking modules — reliability, fragmentation, connection state |

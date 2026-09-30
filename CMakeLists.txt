@@ -622,9 +622,13 @@ foreach(_miniaudio_patch_name miniaudio-pulse-device-info-error.patch miniaudio-
     endif()
 endforeach()
 
-add_library(miniaudio STATIC "${miniaudio_SOURCE_DIR}/miniaudio.c")
+# Our own implementation file rather than upstream's miniaudio.c, so that it can
+# compile in the stb_vorbis.c miniaudio ships with, which is its Ogg Vorbis
+# decoder. MP3 is compiled out: a game's sounds are WAV, FLAC or Ogg Vorbis, and
+# the editor must refuse an MP3 the cook would refuse.
+add_library(miniaudio STATIC "${CMAKE_CURRENT_SOURCE_DIR}/cmake/miniaudio/miniaudio.c")
 target_include_directories(miniaudio SYSTEM PUBLIC "${miniaudio_SOURCE_DIR}")
-target_compile_definitions(miniaudio PUBLIC MA_NO_ENGINE MA_NO_RESOURCE_MANAGER)
+target_compile_definitions(miniaudio PUBLIC MA_NO_ENGINE MA_NO_RESOURCE_MANAGER MA_NO_MP3)
 set_target_properties(miniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if (MSVC)
     target_compile_options(miniaudio PRIVATE /w)

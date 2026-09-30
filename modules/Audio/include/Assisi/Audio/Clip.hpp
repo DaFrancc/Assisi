@@ -24,7 +24,7 @@ struct PcmClip
     [[nodiscard]] std::uint64_t Frames() const noexcept { return FrameCount(samples.size()); }
 };
 
-/// @brief Decode a WAV, FLAC or MP3 file held in memory into the engine format.
+/// @brief Decode a WAV, FLAC or Ogg Vorbis file held in memory into the engine format.
 ///
 /// The source's rate and channel count are converted here, once, so nothing
 /// downstream ever resamples or remixes a clip.

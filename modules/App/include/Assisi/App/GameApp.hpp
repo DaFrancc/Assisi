@@ -102,11 +102,11 @@ struct GameLaunch
 /// @brief The game application. See the file comment.
 class GameApp : public Application
 {
-public:
+  public:
     explicit GameApp(GameLaunch launch);
     ~GameApp() override;
 
-protected:
+  protected:
     /// Opens the content package and installs the readers over it: the asset
     /// source, the level document reader and the config reader. A package that
     /// is missing or unreadable refuses the launch and names its path.
@@ -136,13 +136,17 @@ protected:
     /// @brief Every resident world, for a game that keeps more than one.
     [[nodiscard]] WorldManager &Worlds() { return _worlds; }
 
-private:
+  private:
     /// Brings up the asset cache and the scene renderer. Windowed runs only —
     /// there is no device in a headless process and nothing to draw with it.
     ///
     /// False when there is nothing to draw with, which refuses the launch rather
     /// than running a game whose window stays empty.
     [[nodiscard]] bool SetupRenderer();
+
+    /// The context every phase of @p world runs under. The one place a context is
+    /// filled in, so no phase can be handed one with a service missing.
+    [[nodiscard]] SystemContext WorldContext(World &world, float dt, std::uint64_t simTick);
 
     /// The context the one-shot phases (Begin, Loaded) run under: everything a
     /// per-frame phase gets, with dt and the tick zero because no frame has run.

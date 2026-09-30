@@ -162,8 +162,69 @@ change that volume in a later version:
 A saved volume for a bus the game no longer has is kept in the file but not
 used, so it comes back if the bus does.
 
+## Sound files
+
+The engine reads three formats:
+
+| Format | Good for |
+|---|---|
+| `.wav` | Short sounds played often, such as clicks and footsteps. It is not compressed, so it plays with no decoding cost but takes the most space. |
+| `.ogg` (Ogg Vorbis) | Long sounds such as music and ambience, where size matters most. |
+| `.flac` | Long sounds that must stay lossless. |
+
+A file ships in the format you authored it in; the engine never converts one.
+The extension must be lowercase.
+
+MP3 is not supported. Convert an MP3 to Ogg Vorbis or FLAC first, with a tool
+such as [ffmpeg](https://ffmpeg.org) or [Audacity](https://www.audacityteam.org):
+
+```sh
+ffmpeg -i music.mp3 -c:a libvorbis -q:a 6 music.ogg
+```
+
+Decoding is done by [miniaudio](https://github.com/mackron/miniaudio), and Ogg
+Vorbis by the [stb_vorbis](https://github.com/nothings/stb) copy that ships
+with it.
+
+### Sounds are assets
+
+A sound file in `assets/` is an asset of the `sound` kind. When the editor
+first sees a `.wav`, `.flac` or `.ogg`, it writes that kind into the file's
+`.aast` sidecar.
+
+The cook decodes every sound once to check it. A file that does not decode
+fails the cook, naming the file, instead of failing in a player's game. A sound
+that decodes ships exactly as you authored it.
+
+A component refers to a sound by its id, like any other asset:
+
+```cpp
+AFIELD() Assisi::Core::AssetId clip;
+```
+
+A system loads it from `ctx.assets`. The first request starts loading the file
+in the background and returns nothing, so ask again on later frames:
+
+```cpp
+std::shared_ptr<const Assisi::Audio::PcmClip> clip = ctx.assets->Resolve<Assisi::Audio::PcmClip>(id);
+if (clip == nullptr)
+{
+    return; // still loading, missing, or broken
+}
+```
+
+A missing or broken sound logs one warning and is not loaded again.
+
 ## Playing sounds
 
 Sounds are played by entities with an audio emitter. `ctx.mixer` is what the
 engine's emitter system plays them through; it starts and stops sounds, and
 has no way to change a bus's volume.
+
+A loaded clip plays on a bus through the mixer:
+
+```cpp
+(void)ctx.mixer->Attach(clip, Assisi::Audio::ToBusId(Assisi::Audio::DefaultBus::Sfx));
+```
+
+`ctx.mixer` is null in a host with no audio device, so check it first.

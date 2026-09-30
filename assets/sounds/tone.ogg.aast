@@ -1,0 +1,10 @@
+{
+  "guid": "5e6daab0-95d3-4985-b292-d95f920c8df8",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "sound"
+    }
+  ],
+  "version": 1
+}

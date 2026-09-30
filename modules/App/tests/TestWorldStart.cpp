@@ -16,6 +16,7 @@
 #include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/TestSystems.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/Core/AssetStore.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -88,6 +89,24 @@ TEST_CASE("A loaded level begins once, before it has stepped")
     REQUIRE(world != nullptr);
     CHECK(Runs(*world, "Started") == 1u);
     CHECK(world->start == StartProgress::Begun);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("A starting world's systems reach the asset store the host installed")
+{
+    const std::filesystem::path root = MountTestRoot();
+    WriteLevel(root, "A.alvl", {"SeesAssets"});
+    Assisi::App::Test::SeenAssets() = nullptr;
+
+    Assisi::Core::EventQueue events;
+    Assisi::Core::AssetStore store;
+    WorldManager worlds;
+    worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = nullptr, .events = &events, .assets = &store});
+
+    World *const world = worlds.LoadLevel("levels/A.alvl");
+    REQUIRE(world != nullptr);
+    CHECK(Assisi::App::Test::SeenAssets() == &store);
 
     std::filesystem::remove_all(root);
 }

@@ -191,14 +191,19 @@ them so the linker cannot drop them: a registration nothing calls would
 otherwise vanish from the build without an error.
 
 Kinds are added by engine modules. Code in `apps/game/src` can't register one
-yet.
+yet. The Audio module's sound kind is a complete example: `SoundAsset.hpp`,
+`SoundKind.cpp` and `SoundCook.cpp` in `modules/Audio`.
+
+Name the kind through one constant that both files include, as
+`SoundAsset.hpp` does. A cook step whose kind name has a typo is never used, and
+the files it was meant for ship uncooked.
 
 ## Loading an asset
 
-Anything with the application can ask for an asset by id:
+A system asks for an asset by id through `ctx.assets`:
 
 ```cpp
-std::shared_ptr<const PcmClip> clip = app.GetAssets().Resolve<PcmClip>(soundId);
+std::shared_ptr<const PcmClip> clip = ctx.assets->Resolve<PcmClip>(soundId);
 if (clip == nullptr)
 {
     return; // still loading, missing, or broken

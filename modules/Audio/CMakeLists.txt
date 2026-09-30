@@ -13,6 +13,7 @@ target_sources(Assisi-Audio
     "include/Assisi/Audio/BusLayout.hpp"
     "include/Assisi/Audio/Clip.hpp"
     "include/Assisi/Audio/Mixer.hpp"
+    "include/Assisi/Audio/SoundAsset.hpp"
     "include/Assisi/Audio/SoundOutput.hpp"
   PRIVATE
     "src/AudioContext.cpp"
@@ -46,6 +47,14 @@ assisi_reflect(
   TARGET Assisi-Audio
   HEADERS
     include/Assisi/Audio/BusConfig.hpp
+)
+
+# The "sound" asset kind. The cook step is kept apart so a shipped game, which
+# never cooks, does not link it.
+assisi_asset_kind(
+  TARGET Assisi-Audio
+  LOAD   src/SoundKind.cpp
+  COOK   src/SoundCook.cpp
 )
 
 add_library(Assisi::Audio ALIAS Assisi-Audio)

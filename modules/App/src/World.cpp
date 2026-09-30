@@ -225,7 +225,8 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
                     .worldManager = this,
                     .ui = _services.ui,
                     .mixer = _services.mixer,
-                    .settings = _services.settings},
+                    .settings = _services.settings,
+                    .assets = _services.assets},
                    _simulateFrom);
     }
     else
