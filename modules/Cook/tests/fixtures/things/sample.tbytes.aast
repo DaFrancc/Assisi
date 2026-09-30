@@ -1,0 +1,10 @@
+{
+  "guid": "b7f5f2ad-a859-4ac2-8f45-d4a9e63ad5fb",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "test reversed bytes"
+    }
+  ],
+  "version": 1
+}

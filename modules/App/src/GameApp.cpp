@@ -101,7 +101,7 @@ bool GameApp::MountContent()
     if (!mounted)
     {
         Core::Log::Error("Game: cannot start - the content package '{}' cannot be read ({}).", pak.string(),
-                         Core::ToString(mounted.error()));
+                         Core::Describe(mounted.error()));
         return false;
     }
     Core::Log::Info("Game: reading content from '{}'.", pak.string());
@@ -111,6 +111,7 @@ bool GameApp::MountContent()
 
     const Core::PakProvider &provider = *_pak;
     (void)Render::SetAssetSource(&*_assetSource);
+    LoadAssetsFrom(provider);
     (void)Runtime::SceneSerializer::SetDocumentReader([&provider](std::string_view vpath)
                                                       { return Runtime::ReadCookedDocument(provider, vpath); });
     (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)

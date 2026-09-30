@@ -136,7 +136,7 @@ std::string_view ToString(CookedFontError error) noexcept
 
 void WriteCookedFont(Core::BitWriter &writer, const Font &font)
 {
-    Core::WriteCookedHeader(writer, Core::CookedKind::Font);
+    Core::WriteCookedHeader(writer, Core::kFontKind);
     writer.WriteUInt8(kFontPayloadVersion);
     writer.WriteUInt8(static_cast<uint8_t>(font.kind));
     writer.WriteUInt8(font.spread);
@@ -183,8 +183,8 @@ std::expected<Font, CookedFontError> ReadCookedFont(std::span<const std::byte> b
 {
     Core::BitReader reader{bytes};
 
-    const std::expected<Core::CookedKind, Core::CookedBlobError> blobKind = Core::ReadCookedHeader(reader);
-    if (!blobKind || *blobKind != Core::CookedKind::Font)
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> blobKind = Core::ReadCookedHeader(reader);
+    if (!blobKind || *blobKind != Core::kFontKind)
     {
         if (!blobKind && blobKind.error() == Core::CookedBlobError::Truncated)
         {

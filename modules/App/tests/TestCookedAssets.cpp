@@ -36,11 +36,11 @@ namespace
 /// Cooked blobs by path, held in memory: a pak without the file.
 class MemoryProvider final : public Core::AssetProvider
 {
-public:
+  public:
     Core::AssetId Add(std::string_view vpath, std::vector<std::byte> bytes)
     {
         const Core::AssetId id = Core::DerivedAssetId(vpath);
-        _blobs[id]             = std::move(bytes);
+        _blobs[id] = std::move(bytes);
         return id;
     }
 
@@ -49,7 +49,7 @@ public:
         const auto found = _blobs.find(id);
         if (found == _blobs.end())
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return found->second;
     }
@@ -59,12 +59,12 @@ public:
         const Core::AssetId id = Core::DerivedAssetId(vpath);
         if (!_blobs.contains(id))
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return id;
     }
 
-private:
+  private:
     std::unordered_map<Core::AssetId, std::vector<std::byte>> _blobs;
 };
 
@@ -91,14 +91,14 @@ Geometry::MeshData Triangle()
 /// A 4x4 BC7 image with its full mip chain.
 Image::DecodedImage Bc7Chain()
 {
-    constexpr std::uint32_t kEdge        = 4;
+    constexpr std::uint32_t kEdge = 4;
     constexpr std::size_t kBc7BlockBytes = 16;
-    constexpr std::size_t kLevels        = 3; // 4x4, 2x2 and 1x1 texels, one block each.
+    constexpr std::size_t kLevels = 3; // 4x4, 2x2 and 1x1 texels, one block each.
 
     Image::DecodedImage image;
-    image.width      = kEdge;
-    image.height     = kEdge;
-    image.format     = Image::PixelFormat::Bc7;
+    image.width = kEdge;
+    image.height = kEdge;
+    image.format = Image::PixelFormat::Bc7;
     image.colorSpace = Image::ColorSpace::Srgb;
     for (std::size_t level = 0; level < kLevels; ++level)
     {

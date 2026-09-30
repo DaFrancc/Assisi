@@ -64,6 +64,7 @@ EditorApp::EditorApp(EditorConfig config)
 {
     // Before Initialize, which loads the post-process shaders through it.
     (void)Assisi::Render::SetAssetSource(&_assetSource);
+    LoadAssetsFrom(_cookedSources);
 
     // Application reads these during Initialize(), which runs before OnStart, so
     // they cannot wait for a hook — hence the constructor body.

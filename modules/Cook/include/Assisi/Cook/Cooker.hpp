@@ -2,18 +2,13 @@
 #pragma once
 
 /// @file Cooker.hpp
-/// @brief One asset in, one cooked blob out, and the interface every type's
+/// @brief One asset in, one cooked blob out, and the interface every kind's
 ///        cooker answers.
 ///
-/// A cooker is asked three things about a virtual path: whether it claims it,
-/// what else the answer depends on, and what the bytes are. Splitting the first
-/// two out of the third is what makes the cook incremental and what makes an
-/// unclaimed file a build failure rather than a file quietly left behind.
-///
-/// **Claiming is not the same as producing.** A `.vert` is claimed — it is
-/// content, and a cook that did not recognise it would fail — but it produces
-/// nothing, because the renderer loads the `.spv` the build compiled from it and
-/// GLSL never leaves the source tree. That is a third answer, not a missing one.
+/// Which cooker takes a file is not the cooker's question: the file's sidecar
+/// names its kind, and the cooker is the one whose Kind() that is. A cooker is
+/// asked what else its output depends on and what the bytes are; splitting the
+/// first out of the second is what makes the cook incremental.
 
 #include <cstddef>
 #include <cstdint>
@@ -40,21 +35,6 @@ namespace Assisi::Cook
 {
 
 class TextureRoles;
-
-/// @brief What a cooker does with a path.
-enum class Claim : std::uint8_t
-{
-    /// Not this cooker's. The tree walk tries the next one, and a path no cooker
-    /// claims fails the cook.
-    None,
-
-    /// Claimed, and produces a cooked blob.
-    Output,
-
-    /// Claimed, and deliberately produces nothing — an import source or a shader
-    /// source, which is content in the tree and absent from a shipped build.
-    SourceOnly,
-};
 
 /// @brief A cook that did not happen, and which file it was about.
 ///
@@ -96,14 +76,9 @@ public:
     /// @brief A short name, for the line a failure prints.
     [[nodiscard]] virtual std::string_view Name() const = 0;
 
-    /// @brief Whether @p vpath is this cooker's, and whether it produces bytes.
-    [[nodiscard]] virtual Claim Claims(std::string_view vpath) const = 0;
-
-    /// @brief The kind every blob this cooker writes carries in its header.
-    ///
-    /// Answered without cooking, so an asset can be listed by kind from its path
-    /// alone.
-    [[nodiscard]] virtual Core::CookedKind Kind() const = 0;
+    /// @brief The kind this cooker cooks, which every blob it writes carries in
+    ///        its header. A file whose sidecar names this kind comes here.
+    [[nodiscard]] virtual Core::AssetKindId Kind() const = 0;
 
     /// @brief What besides the source changes this cooker's output, folded into
     ///        the cache key.
@@ -121,15 +96,15 @@ public:
     /// hash mismatch could give.
     [[nodiscard]] virtual std::vector<std::string> Dependencies(std::string_view /*vpath*/) const { return {}; }
 
-    /// @brief Whether a file this cooker answered SourceOnly for is accounted
-    ///        for elsewhere in the tree.
+    /// @brief Whether a file this kind consumes as part of another asset is
+    ///        accounted for elsewhere in the tree.
     ///
-    /// SourceOnly means "content, and its bytes reach the cooked tree through
-    /// something else" — so the cook has to check that the something else is
-    /// there. A shader source whose `.spv` is missing is the case: the build
-    /// compiles one per source, and an absent one means that compile did not
-    /// happen. Without this the cook would skip the source, skip the output that
-    /// is not there, and produce a tree quietly missing a stage.
+    /// A consumed file's bytes reach the cooked tree through something else, so
+    /// the cook has to check that the something else is there. A shader source
+    /// whose `.spv` is missing is the case: the build compiles one per source,
+    /// and an absent one means that compile did not happen. Without this the
+    /// cook would skip the source, skip the output that is not there, and
+    /// produce a tree quietly missing a stage.
     [[nodiscard]] virtual std::expected<void, CookError> CheckSource(std::string_view /*vpath*/) const
     {
         return {};
@@ -150,7 +125,7 @@ public:
 
     /// @brief The cooked bytes for @p vpath.
     ///
-    /// Called only for a path this cooker answered Output for. @p id is the
+    /// Called only for a file of this cooker's kind. @p id is the
     /// asset's GUID, which a cooker needs when the blob has to name itself or
     /// its siblings.
     [[nodiscard]] virtual std::expected<std::vector<std::byte>, CookError>
@@ -181,7 +156,10 @@ public:
     ///        message. Empty when they did not.
     [[nodiscard]] std::pair<std::string, std::string> Conflict(Core::AssetId texture) const;
 
-private:
+    /// @brief A material that binds @p texture, or empty when none does.
+    [[nodiscard]] std::string BoundBy(Core::AssetId texture) const;
+
+  private:
     struct Binding
     {
         std::string material;
@@ -192,11 +170,8 @@ private:
     std::unordered_map<Core::AssetId, Binding> _bindings;
 };
 
-/// @brief Every cooker, in the order the tree walk tries them.
-///
-/// Order matters only where two cookers could claim one path, which is why the
-/// verbatim catch-all is last: it claims what nothing else did, and putting it
-/// first would swallow every asset in the tree.
+/// @brief Every cooker: one per kind, the engine's own and every one a module
+///        registered. No two share a kind.
 [[nodiscard]] std::vector<std::unique_ptr<Cooker>> MakeCookers();
 
 } // namespace Assisi::Cook

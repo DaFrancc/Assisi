@@ -517,7 +517,7 @@ nlohmann::json FullJson(const OptionsConfig &options)
     // Written even when empty, so the defaults hold the same empty object and
     // ChangedFrom drops it: only a volume the player set is ever saved.
     nlohmann::json &volumes = json["audio"]["volumes"];
-    volumes                 = nlohmann::json::object();
+    volumes = nlohmann::json::object();
     for (const std::pair<const std::string, float> &entry : options.busVolumes)
     {
         volumes[entry.first] = entry.second;
@@ -543,7 +543,7 @@ void OptionsConfig::SaveToJson() const
     const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", ToJsonText());
     if (!result)
     {
-        Core::Log::Warn("Could not write options.json (asset error {}).", static_cast<int32_t>(result.error()));
+        Core::Log::Warn("Could not write options.json ({}).", Core::Describe(result.error()));
     }
 }
 

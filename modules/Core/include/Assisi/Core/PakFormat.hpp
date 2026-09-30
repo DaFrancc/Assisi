@@ -34,7 +34,7 @@ namespace Assisi::Core
 inline constexpr std::uint32_t kPakMagic = 0x4B415041U;
 
 /// @brief Version of the layout below, bumped when any field changes.
-inline constexpr std::uint16_t kPakFormatVersion = 1;
+inline constexpr std::uint16_t kPakFormatVersion = 2;
 
 /// @brief Bytes the header occupies on disk.
 inline constexpr std::size_t kPakHeaderBytes = sizeof(std::uint32_t) + sizeof(std::uint16_t) +
@@ -42,11 +42,12 @@ inline constexpr std::size_t kPakHeaderBytes = sizeof(std::uint32_t) + sizeof(st
 
 /// @brief Bytes one index entry occupies on disk.
 inline constexpr std::size_t kPakEntryBytes =
-    sizeof(AssetId::bytes) + sizeof(AssetId::bytes) +                    // id, pathId
-    sizeof(std::uint64_t) + sizeof(std::uint64_t) +                      // offset, storedSize
-    sizeof(std::uint64_t) + sizeof(std::uint64_t) +                      // uncompressedSize, contentHash
-    sizeof(std::uint16_t) +                                              // archive
-    sizeof(std::uint8_t) + sizeof(std::uint8_t) + sizeof(std::uint8_t); // codec, flags, kind
+    sizeof(AssetId::bytes) + sizeof(AssetId::bytes) + // id, pathId
+    sizeof(std::uint64_t) + sizeof(std::uint64_t) +   // offset, storedSize
+    sizeof(std::uint64_t) + sizeof(std::uint64_t) +   // uncompressedSize, contentHash
+    sizeof(std::uint64_t) +                           // kind
+    sizeof(std::uint16_t) +                           // archive
+    sizeof(std::uint8_t) + sizeof(std::uint8_t);      // codec, flags
 
 /// @brief Bits in a slice's flags byte.
 enum class PakSliceFlag : std::uint8_t
@@ -79,13 +80,14 @@ struct PakEntry
     /// compare two paks without reading a single slice.
     std::uint64_t contentHash = 0;
 
+    AssetKindId kind = kVerbatimKind;
+
     /// Which archive holds the slice. One archive exists today, so anything else
     /// is refused rather than read from the wrong file.
     std::uint16_t archive = 0;
 
     PakCodec codec     = PakCodec::None;
     std::uint8_t flags = 0;
-    CookedKind kind    = CookedKind::Verbatim;
 };
 
 /// @brief Why bytes did not read as a pak header or index.
@@ -94,7 +96,6 @@ enum class PakFormatError : std::uint8_t
     NotAPak,            ///< The magic is wrong.
     UnsupportedVersion, ///< A layout version this build does not read.
     Truncated,          ///< Fewer bytes than the header or the index needs.
-    Corrupt,            ///< A field holds a value no writer produces.
 };
 
 /// @brief A short human-readable description, for a load failure's log line.
@@ -109,9 +110,8 @@ void WritePakEntry(BitWriter &writer, const PakEntry &entry);
 
 /// @brief Reads one entry.
 ///
-/// A codec value or flag this build does not know is kept, because it describes
-/// one slice and only that slice's open should fail. A kind outside the table is
-/// refused, because no writer produces one.
+/// A codec value, flag or kind this build does not know is kept, because it
+/// describes one slice and only that slice's open should fail.
 [[nodiscard]] std::expected<PakEntry, PakFormatError> ReadPakEntry(BitReader &reader);
 
 } // namespace Assisi::Core

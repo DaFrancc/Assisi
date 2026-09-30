@@ -32,8 +32,8 @@ struct TestSlice
 {
     std::string vpath;
     std::vector<std::byte> bytes;
-    PakCodec codec     = PakCodec::None;
-    CookedKind kind    = CookedKind::Verbatim;
+    PakCodec codec = PakCodec::None;
+    AssetKindId kind = kVerbatimKind;
     std::uint8_t flags = 0;
     std::uint16_t archive = 0;
 };
@@ -63,15 +63,15 @@ void WriteTestPak(const std::filesystem::path &path, const std::vector<TestSlice
         REQUIRE(stored.has_value());
 
         PakEntry entry;
-        entry.id               = DerivedAssetId("id:" + slice.vpath);
-        entry.pathId           = DerivedAssetId(slice.vpath);
-        entry.offset           = offset;
-        entry.storedSize       = stored->size();
+        entry.id = DerivedAssetId("id:" + slice.vpath);
+        entry.pathId = DerivedAssetId(slice.vpath);
+        entry.offset = offset;
+        entry.storedSize = stored->size();
         entry.uncompressedSize = slice.bytes.size();
-        entry.codec            = slice.codec;
-        entry.flags            = slice.flags;
-        entry.kind             = slice.kind;
-        entry.archive          = slice.archive;
+        entry.codec = slice.codec;
+        entry.flags = slice.flags;
+        entry.kind = slice.kind;
+        entry.archive = slice.archive;
         entries.push_back(entry);
 
         body.WriteBytes(*stored);
@@ -79,7 +79,7 @@ void WriteTestPak(const std::filesystem::path &path, const std::vector<TestSlice
     }
 
     PakHeader header;
-    header.entryCount  = static_cast<std::uint32_t>(entries.size());
+    header.entryCount = static_cast<std::uint32_t>(entries.size());
     header.indexOffset = offset;
 
     BitWriter out;
@@ -98,7 +98,7 @@ void WriteTestPak(const std::filesystem::path &path, const std::vector<TestSlice
 /// A pak file in the temp directory that removes itself.
 class TempPak
 {
-public:
+  public:
     TempPak(const char *name, const std::vector<TestSlice> &slices)
         : _path(std::filesystem::temp_directory_path() / name)
     {
@@ -109,12 +109,12 @@ public:
         std::error_code code;
         std::filesystem::remove(_path, code);
     }
-    TempPak(const TempPak &)            = delete;
+    TempPak(const TempPak &) = delete;
     TempPak &operator=(const TempPak &) = delete;
 
     [[nodiscard]] const std::filesystem::path &Path() const { return _path; }
 
-private:
+  private:
     std::filesystem::path _path;
 };
 
@@ -159,7 +159,7 @@ TEST_CASE("A pak resolves a packed path to its id and refuses one it does not ho
 
     const std::expected<AssetId, AssetError> absent = mounted->Resolve("config/absent.json");
     REQUIRE_FALSE(absent.has_value());
-    CHECK(absent.error() == AssetError::UnknownAssetId);
+    CHECK(absent.error() == AssetErrorCode::UnknownAssetId);
 }
 
 TEST_CASE("An id the pak does not hold, or a built-in id, is unknown and nothing else is read")
@@ -170,18 +170,19 @@ TEST_CASE("An id the pak does not hold, or a built-in id, is unknown and nothing
 
     const std::expected<std::vector<std::byte>, AssetError> missing = mounted->Open(IdOf("b.txt"));
     REQUIRE_FALSE(missing.has_value());
-    CHECK(missing.error() == AssetError::UnknownAssetId);
+    CHECK(missing.error() == AssetErrorCode::UnknownAssetId);
 
     const std::expected<std::vector<std::byte>, AssetError> builtin = mounted->Open(BuiltinAssetId::Cube);
     REQUIRE_FALSE(builtin.has_value());
-    CHECK(builtin.error() == AssetError::UnknownAssetId);
+    CHECK(builtin.error() == AssetErrorCode::UnknownAssetId);
 }
 
 TEST_CASE("A slice this build cannot decode is refused, not handed on as garbage")
 {
     const auto unknownCodec = static_cast<PakCodec>(PakCodec::Count);
     const std::vector<TestSlice> slices{
-        {.vpath = "encrypted.bin", .bytes = Pattern(kSliceBytes, 1),
+        {.vpath = "encrypted.bin",
+         .bytes = Pattern(kSliceBytes, 1),
          .flags = static_cast<std::uint8_t>(PakSliceFlag::Encrypted)},
         {.vpath = "codec.bin", .bytes = Pattern(kSliceBytes, 2), .codec = unknownCodec},
         {.vpath = "archive.bin", .bytes = Pattern(kSliceBytes, 3), .archive = 1},
@@ -196,7 +197,7 @@ TEST_CASE("A slice this build cannot decode is refused, not handed on as garbage
         CAPTURE(vpath);
         const std::expected<std::vector<std::byte>, AssetError> bytes = mounted->Open(IdOf(vpath));
         REQUIRE_FALSE(bytes.has_value());
-        CHECK(bytes.error() == AssetError::UnsupportedEncoding);
+        CHECK(bytes.error() == AssetErrorCode::UnsupportedEncoding);
     }
     // One unreadable slice does not take the others down with it.
     CHECK(mounted->Open(IdOf("fine.bin")).has_value());
@@ -211,7 +212,7 @@ TEST_CASE("A pak cut short is refused at mount rather than read past its end")
     std::filesystem::resize_file(pak.Path(), size - 1);
     const std::expected<PakProvider, AssetError> shortIndex = PakProvider::Mount(pak.Path());
     REQUIRE_FALSE(shortIndex.has_value());
-    CHECK(shortIndex.error() == AssetError::CorruptArchive);
+    CHECK(shortIndex.error() == AssetErrorCode::CorruptArchive);
 
     // Short of the header.
     std::filesystem::resize_file(pak.Path(), kPakHeaderBytes - 1);
@@ -232,9 +233,9 @@ TEST_CASE("A file that is not a pak does not mount")
 
 TEST_CASE("Workers opening different slices of one pak at once each get their own bytes")
 {
-    constexpr std::size_t kSlices  = 16;
+    constexpr std::size_t kSlices = 16;
     constexpr std::size_t kThreads = 8;
-    constexpr std::size_t kRounds  = 50;
+    constexpr std::size_t kRounds = 50;
 
     std::vector<TestSlice> slices;
     for (std::size_t i = 0; i < kSlices; ++i)
@@ -252,18 +253,19 @@ TEST_CASE("Workers opening different slices of one pak at once each get their ow
     std::vector<std::thread> threads;
     for (std::size_t t = 0; t < kThreads; ++t)
     {
-        threads.emplace_back([&, t]()
-                             {
-                                 for (std::size_t r = 0; r < kRounds; ++r)
-                                 {
-                                     const TestSlice &slice = slices[(t + r) % kSlices];
-                                     const auto bytes       = shared.Open(IdOf(slice.vpath));
-                                     if (!bytes || *bytes != slice.bytes)
-                                     {
-                                         ++wrong;
-                                     }
-                                 }
-                             });
+        threads.emplace_back(
+            [&, t]()
+            {
+                for (std::size_t r = 0; r < kRounds; ++r)
+                {
+                    const TestSlice &slice = slices[(t + r) % kSlices];
+                    const auto bytes = shared.Open(IdOf(slice.vpath));
+                    if (!bytes || *bytes != slice.bytes)
+                    {
+                        ++wrong;
+                    }
+                }
+            });
     }
     for (std::thread &thread : threads)
     {
@@ -275,20 +277,20 @@ TEST_CASE("Workers opening different slices of one pak at once each get their ow
 TEST_CASE("A pak lists its slices of one kind")
 {
     const std::vector<TestSlice> slices{
-        {.vpath = "levels/a.alvl", .bytes = Pattern(1, 1), .kind = CookedKind::Scene},
-        {.vpath = "textures/t.png", .bytes = Pattern(1, 2), .kind = CookedKind::Texture},
-        {.vpath = "levels/b.alvl", .bytes = Pattern(1, 3), .kind = CookedKind::Scene},
+        {.vpath = "levels/a.alvl", .bytes = Pattern(1, 1), .kind = kSceneKind},
+        {.vpath = "textures/t.png", .bytes = Pattern(1, 2), .kind = kTextureKind},
+        {.vpath = "levels/b.alvl", .bytes = Pattern(1, 3), .kind = kSceneKind},
     };
     const TempPak pak("assisi-pak-list.pak", slices);
     const std::expected<PakProvider, AssetError> mounted = PakProvider::Mount(pak.Path());
     REQUIRE(mounted.has_value());
 
-    const std::vector<PakEntry> scenes = mounted->EntriesOfKind(CookedKind::Scene);
+    const std::vector<PakEntry> scenes = mounted->EntriesOfKind(kSceneKind);
     REQUIRE(scenes.size() == 2);
     // By id, so two machines holding the same pak list it in the same order.
     CHECK(scenes[0].id < scenes[1].id);
     for (const PakEntry &entry : scenes)
     {
-        CHECK(entry.kind == CookedKind::Scene);
+        CHECK(entry.kind == kSceneKind);
     }
 }

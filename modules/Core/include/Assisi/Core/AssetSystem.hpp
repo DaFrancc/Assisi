@@ -44,7 +44,7 @@ namespace Assisi::Core
 {
 class AssetSystem
 {
-public:
+  public:
     /**
      * @brief Initializes the asset system by discovering and caching the asset root.
      *
@@ -67,7 +67,7 @@ public:
      *
      * @return std::expected<void, AssetError>
      *   - Success: root is accepted and cached.
-     *   - Failure: AssetError::InvalidRoot if the path is not an existing directory.
+     *   - Failure: AssetErrorCode::InvalidRoot if the path is not an existing directory.
      *
      * @note The stored root is canonicalized (weakly) to normalize path comparisons.
      */
@@ -142,7 +142,7 @@ public:
      *
      * @return std::expected<void, AssetError>
      *   - Success: root is accepted and cached.
-     *   - Failure: AssetError::InvalidRoot if the path is not an existing directory.
+     *   - Failure: AssetErrorCode::InvalidRoot if the path is not an existing directory.
      *
      * @note Overrides both the ASSISI_USER_ROOT default and any prior lazy
      *   initialization. Use this to redirect writes to a platform per-user
@@ -227,7 +227,7 @@ public:
     static std::expected<void, AssetError> WriteBinary(std::string_view vpath,
                                                        std::span<const std::byte> data) noexcept;
 
-private:
+  private:
     /**
      * @brief Returns whether the asset system has been initialized.
      *
@@ -245,7 +245,7 @@ private:
      *
      * @return std::expected<std::filesystem::path, AssetError>
      *   - Success: discovered root path.
-     *   - Failure: AssetError::RootNotFound if discovery fails.
+     *   - Failure: AssetErrorCode::RootNotFound if discovery fails.
      */
     static std::expected<std::filesystem::path, AssetError> DiscoverRoot() noexcept;
 
@@ -264,7 +264,7 @@ private:
      *
      * @return std::expected<std::filesystem::path, AssetError>
      *   - Success: normalized relative path.
-     *   - Failure: AssetError::InvalidVirtualPath for invalid inputs.
+     *   - Failure: AssetErrorCode::InvalidVirtualPath for invalid inputs.
      */
     static std::expected<std::filesystem::path, AssetError> NormalizeVirtualPath(std::string_view vpath) noexcept;
 

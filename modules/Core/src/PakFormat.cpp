@@ -15,8 +15,6 @@ std::string_view ToString(PakFormatError error) noexcept
         return "a pak layout version this build does not read";
     case PakFormatError::Truncated:
         return "the pak ends before its header or index does";
-    case PakFormatError::Corrupt:
-        return "the pak's index holds a value no writer produces";
     }
     return "unknown";
 }
@@ -65,10 +63,10 @@ void WritePakEntry(BitWriter &writer, const PakEntry &entry)
     writer.WriteUInt64(entry.storedSize);
     writer.WriteUInt64(entry.uncompressedSize);
     writer.WriteUInt64(entry.contentHash);
+    writer.WriteUInt64(entry.kind.hash);
     writer.WriteUInt16(entry.archive);
     writer.WriteUInt8(static_cast<std::uint8_t>(entry.codec));
     writer.WriteUInt8(entry.flags);
-    writer.WriteUInt8(static_cast<std::uint8_t>(entry.kind));
 }
 
 std::expected<PakEntry, PakFormatError> ReadPakEntry(BitReader &reader)
@@ -80,25 +78,19 @@ std::expected<PakEntry, PakFormatError> ReadPakEntry(BitReader &reader)
     entry.storedSize          = reader.ReadUInt64();
     entry.uncompressedSize    = reader.ReadUInt64();
     entry.contentHash         = reader.ReadUInt64();
+    entry.kind.hash = reader.ReadUInt64();
     entry.archive             = reader.ReadUInt16();
     const std::uint8_t codec  = reader.ReadUInt8();
     entry.flags               = reader.ReadUInt8();
-    const std::uint8_t kind   = reader.ReadUInt8();
     if (reader.Failed())
     {
         return std::unexpected(PakFormatError::Truncated);
     }
 
-    // Kept as values here rather than refused: an unknown codec or a set flag is
-    // a property of one slice, and the provider refuses that slice when it is
-    // opened while every other asset stays loadable. A kind outside the table is
-    // different — no writer produces it, so the index itself is suspect.
-    if (kind >= static_cast<std::uint8_t>(CookedKind::Count))
-    {
-        return std::unexpected(PakFormatError::Corrupt);
-    }
+    // Kept as values here rather than refused: an unknown codec, flag or kind is
+    // a property of one slice, and whoever opens that slice refuses it while
+    // every other asset stays loadable.
     entry.codec = static_cast<PakCodec>(codec);
-    entry.kind  = static_cast<CookedKind>(kind);
     return entry;
 }
 

@@ -431,7 +431,7 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
     // The envelope last, so the tables the body interned are complete. Framing
     // puts them ahead of it on the wire, which is what a reader needs.
     Core::BitWriter out;
-    Core::WriteCookedHeader(out, Core::CookedKind::Scene);
+    Core::WriteCookedHeader(out, Core::kSceneKind);
     out.WriteUInt8(kScenePayloadVersion);
     out.WriteUInt64(Core::Reflect::ProtocolHash());
     WriteStringList(out, names.Names());
@@ -510,15 +510,15 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
 {
     Core::BitReader reader{bytes};
 
-    const std::expected<Core::CookedKind, Core::CookedBlobError> kind = Core::ReadCookedHeader(reader);
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> kind = Core::ReadCookedHeader(reader);
     if (!kind)
     {
         Core::Log::Error("CookedScene: {}.", Core::ToString(kind.error()));
         return std::unexpected(LevelError::MalformedBlob);
     }
-    if (*kind != Core::CookedKind::Scene)
+    if (*kind != Core::kSceneKind)
     {
-        Core::Log::Error("CookedScene: these bytes are a {} blob, not a scene.", Core::ToString(*kind));
+        Core::Log::Error("CookedScene: these bytes are a {} blob, not a scene.", Core::DescribeKind(*kind));
         return std::unexpected(LevelError::MalformedBlob);
     }
 

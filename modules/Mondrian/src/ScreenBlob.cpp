@@ -117,7 +117,7 @@ std::string_view ToString(CookedScreenError error) noexcept
 
 void WriteCookedScreen(Core::BitWriter &writer, const ScreenDocument &document)
 {
-    Core::WriteCookedHeader(writer, Core::CookedKind::Screen);
+    Core::WriteCookedHeader(writer, Core::kScreenKind);
     writer.WriteUInt8(kScreenPayloadVersion);
     writer.WriteBits64(ScreenLayoutHash(), kLayoutHashBits);
     (void)Core::Reflect::WriteStruct(DocumentSpec(), &document, writer);
@@ -127,8 +127,8 @@ std::expected<ScreenDocument, CookedScreenError> ReadCookedScreen(std::span<cons
 {
     Core::BitReader reader{bytes};
 
-    const std::expected<Core::CookedKind, Core::CookedBlobError> blobKind = Core::ReadCookedHeader(reader);
-    if (!blobKind || *blobKind != Core::CookedKind::Screen)
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> blobKind = Core::ReadCookedHeader(reader);
+    if (!blobKind || *blobKind != Core::kScreenKind)
     {
         if (!blobKind && blobKind.error() == Core::CookedBlobError::Truncated)
         {

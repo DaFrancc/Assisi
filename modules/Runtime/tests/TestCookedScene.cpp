@@ -31,10 +31,10 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Core/CookedPayload.hpp>
-#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
@@ -68,7 +68,7 @@ void FillScene(ECS::Scene &scene)
     (void)scene.Add<Name>(body, Name{Core::EntityName{"body"}});
     Transform bodyTransform;
     bodyTransform.position = {1.5f, -2.25f, 3.125f};
-    bodyTransform.scale    = {2.f, 2.f, 2.f};
+    bodyTransform.scale = {2.f, 2.f, 2.f};
     (void)scene.Add<Transform>(body, bodyTransform);
 
     const ECS::Entity lamp = scene.Create();
@@ -78,7 +78,7 @@ void FillScene(ECS::Scene &scene)
     (void)scene.Add<Transform>(lamp, lampTransform);
     PointLight light;
     light.intensity = 250.f;
-    light.radius    = 12.5f;
+    light.radius = 12.5f;
     (void)scene.Add<PointLight>(lamp, light);
 
     // Points at an entity created before it, and — once the map sorts — possibly
@@ -112,16 +112,15 @@ void RebuildFrom(const CookedScene &cooked, ECS::Scene &scene)
 
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [&byNameIndex](std::uint64_t wire) -> std::uint64_t
-                           {
-                               const auto index = static_cast<std::size_t>(wire);
-                               if (index >= byNameIndex.size())
-                               {
-                                   return (static_cast<std::uint64_t>(ECS::NullEntity.generation) << 32) |
-                                          ECS::NullEntity.index;
-                               }
-                               const ECS::Entity target = byNameIndex[index];
-                               return (static_cast<std::uint64_t>(target.generation) << 32) | target.index;
-                           };
+    {
+        const auto index = static_cast<std::size_t>(wire);
+        if (index >= byNameIndex.size())
+        {
+            return (static_cast<std::uint64_t>(ECS::NullEntity.generation) << 32) | ECS::NullEntity.index;
+        }
+        const ECS::Entity target = byNameIndex[index];
+        return (static_cast<std::uint64_t>(target.generation) << 32) | target.index;
+    };
 
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
     for (std::size_t i = 0; i < cooked.entities.size(); ++i)
@@ -173,7 +172,7 @@ const Core::AssetId kCarId = Core::DerivedAssetId("car.abp");
 /// Cooked blobs by path, held in memory: a pak without the file.
 class MemoryProvider final : public Core::AssetProvider
 {
-public:
+  public:
     void Add(std::string_view vpath, std::vector<std::byte> bytes)
     {
         _blobs[Core::DerivedAssetId(vpath)] = std::move(bytes);
@@ -184,7 +183,7 @@ public:
         const auto found = _blobs.find(id);
         if (found == _blobs.end())
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return found->second;
     }
@@ -194,12 +193,12 @@ public:
         const Core::AssetId id = Core::DerivedAssetId(vpath);
         if (!_blobs.contains(id))
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return id;
     }
 
-private:
+  private:
     std::unordered_map<Core::AssetId, std::vector<std::byte>> _blobs;
 };
 
@@ -224,11 +223,11 @@ Core::AssetId CarIdOf(std::string_view source)
 /// stays a patch is actually about.
 nlohmann::json CarFile()
 {
-    return {{"version", 2},
-            {"entities", nlohmann::json::array(
-                 {{{"name", "body"},
-                   {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
-                  {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
+    return {
+        {"version", 2},
+        {"entities", nlohmann::json::array(
+                         {{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
+                          {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 } // namespace
@@ -244,7 +243,7 @@ TEST_CASE("A cooked scene is a Scene blob this build's protocol matches")
     Core::BitReader reader{*bytes};
     const auto kind = Core::ReadCookedHeader(reader);
     REQUIRE(kind.has_value());
-    CHECK(*kind == Core::CookedKind::Scene);
+    CHECK(*kind == Core::kSceneKind);
     CHECK(reader.ReadUInt8() == Runtime::kScenePayloadVersion);
     CHECK(reader.ReadBits64(64) == Core::Reflect::ProtocolHash());
 }
@@ -268,7 +267,7 @@ TEST_CASE("Every entity, component and value survives the cooked round trip")
     // covers every reflected field of every component — including any added after
     // this test was written.
     const nlohmann::json before = Runtime::SceneSerializer::Save(source);
-    const nlohmann::json after  = Runtime::SceneSerializer::Save(rebuilt);
+    const nlohmann::json after = Runtime::SceneSerializer::Save(rebuilt);
     CHECK(before["entities"] == after["entities"]);
 }
 
@@ -288,7 +287,7 @@ TEST_CASE("A reference survives the cooked round trip as a reference")
     // Found by name rather than by handle: the rebuild allocates its own, and the
     // point is that the *wiring* came back, not that the numbers did.
     ECS::Entity wheel = ECS::NullEntity;
-    ECS::Entity body  = ECS::NullEntity;
+    ECS::Entity body = ECS::NullEntity;
     for (auto [entity, name] : rebuilt.Query<Name>())
     {
         if (name.value.View() == "wheel")
@@ -368,7 +367,7 @@ TEST_CASE("Cooking the same scene twice produces identical bytes")
 TEST_CASE("A blob of another kind is refused")
 {
     Core::BitWriter writer;
-    Core::WriteCookedHeader(writer, Core::CookedKind::Mesh);
+    Core::WriteCookedHeader(writer, Core::kMeshKind);
     writer.WriteUInt8(Runtime::kScenePayloadVersion);
     writer.WriteUInt64(Core::Reflect::ProtocolHash());
 
@@ -390,7 +389,7 @@ TEST_CASE("A blob written against another component table is refused whole")
 
     std::vector<std::byte> tampered = *bytes;
     Core::BitWriter header;
-    Core::WriteCookedHeader(header, Core::CookedKind::Scene);
+    Core::WriteCookedHeader(header, Core::kSceneKind);
     header.WriteUInt8(Runtime::kScenePayloadVersion);
     const std::size_t hashOffset = header.Data().size();
     // Flip one bit of the stored protocol hash.
@@ -424,19 +423,16 @@ TEST_CASE("An instance survives with its placement, its overrides and its remova
     Write(root, "main.alvl",
           {{"version", 2},
            {"entities", nlohmann::json::array()},
-           {"instances",
-            nlohmann::json::array(
-                {{{"name", "car_3"},
-                  {"source", "car.abp"},
-                  {"transform", {{"position", {1.f, 2.f, 3.f}}}},
-                  {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}},
-                  {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
+           {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                 {"source", "car.abp"},
+                                                 {"transform", {{"position", {1.f, 2.f, 3.f}}}},
+                                                 {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}},
+                                                 {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
     Runtime::LevelHeader header;
-    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
-                                                   {.header = &header, .instances = &table}));
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE(bytes.has_value());
@@ -470,14 +466,12 @@ TEST_CASE("An override is a masked block naming only the field the author set")
            {"entities", nlohmann::json::array()},
            {"instances", nlohmann::json::array({{{"name", "car_3"},
                                                  {"source", "car.abp"},
-                                                 {"overrides",
-                                                  {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}}}})}});
+                                                 {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
     Runtime::LevelHeader header;
-    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
-                                                   {.header = &header, .instances = &table}));
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE(bytes.has_value());
@@ -507,7 +501,7 @@ TEST_CASE("An override is a masked block naming only the field the author set")
 
     // And the mask bit is fovDegrees', not whichever field happens to be first.
     std::size_t codecIndex = 0;
-    std::size_t fovIndex   = 0;
+    std::size_t fovIndex = 0;
     for (const Core::Reflect::FieldMeta &field : meta->fields)
     {
         if (!Core::Reflect::IsWireField(field))
@@ -534,14 +528,12 @@ TEST_CASE("An override naming a field the component does not have is refused")
            {"entities", nlohmann::json::array()},
            {"instances", nlohmann::json::array({{{"name", "car_3"},
                                                  {"source", "car.abp"},
-                                                 {"overrides",
-                                                  {{"body", {{"Camera", {{"noSuchField", 1.f}}}}}}}}})}});
+                                                 {"overrides", {{"body", {{"Camera", {{"noSuchField", 1.f}}}}}}}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
     Runtime::LevelHeader header;
-    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
-                                                   {.header = &header, .instances = &table}));
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE_FALSE(bytes.has_value());
@@ -563,8 +555,7 @@ TEST_CASE("An instance whose blueprint has no id fails the cook")
     ECS::Scene scene;
     Runtime::InstanceTable table;
     Runtime::LevelHeader header;
-    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
-                                                   {.header = &header, .instances = &table}));
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     const auto knowsNothing = [](std::string_view) { return Core::AssetId{}; };
     const auto bytes = SaveCookedScene(scene, header, &table, knowsNothing);
@@ -582,7 +573,7 @@ TEST_CASE("A scene blob of a version this build does not read is refused")
 
     std::vector<std::byte> newer = *bytes;
     Core::BitWriter header;
-    Core::WriteCookedHeader(header, Core::CookedKind::Scene);
+    Core::WriteCookedHeader(header, Core::kSceneKind);
     newer[header.Data().size()] = std::byte{Runtime::kScenePayloadVersion + 1};
 
     const auto cooked = DecodeCookedScene(newer);
@@ -602,9 +593,9 @@ TEST_CASE("A cooked scene converts back to the document it was cooked from")
     Write(root, "main.alvl",
           {{"version", 2},
            {"systems", nlohmann::json::array({"Spin"})},
-           {"entities", nlohmann::json::array(
-                {{{"name", "ground"}},
-                 {{"name", "marker"}, {"components", {{"Parent", {{"parent", "car_3/body"}}}}}}})},
+           {"entities",
+            nlohmann::json::array({{{"name", "ground"}},
+                                   {{"name", "marker"}, {"components", {{"Parent", {{"parent", "car_3/body"}}}}}}})},
            {"instances",
             nlohmann::json::array(
                 {{{"name", "car_3"},
@@ -634,8 +625,8 @@ TEST_CASE("A cooked scene converts back to the document it was cooked from")
     ECS::Scene reloaded;
     Runtime::InstanceTable reloadedTable;
     Runtime::LevelHeader reloadedHeader;
-    REQUIRE(Runtime::SceneSerializer::Load(reloaded, *document,
-                                           {.header = &reloadedHeader, .instances = &reloadedTable}));
+    REQUIRE(
+        Runtime::SceneSerializer::Load(reloaded, *document, {.header = &reloadedHeader, .instances = &reloadedTable}));
     CHECK(Runtime::SceneSerializer::Save(reloaded, reloadedHeader, &reloadedTable) == saved);
 }
 
@@ -684,7 +675,7 @@ TEST_CASE("A level load with no document reader installed fails rather than read
     const Runtime::SceneSerializer::DocumentReader previous = Runtime::SceneSerializer::SetDocumentReader({});
     ECS::Scene scene;
     const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl");
-    const auto systems                = Runtime::SceneSerializer::ReadLevelSystems("main.alvl");
+    const auto systems = Runtime::SceneSerializer::ReadLevelSystems("main.alvl");
     (void)Runtime::SceneSerializer::SetDocumentReader(previous);
 
     REQUIRE_FALSE(loaded.has_value());
@@ -701,14 +692,12 @@ TEST_CASE("A member entity is described by its instance, not written as an entit
     Write(root, "main.alvl",
           {{"version", 2},
            {"entities", nlohmann::json::array({{{"name", "ground"}}})},
-           {"instances",
-            nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
     Runtime::LevelHeader header;
-    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl",
-                                                   {.header = &header, .instances = &table}));
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     const auto bytes = SaveCookedScene(scene, header, &table, CarIdOf);
     REQUIRE(bytes.has_value());

@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Image/Compress.hpp>
@@ -19,12 +20,22 @@ SourceAssetSource::SourceAssetSource(const Core::AssetDatabase &database) noexce
 {
 }
 
+bool SourceAssetSource::UsedAsOtherThan(const Core::AssetId &id, Core::AssetKindId kind) const
+{
+    const std::optional<std::string> kindName = _database->KindNameOf(id);
+    return kindName.has_value() && Core::AssetKindId{*kindName} != kind;
+}
+
 std::expected<Geometry::CookedMesh, Render::AssetLoadError> SourceAssetSource::LoadMesh(const Core::AssetId &id) const
 {
     const std::optional<std::string> path = _database->PathFor(id);
     if (!path)
     {
         return std::unexpected(Render::AssetLoadError::UnknownAsset);
+    }
+    if (UsedAsOtherThan(id, Core::kMeshKind))
+    {
+        return std::unexpected(Render::AssetLoadError::Undecodable);
     }
 
     const Core::AssetDatabase &database = *_database;
@@ -79,6 +90,12 @@ SourceAssetSource::LoadTexture(const Core::AssetId &id, Image::ColorSpace space,
     if (!path)
     {
         return std::unexpected(Render::AssetLoadError::UnknownAsset);
+    }
+    // The cook refuses a texture binding to a file used as something else; the
+    // editor shows the same, rather than a texture the game will not have.
+    if (UsedAsOtherThan(id, Core::kTextureKind))
+    {
+        return std::unexpected(Render::AssetLoadError::Undecodable);
     }
     std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeImage(*path, space);
     if (!decoded)

@@ -70,7 +70,7 @@ std::string_view ToString(CookedStringTableError error) noexcept
 
 void WriteCookedStringTable(Core::BitWriter &writer, const StringTable &table)
 {
-    Core::WriteCookedHeader(writer, Core::CookedKind::StringTable);
+    Core::WriteCookedHeader(writer, Core::kStringTableKind);
     writer.WriteUInt8(kStringTablePayloadVersion);
 
     // Sorted, so the same table always cooks to the same bytes whatever order
@@ -97,8 +97,8 @@ std::expected<StringTable, CookedStringTableError> ReadCookedStringTable(std::sp
 {
     Core::BitReader reader{bytes};
 
-    const std::expected<Core::CookedKind, Core::CookedBlobError> blobKind = Core::ReadCookedHeader(reader);
-    if (!blobKind || *blobKind != Core::CookedKind::StringTable)
+    const std::expected<Core::AssetKindId, Core::CookedBlobError> blobKind = Core::ReadCookedHeader(reader);
+    if (!blobKind || *blobKind != Core::kStringTableKind)
     {
         if (!blobKind && blobKind.error() == Core::CookedBlobError::Truncated)
         {

@@ -13,6 +13,7 @@
 
 #include <ostream>
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -23,14 +24,16 @@
 #include <vector>
 
 #include <Assisi/Cook/CookTree.hpp>
+#include <Assisi/Core/AssetKind.hpp>
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>
 #include <Assisi/Image/Compress.hpp>
 #include <Assisi/Mondrian/Font.hpp>
+#include <Assisi/Testing/TestAssetKinds.hpp>
 
-using Assisi::Cook::Claim;
 using Assisi::Cook::CookReport;
 using Assisi::Cook::CookTree;
 using Assisi::Cook::MakeCookers;
@@ -38,18 +41,38 @@ using Assisi::Cook::MakeCookers;
 namespace
 {
 
-/// Which claim the cooker set gives a path, by asking them in the order the walk
-/// does.
-Claim ClaimFor(std::string_view vpath)
+/// How many cookers cook @p kind.
+std::size_t CookersOf(Assisi::Core::AssetKindId kind)
 {
-    for (const auto &cooker : MakeCookers())
+    const std::vector<std::unique_ptr<Assisi::Cook::Cooker>> cookers = MakeCookers();
+    return static_cast<std::size_t>(std::ranges::count_if(
+        cookers, [kind](const std::unique_ptr<Assisi::Cook::Cooker> &cooker) { return cooker->Kind() == kind; }));
+}
+
+/// A copy of the fixture tree with one more file and a sidecar naming @p kind
+/// (none when empty), cooked. The fixture itself stays as every other case
+/// cooks it.
+std::expected<CookReport, Assisi::Cook::CookError> CookWithExtraFile(const std::filesystem::path &source,
+                                                                     const std::filesystem::path &out,
+                                                                     const std::string &vpath, const std::string &kind)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source, std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
     {
-        if (const Claim claim = cooker->Claims(vpath); claim != Claim::None)
-        {
-            return claim;
-        }
+        std::ofstream file(source / vpath, std::ios::binary);
+        file << "extra";
     }
-    return Claim::None;
+    {
+        std::ofstream sidecar(source / (vpath + ".aast"));
+        sidecar << R"({"guid":"5e2c9b7a-0f41-4d86-b3a2-8c1e7d6f4a90","type":"AssetSidecar","version":1)";
+        if (!kind.empty())
+        {
+            sidecar << R"(,"uses":[{"kind":")" << kind << R"("}])";
+        }
+        sidecar << "}";
+    }
+    return CookTree(source, out);
 }
 
 /// What went wrong, as a line a failing test can print — the cook's whole
@@ -109,57 +132,184 @@ std::map<std::string, std::vector<char>> ReadCookedTree(const std::filesystem::p
     return files;
 }
 
+std::vector<char> ReadFile(const std::filesystem::path &path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<char>{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
 } // namespace
 
-TEST_CASE("Each asset kind is claimed by the cooker that owns it")
+TEST_CASE("Every kind, the engine's own and a module's, has exactly one cooker")
 {
-    CHECK(ClaimFor("materials/checker.amat") == Claim::Output);
-    CHECK(ClaimFor("config/game.json") == Claim::Output);
-    CHECK(ClaimFor("levels/Test.alvl") == Claim::Output);
-    CHECK(ClaimFor("blueprints/Player.abp") == Claim::Output);
-    CHECK(ClaimFor("models/helmet.gltf") == Claim::Output);
-    CHECK(ClaimFor("models/helmet.glb") == Claim::Output);
-    CHECK(ClaimFor("textures/checker.png") == Claim::Output);
-    CHECK(ClaimFor("textures/moon.jpg") == Claim::Output);
-    CHECK(ClaimFor("shaders/mesh.vert.spv") == Claim::Output);
-    CHECK(ClaimFor("fonts/Inter-Regular.afont") == Claim::Output);
-    CHECK(ClaimFor("ui/Pause.amdn") == Claim::Output);
+    // A file's sidecar names its kind and the cook hands it to that kind's
+    // cooker, so a kind with none has files nothing can cook, and a kind with
+    // two has files the cook would hand to whichever it found first.
+    for (const Assisi::Core::AssetKind &kind : Assisi::Core::AssetKindRegistry::Instance().All())
+    {
+        CAPTURE(kind.name);
+        CHECK(CookersOf(kind.id) == 1);
+    }
 }
 
-TEST_CASE("Font files and their licences are claimed and produce nothing of their own")
+TEST_CASE("A file whose sidecar names no kind fails the cook, naming it")
 {
-    // A font's glyphs reach the cooked tree through the description that names
-    // it, so neither the font file nor the licence beside it ships.
-    CHECK(ClaimFor("fonts/Inter-Regular.ttf") == Claim::SourceOnly);
-    CHECK(ClaimFor("fonts/Other.otf") == Claim::SourceOnly);
-    CHECK(ClaimFor("fonts/OFL.txt") == Claim::SourceOnly);
+    const ScratchDir source("no-kind-src");
+    const ScratchDir out("no-kind-out");
+    const std::expected<CookReport, Assisi::Cook::CookError> report =
+        CookWithExtraFile(source.Path(), out.Path(), "things/unstated.tbytes", "");
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "things/unstated.tbytes");
+    CHECK(report.error().reason.find("names no kind") != std::string::npos);
 }
 
-TEST_CASE("Template libraries are claimed and produce nothing of their own")
+TEST_CASE("A file used as a kind that does not read its format fails the cook, naming both")
 {
-    // What a library holds reaches the cooked tree inside the screens built
-    // from it.
-    CHECK(ClaimFor("ui/common/Controls.amdt") == Claim::SourceOnly);
+    const ScratchDir source("wrong-kind-src");
+    const ScratchDir out("wrong-kind-out");
+    const std::expected<CookReport, Assisi::Cook::CookError> report =
+        CookWithExtraFile(source.Path(), out.Path(), "things/wrong.png", "test reversed bytes");
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "things/wrong.png");
+    CHECK(report.error().reason.find("test reversed bytes") != std::string::npos);
 }
 
-TEST_CASE("Shader sources are claimed and produce nothing")
+TEST_CASE("A file used as a kind this build does not have fails the cook, naming both")
 {
-    // A third answer, not a missing one: GLSL is content in the tree and absent
-    // from a shipped build, and a cook that did not recognise it would fail.
-    CHECK(ClaimFor("shaders/mesh.vert") == Claim::SourceOnly);
-    CHECK(ClaimFor("shaders/mesh.frag") == Claim::SourceOnly);
-    CHECK(ClaimFor("shaders/cluster.comp") == Claim::SourceOnly);
-    CHECK(ClaimFor("shaders/mesh/material.glsl") == Claim::SourceOnly);
+    const ScratchDir source("unknown-kind-src");
+    const ScratchDir out("unknown-kind-out");
+    const std::expected<CookReport, Assisi::Cook::CookError> report =
+        CookWithExtraFile(source.Path(), out.Path(), "things/odd.png", "heightmap");
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "things/odd.png");
+    CHECK(report.error().reason.find("heightmap") != std::string::npos);
 }
 
-TEST_CASE("A file no cooker knows is claimed by nobody")
+TEST_CASE("A part of another asset is cooked with it, not as an asset of its own")
 {
-    // Which is what makes the walk refuse it. The catch-all is deliberately not
-    // a catch-all: it takes named extensions, so an unknown one reaches the
-    // refusal rather than being copied on a guess.
-    CHECK(ClaimFor("models/Coffee_Machine.zip") == Claim::None);
-    CHECK(ClaimFor("models/scene.blend") == Claim::None);
-    CHECK(ClaimFor("notes.md") == Claim::None);
+    // A glTF's buffer has no kind of its own to name, so a sidecar with none
+    // is right for it; it produces nothing, and nothing fails.
+    const ScratchDir source("part-src");
+    const ScratchDir out("part-out");
+    const std::expected<CookReport, Assisi::Cook::CookError> report =
+        CookWithExtraFile(source.Path(), out.Path(), "things/mesh.bin", "");
+    REQUIRE_MESSAGE(report.has_value(), Explain(report));
+    for (const Assisi::Cook::ManifestEntry &entry : report->entries)
+    {
+        CHECK(entry.vpath != "things/mesh.bin");
+    }
+}
+
+TEST_CASE("A PNG whose sidecar says it is another kind cooks as that kind, and one that says texture as a texture")
+{
+    const ScratchDir out("png-kinds");
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    REQUIRE_MESSAGE(report.has_value(), Explain(report));
+
+    const auto kindOf = [&](const std::string &vpath) -> Assisi::Core::AssetKindId
+    {
+        const std::vector<Assisi::Cook::ManifestEntry>::const_iterator entry =
+            std::ranges::find(report->entries, vpath, &Assisi::Cook::ManifestEntry::vpath);
+        REQUIRE(entry != report->entries.end());
+        const std::vector<char> cooked = ReadFile(out.Path() / (entry->guid + ".cooked"));
+        Assisi::Core::BitReader reader(std::as_bytes(std::span{cooked}));
+        const std::expected<Assisi::Core::AssetKindId, Assisi::Core::CookedBlobError> kind =
+            Assisi::Core::ReadCookedHeader(reader);
+        REQUIRE(kind.has_value());
+        return *kind;
+    };
+    CHECK(kindOf("things/photo.png") == Assisi::Testing::kRawKind);
+    CHECK(kindOf("textures/checker.png") == Assisi::Core::kTextureKind);
+}
+
+TEST_CASE("A material that binds a file used as something other than a texture fails the cook, naming both")
+{
+    const ScratchDir source("bound-src");
+    const ScratchDir out("bound-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+    // Point the fixture material's base colour at the PNG used as a test kind.
+    {
+        std::ofstream sidecar(source.Path() / "textures" / "checker.png.aast");
+        sidecar << R"({"guid":"1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d","type":"AssetSidecar","version":1,)"
+                   R"("uses":[{"kind":"test raw bytes"}]})";
+    }
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "textures/checker.png");
+    CHECK(report.error().reason.find("materials/checker.amat") != std::string::npos);
+    CHECK(report.error().reason.find("test raw bytes") != std::string::npos);
+}
+
+TEST_CASE("Changing a file's kind re-cooks it as the new kind")
+{
+    const ScratchDir source("rekind-src");
+    const ScratchDir out("rekind-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+    REQUIRE(CookTree(source.Path(), out.Path()).has_value());
+
+    {
+        std::ofstream sidecar(source.Path() / "things" / "photo.png.aast");
+        sidecar << R"({"guid":"9daec218-7b41-4d98-9e25-21eaece14173","type":"AssetSidecar","version":1,)"
+                   R"("uses":[{"kind":"texture"}]})";
+    }
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+
+    const std::vector<char> cooked = ReadFile(out.Path() / "9daec218-7b41-4d98-9e25-21eaece14173.cooked");
+    Assisi::Core::BitReader reader(std::as_bytes(std::span{cooked}));
+    const std::expected<Assisi::Core::AssetKindId, Assisi::Core::CookedBlobError> kind =
+        Assisi::Core::ReadCookedHeader(reader);
+    REQUIRE(kind.has_value());
+    CHECK(*kind == Assisi::Core::kTextureKind);
+}
+
+TEST_CASE("A registered kind's file cooks through the kind's own step")
+{
+    const ScratchDir out("registered-kind");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
+    REQUIRE_MESSAGE(report.has_value(), Explain(report));
+
+    const std::vector<Assisi::Cook::ManifestEntry>::const_iterator entry =
+        std::ranges::find(report->entries, std::string{"things/sample.tbytes"}, &Assisi::Cook::ManifestEntry::vpath);
+    REQUIRE(entry != report->entries.end());
+
+    // The fixture holds "abc", and the test kind's step reverses it.
+    const std::vector<char> cooked = ReadFile(out.Path() / (entry->guid + ".cooked"));
+    REQUIRE(cooked.size() == Assisi::Core::kCookedHeaderBytes + 3);
+    CHECK(std::string{cooked.begin() + Assisi::Core::kCookedHeaderBytes, cooked.end()} == "cba");
+}
+
+TEST_CASE("A registered kind's cook step refusing a file fails the cook, naming the path and the reason")
+{
+    const ScratchDir source("refused-kind-src");
+    const ScratchDir out("refused-kind-out");
+
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    // Written here rather than kept in the fixture tree, which every other case
+    // cooks whole. The test kind's step refuses a source that starts with 'X'.
+    {
+        std::ofstream refused(source.Path() / "things" / "refused.tbytes", std::ios::binary);
+        refused << "Xyz";
+    }
+    {
+        std::ofstream sidecar(source.Path() / "things" / "refused.tbytes.aast");
+        sidecar << R"({"guid":"2bc56ba6-b801-47f0-b6bc-5b866a8c5e96","type":"AssetSidecar","version":1,)"
+                   R"("uses":[{"kind":"test reversed bytes"}]})";
+    }
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "things/refused.tbytes");
+    CHECK(report.error().reason.find(Assisi::Testing::kCookRefusedDetail) != std::string::npos);
 }
 
 TEST_CASE("Cooking the fixture tree twice produces identical bytes")
@@ -284,12 +434,11 @@ TEST_CASE("A shader source with no compiled output fails the cook")
     CHECK(report.error().reason.find("no compiled") != std::string::npos);
 }
 
-TEST_CASE("A file no cooker claims fails the cook, naming the path")
+TEST_CASE("A file of a format no kind reads fails the cook, naming the path")
 {
-    // The definition of done, and the property the whole walk exists for: a
-    // shipped build must not be able to quietly lack an asset. Driven through
-    // CookTree rather than through Claims() alone, because what matters is that
-    // the run *stops* and says which file.
+    // The property the whole walk exists for: a shipped build must not be able
+    // to quietly lack an asset. What matters is that the run *stops* and says
+    // which file.
     const ScratchDir source("unclaimed-src");
     const ScratchDir out("unclaimed-out");
 
@@ -310,7 +459,7 @@ TEST_CASE("A file no cooker claims fails the cook, naming the path")
     const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
     REQUIRE_FALSE(report.has_value());
     CHECK(report.error().vpath == "notes.md");
-    CHECK(report.error().reason.find("no cooker") != std::string::npos);
+    CHECK(report.error().reason.find("names no kind") != std::string::npos);
 }
 
 TEST_CASE("A screen naming an event nothing declares fails the cook, with the line and column")
@@ -338,7 +487,8 @@ TEST_CASE("A screen naming an event nothing declares fails the cook, with the li
     }
     {
         std::ofstream sidecar(source.Path() / "ui" / "Misspelt.amdn.aast");
-        sidecar << R"({"guid":"b74e0c15-92af-4d63-8e10-5a7c3f0d29b8","type":"AssetSidecar","version":1})";
+        sidecar << R"({"guid":"b74e0c15-92af-4d63-8e10-5a7c3f0d29b8","type":"AssetSidecar","version":1,)"
+                   R"("uses":[{"kind":"screen"}]})";
     }
 
     const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
@@ -390,38 +540,34 @@ TEST_CASE("Every cooked blob is named by its asset's GUID")
 
 TEST_CASE("A cooker's kind is the kind its blobs say they are")
 {
-    // A provider lists assets by the kind their cooker reports, without cooking
-    // them. A cooker that reports one kind and writes another would list a mesh
-    // as a scene and fail the load that trusted the list.
+    // A pak lists assets by kind, and a load checks the kind in the blob. A
+    // cooker that wrote a kind other than the one the sidecar named would list
+    // a mesh as a scene and fail the load that trusted the list.
     const ScratchDir out("kinds");
 
     const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(ASSISI_COOK_FIXTURE_ROOT, out.Path());
     REQUIRE_MESSAGE(report.has_value(), Explain(report));
     REQUIRE_FALSE(report->entries.empty());
 
-    const std::vector<std::unique_ptr<Assisi::Cook::Cooker>> cookers = MakeCookers();
     for (const Assisi::Cook::ManifestEntry &entry : report->entries)
     {
         CAPTURE(entry.vpath);
 
-        std::ifstream in(out.Path() / (entry.guid + ".cooked"), std::ios::binary);
-        const std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        const std::vector<char> chars = ReadFile(out.Path() / (entry.guid + ".cooked"));
         Assisi::Core::BitReader reader(std::as_bytes(std::span{chars}));
-        const std::expected<Assisi::Core::CookedKind, Assisi::Core::CookedBlobError> written =
+        const std::expected<Assisi::Core::AssetKindId, Assisi::Core::CookedBlobError> written =
             Assisi::Core::ReadCookedHeader(reader);
         REQUIRE(written.has_value());
 
-        const Assisi::Cook::Cooker *owner = nullptr;
-        for (const std::unique_ptr<Assisi::Cook::Cooker> &cooker : cookers)
-        {
-            if (cooker->Claims(entry.vpath) != Claim::None)
-            {
-                owner = cooker.get();
-                break;
-            }
-        }
-        REQUIRE(owner != nullptr);
-        CHECK(owner->Kind() == *written);
+        // The kind the sidecar names; a compiled shader has none and is a shader.
+        const std::vector<char> sidecarText =
+            ReadFile(std::filesystem::path{ASSISI_COOK_FIXTURE_ROOT} / (entry.vpath + ".aast"));
+        const std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError> sidecar =
+            Assisi::Core::DeserializeSidecar(std::string_view{sidecarText.data(), sidecarText.size()});
+        const Assisi::Core::AssetKindId expected = sidecar.has_value() && !sidecar->uses.empty()
+                                                       ? Assisi::Core::AssetKindId{sidecar->uses.front().kind}
+                                                       : Assisi::Core::kShaderKind;
+        CHECK(*written == expected);
     }
 }
 
@@ -492,6 +638,15 @@ TEST_CASE("A change to any reflected type's layout re-cooks the reflected docume
 namespace
 {
 
+/// The sidecar the editor writes beside a new file at @p path under @p root:
+/// @p guid, and the kind a new file of its format is given.
+void WriteNewFileSidecar(const std::filesystem::path &root, const std::string &path, std::string_view guid)
+{
+    const std::optional<Assisi::Core::AssetId> id = Assisi::Core::AssetId::Parse(guid);
+    REQUIRE(id.has_value());
+    std::ofstream(root / (path + ".aast")) << Assisi::Core::SerializeSidecar(Assisi::Core::NewFileSidecar(*id, path));
+}
+
 /// A copy of the fixture tree with a font description and its font file added,
 /// both with sidecars so they have ids to cook under.
 void AddFont(const std::filesystem::path &root)
@@ -504,10 +659,8 @@ void AddFont(const std::filesystem::path &root)
     std::ofstream(root / "fonts" / "Test.afont")
         << R"({ "version": 1, "type": "FontDescription", "source": "fonts/Test.ttf",)"
         << R"( "ranges": [32, 126], "pixelSize": 24, "spread": 4 })";
-    std::ofstream(root / "fonts" / "Test.afont.aast")
-        << R"({ "guid": "5b0e3c2a-6f1d-4e8a-9c7b-2d4f6a8e0c13", "type": "AssetSidecar", "version": 1 })";
-    std::ofstream(root / "fonts" / "Test.ttf.aast")
-        << R"({ "guid": "9a1c7e5f-3b2d-4c6e-8f0a-1e3d5b7c9a24", "type": "AssetSidecar", "version": 1 })";
+    WriteNewFileSidecar(root, "fonts/Test.afont", "5b0e3c2a-6f1d-4e8a-9c7b-2d4f6a8e0c13");
+    WriteNewFileSidecar(root, "fonts/Test.ttf", "9a1c7e5f-3b2d-4c6e-8f0a-1e3d5b7c9a24");
 }
 
 /// The manifest entry for @p vpath, or null.
@@ -549,15 +702,15 @@ TEST_CASE("A font description cooks to a font the runtime reads, and its font fi
 namespace
 {
 
-/// Writes @p text to @p path under @p root, with a sidecar carrying @p guid.
+/// Writes @p text to @p path under @p root, with the sidecar the editor would
+/// give a new file there: @p guid, and its format's kind.
 void WriteAsset(const std::filesystem::path &root, const std::string &path, std::string_view text,
                 std::string_view guid)
 {
     std::error_code code;
     std::filesystem::create_directories((root / path).parent_path(), code);
     std::ofstream(root / path) << text;
-    std::ofstream(root / (path + ".aast"))
-        << R"({ "guid": ")" << guid << R"(", "type": "AssetSidecar", "version": 1 })";
+    WriteNewFileSidecar(root, path, guid);
 }
 
 /// A copy of the fixture tree with a template library and two screens built
@@ -680,17 +833,4 @@ TEST_CASE("A key its table does not have fails the screen's cook")
     REQUIRE_FALSE(report.has_value());
     CHECK(report.error().vpath == "ui/Menu.amdn");
     CHECK(report.error().reason.starts_with("2:"));
-}
-
-TEST_CASE("A .csv the UI settings do not list is no string table")
-{
-    const ScratchDir source("table-unlisted-src");
-    const ScratchDir out("table-unlisted-out");
-    AddStringTable(source.Path(), "#menu:title");
-    WriteAsset(source.Path(), "data/spawns.csv", "x,y\n1,2\n", "8f0b2d4e-6a1c-4e3f-9b5d-1c3e5a7f9b0d");
-
-    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
-    REQUIRE_FALSE(report.has_value());
-    CHECK(report.error().vpath == "data/spawns.csv");
-    CHECK(report.error().reason.find("no cooker") != std::string::npos);
 }

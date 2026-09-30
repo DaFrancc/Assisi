@@ -14,7 +14,7 @@ namespace Assisi::Editor
 void ThumbnailCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs)
 {
     _device = device;
-    _jobs   = jobs;
+    _jobs = jobs;
 }
 
 const Render::Texture *ThumbnailCache::Resolve(const Core::AssetPath &path)
@@ -51,39 +51,39 @@ const Render::Texture *ThumbnailCache::Resolve(const Core::AssetPath &path)
     }
 
     _loading.insert(path);
-    const std::uint64_t epoch                    = _epoch.load(std::memory_order_relaxed);
-    const std::atomic<std::uint64_t> *liveEpoch  = &_epoch;
+    const std::uint64_t epoch = _epoch.load(std::memory_order_relaxed);
+    const std::atomic<std::uint64_t> *liveEpoch = &_epoch;
     const std::string vpath(path.View());
 
     _jobs
-    ->Run(Core::Pool::Worker,
-          [vpath, epoch, liveEpoch]() -> std::expected<Image::DecodedImage, Core::AssetError>
-          {
-              // Skip the decode if a directory change already superseded this
-              // thumbnail. The error is never inspected — the continuation returns
-              // on the epoch mismatch before it looks at the result.
-              if (liveEpoch->load(std::memory_order_relaxed) != epoch)
+        ->Run(Core::Pool::Worker,
+              [vpath, epoch, liveEpoch]() -> std::expected<Image::DecodedImage, Core::AssetError>
               {
-                  return std::unexpected(Core::AssetError::FileReadFailed);
-              }
-              return Image::DecodeImage(vpath, Image::ColorSpace::Linear);
-          })
-    .Then(Core::Pool::Main,
-          [this, path, epoch](std::expected<Image::DecodedImage, Core::AssetError> decoded)
-          {
-              // Superseded: return before erasing, so a stale completion cannot drop
-              // a live epoch's loading marker and re-kick a load.
-              if (epoch != _epoch.load(std::memory_order_relaxed))
+                  // Skip the decode if a directory change already superseded this
+                  // thumbnail. The error is never inspected — the continuation returns
+                  // on the epoch mismatch before it looks at the result.
+                  if (liveEpoch->load(std::memory_order_relaxed) != epoch)
+                  {
+                      return std::unexpected(Core::AssetErrorCode::FileReadFailed);
+                  }
+                  return Image::DecodeImage(vpath, Image::ColorSpace::Linear);
+              })
+        .Then(Core::Pool::Main,
+              [this, path, epoch](std::expected<Image::DecodedImage, Core::AssetError> decoded)
               {
-                  return;
-              }
-              _loading.erase(path);
-              Render::Texture &texture = _thumbnails[path];
-              if (decoded)
-              {
-                  texture.UploadDecoded(_device, *decoded, std::string(path.View()).c_str());
-              }
-          });
+                  // Superseded: return before erasing, so a stale completion cannot drop
+                  // a live epoch's loading marker and re-kick a load.
+                  if (epoch != _epoch.load(std::memory_order_relaxed))
+                  {
+                      return;
+                  }
+                  _loading.erase(path);
+                  Render::Texture &texture = _thumbnails[path];
+                  if (decoded)
+                  {
+                      texture.UploadDecoded(_device, *decoded, std::string(path.View()).c_str());
+                  }
+              });
 
     return nullptr; // loading — the browser shows a placeholder tile this frame
 }

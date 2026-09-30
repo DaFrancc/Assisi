@@ -3,6 +3,7 @@
 #include <Assisi/Cook/Cooker.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/ContentHash.hpp>
@@ -52,11 +53,6 @@ bool HasExtension(std::string_view vpath, std::string_view extension)
     return vpath.size() > extension.size() && vpath.ends_with(extension);
 }
 
-bool HasAnyExtension(std::string_view vpath, std::span<const std::string_view> extensions)
-{
-    return std::ranges::any_of(extensions, [vpath](std::string_view ext) { return HasExtension(vpath, ext); });
-}
-
 CookError Failure(std::string_view vpath, std::string reason)
 {
     return CookError{.vpath = std::string{vpath}, .reason = std::move(reason)};
@@ -81,7 +77,7 @@ class ReflectedCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "reflected"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Reflected; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kReflectedKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -95,12 +91,6 @@ class ReflectedCooker final : public Cooker
         }
         std::ranges::sort(layouts);
         return Core::ContentHash64(std::as_bytes(std::span{layouts}));
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".amat"}, std::string_view{".json"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
@@ -183,15 +173,9 @@ class SceneCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "scene"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Scene; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kSceneKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Runtime::kScenePayloadVersion; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".alvl"}, std::string_view{".abp"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
-    }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
                                                                         const CookContext &context) const override
@@ -236,22 +220,9 @@ class MeshCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "mesh"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Mesh; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kMeshKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override { return Geometry::kMeshPayloadVersion; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".gltf"}, std::string_view{".glb"}};
-        if (HasAnyExtension(vpath, kExtensions))
-        {
-            return Claim::Output;
-        }
-        // A glTF's external buffer. Content, and consumed whole into the mesh
-        // blob beside it rather than cooked on its own — the same relationship a
-        // shader source has to its .spv.
-        return HasExtension(vpath, ".bin") ? Claim::SourceOnly : Claim::None;
-    }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
@@ -332,7 +303,7 @@ class TextureCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "texture"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Texture; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kTextureKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &context) const override
     {
@@ -341,13 +312,6 @@ class TextureCooker final : public Cooker
         constexpr std::uint32_t kTierBits = 8;
         return (static_cast<std::uint64_t>(Image::kTexturePayloadVersion) << kTierBits) |
                static_cast<std::uint64_t>(context.textureQuality);
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".png"}, std::string_view{".jpg"},
-                                                std::string_view{".jpeg"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
@@ -408,21 +372,7 @@ class ShaderCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "shader"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Shader; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        if (HasExtension(vpath, ".spv"))
-        {
-            return Claim::Output;
-        }
-        // Source, which the build compiles and a shipped tree never carries. A
-        // `.glsl` is a fragment another shader includes and is not compiled on
-        // its own, so it has no `.spv` of its own either.
-        static constexpr std::array kSources{std::string_view{".vert"}, std::string_view{".frag"},
-                                             std::string_view{".comp"}, std::string_view{".glsl"}};
-        return HasAnyExtension(vpath, kSources) ? Claim::SourceOnly : Claim::None;
-    }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kShaderKind; }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
@@ -488,7 +438,7 @@ class FontCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "font"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Font; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kFontKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -497,19 +447,6 @@ class FontCooker final : public Cooker
         constexpr std::uint32_t kComponentBits = 8;
         return (static_cast<std::uint64_t>(Mondrian::kFontPayloadVersion) << (3 * kComponentBits)) |
                Mondrian::Import::RasterizerVersion();
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        if (HasExtension(vpath, ".afont"))
-        {
-            return Claim::Output;
-        }
-        // A font's licence text travels with the font file, so it stays with it
-        // in the source tree; the game ships neither.
-        static constexpr std::array kSources{std::string_view{".ttf"}, std::string_view{".otf"},
-                                             std::string_view{".txt"}};
-        return HasAnyExtension(vpath, kSources) ? Claim::SourceOnly : Claim::None;
     }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
@@ -592,11 +529,8 @@ std::string Where(const Mondrian::Import::MarkupError &error)
     return error.file.empty() ? place : error.file + ":" + place;
 }
 
-/// The string tables `config/ui.json` lists, each a `.csv` compiled to the table
-/// a screen's keys are looked up in.
-///
-/// Only the listed files are its: a `.csv` listed nowhere is some other kind of
-/// data, and not this cooker's to guess at.
+/// String tables: each a `.csv` whose sidecar says it is one, compiled to the
+/// table a screen's keys are looked up in.
 class StringTableCooker final : public Cooker
 {
   public:
@@ -606,18 +540,11 @@ class StringTableCooker final : public Cooker
     StringTableCooker() : _config(Mondrian::Import::LoadUiConfig(ReadMarkup).value_or(Mondrian::UiConfig{})) {}
 
     [[nodiscard]] std::string_view Name() const override { return "string table"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::StringTable; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kStringTableKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
         return Mondrian::kStringTablePayloadVersion;
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        const bool listed = std::ranges::any_of(_config.stringTables, [vpath](const Core::AssetPath &table)
-                                                { return table.View() == vpath; });
-        return listed ? Claim::Output : Claim::None;
     }
 
     /// The settings say whether an empty text is allowed.
@@ -662,7 +589,7 @@ class ScreenCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "screen"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Screen; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kScreenKind; }
 
     [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
     {
@@ -672,15 +599,6 @@ class ScreenCooker final : public Cooker
         // refuses.
         const std::array<std::uint64_t, 2> parts{Mondrian::kScreenPayloadVersion, Mondrian::ScreenLayoutHash()};
         return Core::ContentHash64(std::as_bytes(std::span{parts}));
-    }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        if (HasExtension(vpath, ".amdn"))
-        {
-            return Claim::Output;
-        }
-        return HasExtension(vpath, ".amdt") ? Claim::SourceOnly : Claim::None;
     }
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
@@ -758,25 +676,54 @@ class ScreenCooker final : public Cooker
     }
 };
 
+// ── Kinds registered by modules ───────────────────────────────────────────────
+
+/// A kind a module registered with AssetKindRegistry: its files cook through
+/// its own step, or ship as they are when it has none. One of these is made per
+/// registered kind, so nothing here names any of them.
+class KindCooker final : public Cooker
+{
+  public:
+    explicit KindCooker(const Core::AssetKind &kind) : _kind(&kind) {}
+
+    [[nodiscard]] std::string_view Name() const override { return _kind->name; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return _kind->id; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        const Core::AssetCookStep *step = Core::AssetKindRegistry::Instance().CookStepFor(_kind->id);
+        return step != nullptr ? step->version : 0;
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::vector<std::byte>, CookError> source = ReadSource(vpath);
+        if (!source)
+        {
+            return std::unexpected(source.error());
+        }
+        std::expected<std::vector<std::byte>, Core::AssetError> cooked = Core::CookAssetBytes(*_kind, *source);
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, Core::Describe(cooked.error())));
+        }
+        return std::move(*cooked);
+    }
+
+  private:
+    const Core::AssetKind *_kind;
+};
+
 // ── Everything else that is still content ─────────────────────────────────────
 
 /// Animated WebP: bytes with no transformation to apply, wrapped in the
 /// envelope so a cooked tree is uniformly readable.
-///
-/// Last in the list and explicit about what it takes. A catch-all that claimed
-/// anything would turn the cook's best property — a file nobody handles is a
-/// build failure — into a silent copy.
 class VerbatimCooker final : public Cooker
 {
   public:
     [[nodiscard]] std::string_view Name() const override { return "verbatim"; }
-    [[nodiscard]] Core::CookedKind Kind() const override { return Core::CookedKind::Verbatim; }
-
-    [[nodiscard]] Claim Claims(std::string_view vpath) const override
-    {
-        static constexpr std::array kExtensions{std::string_view{".webp"}};
-        return HasAnyExtension(vpath, kExtensions) ? Claim::Output : Claim::None;
-    }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kVerbatimKind; }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
                                                                         const CookContext &) const override
@@ -843,6 +790,12 @@ std::pair<std::string, std::string> TextureRoles::Conflict(Core::AssetId texture
     return {found->second.material, found->second.conflictingMaterial};
 }
 
+std::string TextureRoles::BoundBy(Core::AssetId texture) const
+{
+    const std::unordered_map<Core::AssetId, Binding>::const_iterator found = _bindings.find(texture);
+    return found == _bindings.end() ? std::string{} : found->second.material;
+}
+
 std::vector<std::unique_ptr<Cooker>> MakeCookers()
 {
     std::vector<std::unique_ptr<Cooker>> cookers;
@@ -855,6 +808,15 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
+    // One per kind a module registered. The engine's own kinds have no load
+    // function in the registry, and their cookers are the ones above.
+    for (const Core::AssetKind &kind : Core::AssetKindRegistry::Instance().All())
+    {
+        if (kind.load)
+        {
+            cookers.push_back(std::make_unique<KindCooker>(kind));
+        }
+    }
     return cookers;
 }
 

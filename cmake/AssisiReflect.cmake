@@ -1,5 +1,7 @@
 # AssisiReflect.cmake
-# Provides the assisi_reflect() and assisi_link_reflections() functions.
+# Provides the assisi_reflect() and assisi_link_reflections() functions, and
+# assisi_asset_kind() and assisi_link_asset_cook_steps() for asset kinds, which
+# register the same way.
 #
 # Usage in a module's CMakeLists.txt:
 #
@@ -350,5 +352,53 @@ function(assisi_link_reflections target)
     get_property(_reflect_targets GLOBAL PROPERTY ASSISI_REFLECT_OBJECT_TARGETS)
     foreach(_rt ${_reflect_targets})
         target_sources("${target}" PRIVATE "$<TARGET_OBJECTS:${_rt}>")
+    endforeach()
+endfunction()
+
+# A kind of asset a module adds (see Core/AssetKind.hpp):
+#
+#   assisi_asset_kind(
+#     TARGET Assisi-Audio
+#     LOAD   src/SoundKind.cpp
+#     COOK   src/SoundCook.cpp
+#   )
+#
+# LOAD lists the files that register the kind itself. They go into an OBJECT
+# library gathered by assisi_link_reflections(), so every executable that loads
+# assets registers the kind, for the same reason generated registrations go
+# there: a static library would let the linker drop them as unreferenced.
+#
+# COOK, optional, lists the files that register the kind's cook step. Those go
+# into a second OBJECT library, gathered only by assisi_link_asset_cook_steps(),
+# which the cook tool and the editor call and a game does not: a shipped game
+# never cooks, so it never links cook code.
+function(assisi_asset_kind)
+    cmake_parse_arguments(_ARG "" "TARGET" "LOAD;COOK" ${ARGN})
+    if(NOT _ARG_TARGET)
+        message(FATAL_ERROR "assisi_asset_kind: TARGET is required")
+    endif()
+    if(NOT _ARG_LOAD)
+        message(FATAL_ERROR "assisi_asset_kind: LOAD is required")
+    endif()
+
+    set(_load_target "${_ARG_TARGET}-AssetKind")
+    add_library("${_load_target}" OBJECT ${_ARG_LOAD})
+    target_link_libraries("${_load_target}" PRIVATE "${_ARG_TARGET}")
+    set_property(GLOBAL APPEND PROPERTY ASSISI_REFLECT_OBJECT_TARGETS "${_load_target}")
+
+    if(_ARG_COOK)
+        set(_cook_target "${_ARG_TARGET}-AssetCook")
+        add_library("${_cook_target}" OBJECT ${_ARG_COOK})
+        target_link_libraries("${_cook_target}" PRIVATE "${_ARG_TARGET}")
+        set_property(GLOBAL APPEND PROPERTY ASSISI_ASSET_COOK_OBJECT_TARGETS "${_cook_target}")
+    endif()
+endfunction()
+
+# Every asset kind's cook step, for an executable that cooks: the cook tool, and
+# the editor, which cooks source files as it loads them.
+function(assisi_link_asset_cook_steps target)
+    get_property(_cook_targets GLOBAL PROPERTY ASSISI_ASSET_COOK_OBJECT_TARGETS)
+    foreach(_ct ${_cook_targets})
+        target_sources("${target}" PRIVATE "$<TARGET_OBJECTS:${_ct}>")
     endforeach()
 endfunction()

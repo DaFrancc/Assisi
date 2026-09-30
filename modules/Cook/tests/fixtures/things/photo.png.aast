@@ -1,0 +1,10 @@
+{
+  "guid": "9daec218-7b41-4d98-9e25-21eaece14173",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "test raw bytes"
+    }
+  ],
+  "version": 1
+}

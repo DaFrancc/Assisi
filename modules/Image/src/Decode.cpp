@@ -24,8 +24,8 @@ namespace Assisi::Image
 
 void BuildMipChain(DecodedImage &image, const unsigned char *base, bool generateMips)
 {
-    const std::uint32_t width     = image.width;
-    const std::uint32_t height    = image.height;
+    const std::uint32_t width = image.width;
+    const std::uint32_t height = image.height;
     const std::uint32_t mipLevels = generateMips ? MipLevelCount(width, height) : 1;
 
     image.format = PixelFormat::Rgba8;
@@ -34,13 +34,13 @@ void BuildMipChain(DecodedImage &image, const unsigned char *base, bool generate
 
     for (std::uint32_t level = 1; level < mipLevels; ++level)
     {
-        const std::uint32_t mipWidth  = MipExtent(width, level);
+        const std::uint32_t mipWidth = MipExtent(width, level);
         const std::uint32_t mipHeight = MipExtent(height, level);
 
         const LevelLayout layout = LayoutFor(PixelFormat::Rgba8, mipWidth, mipHeight);
         std::vector<unsigned char> mip(layout.byteSize);
 
-        const int inStride  = static_cast<int>(LayoutFor(PixelFormat::Rgba8, width, 1).rowPitch);
+        const int inStride = static_cast<int>(LayoutFor(PixelFormat::Rgba8, width, 1).rowPitch);
         const int outStride = static_cast<int>(layout.rowPitch);
 
         // The resizer is colour-space-aware: an sRGB source is filtered in linear
@@ -77,23 +77,22 @@ std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath
         return std::unexpected(resolved.error());
     }
 
-    int width    = 0;
-    int height   = 0;
+    int width = 0;
+    int height = 0;
     int channels = 0;
     unsigned char *data =
-        stbi_load(resolved->string().c_str(), &width, &height, &channels,
-                  static_cast<int>(kRgba8BytesPerTexel));
+        stbi_load(resolved->string().c_str(), &width, &height, &channels, static_cast<int>(kRgba8BytesPerTexel));
     if (data == nullptr)
     {
         Core::Log::Error("Image: stbi_load failed for '{}'", vpath);
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
 
     DecodedImage image;
-    image.width      = static_cast<std::uint32_t>(width);
-    image.height     = static_cast<std::uint32_t>(height);
+    image.width = static_cast<std::uint32_t>(width);
+    image.height = static_cast<std::uint32_t>(height);
     image.colorSpace = colorSpace;
-    BuildMipChain(image, data, /*generateMips=*/ true);
+    BuildMipChain(image, data, /*generateMips=*/true);
 
     stbi_image_free(data);
     return image;
@@ -110,7 +109,7 @@ std::expected<std::vector<DecodedImage>, Core::AssetError> DecodeAnimatedWebp(st
 
     WebPData webpData;
     webpData.bytes = reinterpret_cast<const uint8_t *>(bytes->data());
-    webpData.size  = bytes->size();
+    webpData.size = bytes->size();
 
     // AnimDecoder composites frame disposal/blending for us and hands back full
     // canvas-sized RGBA frames — exactly what we upload. MODE_RGBA matches our
@@ -119,16 +118,16 @@ std::expected<std::vector<DecodedImage>, Core::AssetError> DecodeAnimatedWebp(st
     if (!WebPAnimDecoderOptionsInit(&options))
     {
         Core::Log::Error("Image: WebPAnimDecoderOptionsInit failed for '{}'", vpath);
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
-    options.color_mode  = MODE_RGBA;
+    options.color_mode = MODE_RGBA;
     options.use_threads = 0;
 
     WebPAnimDecoder *decoder = WebPAnimDecoderNew(&webpData, &options);
     if (decoder == nullptr)
     {
         Core::Log::Error("Image: WebPAnimDecoderNew failed for '{}' (not a valid WebP?)", vpath);
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
 
     WebPAnimInfo info;
@@ -136,7 +135,7 @@ std::expected<std::vector<DecodedImage>, Core::AssetError> DecodeAnimatedWebp(st
     {
         Core::Log::Error("Image: WebPAnimDecoderGetInfo failed for '{}'", vpath);
         WebPAnimDecoderDelete(decoder);
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
 
     std::vector<DecodedImage> frames;
@@ -152,12 +151,12 @@ std::expected<std::vector<DecodedImage>, Core::AssetError> DecodeAnimatedWebp(st
         }
 
         DecodedImage image;
-        image.width      = info.canvas_width;
-        image.height     = info.canvas_height;
+        image.width = info.canvas_width;
+        image.height = info.canvas_height;
         image.colorSpace = colorSpace;
         // No mip chain: these are drawn near their native size, and a chain per
         // frame would multiply the (already many) uploads for no visible gain.
-        BuildMipChain(image, frameRgba, /*generateMips=*/ false);
+        BuildMipChain(image, frameRgba, /*generateMips=*/false);
         frames.push_back(std::move(image));
     }
     WebPAnimDecoderDelete(decoder);
@@ -165,7 +164,7 @@ std::expected<std::vector<DecodedImage>, Core::AssetError> DecodeAnimatedWebp(st
     if (frames.empty())
     {
         Core::Log::Error("Image: decoded no frames from WebP '{}'", vpath);
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
     return frames;
 }

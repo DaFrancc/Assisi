@@ -14,6 +14,7 @@
 #include <Assisi/Audio/AudioDevice.hpp>
 #include <Assisi/Audio/Mixer.hpp>
 #include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Core/AssetStore.hpp>
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
@@ -163,6 +164,11 @@ protected:
     /// and install the readers over it. False, logged, refuses the launch.
     [[nodiscard]] virtual bool MountContent();
 
+    /// @brief Load assets of every registered kind through @p provider from now
+    ///        on: the package in a game, a Core::CookingProvider over the source
+    ///        files in the editor. @p provider must outlive the app.
+    void LoadAssetsFrom(const Core::AssetProvider &provider) { _assets.Initialize(_jobs, provider); }
+
     virtual void OnStart() = 0;
     virtual void OnFixedUpdate(float dt) = 0;
     /// @brief How far the fixed-step simulation advances for a frame that took
@@ -252,6 +258,11 @@ protected:
     /// @brief What sounds are started and stopped through, or null in a headless
     /// process, which has no audio. Bus volumes go through GetPlayerSettings.
     [[nodiscard]] Audio::SoundOutput *GetMixer() const { return _mixer.get(); }
+
+    /// @brief Assets of every kind a module registered, by id, loaded in the
+    /// background. Every Resolve returns null until the app says where assets
+    /// come from.
+    [[nodiscard]] Core::AssetStore &GetAssets() { return _assets; }
 
     /// @brief Whether the window/renderer half of the engine was brought up.
     /// False in a headless process, and false before Initialize().
@@ -470,6 +481,10 @@ private:
     // scheduled work is already gone. Derived-class members are destroyed before
     // this base's, so the app's AssetCache etc. can safely use it up to teardown.
     Core::JobSystem _jobs;
+
+    /// Assets of every kind a module registered. Declared after the job system,
+    /// so it is destroyed first.
+    Core::AssetStore _assets;
 
     Render::PostProcess _postProcess;
     Core::EventQueue _events;

@@ -14,8 +14,8 @@ namespace
 
 Render::AssetLoadError FromAssetError(Core::AssetError error) noexcept
 {
-    return error == Core::AssetError::UnknownAssetId ? Render::AssetLoadError::UnknownAsset
-                                                     : Render::AssetLoadError::Unreadable;
+    return error == Core::AssetErrorCode::UnknownAssetId ? Render::AssetLoadError::UnknownAsset
+                                                         : Render::AssetLoadError::Unreadable;
 }
 
 } // namespace
@@ -39,8 +39,8 @@ std::expected<Geometry::CookedMesh, Render::AssetLoadError> CookedAssetSource::L
     return std::move(*mesh);
 }
 
-std::expected<Geometry::MaterialData, Render::AssetLoadError>
-CookedAssetSource::LoadMaterial(const Core::AssetId &id) const
+std::expected<Geometry::MaterialData, Render::AssetLoadError> CookedAssetSource::LoadMaterial(
+    const Core::AssetId &id) const
 {
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = _provider->Open(id);
     if (!bytes)
@@ -56,8 +56,9 @@ CookedAssetSource::LoadMaterial(const Core::AssetId &id) const
     return std::move(*material);
 }
 
-std::expected<Image::DecodedImage, Render::AssetLoadError>
-CookedAssetSource::LoadTexture(const Core::AssetId &id, Image::ColorSpace, Image::PixelFormat) const
+std::expected<Image::DecodedImage, Render::AssetLoadError> CookedAssetSource::LoadTexture(const Core::AssetId &id,
+                                                                                          Image::ColorSpace,
+                                                                                          Image::PixelFormat) const
 {
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = _provider->Open(id);
     if (!bytes)
@@ -72,8 +73,8 @@ CookedAssetSource::LoadTexture(const Core::AssetId &id, Image::ColorSpace, Image
     return std::move(*image);
 }
 
-std::expected<std::vector<std::byte>, Render::AssetLoadError>
-CookedAssetSource::LoadShader(std::string_view vpath) const
+std::expected<std::vector<std::byte>, Render::AssetLoadError> CookedAssetSource::LoadShader(
+    std::string_view vpath) const
 {
     const std::expected<Core::AssetId, Render::AssetLoadError> id = Resolve(vpath);
     if (!id)

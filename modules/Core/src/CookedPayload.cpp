@@ -16,9 +16,9 @@ namespace
 constexpr std::size_t kBitsPerByte = 8;
 
 /// Reads and checks the envelope, leaving @p reader at the payload.
-std::expected<void, CookedPayloadError> ExpectKind(BitReader &reader, CookedKind wanted)
+std::expected<void, CookedPayloadError> ExpectKind(BitReader &reader, AssetKindId wanted)
 {
-    const std::expected<CookedKind, CookedBlobError> kind = ReadCookedHeader(reader);
+    const std::expected<AssetKindId, CookedBlobError> kind = ReadCookedHeader(reader);
     if (!kind)
     {
         return std::unexpected(kind.error() == CookedBlobError::Truncated ? CookedPayloadError::Truncated
@@ -31,7 +31,7 @@ std::expected<void, CookedPayloadError> ExpectKind(BitReader &reader, CookedKind
     return {};
 }
 
-void WriteByteBlob(BitWriter &writer, CookedKind kind, std::span<const std::byte> contents)
+void WriteByteBlob(BitWriter &writer, AssetKindId kind, std::span<const std::byte> contents)
 {
     WriteCookedHeader(writer, kind);
     writer.WriteVarUInt32(static_cast<std::uint32_t>(contents.size()));
@@ -39,7 +39,7 @@ void WriteByteBlob(BitWriter &writer, CookedKind kind, std::span<const std::byte
 }
 
 std::expected<std::vector<std::byte>, CookedPayloadError> ReadByteBlob(std::span<const std::byte> bytes,
-                                                                        CookedKind kind)
+                                                                       AssetKindId kind)
 {
     BitReader reader{bytes};
     if (const std::expected<void, CookedPayloadError> envelope = ExpectKind(reader, kind); !envelope)
@@ -83,27 +83,27 @@ std::string_view ToString(CookedPayloadError error) noexcept
 
 void WriteShaderBlob(BitWriter &writer, std::span<const std::byte> spirv)
 {
-    WriteByteBlob(writer, CookedKind::Shader, spirv);
+    WriteByteBlob(writer, kShaderKind, spirv);
 }
 
 std::expected<std::vector<std::byte>, CookedPayloadError> ReadShaderBlob(std::span<const std::byte> bytes)
 {
-    return ReadByteBlob(bytes, CookedKind::Shader);
+    return ReadByteBlob(bytes, kShaderKind);
 }
 
 void WriteVerbatimBlob(BitWriter &writer, std::span<const std::byte> contents)
 {
-    WriteByteBlob(writer, CookedKind::Verbatim, contents);
+    WriteByteBlob(writer, kVerbatimKind, contents);
 }
 
 std::expected<std::vector<std::byte>, CookedPayloadError> ReadVerbatimBlob(std::span<const std::byte> bytes)
 {
-    return ReadByteBlob(bytes, CookedKind::Verbatim);
+    return ReadByteBlob(bytes, kVerbatimKind);
 }
 
 bool WriteReflectedBlob(BitWriter &writer, const Reflect::AssetTypeMeta &meta, const void *instance)
 {
-    WriteCookedHeader(writer, CookedKind::Reflected);
+    WriteCookedHeader(writer, kReflectedKind);
     writer.WriteString(meta.name);
     return Reflect::WriteAsset(meta, instance, writer);
 }
@@ -112,7 +112,7 @@ std::expected<void, CookedPayloadError> ReadReflectedBlob(std::span<const std::b
                                                           const Reflect::AssetTypeMeta &meta, void *instance)
 {
     BitReader reader{bytes};
-    if (const std::expected<void, CookedPayloadError> envelope = ExpectKind(reader, CookedKind::Reflected); !envelope)
+    if (const std::expected<void, CookedPayloadError> envelope = ExpectKind(reader, kReflectedKind); !envelope)
     {
         return std::unexpected(envelope.error());
     }

@@ -15,6 +15,9 @@ target_link_libraries(Assisi-Cook-Tests
   PRIVATE
     Assisi::Cook
     Assisi::TestSupport
+    # Two kinds registered from outside the engine, which the fixture tree holds
+    # files of, so the cook is shown claiming a kind nothing in it names.
+    Assisi::TestAssetKinds
 )
 
 # The cook loads levels, which walks ComponentRegistry — populated by static

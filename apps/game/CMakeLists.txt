@@ -153,6 +153,8 @@ foreach(_exe Assisi-Game Assisi-GameEditor)
   endif()
   assisi_link_reflections("${_exe}")
 endforeach()
+# The editor cooks source files as it loads them; the game reads cooked ones.
+assisi_link_asset_cook_steps(Assisi-GameEditor)
 
 # A refused start has to reach the exit code. Driven as a real process because
 # that is the whole claim — `StartupFailed()` returning true is not the property
@@ -219,7 +221,7 @@ if (ASSISI_BUILD_TESTS)
 
   # The same config in both roots but for the scene it names, so a difference in
   # outcome can only come from the scene. The sidecar gives the config an id to
-  # be cooked under.
+  # be cooked under, and says it is a reflected document.
   foreach(_root_scene "${_thin_root}|levels/PerfBlank.alvl" "${_refused_root}|levels/Absent.alvl")
     string(REPLACE "|" ";" _root_scene "${_root_scene}")
     list(GET _root_scene 0 _root)
@@ -234,6 +236,7 @@ if (ASSISI_BUILD_TESTS)
       "{\n"
       "  \"guid\": \"7d3c1f0e-2b4a-4c8d-9e6f-1a2b3c4d5e6f\",\n"
       "  \"type\": \"AssetSidecar\",\n"
+      "  \"uses\": [{ \"kind\": \"reflected\" }],\n"
       "  \"version\": 1\n"
       "}\n")
   endforeach()

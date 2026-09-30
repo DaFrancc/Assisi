@@ -30,6 +30,8 @@
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Core/CookingProvider.hpp>
+#include <Assisi/Core/LooseFileProvider.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/StructMeta.hpp>
@@ -640,6 +642,13 @@ class EditorApp : public Assisi::App::Application
     /// @brief Reads _assetBrowserDir into the cached dirs/images/meshes/materials
     /// lists. Called only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
+    /// @brief The right-click "Use as" menu on the last tile drawn: the kinds that
+    /// read @p vpath's format, the one its sidecar names marked. Nothing when only
+    /// one kind reads it, or in a restricted viewer.
+    void DrawUseAsMenu(const std::string &vpath);
+    /// @brief Rewrite @p vpath's sidecar to say it is a @p kindName, keeping the
+    /// rest of it, then reindex and forget what the store loaded.
+    void UseFileAs(const std::string &vpath, const std::string &kindName);
 
     // --- Material authoring ---
     /// @brief Load @p vpath into the material editor and open it. A material
@@ -1576,6 +1585,14 @@ class EditorApp : public Assisi::App::Application
     // shaders load inside Initialize.
     Assisi::Editor::SourceAssetSource _assetSource{_assetDatabase};
 
+    // What assets of registered kinds load through: the source files, cooked by
+    // each kind's own step as they are read, so the editor loads exactly what
+    // the game will. Declared after the database both read through.
+    Assisi::Core::LooseFileProvider _sourceFiles{_assetDatabase};
+    Assisi::Core::CookingProvider _cookedSources{
+        _sourceFiles, [this](Assisi::Core::AssetId id) { return _assetDatabase.PathFor(id); },
+        [this](Assisi::Core::AssetId id) { return _assetDatabase.KindNameOf(id); }};
+
     // Mesh assets (by virtual path) the last reconcile left stale: their glTF
     // source changed in a way the conservative classifier couldn't auto-resolve.
     // Surfaced as a badge in the asset browser. Rebuilt each reconcile.
@@ -1992,6 +2009,9 @@ class EditorApp : public Assisi::App::Application
     std::vector<std::string> _assetBrowserImages;
     std::vector<std::string> _assetBrowserMeshes;    ///< .glb/.gltf files (no thumbnail; shown as cube tiles).
     std::vector<std::string> _assetBrowserMaterials; ///< .amat files (shown as material-sphere tiles).
+    /// Files of kinds a module registered, each paired with its kind's name, which
+    /// the tile shows under the file's.
+    std::vector<std::pair<std::string, std::string>> _assetBrowserKindFiles;
     bool _assetBrowserDirty = true;
     bool _assetBrowserReadError = false;
     float _assetBrowserThumbSize = 256.f; ///< Tile size in px; adjustable via the zoom buttons.

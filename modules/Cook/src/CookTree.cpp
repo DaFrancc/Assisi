@@ -3,6 +3,7 @@
 #include <Assisi/Cook/CookTree.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
+#include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/JobSystem.hpp>
@@ -209,6 +210,84 @@ std::expected<TextureRoles, CookError> GatherTextureRoles(const std::vector<std:
 
 } // namespace
 
+/// What the cook does with one file: which cooker takes it, and whether it is
+/// only a part of another asset.
+struct FileRole
+{
+    const Cooker *cooker = nullptr;
+    bool partOfAnother = false;
+};
+
+const Cooker *CookerOf(const Core::AssetKind &kind, const std::vector<std::unique_ptr<Cooker>> &cookers)
+{
+    for (const std::unique_ptr<Cooker> &cooker : cookers)
+    {
+        if (cooker->Kind() == kind.id)
+        {
+            return cooker.get();
+        }
+    }
+    return nullptr;
+}
+
+/// The one rule for what a file is. Its sidecar names its kind, and nothing is
+/// inferred from an extension, with two exceptions that have no kind of their
+/// own to name: a file that is part of another asset (a glTF's `.bin`, a font's
+/// `.ttf`), and a compiled shader, which is a build output with no sidecar.
+std::expected<FileRole, CookError> RoleOf(Core::AssetId id, std::string_view vpath, const Core::AssetDatabase &database,
+                                          const std::vector<std::unique_ptr<Cooker>> &cookers)
+{
+    const Core::AssetKindRegistry &registry = Core::AssetKindRegistry::Instance();
+    const std::string_view extension = Core::ExtensionOf(vpath);
+
+    if (const std::optional<std::string> kindName = database.KindNameOf(id); kindName.has_value())
+    {
+        const Core::AssetKind *kind = registry.FindByName(*kindName);
+        if (kind == nullptr)
+        {
+            return std::unexpected(
+                Failure(vpath, std::format("is used as '{}', which is not a kind this build has", *kindName)));
+        }
+        const bool generated = registry.GeneratorOf(extension) == kind;
+        if (!registry.Reads(kind->id, extension) && !generated)
+        {
+            return std::unexpected(
+                Failure(vpath, std::format("is used as '{}', which does not read {} files", *kindName, extension)));
+        }
+        const Cooker *cooker = CookerOf(*kind, cookers);
+        if (cooker == nullptr)
+        {
+            return std::unexpected(Failure(vpath, std::format("is used as '{}', which nothing cooks", *kindName)));
+        }
+        return FileRole{.cooker = cooker, .partOfAnother = false};
+    }
+
+    if (const Core::AssetKind *consumer = registry.ConsumerOf(extension); consumer != nullptr)
+    {
+        if (const Cooker *cooker = CookerOf(*consumer, cookers); cooker != nullptr)
+        {
+            return FileRole{.cooker = cooker, .partOfAnother = true};
+        }
+    }
+    if (const Core::AssetKind *generator = registry.GeneratorOf(extension); generator != nullptr)
+    {
+        if (const Cooker *cooker = CookerOf(*generator, cookers); cooker != nullptr)
+        {
+            return FileRole{.cooker = cooker, .partOfAnother = false};
+        }
+    }
+
+    // Total by construction: `.assisiignore` is what says a file is not content,
+    // so anything still here that nothing cooks is an asset the shipped build
+    // would silently lack.
+    if (id.IsNil())
+    {
+        return std::unexpected(Failure(vpath, "is content with no .aast sidecar to say what kind of asset it is"));
+    }
+    return std::unexpected(Failure(vpath, "has a sidecar that names no kind: open the editor to have one written, "
+                                          "or add \"uses\": [{\"kind\": \"...\"}] to it"));
+}
+
 std::string SerializeManifest(const std::vector<ManifestEntry> &entries)
 {
     std::string text;
@@ -382,30 +461,17 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
 
     for (const auto &[indexedId, vpath] : assets)
     {
-        const Cooker *owner = nullptr;
-        Claim claim         = Claim::None;
-        for (const std::unique_ptr<Cooker> &cooker : cookers)
+        const std::expected<FileRole, CookError> role = RoleOf(indexedId, vpath, database, cookers);
+        if (!role)
         {
-            if (const Claim candidate = cooker->Claims(vpath); candidate != Claim::None)
-            {
-                owner = cooker.get();
-                claim = candidate;
-                break;
-            }
+            return std::unexpected(role.error());
         }
-
-        if (owner == nullptr)
+        const Cooker *owner = role->cooker;
+        if (role->partOfAnother)
         {
-            // Total by construction: `.assisiignore` is what says a file is not
-            // content, so anything still here that nothing cooks is an asset the
-            // shipped build would silently lack.
-            return std::unexpected(Failure(vpath, "is content that no cooker claims"));
-        }
-        if (claim == Claim::SourceOnly)
-        {
-            // Claimed and producing nothing still has to be *accounted for*: a
-            // shader source whose compiled output is absent would otherwise
-            // leave the cooked tree one stage short with nothing said about it.
+            // Producing nothing still has to be *accounted for*: a shader source
+            // whose compiled output is absent would otherwise leave the cooked
+            // tree one stage short with nothing said about it.
             if (const std::expected<void, CookError> complete = owner->CheckSource(vpath); !complete)
             {
                 return std::unexpected(complete.error());
@@ -426,6 +492,13 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
         if (id.IsNil())
         {
             return std::unexpected(Failure(vpath, "has no .aast sidecar, so it has no id to be cooked under"));
+        }
+        // A material samples what it binds as a texture, so a file used as
+        // anything else would reach the GPU as bytes the texture path never made.
+        if (const std::string boundBy = roles->BoundBy(id); !boundBy.empty() && owner->Kind() != Core::kTextureKind)
+        {
+            return std::unexpected(Failure(
+                vpath, std::format("is bound as a texture by '{}' but is used as '{}'", boundBy, owner->Name())));
         }
 
         const std::expected<std::vector<std::byte>, Core::AssetError> source = Core::AssetSystem::ReadBinary(vpath);

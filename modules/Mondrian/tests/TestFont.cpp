@@ -126,7 +126,7 @@ TEST_CASE("Font: every prefix of a cooked font is refused as truncated")
     const std::vector<std::byte> bytes = Encode(SampleFont());
     // Past the envelope, so each cut lands inside the font's own fields.
     Assisi::Core::BitWriter header;
-    Assisi::Core::WriteCookedHeader(header, Assisi::Core::CookedKind::Font);
+    Assisi::Core::WriteCookedHeader(header, Assisi::Core::kFontKind);
     const std::size_t headerBytes = header.Data().size();
 
     for (std::size_t length = headerBytes; length < bytes.size(); ++length)
@@ -140,7 +140,7 @@ TEST_CASE("Font: every prefix of a cooked font is refused as truncated")
 TEST_CASE("Font: a blob of another kind is not a font")
 {
     Assisi::Core::BitWriter writer;
-    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::CookedKind::Texture);
+    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::kTextureKind);
     writer.WriteUInt8(kFontPayloadVersion);
     const std::span<const std::byte> bytes = writer.Data();
 
@@ -152,7 +152,7 @@ TEST_CASE("Font: a blob of another kind is not a font")
 TEST_CASE("Font: a layout version this build does not know is refused")
 {
     Assisi::Core::BitWriter writer;
-    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::CookedKind::Font);
+    Assisi::Core::WriteCookedHeader(writer, Assisi::Core::kFontKind);
     writer.WriteUInt8(kFontPayloadVersion + 1);
     const std::span<const std::byte> bytes = writer.Data();
 

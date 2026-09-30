@@ -62,31 +62,31 @@ AssetId MintAssetId()
     // Editor-time only. Seeded once from the platform entropy source; a single
     // 64-bit engine is plenty for id generation (this is not cryptographic).
     static std::mt19937_64 engine = []
-                                    {
-                                        std::random_device device;
-                                        std::array<std::uint32_t, std::mt19937_64::state_size>   seedData{};
-                                        for (auto &word : seedData)
-                                        {
-                                            word = device();
-                                        }
-                                        std::seed_seq seeds(seedData.begin(), seedData.end());
-                                        return std::mt19937_64(seeds);
-                                    }();
+    {
+        std::random_device device;
+        std::array<std::uint32_t, std::mt19937_64::state_size> seedData{};
+        for (auto &word : seedData)
+        {
+            word = device();
+        }
+        std::seed_seq seeds(seedData.begin(), seedData.end());
+        return std::mt19937_64(seeds);
+    }();
 
     // Drawing from the engine mutates it. The magic-static initialization above
     // is thread-safe but the draws are not, and asset import runs on job threads
     // (AssetImport calls this), so serialize them: two concurrent imports racing
     // the engine's state can otherwise hand back a torn or duplicate id.
     static std::mutex engineMutex;
-    std::lock_guard<std::mutex>     lock(engineMutex);
+    std::lock_guard<std::mutex> lock(engineMutex);
     std::uniform_int_distribution<std::uint64_t> dist;
     const std::uint64_t high = dist(engine);
-    const std::uint64_t low  = dist(engine);
+    const std::uint64_t low = dist(engine);
 
     AssetId id{};
     for (std::size_t i = 0; i < 8; ++i)
     {
-        id.bytes[i]     = static_cast<std::uint8_t>(high >> (8 * (7 - i)));
+        id.bytes[i] = static_cast<std::uint8_t>(high >> (8 * (7 - i)));
         id.bytes[8 + i] = static_cast<std::uint8_t>(low >> (8 * (7 - i)));
     }
     // RFC 4122: version 4 in the high nibble of byte 6, variant 0b10 in byte 8.
@@ -102,6 +102,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
     _idToPath.clear();
     _pathToId.clear();
     _manifests.clear();
+    _kinds.clear();
 
     // Seed the reserved built-ins first — they resolve to primitive factories,
     // not files, so the scan never touches them.
@@ -115,7 +116,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
     std::error_code ec;
     if (root.empty() || !fs::is_directory(root, ec))
     {
-        return std::unexpected(AssetError::NotInitialized);
+        return std::unexpected(AssetErrorCode::NotInitialized);
     }
 
     // Reloaded every scan, so editing a `.assisiignore` and hitting reimport is
@@ -133,7 +134,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
     if (walkEc)
     {
         Log::Warn("AssetDatabase: cannot walk asset root '{}': {}", root.generic_string(), walkEc.message());
-        return std::unexpected(AssetError::NotInitialized);
+        return std::unexpected(AssetErrorCode::NotInitialized);
     }
 
     for (; it != end; it.increment(walkEc))
@@ -173,6 +174,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
         sidecarPath += std::string(kSidecarExtension);
 
         AssetId id{};
+        std::vector<AssetUse> uses;
         if (fs::exists(sidecarPath, ec))
         {
             // Reconcile-not-clobber: read the existing id, never rewrite it.
@@ -190,6 +192,28 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
                 continue;
             }
             id = sidecar->guid;
+            uses = sidecar->uses;
+
+            // A sidecar written before files stated their kind gets one, once:
+            // the kind a new file of its format would get, written out so it no
+            // longer depends on that choice. A read-only scan writes nothing.
+            if (uses.empty() && mode != RebuildMode::ReadOnly)
+            {
+                AssetSidecar upgraded = *sidecar;
+                upgraded.uses = NewFileSidecar(id, virtualPath).uses;
+                if (!upgraded.uses.empty())
+                {
+                    if (WriteWholeFile(sidecarPath, SerializeSidecar(upgraded)))
+                    {
+                        uses = upgraded.uses;
+                    }
+                    else
+                    {
+                        Log::Warn("AssetDatabase: failed to write the kind into sidecar '{}'.",
+                                  sidecarPath.generic_string());
+                    }
+                }
+            }
 
             // Composite manifest (S3): flatten `slot → material` into a dense
             // slot-indexed vector, nil-filling any gap so SlotMaterial() is a
@@ -221,9 +245,11 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
         }
         else
         {
-            // Missing sidecar: mint an id and write one.
-            id                        = MintAssetId();
-            const std::string content = SerializeSidecar(AssetSidecar::Leaf(id));
+            // Missing sidecar: mint an id and write one, with the file's kind.
+            id = MintAssetId();
+            const AssetSidecar newSidecar = NewFileSidecar(id, virtualPath);
+            uses = newSidecar.uses;
+            const std::string content = SerializeSidecar(newSidecar);
             if (!WriteWholeFile(sidecarPath, content))
             {
                 Log::Warn("AssetDatabase: failed to write sidecar '{}', skipping.", sidecarPath.generic_string());
@@ -248,7 +274,9 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
         {
             const AssetId previous = id;
             const AssetId reminted = MintAssetId();
-            const std::string content = SerializeSidecar(AssetSidecar::Leaf(reminted));
+            AssetSidecar remintedSidecar = AssetSidecar::Leaf(reminted);
+            remintedSidecar.uses = uses;
+            const std::string content = SerializeSidecar(remintedSidecar);
             if (!WriteWholeFile(sidecarPath, content))
             {
                 Log::Warn("AssetDatabase: id {} is already taken by '{}' and re-minting for '{}' failed; it stays "
@@ -267,6 +295,10 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
             id = reminted;
         }
         _pathToId.insert_or_assign(virtualPath, id);
+        if (!uses.empty())
+        {
+            _kinds.insert_or_assign(id, uses.front().kind);
+        }
         ++registered;
     }
 
@@ -324,6 +356,16 @@ std::vector<std::pair<AssetId, std::string>> AssetDatabase::Assets() const
         }
     }
     return assets;
+}
+
+std::optional<std::string> AssetDatabase::KindNameOf(AssetId id) const
+{
+    const auto found = _kinds.find(id);
+    if (found == _kinds.end())
+    {
+        return std::nullopt;
+    }
+    return found->second;
 }
 
 bool AssetDatabase::HasManifest(AssetId meshId) const

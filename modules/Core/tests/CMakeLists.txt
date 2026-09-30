@@ -7,13 +7,24 @@ target_include_directories(Assisi-TestSupport INTERFACE
 target_link_libraries(Assisi-TestSupport INTERFACE Assisi::Core)
 add_library(Assisi::TestSupport ALIAS Assisi-TestSupport)
 
+# Two asset kinds only tests have, registered from a source file compiled into
+# each test executable that links this, the way a module registers its own.
+add_library(Assisi-TestAssetKinds INTERFACE)
+target_sources(Assisi-TestAssetKinds INTERFACE
+  "${CMAKE_CURRENT_SOURCE_DIR}/support/Assisi/Testing/TestAssetKinds.cpp"
+)
+target_link_libraries(Assisi-TestAssetKinds INTERFACE Assisi::TestSupport)
+add_library(Assisi::TestAssetKinds ALIAS Assisi-TestAssetKinds)
+
 add_executable(Assisi-Core-Tests
   main.cpp
   TestAssetDatabase.cpp
   TestAssetId.cpp
   TestAssetIdJson.cpp
   TestAssetIgnore.cpp
+  TestAssetKind.cpp
   TestAssetPath.cpp
+  TestAssetStore.cpp
   TestAssetSystem.cpp
   TestBiMap.cpp
   TestAssetCodec.cpp
@@ -54,6 +65,7 @@ target_link_libraries(Assisi-Core-Tests
   PRIVATE
     Assisi::Core
     Assisi::TestSupport
+    Assisi::TestAssetKinds
 )
 
 add_test(NAME Core COMMAND Assisi-Core-Tests)

@@ -10,6 +10,7 @@
 /// is what the next load sees. A shipped game has none of these files and uses
 /// the cooked source instead.
 
+#include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Render/AssetSource.hpp>
 
 namespace Assisi::Core
@@ -45,7 +46,11 @@ public:
     [[nodiscard]] std::string Describe(const Core::AssetId &id) const override;
 
 private:
-    const Core::AssetDatabase *_database;
+  /// @brief Whether @p id's sidecar names a kind other than @p kind. A sidecar
+  ///        that names none is not refused here; the cook refuses it.
+  [[nodiscard]] bool UsedAsOtherThan(const Core::AssetId &id, Core::AssetKindId kind) const;
+
+  const Core::AssetDatabase *_database;
 };
 
 } // namespace Assisi::Editor

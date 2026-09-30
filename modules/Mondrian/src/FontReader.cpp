@@ -60,8 +60,8 @@ std::expected<Font, FontLoadError> ReadCookedFont(const Core::AssetProvider &pro
     const std::expected<Core::AssetId, Core::AssetError> id = provider.Resolve(vpath);
     if (!id)
     {
-        return std::unexpected(id.error() == Core::AssetError::UnknownAssetId ? FontLoadError::Missing
-                                                                              : FontLoadError::Unreadable);
+        return std::unexpected(id.error() == Core::AssetErrorCode::UnknownAssetId ? FontLoadError::Missing
+                                                                                  : FontLoadError::Unreadable);
     }
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = provider.Open(*id);
     if (!bytes)
