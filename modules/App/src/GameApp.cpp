@@ -140,7 +140,8 @@ void GameApp::OnStart()
                          .actions = &GetActions(),
                          .ui = GetUi(),
                          .mixer = GetMixer(),
-                         .settings = GetPlayerSettings()});
+                         .settings = GetPlayerSettings(),
+                         .assets = &GetAssets()});
 
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
@@ -329,13 +330,11 @@ bool GameApp::SetupRenderer()
     return true;
 }
 
-SystemContext GameApp::WorldStartContext(World &world)
+SystemContext GameApp::WorldContext(World &world, float dt, std::uint64_t simTick)
 {
-    // Everything a per-frame phase gets, except dt and the tick: a one-shot runs
-    // outside any frame, so there is no elapsed time and no tick it belongs to.
     return {.world = world,
-            .dt = 0.f,
-            .simTick = 0,
+            .dt = dt,
+            .simTick = simTick,
             .input = HasPresentation() ? &GetInput() : nullptr,
             .actions = &GetActions(),
             .events = GetEvents(),
@@ -343,7 +342,15 @@ SystemContext GameApp::WorldStartContext(World &world)
             .worldManager = &_worlds,
             .ui = GetUi(),
             .mixer = GetMixer(),
-            .settings = GetPlayerSettings()};
+            .settings = GetPlayerSettings(),
+            .assets = &GetAssets()};
+}
+
+SystemContext GameApp::WorldStartContext(World &world)
+{
+    // A one-shot runs outside any frame, so there is no elapsed time and no tick
+    // it belongs to.
+    return WorldContext(world, 0.f, 0);
 }
 
 void GameApp::StepWorlds(float dt)
@@ -366,9 +373,7 @@ void GameApp::StepWorlds(float dt)
             // Apply forces this tick, then simulate them, then react to what the
             // step actually did. The phase decides which side of the step a
             // system lands on; ordering within a phase cannot substitute for it.
-            world.systems.Run(SystemPhase::FixedUpdate,
-                              {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+            world.systems.Run(SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
@@ -505,15 +510,7 @@ void GameApp::OnUpdate(float dt)
                 return;
             }
 
-            const SystemContext ctx{world,
-                                    dt,
-                                    GetSimTick(),
-                                    HasPresentation() ? &GetInput() : nullptr,
-                                    &GetActions(),
-                                    GetEvents(),
-                                    /*isActiveWorld=*/&world == _worlds.Active(),
-                                    &_worlds,
-                                    GetUi()};
+            const SystemContext ctx = WorldContext(world, dt, GetSimTick());
             world.systems.Run(SystemPhase::PreUpdate, ctx);
             world.systems.Run(SystemPhase::Update, ctx);
             world.systems.Run(SystemPhase::PostUpdate, ctx);

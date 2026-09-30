@@ -33,7 +33,7 @@ namespace Assisi::App::Test
 /// per-world registry exists to prevent.
 class RunCounts
 {
-public:
+  public:
     static RunCounts &Instance()
     {
         static RunCounts counts;
@@ -65,7 +65,7 @@ public:
         _entries.push_back(Entry{.world = &world, .system = std::string{system}, .runs = 1});
     }
 
-private:
+  private:
     struct Entry
     {
         const World *world = nullptr;
@@ -83,7 +83,7 @@ private:
 /// and one container doing both serves neither well.
 class RunOrder
 {
-public:
+  public:
     static RunOrder &Instance()
     {
         static RunOrder order;
@@ -96,7 +96,7 @@ public:
 
     [[nodiscard]] const std::vector<std::string> &Names() const { return _names; }
 
-private:
+  private:
     std::vector<std::string> _names;
 };
 
@@ -124,6 +124,16 @@ ASYSTEM(Begin, name = "Started") inline void StartedSystem(SystemContext &ctx);
 ASYSTEM(Begin, name = "StartedLate", after = "Started") inline void StartedLateSystem(SystemContext &ctx);
 
 ASYSTEM(Loaded, name = "Settled") inline void SettledSystem(SystemContext &ctx);
+
+/// The asset store the last run of "SeesAssets" was handed, so a test can tell
+/// whether the host's services reached a starting world's systems.
+inline Core::AssetStore *&SeenAssets()
+{
+    static Core::AssetStore *seen = nullptr;
+    return seen;
+}
+
+ASYSTEM(Begin, name = "SeesAssets") inline void SeesAssetsSystem(SystemContext &ctx);
 
 /// A pair ordered against each other in the Render phase.
 ///
@@ -168,6 +178,11 @@ inline void StartedLateSystem(SystemContext &ctx)
 inline void SettledSystem(SystemContext &ctx)
 {
     RunCounts::Instance().Record(ctx.world, "Settled");
+}
+
+inline void SeesAssetsSystem(SystemContext &ctx)
+{
+    SeenAssets() = ctx.assets;
 }
 
 inline void DrawEarlySystem(RenderContext &)

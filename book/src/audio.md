@@ -186,8 +186,45 @@ Decoding is done by [miniaudio](https://github.com/mackron/miniaudio), and Ogg
 Vorbis by the [stb_vorbis](https://github.com/nothings/stb) copy that ships
 with it.
 
+### Sounds are assets
+
+A sound file in `assets/` is an asset of the `sound` kind. When the editor
+first sees a `.wav`, `.flac` or `.ogg`, it writes that kind into the file's
+`.aast` sidecar.
+
+The cook decodes every sound once to check it. A file that does not decode
+fails the cook, naming the file, instead of failing in a player's game. A sound
+that decodes ships exactly as you authored it.
+
+A component refers to a sound by its id, like any other asset:
+
+```cpp
+AFIELD() Assisi::Core::AssetId clip;
+```
+
+A system loads it from `ctx.assets`. The first request starts loading the file
+in the background and returns nothing, so ask again on later frames:
+
+```cpp
+std::shared_ptr<const Assisi::Audio::PcmClip> clip = ctx.assets->Resolve<Assisi::Audio::PcmClip>(id);
+if (clip == nullptr)
+{
+    return; // still loading, missing, or broken
+}
+```
+
+A missing or broken sound logs one warning and is not loaded again.
+
 ## Playing sounds
 
 Sounds are played by entities with an audio emitter. `ctx.mixer` is what the
 engine's emitter system plays them through; it starts and stops sounds, and
 has no way to change a bus's volume.
+
+A loaded clip plays on a bus through the mixer:
+
+```cpp
+(void)ctx.mixer->Attach(clip, Assisi::Audio::ToBusId(Assisi::Audio::DefaultBus::Sfx));
+```
+
+`ctx.mixer` is null in a host with no audio device, so check it first.

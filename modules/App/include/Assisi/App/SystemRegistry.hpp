@@ -67,6 +67,11 @@ namespace Assisi::Audio
 class SoundOutput;
 } // namespace Assisi::Audio
 
+namespace Assisi::Core
+{
+class AssetStore;
+} // namespace Assisi::Core
+
 namespace Assisi::App
 {
 
@@ -140,6 +145,11 @@ struct SystemContext
     /// The player's options, and applying and saving them. Null in hosts that
     /// run systems without an application (tests).
     PlayerSettings *settings = nullptr;
+
+    /// Assets of every registered kind, such as sounds, by id. A Resolve returns
+    /// null until the asset has loaded, so a system asks again on later frames.
+    /// Null in hosts that run systems without an application (tests).
+    Core::AssetStore *assets = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).

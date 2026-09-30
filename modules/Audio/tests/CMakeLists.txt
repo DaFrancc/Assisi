@@ -5,6 +5,14 @@ add_executable(Assisi-Audio-Tests
   TestBusLayout.cpp
   TestClipDecode.cpp
   TestMixer.cpp
+  TestSoundKind.cpp
+)
+
+# The sound kind and its cook step, taken directly rather than through
+# assisi_link_reflections: a static library would drop their registrations.
+target_sources(Assisi-Audio-Tests PRIVATE
+  $<TARGET_OBJECTS:Assisi-Audio-AssetKind>
+  $<TARGET_OBJECTS:Assisi-Audio-AssetCook>
 )
 
 Assisi_apply_test_defaults(Assisi-Audio-Tests)

@@ -313,7 +313,8 @@ void EditorApp::OnStart()
                          .actions = &GetActions(),
                          .ui = GetUi(),
                          .mixer = GetMixer(),
-                         .settings = GetPlayerSettings()});
+                         .settings = GetPlayerSettings(),
+                         .assets = &GetAssets()});
 
     // Editor travel is the game's path, so it honours the game's policy: a level
     // that waits for its assets in the shipped game waits here too, or testing a
@@ -1102,9 +1103,7 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
-                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                                  {world, dt, GetSimTick(), &GetInput(), &GetActions(), GetEvents(),
-                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
 
                 {
                     // Jolt's whole step, including its internal job dispatch:
@@ -1352,8 +1351,8 @@ void EditorApp::OnUpdate(float dt)
 
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
-    const Assisi::App::SystemContext editorCtx{
-        *_world, dt, GetSimTick(), &input, &GetActions(), GetEvents(), /*isActiveWorld=*/true, &_worlds, GetUi()};
+    Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, GetSimTick());
+    editorCtx.isActiveWorld = true;
     _systems.Run(Assisi::App::SystemPhase::Update, editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
@@ -1371,15 +1370,7 @@ void EditorApp::OnUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                     return;
 
-                const Assisi::App::SystemContext ctx{world,
-                                                     dt,
-                                                     GetSimTick(),
-                                                     &input,
-                                                     &GetActions(),
-                                                     GetEvents(),
-                                                     /*isActiveWorld=*/&world == _worlds.Active(),
-                                                     &_worlds,
-                                                     GetUi()};
+                const Assisi::App::SystemContext ctx = WorldContext(world, dt, GetSimTick());
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
@@ -1387,13 +1378,11 @@ void EditorApp::OnUpdate(float dt)
     }
 }
 
-Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &world)
+Assisi::App::SystemContext EditorApp::WorldContext(Assisi::App::World &world, float dt, std::uint64_t simTick)
 {
-    // Everything a per-frame phase gets, matching the game. dt and the tick are
-    // zero: a one-shot runs outside any frame.
     return {.world = world,
-            .dt = 0.f,
-            .simTick = 0,
+            .dt = dt,
+            .simTick = simTick,
             .input = &GetInput(),
             .actions = &GetActions(),
             .events = GetEvents(),
@@ -1401,7 +1390,14 @@ Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &worl
             .worldManager = &_worlds,
             .ui = GetUi(),
             .mixer = GetMixer(),
-            .settings = GetPlayerSettings()};
+            .settings = GetPlayerSettings(),
+            .assets = &GetAssets()};
+}
+
+Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &world)
+{
+    // A one-shot runs outside any frame, so dt and the tick are zero.
+    return WorldContext(world, 0.f, 0);
 }
 
 void EditorApp::InstallQueuedSystems()

@@ -287,10 +287,14 @@ class EditorApp : public Assisi::App::Application
     void SetupCamera();
     void SetupScene();
 
-    /// @brief The context the one-shot phases (Begin, Loaded) run under.
+    /// @brief The context every phase of @p world runs under, matching the game.
     ///
-    /// Everything a per-frame phase gets, matching the game. dt and the tick are
-    /// zero: a one-shot runs outside any frame.
+    /// The one place a context is filled in, so no phase can be handed one with
+    /// a service missing.
+    [[nodiscard]] Assisi::App::SystemContext WorldContext(Assisi::App::World &world, float dt, std::uint64_t simTick);
+
+    /// @brief The context the one-shot phases (Begin, Loaded) run under. dt and
+    /// the tick are zero: a one-shot runs outside any frame.
     [[nodiscard]] Assisi::App::SystemContext WorldStartContext(Assisi::App::World &world);
 
     /// @brief Move the editor camera onto the loaded level's active Camera
