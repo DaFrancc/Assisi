@@ -36,7 +36,7 @@ std::pair<Core::AssetKindId, std::vector<std::byte>> Open(const std::vector<std:
     return {*kind, std::vector<std::byte>{payload.begin(), payload.end()}};
 }
 
-std::expected<Testing::TestBytes, std::string> LoadNothing(std::span<const std::byte>)
+std::expected<Testing::TestBytes, Core::AssetError> LoadNothing(std::span<const std::byte>)
 {
     return Testing::TestBytes{};
 }
@@ -139,7 +139,7 @@ TEST_CASE("A kind with no cook step ships its source unchanged behind the envelo
     const Core::AssetKind *raw = Core::AssetKindRegistry::Instance().Find(Testing::kRawKind);
     REQUIRE(raw != nullptr);
 
-    const std::expected<std::vector<std::byte>, std::string> blob = Core::CookAssetBytes(*raw, kSource);
+    const std::expected<std::vector<std::byte>, Core::AssetError> blob = Core::CookAssetBytes(*raw, kSource);
     REQUIRE(blob.has_value());
     const std::pair<Core::AssetKindId, std::vector<std::byte>> opened = Open(*blob);
     CHECK(opened.first == Testing::kRawKind);
@@ -151,7 +151,7 @@ TEST_CASE("A kind with a cook step ships what the step makes of its source")
     const Core::AssetKind *reversed = Core::AssetKindRegistry::Instance().Find(Testing::kReversedKind);
     REQUIRE(reversed != nullptr);
 
-    const std::expected<std::vector<std::byte>, std::string> blob = Core::CookAssetBytes(*reversed, kSource);
+    const std::expected<std::vector<std::byte>, Core::AssetError> blob = Core::CookAssetBytes(*reversed, kSource);
     REQUIRE(blob.has_value());
     const std::pair<Core::AssetKindId, std::vector<std::byte>> opened = Open(*blob);
     CHECK(opened.first == Testing::kReversedKind);
@@ -164,9 +164,10 @@ TEST_CASE("A cook step's refusal comes back with its reason")
     REQUIRE(reversed != nullptr);
 
     const std::vector<std::byte> refused{std::byte{'X'}, std::byte{'y'}};
-    const std::expected<std::vector<std::byte>, std::string> blob = Core::CookAssetBytes(*reversed, refused);
+    const std::expected<std::vector<std::byte>, Core::AssetError> blob = Core::CookAssetBytes(*reversed, refused);
     REQUIRE_FALSE(blob.has_value());
-    CHECK(blob.error() == "the source asks the cook to fail");
+    CHECK(blob.error() == Core::AssetErrorCode::CorruptAsset);
+    CHECK(blob.error().detail == Testing::kCookRefusedDetail);
 }
 
 TEST_CASE("A sidecar's uses round-trip, a sidecar without them still reads, and two are refused")

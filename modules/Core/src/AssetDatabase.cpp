@@ -62,31 +62,31 @@ AssetId MintAssetId()
     // Editor-time only. Seeded once from the platform entropy source; a single
     // 64-bit engine is plenty for id generation (this is not cryptographic).
     static std::mt19937_64 engine = []
-                                    {
-                                        std::random_device device;
-                                        std::array<std::uint32_t, std::mt19937_64::state_size>   seedData{};
-                                        for (auto &word : seedData)
-                                        {
-                                            word = device();
-                                        }
-                                        std::seed_seq seeds(seedData.begin(), seedData.end());
-                                        return std::mt19937_64(seeds);
-                                    }();
+    {
+        std::random_device device;
+        std::array<std::uint32_t, std::mt19937_64::state_size> seedData{};
+        for (auto &word : seedData)
+        {
+            word = device();
+        }
+        std::seed_seq seeds(seedData.begin(), seedData.end());
+        return std::mt19937_64(seeds);
+    }();
 
     // Drawing from the engine mutates it. The magic-static initialization above
     // is thread-safe but the draws are not, and asset import runs on job threads
     // (AssetImport calls this), so serialize them: two concurrent imports racing
     // the engine's state can otherwise hand back a torn or duplicate id.
     static std::mutex engineMutex;
-    std::lock_guard<std::mutex>     lock(engineMutex);
+    std::lock_guard<std::mutex> lock(engineMutex);
     std::uniform_int_distribution<std::uint64_t> dist;
     const std::uint64_t high = dist(engine);
-    const std::uint64_t low  = dist(engine);
+    const std::uint64_t low = dist(engine);
 
     AssetId id{};
     for (std::size_t i = 0; i < 8; ++i)
     {
-        id.bytes[i]     = static_cast<std::uint8_t>(high >> (8 * (7 - i)));
+        id.bytes[i] = static_cast<std::uint8_t>(high >> (8 * (7 - i)));
         id.bytes[8 + i] = static_cast<std::uint8_t>(low >> (8 * (7 - i)));
     }
     // RFC 4122: version 4 in the high nibble of byte 6, variant 0b10 in byte 8.
@@ -116,7 +116,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
     std::error_code ec;
     if (root.empty() || !fs::is_directory(root, ec))
     {
-        return std::unexpected(AssetError::NotInitialized);
+        return std::unexpected(AssetErrorCode::NotInitialized);
     }
 
     // Reloaded every scan, so editing a `.assisiignore` and hitting reimport is
@@ -134,7 +134,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
     if (walkEc)
     {
         Log::Warn("AssetDatabase: cannot walk asset root '{}': {}", root.generic_string(), walkEc.message());
-        return std::unexpected(AssetError::NotInitialized);
+        return std::unexpected(AssetErrorCode::NotInitialized);
     }
 
     for (; it != end; it.increment(walkEc))

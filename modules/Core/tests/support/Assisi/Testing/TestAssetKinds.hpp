@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace Assisi::Testing
@@ -33,6 +34,12 @@ inline constexpr Core::AssetKindId kReversedKind{"test reversed bytes"};
 /// @brief `.traw`, and `.png` when a sidecar chooses it: no cook step and no
 ///        finish, so its payload is its source. An empty payload fails to load.
 inline constexpr Core::AssetKindId kRawKind{"test raw bytes"};
+
+/// @brief The detail each test kind's refusal carries, so a test can tell which
+///        refusal it got.
+inline constexpr std::string_view kEmptyPayloadDetail = "the payload is empty";
+inline constexpr std::string_view kCookRefusedDetail = "the source asks the cook to fail";
+inline constexpr std::string_view kFinishRefusedDetail = "the payload asks the finish to fail";
 
 /// @brief How many times either kind's load has run, for tests that check a
 ///        load did or did not happen.

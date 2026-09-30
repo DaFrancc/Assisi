@@ -30,7 +30,7 @@ struct Loaded
     const AssetKind *kind = nullptr;
 };
 
-using LoadResult = std::expected<Loaded, std::string>;
+using LoadResult = std::expected<Loaded, AssetError>;
 
 /// Worker side: read the blob, find its kind, check it loads what was asked
 /// for, and load it. Touches no store state.
@@ -39,31 +39,31 @@ LoadResult ReadAndLoad(const AssetProvider &provider, AssetId id, std::type_inde
     const std::expected<std::vector<std::byte>, AssetError> bytes = provider.Open(id);
     if (!bytes)
     {
-        return std::unexpected(std::string{ToString(bytes.error())});
+        return std::unexpected(bytes.error());
     }
 
     BitReader reader{*bytes};
     const std::expected<AssetKindId, CookedBlobError> kindId = ReadCookedHeader(reader);
     if (!kindId)
     {
-        return std::unexpected(std::string{ToString(kindId.error())});
+        return std::unexpected(AssetError{AssetErrorCode::CorruptAsset, ToString(kindId.error())});
     }
     const AssetKind *kind = AssetKindRegistry::Instance().Find(*kindId);
-    if (kind == nullptr)
+    if (kind == nullptr || !kind->load)
     {
         return std::unexpected(
-            std::format("it is a {} asset, and nothing in this build loads that kind", DescribeKind(*kindId)));
+            AssetError{AssetErrorCode::UnsupportedEncoding, "nothing in this build loads the asset's kind"});
     }
     if (kind->valueType != wanted)
     {
-        return std::unexpected(std::format("it is a {} asset, which is not what was asked for", kind->name));
+        return std::unexpected(AssetErrorCode::WrongType);
     }
 
     const std::span<const std::byte> payload = std::span<const std::byte>{*bytes}.subspan(kCookedHeaderBytes);
-    std::expected<std::shared_ptr<void>, std::string> value = kind->load(payload);
+    std::expected<std::shared_ptr<void>, AssetError> value = kind->load(payload);
     if (!value)
     {
-        return std::unexpected(std::move(value.error()));
+        return std::unexpected(value.error());
     }
     return Loaded{.value = std::move(*value), .kind = kind};
 }
@@ -139,7 +139,7 @@ std::shared_ptr<const void> AssetStore::ResolveErased(AssetId id, std::type_inde
 
                   if (result && result->kind->finish)
                   {
-                      const std::expected<void, std::string> finished = result->kind->finish(result->value.get());
+                      const std::expected<void, AssetError> finished = result->kind->finish(result->value.get());
                       if (!finished)
                       {
                           result = std::unexpected(finished.error());
@@ -149,7 +149,7 @@ std::shared_ptr<const void> AssetStore::ResolveErased(AssetId id, std::type_inde
                   {
                       live->failed.insert(id);
                       Log::Warn("AssetStore: asset {} did not load ({}); anything using it goes without.",
-                                id.ToString(), result.error());
+                                id.ToString(), Describe(result.error()));
                       return;
                   }
                   live->resident.emplace(id, std::move(result->value));

@@ -309,7 +309,7 @@ TEST_CASE("A registered kind's cook step refusing a file fails the cook, naming 
     const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
     REQUIRE_FALSE(report.has_value());
     CHECK(report.error().vpath == "things/refused.tbytes");
-    CHECK(report.error().reason == "the source asks the cook to fail");
+    CHECK(report.error().reason.find(Assisi::Testing::kCookRefusedDetail) != std::string::npos);
 }
 
 TEST_CASE("Cooking the fixture tree twice produces identical bytes")
@@ -834,4 +834,3 @@ TEST_CASE("A key its table does not have fails the screen's cook")
     CHECK(report.error().vpath == "ui/Menu.amdn");
     CHECK(report.error().reason.starts_with("2:"));
 }
-

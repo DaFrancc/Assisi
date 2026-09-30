@@ -63,7 +63,7 @@ enum class RebuildMode : std::uint8_t
 /// @brief Editor-time index of every asset under the asset root, keyed by id.
 class AssetDatabase
 {
-public:
+  public:
     /// @brief Scan the asset root, reconcile sidecars, and (re)build the map.
     ///
     /// Clears any previous state, seeds the reserved built-ins, reloads the
@@ -81,7 +81,7 @@ public:
     /// @p mode selects whether the reconcile may write; see RebuildMode.
     ///
     /// @return The number of asset files registered (excluding built-ins), or
-    ///         AssetError::NotInitialized if the asset root is not set.
+    ///         AssetErrorCode::NotInitialized if the asset root is not set.
     std::expected<std::size_t, AssetError> Rebuild(RebuildMode mode = RebuildMode::Reconcile);
 
     /// @brief The current virtual path for an id (built-ins included), or

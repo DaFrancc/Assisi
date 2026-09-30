@@ -57,13 +57,13 @@ TEST_CASE("AssetSystem::Resolve rejects escaping and malformed paths")
     REQUIRE(AssetSystem::SetRoot(TempRoot()).has_value());
 
     auto expectInvalid = [](const char *vpath)
-                         {
-                             auto r = AssetSystem::Resolve(vpath);
-                             REQUIRE_FALSE(r.has_value());
-                             CHECK(r.error() == AssetError::InvalidVirtualPath);
-                         };
+    {
+        auto r = AssetSystem::Resolve(vpath);
+        REQUIRE_FALSE(r.has_value());
+        CHECK(r.error() == AssetErrorCode::InvalidVirtualPath);
+    };
 
-    expectInvalid("");           // empty
+    expectInvalid("");            // empty
     expectInvalid("/etc/passwd"); // absolute
     expectInvalid("C:/Windows");  // drive-qualified
     expectInvalid("../secret");   // surviving parent traversal escapes the root
@@ -123,7 +123,7 @@ TEST_CASE("AssetSystem::ResolveUser rejects paths escaping the user root")
 
     const std::expected<std::filesystem::path, AssetError> escaped = AssetSystem::ResolveUser("../outside.txt");
     REQUIRE_FALSE(escaped.has_value());
-    CHECK(escaped.error() == AssetError::InvalidVirtualPath);
+    CHECK(escaped.error() == AssetErrorCode::InvalidVirtualPath);
 
     // A write that would escape must fail without touching the filesystem.
     CHECK_FALSE(AssetSystem::WriteText("../outside.txt", "nope").has_value());
@@ -135,8 +135,47 @@ TEST_CASE("AssetSystem::ReadUserText reports a clean error for a missing file")
 
     const std::expected<std::string, AssetError> read = AssetSystem::ReadUserText("does-not-exist.json");
     REQUIRE_FALSE(read.has_value());
-    CHECK(read.error() == AssetError::FileOpenFailed);
+    CHECK(read.error() == AssetErrorCode::FileNotFound);
     CHECK_FALSE(AssetSystem::UserExists("does-not-exist.json"));
+}
+
+TEST_CASE("An asset error describes its code, and its detail when it has one")
+{
+    CHECK(Describe(AssetErrorCode::FileNotFound) == "the file does not exist");
+    CHECK(Describe(AssetError{AssetErrorCode::CorruptAsset, "the audio could not be decoded"}) ==
+          "the file's contents are corrupt (the audio could not be decoded)");
+}
+
+TEST_CASE("AssetSystem::ReadUserText says a path is a directory, not that it is missing")
+{
+    const std::filesystem::path root = MakeUserRoot("directory");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+    std::filesystem::create_directories(root / "saves");
+
+    const std::expected<std::string, AssetError> read = AssetSystem::ReadUserText("saves");
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == AssetErrorCode::IsDirectory);
+}
+
+TEST_CASE("AssetSystem::ReadUserText says a file it may not open is refused, not missing")
+{
+    const std::filesystem::path root = MakeUserRoot("permission");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+    REQUIRE(AssetSystem::WriteText("locked.json", "{}").has_value());
+    std::filesystem::permissions(root / "locked.json", std::filesystem::perms::none);
+
+    // A process that can open it anyway (root, or a filesystem that ignores
+    // permissions) has nothing to report.
+    if (std::ifstream{root / "locked.json"})
+    {
+        std::filesystem::permissions(root / "locked.json", std::filesystem::perms::owner_all);
+        return;
+    }
+
+    const std::expected<std::string, AssetError> read = AssetSystem::ReadUserText("locked.json");
+    std::filesystem::permissions(root / "locked.json", std::filesystem::perms::owner_all);
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == AssetErrorCode::PermissionDenied);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +206,7 @@ TEST_CASE("AssetSystem::SetRoot refuses a path that is not a directory, and does
     std::expected<void, AssetError> result;
     CHECK_NOTHROW(result = AssetSystem::SetRoot(file));
     REQUIRE_FALSE(result.has_value());
-    CHECK(result.error() == AssetError::InvalidRoot);
+    CHECK(result.error() == AssetErrorCode::InvalidRoot);
 }
 
 TEST_CASE("AssetSystem::SetUserRoot refuses a path that does not exist, and does not throw")
@@ -177,7 +216,7 @@ TEST_CASE("AssetSystem::SetUserRoot refuses a path that does not exist, and does
     std::expected<void, AssetError> result;
     CHECK_NOTHROW(result = AssetSystem::SetUserRoot(missing));
     REQUIRE_FALSE(result.has_value());
-    CHECK(result.error() == AssetError::InvalidRoot);
+    CHECK(result.error() == AssetErrorCode::InvalidRoot);
 }
 
 TEST_CASE("AssetSystem::Exists answers false for an unreadable path rather than throwing")

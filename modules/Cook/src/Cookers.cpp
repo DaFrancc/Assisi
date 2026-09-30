@@ -703,10 +703,10 @@ class KindCooker final : public Cooker
         {
             return std::unexpected(source.error());
         }
-        std::expected<std::vector<std::byte>, std::string> cooked = Core::CookAssetBytes(*_kind, *source);
+        std::expected<std::vector<std::byte>, Core::AssetError> cooked = Core::CookAssetBytes(*_kind, *source);
         if (!cooked)
         {
-            return std::unexpected(Failure(vpath, std::move(cooked.error())));
+            return std::unexpected(Failure(vpath, Core::Describe(cooked.error())));
         }
         return std::move(*cooked);
     }

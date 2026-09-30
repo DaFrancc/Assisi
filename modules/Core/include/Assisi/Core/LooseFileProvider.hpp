@@ -31,20 +31,20 @@ class AssetDatabase;
 /// @brief `AssetProvider` over loose files, resolved through an `AssetDatabase`.
 class LooseFileProvider final : public AssetProvider
 {
-public:
+  public:
     /// @param database The GUID→path index to resolve through. Must outlive this
     ///        provider (the provider holds a reference, not a copy).
     explicit LooseFileProvider(const AssetDatabase &database) noexcept;
 
     /// @brief Resolve @p id to a path via the database and read the file's bytes.
-    /// @return The bytes, or AssetError::UnknownAssetId if the id is reserved or
+    /// @return The bytes, or AssetErrorCode::UnknownAssetId if the id is reserved or
     ///         not in the database (FileOpenFailed / FileReadFailed on I/O).
     [[nodiscard]] std::expected<std::vector<std::byte>, AssetError> Open(AssetId id) const override;
 
     /// @brief The id the database holds for @p vpath, or UnknownAssetId.
     [[nodiscard]] std::expected<AssetId, AssetError> Resolve(std::string_view vpath) const override;
 
-private:
+  private:
     const AssetDatabase *_database;
 };
 

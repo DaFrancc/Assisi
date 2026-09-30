@@ -6,47 +6,71 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <optional>
+#include <string>
+#include <system_error>
 
 #ifdef _WIN32
-#    include <windows.h>
+#include <windows.h>
 #else
-#    include <unistd.h>
+#include <unistd.h>
 #endif
 
 namespace Assisi::Core
 {
 namespace fs = std::filesystem;
 
-std::string_view ToString(AssetError error) noexcept
+std::string_view ToString(AssetErrorCode code) noexcept
 {
-    switch (error)
+    switch (code)
     {
-    case AssetError::NotInitialized:
+    case AssetErrorCode::NotInitialized:
         return "the asset system is not initialized";
-    case AssetError::RootNotFound:
+    case AssetErrorCode::RootNotFound:
         return "no asset root was found";
-    case AssetError::InvalidRoot:
+    case AssetErrorCode::InvalidRoot:
         return "the asset root is not a directory";
-    case AssetError::InvalidVirtualPath:
+    case AssetErrorCode::InvalidVirtualPath:
         return "the path is empty, absolute, or climbs out with '..'";
-    case AssetError::RootEscape:
+    case AssetErrorCode::RootEscape:
         return "the path leaves the asset root";
-    case AssetError::FileOpenFailed:
-        return "the file does not exist or could not be opened";
-    case AssetError::FileReadFailed:
+    case AssetErrorCode::FileNotFound:
+        return "the file does not exist";
+    case AssetErrorCode::IsDirectory:
+        return "the path is a directory, not a file";
+    case AssetErrorCode::PermissionDenied:
+        return "permission to open the file is denied";
+    case AssetErrorCode::FileOpenFailed:
+        return "the file could not be opened";
+    case AssetErrorCode::FileReadFailed:
         return "the file could not be read";
-    case AssetError::FileWriteFailed:
+    case AssetErrorCode::FileWriteFailed:
         return "the file could not be written";
-    case AssetError::UnknownAssetId:
+    case AssetErrorCode::UnknownAssetId:
         return "no asset has that id";
-    case AssetError::UnsupportedEncoding:
+    case AssetErrorCode::UnsupportedEncoding:
         return "the data is stored in a form this build cannot read";
-    case AssetError::CorruptArchive:
+    case AssetErrorCode::CorruptAsset:
+        return "the file's contents are corrupt";
+    case AssetErrorCode::CorruptArchive:
         return "the package is corrupt";
+    case AssetErrorCode::WrongType:
+        return "the asset was asked for as a type it does not load as";
+    case AssetErrorCode::Count:
+        break;
     }
     return "unknown";
+}
+
+std::string Describe(const AssetError &error)
+{
+    if (error.detail.empty())
+    {
+        return std::string{ToString(error.code)};
+    }
+    return std::format("{} ({})", ToString(error.code), error.detail);
 }
 
 /// Every `std::filesystem` call in this file goes through the `std::error_code`
@@ -158,6 +182,30 @@ std::optional<fs::path> EnvDir(const char *name) noexcept
     return std::nullopt;
 }
 
+/* Why a file that would not open did not: asked of the filesystem afterwards,
+   because a stream that fails to open says only that it failed. */
+AssetErrorCode WhyUnopenable(const fs::path &path) noexcept
+{
+    std::error_code ec;
+    const fs::file_status status = fs::status(path, ec);
+    if (ec == std::errc::permission_denied)
+    {
+        return AssetErrorCode::PermissionDenied;
+    }
+    switch (status.type())
+    {
+    case fs::file_type::not_found:
+        return AssetErrorCode::FileNotFound;
+    case fs::file_type::directory:
+        return AssetErrorCode::IsDirectory;
+    case fs::file_type::regular:
+        // It is there and it is a file, so the open was refused.
+        return AssetErrorCode::PermissionDenied;
+    default:
+        return AssetErrorCode::FileOpenFailed;
+    }
+}
+
 /* Reads an entire file into a byte buffer sized in one seek-to-end pass. */
 BytesResult ReadFileBytes(const fs::path &path) noexcept
 {
@@ -166,14 +214,14 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
         std::ifstream file(path, std::ios::binary | std::ios::ate);
         if (!file)
         {
-            return std::unexpected(AssetError::FileOpenFailed);
+            return std::unexpected(WhyUnopenable(path));
         }
 
         /* tellg() can fail (e.g., non-seekable streams); treat as read failure. */
         const std::streampos end = file.tellg();
         if (end < 0)
         {
-            return std::unexpected(AssetError::FileReadFailed);
+            return std::unexpected(AssetErrorCode::FileReadFailed);
         }
 
         std::vector<std::byte> data(static_cast<size_t>(end));
@@ -183,7 +231,7 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
         /* Detect read failures (EOF is acceptable exactly at end-of-file). */
         if (!file.good() && !file.eof())
         {
-            return std::unexpected(AssetError::FileReadFailed);
+            return std::unexpected(AssetErrorCode::FileReadFailed);
         }
 
         return data;
@@ -191,7 +239,7 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
     catch (const std::exception &e)
     {
         Log::Warn("AssetSystem: exception reading '{}': {}", path.string(), e.what());
-        return std::unexpected(AssetError::FileReadFailed);
+        return std::unexpected(AssetErrorCode::FileReadFailed);
     }
 }
 
@@ -206,9 +254,8 @@ VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data)
         fs::create_directories(path.parent_path(), ec);
         if (ec)
         {
-            Log::Warn("AssetSystem: cannot create the directory for '{}' ({}).", path.string(),
-                      ec.message());
-            return std::unexpected(AssetError::FileWriteFailed);
+            Log::Warn("AssetSystem: cannot create the directory for '{}' ({}).", path.string(), ec.message());
+            return std::unexpected(AssetErrorCode::FileWriteFailed);
         }
     }
 
@@ -219,13 +266,13 @@ VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data)
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
         if (!file)
         {
-            return std::unexpected(AssetError::FileWriteFailed);
+            return std::unexpected(AssetErrorCode::FileWriteFailed);
         }
 
         file.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
         if (!file.good())
         {
-            return std::unexpected(AssetError::FileWriteFailed);
+            return std::unexpected(AssetErrorCode::FileWriteFailed);
         }
 
         return {};
@@ -233,7 +280,7 @@ VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data)
     catch (const std::exception &e)
     {
         Log::Warn("AssetSystem: exception writing '{}': {}", path.string(), e.what());
-        return std::unexpected(AssetError::FileWriteFailed);
+        return std::unexpected(AssetErrorCode::FileWriteFailed);
     }
 }
 } // namespace
@@ -256,10 +303,10 @@ VoidResult AssetSystem::Initialize() noexcept
     if (ec)
     {
         Log::Warn("AssetSystem: cannot canonicalize the asset root '{}' ({}).", root->string(), ec.message());
-        return std::unexpected(AssetError::InvalidRoot);
+        return std::unexpected(AssetErrorCode::InvalidRoot);
     }
 
-    gAssetRoot   = std::move(canonical);
+    gAssetRoot = std::move(canonical);
     gInitialized = true;
 
     return {};
@@ -270,17 +317,17 @@ VoidResult AssetSystem::SetRoot(const fs::path &root) noexcept
     std::error_code ec;
     if (!fs::is_directory(root, ec) || ec)
     {
-        return std::unexpected(AssetError::InvalidRoot);
+        return std::unexpected(AssetErrorCode::InvalidRoot);
     }
 
     fs::path canonical = fs::weakly_canonical(root, ec);
     if (ec)
     {
         Log::Warn("AssetSystem: cannot canonicalize '{}' ({}).", root.string(), ec.message());
-        return std::unexpected(AssetError::InvalidRoot);
+        return std::unexpected(AssetErrorCode::InvalidRoot);
     }
 
-    gAssetRoot   = std::move(canonical);
+    gAssetRoot = std::move(canonical);
     gInitialized = true;
 
     return {};
@@ -304,7 +351,7 @@ PathResult AssetSystem::ResolveUnder(const fs::path &root, std::string_view vpat
     const fs::path absolute = fs::weakly_canonical(root / *relative, ec);
     if (ec)
     {
-        return std::unexpected(AssetError::FileReadFailed);
+        return std::unexpected(AssetErrorCode::FileReadFailed);
     }
 
     // Prevent escaping the root. Compare path components rather than string
@@ -315,7 +362,7 @@ PathResult AssetSystem::ResolveUnder(const fs::path &root, std::string_view vpat
     const fs::path rel = absolute.lexically_relative(root);
     if (rel.empty() || *rel.begin() == "..")
     {
-        return std::unexpected(AssetError::RootEscape);
+        return std::unexpected(AssetErrorCode::RootEscape);
     }
 
     return absolute;
@@ -325,7 +372,7 @@ PathResult AssetSystem::Resolve(std::string_view vpath) noexcept
 {
     if (!IsInitialized())
     {
-        return std::unexpected(AssetError::NotInitialized);
+        return std::unexpected(AssetErrorCode::NotInitialized);
     }
     return ResolveUnder(gAssetRoot, vpath);
 }
@@ -408,17 +455,17 @@ VoidResult AssetSystem::SetUserRoot(const fs::path &root) noexcept
     std::error_code ec;
     if (!fs::is_directory(root, ec) || ec)
     {
-        return std::unexpected(AssetError::InvalidRoot);
+        return std::unexpected(AssetErrorCode::InvalidRoot);
     }
 
     fs::path canonical = fs::weakly_canonical(root, ec);
     if (ec)
     {
         Log::Warn("AssetSystem: cannot canonicalize the user root '{}' ({}).", root.string(), ec.message());
-        return std::unexpected(AssetError::InvalidRoot);
+        return std::unexpected(AssetErrorCode::InvalidRoot);
     }
 
-    gUserRoot            = std::move(canonical);
+    gUserRoot = std::move(canonical);
     gUserRootInitialized = true;
 
     return {};
@@ -430,7 +477,10 @@ const fs::path &AssetSystem::GetUserRoot() noexcept
     return gUserRoot;
 }
 
-std::optional<fs::path> AssetSystem::ExecutablePath() noexcept { return ExePath(); }
+std::optional<fs::path> AssetSystem::ExecutablePath() noexcept
+{
+    return ExePath();
+}
 
 PathResult AssetSystem::ResolveUser(std::string_view vpath) noexcept
 {
@@ -521,23 +571,23 @@ PathResult AssetSystem::DiscoverRoot() noexcept
     constexpr int32_t kMaxWalkUpDepth = 10;
 
     auto walkUp = [](fs::path dir) -> std::optional<fs::path>
-                  {
-                      for (int32_t i = 0; i < kMaxWalkUpDepth; ++i)
-                      {
-                          std::error_code ec;
-                          const fs::path candidate = dir / "assets";
-                          if (fs::is_directory(candidate, ec) && !ec)
-                          {
-                              return candidate;
-                          }
-                          if (!dir.has_parent_path())
-                          {
-                              break;
-                          }
-                          dir = dir.parent_path();
-                      }
-                      return std::nullopt;
-                  };
+    {
+        for (int32_t i = 0; i < kMaxWalkUpDepth; ++i)
+        {
+            std::error_code ec;
+            const fs::path candidate = dir / "assets";
+            if (fs::is_directory(candidate, ec) && !ec)
+            {
+                return candidate;
+            }
+            if (!dir.has_parent_path())
+            {
+                break;
+            }
+            dir = dir.parent_path();
+        }
+        return std::nullopt;
+    };
 
     /* Walk upward from the executable's directory first — works regardless of CWD. */
     if (const std::optional<fs::path> exe = ExeDir())
@@ -558,7 +608,7 @@ PathResult AssetSystem::DiscoverRoot() noexcept
             return *found;
         }
     }
-    return std::unexpected(AssetError::RootNotFound);
+    return std::unexpected(AssetErrorCode::RootNotFound);
 }
 
 PathResult AssetSystem::NormalizeVirtualPath(std::string_view vpath) noexcept
@@ -573,7 +623,7 @@ PathResult AssetSystem::NormalizeVirtualPath(std::string_view vpath) noexcept
         std::string str(vpath);
         if (str.empty() || str.front() == '/' || str.find(':') != std::string::npos)
         {
-            return std::unexpected(AssetError::InvalidVirtualPath);
+            return std::unexpected(AssetErrorCode::InvalidVirtualPath);
         }
 
         /* Normalize path separators so callers can pass Windows-style paths too. */
@@ -591,7 +641,7 @@ PathResult AssetSystem::NormalizeVirtualPath(std::string_view vpath) noexcept
         {
             if (part == "..")
             {
-                return std::unexpected(AssetError::InvalidVirtualPath);
+                return std::unexpected(AssetErrorCode::InvalidVirtualPath);
             }
         }
 
@@ -599,7 +649,7 @@ PathResult AssetSystem::NormalizeVirtualPath(std::string_view vpath) noexcept
     }
     catch (const std::exception &)
     {
-        return std::unexpected(AssetError::InvalidVirtualPath);
+        return std::unexpected(AssetErrorCode::InvalidVirtualPath);
     }
 }
 } // namespace Assisi::Core

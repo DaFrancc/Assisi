@@ -41,6 +41,7 @@ using Assisi::Cook::PakLayout;
 using Assisi::Cook::PakReport;
 using Assisi::Cook::WritePak;
 using Assisi::Core::AssetError;
+using Assisi::Core::AssetErrorCode;
 using Assisi::Core::AssetId;
 using Assisi::Core::PakCodec;
 using Assisi::Core::PakProvider;
@@ -51,7 +52,7 @@ namespace
 /// A scratch directory that cleans itself up.
 class ScratchDir
 {
-public:
+  public:
     explicit ScratchDir(std::string_view name)
         : _path(std::filesystem::temp_directory_path() / ("assisi-pak-test-" + std::string{name}))
     {
@@ -64,12 +65,12 @@ public:
         std::error_code code;
         std::filesystem::remove_all(_path, code);
     }
-    ScratchDir(const ScratchDir &)            = delete;
+    ScratchDir(const ScratchDir &) = delete;
     ScratchDir &operator=(const ScratchDir &) = delete;
 
     [[nodiscard]] const std::filesystem::path &Path() const { return _path; }
 
-private:
+  private:
     std::filesystem::path _path;
 };
 
@@ -330,7 +331,7 @@ TEST_CASE("A blob the manifest does not list is left out of the pak")
     REQUIRE(pak.has_value());
     const std::expected<std::vector<std::byte>, AssetError> bytes = pak->Open(orphan);
     REQUIRE_FALSE(bytes.has_value());
-    CHECK(bytes.error() == AssetError::UnknownAssetId);
+    CHECK(bytes.error() == AssetErrorCode::UnknownAssetId);
 }
 
 TEST_CASE("A manifest row whose blob is missing fails the pack, naming the path")
@@ -388,8 +389,7 @@ TEST_CASE("With no previous pak, slices sit back to back in manifest order")
                                                  WriteBlob(cooked.Path(), "c", 300 * kKiB)};
 
     const std::filesystem::path pakPath = packed.Path() / "assets.pak";
-    const std::expected<PakReport, CookError> report =
-        WritePak(cooked.Path(), manifest, pakPath, PakCodec::None, {});
+    const std::expected<PakReport, CookError> report = WritePak(cooked.Path(), manifest, pakPath, PakCodec::None, {});
     REQUIRE_MESSAGE(report.has_value(), Explain(report));
     CHECK(report->layout == PakLayout::Fresh);
     CHECK(report->gapBytes == 0);
@@ -423,7 +423,7 @@ TEST_CASE("A slice that grows moves, and every other slice keeps its offset")
     const ScratchDir packed("grow-packed");
     const std::vector<ManifestEntry> manifest = WriteEqualBlobs(cooked.Path(), kSliceCount, kSliceBytes);
     const std::filesystem::path before = packed.Path() / "before.pak";
-    const std::filesystem::path after  = packed.Path() / "after.pak";
+    const std::filesystem::path after = packed.Path() / "after.pak";
     REQUIRE(WritePak(cooked.Path(), manifest, before, PakCodec::None, {}).has_value());
 
     constexpr std::uint64_t kGrowthBytes = 8;
@@ -461,7 +461,7 @@ TEST_CASE("A slice that shrinks stays where it was, leaving the rest of its plac
     const ScratchDir packed("shrink-packed");
     const std::vector<ManifestEntry> manifest = WriteEqualBlobs(cooked.Path(), kSliceCount, kSliceBytes);
     const std::filesystem::path before = packed.Path() / "before.pak";
-    const std::filesystem::path after  = packed.Path() / "after.pak";
+    const std::filesystem::path after = packed.Path() / "after.pak";
     REQUIRE(WritePak(cooked.Path(), manifest, before, PakCodec::None, {}).has_value());
 
     WriteBlob(cooked.Path(), manifest[2].vpath, kSliceBytes - kKiB);
@@ -482,9 +482,9 @@ TEST_CASE("A removed slice is zeroed, and a new slice takes the smallest gap it 
     const std::string small = manifest[5].vpath;
     const std::string large = manifest[12].vpath;
     WriteBlob(cooked.Path(), large, 2 * kSliceBytes);
-    const std::filesystem::path first  = packed.Path() / "first.pak";
+    const std::filesystem::path first = packed.Path() / "first.pak";
     const std::filesystem::path second = packed.Path() / "second.pak";
-    const std::filesystem::path third  = packed.Path() / "third.pak";
+    const std::filesystem::path third = packed.Path() / "third.pak";
     REQUIRE(WritePak(cooked.Path(), manifest, first, PakCodec::None, {}).has_value());
     const std::vector<Assisi::Core::PakEntry> firstIndex = ReadIndex(first);
 
@@ -496,7 +496,7 @@ TEST_CASE("A removed slice is zeroed, and a new slice takes the smallest gap it 
 
     // Content a release deleted does not ship in the next one.
     const std::vector<char> secondBytes = ReadFile(second);
-    const Assisi::Core::PakEntry &gone  = Row(firstIndex, small);
+    const Assisi::Core::PakEntry &gone = Row(firstIndex, small);
     CHECK(std::all_of(secondBytes.begin() + static_cast<std::ptrdiff_t>(gone.offset),
                       secondBytes.begin() + static_cast<std::ptrdiff_t>(gone.offset + gone.storedSize),
                       [](char c) { return c == 0; }));
@@ -527,7 +527,6 @@ TEST_CASE("Gaps past the limit are compacted into a fresh layout")
     REQUIRE_MESSAGE(report.has_value(), Explain(report));
     CHECK(report->layout == PakLayout::Compacted);
     CHECK(report->gapBytes == 0);
-    CHECK(Row(ReadIndex(packed.Path() / "after.pak"), manifest.front().vpath).offset ==
-          Assisi::Core::kPakHeaderBytes);
+    CHECK(Row(ReadIndex(packed.Path() / "after.pak"), manifest.front().vpath).offset == Assisi::Core::kPakHeaderBytes);
     CheckServesEveryAsset(packed.Path() / "after.pak", cooked.Path(), manifest);
 }

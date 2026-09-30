@@ -203,8 +203,8 @@ std::string_view ExtensionOf(std::string_view vpath)
     return name.substr(dot);
 }
 
-std::expected<std::vector<std::byte>, std::string> CookAssetBytes(const AssetKind &kind,
-                                                                  std::span<const std::byte> source)
+std::expected<std::vector<std::byte>, AssetError> CookAssetBytes(const AssetKind &kind,
+                                                                 std::span<const std::byte> source)
 {
     BitWriter writer;
     WriteCookedHeader(writer, kind.id);
@@ -216,7 +216,7 @@ std::expected<std::vector<std::byte>, std::string> CookAssetBytes(const AssetKin
     }
     else
     {
-        const std::expected<std::vector<std::byte>, std::string> cooked = step->cook(source);
+        const std::expected<std::vector<std::byte>, AssetError> cooked = step->cook(source);
         if (!cooked)
         {
             return std::unexpected(cooked.error());

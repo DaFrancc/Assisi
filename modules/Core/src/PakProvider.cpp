@@ -48,31 +48,32 @@ std::expected<PakProvider, AssetError> PakProvider::Mount(const std::filesystem:
     if (!file->ReadAt(0, headerBytes))
     {
         Log::Error("Pak: '{}' is too short to be a pak.", path.string());
-        return std::unexpected(AssetError::CorruptArchive);
+        return std::unexpected(AssetErrorCode::CorruptArchive);
     }
     const std::expected<PakHeader, PakFormatError> header = ReadPakHeader(headerBytes);
     if (!header)
     {
         Log::Error("Pak: '{}': {}.", path.string(), ToString(header.error()));
-        return std::unexpected(header.error() == PakFormatError::UnsupportedVersion ? AssetError::UnsupportedEncoding
-                                                                                    : AssetError::CorruptArchive);
+        return std::unexpected(header.error() == PakFormatError::UnsupportedVersion
+                                   ? AssetErrorCode::UnsupportedEncoding
+                                   : AssetErrorCode::CorruptArchive);
     }
 
     // The index is the tail of the file, exactly: anything else means the file
     // was cut short, extended, or its header points somewhere invented.
-    const std::uint64_t fileSize   = file->Size();
+    const std::uint64_t fileSize = file->Size();
     const std::uint64_t indexBytes = static_cast<std::uint64_t>(header->entryCount) * kPakEntryBytes;
     if (header->indexOffset < kPakHeaderBytes || header->indexOffset > fileSize ||
         fileSize - header->indexOffset != indexBytes)
     {
         Log::Error("Pak: '{}' does not end where its index says it should.", path.string());
-        return std::unexpected(AssetError::CorruptArchive);
+        return std::unexpected(AssetErrorCode::CorruptArchive);
     }
 
     std::vector<std::byte> indexData(static_cast<std::size_t>(indexBytes));
     if (!file->ReadAt(header->indexOffset, indexData))
     {
-        return std::unexpected(AssetError::CorruptArchive);
+        return std::unexpected(AssetErrorCode::CorruptArchive);
     }
 
     std::vector<PakEntry> entries;
@@ -84,16 +85,15 @@ std::expected<PakProvider, AssetError> PakProvider::Mount(const std::filesystem:
         if (!entry)
         {
             Log::Error("Pak: '{}' entry {}: {}.", path.string(), i, ToString(entry.error()));
-            return std::unexpected(AssetError::CorruptArchive);
+            return std::unexpected(AssetErrorCode::CorruptArchive);
         }
         // Slices live between the header and the index. One reaching outside
         // would read header or index bytes as asset data.
-        if (entry->archive == kThisArchive &&
-            (entry->offset < kPakHeaderBytes || entry->offset > header->indexOffset ||
-             entry->storedSize > header->indexOffset - entry->offset))
+        if (entry->archive == kThisArchive && (entry->offset < kPakHeaderBytes || entry->offset > header->indexOffset ||
+                                               entry->storedSize > header->indexOffset - entry->offset))
         {
             Log::Error("Pak: '{}' entry {} points outside the slice region.", path.string(), i);
-            return std::unexpected(AssetError::CorruptArchive);
+            return std::unexpected(AssetErrorCode::CorruptArchive);
         }
         entries.push_back(*entry);
     }
@@ -102,7 +102,7 @@ std::expected<PakProvider, AssetError> PakProvider::Mount(const std::filesystem:
     if (provider._byId.size() != provider._entries.size() || provider._byPath.size() != provider._entries.size())
     {
         Log::Error("Pak: '{}' holds two slices under one id or one path.", path.string());
-        return std::unexpected(AssetError::CorruptArchive);
+        return std::unexpected(AssetErrorCode::CorruptArchive);
     }
     return provider;
 }
@@ -111,12 +111,12 @@ std::expected<std::vector<std::byte>, AssetError> PakProvider::Open(AssetId id) 
 {
     if (id.IsReserved())
     {
-        return std::unexpected(AssetError::UnknownAssetId);
+        return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
     const auto found = _byId.find(id);
     if (found == _byId.end())
     {
-        return std::unexpected(AssetError::UnknownAssetId);
+        return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
     const PakEntry &entry = _entries[found->second];
 
@@ -125,19 +125,19 @@ std::expected<std::vector<std::byte>, AssetError> PakProvider::Open(AssetId id) 
     // might still frame well enough to reach a loader.
     if (entry.archive != kThisArchive || HasFlag(entry, PakSliceFlag::Encrypted) || entry.codec >= PakCodec::Count)
     {
-        return std::unexpected(AssetError::UnsupportedEncoding);
+        return std::unexpected(AssetErrorCode::UnsupportedEncoding);
     }
 
     std::vector<std::byte> stored(static_cast<std::size_t>(entry.storedSize));
     if (!_file.ReadAt(entry.offset, stored))
     {
-        return std::unexpected(AssetError::FileReadFailed);
+        return std::unexpected(AssetErrorCode::FileReadFailed);
     }
     if (entry.codec == PakCodec::None)
     {
         if (stored.size() != entry.uncompressedSize)
         {
-            return std::unexpected(AssetError::CorruptArchive);
+            return std::unexpected(AssetErrorCode::CorruptArchive);
         }
         return stored;
     }
@@ -146,7 +146,7 @@ std::expected<std::vector<std::byte>, AssetError> PakProvider::Open(AssetId id) 
         DecompressSlice(entry.codec, stored, static_cast<std::size_t>(entry.uncompressedSize));
     if (!bytes)
     {
-        return std::unexpected(AssetError::CorruptArchive);
+        return std::unexpected(AssetErrorCode::CorruptArchive);
     }
     return std::move(*bytes);
 }
@@ -156,7 +156,7 @@ std::expected<AssetId, AssetError> PakProvider::Resolve(std::string_view vpath) 
     const auto found = _byPath.find(DerivedAssetId(vpath));
     if (found == _byPath.end())
     {
-        return std::unexpected(AssetError::UnknownAssetId);
+        return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
     return _entries[found->second].id;
 }

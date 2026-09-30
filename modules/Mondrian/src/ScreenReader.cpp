@@ -65,8 +65,8 @@ std::expected<ScreenDocument, ScreenReadError> ReadCookedScreen(const Core::Asse
     const std::expected<Core::AssetId, Core::AssetError> id = provider.Resolve(vpath);
     if (!id)
     {
-        return std::unexpected(id.error() == Core::AssetError::UnknownAssetId ? ScreenReadError::Missing
-                                                                              : ScreenReadError::Unreadable);
+        return std::unexpected(id.error() == Core::AssetErrorCode::UnknownAssetId ? ScreenReadError::Missing
+                                                                                  : ScreenReadError::Unreadable);
     }
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = provider.Open(*id);
     if (!bytes)

@@ -7,7 +7,9 @@
 namespace Assisi::Core
 {
 
-LooseFileProvider::LooseFileProvider(const AssetDatabase &database) noexcept : _database(&database) {}
+LooseFileProvider::LooseFileProvider(const AssetDatabase &database) noexcept : _database(&database)
+{
+}
 
 std::expected<std::vector<std::byte>, AssetError> LooseFileProvider::Open(AssetId id) const
 {
@@ -15,13 +17,13 @@ std::expected<std::vector<std::byte>, AssetError> LooseFileProvider::Open(AssetI
     // payloads on disk — this backend does not serve them.
     if (id.IsReserved())
     {
-        return std::unexpected(AssetError::UnknownAssetId);
+        return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
 
     const std::optional<std::string> path = _database->PathFor(id);
     if (!path.has_value())
     {
-        return std::unexpected(AssetError::UnknownAssetId);
+        return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
 
     return AssetSystem::ReadBinary(*path);
@@ -32,7 +34,7 @@ std::expected<AssetId, AssetError> LooseFileProvider::Resolve(std::string_view v
     const std::optional<AssetId> id = _database->IdFor(vpath);
     if (!id.has_value())
     {
-        return std::unexpected(AssetError::UnknownAssetId);
+        return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
     return *id;
 }

@@ -35,7 +35,7 @@ constexpr double kConfiguredHz = 30.0;
 /// Cooked blobs by path, held in memory: a pak without the file.
 class MemoryProvider final : public Core::AssetProvider
 {
-public:
+  public:
     void Add(std::string_view vpath, std::vector<std::byte> bytes)
     {
         _blobs[Core::DerivedAssetId(vpath)] = std::move(bytes);
@@ -46,7 +46,7 @@ public:
         const auto found = _blobs.find(id);
         if (found == _blobs.end())
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return found->second;
     }
@@ -56,12 +56,12 @@ public:
         const Core::AssetId id = Core::DerivedAssetId(vpath);
         if (!_blobs.contains(id))
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return id;
     }
 
-private:
+  private:
     std::unordered_map<Core::AssetId, std::vector<std::byte>> _blobs;
 };
 
@@ -107,8 +107,7 @@ TEST_CASE("The text config reader fills a config, and names a missing or broken 
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error() == Core::ConfigError::Missing);
 
-    const auto wrongType =
-        Core::ReadTextConfig("config/broken.json", std::type_index(typeid(App::AppConfig)), &config);
+    const auto wrongType = Core::ReadTextConfig("config/broken.json", std::type_index(typeid(App::AppConfig)), &config);
     REQUIRE_FALSE(wrongType.has_value());
     CHECK(wrongType.error() == Core::ConfigError::Malformed);
 }
@@ -145,9 +144,9 @@ TEST_CASE("A config loads through whichever reader is installed")
     shipped.physicsHz = kConfiguredHz;
     provider.Add("config/game.json", Cooked(std::type_index(typeid(App::AppConfig)), &shipped));
 
-    const Core::ConfigReader previous = Core::SetConfigReader(
-        [&provider](std::string_view vpath, std::type_index type, void *instance)
-        { return Core::ReadCookedConfig(provider, vpath, type, instance); });
+    const Core::ConfigReader previous =
+        Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)
+                              { return Core::ReadCookedConfig(provider, vpath, type, instance); });
     const App::AppConfig loaded = App::AppConfig::Load();
 
     // And with none installed, nothing is read, not even a loose file.

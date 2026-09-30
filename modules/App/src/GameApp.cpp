@@ -101,7 +101,7 @@ bool GameApp::MountContent()
     if (!mounted)
     {
         Core::Log::Error("Game: cannot start - the content package '{}' cannot be read ({}).", pak.string(),
-                         Core::ToString(mounted.error()));
+                         Core::Describe(mounted.error()));
         return false;
     }
     Core::Log::Info("Game: reading content from '{}'.", pak.string());

@@ -74,7 +74,7 @@ void ExtractBlock(const std::vector<unsigned char> &level, std::uint32_t width, 
             const std::uint32_t sourceX = std::min(blockX + column, width - 1);
 
             const std::size_t from = (static_cast<std::size_t>(sourceY) * width + sourceX) * kRgba8BytesPerTexel;
-            const std::size_t to   = (static_cast<std::size_t>(row) * kBlockExtent + column) * kRgba8BytesPerTexel;
+            const std::size_t to = (static_cast<std::size_t>(row) * kBlockExtent + column) * kRgba8BytesPerTexel;
             std::memcpy(out.data() + to, level.data() + from, kRgba8BytesPerTexel);
         }
     }
@@ -134,8 +134,7 @@ void SetBlockAlphaOpaque(std::array<unsigned char, kBlockRgba8Bytes> &block)
 }
 
 /// Unpacks one block of `format` into 16 RGBA8 texels.
-void DecodeBlock(PixelFormat format, const unsigned char *source,
-                 std::array<unsigned char, kBlockRgba8Bytes> &out)
+void DecodeBlock(PixelFormat format, const unsigned char *source, std::array<unsigned char, kBlockRgba8Bytes> &out)
 {
     out.fill(0);
     switch (format)
@@ -176,22 +175,22 @@ std::expected<DecodedImage, Core::AssetError> Compress(const DecodedImage &sourc
     if (!IsBlockCompressed(format))
     {
         Core::Log::Error("Image: Compress target is not a block format");
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
     if (source.format != PixelFormat::Rgba8)
     {
         Core::Log::Error("Image: Compress source must be RGBA8");
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
     if (IsDataFormat(format) && source.colorSpace == ColorSpace::Srgb)
     {
         Core::Log::Error("Image: an sRGB source cannot be encoded as a data format, which has no sRGB form");
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
     if (!ValidateMipChain(source))
     {
         Core::Log::Error("Image: Compress source has a malformed mip chain");
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
 
     bc7enc_compress_block_params bc7Params{};
@@ -205,15 +204,15 @@ std::expected<DecodedImage, Core::AssetError> Compress(const DecodedImage &sourc
         {
             bc7enc_compress_block_params_init_perceptual_weights(&bc7Params);
         }
-        const bool best              = quality == CompressQuality::Best;
-        bc7Params.m_max_partitions   = best ? kBc7BestPartitions : kBc7FastPartitions;
-        bc7Params.m_uber_level       = best ? kBc7BestUberLevel : kBc7FastUberLevel;
+        const bool best = quality == CompressQuality::Best;
+        bc7Params.m_max_partitions = best ? kBc7BestPartitions : kBc7FastPartitions;
+        bc7Params.m_uber_level = best ? kBc7BestUberLevel : kBc7FastUberLevel;
     }
 
     DecodedImage encoded;
-    encoded.width      = source.width;
-    encoded.height     = source.height;
-    encoded.format     = format;
+    encoded.width = source.width;
+    encoded.height = source.height;
+    encoded.format = format;
     encoded.colorSpace = source.colorSpace;
     encoded.mips.resize(source.mips.size());
 
@@ -224,9 +223,9 @@ std::expected<DecodedImage, Core::AssetError> Compress(const DecodedImage &sourc
         {
             continue;
         }
-        const std::uint32_t mipWidth  = MipExtent(source.width, static_cast<std::uint32_t>(level));
+        const std::uint32_t mipWidth = MipExtent(source.width, static_cast<std::uint32_t>(level));
         const std::uint32_t mipHeight = MipExtent(source.height, static_cast<std::uint32_t>(level));
-        const LevelLayout layout      = LayoutFor(format, mipWidth, mipHeight);
+        const LevelLayout layout = LayoutFor(format, mipWidth, mipHeight);
 
         encoded.mips[level].assign(layout.byteSize, 0u);
 
@@ -250,18 +249,18 @@ std::expected<DecodedImage, Core::AssetError> Decompress(const DecodedImage &sou
     if (!IsBlockCompressed(source.format))
     {
         Core::Log::Error("Image: Decompress source is not block compressed");
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
     if (!ValidateMipChain(source))
     {
         Core::Log::Error("Image: Decompress source has a malformed mip chain");
-        return std::unexpected(Core::AssetError::FileReadFailed);
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
     }
 
     DecodedImage decoded;
-    decoded.width      = source.width;
-    decoded.height     = source.height;
-    decoded.format     = PixelFormat::Rgba8;
+    decoded.width = source.width;
+    decoded.height = source.height;
+    decoded.format = PixelFormat::Rgba8;
     decoded.colorSpace = source.colorSpace;
     decoded.mips.resize(source.mips.size());
 
@@ -272,7 +271,7 @@ std::expected<DecodedImage, Core::AssetError> Decompress(const DecodedImage &sou
         {
             continue;
         }
-        const std::uint32_t mipWidth  = MipExtent(source.width, static_cast<std::uint32_t>(level));
+        const std::uint32_t mipWidth = MipExtent(source.width, static_cast<std::uint32_t>(level));
         const std::uint32_t mipHeight = MipExtent(source.height, static_cast<std::uint32_t>(level));
 
         decoded.mips[level].assign(LayoutFor(PixelFormat::Rgba8, mipWidth, mipHeight).byteSize, 0u);

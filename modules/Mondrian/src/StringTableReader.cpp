@@ -87,8 +87,8 @@ std::expected<StringTable, StringTableReadError> ReadCookedStringTable(const Cor
     const std::expected<Core::AssetId, Core::AssetError> id = provider.Resolve(vpath);
     if (!id)
     {
-        return std::unexpected(id.error() == Core::AssetError::UnknownAssetId ? StringTableReadError::Missing
-                                                                              : StringTableReadError::Unreadable);
+        return std::unexpected(id.error() == Core::AssetErrorCode::UnknownAssetId ? StringTableReadError::Missing
+                                                                                  : StringTableReadError::Unreadable);
     }
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = provider.Open(*id);
     if (!bytes)

@@ -5,9 +5,9 @@
 
 #include <algorithm>
 #include <expected>
-#include <functional>
 #include <span>
-#include <string>
+#include <string_view>
+#include <vector>
 
 namespace Assisi::Testing
 {
@@ -18,46 +18,48 @@ namespace
 constexpr std::byte kFailCook{'X'};
 constexpr std::byte kFailFinish{'F'};
 
-std::expected<TestBytes, std::string> Load(std::span<const std::byte> payload)
+/// The reversing step has never changed what it cooks.
+constexpr std::uint32_t kReversedCookVersion = 1;
+
+std::expected<TestBytes, Core::AssetError> Load(std::span<const std::byte> payload)
 {
     TestKindLoads().fetch_add(1);
     if (payload.empty())
     {
-        return std::unexpected(std::string{"the payload is empty"});
+        return std::unexpected(Core::AssetError{Core::AssetErrorCode::CorruptAsset, kEmptyPayloadDetail});
     }
     return TestBytes{.bytes = {payload.begin(), payload.end()}};
+}
+
+std::expected<void, Core::AssetError> Finish(TestBytes &loaded)
+{
+    if (!loaded.bytes.empty() && loaded.bytes.front() == kFailFinish)
+    {
+        return std::unexpected(Core::AssetError{Core::AssetErrorCode::CorruptAsset, kFinishRefusedDetail});
+    }
+    loaded.finished = true;
+    return {};
+}
+
+std::expected<std::vector<std::byte>, Core::AssetError> CookReversed(std::span<const std::byte> source)
+{
+    if (!source.empty() && source.front() == kFailCook)
+    {
+        return std::unexpected(Core::AssetError{Core::AssetErrorCode::CorruptAsset, kCookRefusedDetail});
+    }
+    std::vector<std::byte> reversed{source.begin(), source.end()};
+    std::ranges::reverse(reversed);
+    return reversed;
 }
 
 bool RegisterReversed()
 {
     Core::AssetKind kind = Core::MakeAssetKind<TestBytes>(
         "test reversed bytes", {Core::AssetFormat{.extension = ".tbytes", .preferred = true}}, Load);
-    kind.finish = [](void *value) -> std::expected<void, std::string>
-    {
-        TestBytes &loaded = *static_cast<TestBytes *>(value);
-        if (!loaded.bytes.empty() && loaded.bytes.front() == kFailFinish)
-        {
-            return std::unexpected(std::string{"the payload asks the finish to fail"});
-        }
-        loaded.finished = true;
-        return {};
-    };
+    kind.finish = Core::MakeAssetFinish<TestBytes>(Finish);
     const bool registered = Core::AssetKindRegistry::Instance().Register(std::move(kind));
-
-    Core::AssetCookStep step;
-    step.kind = kReversedKind;
-    step.version = 1;
-    step.cook = [](std::span<const std::byte> source) -> std::expected<std::vector<std::byte>, std::string>
-    {
-        if (!source.empty() && source.front() == kFailCook)
-        {
-            return std::unexpected(std::string{"the source asks the cook to fail"});
-        }
-        std::vector<std::byte> reversed{source.begin(), source.end()};
-        std::ranges::reverse(reversed);
-        return reversed;
-    };
-    return registered && Core::AssetKindRegistry::Instance().RegisterCookStep(std::move(step));
+    return registered && Core::AssetKindRegistry::Instance().RegisterCookStep(
+                             Core::MakeAssetCookStep(kReversedKind, kReversedCookVersion, CookReversed));
 }
 
 bool RegisterRaw()

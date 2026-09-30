@@ -48,14 +48,14 @@ class MemoryProvider final : public Core::AssetProvider
         const std::unordered_map<Core::AssetId, std::vector<std::byte>>::const_iterator found = _files.find(id);
         if (found == _files.end())
         {
-            return std::unexpected(Core::AssetError::UnknownAssetId);
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
         }
         return found->second;
     }
 
     [[nodiscard]] std::expected<Core::AssetId, Core::AssetError> Resolve(std::string_view) const override
     {
-        return std::unexpected(Core::AssetError::UnknownAssetId);
+        return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
     }
 
     [[nodiscard]] std::uint32_t Opens() const { return _opens.load(); }
@@ -78,7 +78,7 @@ std::vector<std::byte> Blob(Core::AssetKindId kind, std::string_view payload)
     REQUIRE(registered != nullptr);
     // The raw kind has no cook step, so its blob is exactly the envelope and the payload.
     REQUIRE(Core::AssetKindRegistry::Instance().CookStepFor(kind) == nullptr);
-    std::expected<std::vector<std::byte>, std::string> blob = Core::CookAssetBytes(*registered, Bytes(payload));
+    std::expected<std::vector<std::byte>, Core::AssetError> blob = Core::CookAssetBytes(*registered, Bytes(payload));
     REQUIRE(blob.has_value());
     return std::move(*blob);
 }
@@ -343,10 +343,11 @@ TEST_CASE("The cooking provider takes a file's kind from its sidecar and nowhere
     const Core::AssetId kNoPath = Core::DerivedAssetId("things/nowhere.tbytes");
     const Core::CookingProvider cooking = tree.Provider();
 
-    CHECK(cooking.Open(kNoKind).error() == Core::AssetError::UnknownAssetId);
-    CHECK(cooking.Open(kWrongFormat).error() == Core::AssetError::UnknownAssetId);
-    CHECK(cooking.Open(kUnknownKind).error() == Core::AssetError::UnknownAssetId);
-    CHECK(cooking.Open(kTexture).error() == Core::AssetError::UnknownAssetId);
-    CHECK(cooking.Open(kNoPath).error() == Core::AssetError::UnknownAssetId);
-    CHECK(cooking.Open(kRefused).error() == Core::AssetError::UnsupportedEncoding);
+    CHECK(cooking.Open(kNoKind).error() == Core::AssetErrorCode::UnknownAssetId);
+    CHECK(cooking.Open(kWrongFormat).error() == Core::AssetErrorCode::UnknownAssetId);
+    CHECK(cooking.Open(kUnknownKind).error() == Core::AssetErrorCode::UnknownAssetId);
+    CHECK(cooking.Open(kTexture).error() == Core::AssetErrorCode::UnknownAssetId);
+    CHECK(cooking.Open(kNoPath).error() == Core::AssetErrorCode::UnknownAssetId);
+    // The step's own error, not one the provider made up.
+    CHECK(cooking.Open(kRefused).error().detail == Testing::kCookRefusedDetail);
 }

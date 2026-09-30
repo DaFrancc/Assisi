@@ -31,14 +31,14 @@ namespace Assisi::Core
 /// no per-call state.
 class AssetProvider
 {
-public:
+  public:
     virtual ~AssetProvider() = default;
 
     /// @brief Read the full byte payload of the asset with this id.
     ///
     /// @param id The asset to open. Reserved built-in ids (the `prim://`
     ///        primitives) are handled by the resolver above this layer, not by a
-    ///        provider — opening one returns AssetError::UnknownAssetId.
+    ///        provider — opening one returns AssetErrorCode::UnknownAssetId.
     /// @return The bytes, or an AssetError: UnknownAssetId if this provider does
     ///         not serve the id, FileOpenFailed / FileReadFailed on I/O trouble,
     ///         and UnsupportedEncoding / CorruptArchive for a slice the pak cannot

@@ -248,8 +248,8 @@ TEST_CASE("AssetDatabase::Rebuild is idempotent")
 TEST_CASE("AssetSidecar round-trips a composite manifest")
 {
     const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
-    const AssetId matA   = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
-    const AssetId matB   = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
+    const AssetId matA = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
+    const AssetId matB = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
 
     AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 0, .material = matA});
@@ -293,7 +293,7 @@ TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMateria
     // Give crate.png a hand-written glTF-style sidecar carrying a manifest (any
     // file can carry one; the DB does not care about the type).
     const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
-    const AssetId matId  = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000009");
+    const AssetId matId = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000009");
     AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 2, .material = matId});
     WriteFile(root / "textures" / "crate.png.aast", SerializeSidecar(sidecar));
@@ -456,7 +456,7 @@ TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
     LooseFileProvider provider(db);
 
     const AssetId crateId = *db.IdFor("textures/crate.png");
-    auto bytes   = provider.Open(crateId);
+    auto bytes = provider.Open(crateId);
     REQUIRE(bytes.has_value());
     const std::string text(reinterpret_cast<const char *>(bytes->data()), bytes->size());
     CHECK(text == "PNG-BYTES");
@@ -464,12 +464,12 @@ TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
     // A reserved built-in is not a byte payload here.
     auto builtin = provider.Open(BuiltinAssetId::Cube);
     REQUIRE_FALSE(builtin.has_value());
-    CHECK(builtin.error() == AssetError::UnknownAssetId);
+    CHECK(builtin.error() == AssetErrorCode::UnknownAssetId);
 
     // A minted-but-unregistered id is unknown.
     auto missing = provider.Open(MintAssetId());
     REQUIRE_FALSE(missing.has_value());
-    CHECK(missing.error() == AssetError::UnknownAssetId);
+    CHECK(missing.error() == AssetErrorCode::UnknownAssetId);
 }
 
 TEST_CASE("LooseFileProvider resolves a virtual path to the id the database holds")
@@ -487,7 +487,7 @@ TEST_CASE("LooseFileProvider resolves a virtual path to the id the database hold
 
     const std::expected<AssetId, AssetError> absent = provider.Resolve("textures/absent.png");
     REQUIRE_FALSE(absent.has_value());
-    CHECK(absent.error() == AssetError::UnknownAssetId);
+    CHECK(absent.error() == AssetErrorCode::UnknownAssetId);
 }
 
 TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
@@ -522,4 +522,3 @@ TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
     CHECK(second.IdFor("textures/copy_a.png") == idA);
     CHECK(second.IdFor("textures/copy_b.png") == idB);
 }
-

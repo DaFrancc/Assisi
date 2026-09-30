@@ -63,8 +63,8 @@ std::expected<void, ConfigError> ReadCookedConfig(const AssetProvider &provider,
     const std::expected<AssetId, AssetError> id = provider.Resolve(vpath);
     if (!id)
     {
-        return std::unexpected(id.error() == AssetError::UnknownAssetId ? ConfigError::Missing
-                                                                        : ConfigError::Unreadable);
+        return std::unexpected(id.error() == AssetErrorCode::UnknownAssetId ? ConfigError::Missing
+                                                                            : ConfigError::Unreadable);
     }
     const std::expected<std::vector<std::byte>, AssetError> bytes = provider.Open(*id);
     if (!bytes)

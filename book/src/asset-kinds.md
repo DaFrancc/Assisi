@@ -78,12 +78,23 @@ changes.
 namespace
 {
 
-std::expected<PcmClip, std::string> LoadSound(std::span<const std::byte> bytes)
+using Assisi::Core::AssetError;
+using Assisi::Core::AssetErrorCode;
+
+/// What went wrong, as every asset says it, with the decoder's words as detail.
+AssetError ToAssetError(AudioError error)
+{
+    const AssetErrorCode code = error == AudioError::UnsupportedEncoding ? AssetErrorCode::UnsupportedEncoding
+                                                                         : AssetErrorCode::CorruptAsset;
+    return AssetError{code, ToString(error)};
+}
+
+std::expected<PcmClip, AssetError> LoadSound(std::span<const std::byte> bytes)
 {
     std::expected<PcmClip, AudioError> clip = DecodeClip(bytes);
     if (!clip)
     {
-        return std::unexpected(std::string{ToString(clip.error())});
+        return std::unexpected(ToAssetError(clip.error()));
     }
     return std::move(*clip);
 }
@@ -106,19 +117,28 @@ using Assisi::Core::AssetFormat;
 - **`preferred` says what new files get.** Several kinds may read one format. A
   heightmap kind would read `.png` without preferring it, so new `.png` files
   stay textures and a designer marks the heightmaps with "Use as".
-- **The error is the reason.** It goes into the warning a failed load logs.
+- **Errors are `AssetError`s.** Every kind reports failure the same way, so
+  whatever loads an asset can tell what happened without knowing its kind. Map
+  your decoder's errors onto a code: `CorruptAsset` for a file whose contents are
+  broken, `UnsupportedEncoding` for a valid file this build cannot read. Put the
+  decoder's own description in `detail`; the warning a failed load logs prints
+  both.
+- **`detail` is a view.** Point it at text that is never freed, such as a string
+  literal or an error enum's `ToString`. Text built at runtime would be gone by
+  the time the warning prints it.
 
 If the value needs work on the main thread before it can be used, such as
-creating GPU resources, set the kind's `finish` function before registering it.
-It runs once, on the main thread, after the load and before anything sees the
-value.
+creating GPU resources, set the kind's `finish` before registering it, with
+`MakeAssetFinish<PcmClip>(yourFinish)`. It runs once, on the main thread, after
+the load and before anything sees the value.
 
 ## Step 3: a cook step, if the kind needs one
 
 Without a cook step, a file ships exactly as it was authored. Add one to check a
 file before it ships, or to convert it into something faster to load. It goes in
 a separate source file, because a shipped game never cooks and must not link
-cook code:
+cook code. It reports errors the way the load does, so declare `ToAssetError` in
+a header both files include:
 
 ```cpp
 #include <Assisi/Core/AssetKind.hpp>
@@ -126,34 +146,33 @@ cook code:
 namespace
 {
 
-std::expected<std::vector<std::byte>, std::string> CookSound(std::span<const std::byte> source)
+/// Raise when the step would cook the same file differently.
+constexpr std::uint32_t kSoundCookVersion = 1;
+
+std::expected<std::vector<std::byte>, Assisi::Core::AssetError> CookSound(std::span<const std::byte> source)
 {
     // Decode once and throw the samples away: a file that would never play
     // fails the cook instead of a player's game.
     if (std::expected<PcmClip, AudioError> clip = DecodeClip(source); !clip)
     {
-        return std::unexpected(std::string{"does not decode: "} + std::string{ToString(clip.error())});
+        return std::unexpected(ToAssetError(clip.error()));
     }
     return std::vector<std::byte>{source.begin(), source.end()};
 }
 
-bool Register()
-{
-    Assisi::Core::AssetCookStep step;
-    step.kind    = Assisi::Core::AssetKindId{"sound"};
-    step.version = 1;
-    step.cook    = CookSound;
-    return Assisi::Core::AssetKindRegistry::Instance().RegisterCookStep(std::move(step));
-}
-
-[[maybe_unused]] const bool kRegistered = Register();
+[[maybe_unused]] const bool kRegistered = Assisi::Core::AssetKindRegistry::Instance().RegisterCookStep(
+    Assisi::Core::MakeAssetCookStep(Assisi::Core::AssetKindId{"sound"}, kSoundCookVersion, CookSound));
 
 } // namespace
 ```
 
 Raise `version` whenever the step would cook the same file differently, so the
-cook redoes files it has already cooked. A step's error fails the cook, with
-the file's path and your message.
+cook redoes files it has already cooked. A step's error fails the cook with the
+file's path, the code and your detail:
+
+```
+cook: sounds/bad.wav: the file's contents are corrupt (the audio could not be decoded)
+```
 
 ## Step 4: tell the build
 

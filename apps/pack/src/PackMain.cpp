@@ -31,9 +31,9 @@
 namespace
 {
 
-constexpr int kExitOk     = 0;
+constexpr int kExitOk = 0;
 constexpr int kExitFailed = 1;
-constexpr int kExitUsage  = 2;
+constexpr int kExitUsage = 2;
 
 void PrintUsage()
 {
@@ -124,15 +124,15 @@ int main(int argc, char **argv)
         if (!mounted)
         {
             std::fprintf(stderr, "pack: %s: previous pak does not mount: %s\n", previousPath.generic_string().c_str(),
-                         std::string{Assisi::Core::ToString(mounted.error())}.c_str());
+                         Assisi::Core::Describe(mounted.error()).c_str());
             return kExitFailed;
         }
         previous.emplace(std::move(*mounted));
     }
 
-    const std::expected<Assisi::Cook::PakReport, Assisi::Cook::CookError> report = Assisi::Cook::WritePak(
-        cookedRoot, entries, outPath, codec,
-        previous ? previous->Entries() : std::span<const Assisi::Core::PakEntry>{});
+    const std::expected<Assisi::Cook::PakReport, Assisi::Cook::CookError> report =
+        Assisi::Cook::WritePak(cookedRoot, entries, outPath, codec,
+                               previous ? previous->Entries() : std::span<const Assisi::Core::PakEntry>{});
     if (!report)
     {
         std::fprintf(stderr, "pack: %s: %s\n", report.error().vpath.c_str(), report.error().reason.c_str());
