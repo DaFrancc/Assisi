@@ -1,11 +1,33 @@
 {
   "systems": [
+    "AudioEmitters",
     "PauseMenuScreen",
     "SampleScreen",
     "SampleScreenToggle",
     "ControlsScreen",
     "ControlsScreenToggle"
   ],
-  "entities": [],
+  "entities": [
+    {
+      "components": {
+        "AudioEmitter": {
+          "bus": "UI",
+          "clip": {
+            "guid": "feefe5bb-b0d0-4ff5-ba2a-c350c00ce848",
+            "path": "sounds/click.wav"
+          },
+          "ignoresWorldPause": false,
+          "looping": false,
+          "maxConcurrentSounds": 4,
+          "maxQueuedRequests": 0,
+          "space": "InEar",
+          "volume": 1.0,
+          "whenFull": "ReplaceOldest"
+        },
+        "DefaultEmitter": {}
+      },
+      "name": "UiSpeaker"
+    }
+  ],
   "version": 2
 }

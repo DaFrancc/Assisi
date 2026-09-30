@@ -14,9 +14,9 @@
 
     <row name="buttons" width="grow" gap="20" align="center center">
 
-      <!-- Resume closes the menu and reaches nothing outside the UI, so it
-           needs no event, no system and nothing named in a level. -->
-      <menu_button name="resume" on_click="hide()" focus="true"
+      <!-- Resume goes through an event, so the system that closes the menu
+           also plays its click. -->
+      <menu_button name="resume" on_click="Game::ResumeRequested" focus="true"
                    background="#e63319">#pause:resume</menu_button>
 
       <!-- Quit leaves the UI, so it goes through an event a system answers. -->

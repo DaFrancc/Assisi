@@ -5,6 +5,7 @@ target_sources(Assisi-App
   PUBLIC
     "include/Assisi/App/AppConfig.hpp"
     "include/Assisi/App/Application.hpp"
+    "include/Assisi/App/AudioSystems.hpp"
     "include/Assisi/App/BlueprintVerbs.hpp"
     "include/Assisi/App/CameraBenchmark.hpp"
     "include/Assisi/App/ChildProcess.hpp"
@@ -25,6 +26,7 @@ target_sources(Assisi-App
   PRIVATE
     "src/AppConfig.cpp"
     "src/Application.cpp"
+    "src/AudioSystems.cpp"
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
     "src/CameraBenchmark.cpp"
@@ -94,6 +96,7 @@ assisi_reflect(
   TARGET Assisi-App
   HEADERS
     include/Assisi/App/AppConfig.hpp
+    include/Assisi/App/AudioSystems.hpp
     include/Assisi/App/PhysicsSystems.hpp
     include/Assisi/App/MotionSystems.hpp
     include/Assisi/App/SystemRegistry.hpp

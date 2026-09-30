@@ -25,11 +25,12 @@ namespace Assisi::Audio
 inline constexpr float kMinVolume = 0.0f;
 inline constexpr float kMaxVolume = 1.0f;
 
-/// @brief How long a bus takes to reach a new volume: long enough not to click,
-/// short enough that a slider feels immediate.
+/// @brief How long a bus or a sound takes to reach a new volume: long enough not
+/// to click, short enough that a slider feels immediate.
 inline constexpr std::uint32_t kVolumeRampFrames = kSampleRate / 50;
 
-/// @brief How long a stopped sound takes to fade to silence rather than cut off.
+/// @brief How long a stopped or paused sound takes to fade to silence rather
+/// than cut off, and a resumed one to fade back in.
 inline constexpr std::uint32_t kSoundFadeFrames = kSampleRate / 100;
 
 /// @brief Sounds that can play at once. Every slot is built up front, so
@@ -49,15 +50,15 @@ inline constexpr std::size_t kMaxSounds = 256;
 /// player's settings, which hold the whole mixer.
 class Mixer final : public AudioRenderer, public SoundOutput
 {
-public:
+  public:
     struct Impl;
 
     [[nodiscard]] static std::expected<std::unique_ptr<Mixer>, AudioError> Create(const BusLayout &layout);
 
-    Mixer(const Mixer &)            = delete;
+    Mixer(const Mixer &) = delete;
     Mixer &operator=(const Mixer &) = delete;
-    Mixer(Mixer &&)                 = delete;
-    Mixer &operator=(Mixer &&)      = delete;
+    Mixer(Mixer &&) = delete;
+    Mixer &operator=(Mixer &&) = delete;
     ~Mixer() override;
 
     /// @brief Ramp @p bus to @p volume, clamped to kMinVolume..kMaxVolume.
@@ -67,22 +68,26 @@ public:
 
     [[nodiscard]] std::optional<BusId> FindBus(std::string_view name) const override;
 
-    /// @brief Start @p clip on @p bus. The mixer holds the clip until the sound
-    /// finishes and Update releases it.
-    [[nodiscard]] std::expected<SoundHandle, AudioError> Attach(std::shared_ptr<const PcmClip> clip,
-                                                                BusId bus) override;
-
-    /// @brief Fade @p sound out over kSoundFadeFrames. Does nothing to a finished sound.
+    [[nodiscard]] std::expected<SoundHandle, AudioError> Claim(std::shared_ptr<const PcmClip> clip, BusId bus) override;
+    void Play(SoundHandle sound) override;
+    void SetVolume(SoundHandle sound, float volume) override;
+    void SetLooping(SoundHandle sound, bool looping) override;
+    void Pause(SoundHandle sound) override;
+    void Resume(SoundHandle sound) override;
+    void Hold(SoundHandle sound) override;
     void Stop(SoundHandle sound) override;
-
     [[nodiscard]] bool IsFinished(SoundHandle sound) const override;
 
-    /// @brief Release every finished sound's slot and clip. Call once per frame.
+    /// @brief Claim and play @p clip at full volume, once.
+    [[nodiscard]] std::expected<SoundHandle, AudioError> Attach(std::shared_ptr<const PcmClip> clip, BusId bus);
+
+    /// @brief Fade out every sound nobody held since the last Update, and release
+    ///        every finished sound's slot and clip. Call once per frame.
     void Update();
 
     void Render(std::span<float> interleaved) noexcept override;
 
-private:
+  private:
     explicit Mixer(std::unique_ptr<Impl> impl) noexcept;
 
     std::unique_ptr<Impl> _impl;

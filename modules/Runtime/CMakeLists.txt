@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-Runtime)
 target_sources(Assisi-Runtime
   PUBLIC
     "include/Assisi/Runtime/AssetResolve.hpp"
+    "include/Assisi/Runtime/AudioEmitter.hpp"
     "include/Assisi/Runtime/Blueprint.hpp"
     "include/Assisi/Runtime/CookedScene.hpp"
     "include/Assisi/Runtime/Camera.hpp"
@@ -61,11 +62,14 @@ target_link_libraries(Assisi-Runtime
     Assisi::ECS
     Assisi::Math
     Assisi::Render
+    # Audio: the SoundHandle an AudioEmitter keeps for each sound it plays.
+    Assisi::Audio
 )
 
 assisi_reflect(
   TARGET Assisi-Runtime
   HEADERS
+    include/Assisi/Runtime/AudioEmitter.hpp
     include/Assisi/Runtime/CameraPath.hpp
     include/Assisi/Runtime/Components.hpp
     include/Assisi/Runtime/EditorOnly.hpp
