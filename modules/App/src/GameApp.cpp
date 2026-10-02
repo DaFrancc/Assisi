@@ -3,6 +3,7 @@
 
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/StartupScene.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
@@ -543,6 +544,7 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         ASSISI_PROFILE_SCOPE("physics-interpolate");
         _world->physics.InterpolateTransforms(_world->scene, GetInterpolationAlpha(),
                                               ParentWorldResolver(_world->scene));
+        PlaceCharacterEyes(_world->scene, _world->physics, GetInterpolationAlpha());
     }
 
     // Before the camera is chosen, not only inside Render(): a camera is placed

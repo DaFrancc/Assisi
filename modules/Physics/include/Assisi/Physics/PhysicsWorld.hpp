@@ -148,7 +148,7 @@ struct ContactEvent
 /// Destruction cleans up all bodies and unregisters Jolt types.
 class PhysicsWorld
 {
-public:
+  public:
     PhysicsWorld();
     ~PhysicsWorld();
 
@@ -581,17 +581,29 @@ public:
 
     /// @brief Sets what @p character is trying to do on the next step.
     ///
-    /// @p desiredVelocity is a world-space velocity, already scaled to a real
-    /// speed — the controller accelerates toward it rather than snapping to it,
-    /// at the descriptor's ground or air rate depending on where the character
-    /// is. Its vertical component is ignored; gravity and @p jump own that axis.
+    /// @p wishVelocity is a world-space request: its direction is where the
+    /// character wants to go and its length is the speed it wants, already
+    /// scaled to metres per second. The character is not set to it. Each step
+    /// the ground takes speed away by the descriptor's friction and the
+    /// character gains speed along that direction at the descriptor's ground or
+    /// air rate, so the velocity it already has carries over as momentum. The
+    /// vertical component is ignored; gravity and @p jump own that axis.
     ///
     /// @p jump is a request that survives a short time: asked for just before
     /// landing it fires on the landing step, and asked for just after walking
     /// off a ledge it still counts as a ground jump. Asked for while genuinely
     /// airborne it is dropped rather than queued, so a held button cannot bank
     /// jumps.
-    void MoveCharacter(const Character &character, glm::vec3 desiredVelocity, bool jump);
+    void MoveCharacter(const Character &character, glm::vec3 wishVelocity, bool jump);
+
+    /// @brief Tells the controller which way @p character is looking.
+    ///
+    /// The controller moves a character and never turns it, so it does not know
+    /// this unless told. Only BunnyHopPolicy::Boost uses it, where a jump adds
+    /// and removes speed along the facing; under any other policy it changes
+    /// nothing. @p forward is a world-space direction; its vertical part is
+    /// ignored and it need not be unit length. Kept until set again.
+    void SetCharacterFacing(const Character &character, glm::vec3 forward);
 
     /// @brief Asks @p character to stand or crouch.
     ///
@@ -600,10 +612,24 @@ public:
     /// case, and asking again once the character has moved clear succeeds — so
     /// a caller holding a crouch simply asks every step rather than tracking
     /// whether it is stuck.
+    ///
+    /// On the ground the feet stay put and the head moves. In the air the head
+    /// stays put and the feet move, so crouching mid-jump lifts them over a
+    /// ledge; standing again in the air is refused while there is no room below
+    /// for the legs.
     bool SetCharacterStance(const Character &character, Stance stance);
 
     /// @brief What @p character's last step left behind.
     [[nodiscard]] CharacterState GetCharacterState(const Character &character) const;
+
+    /// @brief @p character's eye height for a rendered frame: its last two
+    /// steps' values blended by @p alpha, the same fraction
+    /// InterpolateTransforms() is given.
+    ///
+    /// CharacterState::eyeHeight changes once per step. A camera placed from it
+    /// moves in visible steps whenever the display refreshes faster than the
+    /// simulation; one placed from this moves every frame.
+    [[nodiscard]] float GetCharacterEyeHeight(const Character &character, float alpha) const;
 
     /// @brief Teleports a character to a pose, feet first like the spawn.
     ///
@@ -705,7 +731,7 @@ public:
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

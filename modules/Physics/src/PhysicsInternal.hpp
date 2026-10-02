@@ -363,12 +363,43 @@ JPH::RefConst<JPH::Shape> MakeCharacterShape(float radius, float halfHeight);
 /// @ref MakeCharacterShape builds.
 float CharacterHalfHeight(float radius, float halfHeight);
 
-/// Moves @p from toward @p to by at most @p maxDelta, landing exactly on @p to
-/// rather than overshooting and oscillating around it.
+/// Below this horizontal speed friction stops the character outright (m/s).
+/// Dividing by a speed this small to keep the direction would amplify rounding
+/// into a velocity that wanders.
+constexpr float kFrictionMinSpeed = 0.002f;
+
+/// Below this requested speed there is no direction to accelerate along (m/s):
+/// normalizing it would divide by nearly zero.
+constexpr float kMinWishSpeed = 1.0e-4f;
+
+/// With BunnyHopPolicy::Boost, the share of its forward request a standing
+/// character's jump adds, and equally how far over walkSpeed the jump may leave
+/// it. Half-Life 2's value for a player who is not sprinting.
+constexpr float kJumpBoostStanding = 0.5f;
+
+/// The same for a crouched character. The smaller margin is why back hopping
+/// gains more while crouched: more of the speed counts as over the limit.
+constexpr float kJumpBoostCrouching = 0.1f;
+
+/// What ground friction leaves of a horizontal @p velocity after @p deltaTime:
+/// the speed drops by `max(speed, stopSpeed) * friction * deltaTime` and never
+/// below zero, so the direction is kept and the character cannot be pushed
+/// backwards by its own friction.
+JPH::Vec3 ApplyFriction(JPH::Vec3Arg velocity, float friction, float stopSpeed, float deltaTime);
+
+/// Adds speed along the unit @p wishDirection until the velocity's component
+/// along it reaches @p targetSpeed, by at most @p maxGain.
 ///
-/// A zero @p maxDelta holds @p from unchanged, which is what an acceleration of
-/// zero has to mean: keep the velocity you had and ignore the request.
-JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta);
+/// Only that one component is measured. A velocity already faster than
+/// @p targetSpeed in another direction still gains along this one, which is
+/// where both the slide of a ground turn and the speed of an air strafe come
+/// from; one already at @p targetSpeed along it is returned unchanged, never
+/// slowed.
+JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float targetSpeed, float maxGain);
+
+/// Scales a horizontal @p velocity down to @p maxSpeed if it is faster, keeping
+/// its direction.
+JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 
 /// Builds the Jolt collision shape for a descriptor. Radii and half-heights are
 /// clamped to the convex radius, so a zeroed dimension field — reachable from an
@@ -611,10 +642,15 @@ private:
         JPH::RefConst<JPH::Shape>       standingShape;
         JPH::RefConst<JPH::Shape>       crouchingShape;
 
-        /// Where it is trying to go, as set by MoveCharacter. Kept between steps
-        /// so a caller that stops asking keeps walking rather than stopping dead
-        /// on a step nobody addressed it.
-        glm::vec3 desiredVelocity{0.f};
+        /// The direction it is trying to go and the speed it is asking for, as
+        /// set by MoveCharacter. Kept between steps so a caller that stops
+        /// asking keeps walking rather than stopping dead on a step nobody
+        /// addressed it.
+        glm::vec3 wishVelocity{0.f};
+
+        /// The way it is looking, as set by SetCharacterFacing. The capsule
+        /// itself is never turned; only BunnyHopPolicy::Boost reads this.
+        glm::vec3 facing{0.f, 0.f, -1.f};
 
         /// The last two stepped poses, for render interpolation. Held here
         /// rather than in `snapshots` because that map is keyed by the ids of
@@ -631,8 +667,16 @@ private:
         CollisionFilter queryFilter;
 
         float jumpSpeed          = 0.f;
+        float walkSpeed          = 0.f;
+        float friction           = 0.f;
+        float stopSpeed          = 0.f;
         float groundAcceleration = 0.f;
         float airAcceleration    = 0.f;
+        float airWishSpeedCap    = 0.f;
+        float bunnyHopSpeedCap   = 0.f;
+        float standingEyeHeight  = 0.f;
+        float crouchEyeHeight    = 0.f;
+        float eyeSpeed           = 0.f;
         float gravityScale       = 1.f;
         float coyoteTime         = 0.f;
         float jumpBufferTime     = 0.f;
@@ -640,6 +684,19 @@ private:
         float radius             = 0.f;
         float standingHalfHeight = 0.f;
         float crouchHalfHeight   = 0.f;
+
+        /// How much taller the standing capsule is than the crouching one (m),
+        /// which is how far the feet move when the stance changes in the air.
+        float stanceLift = 0.f;
+
+        /// Where the eye is above the feet right now; see
+        /// CharacterState::eyeHeight.
+        float eyeHeight = 0.f;
+
+        /// @ref eyeHeight as the step before left it. The pair is blended at
+        /// render time like the two poses in @ref snapshot, so the eye moves
+        /// every frame instead of once per step.
+        float prevEyeHeight = 0.f;
 
         /// Seconds since last standing on walkable ground; what coyote time is
         /// measured against.
@@ -656,6 +713,8 @@ private:
 
         Stance stance = Stance::Standing;
 
+        BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
+
         /// Set when a jump fires, cleared on landing. Without it the jump buffer
         /// would fire a second jump in the same flight the moment the first one
         /// left the coyote window open.
@@ -664,6 +723,18 @@ private:
         bool canPushBodies = true;
         bool canBePushed   = true;
         bool frozen        = false;
+
+        /// The horizontal velocity, relative to the ground, that one step of
+        /// intent turns @p velocity into. @p wish is the horizontal request;
+        /// @p grounded is standing on walkable ground and not jumping this step.
+        JPH::Vec3 Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded, float deltaTime) const;
+
+        /// The most horizontal speed a jump may leave the ground with.
+        float TakeOffSpeedLimit() const;
+
+        /// What a jump under BunnyHopPolicy::Boost turns the horizontal
+        /// @p velocity into, given the horizontal request @p wish.
+        JPH::Vec3 BoostTakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
     };
 
     /// Ordered, not hashed: characters are stepped in this order, and one that

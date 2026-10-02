@@ -102,13 +102,18 @@ void CharacterMoveSystem(SystemContext &ctx)
     for (auto [entity, character, descriptor] :
          scene.QueryMut<Physics::Character, Physics::CharacterDescriptor>())
     {
-        (void)entity;
-
         const Physics::Character           &intent   = character.Get();
         const Physics::CharacterDescriptor &authored = descriptor.Get();
 
         const glm::vec3 move = intent.move;
         const bool      jump = intent.jump;
+
+        // Facing lives on the Transform, which the controller never reads: it
+        // moves the capsule and leaves turning it to gameplay.
+        if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
+        {
+            ctx.world.physics.SetCharacterFacing(intent, transform->rotation * glm::vec3(0.f, 0.f, -1.f));
+        }
 
         // Asked every step rather than on the edge of a keypress: standing up
         // under something low fails, and retrying is what lets a character stand
@@ -123,6 +128,9 @@ void CharacterMoveSystem(SystemContext &ctx)
                                            ? authored.walkSpeed * authored.crouchSpeedScale
                                            : authored.walkSpeed;
 
+        // A request, not a velocity to take: the direction to gain speed along
+        // and how much of it to ask for. What the character is already doing
+        // stays in the controller between steps.
         ctx.world.physics.MoveCharacter(intent, move * speed, jump);
 
         // A request, consumed: one press is one jump however many steps pass
@@ -146,12 +154,40 @@ void CharacterStateSystem(SystemContext &ctx)
         if (character.Get().state.velocity == state.velocity &&
             character.Get().state.ground == state.ground &&
             character.Get().state.stance == state.stance &&
+            character.Get().state.eyeHeight == state.eyeHeight &&
             character.Get().state.groundEntity == state.groundEntity)
         {
             continue;
         }
 
         character.GetMut().state = state;
+    }
+}
+
+void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics, float alpha)
+{
+    for (auto [entity, character] : scene.Query<Physics::Character>())
+    {
+        const float eyeHeight = physics.GetCharacterEyeHeight(character, alpha);
+
+        for (auto [child, camera, parent] : scene.Query<Runtime::Camera, Runtime::Parent>())
+        {
+            (void)camera;
+            if (parent.parent != entity)
+            {
+                continue;
+            }
+
+            // Compared first: a write stamps the Transform as changed, and a
+            // character standing still would otherwise re-propagate its camera
+            // every frame.
+            const ECS::Transform *current = scene.Get<ECS::Transform>(child);
+            if (current == nullptr || current->position.y == eyeHeight)
+            {
+                continue;
+            }
+            scene.GetMut<ECS::Transform>(child)->position.y = eyeHeight;
+        }
     }
 }
 

@@ -6,8 +6,9 @@
 ///
 /// The controller itself is covered in the Physics suite. What is checked here is
 /// the translation: that the descriptor's speed is applied, that the crouch scale
-/// is applied to the stance actually reached rather than the one asked for, and
-/// that a jump request is consumed exactly once.
+/// is applied to the stance actually reached rather than the one asked for, that
+/// a jump request is consumed exactly once, and that the camera is kept at the
+/// eye.
 
 #include <doctest/doctest.h>
 
@@ -18,6 +19,8 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 
 using namespace Assisi::App;
 
@@ -174,6 +177,97 @@ TEST_CASE("A jump request is consumed once, not held")
     REQUIRE(character != nullptr);
     CHECK_FALSE(character->jump);
     CHECK(character->state.velocity.y > 1.f);
+}
+
+TEST_CASE("A camera parented to a character is placed at its eye height, blended between steps")
+{
+    WorldManager worlds;
+    World &world = worlds.Create("Characters");
+    Assisi::Core::EventQueue events;
+
+    (void)SpawnFloor(world);
+
+    const Assisi::Physics::CharacterDescriptor descriptor{};
+    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+
+    // Authored somewhere else on purpose: the height is the character's to set.
+    const Assisi::ECS::Entity eye = world.scene.Create();
+    Assisi::ECS::Transform *eyeTransform = world.scene.Add<Assisi::ECS::Transform>(eye);
+    eyeTransform->position = {0.f, 5.f, 0.f};
+    (void)world.scene.Add<Assisi::Runtime::Camera>(eye);
+    (void)world.scene.Add<Assisi::Runtime::Parent>(eye, Assisi::Runtime::Parent{entity});
+
+    for (int32_t i = 0; i < 60; ++i)
+    {
+        Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
+        Tick(world, events);
+    }
+    PlaceCharacterEyes(world.scene, world.physics, 1.f);
+    CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.eyeHeight));
+
+    // One step into a crouch, a frame drawn half way between the two steps
+    // sees the eye half way between them: it moves every frame, not every step.
+    Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
+    Tick(world, events);
+    const float afterOneStep = world.physics.GetCharacterState(*world.scene.Get<Assisi::Physics::Character>(entity)).eyeHeight;
+    REQUIRE(afterOneStep < descriptor.eyeHeight);
+
+    PlaceCharacterEyes(world.scene, world.physics, 0.5f);
+    CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y ==
+          doctest::Approx(0.5f * (descriptor.eyeHeight + afterOneStep)));
+
+    for (int32_t i = 0; i < 60; ++i)
+    {
+        Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
+        Tick(world, events);
+    }
+    PlaceCharacterEyes(world.scene, world.physics, 1.f);
+    CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.crouchEyeHeight));
+}
+
+TEST_CASE("CharacterMoveSystem tells the controller which way the character's Transform faces")
+{
+    // Only the Boost policy reads the facing, so that is what shows it arrived:
+    // a character over the limit and travelling backwards gains speed on a jump.
+    // With the facing left at its default it would be slowed instead.
+    WorldManager worlds;
+    World &world = worlds.Create("Characters");
+    Assisi::Core::EventQueue events;
+
+    (void)SpawnFloor(world);
+
+    Assisi::Physics::CharacterDescriptor descriptor{};
+    descriptor.walkSpeed          = 4.f;
+    descriptor.groundAcceleration = 1000.f;
+    descriptor.bunnyHop           = Assisi::Physics::BunnyHopPolicy::Boost;
+    descriptor.coyoteTime         = 0.f;
+    descriptor.jumpBufferTime     = 0.f;
+    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+
+    // Turned half way round: forward is +z.
+    world.scene.GetMut<Assisi::ECS::Transform>(entity)->rotation =
+        glm::angleAxis(glm::radians(180.f), glm::vec3(0.f, 1.f, 0.f));
+
+    for (int32_t i = 0; i < 60; ++i)
+    {
+        Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
+        Tick(world, events);
+    }
+
+    // Backwards along -z at 10 m/s, two and a half times the walk speed.
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        Ask(world, entity, {0.f, 0.f, -2.5f}, /*jump=*/ false);
+        Tick(world, events);
+    }
+
+    Ask(world, entity, glm::vec3(0.f), /*jump=*/ true);
+    Tick(world, events);
+
+    const Assisi::Physics::Character *character = world.scene.Get<Assisi::Physics::Character>(entity);
+    REQUIRE(character != nullptr);
+    REQUIRE(character->state.velocity.y > 1.f);
+    CHECK(character->state.velocity.z < -13.f);
 }
 
 TEST_CASE("CharacterMoveSystem refreshes the state a later system would read")

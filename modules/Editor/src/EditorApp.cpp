@@ -7,6 +7,7 @@
 
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
@@ -948,6 +949,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // space while its Transform is an offset from its parent, so without it
         // every parented body drifts by its parent's transform once per frame.
         _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha(), Assisi::App::ParentWorldResolver(*_scene));
+        Assisi::App::PlaceCharacterEyes(*_scene, *_physics, GetInterpolationAlpha());
     }
 
     // Must stay between the writeback above and Render()'s propagation: a bodied
