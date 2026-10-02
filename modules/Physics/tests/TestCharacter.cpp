@@ -35,9 +35,9 @@ constexpr float kStep = 1.f / 60.f;
 /// Long enough for a fall of a couple of metres to land and settle.
 constexpr int32_t kSettleSteps = 120;
 
-/// MoveCharacter takes a velocity, not a direction — scaling a direction by a
-/// speed is the App system's job. This is the descriptor's default walk speed,
-/// spelled as a velocity along +x.
+/// MoveCharacter takes a direction with a speed for its length — scaling a
+/// direction by the descriptor's speed is the App system's job. This asks for a
+/// brisk 5 m/s along +x.
 constexpr glm::vec3 kWalkForward{5.f, 0.f, 0.f};
 
 /// A static box with an entity, so a hit or a contact has something to name.
@@ -169,6 +169,11 @@ TEST_CASE("A character whose mask excludes World walks through the wall")
     descriptor.collidesWith = Physics::AllChannels.Without(Physics::CollisionChannel::World);
     descriptor.gravityScale = 0.f; // nothing left to stand on once World is out
 
+    // With nothing underfoot it moves by the air rules, which hold a straight
+    // request to the air cap. Lifted out of the way: this case is about the
+    // mask, and needs the character to actually arrive at the wall.
+    descriptor.airWishSpeedCap = 100.f;
+
     const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
     Walk(world, character, kWalkForward, kSettleSteps);
 
@@ -217,7 +222,7 @@ TEST_CASE("A character crosses a trigger without being stopped, and the trigger 
     (void)SpawnFloor(scene, world);
 
     const ECS::Entity trigger = SpawnBox(scene, world, {2.f, 1.f, 0.f}, {0.5f, 1.f, 2.f},
-                                         /*isStatic=*/ false, Physics::CollisionChannel::Trigger);
+                                         /*isStatic=*/false, Physics::CollisionChannel::Trigger);
 
     const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
 
@@ -393,6 +398,89 @@ TEST_CASE("A crouched character is not hit at standing head height")
     Walk(world, character, glm::vec3(0.f), 10);
 
     CHECK_FALSE(world.CastRay(origin, sweep, {}, ECS::NullEntity).has_value());
+}
+
+TEST_CASE("Crouching in the air lifts the feet and leaves the eye where it was")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world;
+    (void)SpawnFloor(scene, world);
+
+    Physics::CharacterDescriptor descriptor{};
+    descriptor.radius = 0.3f;
+    descriptor.halfHeight = 0.6f;
+    descriptor.crouchHalfHeight = 0.3f;
+    descriptor.jumpSpeed = 8.f; // high enough to stand back up before landing
+
+    // Standing is 1.8 tall and crouching 1.2, so the feet have 0.6 to travel.
+    constexpr float kLift = 0.6f;
+
+    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    Walk(world, character, glm::vec3(0.f), 60);
+
+    world.MoveCharacter(character, glm::vec3(0.f), /*jump=*/ true);
+    world.Update(kStep);
+    world.CaptureState();
+    Walk(world, character, glm::vec3(0.f), 14);
+    REQUIRE(world.GetCharacterState(character).ground == Physics::GroundState::InAir);
+
+    const float feetBefore = CharacterPosition(scene, world).y;
+    const float eyeBefore = feetBefore + world.GetCharacterState(character).eyeHeight;
+    REQUIRE(feetBefore > kLift);
+
+    REQUIRE(world.SetCharacterStance(character, Physics::Stance::Crouching));
+
+    // No step in between: the whole change is the stance call's.
+    const float feetCrouched = CharacterPosition(scene, world).y;
+    CHECK(feetCrouched == doctest::Approx(feetBefore + kLift));
+    CHECK(feetCrouched + world.GetCharacterState(character).eyeHeight == doctest::Approx(eyeBefore));
+
+    // With room below, standing puts the feet back.
+    REQUIRE(world.SetCharacterStance(character, Physics::Stance::Standing));
+    CHECK(CharacterPosition(scene, world).y == doctest::Approx(feetBefore));
+    CHECK(world.GetCharacterState(character).stance == Physics::Stance::Standing);
+}
+
+TEST_CASE("Crouching on the ground leaves the feet where they are")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world;
+    (void)SpawnFloor(scene, world);
+
+    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
+    Walk(world, character, glm::vec3(0.f), 60);
+    const float feetBefore = CharacterPosition(scene, world).y;
+
+    REQUIRE(world.SetCharacterStance(character, Physics::Stance::Crouching));
+    CHECK(CharacterPosition(scene, world).y == doctest::Approx(feetBefore));
+}
+
+TEST_CASE("A character crouched in the air cannot stand while the floor is too close below")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world;
+    (void)SpawnFloor(scene, world);
+
+    Physics::CharacterDescriptor descriptor{};
+    descriptor.gravityScale = 0.f; // hangs where it is put
+
+    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 2.f, 0.f}, descriptor);
+    Walk(world, character, glm::vec3(0.f), 2);
+    REQUIRE(world.SetCharacterStance(character, Physics::Stance::Crouching));
+
+    // Feet 0.2 above the floor: standing would put them 0.4 under it.
+    constexpr float kFeetHeight = 0.2f;
+    world.SetCharacterTransform(character, {0.f, kFeetHeight, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f});
+    REQUIRE(world.GetCharacterState(character).ground != Physics::GroundState::OnGround);
+
+    CHECK_FALSE(world.SetCharacterStance(character, Physics::Stance::Standing));
+    CHECK(world.GetCharacterState(character).stance == Physics::Stance::Crouching);
+
+    // Refused means untouched: left lowered, it would be a crouched capsule
+    // sunk into the floor. Read after a step, so it is where the simulation
+    // has the character and not where it was last drawn.
+    Walk(world, character, glm::vec3(0.f), 1);
+    CHECK(CharacterPosition(scene, world).y == doctest::Approx(kFeetHeight));
 }
 
 TEST_CASE("A teleported character is somewhere else immediately, not next step")

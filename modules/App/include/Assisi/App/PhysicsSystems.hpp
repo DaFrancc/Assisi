@@ -15,6 +15,16 @@
 
 #include <string_view>
 
+namespace Assisi::ECS
+{
+class Scene;
+}
+
+namespace Assisi::Physics
+{
+class PhysicsWorld;
+}
+
 namespace Assisi::App
 {
 
@@ -91,9 +101,11 @@ inline constexpr std::string_view kActionCrouch       = "Crouch";
 
 /// @brief Turns every Physics::Character's intent into motion.
 ///
-/// Reads the pair (Character, CharacterDescriptor): scales the character's `move`
-/// direction by the descriptor's speed for its current stance, asks for the
-/// stance it wants, and hands both to the controller.
+/// Reads the pair (Character, CharacterDescriptor): asks for the stance the
+/// character wants, scales its `move` direction by the descriptor's speed for
+/// the stance it reached, and hands that to the controller as the direction and
+/// speed it is asking for. The controller keeps the character's velocity between
+/// steps; this never sets it.
 ///
 /// Publishing the result is CharacterStateSystem's job, not this one's — see
 /// there for why it cannot be done here.
@@ -132,6 +144,18 @@ ASYSTEM(FixedUpdate, name = "CharacterMove") void CharacterMoveSystem(SystemCont
 /// so an animation graph or a gameplay system can read the character's footing
 /// without reaching for the physics world at all.
 ASYSTEM(PostFixedUpdate, name = "CharacterState") void CharacterStateSystem(SystemContext &ctx);
+
+/// @brief Puts every Camera parented to a character at that character's eye
+/// height for the frame about to be drawn.
+///
+/// Not a system: it belongs with the render-time pose blend, and no phase runs
+/// there. Call it once per rendered frame, straight after
+/// Physics::PhysicsWorld::InterpolateTransforms and with the same @p alpha,
+/// before transforms are propagated. The feet and the eye height are then
+/// blended across the same two steps, so a crouch is smooth at any refresh rate
+/// and a crouch in the air — feet up, eye height down by as much — never shows
+/// one without the other.
+void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics, float alpha);
 
 /// @brief Drives every Physics::Character in the active world from the keyboard.
 ///

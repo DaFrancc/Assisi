@@ -7,7 +7,8 @@
 /// A character is not a rigid body being pushed around. Rigid body physics has
 /// no concept of a step height, skates down slopes it should hold on, and turns
 /// a jump into a guess about impulses. A character is swept through the world
-/// instead, under rules this file owns: accelerate toward what was asked for,
+/// instead, under rules this file owns: lose speed to the ground, gain it along
+/// the direction asked for, keep in the air whatever it left the ground with,
 /// climb what is short enough, slide off what is too steep, and stay on the floor
 /// while walking down stairs.
 ///
@@ -28,6 +29,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <utility>
 
 namespace Assisi::Physics
@@ -50,16 +52,112 @@ float CharacterHalfHeight(float radius, float halfHeight)
     return glm::max(halfHeight, JPH::cDefaultConvexRadius) + glm::max(radius, JPH::cDefaultConvexRadius);
 }
 
-JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta)
+JPH::Vec3 ApplyFriction(JPH::Vec3Arg velocity, float friction, float stopSpeed, float deltaTime)
 {
-    const JPH::Vec3 delta  = to - from;
-    const float     length = delta.Length();
-    if (length <= maxDelta)
+    const float speed = velocity.Length();
+    if (speed < kFrictionMinSpeed)
     {
-        return to;
+        return JPH::Vec3::sZero();
     }
-    return from + delta * (maxDelta / length);
+
+    const float drop = glm::max(speed, stopSpeed) * friction * deltaTime;
+    return velocity * (glm::max(speed - drop, 0.f) / speed);
 }
+
+JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float targetSpeed, float maxGain)
+{
+    const float addSpeed = targetSpeed - velocity.Dot(wishDirection);
+    if (addSpeed <= 0.f)
+    {
+        return velocity;
+    }
+    return velocity + wishDirection * glm::min(addSpeed, maxGain);
+}
+
+JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed)
+{
+    const float speed = velocity.Length();
+    if (speed <= maxSpeed)
+    {
+        return velocity;
+    }
+    return velocity * (maxSpeed / speed);
+}
+
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded,
+                                                     float deltaTime) const
+{
+    const JPH::Vec3 slowed = grounded ? ApplyFriction(velocity, friction, stopSpeed, deltaTime) : velocity;
+
+    const float wishSpeed = wish.Length();
+    if (wishSpeed < kMinWishSpeed)
+    {
+        return slowed;
+    }
+    const JPH::Vec3 wishDirection = wish / wishSpeed;
+
+    if (grounded)
+    {
+        return Accelerate(slowed, wishDirection, wishSpeed, groundAcceleration * wishSpeed * deltaTime);
+    }
+
+    // The target is cut down and the gain is not. A request held straight ahead
+    // is already past the small target and adds nothing; one turned away from
+    // the velocity is short of it every step and keeps adding at the full rate.
+    return Accelerate(slowed, wishDirection, glm::min(wishSpeed, airWishSpeedCap),
+                      airAcceleration * wishSpeed * deltaTime);
+}
+
+float PhysicsWorld::Impl::CharacterRecord::TakeOffSpeedLimit() const
+{
+    if (bunnyHop == BunnyHopPolicy::Cap)
+    {
+        return bunnyHopSpeedCap * walkSpeed;
+    }
+    if (bunnyHop == BunnyHopPolicy::Disallow)
+    {
+        return walkSpeed;
+    }
+    return std::numeric_limits<float>::max();
+}
+
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::BoostTakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const
+{
+    JPH::Vec3 forward{facing.x, facing.y, facing.z};
+    forward -= kCharacterUp * forward.Dot(kCharacterUp);
+    forward  = forward.NormalizedOr(JPH::Vec3::sZero());
+
+    const float boost       = stance == Stance::Crouching ? kJumpBoostCrouching : kJumpBoostStanding;
+    const float forwardMove = wish.Dot(forward);
+    const float maxSpeed    = walkSpeed * (1.f + boost);
+
+    // The excess is taken out of the boost, so a character already over the
+    // limit gets a negative one. It is applied along the facing whichever way
+    // the character is travelling: facing its travel it is slowed to the limit,
+    // and facing away from it the same subtraction speeds it up.
+    float       addition = glm::abs(forwardMove) * boost;
+    const float newSpeed = addition + velocity.Length();
+    if (newSpeed > maxSpeed)
+    {
+        addition -= newSpeed - maxSpeed;
+    }
+    if (forwardMove < 0.f)
+    {
+        addition = -addition;
+    }
+    return velocity + forward * addition;
+}
+
+namespace
+{
+
+/// Moves @p from toward @p to by at most @p maxDelta without passing it.
+float Approach(float from, float to, float maxDelta)
+{
+    return from < to ? glm::min(from + maxDelta, to) : glm::max(from - maxDelta, to);
+}
+
+} // namespace
 
 void PhysicsWorld::Impl::StepCharacters(float deltaTime)
 {
@@ -74,6 +172,7 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         // kept falling would drop out from under the cursor dragging it.
         if (record.frozen)
         {
+            record.prevEyeHeight = record.eyeHeight;
             character.SetLinearVelocity(JPH::Vec3::sZero());
             continue;
         }
@@ -130,25 +229,40 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             record.jumpBufferRemaining = glm::max(record.jumpBufferRemaining - deltaTime, 0.f);
         }
 
+        const float eyeTarget = record.stance == Stance::Crouching ? record.crouchEyeHeight : record.standingEyeHeight;
+        record.prevEyeHeight = record.eyeHeight;
+        record.eyeHeight     = Approach(record.eyeHeight, eyeTarget, record.eyeSpeed * deltaTime);
+
         // Steering is done relative to the ground, so a character walking on a
         // moving platform accelerates from a standstill *on the platform* rather
-        // than having to out-accelerate the platform's own speed to stay put.
+        // than having to out-accelerate the platform's own speed to stay put —
+        // and friction holds it still on the platform rather than in the world.
         const JPH::Vec3 reference          = standing ? groundVelocity : JPH::Vec3::sZero();
         const JPH::Vec3 relative           = currentVelocity - reference;
-        const JPH::Vec3 relativeHorizontal = relative - kCharacterUp * relative.Dot(kCharacterUp);
+        JPH::Vec3       relativeHorizontal = relative - kCharacterUp * relative.Dot(kCharacterUp);
 
-        JPH::Vec3 desired{record.desiredVelocity.x, record.desiredVelocity.y, record.desiredVelocity.z};
-        desired -= kCharacterUp * desired.Dot(kCharacterUp);
+        JPH::Vec3 wish{record.wishVelocity.x, record.wishVelocity.y, record.wishVelocity.z};
+        wish -= kCharacterUp * wish.Dot(kCharacterUp);
         if (standing)
         {
             // Walking into a slope too steep to climb must not press the
             // character into it — the component heading uphill is dropped, so
             // what is left slides along.
-            desired = character.CancelVelocityTowardsSteepSlopes(desired);
+            wish = character.CancelVelocityTowardsSteepSlopes(wish);
         }
 
-        const float acceleration = standing ? record.groundAcceleration : record.airAcceleration;
-        const JPH::Vec3 steered  = MoveToward(relativeHorizontal, desired, acceleration * deltaTime);
+        if (jumping)
+        {
+            relativeHorizontal = record.bunnyHop == BunnyHopPolicy::Boost
+                                     ? record.BoostTakeOff(relativeHorizontal, wish)
+                                     : LimitSpeed(relativeHorizontal, record.TakeOffSpeedLimit());
+        }
+
+        // A character that jumps this step has already left the ground as far
+        // as movement goes: it takes no friction and steers by the air rules.
+        // That is what lets a jump on the landing step keep its speed.
+        const bool      grounded = standing && !jumping;
+        const JPH::Vec3 steered  = record.Steer(relativeHorizontal, wish, grounded, deltaTime);
 
         JPH::Vec3 newVelocity = reference - kCharacterUp * reference.Dot(kCharacterUp) + steered +
                                 kCharacterUp * (standing ? groundUpSpeed : currentUpSpeed);
@@ -257,8 +371,20 @@ std::expected<Character, PhysicsWorld::PhysicsError> PhysicsWorld::AddCharacterF
         CollisionChannel::Trigger);
 
     record.jumpSpeed          = descriptor.jumpSpeed;
+    record.walkSpeed          = descriptor.walkSpeed;
+    record.friction           = descriptor.friction;
+    record.stopSpeed          = descriptor.stopSpeed;
     record.groundAcceleration = descriptor.groundAcceleration;
     record.airAcceleration    = descriptor.airAcceleration;
+    record.airWishSpeedCap    = descriptor.airWishSpeedCap;
+    record.bunnyHopSpeedCap   = descriptor.bunnyHopSpeedCap;
+    record.bunnyHop           = descriptor.bunnyHop;
+    record.standingEyeHeight  = descriptor.eyeHeight;
+    record.crouchEyeHeight    = descriptor.crouchEyeHeight;
+    record.eyeSpeed           = descriptor.eyeSpeed;
+    record.eyeHeight          = descriptor.eyeHeight;
+    record.prevEyeHeight      = descriptor.eyeHeight;
+    record.stanceLift         = 2.f * (standingHeight - CharacterHalfHeight(descriptor.radius, crouchHalfHeight));
     record.gravityScale       = descriptor.gravityScale;
     record.coyoteTime         = descriptor.coyoteTime;
     record.jumpBufferTime     = descriptor.jumpBufferTime;
@@ -287,6 +413,12 @@ std::expected<Character, PhysicsWorld::PhysicsError> PhysicsWorld::AddCharacterF
     // name the entity behind it exactly as it does for a rigid body.
     _impl->bodyEntities[innerBody.GetIndexAndSequenceNumber()] = entity;
     _impl->entityBodies[entity]                                = innerBody;
+
+    // Found now rather than on the first step: a stance asked for before then
+    // has to know whether the character is standing on something, or a crouch
+    // at spawn is taken for one in the air and lifts the feet off the floor.
+    const FilterLayerFilter layerFilter{_impl->characters.at(id).queryFilter};
+    _impl->characters.at(id).character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
 
     const Character character{CharacterState{}, glm::vec3{0.f}, CharacterId{id}, Stance::Standing, false};
     (void)scene.Add<Character>(entity, character);
@@ -322,7 +454,7 @@ void PhysicsWorld::RemoveCharacter(const Character &character)
     _impl->characters.erase(it);
 }
 
-void PhysicsWorld::MoveCharacter(const Character &character, glm::vec3 desiredVelocity, bool jump)
+void PhysicsWorld::MoveCharacter(const Character &character, glm::vec3 wishVelocity, bool jump)
 {
     Impl::CharacterRecord *record = _impl->FindCharacter(character);
     if (record == nullptr)
@@ -330,7 +462,7 @@ void PhysicsWorld::MoveCharacter(const Character &character, glm::vec3 desiredVe
         return;
     }
 
-    record->desiredVelocity = desiredVelocity;
+    record->wishVelocity = wishVelocity;
 
     // Recorded rather than acted on: whether it fires is the step's decision, and
     // the step is also what gives the request its lifetime, so one made just
@@ -339,6 +471,16 @@ void PhysicsWorld::MoveCharacter(const Character &character, glm::vec3 desiredVe
     {
         record->jumpRequested = true;
     }
+}
+
+void PhysicsWorld::SetCharacterFacing(const Character &character, glm::vec3 forward)
+{
+    Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    if (record == nullptr)
+    {
+        return;
+    }
+    record->facing = forward;
 }
 
 bool PhysicsWorld::SetCharacterStance(const Character &character, Stance stance)
@@ -360,10 +502,21 @@ bool PhysicsWorld::SetCharacterStance(const Character &character, Stance stance)
     const float maxPenetration =
         kStanceChangePenetrationSlopFactor * _impl->physicsSystem.GetPhysicsSettings().mPenetrationSlop;
 
+    // On the ground the two shapes share their feet and the head moves. In the
+    // air they share their head instead and the feet move: crouching pulls them
+    // up, which is what lets a crouched jump clear a ledge the jump alone does
+    // not, and standing puts them back down.
+    const bool airborne = record->character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround;
+    const float feetShift = !airborne ? 0.f : (stance == Stance::Crouching ? record->stanceLift : -record->stanceLift);
+
+    const JPH::RVec3 position = record->character->GetPosition();
+    record->character->SetPosition(position + kCharacterUp * feetShift);
+
     // Growing into something solid fails and changes nothing, which is what makes
     // "stand up" a question rather than a command. Shrinking always succeeds.
     if (!record->character->SetShape(shape, maxPenetration, {}, layerFilter, {}, {}, _impl->tempAlloc))
     {
+        record->character->SetPosition(position);
         return false;
     }
 
@@ -371,6 +524,16 @@ bool PhysicsWorld::SetCharacterStance(const Character &character, Stance stance)
     // it. Left out, a crouched character is still shot at head height.
     record->character->SetInnerBodyShape(shape);
     record->stance = stance;
+
+    // The feet moved and the eye did not, so the eye is that much nearer to or
+    // further from them. Both halves of each render blend move together: one
+    // blended across the shift and the other not would show the feet
+    // travelling under an eye height that had already changed, and the view
+    // would dip for a frame.
+    record->eyeHeight               -= feetShift;
+    record->prevEyeHeight           -= feetShift;
+    record->snapshot.prevPosition.y += feetShift;
+    record->snapshot.curPosition.y  += feetShift;
     return true;
 }
 
@@ -397,6 +560,7 @@ CharacterState PhysicsWorld::GetCharacterState(const Character &character) const
 
     state.groundEntity      = _impl->EntityFor(virtualCharacter.GetGroundBodyID());
     state.timeSinceGrounded = record->timeSinceGrounded;
+    state.eyeHeight         = record->eyeHeight;
     state.stance            = record->stance;
     state.canJump = !record->jumpedSinceGrounded && record->timeSinceGrounded <= record->coyoteTime;
 
@@ -419,6 +583,16 @@ CharacterState PhysicsWorld::GetCharacterState(const Character &character) const
     }
 
     return state;
+}
+
+float PhysicsWorld::GetCharacterEyeHeight(const Character &character, float alpha) const
+{
+    const Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    if (record == nullptr)
+    {
+        return 0.f;
+    }
+    return glm::mix(record->prevEyeHeight, record->eyeHeight, alpha);
 }
 
 void PhysicsWorld::SetCharacterTransform(const Character &character, glm::vec3 position,
@@ -471,7 +645,7 @@ void PhysicsWorld::SetCharacterFrozen(const Character &character, bool frozen)
     // the instant it thaws, and thawing must not resume a velocity earned before
     // the drag that moved it somewhere else entirely.
     record->character->SetLinearVelocity(JPH::Vec3::sZero());
-    record->desiredVelocity     = glm::vec3(0.f);
+    record->wishVelocity        = glm::vec3(0.f);
     record->jumpBufferRemaining = 0.f;
     record->jumpRequested       = false;
 }

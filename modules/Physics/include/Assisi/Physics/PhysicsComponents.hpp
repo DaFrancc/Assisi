@@ -257,6 +257,12 @@ struct CharacterState
     /// flicker with.
     float timeSinceGrounded = 0.f;
 
+    /// Height of the eye above the feet right now (m). Eases between the
+    /// descriptor's two eye heights as the stance changes, and jumps by the
+    /// difference between the two capsule heights when a stance change in the
+    /// air moves the feet, so the eye itself stays where it was.
+    float eyeHeight = 0.f;
+
     GroundState ground = GroundState::InAir;
 
     /// The stance the character is **actually** in, which is not always the one
@@ -271,6 +277,28 @@ struct CharacterState
     /// touching something. Gameplay and animation should ask this; @ref ground
     /// stays the simulation's plain answer about what is underfoot.
     bool canJump = false;
+};
+
+/// @brief What happens to a character's speed when it jumps on the step it
+/// lands.
+///
+/// Friction is a ground force and a jumping character is not on the ground, so
+/// a jump timed to the landing step keeps all the speed gained in the air. This
+/// says how much of it survives the take-off.
+AENUM()
+enum class BunnyHopPolicy : std::uint8_t
+{
+    Allow,    ///< Nothing is taken away; chained hops keep building speed.
+    Cap,      ///< Take-off speed is limited to bunnyHopSpeedCap times walkSpeed.
+    Disallow, ///< Take-off speed is limited to walkSpeed, so hopping gains nothing.
+
+    /// Half-Life 2's rule. A jump adds speed along the way the character faces
+    /// when it is asking to go forward, and takes away whatever that leaves over
+    /// the limit — also along the way it faces, not the way it is moving. A
+    /// character travelling backwards over the limit is therefore pushed faster
+    /// by every jump, which is the accelerated back hop.
+    Boost,
+    Count,
 };
 
 /// @brief Serializable description of a character's shape and how it moves.
@@ -319,32 +347,72 @@ struct CharacterDescriptor
     /// author typed.
     AFIELD(min = 0.0) float maxStepHeight = 0.4f;
 
-    AFIELD(min = 0.0) float walkSpeed = 5.f; ///< Top speed on the ground (m/s).
+    /// Height of the eye above the feet while standing (m). A camera parented
+    /// to the character is kept at the character's eye height, which rests here.
+    AFIELD(min = 0.0) float eyeHeight = 1.5f;
+
+    /// @ref eyeHeight while crouching. The default is lower by exactly the
+    /// difference between the two capsule heights, which is what makes a crouch
+    /// in the air leave the view where it was while the feet come up.
+    AFIELD(min = 0.0) float crouchEyeHeight = 0.9f;
+
+    /// How fast the eye moves between the two heights (m/s). The default covers
+    /// the distance in a fifth of a second.
+    AFIELD(min = 0.0) float eyeSpeed = 3.f;
+
+    /// The speed the character asks for with a full `move` (m/s). Not a hard
+    /// limit: speed gained in the air or carried off a moving platform is kept
+    /// until friction takes it. The default is Half-Life 2's normal run, 190
+    /// units a second at 1.905 cm to the unit — every movement default below is
+    /// that game's value at that scale.
+    AFIELD(min = 0.0) float walkSpeed = 3.62f;
 
     /// @ref walkSpeed multiplier while crouching. A scale rather than a second
     /// speed so retuning the walk carries the crouch with it.
-    AFIELD(min = 0.0) float crouchSpeedScale = 0.4f;
+    AFIELD(min = 0.0) float crouchSpeedScale = 0.333f;
 
-    /// Upward speed a jump starts with (m/s). At the default gravity 6 m/s
-    /// clears about 1.8 m.
-    AFIELD(min = 0.0) float jumpSpeed = 6.f;
+    /// Upward speed a jump starts with (m/s). With the default
+    /// @ref gravityScale it rises about 0.4 m.
+    AFIELD(min = 0.0) float jumpSpeed = 3.05f;
 
-    /// How hard the character accelerates toward its requested velocity while
-    /// on the ground (m/s²). An acceleration rather than a blend fraction so
-    /// the feel does not change with the fixed-step rate. The default reaches
-    /// @ref walkSpeed in under a tenth of a second, which reads as instant;
-    /// lower it for weight, and far lower for ice.
-    AFIELD(min = 0.0) float groundAcceleration = 60.f;
+    /// How strongly the ground slows the character, as the fraction of its
+    /// speed lost per second. Applied every step it stands on walkable ground,
+    /// before acceleration, whether or not it is asking to move — the short
+    /// slide when changing direction is this losing to the old velocity.
+    AFIELD(min = 0.0) float friction = 4.f;
 
-    /// The same while airborne (m/s²). Zero keeps whatever horizontal velocity
-    /// the jump launched with and ignores steering entirely; the default
-    /// reverses a full-speed jump in about half a second.
+    /// Below this speed friction acts as though the character were moving this
+    /// fast (m/s). Without it the loss shrinks with the speed and a stop creeps
+    /// toward zero forever; with it the last of the speed goes at a constant
+    /// rate and the stop is firm.
+    AFIELD(min = 0.0) float stopSpeed = 1.905f;
+
+    /// How fast speed is gained along the requested direction on the ground, as
+    /// a fraction of the requested speed per second: at 10, a tenth of a second
+    /// of gain reaches it. Only the speed *along* that direction is limited to
+    /// the requested speed; whatever the character has sideways is left to
+    /// friction.
+    AFIELD(min = 0.0) float groundAcceleration = 10.f;
+
+    /// The same while airborne. Zero keeps whatever horizontal velocity the
+    /// jump launched with and ignores steering entirely.
     AFIELD(min = 0.0) float airAcceleration = 10.f;
+
+    /// In the air, the requested speed is cut down to this before deciding how
+    /// much may be added (m/s), while the gain per second still uses the full
+    /// requested speed. Holding a direction therefore adds almost nothing, and
+    /// turning the request away from the current velocity keeps adding — which
+    /// is what lets a strafing jump curve and gain speed.
+    AFIELD(min = 0.0) float airWishSpeedCap = 0.5715f;
+
+    /// With BunnyHopPolicy::Cap, the most horizontal speed a jump may leave the
+    /// ground with, as a multiple of @ref walkSpeed.
+    AFIELD(min = 0.0) float bunnyHopSpeedCap = 1.7f;
 
     /// Multiplies the world's gravity for this character alone. Above 1 falls
     /// heavier and jumps shorter; the arc is what most of a character's weight
     /// reads as.
-    AFIELD(min = 0.0) float gravityScale = 1.f;
+    AFIELD(min = 0.0) float gravityScale = 1.165f;
 
     /// Mass used when pushing down on what it stands on, and when deciding how
     /// far a push moves it (kg).
@@ -363,6 +431,9 @@ struct CharacterDescriptor
     /// How long before landing a jump request is remembered (seconds). Covers
     /// the opposite mistake: the button pressed a frame before touching down.
     AFIELD(min = 0.0) float jumpBufferTime = 0.15f;
+
+    /// What a jump on the landing step does with speed gained in the air.
+    AFIELD() BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
 
     /// Whether this character can shove other bodies at all. Distinct from
     /// @ref pushStrength being zero only in intent; both are honoured.
@@ -403,8 +474,9 @@ struct Character
 
     /// Where the character is trying to go, in world space, as a direction of
     /// magnitude at most 1 — the scale to a real speed is the descriptor's, so
-    /// the same input drives a walk and a crouch. The vertical component is
-    /// ignored: going up is @ref jump's business and going down is gravity's.
+    /// the same input drives a walk and a crouch, and a magnitude below 1 asks
+    /// for proportionally less speed. The vertical component is ignored: going
+    /// up is @ref jump's business and going down is gravity's.
     glm::vec3 move{0.f};
 
     /// Handle into the PhysicsWorld's characters.
