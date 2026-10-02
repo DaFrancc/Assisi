@@ -57,7 +57,8 @@ for (const Assisi::App::QuitRequested &event :
 }
 ```
 
-See [Events](events.md) for how events work.
+See [Events](events.md) for how events work, and
+[Audio](audio.md#sounds-from-the-ui) for a button that plays a sound.
 
 To define your own event, mark a struct `AEVENT()` in a header under
 `apps/game/src/`:

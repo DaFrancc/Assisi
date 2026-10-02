@@ -1,10 +1,14 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "PauseMenu.hpp"
 
+#include <Assisi/App/AudioSystems.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
+
+#include <optional>
 
 namespace Game
 {
@@ -38,6 +42,16 @@ void PauseMenuSystem(Assisi::App::SystemContext &ctx)
     {
         ctx.input->ConsumeKey(Assisi::Window::Key::Escape);
         pause->Show();
+    }
+
+    if (ctx.events.Read<ResumeRequested>().empty())
+    {
+        return;
+    }
+    pause->Hide();
+    if (const std::optional<Assisi::ECS::Entity> speaker = Assisi::App::FindDefaultEmitter(ctx.world))
+    {
+        ctx.events.Push(Assisi::App::PlaySound{.target = *speaker});
     }
 }
 

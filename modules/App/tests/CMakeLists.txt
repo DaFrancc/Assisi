@@ -27,6 +27,7 @@ add_executable(Assisi-App-Tests
   TestCookedAssets.cpp
   TestInstanceViews.cpp
   TestAppConfig.cpp
+  TestAudioEmitter.cpp
   TestLevelSystemsPrecheck.cpp
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp
@@ -57,6 +58,9 @@ Assisi_apply_test_defaults(Assisi-App-Tests)
 # cannot drift.
 target_compile_definitions(Assisi-App-Tests PRIVATE
   ASSISI_INSTANCE_VIEW_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/blueprints"
+  # A real sound for the emitter tests, read from the Audio tests' fixtures
+  # rather than kept as a second copy.
+  ASSISI_AUDIO_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../Audio/tests/fixtures"
 )
 # The generated header this includes is ordered by Assisi::App, which the
 # generator target is attached to — stating it again here would be a forward
@@ -99,6 +103,8 @@ target_sources(Assisi-App-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Geometry-Generated>
   # The screen document's field table, which reading a cooked screen walks.
   $<TARGET_OBJECTS:Assisi-Mondrian-Generated>
+  # The sound kind, so the emitter tests load a real sound through the asset store.
+  $<TARGET_OBJECTS:Assisi-Audio-AssetKind>
   # Replicated is an ACOMP in NetSync; without its registrations the loader has
   # no ComponentId for it and a blueprint declaring one silently gets an entity
   # that never replicates.

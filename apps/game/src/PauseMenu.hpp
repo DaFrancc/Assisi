@@ -39,12 +39,19 @@ inline constexpr std::string_view kPauseScreenPath = "ui/Pause.amdn";
 ASYSTEM(Loaded, name = "PauseMenuScreen")
 void PauseMenuScreenSystem(Assisi::App::SystemContext &ctx);
 
-/// Shows the pause menu on Escape.
+/// Pushed by the menu's Resume button.
+AEVENT()
+struct ResumeRequested
+{
+};
+
+/// Shows the pause menu on Escape, and closes it with a click when Resume is
+/// pressed.
 ///
-/// Only the opening: closing is carried on the Resume button and answered by
-/// Back, neither of which reaches the world. Escape is not read for closing
-/// either — the UI has the keys while the menu is up, so Back pops the screen
-/// before the game ever sees that press.
+/// The click plays on the world's default emitter, which plays on while the
+/// world is paused. Back closes the menu without one: the UI answers it before
+/// the game sees that press, and Escape is not read for closing because the UI
+/// has the keys while the menu is up.
 ///
 /// Declared by the screen file, so a level that shows the menu installs this
 /// without naming it. `activeWorldOnly`: only the world on screen is paused by

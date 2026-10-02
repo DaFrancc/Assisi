@@ -202,29 +202,114 @@ A component refers to a sound by its id, like any other asset:
 AFIELD() Assisi::Core::AssetId clip;
 ```
 
-A system loads it from `ctx.assets`. The first request starts loading the file
-in the background and returns nothing, so ask again on later frames:
-
-```cpp
-std::shared_ptr<const Assisi::Audio::PcmClip> clip = ctx.assets->Resolve<Assisi::Audio::PcmClip>(id);
-if (clip == nullptr)
-{
-    return; // still loading, missing, or broken
-}
-```
-
+The engine loads it in the background when an emitter that plays it is placed.
 A missing or broken sound logs one warning and is not loaded again.
+
+## Emitters
+
+Every sound comes from an entity with an `AudioEmitter`. The emitter says what
+it plays and how; an event says when.
+
+| Field | What it does |
+|---|---|
+| `clip` | The sound it plays. |
+| `bus` | The bus it plays on, by name: `SFX`, `Music`, `UI`, or one of your own. |
+| `volume` | Its own volume, from 0 to 1, on top of the bus's. A change reaches sounds already playing. |
+| `looping` | Whether its sound starts again from the beginning when it ends. |
+| `maxConcurrentSounds` | How many of its sounds play at once. |
+| `whenFull` | What a request does when that many are already playing. See below. |
+| `maxQueuedRequests` | How many requests wait when `whenFull` is `Queue`. |
+| `ignoresWorldPause` | Whether it plays on while its world is paused. |
+| `space` | `InEar`, played as it is, or `InWorld`, placed in the world. Both sound the same for now. |
+
+A level or blueprint that places emitters names the `AudioEmitters` system,
+which is what plays them.
+
+### When an emitter is full
+
+| `whenFull` | A request to an emitter already playing its maximum... |
+|---|---|
+| `Drop` | is dropped. |
+| `Queue` | waits for a sound to end, up to `maxQueuedRequests`. Past that, it is dropped. |
+| `ReplaceOldest` | fades out the sound that started first, and plays. |
+| `ReplaceNewest` | fades out the sound that started last, and plays. |
+
+A sound that is replaced fades out over a hundredth of a second rather than
+cutting off, so for that moment the old and new sounds overlap. With
+`maxConcurrentSounds` at 1, either `Replace` restarts the sound.
+
+A request that arrives before the emitter's clip has finished loading waits like
+a queued one, up to `maxQueuedRequests`.
 
 ## Playing sounds
 
-Sounds are played by entities with an audio emitter. `ctx.mixer` is what the
-engine's emitter system plays them through; it starts and stops sounds, and
-has no way to change a bus's volume.
-
-A loaded clip plays on a bus through the mixer:
+A system plays, stops, pauses and resumes an emitter by pushing an
+[event](events.md) that names its entity:
 
 ```cpp
-(void)ctx.mixer->Attach(clip, Assisi::Audio::ToBusId(Assisi::Audio::DefaultBus::Sfx));
+ctx.events.Push(Assisi::App::PlaySound{.target = door});
 ```
 
-`ctx.mixer` is null in a host with no audio device, so check it first.
+| Event | What it does |
+|---|---|
+| `PlaySound` | Plays the emitter's clip, as its `whenFull` says. |
+| `StopEmitter` | Fades out everything the emitter is playing and forgets what it has queued. |
+| `PauseEmitter` | Fades everything the emitter is playing to silence, where it is. Sounds it starts while paused start silent. |
+| `ResumeEmitter` | Fades them back in from where they paused. |
+
+The `AudioEmitters` system answers them in `PostUpdate`, so push them from
+`Update` or earlier. An event that names no entity, or an entity with no
+`AudioEmitter`, logs a warning and does nothing.
+
+Emitters belong to the world they are in, and these events name an entity
+only. With several worlds playing sounds at once, an event can reach an entity
+in the wrong one.
+
+### When sounds end
+
+- **A destroyed emitter's sounds stop.** They fade out as the entity goes. A
+  sound meant to outlive its entity, such as an explosion as something is
+  destroyed, plays from another entity.
+- **A paused world pauses its emitters.** They resume when the world does. An
+  emitter with `ignoresWorldPause`, and the default emitter below, play on. An
+  emitter you paused with `PauseEmitter` stays paused until you resume it,
+  whatever the world does.
+
+## The default emitter
+
+Sounds that belong to no place in the world, such as the UI's, play from one
+emitter the scene sets aside for them. Give an entity both an `AudioEmitter`
+and a `DefaultEmitter`, and find it from a system with
+`Assisi::App::FindDefaultEmitter(ctx.world)`. The default emitter plays on while
+its world is paused.
+
+`FindDefaultEmitter` logs a warning and finds nothing when no entity has a
+`DefaultEmitter`, when more than one does, or when the one that does has no
+`AudioEmitter`.
+
+The `BaseGameplay` blueprint places one, which plays a click on the `UI` bus.
+
+### Sounds from the UI
+
+A button pushes an event with nothing in it, so it cannot name an emitter.
+Instead it pushes an event of your game's, and a system of yours answers it and
+plays the sound. The pause menu's Resume button works this way:
+
+```xml
+<menu_button name="resume" on_click="Game::ResumeRequested">#pause:resume</menu_button>
+```
+
+```cpp
+if (!ctx.events.Read<ResumeRequested>().empty())
+{
+    pause->Hide();
+    if (const std::optional<Assisi::ECS::Entity> speaker = Assisi::App::FindDefaultEmitter(ctx.world))
+    {
+        ctx.events.Push(Assisi::App::PlaySound{.target = *speaker});
+    }
+}
+```
+
+The engine plays a sound exactly as its file is written. A sound that starts or
+ends at full volume clicks as it starts and stops; give the file a short fade in
+and out if it should not.

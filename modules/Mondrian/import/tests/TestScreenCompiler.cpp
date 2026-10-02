@@ -885,10 +885,16 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     REQUIRE(file.is_open());
     const std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
 
-    // The event the shipped file names, which this binary does not link.
+    // The events the shipped file names, which this binary does not link: the
+    // game's own is pushed as a stand-in, since only its name is compiled here.
+    struct ResumeStandIn
+    {
+    };
     EventCatalog catalog;
     catalog.Register(
         {.name = "Assisi::App::QuitRequested", .push = [](EventQueue &events) { events.Push(QuitRequested{}); }});
+    catalog.Register(
+        {.name = "Game::ResumeRequested", .push = [](EventQueue &events) { events.Push(ResumeStandIn{}); }});
 
     // The table the shipped file's keys name, read in place like the file.
     std::ifstream tableFile{ASSISI_PAUSE_TABLE_PATH};
@@ -938,8 +944,8 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     const ScreenNode &resume = NodeNamed(*document, "resume");
     CHECK(resume.textIsKey);
     CHECK(*rules.tables.Find("pause", "resume") == "Resume");
-    CHECK(resume.action == ActionKind::Verb);
-    CHECK(resume.verb == ScreenVerb::Hide);
+    CHECK(resume.action == ActionKind::Event);
+    CHECK(resume.eventName.View() == "Game::ResumeRequested");
     CHECK(resume.style.textSize == Px(28.f));
     CHECK(resume.style.cornerRadius == Px(10.f));
 

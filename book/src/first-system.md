@@ -149,7 +149,7 @@ The `SystemContext` your system receives holds everything it can reach:
 | `ctx.worldManager` | Manages every loaded world. Use `ctx.worldManager->RequestTravel("levels/Other.alvl")` to change level. |
 | `ctx.isActiveWorld` | Whether this is the world being shown and played. |
 | `ctx.assets` | Assets by id, such as sounds. See [Your own asset kinds](asset-kinds.md). **`nullptr` in tests.** |
-| `ctx.mixer` | Starts and stops sounds. See [Audio](audio.md). **`nullptr` with no audio device.** |
+| `ctx.mixer` | The mixer the engine plays emitters through. Play sounds with events instead; see [Audio](audio.md). **`nullptr` with no audio device.** |
 | `ctx.settings` | The player's options. See [Audio](audio.md). **`nullptr` in tests.** |
 
 ## Phases: when a system runs
