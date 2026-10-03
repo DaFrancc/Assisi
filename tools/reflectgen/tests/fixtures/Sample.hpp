@@ -4,7 +4,7 @@
 // Fixture header for reflectgen's golden tests. Exercises the scalar, glm,
 // enum, AssetPath/ShortString and path-vector field types, a transient field, a
 // tracked (change-detection) component, a replicable component with a norep
-// field, an empty component, namespaced components, comment stripping,
+// field, an empty component, requires/excludes rules, namespaced components, comment stripping,
 // nested-brace initializers, and EntityRef include emission. AssetId,
 // EntityName and InstanceId have their own cases in test_reflectgen.py rather
 // than living here; ComponentMask has none. If you change this header,
@@ -79,6 +79,13 @@ struct SampleRef
 // Empty component: exercises the no-fields serialize/deserialize branch.
 ACOMP()
 struct SampleEmpty
+{
+};
+
+// requires/excludes: the names reach the registration as written, for the
+// registry to resolve.
+ACOMP(requires = {SampleEmpty}, excludes = {SampleRef})
+struct SampleRules
 {
 };
 

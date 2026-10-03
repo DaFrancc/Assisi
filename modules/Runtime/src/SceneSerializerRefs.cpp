@@ -8,8 +8,10 @@
 #include <Assisi/Runtime/Naming.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "SceneSerializerContext.hpp"
@@ -305,6 +307,22 @@ SceneSerializer::ScopedRawEntityContext::ScopedRawEntityContext(ECS::Scene &scen
 SceneSerializer::ScopedRawEntityContext::~ScopedRawEntityContext()
 {
     s_rawContextScene = nullptr;
+}
+
+bool SkipExcluded(const ECS::Scene &scene, ECS::Entity entity, const Core::Reflect::ComponentMeta &meta,
+                  std::string_view entityName, std::string_view source)
+{
+    const std::optional<ECS::ComponentConflict> conflict = scene.ConflictOf(entity, meta.id);
+    if (!conflict.has_value())
+    {
+        return false;
+    }
+    const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
+    Core::Log::Error("SceneSerializer: '{}' gives entity '{}' both '{}' and '{}', which exclude each other - '{}' "
+                     "is dropped.",
+                     source.empty() ? std::string_view{"<document>"} : source, entityName,
+                     registry.ById(conflict->present)->name, registry.ById(conflict->wanted)->name, meta.name);
+    return true;
 }
 
 } // namespace Assisi::Runtime

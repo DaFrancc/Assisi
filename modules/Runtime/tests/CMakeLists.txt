@@ -1,3 +1,17 @@
+# Components with requires/excludes rules, for the loaders' handling of them.
+# Reflected through an INTERFACE library so the generated OBJECT library
+# inherits the include dir and Runtime deps, as the ECS test components are.
+add_library(Assisi-Runtime-TestComponents INTERFACE)
+target_include_directories(Assisi-Runtime-TestComponents INTERFACE
+  "${CMAKE_CURRENT_SOURCE_DIR}/support/include"
+)
+target_link_libraries(Assisi-Runtime-TestComponents INTERFACE Assisi::Runtime)
+assisi_reflect(
+  TARGET Assisi-Runtime-TestComponents
+  HEADERS
+    support/include/Assisi/Runtime/Tests/RuleComponents.hpp
+)
+
 add_executable(Assisi-Runtime-Tests
   main.cpp
   TestBlueprintAuthoring.cpp
@@ -7,6 +21,7 @@ add_executable(Assisi-Runtime-Tests
   TestBlueprintPreparedForm.cpp
   TestBlueprintReexpand.cpp
   TestCameraPath.cpp
+  TestComponentRules.cpp
   TestCookedScene.cpp
   TestDrawItem.cpp
   TestIndirectResolve.cpp
@@ -34,6 +49,7 @@ target_include_directories(Assisi-Runtime-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-Runtime-Tests
   PRIVATE
     Assisi::Runtime
+    Assisi-Runtime-TestComponents
 )
 
 # The serializer walks ComponentRegistry, which is populated by the static
@@ -46,6 +62,7 @@ target_link_libraries(Assisi-Runtime-Tests
 target_sources(Assisi-Runtime-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
+  $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
 )
 
 add_test(NAME Runtime COMMAND Assisi-Runtime-Tests)

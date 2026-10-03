@@ -719,8 +719,20 @@ void KeepAppliedFields(const Core::Reflect::ComponentMeta &meta, Core::Reflect::
     }
 }
 
-/// Decodes one block onto @p entity of @p scratch and serializes it, removing the
-/// component again so the entity can take another block of the same type.
+/// Takes every component off @p entity: the one a block decoded into and any
+/// it required, which would otherwise stay and could exclude the next block.
+void StripHolder(ECS::Scene &scratch, ECS::Entity entity)
+{
+    std::vector<Core::Reflect::ComponentId> ids;
+    for (const Core::Reflect::ComponentMeta &meta : Core::Reflect::ComponentRegistry::Instance().All())
+    {
+        ids.push_back(meta.id);
+    }
+    (void)scratch.RemoveManyById(entity, ids);
+}
+
+/// Decodes one block onto @p entity of @p scratch and serializes it, then strips
+/// the entity so it can take another block of any type.
 std::expected<nlohmann::json, LevelError> BlockToJson(ECS::Scene &scratch, ECS::Entity entity,
                                                       std::span<const std::byte> block,
                                                       const Core::Reflect::CodecContext &codec,
@@ -737,11 +749,11 @@ std::expected<nlohmann::json, LevelError> BlockToJson(ECS::Scene &scratch, ECS::
     void *component = meta->construct(&scratch, entity.index, entity.generation);
     if (component == nullptr || !Core::Reflect::ReadComponent(*meta, component, reader, applied, &codec))
     {
-        scratch.RemoveById(entity, meta->id);
+        StripHolder(scratch, entity);
         return std::unexpected(LevelError::MalformedBlob);
     }
     nlohmann::json value = meta->serialize(component);
-    scratch.RemoveById(entity, meta->id);
+    StripHolder(scratch, entity);
     return value;
 }
 

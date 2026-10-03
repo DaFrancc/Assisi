@@ -9,6 +9,8 @@
 /// entity from every pool it belongs to.
 
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -20,6 +22,23 @@
 
 namespace Assisi::ECS
 {
+
+/// @brief A component that cannot go on an entity, and the one already there
+/// that excludes it, or that it excludes.
+struct ComponentConflict
+{
+    Core::Reflect::ComponentId wanted;
+    Core::Reflect::ComponentId present;
+};
+
+/// @brief What a removal did.
+enum class RemoveResult : uint8_t
+{
+    Removed,
+    Absent,   ///< The entity did not have the component.
+    Required, ///< Refused: another component on the entity requires it.
+    Count
+};
 
 struct Scene
 {
@@ -65,7 +84,8 @@ struct Scene
     /// Removes each queued entity from the registry and all component pools and
     /// frees its slot for reuse, then clears the queue. Application::Run calls
     /// this once per frame after systems run; tests and custom loops call it
-    /// directly. A no-op when nothing is queued.
+    /// directly. A no-op when nothing is queued. Every component goes at once,
+    /// so no removal is refused for a requirement.
     void FlushDestroyed()
     {
         for (Entity entity : _pendingDestroy)
@@ -120,24 +140,59 @@ struct Scene
         _pendingDestroy.clear();
     }
 
-    /// @brief Adds a component of type T to the entity.
+    /// @brief Adds a component of type T to the entity, with every component T
+    /// requires that the entity lacks, default-constructed.
     ///
-    /// Creates the component pool on first use.
+    /// Creates the component pools on first use. A requirement the entity
+    /// already has is left as it is. Because requirements are added too, this
+    /// may touch pools other than T's; the mid-Query warning on Query applies
+    /// to all of them.
     /// @return Pointer to the new component, or nullptr if the add was rejected:
     ///         the entity is not alive (a stale handle — the pool-level check
     ///         only catches this once the live occupant has populated the same
-    ///         pool, so guard here where liveness is authoritative), or the
-    ///         entity already has this component.
+    ///         pool, so guard here where liveness is authoritative), the
+    ///         entity already has this component, or T or one of its
+    ///         requirements is excluded by a component on the entity, or
+    ///         excludes one. That last refusal logs both components and the
+    ///         entity, asserts in debug builds, and adds nothing at all;
+    ///         ConflictOf asks the same question without either.
     template <typename T> [[nodiscard]] T *Add(Entity entity, T component = {})
     {
         if (!IsAlive(entity))
+        {
             return nullptr;
+        }
+        const Core::Reflect::ComponentId id = Core::Reflect::ComponentIdOf<T>();
+        if (const std::optional<ComponentConflict> conflict = ConflictOf(entity, id); conflict.has_value())
+        {
+            ReportConflict(entity, id, *conflict);
+            return nullptr;
+        }
         SparseSet<T> &pool = GetOrCreatePool<T>();
         T *added = pool.Add(entity, std::move(component));
-        if (added && pool.TracksChanges())
+        if (added == nullptr)
+        {
+            return nullptr;
+        }
+        if (pool.TracksChanges())
+        {
             pool.Stamp(entity, ++_changeTick); // a fresh component counts as changed
+        }
+        AddRequirements(entity, id);
         return added;
     }
+
+    /// @brief Whether adding the component @p id to @p entity would be refused
+    /// for an exclusion, and if so which two components clash.
+    ///
+    /// Covers the component and everything it would bring with it. Loaders and
+    /// the editor ask this first, so an excluded component in a file or a menu
+    /// is reported in their own terms rather than tripping Add's assert.
+    [[nodiscard]] std::optional<ComponentConflict> ConflictOf(Entity entity, Core::Reflect::ComponentId id) const;
+
+    /// @brief A component on @p entity that requires the component @p id, or
+    /// kInvalidComponentId when nothing there does and it may be removed.
+    [[nodiscard]] Core::Reflect::ComponentId RequirerOf(Entity entity, Core::Reflect::ComponentId id) const;
 
     /// @brief Returns a pointer to the entity's component of type T, or nullptr if not present.
     ///
@@ -181,10 +236,16 @@ struct Scene
     }
 
     /// @brief Removes the component of type T from the entity.
-    template <typename T> void Remove(Entity entity)
+    ///
+    /// Refused while another component on the entity requires T: that logs,
+    /// asserts in debug builds, and leaves T in place. Removing a component
+    /// leaves the ones it required.
+    template <typename T> RemoveResult Remove(Entity entity)
     {
-        if (SparseSet<T> *pool = GetPool<T>())
-            pool->Remove(entity);
+        const RemoveResult result = RemoveById(entity, Core::Reflect::ComponentIdOf<T>());
+        ASSISI_ASSERT(result != RemoveResult::Required,
+                      "Scene::Remove of a component another component on the entity requires");
+        return result;
     }
 
     // ── Change detection ──────────────────────────────────────────────────────
@@ -310,14 +371,20 @@ struct Scene
 
     /// @brief Removes the entity's component identified by ComponentId rather than
     /// static type — for generic tooling (e.g. the inspector's delete-component
-    /// button), which has a ComponentMeta but no compile-time T. No-op if the
-    /// scene has no pool for that id or the entity lacks that component.
-    void RemoveById(Entity entity, Core::Reflect::ComponentId id)
-    {
-        // .value: array index into _pools.
-        if (id.value < _pools.size() && _pools[id.value].pool && _pools[id.value].remove)
-            _pools[id.value].remove(_pools[id.value].pool, entity);
-    }
+    /// button), which has a ComponentMeta but no compile-time T.
+    ///
+    /// Refused, with an error logged, while another component on the entity
+    /// requires it. Unlike Remove<T> it does not assert: its callers remove
+    /// what a file, a snapshot or a user named, and report the refusal.
+    RemoveResult RemoveById(Entity entity, Core::Reflect::ComponentId id);
+
+    /// @brief Removes every component in @p ids from @p entity, requirers before
+    /// what they require, so a set that holds each requirer of its members
+    /// comes off whatever order it is listed in.
+    ///
+    /// @return false when some member stays because a component outside the set
+    /// requires it; each such member is logged.
+    bool RemoveManyById(Entity entity, std::span<const Core::Reflect::ComponentId> ids);
 
     /// @brief Returns a lazy view over all entities that have every component in Ts.
     ///
@@ -386,6 +453,20 @@ struct Scene
     }
 
 private:
+    /// @brief Whether @p entity has the component @p id, by id.
+    [[nodiscard]] bool HasById(Entity entity, Core::Reflect::ComponentId id) const;
+
+    /// @brief The clash adding @p meta's component alone would cause, ignoring
+    /// what it requires.
+    [[nodiscard]] std::optional<ComponentConflict> IncomingConflict(Entity entity,
+                                                                    const Core::Reflect::ComponentMeta &meta) const;
+
+    /// @brief Adds a default of every component @p id requires that @p entity lacks.
+    void AddRequirements(Entity entity, Core::Reflect::ComponentId id);
+
+    /// @brief Logs a refused add of @p id and asserts.
+    void ReportConflict(Entity entity, Core::Reflect::ComponentId id, ComponentConflict conflict) const;
+
     /// @brief Shared body of Query/QueryMut: resolve the pools, reject the
     /// no-match case, and pick the pool that drives iteration.
     ///
@@ -436,6 +517,7 @@ private:
     {
         void *pool = nullptr;
         void (*remove)(void *pool, Entity entity) = nullptr;
+        bool (*has)(const void *pool, Entity entity) = nullptr;
         void (*clear)(void *pool) = nullptr;
         void (*destroy)(void *pool) = nullptr;
         void (*stamp)(void *pool, Entity entity, uint64_t tick) = nullptr; // null unless the pool is tracked
@@ -446,6 +528,11 @@ private:
     template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
         static_cast<SparseSet<T> *>(pool)->Remove(entity);
+    }
+
+    template <typename T> static bool HasFn(const void *pool, Entity entity)
+    {
+        return static_cast<const SparseSet<T> *>(pool)->Has(entity);
     }
 
     template <typename T> static void ClearFn(void *pool) { static_cast<SparseSet<T> *>(pool)->Clear(); }
@@ -503,7 +590,7 @@ private:
             // Every pool logs its removals on the change clock, tracked or not:
             // the log costs an entry per removal and nothing per component.
             pool->SetRemovalClock(&_changeTick);
-            slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>, nullptr, &SizeFn<T>};
+            slot = PoolStorage{pool, &RemoveFn<T>, &HasFn<T>, &ClearFn<T>, &DestroyFn<T>, nullptr, &SizeFn<T>};
 
             // Wire change detection for ACOMP(tracked) types. The registry is
             // finalized by the time a component is first added at runtime, so the

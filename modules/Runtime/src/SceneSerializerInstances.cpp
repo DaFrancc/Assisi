@@ -114,11 +114,14 @@ namespace
 /// precondition (see SceneSerializer::ReexpandInstance).
 void StripSerializable(ECS::Scene &scene, ECS::Entity entity)
 {
+    // As a set, so a requirement comes off after the components requiring it.
+    std::vector<Core::Reflect::ComponentId> ids;
     for (const Core::Reflect::ComponentMeta *meta :
          Core::Reflect::ComponentRegistry::Instance().SerializableComponents())
     {
-        scene.RemoveById(entity, meta->id);
+        ids.push_back(meta->id);
     }
+    (void)scene.RemoveManyById(entity, ids);
 }
 
 /// The last segment of a member path — what the member is called in its own file,
@@ -363,6 +366,10 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             const Core::Reflect::ComponentMeta *meta = registry.Find(prepared.name);
             if (meta == nullptr)
                 continue;
+            if (SkipExcluded(scene, e, *meta, desc.name, staged.definition->source))
+            {
+                continue;
+            }
 
             void *component = meta->construct(&scene, e.index, e.generation);
             if (component == nullptr)
@@ -411,6 +418,11 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
 
                 // A one-key wrapper because the qualifier takes a component *set* —
                 // it looks each component up to know which fields are references.
+                if (SkipExcluded(scene, e, *meta, desc.name, staged.definition->source))
+                {
+                    continue;
+                }
+
                 nlohmann::json wrapper{{componentName, componentData}};
                 QualifyInstanceReferences(wrapper, prefix);
                 // PrepareBlueprint already refused any member whose values do not

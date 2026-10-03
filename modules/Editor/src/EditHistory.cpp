@@ -285,16 +285,14 @@ void EditHistory::RecordBefore(Entity entity, Reflect::ComponentId id, std::stri
                                 .touchedThisFrame = true});
 }
 
-bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
+bool EditHistory::AppendGesture(Transaction &txn, const OpenGesture &gesture)
 {
     const std::optional<nlohmann::json> after = SnapshotComponent(gesture.entity, gesture.id);
     if (gesture.before == after)
+    {
         return false; // no net change — drops click-without-drag and Escape-revert
+    }
 
-    Transaction txn;
-    txn.label           = gesture.label;
-    txn.selectionBefore = gesture.selection;
-    txn.selectionAfter  = gesture.selection;
     txn.Add(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
 
     // In the same transaction as the edit, never recorded separately: undo must
@@ -304,7 +302,19 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     {
         txn.Add(std::move(*record));
     }
+    return true;
+}
 
+bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
+{
+    Transaction txn;
+    txn.label           = gesture.label;
+    txn.selectionBefore = gesture.selection;
+    txn.selectionAfter  = gesture.selection;
+    if (!AppendGesture(txn, gesture))
+    {
+        return false;
+    }
     Push(std::move(txn));
     return true;
 }
@@ -465,6 +475,38 @@ void EditHistory::CommitGesture(Entity entity, Reflect::ComponentId id)
     std::erase_if(_open, [&](const OpenGesture &g) { return g.id == id && g.entity == entity; });
 }
 
+void EditHistory::CommitGestures(Entity entity, std::span<const Reflect::ComponentId> ids)
+{
+    if (_applying)
+    {
+        return;
+    }
+
+    Transaction txn;
+    for (const Reflect::ComponentId id : ids)
+    {
+        const OpenGesture *gesture = FindOpen(entity, id);
+        if (gesture == nullptr)
+        {
+            continue;
+        }
+        // The last gesture names the step: callers list the component the
+        // author acted on last, after what it brought.
+        txn.label           = gesture->label;
+        txn.selectionBefore = gesture->selection;
+        txn.selectionAfter  = gesture->selection;
+        (void)AppendGesture(txn, *gesture);
+    }
+    for (const Reflect::ComponentId id : ids)
+    {
+        std::erase_if(_open, [&](const OpenGesture &g) { return g.id == id && g.entity == entity; });
+    }
+    if (!txn.cmds.empty())
+    {
+        Push(std::move(txn));
+    }
+}
+
 void EditHistory::EndFrameSweep(bool editingActive)
 {
     if (_applying)
@@ -513,7 +555,7 @@ void EditHistory::RestoreComponent(Entity entity, Reflect::ComponentId id,
         // so a no-op restore does not tear down state that was never built.
         if (meta && meta->getByEntity && meta->getByEntity(&_scene, entity.index, entity.generation))
         {
-            _scene.RemoveById(entity, id);
+            (void)_scene.RemoveById(entity, id);
             _rebind(entity, id, /*present=*/ false);
         }
         return;
@@ -535,17 +577,17 @@ bool EditHistory::AddComponentForRestore(Entity entity, Reflect::ComponentId id,
     if (!meta || !meta->serializable || !meta->addToScene)
         return false;
 
-    // Remove-first-then-add. Scene::Add, which addToScene bottoms out in, silently
-    // rejects an already-present component, so a value edit must clear the old one.
-    _scene.RemoveById(entity, id);
+    // addToScene overwrites a component the entity already has, so a value edit
+    // lands in place. Removing first would be refused for a component another
+    // one on the entity requires.
+    //
     // The payload came from this history capturing a live component, so a refusal
-    // means the codec cannot read back what it just wrote. The old value is gone
-    // by now and there is nothing to restore, so say so loudly rather than report
-    // an undo that quietly dropped a component.
+    // means the codec cannot read back what it just wrote. Say so loudly rather
+    // than report an undo that quietly kept the wrong value.
     if (!meta->addToScene(&_scene, entity.index, entity.generation, data))
     {
         Assisi::Core::Log::Error("EditHistory: '{}' could not be restored from its own snapshot - this is "
-                                 "an engine bug. The component is now missing from the entity.",
+                                 "an engine bug. The component is left as it was.",
                                  meta->name);
         return false;
     }

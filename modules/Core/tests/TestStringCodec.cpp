@@ -105,19 +105,13 @@ std::vector<FieldMeta> TextsFields()
 
 ComponentMeta MakeTextsComponent()
 {
-    ComponentMeta meta{.name            = "Texts",
-                       .typeIndex       = std::type_index(typeid(Texts)),
-                       .fields          = TextsFields(),
-                       .serialize       = {},
-                       .addToScene      = {},
-                       .iterateEntities = {},
-                       .getByEntity     = {},
-                       .construct       = {},
-                       .getMutable      = {},
-                       .serializable    = true,
-                       .tracksChanges   = true,
-                       .replicable      = true,
-                       .id              = ComponentId{12}};
+    ComponentMeta meta{.name = "Texts",
+                       .fields = TextsFields(),
+                       .typeIndex = std::type_index(typeid(Texts)),
+                       .id = ComponentId{12},
+                       .serializable = true,
+                       .tracksChanges = true,
+                       .replicable = true};
     return meta;
 }
 

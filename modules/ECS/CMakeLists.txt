@@ -17,6 +17,7 @@ target_sources(Assisi-ECS
     "src/EntityRef.cpp"
     "src/Hierarchy.cpp"
     "src/Registry.cpp"
+    "src/Scene.cpp"
     "src/TransformPose.cpp"
 )
 

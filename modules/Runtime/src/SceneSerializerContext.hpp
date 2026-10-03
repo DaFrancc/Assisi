@@ -42,6 +42,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -191,5 +192,13 @@ template <typename Fn> void ForEachRefLeavingSet(ECS::Scene &scene, std::span<co
         }
     }
 }
+
+/// @brief Whether a component a file gives @p entity is one its components
+/// exclude, or that excludes one of them, counting what it would bring along.
+///
+/// When it is, logs the entity, the file and both components; the caller skips
+/// that component and loads the rest, so one bad pairing does not cost the file.
+[[nodiscard]] bool SkipExcluded(const ECS::Scene &scene, ECS::Entity entity, const Core::Reflect::ComponentMeta &meta,
+                                std::string_view entityName, std::string_view source);
 
 } // namespace Assisi::Runtime

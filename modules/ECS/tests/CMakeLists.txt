@@ -21,6 +21,7 @@ add_executable(Assisi-ECS-Tests
   TestQuery.cpp
   TestQueryMut.cpp
   TestScene.cpp
+  TestComponentRules.cpp
   TestChangeDetection.cpp
   TestReflectHooks.cpp
   TestStringFields.cpp

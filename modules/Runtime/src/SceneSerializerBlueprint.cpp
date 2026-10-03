@@ -93,6 +93,10 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
             const Core::Reflect::ComponentMeta *meta = registry.Find(componentName);
             if (meta == nullptr || !meta->serializable)
                 continue; // reported at expansion, where there is an instance to name
+            if (SkipExcluded(scratch, scratchEntities[i], *meta, member.name, definition.source))
+            {
+                continue;
+            }
             if (!meta->addToScene(&scratch, scratchEntities[i].index, scratchEntities[i].generation,
                                   componentData))
             {

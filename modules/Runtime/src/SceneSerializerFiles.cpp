@@ -209,9 +209,16 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
         return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson});
     }
 
+    const std::string pathText = path.string();
+    LoadOptions named = options;
+    if (named.source.empty())
+    {
+        named.source = pathText;
+    }
+
     try
     {
-        return Load(scene, doc, options);
+        return Load(scene, doc, named);
     }
     catch (const std::exception &ex)
     {

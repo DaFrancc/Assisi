@@ -101,17 +101,10 @@ ComponentMeta MakeContainersMeta()
 {
     ComponentMeta meta{.name = "Containers",
                        .typeIndex = std::type_index(typeid(Containers)),
-                       .fields = {},
-                       .serialize = {},
-                       .addToScene = {},
-                       .iterateEntities = {},
-                       .getByEntity = {},
-                       .construct = {},
-                       .getMutable = {},
+                       .id = ComponentId{11},
                        .serializable = true,
                        .tracksChanges = true,
-                       .replicable = true,
-                       .id = ComponentId{11}};
+                       .replicable = true};
 
     meta.fields.push_back(ContainerField<std::vector<std::int32_t>>("numbers", OffsetOf(&Containers::numbers)));
     meta.fields.push_back(
@@ -428,17 +421,10 @@ ComponentMeta MakeNestedMeta(const StructSpec &inner = InnerSpec())
 {
     ComponentMeta meta{.name = "Nested",
                        .typeIndex = std::type_index(typeid(Nested)),
-                       .fields = {},
-                       .serialize = {},
-                       .addToScene = {},
-                       .iterateEntities = {},
-                       .getByEntity = {},
-                       .construct = {},
-                       .getMutable = {},
+                       .id = ComponentId{12},
                        .serializable = true,
                        .tracksChanges = true,
-                       .replicable = true,
-                       .id = ComponentId{12}};
+                       .replicable = true};
 
     FieldMeta single;
     single.name = "single";
@@ -509,17 +495,10 @@ TEST_CASE("ContainerCodec: an array's length is its type's, so the wire carries 
     };
     ComponentMeta meta{.name = "Bytes",
                        .typeIndex = std::type_index(typeid(Bytes)),
-                       .fields = {},
-                       .serialize = {},
-                       .addToScene = {},
-                       .iterateEntities = {},
-                       .getByEntity = {},
-                       .construct = {},
-                       .getMutable = {},
+                       .id = ComponentId{13},
                        .serializable = true,
                        .tracksChanges = true,
-                       .replicable = true,
-                       .id = ComponentId{13}};
+                       .replicable = true};
     meta.fields.push_back(ContainerField<std::array<std::uint8_t, 3>>("values", 0));
 
     const Bytes source{.values = {1, 2, 3}};

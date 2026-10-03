@@ -478,6 +478,10 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
                 Core::Log::Warn("SceneSerializer: non-serializable component '{}' - skipped", compName);
                 continue;
             }
+            if (SkipExcluded(scene, e, *meta, names[i], options.source))
+            {
+                continue;
+            }
             if (!meta->addToScene(&scene, e.index, e.generation, compData))
             {
                 // The hook logged the component, the field and the mismatch; this
