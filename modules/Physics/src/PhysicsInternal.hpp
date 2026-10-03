@@ -24,11 +24,11 @@
 
 // A sanitized build steps physics on one thread — see JoltRuntime.cpp for why.
 #if defined(__SANITIZE_THREAD__)
-#    define ASSISI_PHYSICS_TSAN 1
+#define ASSISI_PHYSICS_TSAN 1
 #elif defined(__has_feature)
-#    if __has_feature(thread_sanitizer)
-#        define ASSISI_PHYSICS_TSAN 1
-#    endif
+#if __has_feature(thread_sanitizer)
+#define ASSISI_PHYSICS_TSAN 1
+#endif
 #endif
 
 #include <Jolt/Core/JobSystem.h>
@@ -98,16 +98,16 @@ static_assert(sizeof(JPH::ObjectLayer) == sizeof(std::uint32_t),
               "Assisi packs 22 bits into a Jolt ObjectLayer; build Jolt with OBJECT_LAYER_BITS=32.");
 
 static constexpr std::uint32_t ChannelBits = 4;
-static constexpr std::uint32_t MaskBits    = 16;
-static constexpr std::uint32_t MotionBits  = 2;
+static constexpr std::uint32_t MaskBits = 16;
+static constexpr std::uint32_t MotionBits = 2;
 
 static constexpr std::uint32_t ChannelShift = 0;
-static constexpr std::uint32_t MaskShift    = ChannelShift + ChannelBits;
-static constexpr std::uint32_t MotionShift  = MaskShift + MaskBits;
+static constexpr std::uint32_t MaskShift = ChannelShift + ChannelBits;
+static constexpr std::uint32_t MotionShift = MaskShift + MaskBits;
 
 static constexpr std::uint32_t ChannelMask = (1u << ChannelBits) - 1u;
-static constexpr std::uint32_t MaskMask    = (1u << MaskBits) - 1u;
-static constexpr std::uint32_t MotionMask  = (1u << MotionBits) - 1u;
+static constexpr std::uint32_t MaskMask = (1u << MaskBits) - 1u;
+static constexpr std::uint32_t MotionMask = (1u << MotionBits) - 1u;
 
 static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) <= MaskBits,
               "Every channel needs a bit in the collides-with mask.");
@@ -119,9 +119,9 @@ static_assert(static_cast<std::uint32_t>(BodyMotion::Count) <= MotionMask + 1u,
 inline JPH::ObjectLayer PackLayer(CollisionFilter filter, BodyMotion motion)
 {
     const std::uint32_t channel = static_cast<std::uint32_t>(filter.channel) & ChannelMask;
-    const std::uint32_t mask    = filter.collidesWith.bits & MaskMask;
-    const std::uint32_t packed  = (channel << ChannelShift) | (mask << MaskShift) |
-                                  ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
+    const std::uint32_t mask = filter.collidesWith.bits & MaskMask;
+    const std::uint32_t packed = (channel << ChannelShift) | (mask << MaskShift) |
+                                 ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
     return static_cast<JPH::ObjectLayer>(packed);
 }
 
@@ -262,8 +262,7 @@ class FilterLayerFilter final : public JPH::ObjectLayerFilter
 {
 public:
     explicit FilterLayerFilter(CollisionFilter filter)
-        : _mask(filter.collidesWith.bits),
-          _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
+        : _mask(filter.collidesWith.bits), _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
     {
     }
 
@@ -292,7 +291,7 @@ public:
     JoltRuntimeRef();
     ~JoltRuntimeRef();
 
-    JoltRuntimeRef(const JoltRuntimeRef &)            = delete;
+    JoltRuntimeRef(const JoltRuntimeRef &) = delete;
     JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
 
     // The base type, so the tsan build's single-threaded job system substitutes
@@ -424,7 +423,7 @@ struct PhysicsWorld::Impl
     // Defaults to 1 (a single solve, like Unity/Unreal at their fixed rate);
     // raise it to trade CPU for shallower impact penetration.
     static constexpr int32_t kDefaultCollisionSteps = 1;
-    static constexpr int32_t kMaxCollisionSteps     = 16;
+    static constexpr int32_t kMaxCollisionSteps = 16;
     int32_t collisionSteps = kDefaultCollisionSteps;
 
     BPLayerInterface bpLayerInterface;
@@ -603,8 +602,8 @@ public:
         // Jolt called says only whether it saw the pair last step, and the pair
         // table already knows that — and knows it in the cases Jolt gets wrong,
         // where a body woke and Jolt reports a contact it never stopped having.
-        void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2,
-                                const JPH::ContactManifold &manifold, JPH::ContactSettings &settings) override
+        void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
+                                JPH::ContactSettings &settings) override
         {
             (void)settings;
             _owner.RecordTouch(body1, body2, manifold);
@@ -639,8 +638,8 @@ private:
     struct CharacterRecord
     {
         JPH::Ref<JPH::CharacterVirtual> character;
-        JPH::RefConst<JPH::Shape>       standingShape;
-        JPH::RefConst<JPH::Shape>       crouchingShape;
+        JPH::RefConst<JPH::Shape> standingShape;
+        JPH::RefConst<JPH::Shape> crouchingShape;
 
         /// The direction it is trying to go and the speed it is asking for, as
         /// set by MoveCharacter. Kept between steps so a caller that stops
@@ -666,24 +665,24 @@ private:
         /// keeps the full mask, which is what lets the sensor see it.
         CollisionFilter queryFilter;
 
-        float jumpSpeed          = 0.f;
-        float walkSpeed          = 0.f;
-        float friction           = 0.f;
-        float stopSpeed          = 0.f;
+        float jumpSpeed = 0.f;
+        float walkSpeed = 0.f;
+        float friction = 0.f;
+        float stopSpeed = 0.f;
         float groundAcceleration = 0.f;
-        float airAcceleration    = 0.f;
-        float airWishSpeedCap    = 0.f;
-        float bunnyHopSpeedCap   = 0.f;
-        float standingEyeHeight  = 0.f;
-        float crouchEyeHeight    = 0.f;
-        float eyeSpeed           = 0.f;
-        float gravityScale       = 1.f;
-        float coyoteTime         = 0.f;
-        float jumpBufferTime     = 0.f;
-        float maxStepHeight      = 0.f;
-        float radius             = 0.f;
+        float airAcceleration = 0.f;
+        float airWishSpeedCap = 0.f;
+        float bunnyHopSpeedCap = 0.f;
+        float standingEyeHeight = 0.f;
+        float crouchEyeHeight = 0.f;
+        float eyeSpeed = 0.f;
+        float gravityScale = 1.f;
+        float coyoteTime = 0.f;
+        float jumpBufferTime = 0.f;
+        float maxStepHeight = 0.f;
+        float radius = 0.f;
         float standingHalfHeight = 0.f;
-        float crouchHalfHeight   = 0.f;
+        float crouchHalfHeight = 0.f;
 
         /// How much taller the standing capsule is than the crouching one (m),
         /// which is how far the feet move when the stance changes in the air.
@@ -721,8 +720,8 @@ private:
         bool jumpedSinceGrounded = false;
 
         bool canPushBodies = true;
-        bool canBePushed   = true;
-        bool frozen        = false;
+        bool canBePushed = true;
+        bool frozen = false;
 
         /// The horizontal velocity, relative to the ground, that one step of
         /// intent turns @p velocity into. @p wish is the horizontal request;
@@ -782,8 +781,8 @@ private:
     /// @p writeRotation is false for characters: the capsule is symmetric about
     /// its up axis, so the simulation has no opinion on facing and overwriting it
     /// would snap a turning character back to forward every frame.
-    static void WriteRenderPose(ECS::Entity entity, ECS::Mut<ECS::Transform> transform, Pose pose,
-                                bool writeRotation, const ParentWorldFn &parentWorld);
+    static void WriteRenderPose(const ECS::Scene &scene, ECS::Entity entity, ECS::Mut<ECS::Transform> transform,
+                                Pose pose, bool writeRotation);
 
     /// Records that a character touched a body, from inside the character's own
     /// sweep. The body-vs-body listener cannot see these: a character's inner
@@ -807,11 +806,9 @@ public:
                             const JPH::SubShapeID &subShapeId, JPH::RVec3Arg contactPosition,
                             JPH::Vec3Arg contactNormal, JPH::CharacterContactSettings &settings) override;
 
-        void OnCharacterContactAdded(const JPH::CharacterVirtual *character,
-                                     const JPH::CharacterVirtual *other,
+        void OnCharacterContactAdded(const JPH::CharacterVirtual *character, const JPH::CharacterVirtual *other,
                                      const JPH::SubShapeID &subShapeId, JPH::RVec3Arg contactPosition,
-                                     JPH::Vec3Arg contactNormal,
-                                     JPH::CharacterContactSettings &settings) override;
+                                     JPH::Vec3Arg contactNormal, JPH::CharacterContactSettings &settings) override;
 
 private:
         Impl &_owner;

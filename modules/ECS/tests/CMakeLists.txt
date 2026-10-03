@@ -25,6 +25,8 @@ add_executable(Assisi-ECS-Tests
   TestReflectHooks.cpp
   TestStringFields.cpp
   TestNestedFields.cpp
+  TestEntityRef.cpp
+  TestHierarchy.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-ECS-Tests)
@@ -47,6 +49,7 @@ target_link_libraries(Assisi-ECS-Tests
 # assisi_link_reflections so we take exactly these registrations, nothing else.
 target_sources(Assisi-ECS-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-TestComponents-Generated>
+  $<TARGET_OBJECTS:Assisi-ECS-Generated>
 )
 
 add_test(NAME ECS COMMAND Assisi-ECS-Tests)

@@ -25,7 +25,7 @@
 ///
 /// Destruction is by explicit verb. `Scene::Destroy` on a wheel destroys the
 /// wheel and nothing else — no existing destroy path anywhere in the engine
-/// acquires blueprint semantics, which matches how Runtime::GatherSubtree already
+/// acquires blueprint semantics, which matches how ECS::GatherSubtree already
 /// works: hierarchy-aware destruction is opt-in at the call site.
 ///
 /// There is **no adopt**. Entities may be created at runtime freely; they never
@@ -125,8 +125,7 @@ bool ExplodeInstance(World &world, ECS::InstanceId instanceId);
 /// a library build has no blueprints opted in and must not require the file to
 /// exist.
 template <typename T>
-[[nodiscard]] std::optional<Runtime::InstanceView<T>> SpawnBlueprint(World &world,
-                                                                     const ECS::Transform &placement)
+[[nodiscard]] std::optional<Runtime::InstanceView<T>> SpawnBlueprint(World &world, const ECS::Transform &placement)
 {
     const std::optional<ECS::InstanceId> instanceId =
         SpawnBlueprint(world, Runtime::InstanceViewTraits<T>::kSource, placement);

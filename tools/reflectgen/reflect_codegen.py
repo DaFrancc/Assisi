@@ -317,8 +317,9 @@ def _is_serializable(f: FieldInfo) -> bool:
 
 # A message's EntityRef fields, for JSON only.
 #
-# The component path routes an EntityRef through Runtime::SceneSerializer, which
-# resolves it against the scene being saved. A message has no scene and is never
+# The component path routes an EntityRef through the entity-reference codec the
+# running serializer installs, which resolves it against the scene being saved.
+# A message has no scene and is never
 # saved — its JSON form exists for tests, tooling, and log lines — so it carries
 # the handle's two halves verbatim instead. The *binary* path is unaffected and
 # still translates through NetIds, which is the only form that means anything
@@ -995,7 +996,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/Reflect/ComponentRegistry.hpp>')
         includes.append('#include <Assisi/ECS/Scene.hpp>')
         if has_entity_refs:
-            includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
+            includes.append('#include <Assisi/ECS/EntityRef.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
         # An asset type's construct hook allocates with std::nothrow.

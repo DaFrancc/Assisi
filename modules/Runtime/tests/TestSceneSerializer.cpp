@@ -6,9 +6,9 @@
 // CHECK (a Name's View() comparison) needs the complete type.
 #include <ostream>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <cstdint>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -19,9 +19,9 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -33,12 +33,12 @@
 #include "../src/SceneSerializerContext.hpp"
 
 using namespace Assisi;
+using Assisi::ECS::Parent;
 using Assisi::Runtime::Camera;
 using Assisi::Runtime::DirectionalLight;
 using Assisi::Runtime::LevelError;
 using Assisi::Runtime::LevelResult;
 using Assisi::Runtime::MeshRenderer;
-using Assisi::Runtime::Parent;
 using Assisi::Runtime::PointLight;
 using Assisi::Runtime::SceneSerializer;
 using Assisi::Runtime::SpotLight;
@@ -50,7 +50,7 @@ TEST_CASE("SceneSerializer: transform values survive a round-trip")
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f},
                                    .rotation = glm::quat{1.f, 0.f, 0.f, 0.f},
-                                   .scale    = {4.f, 5.f, 6.f}}) != nullptr);
+                                   .scale = {4.f, 5.f, 6.f}}) != nullptr);
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
@@ -71,7 +71,7 @@ TEST_CASE("SceneSerializer: transform values survive a round-trip")
 TEST_CASE("SceneSerializer: forward parent reference survives a round-trip")
 {
     ECS::Scene scene;
-    const ECS::Entity child  = scene.Create(); // {0,0} — sorts first
+    const ECS::Entity child = scene.Create();  // {0,0} — sorts first
     const ECS::Entity parent = scene.Create(); // {1,0}
 
     REQUIRE(scene.Add(parent, Transform{}) != nullptr);
@@ -100,13 +100,13 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities",
-         nlohmann::json::array(
-             {{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "body"}}}}}}, // [0] -> body
-                 {{"name", "body"},
-                     {"components", {{"Transform",
-                          {{"position", {0.f, 0.f, 0.f}},
-                              {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                              {"scale", {1.f, 1.f, 1.f}}}}}}}})}};    // [1] body
+         nlohmann::json::array({{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "body"}}}}}}, // [0] -> body
+                                   {{"name", "body"},
+                                       {"components",
+                                        {{"Transform",
+                                            {{"position", {0.f, 0.f, 0.f}},
+                                                {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                {"scale", {1.f, 1.f, 1.f}}}}}}}})}}; // [1] body
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
@@ -157,7 +157,7 @@ TEST_CASE("SceneSerializer: an unnamed entity is given a name, and duplicates ar
     REQUIRE(scene.Add(b, Runtime::Name{Core::EntityName{"Cube"}}) != nullptr);
 
     const nlohmann::json saved = SceneSerializer::Save(scene);
-    const auto &list  = saved.at("entities");
+    const auto &list = saved.at("entities");
     REQUIRE(list.size() == 3);
 
     std::set<std::string> names;
@@ -198,8 +198,7 @@ TEST_CASE("SceneSerializer: a missing or empty name refuses the file")
     // Absent and present-but-unusable are different kinds, and the file is wrong
     // in a different way in each: MissingName means the key is not there at all,
     // InvalidName means ValidateName looked at it and said no.
-    const nlohmann::json missing = {
-        {"version", 2},
+    const nlohmann::json missing = {{"version", 2},
         {"entities", nlohmann::json::array({{{"components", nlohmann::json::object()}}})}};
     const LevelResult noName = SceneSerializer::Load(loaded, missing);
     REQUIRE_FALSE(noName.has_value());
@@ -243,8 +242,7 @@ TEST_CASE("SceneSerializer: a v1 file is refused rather than read positionally")
 {
     // Its refs are numbers, which under v2 would each resolve to *some* entity if
     // the loader guessed. There is no v1 reader and this is what that means.
-    const nlohmann::json v1 = {
-        {"version", 1},
+    const nlohmann::json v1 = {{"version", 1},
         {"entities", nlohmann::json::array({{{"components", {{"Parent", {{"parent", 1}}}}}},
                                                {{"components", nlohmann::json::object()}}})}};
 
@@ -259,7 +257,8 @@ TEST_CASE("SceneSerializer: a null reference stays null")
 {
     const nlohmann::json fixture = {
         {"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "loose"}, {"components", {{"Parent", {{"parent", nullptr}}}}}}})}};
+        {"entities",
+         nlohmann::json::array({{{"name", "loose"}, {"components", {{"Parent", {{"parent", nullptr}}}}}}})}};
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
@@ -283,7 +282,7 @@ TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't
     // Reserved built-in id for prim://cube, plus an arbitrary material id. No hint
     // resolver is installed, so the GUIDs serialize without a path hint and the
     // ids round-trip on their own.
-    const Core::AssetId cubeId     = Core::BuiltinAssetId::Cube;
+    const Core::AssetId cubeId = Core::BuiltinAssetId::Cube;
     const Core::AssetId materialId = *Core::AssetId::Parse("8c08e9c0-e9fb-4f84-a9ba-7a90223526fd");
 
     ECS::Scene scene;
@@ -293,15 +292,14 @@ TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't
     // no business naming, and omitting them from a braced initializer draws
     // -Wmissing-field-initializers.
     MeshRenderer renderer;
-    renderer.mesh              = cubeId;
+    renderer.mesh = cubeId;
     renderer.materialOverrides = {materialId};
     REQUIRE(scene.Add(e, renderer) != nullptr);
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
 
-    const MeshRenderer *mrc =
-        loaded.Get<MeshRenderer>(ECS::Entity{.index = 0, .generation = 0});
+    const MeshRenderer *mrc = loaded.Get<MeshRenderer>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(mrc != nullptr); // presence survives
     CHECK(mrc->mesh == cubeId);
     REQUIRE(mrc->materialOverrides.size() == 1);
@@ -430,16 +428,16 @@ TEST_CASE("SceneSerializer: a level saved before the shadow flags existed casts 
     // each one must load as a shadow caster rather than as silently unshadowed.
     const nlohmann::json fixture = {
         {"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "lamp"},
-                                               {"components",
-                                                {{"PointLight", {{"intensity", 3.f}}},
-                                                    {"MeshRenderer", nlohmann::json::object()}}}}})}};
+        {"entities",
+         nlohmann::json::array(
+             {{{"name", "lamp"},
+                 {"components", {{"PointLight", {{"intensity", 3.f}}}, {"MeshRenderer", nlohmann::json::object()}}}}})}};
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
 
     const ECS::Entity le{.index = 0, .generation = 0};
-    const PointLight *light      = loaded.Get<PointLight>(le);
+    const PointLight *light = loaded.Get<PointLight>(le);
     const MeshRenderer *renderer = loaded.Get<MeshRenderer>(le);
     REQUIRE(light != nullptr);
     REQUIRE(renderer != nullptr);
@@ -547,8 +545,8 @@ TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replace
     SUBCASE("a component field of the wrong type")
     {
         fixture = {{"version", 2},
-            {"entities", nlohmann::json::array({{{"name", "eye"},
-                                                   {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+            {"entities", nlohmann::json::array(
+                 {{{"name", "eye"}, {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
     }
 
     const LevelResult result = SceneSerializer::Load(scene, fixture);
@@ -623,8 +621,7 @@ TEST_CASE("SceneSerializer: a components key of the wrong shape is refused, not 
     // than the throws above. Found in pass 3, past the clear by construction, so it
     // reports the replacement rather than pretending the scene survived.
     const nlohmann::json fixture = {
-        {"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "body"}, {"components", "Transform"}}})}};
+        {"version", 2}, {"entities", nlohmann::json::array({{{"name", "body"}, {"components", "Transform"}}})}};
 
     const LevelResult result = SceneSerializer::Load(scene, fixture);
     REQUIRE_FALSE(result.has_value());
@@ -635,7 +632,7 @@ TEST_CASE("SceneSerializer: a components key of the wrong shape is refused, not 
 
 TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
 {
-    namespace fs        = std::filesystem;
+    namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() / "assisi_serializer_replaced_test";
     fs::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -697,8 +694,8 @@ TEST_CASE("SceneSerializer: a field of the wrong type refuses the file rather th
     // The key is present, so a contains()-only guard lets it through.
     const nlohmann::json fixture = {
         {"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "eye"},
-                                               {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+        {"entities",
+         nlohmann::json::array({{{"name", "eye"}, {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
 
     ECS::Scene loaded;
     LevelResult result;
@@ -718,10 +715,11 @@ TEST_CASE("SceneSerializer: an array field of the wrong length refuses the file"
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities",
-         nlohmann::json::array({{{"name", "body"},
-                                   {"components", {{"Transform", {{"position", {0.f, 0.f, 0.f}},
-                                            {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                            {"scale", {1.f, 1.f}}}}}}}})}};
+         nlohmann::json::array(
+             {{{"name", "body"},
+                 {"components",
+                  {{"Transform",
+                      {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f}}}}}}}})}};
 
     ECS::Scene loaded;
     LevelResult result;
@@ -738,8 +736,7 @@ TEST_CASE("SceneSerializer: an absent field is not a failure and keeps its defau
     // A file that simply does not mention `isActive` is an ordinary old file.
     const nlohmann::json fixture = {
         {"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "eye"},
-                                               {"components", {{"Camera", {{"fovDegrees", 42.f}}}}}}})}};
+        {"entities", nlohmann::json::array({{{"name", "eye"}, {"components", {{"Camera", {{"fovDegrees", 42.f}}}}}}})}};
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
@@ -755,7 +752,7 @@ TEST_CASE("SceneSerializer: a version mismatch through a file fails the load, no
     // Logging alone is not enough: LoadFromFile would return true over an empty
     // scene, so a level from a newer build reads as a level with nothing in it —
     // all the way up to the server announcing it had loaded the world.
-    namespace fs        = std::filesystem;
+    namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() / "assisi_serializer_version_test";
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -801,8 +798,8 @@ TEST_CASE("SceneSerializer: a saved level is LF on every platform")
     // touched. This fails on Windows the moment SaveToFile drops std::ios::binary
     // — the point of asserting on raw bytes rather than on a round-trip, which
     // would keep passing either way.
-    namespace fs            = std::filesystem;
-    const fs::path root     = fs::temp_directory_path() / "assisi_serializer_eol_test";
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "assisi_serializer_eol_test";
     fs::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
 
@@ -835,14 +832,13 @@ TEST_CASE("SceneSerializer: malformed and missing files fail cleanly, not fatall
     }
 
     ECS::Scene scene;
-    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "bad.alvl"));      // parse error caught
-    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "nope.alvl"));     // missing file
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "bad.alvl"));  // parse error caught
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "nope.alvl")); // missing file
 }
 
 TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
 {
-    const nlohmann::json fixture = {
-        {"version", 2},
+    const nlohmann::json fixture = {{"version", 2},
         {"entities", nlohmann::json::array({{{"name", "thing"},
                                                {"components",
                                                 {{"NopeComponent", {{"x", 1}}},
@@ -1061,7 +1057,7 @@ TEST_CASE("SceneSerializer: Load inside another serialization context refuses an
 TEST_CASE("SceneSerializer: nested contexts restore in order, and the outermost leaves none behind")
 {
     ECS::Scene scene;
-    const ECS::Entity e    = scene.Create();
+    const ECS::Entity e = scene.Create();
     const uint64_t key = Runtime::EntityKey(e.index, e.generation);
 
     // Which context is live, read the way the generated code reads it.

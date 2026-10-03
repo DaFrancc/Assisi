@@ -20,12 +20,13 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Editor/ColliderPose.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 
 using namespace Assisi;
 using Assisi::Editor::ColliderBodyModel;
@@ -63,8 +64,7 @@ glm::quat RotationOf(const glm::mat4 &model)
 bool IsUnscaled(const glm::mat4 &model)
 {
     const glm::mat3 basis(model);
-    return NearlyEqual(glm::vec3(glm::length(basis[0]), glm::length(basis[1]), glm::length(basis[2])),
-                       glm::vec3(1.f));
+    return NearlyEqual(glm::vec3(glm::length(basis[0]), glm::length(basis[1]), glm::length(basis[2])), glm::vec3(1.f));
 }
 
 /// A parent frame that is neither identity nor axis-aligned with the child's, so
@@ -73,7 +73,7 @@ ECS::Transform ParentPose(float scale = 1.f)
 {
     return {.position = {10.f, 2.f, -3.f},
             .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3(0.f, 1.f, 0.f)),
-            .scale    = glm::vec3(scale)};
+            .scale = glm::vec3(scale)};
 }
 
 /// Hangs @p local under a parent at @p parentPose and propagates, so the parent's
@@ -82,11 +82,11 @@ ECS::Transform ParentPose(float scale = 1.f)
 ECS::Entity AddParentedBody(ECS::Scene &scene, const ECS::Transform &parentPose, const ECS::Transform &local)
 {
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity body   = scene.Create();
+    const ECS::Entity body = scene.Create();
     REQUIRE(scene.Add(parent, parentPose) != nullptr);
     REQUIRE(scene.Add(body, local) != nullptr);
-    REQUIRE(scene.Add(body, Runtime::Parent{.parent = parent}) != nullptr);
-    (void)Runtime::PropagateTransforms(scene, 0);
+    REQUIRE(scene.Add(body, ECS::Parent{.parent = parent}) != nullptr);
+    (void)ECS::PropagateTransforms(scene, 0);
     return body;
 }
 
@@ -99,12 +99,12 @@ TEST_CASE("ColliderBodyModel: a parented body is posed in world space")
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
 
     ECS::Scene scene;
-    const ECS::Entity body  = AddParentedBody(scene, parentPose, local);
+    const ECS::Entity body = AddParentedBody(scene, parentPose, local);
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // ComposeTransform is the engine's other statement of the same composition, so
     // the expectation is not this function marking its own homework.
-    const ECS::Transform expected = Runtime::ComposeTransform(parentPose, local);
+    const ECS::Transform expected = ECS::ComposeTransform(parentPose, local);
     CHECK(NearlyEqual(TranslationOf(model), expected.position));
     CHECK(NearlyEqual(RotationOf(model), expected.rotation));
 
@@ -122,7 +122,7 @@ TEST_CASE("ColliderBodyModel: an unparented body is posed at its own transform")
 
     const ECS::Entity body = scene.Create();
     REQUIRE(scene.Add(body, local) != nullptr);
-    (void)Runtime::PropagateTransforms(scene, 0);
+    (void)ECS::PropagateTransforms(scene, 0);
 
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
     CHECK(NearlyEqual(TranslationOf(model), local.position));
@@ -135,11 +135,11 @@ TEST_CASE("ColliderBodyModel: a parent's scale moves the body but never stretche
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
     ECS::Scene scene;
-    const ECS::Entity body  = AddParentedBody(scene, parentPose, local);
+    const ECS::Entity body = AddParentedBody(scene, parentPose, local);
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // The offset is in the parent's space, so it scales with it...
-    CHECK(NearlyEqual(TranslationOf(model), Runtime::ComposeTransform(parentPose, local).position));
+    CHECK(NearlyEqual(TranslationOf(model), ECS::ComposeTransform(parentPose, local).position));
     // ...but the collider's dimensions are absolute world units, exactly as
     // PhysicsWorld built the shape, so nothing scales the wireframe itself.
     CHECK(IsUnscaled(model));
@@ -150,17 +150,17 @@ TEST_CASE("ColliderBodyModel: the body's own scale does not reach the wireframe"
     const ECS::Transform parentPose = ParentPose();
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(45.f), glm::vec3(0.f, 1.f, 0.f)),
-                               .scale    = {3.f, 1.f, 1.f}};
+                               .scale = {3.f, 1.f, 1.f}};
 
     ECS::Scene scene;
-    const ECS::Entity body  = AddParentedBody(scene, parentPose, local);
+    const ECS::Entity body = AddParentedBody(scene, parentPose, local);
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // Physics ignores the entity's scale when it builds the body. Non-uniform at
     // that, so composing it in would shear the basis rather than merely stretch
     // it — the rotation read back would not even be the body's.
     CHECK(IsUnscaled(model));
-    CHECK(NearlyEqual(RotationOf(model), Runtime::ComposeTransform(parentPose, local).rotation));
+    CHECK(NearlyEqual(RotationOf(model), ECS::ComposeTransform(parentPose, local).rotation));
 }
 
 TEST_CASE("ColliderBodyModel: a parent with no Transform leaves the body where it stands")
@@ -169,13 +169,13 @@ TEST_CASE("ColliderBodyModel: a parent with no Transform leaves the body where i
     const ECS::Transform local{.position = {1.f, 5.f, 0.f}};
 
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity body   = scene.Create();
+    const ECS::Entity body = scene.Create();
     REQUIRE(scene.Add(body, local) != nullptr);
-    REQUIRE(scene.Add(body, Runtime::Parent{.parent = parent}) != nullptr);
-    (void)Runtime::PropagateTransforms(scene, 0);
+    REQUIRE(scene.Add(body, ECS::Parent{.parent = parent}) != nullptr);
+    (void)ECS::PropagateTransforms(scene, 0);
 
-    // Nothing to resolve against — the same answer Physics gets from a resolver
-    // that returns null, rather than a crash or a zeroed pose.
+    // Nothing to resolve against — the same answer Physics gets when
+    // ECS::ParentWorldMatrix returns null, rather than a crash or a zeroed pose.
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
     CHECK(NearlyEqual(TranslationOf(model), local.position));
 }

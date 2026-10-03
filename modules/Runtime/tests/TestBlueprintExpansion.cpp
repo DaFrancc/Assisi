@@ -25,10 +25,11 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -72,8 +73,7 @@ nlohmann::json Entity(const std::string &name, nlohmann::json components = nlohm
 
 nlohmann::json At(float x, float y, float z)
 {
-    return {{"Transform",
-        {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
+    return {{"Transform", {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
 }
 
 nlohmann::json Placement(float x, float y, float z, float scale = 1.f)
@@ -179,12 +179,9 @@ TEST_CASE("Blueprint: nesting flattens to one member list with path names")
     Write(root, "lot.abp",
           {{"version", 2},
               {"entities", nlohmann::json::array({Entity("sign", At(0.f, 0.f, 0.f))})},
-              {"instances", nlohmann::json::array({{{"name", "car_1"},
-                                                      {"source", "car.abp"},
-                                                      {"transform", Placement(10.f, 0.f, 0.f)}},
-                                                      {{"name", "car_2"},
-                                                          {"source", "car.abp"},
-                                                          {"transform", Placement(20.f, 0.f, 0.f)}}})}});
+              {"instances", nlohmann::json::array(
+                   {{{"name", "car_1"}, {"source", "car.abp"}, {"transform", Placement(10.f, 0.f, 0.f)}},
+                       {{"name", "car_2"}, {"source", "car.abp"}, {"transform", Placement(20.f, 0.f, 0.f)}}})}});
 
     const BlueprintResult loaded = Runtime::GetBlueprintDefinition("lot.abp");
     REQUIRE(loaded.has_value());
@@ -237,14 +234,16 @@ TEST_CASE("Blueprint: a non-uniform instance scale is refused, not clamped")
 {
     const std::filesystem::path root = FreshRoot("scale");
     Write(root, "car.abp", CarFile());
-    Write(root, "lot.abp", {{"version", 2},
-              {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "squashed"},
-                                                      {"source", "car.abp"},
-                                                      {"transform",
-                                                       {{"position", {0.f, 0.f, 0.f}},
-                                                           {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                           {"scale", {2.f, 1.f, 1.f}}}}}})}});
+    Write(
+        root, "lot.abp",
+        {{"version", 2},
+            {"entities", nlohmann::json::array()},
+            {"instances",
+             nlohmann::json::array(
+                 {{{"name", "squashed"},
+                     {"source", "car.abp"},
+                     {"transform",
+                      {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {2.f, 1.f, 1.f}}}}}})}});
 
     // Clamping to an axis was rejected: it lets the file say one thing while the
     // game does another. Composing it is not an option either — the product is a
@@ -286,8 +285,7 @@ TEST_CASE("Blueprint: expanding places members, tags them, and records one table
     ECS::Transform placement;
     placement.position = {5.f, 0.f, 0.f};
 
-    const auto id =
-        SceneSerializer::ExpandInstance(scene, table, "car.abp", placement);
+    const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", placement);
     REQUIRE(id.has_value());
     CHECK(*id == ECS::InstanceId{1}); // ids start at 1; 0 is never a live instance
 
@@ -330,7 +328,7 @@ TEST_CASE("Blueprint: a member's reference resolves to its own instance, not ano
     ECS::Scene scene;
     InstanceTable table;
 
-    const auto first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto first = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
@@ -343,7 +341,7 @@ TEST_CASE("Blueprint: a member's reference resolves to its own instance, not ano
         if (tag.memberIndex != 1)
             continue; // only the wheel has a Parent
 
-        const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
+        const ECS::Parent *parent = scene.Get<ECS::Parent>(entity);
         REQUIRE(parent != nullptr);
         REQUIRE(parent->parent != ECS::NullEntity);
 
@@ -361,9 +359,8 @@ TEST_CASE("Blueprint: a level's instances expand on load and are written back on
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array({Entity("spawn_marker", At(0.f, 0.f, 0.f))})},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"},
-                                                      {"transform", Placement(22.f, 0.f, 4.f)}}})}});
+              {"instances", nlohmann::json::array(
+                   {{{"name", "car_3"}, {"source", "car.abp"}, {"transform", Placement(22.f, 0.f, 4.f)}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -406,8 +403,7 @@ TEST_CASE("Blueprint: a level's instances expand on load and are written back on
     REQUIRE(saved.at("instances").size() == 1);
     CHECK(saved.at("instances")[0].at("name").get<std::string>() == "car_3");
     CHECK(saved.at("instances")[0].at("source").get<std::string>() == "car.abp");
-    CHECK(Runtime::TransformFromJson(saved.at("instances")[0].at("transform")).position.x ==
-          doctest::Approx(22.f));
+    CHECK(Runtime::TransformFromJson(saved.at("instances")[0].at("transform")).position.x == doctest::Approx(22.f));
 }
 
 TEST_CASE("Blueprint: a level entity may point into an instance by path")
@@ -427,7 +423,7 @@ TEST_CASE("Blueprint: a level entity may point into an instance by path")
     REQUIRE(scene.Get<Runtime::Name>(trailer) != nullptr);
     REQUIRE(scene.Get<Runtime::Name>(trailer)->value.View() == "trailer");
 
-    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(trailer);
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(trailer);
     REQUIRE(parent != nullptr);
     REQUIRE(parent->parent != ECS::NullEntity);
 
@@ -471,10 +467,11 @@ TEST_CASE("Blueprint: two instances of one name are refused, not silently merged
     // this is the loader refusing a file that says it anyway.
     const std::filesystem::path root = FreshRoot("dupinstance");
     Write(root, "car.abp", CarFile());
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car"}, {"source", "car.abp"}},
-                                                      {{"name", "car"}, {"source", "car.abp"}}})}});
+              {"instances", nlohmann::json::array(
+                   {{{"name", "car"}, {"source", "car.abp"}}, {{"name", "car"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -509,13 +506,13 @@ TEST_CASE("Blueprint: a member's Name component does not displace its leaf name"
     const std::filesystem::path root = FreshRoot("membername");
     Write(root, "car.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"},
-                                                     {"components",
-                                                      {{"Transform",
-                                                          {{"position", {0.f, 1.f, 0.f}},
-                                                              {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                              {"scale", {1.f, 1.f, 1.f}}}},
-                                                          {"Name", {{"value", "chassis"}}}}}}})}});
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "body"},
+                       {"components",
+                        {{"Transform",
+                            {{"position", {0.f, 1.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                            {"Name", {{"value", "chassis"}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -621,9 +618,10 @@ TEST_CASE("Blueprint: two entities of one name are refused")
 {
     // Reachable the same way, and the reason the rename box needs a guard at all.
     const std::filesystem::path root = FreshRoot("dupentity");
-    Write(root, "main.alvl", {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("crate", At(0.f, 0.f, 0.f)),
-                                                  Entity("crate", At(1.f, 0.f, 0.f))})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({Entity("crate", At(0.f, 0.f, 0.f)), Entity("crate", At(1.f, 0.f, 0.f))})}});
 
     ECS::Scene scene;
     CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl"));
@@ -688,11 +686,8 @@ TEST_CASE("Blueprint: UniqueInstanceName steps past the names already taken")
 
     const auto place = [&](const std::string &name)
                        {
-                           const Runtime::LevelInstance entry{.name      = name,
-                                                              .source    = "car.abp",
-                                                              .transform = {},
-                                                              .overrides = nlohmann::json::object(),
-                                                              .removed   = {}};
+                           const Runtime::LevelInstance entry{
+                               .name = name, .source = "car.abp", .transform = {}, .overrides = nlohmann::json::object(), .removed = {}};
                            REQUIRE(SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true).has_value());
                        };
 
@@ -724,8 +719,7 @@ TEST_CASE("Naming: the separator is the one character a name may not hold")
     CHECK(Runtime::ValidateName("/car").error() == Runtime::NameError::ContainsSeparator);
 
     REQUIRE_FALSE(Runtime::ValidateName(std::string(Core::kEntityNameMax + 1, 'a')).has_value());
-    CHECK(Runtime::ValidateName(std::string(Core::kEntityNameMax + 1, 'a')).error() ==
-          Runtime::NameError::TooLong);
+    CHECK(Runtime::ValidateName(std::string(Core::kEntityNameMax + 1, 'a')).error() == Runtime::NameError::TooLong);
     CHECK(Runtime::ValidateName(std::string(Core::kEntityNameMax, 'a')).has_value()); // the limit itself fits
 }
 
@@ -798,8 +792,7 @@ TEST_CASE("Naming: the Rename door refuses what it cannot honour, and changes no
 
     // The loader's rules are this door's rules, so a name it accepts is a name the
     // level reloads with.
-    CHECK(Runtime::RenameEntity(scene, barrel, "crate/lid").error() ==
-          Runtime::NameError::ContainsSeparator);
+    CHECK(Runtime::RenameEntity(scene, barrel, "crate/lid").error() == Runtime::NameError::ContainsSeparator);
     CHECK(Runtime::RenameEntity(scene, barrel, std::string(Core::kEntityNameMax + 1, 'a')).error() ==
           Runtime::NameError::TooLong);
 
@@ -830,10 +823,10 @@ TEST_CASE("Blueprint: a level with instances refuses to load with nowhere to rec
 {
     const std::filesystem::path root = FreshRoot("notable");
     Write(root, "car.abp", CarFile());
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"}}})}});
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     // Dropping them instead would produce a level missing most of its content,
     // reported as a successful load.
@@ -845,10 +838,10 @@ TEST_CASE("Blueprint: instance ids restart with the world")
 {
     const std::filesystem::path root = FreshRoot("ids");
     Write(root, "car.abp", CarFile());
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"}}})}});
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -871,18 +864,18 @@ TEST_CASE("Blueprint: composition is a placement applied to a local pose")
     ECS::Transform placement;
     placement.position = {10.f, 0.f, 0.f};
     placement.rotation = glm::angleAxis(glm::radians(90.f), glm::vec3(0.f, 1.f, 0.f));
-    placement.scale    = {2.f, 2.f, 2.f};
+    placement.scale = {2.f, 2.f, 2.f};
 
     ECS::Transform local;
     local.position = {1.f, 0.f, 0.f};
 
-    const ECS::Transform composed = Runtime::ComposeTransform(placement, local);
+    const ECS::Transform composed = ECS::ComposeTransform(placement, local);
     // Scaled, then rotated, then translated: (1,0,0) * 2 turned 90° about Y is
     // (0,0,-2), landing at (10,0,-2).
     CHECK(composed.position.x == doctest::Approx(10.f));
     CHECK(composed.position.z == doctest::Approx(-2.f));
     CHECK(composed.scale.x == doctest::Approx(2.f));
 
-    CHECK(Runtime::HasUniformScale(placement));
-    CHECK_FALSE(Runtime::HasUniformScale(ECS::Transform{.scale = {1.f, 2.f, 1.f}}));
+    CHECK(ECS::HasUniformScale(placement));
+    CHECK_FALSE(ECS::HasUniformScale(ECS::Transform{.scale = {1.f, 2.f, 1.f}}));
 }

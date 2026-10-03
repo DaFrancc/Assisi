@@ -4,7 +4,7 @@
 #include <Assisi/Core/Reflect/JsonRead.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/ECS/EntityRef.hpp>
 #include <Assisi/Core/Reflect/ContainerJson.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <cstdint>
@@ -187,7 +187,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
         {
             const auto& c = *static_cast<const T*>(ptr);
             return nlohmann::json{
-                { "target", Assisi::Runtime::SceneSerializer::EntityToRef(c.target) },
+                { "target", Assisi::ECS::EntityRefToJson(c.target) },
             };
         },
         [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
@@ -197,7 +197,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             Assisi::ECS::Entity e{entity_index, entity_gen};
             T comp{};
-            { const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "target", _r)) comp.target = Assisi::Runtime::SceneSerializer::RefToEntity(*_r); else comp.target = Assisi::ECS::NullEntity; }
+            { const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "target", _r)) comp.target = Assisi::ECS::EntityRefFromJson(*_r); else comp.target = Assisi::ECS::NullEntity; }
             (void)scene.Add(e, comp);
             return true;
         },

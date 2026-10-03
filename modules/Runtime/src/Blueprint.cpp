@@ -4,8 +4,9 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -26,22 +27,6 @@ namespace Assisi::Runtime
 // ---------------------------------------------------------------------------
 // Transform composition
 // ---------------------------------------------------------------------------
-
-bool HasUniformScale(const ECS::Transform &transform)
-{
-    // Relative, so a metre-scale and a kilometre-scale instance are held to the
-    // same standard. The tolerance exists for a hand-typed 1.0000001, not to let a
-    // genuinely non-uniform scale through: the smallest visible non-uniformity is
-    // orders of magnitude above this.
-    constexpr float kTolerance = 1e-5f;
-
-    const glm::vec3 &scale = transform.scale;
-    const float mean  = (std::abs(scale.x) + std::abs(scale.y) + std::abs(scale.z)) / 3.f;
-    if (mean <= 0.f)
-        return scale.x == scale.y && scale.y == scale.z;
-
-    return std::abs(scale.x - scale.y) / mean < kTolerance && std::abs(scale.y - scale.z) / mean < kTolerance;
-}
 
 ECS::Transform TransformFromJson(const nlohmann::json &value)
 {
@@ -83,18 +68,8 @@ ECS::Transform TransformFromJson(const nlohmann::json &value)
 nlohmann::json TransformToJson(const ECS::Transform &transform)
 {
     return {{"position", {transform.position.x, transform.position.y, transform.position.z}},
-        {"rotation",
-         {transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z}},
+        {"rotation", {transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z}},
         {"scale", {transform.scale.x, transform.scale.y, transform.scale.z}}};
-}
-
-ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Transform &local)
-{
-    ECS::Transform out;
-    out.position = placement.position + (placement.rotation * (placement.scale * local.position));
-    out.rotation = glm::normalize(placement.rotation * local.rotation);
-    out.scale    = placement.scale * local.scale;
-    return out;
 }
 
 ECS::Transform AuthoringOrigin(const ECS::Transform &root)
@@ -115,21 +90,7 @@ ECS::Transform AuthoringOriginFor(const ECS::Scene &scene, std::span<const ECS::
     // something the selection does not include, and the origin has to be where it
     // actually stands or the instance is placed into a space that is not coming
     // with it. For an unparented anchor the two are the same.
-    return AuthoringOrigin(WorldTransformOf(scene, entities.front()));
-}
-
-ECS::Transform InverseComposeTransform(const ECS::Transform &placement, const ECS::Transform &world)
-{
-    // Exact only under the uniform-scale rule, same as the forward form: with one
-    // scale factor the division below is a scalar and the rotation is unaffected
-    // by it.
-    const float scale = placement.scale.x != 0.f ? placement.scale.x : 1.f;
-
-    ECS::Transform out;
-    out.rotation = glm::normalize(glm::inverse(placement.rotation) * world.rotation);
-    out.position = (glm::inverse(placement.rotation) * (world.position - placement.position)) / scale;
-    out.scale    = world.scale / scale;
-    return out;
+    return AuthoringOrigin(ECS::WorldTransformOf(scene, entities.front()));
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +129,7 @@ void InstanceTable::RestoreAt(ECS::InstanceId id, BlueprintInstance instance)
         return; // 0 is never a live instance
 
     _rows[id] = std::move(instance);
-    _nextId   = std::max(_nextId, id.value + 1);
+    _nextId = std::max(_nextId, id.value + 1);
 }
 
 std::vector<std::pair<ECS::InstanceId, const BlueprintInstance *>> InstanceTable::All() const
@@ -212,8 +173,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity)
     return true;
 }
 
-ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
-                       std::string_view name)
+ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId, std::string_view name)
 {
     const BlueprintInstance *row = FindInstance(table, instanceId);
     if (row == nullptr)
@@ -273,11 +233,11 @@ std::vector<LevelInstance> InstancesForSave(InstanceTable &table)
         if (!row->authored)
             continue;
 
-        out.push_back(LevelInstance{.name      = row->name,
-                                    .source    = row->source,
+        out.push_back(LevelInstance{.name = row->name,
+                                    .source = row->source,
                                     .transform = row->transform,
                                     .overrides = row->overrides,
-                                    .removed   = row->removed});
+                                    .removed = row->removed});
         // Written here because this is where the position is decided. Anything that
         // recomputed it later would be a second reader of this filter, free to
         // disagree with the file that was actually written.
@@ -455,9 +415,8 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
 
     for (const auto &[componentName, claim] : componentOverrides.items())
     {
-        const bool alreadyRemoved =
-            std::find(member.removedComponents.begin(), member.removedComponents.end(), componentName) !=
-            member.removedComponents.end();
+        const bool alreadyRemoved = std::find(member.removedComponents.begin(), member.removedComponents.end(),
+                                              componentName) != member.removedComponents.end();
 
         if (claim.is_null())
         {
@@ -497,7 +456,7 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
     // instance's placement composes onto its Transform — so a stale value puts the
     // member the whole placement away from where the author put it.
     const bool wasParented = member.parented;
-    member.parented        = DeclaresParent(member.components);
+    member.parented = DeclaresParent(member.components);
     if (wasParented == member.parented)
         return;
 
@@ -510,9 +469,9 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
     if (const auto it = member.components.find("Transform"); it != member.components.end())
         current = TransformFromJson(*it);
 
-    member.components["Transform"] = TransformToJson(
-        member.parented ? InverseComposeTransform(member.placement, current)
-                        : ComposeTransform(member.placement, current));
+    member.components["Transform"] =
+        TransformToJson(member.parented ? ECS::InverseComposeTransform(member.placement, current)
+                                        : ECS::ComposeTransform(member.placement, current));
 }
 
 bool IsMemberRemoved(std::string_view memberName, const std::vector<std::string> &removed)
@@ -573,13 +532,12 @@ std::expected<nlohmann::json, BlueprintError> ReadFile(std::string_view source)
 struct FlattenState
 {
     BlueprintDefinition *out;
-    std::vector<std::string>                stack;   ///< Sources currently being flattened, for cycle detection.
-    std::unordered_set<std::string>         declared; ///< Member names claimed so far.
+    std::vector<std::string> stack;           ///< Sources currently being flattened, for cycle detection.
+    std::unordered_set<std::string> declared; ///< Member names claimed so far.
 };
 
-std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohmann::json &doc,
-                                                std::string_view source, const std::string &prefix,
-                                                const ECS::Transform &placement);
+std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_view source,
+                                                const std::string &prefix, const ECS::Transform &placement);
 
 /// One nested instance entry: resolve the source, compose the placement, recurse.
 std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const nlohmann::json &entry,
@@ -593,12 +551,11 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
     }
     if (!entry.contains("source") || !entry.at("source").is_string())
     {
-        Core::Log::Error("Blueprint: '{}' instance '{}' has no source.", source,
-                         entry.at("name").get<std::string>());
+        Core::Log::Error("Blueprint: '{}' instance '{}' has no source.", source, entry.at("name").get<std::string>());
         return std::unexpected(BlueprintError::MissingSource);
     }
 
-    const std::string name        = entry.at("name").get<std::string>();
+    const std::string name = entry.at("name").get<std::string>();
     const std::string childSource = entry.at("source").get<std::string>();
 
     // Cycles hard-fail rather than being detected later: `a` containing `b`
@@ -616,7 +573,7 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
 
     // At every level, not just the outermost (§4). Clamping to an axis was
     // rejected: it lets the file say one thing while the game does another.
-    if (!HasUniformScale(local))
+    if (!ECS::HasUniformScale(local))
     {
         Core::Log::Error("Blueprint: '{}' instance '{}' has a non-uniform scale ({}, {}, {}); an instance may "
                          "only translate, rotate, or scale uniformly.",
@@ -625,7 +582,7 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
     }
 
     const std::string childPrefix = prefix + name + "/";
-    const std::size_t first       = state.out->members.size();
+    const std::size_t first = state.out->members.size();
 
     // Read here rather than inside the recursion, so a failed read is checked
     // before it feeds one.
@@ -635,7 +592,7 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
 
     state.stack.push_back(childSource);
     const std::expected<void, BlueprintError> flattened =
-        FlattenInto(state, *childDoc, childSource, childPrefix, ComposeTransform(placement, local));
+        FlattenInto(state, *childDoc, childSource, childPrefix, ECS::ComposeTransform(placement, local));
     state.stack.pop_back();
     if (!flattened)
         return std::unexpected(flattened.error());
@@ -691,8 +648,8 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
             // Dropped rather than refused, and banning renames is what makes that
             // clean: a missing member can only mean deliberate deletion, so there
             // is no second reading in which this discards a real edit (§6).
-            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares - dropped.", source,
-                            full, childSource);
+            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares - dropped.", source, full,
+                            childSource);
             continue;
         }
 
@@ -707,9 +664,8 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
     return {};
 }
 
-std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohmann::json &doc,
-                                                std::string_view source, const std::string &prefix,
-                                                const ECS::Transform &placement)
+std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_view source,
+                                                const std::string &prefix, const ECS::Transform &placement)
 {
     if (std::find(state.out->closure.begin(), state.out->closure.end(), source) == state.out->closure.end())
         state.out->closure.emplace_back(source);
@@ -724,8 +680,7 @@ std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohm
             if (!name.is_string())
                 continue;
             std::string value = name.get<std::string>();
-            if (std::find(state.out->systems.begin(), state.out->systems.end(), value) ==
-                state.out->systems.end())
+            if (std::find(state.out->systems.begin(), state.out->systems.end(), value) == state.out->systems.end())
             {
                 state.out->systems.push_back(std::move(value));
             }
@@ -769,7 +724,7 @@ std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohm
                 if (const auto it = member.components.find("Transform"); it != member.components.end())
                     local = TransformFromJson(*it);
 
-                member.components["Transform"] = TransformToJson(ComposeTransform(placement, local));
+                member.components["Transform"] = TransformToJson(ECS::ComposeTransform(placement, local));
             }
 
             state.out->members.push_back(std::move(member));
@@ -826,7 +781,7 @@ BlueprintResult GetBlueprintDefinition(std::string_view source)
     if (const auto it = cache.find(source); it != cache.end())
         return it->second;
 
-    auto definition    = std::make_shared<BlueprintDefinition>();
+    auto definition = std::make_shared<BlueprintDefinition>();
     definition->source = std::string{source};
 
     // Reading and flattening report failure by value; the try is here for the

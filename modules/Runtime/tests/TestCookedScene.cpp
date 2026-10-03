@@ -33,22 +33,22 @@
 #include <Assisi/Core/CookedPayload.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
+using Assisi::ECS::Parent;
 using Assisi::Runtime::CookedScene;
 using Assisi::Runtime::DecodeCookedScene;
 using Assisi::Runtime::LevelError;
 using Assisi::Runtime::LevelHeader;
 using Assisi::Runtime::Name;
-using Assisi::Runtime::Parent;
 using Assisi::Runtime::PointLight;
 using Assisi::Runtime::SaveCookedScene;
 using Assisi::Runtime::Transform;
@@ -112,15 +112,15 @@ void RebuildFrom(const CookedScene &cooked, ECS::Scene &scene)
 
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [&byNameIndex](std::uint64_t wire) -> std::uint64_t
-    {
-        const auto index = static_cast<std::size_t>(wire);
-        if (index >= byNameIndex.size())
-        {
-            return (static_cast<std::uint64_t>(ECS::NullEntity.generation) << 32) | ECS::NullEntity.index;
-        }
-        const ECS::Entity target = byNameIndex[index];
-        return (static_cast<std::uint64_t>(target.generation) << 32) | target.index;
-    };
+                           {
+                               const auto index = static_cast<std::size_t>(wire);
+                               if (index >= byNameIndex.size())
+                               {
+                                   return (static_cast<std::uint64_t>(ECS::NullEntity.generation) << 32) | ECS::NullEntity.index;
+                               }
+                               const ECS::Entity target = byNameIndex[index];
+                               return (static_cast<std::uint64_t>(target.generation) << 32) | target.index;
+                           };
 
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
     for (std::size_t i = 0; i < cooked.entities.size(); ++i)
@@ -172,7 +172,7 @@ const Core::AssetId kCarId = Core::DerivedAssetId("car.abp");
 /// Cooked blobs by path, held in memory: a pak without the file.
 class MemoryProvider final : public Core::AssetProvider
 {
-  public:
+public:
     void Add(std::string_view vpath, std::vector<std::byte> bytes)
     {
         _blobs[Core::DerivedAssetId(vpath)] = std::move(bytes);
@@ -198,7 +198,7 @@ class MemoryProvider final : public Core::AssetProvider
         return id;
     }
 
-  private:
+private:
     std::unordered_map<Core::AssetId, std::vector<std::byte>> _blobs;
 };
 
@@ -226,8 +226,8 @@ nlohmann::json CarFile()
     return {
         {"version", 2},
         {"entities", nlohmann::json::array(
-                         {{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
-                          {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
+             {{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
+                 {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 } // namespace
@@ -422,12 +422,12 @@ TEST_CASE("An instance survives with its placement, its overrides and its remova
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array()},
-           {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                 {"source", "car.abp"},
-                                                 {"transform", {{"position", {1.f, 2.f, 3.f}}}},
-                                                 {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}},
-                                                 {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
+              {"entities", nlohmann::json::array()},
+              {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                      {"source", "car.abp"},
+                                                      {"transform", {{"position", {1.f, 2.f, 3.f}}}},
+                                                      {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}},
+                                                      {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
@@ -463,10 +463,10 @@ TEST_CASE("An override is a masked block naming only the field the author set")
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array()},
-           {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                 {"source", "car.abp"},
-                                                 {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}}}})}});
+              {"entities", nlohmann::json::array()},
+              {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                      {"source", "car.abp"},
+                                                      {"overrides", {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}}}}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
@@ -525,10 +525,10 @@ TEST_CASE("An override naming a field the component does not have is refused")
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array()},
-           {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                 {"source", "car.abp"},
-                                                 {"overrides", {{"body", {{"Camera", {{"noSuchField", 1.f}}}}}}}}})}});
+              {"entities", nlohmann::json::array()},
+              {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                      {"source", "car.abp"},
+                                                      {"overrides", {{"body", {{"Camera", {{"noSuchField", 1.f}}}}}}}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
@@ -549,8 +549,8 @@ TEST_CASE("An instance whose blueprint has no id fails the cook")
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array()},
-           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+              {"entities", nlohmann::json::array()},
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
@@ -592,19 +592,19 @@ TEST_CASE("A cooked scene converts back to the document it was cooked from")
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"systems", nlohmann::json::array({"Spin"})},
-           {"entities",
-            nlohmann::json::array({{{"name", "ground"}},
-                                   {{"name", "marker"}, {"components", {{"Parent", {{"parent", "car_3/body"}}}}}}})},
-           {"instances",
-            nlohmann::json::array(
-                {{{"name", "car_3"},
-                  {"source", "car.abp"},
-                  {"transform", {{"position", {1.f, 2.f, 3.f}}}},
-                  {"overrides",
-                   {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}},
-                    {"wheel_fl", {{"Parent", {{"parent", "/ground"}}}}}}}},
-                 {{"name", "car_4"}, {"source", "car.abp"}, {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
+              {"systems", nlohmann::json::array({"Spin"})},
+              {"entities",
+               nlohmann::json::array({{{"name", "ground"}},
+                                         {{"name", "marker"}, {"components", {{"Parent", {{"parent", "car_3/body"}}}}}}})},
+              {"instances",
+               nlohmann::json::array(
+                   {{{"name", "car_3"},
+                       {"source", "car.abp"},
+                       {"transform", {{"position", {1.f, 2.f, 3.f}}}},
+                       {"overrides",
+                        {{"body", {{"Camera", {{"fovDegrees", 90.f}}}}},
+                            {"wheel_fl", {{"Parent", {{"parent", "/ground"}}}}}}}},
+                       {{"name", "car_4"}, {"source", "car.abp"}, {"removed", nlohmann::json::array({"wheel_fl"})}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
@@ -636,8 +636,8 @@ TEST_CASE("A cooked document reads from a provider by its path")
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array({{{"name", "ground"}}})},
-           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+              {"entities", nlohmann::json::array({{{"name", "ground"}}})},
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;
@@ -691,8 +691,8 @@ TEST_CASE("A member entity is described by its instance, not written as an entit
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array({{{"name", "ground"}}})},
-           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+              {"entities", nlohmann::json::array({{{"name", "ground"}}})},
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     Runtime::InstanceTable table;

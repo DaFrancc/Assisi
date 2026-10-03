@@ -9,9 +9,9 @@
 
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
 namespace Assisi::Runtime
@@ -108,11 +108,10 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                     .materialTable = params.materialTable,
                                                     .bindlessLayout = params.bindlessLayout,
                                                     .bindlessTable = params.bindlessTable}) ||
-        !_shadowPass.Initialize(
-            Render::ShadowPass::InitParams{.device = _device,
-                                           .depthRenderer = &_shadowDepthRenderer,
-                                           .restoreVertexShaderSpvPath = kShadowTileResetShader,
-                                           .restorePixelShaderSpvPath = kShadowDepthRestoreShader}))
+        !_shadowPass.Initialize(Render::ShadowPass::InitParams{.device = _device,
+                                                               .depthRenderer = &_shadowDepthRenderer,
+                                                               .restoreVertexShaderSpvPath = kShadowTileResetShader,
+                                                               .restorePixelShaderSpvPath = kShadowDepthRestoreShader}))
     {
         Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
     }
@@ -126,21 +125,20 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: local-light shadows unavailable (the depth pass failed to initialise).");
     }
 
-    if (!_meshPass.Initialize(Render::MeshPass::InitParams{.device = _device,
-                                                           .framebufferInfo = params.framebufferInfo,
-                                                           .vertexShaderSpvPath = kSceneVertexShader,
-                                                           .pixelShaderSpvPath = kScenePixelShader,
-                                                           .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
-                                                           .depthVertexShaderSpvPath = kSceneDepthVertexShader,
-                                                           .maskedDepthVertexShaderSpvPath =
-                                                               kSceneMaskedDepthVertexShader,
-                                                           .maskedDepthPixelShaderSpvPath =
-                                                               kSceneMaskedDepthPixelShader,
-                                                           .invariantVertexShaderSpvPath = kSceneInvariantVertexShader,
-                                                           .clusterGrid = &_lighting.Grid(),
-                                                           .bindlessLayout = params.bindlessLayout,
-                                                           .bindlessTable = params.bindlessTable,
-                                                           .materialTable = params.materialTable}))
+    if (!_meshPass.Initialize(
+            Render::MeshPass::InitParams{.device = _device,
+                                         .framebufferInfo = params.framebufferInfo,
+                                         .vertexShaderSpvPath = kSceneVertexShader,
+                                         .pixelShaderSpvPath = kScenePixelShader,
+                                         .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
+                                         .depthVertexShaderSpvPath = kSceneDepthVertexShader,
+                                         .maskedDepthVertexShaderSpvPath = kSceneMaskedDepthVertexShader,
+                                         .maskedDepthPixelShaderSpvPath = kSceneMaskedDepthPixelShader,
+                                         .invariantVertexShaderSpvPath = kSceneInvariantVertexShader,
+                                         .clusterGrid = &_lighting.Grid(),
+                                         .bindlessLayout = params.bindlessLayout,
+                                         .bindlessTable = params.bindlessTable,
+                                         .materialTable = params.materialTable}))
     {
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
@@ -248,7 +246,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // (see the header).
     {
         ASSISI_PROFILE_SCOPE("propagate-transforms");
-        propagationTick = PropagateTransforms(scene, propagationTick);
+        propagationTick = ECS::PropagateTransforms(scene, propagationTick);
     }
 
     const glm::mat4 projection =
@@ -325,21 +323,21 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     }
     // With a prepass, this draws depth alone: the same extract, cull and sort as
     // ever, kept for the lit pass below to shade. Without, it is the lit pass.
-    _lastDrawStats = DrawScene(DrawSceneParams{.scene = scene,
-                                               .meshPass = _meshPass,
-                                               .frame = frame,
-                                               .view = view,
-                                               .projection = projection,
-                                               .nearZ = camera.nearZ,
-                                               .farZ = camera.farZ,
-                                               .frustumCulling = _frustumCulling,
-                                               .sortDraws = _sortDraws,
-                                               .gpuCulling = _gpuCulling,
-                                               .culler = &_meshCuller,
-                                               .cullBuilder = &_cullBuilder,
-                                               .lodSelector = &_lodSelector,
-                                               .stage = prepass ? Render::MeshPassStage::DepthPrepass
-                                                                : Render::MeshPassStage::Lit});
+    _lastDrawStats =
+        DrawScene(DrawSceneParams{.scene = scene,
+                                  .meshPass = _meshPass,
+                                  .frame = frame,
+                                  .view = view,
+                                  .projection = projection,
+                                  .nearZ = camera.nearZ,
+                                  .farZ = camera.farZ,
+                                  .frustumCulling = _frustumCulling,
+                                  .sortDraws = _sortDraws,
+                                  .gpuCulling = _gpuCulling,
+                                  .culler = &_meshCuller,
+                                  .cullBuilder = &_cullBuilder,
+                                  .lodSelector = &_lodSelector,
+                                  .stage = prepass ? Render::MeshPassStage::DepthPrepass : Render::MeshPassStage::Lit});
 
     if (prepass)
     {
@@ -402,8 +400,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     ASSISI_PROFILE_COUNTER("shadows/cascades-kept", static_cast<double>(_lastShadowStats.cascadesKept));
     // Cascades a caster's motion dirtied, as against ones the camera or the sun
     // moved out from under. Those are different problems with different answers.
-    ASSISI_PROFILE_COUNTER("shadows/cascades-by-motion",
-                           static_cast<double>(_sunCadence.Stats().dirtiedByMotion));
+    ASSISI_PROFILE_COUNTER("shadows/cascades-by-motion", static_cast<double>(_sunCadence.Stats().dirtiedByMotion));
     ASSISI_PROFILE_COUNTER("shadows/instances", static_cast<double>(_lastShadowStats.instances));
     ASSISI_PROFILE_COUNTER("shadows/batches", static_cast<double>(_lastShadowStats.batches));
     // Reads zero for a scene with no cutout caster in it, which is what turns
