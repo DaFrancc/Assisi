@@ -13,6 +13,7 @@
 
 #include "PhysicsInternal.hpp"
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 
@@ -46,8 +47,8 @@ void PhysicsWorld::CaptureState()
         // Retire the previous current, then record this step's pose as current.
         it->second.prevPosition = it->second.curPosition;
         it->second.prevRotation = it->second.curRotation;
-        it->second.curPosition  = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
-        it->second.curRotation  = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
+        it->second.curPosition = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        it->second.curRotation = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
     }
 
     // Characters are swept rather than solved, so they are not in the body set —
@@ -56,12 +57,12 @@ void PhysicsWorld::CaptureState()
     {
         (void)id;
         const JPH::RVec3 pos = record.character->GetPosition();
-        const JPH::Quat  rot = record.character->GetRotation();
+        const JPH::Quat rot = record.character->GetRotation();
 
         record.snapshot.prevPosition = record.snapshot.curPosition;
         record.snapshot.prevRotation = record.snapshot.curRotation;
-        record.snapshot.curPosition  = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
-        record.snapshot.curRotation  = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
+        record.snapshot.curPosition = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        record.snapshot.curRotation = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
     }
 }
 
@@ -71,7 +72,7 @@ namespace
 // Below these per-physics-step deltas a pose is treated as at rest, so it is
 // snapped to the current step instead of blended (see BlendSnapshot).
 constexpr float kRestPositionDeltaSq = 1e-8f; // (0.1 mm)^2 of translation between steps
-constexpr float kRestRotationDelta   = 1e-7f; // 1 - |dot(prev, cur)|; ~0.0009 rad between steps
+constexpr float kRestRotationDelta = 1e-7f;   // 1 - |dot(prev, cur)|; ~0.0009 rad between steps
 
 } // namespace
 
@@ -99,21 +100,17 @@ Pose PhysicsWorld::Impl::BlendSnapshot(const MotionSnapshot &snapshot, float alp
     return pose;
 }
 
-void PhysicsWorld::Impl::WriteRenderPose(ECS::Entity entity, ECS::Mut<ECS::Transform> transform,
-                                         Pose pose, bool writeRotation,
-                                         const ParentWorldFn &parentWorld)
+void PhysicsWorld::Impl::WriteRenderPose(const ECS::Scene &scene, ECS::Entity entity,
+                                         ECS::Mut<ECS::Transform> transform, Pose pose, bool writeRotation)
 {
     // Jolt reports world space; a Transform under a parent is an offset *from*
     // that parent. Writing one into the other and letting PropagateTransforms
     // multiply by the parent again applies the parent twice — silently, and once
     // more every frame. Convert instead.
-    if (parentWorld)
+    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
     {
-        if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
-        {
-            pose.position = glm::vec3(glm::inverse(*parent) * glm::vec4(pose.position, 1.f));
-            pose.rotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * pose.rotation);
-        }
+        pose.position = glm::vec3(glm::inverse(*parent) * glm::vec4(pose.position, 1.f));
+        pose.rotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * pose.rotation);
     }
 
     // Nothing moved: skip the write rather than stamp a change tick for a pose
@@ -136,14 +133,14 @@ void PhysicsWorld::Impl::WriteRenderPose(ECS::Entity entity, ECS::Mut<ECS::Trans
     // Taken once, after the skip: binding the reference costs one tick per object
     // that actually moves rather than one per field written.
     ECS::Transform &t = transform.GetMut();
-    t.position        = pose.position;
+    t.position = pose.position;
     if (writeRotation)
     {
         t.rotation = pose.rotation;
     }
 }
 
-void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld)
+void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
@@ -157,8 +154,7 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
     // RigidBody comes along as a Mut proxy because QueryMut wraps every type, but
     // it is only read — through the const Get(), which never stamps (and RigidBody
     // is ACOMP(transient) and untracked anyway, so there is no tick lane to touch).
-    for (auto [entity, transform, rb] :
-         scene.QueryMut<Assisi::ECS::Transform, RigidBody>())
+    for (auto [entity, transform, rb] : scene.QueryMut<Assisi::ECS::Transform, RigidBody>())
     {
         // Only a body that moves has a pose worth writing back. A static one never
         // does, so its Transform is the authored truth and writing to it would
@@ -180,8 +176,8 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
             continue;
         }
 
-        Impl::WriteRenderPose(entity, transform, Impl::BlendSnapshot(it->second, alpha),
-                              /*writeRotation=*/ true, parentWorld);
+        Impl::WriteRenderPose(scene, entity, transform, Impl::BlendSnapshot(it->second, alpha),
+                              /*writeRotation=*/ true);
     }
 
     // Characters, on the same two helpers. Their snapshots live on the character
@@ -195,8 +191,8 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
             continue;
         }
 
-        Impl::WriteRenderPose(entity, transform, Impl::BlendSnapshot(record->snapshot, alpha),
-                              /*writeRotation=*/ false, parentWorld);
+        Impl::WriteRenderPose(scene, entity, transform, Impl::BlendSnapshot(record->snapshot, alpha),
+                              /*writeRotation=*/ false);
     }
 }
 

@@ -294,18 +294,19 @@ class CodegenTest(unittest.TestCase):
         # Normal components carry the serializable=true marker.
         self.assertIn("true       // serializable", cpp)
 
-    def test_entity_ref_pulls_in_scene_serializer_include(self):
+    def test_entity_ref_pulls_in_entity_ref_include(self):
         with_ref = reflectgen.parse_header(FIXTURES / "Sample.hpp")
-        self.assertIn(
-            "#include <Assisi/Runtime/SceneSerializer.hpp>",
-            reflectgen.generate_cpp(with_ref, SAMPLE_INCLUDE),
-        )
+        cpp = reflectgen.generate_cpp(with_ref, SAMPLE_INCLUDE)
+        self.assertIn("#include <Assisi/ECS/EntityRef.hpp>", cpp)
+        # The codec seam is in ECS; generated code must not reach up into Runtime,
+        # or a component with an entity field could not be reflected below it.
+        self.assertNotIn("Runtime::SceneSerializer", cpp)
 
         without_ref = _parse_source(
             "namespace N {\nACOMP()\nstruct Plain { AFIELD() int32_t x = 0; };\n}\n"
         )
         self.assertNotIn(
-            "SceneSerializer",
+            "EntityRef.hpp",
             reflectgen.generate_cpp(without_ref, "N/Plain.hpp"),
         )
 

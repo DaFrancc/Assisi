@@ -65,11 +65,11 @@ struct SerializationContext
     // SetIndices. Save side: entity key (gen<<32|idx) → index within the set.
     // Load side: index → live Entity.
     std::unordered_map<uint64_t, uint32_t> entityToIndex;
-    std::vector<ECS::Entity>               indexToEntity;
+    std::vector<ECS::Entity> indexToEntity;
 
     // Names. Save side: entity key → the unique name it is being written under.
     // Load side: name → the live Entity created for it.
-    std::unordered_map<uint64_t, std::string>    entityToName;
+    std::unordered_map<uint64_t, std::string> entityToName;
     std::unordered_map<std::string, ECS::Entity> nameToEntity;
 
     /// Names an EntityRef asked for that the file never declared. Collected here
@@ -92,16 +92,13 @@ struct SerializationContext
 class ScopedContext
 {
 public:
-    explicit ScopedContext(SerializationContext ctx = {})
-        : _outer(std::exchange(s_current, std::move(ctx)))
-    {
-    }
+    explicit ScopedContext(SerializationContext ctx = {}) : _outer(std::exchange(s_current, std::move(ctx))) {}
     ~ScopedContext() { s_current = std::move(_outer); }
 
-    ScopedContext(const ScopedContext &)            = delete;
+    ScopedContext(const ScopedContext &) = delete;
     ScopedContext &operator=(const ScopedContext &) = delete;
-    ScopedContext(ScopedContext &&)                 = delete;
-    ScopedContext &operator=(ScopedContext &&)      = delete;
+    ScopedContext(ScopedContext &&) = delete;
+    ScopedContext &operator=(ScopedContext &&) = delete;
 
     /// The *innermost* live context, which is this guard's own only while no
     /// inner one is engaged over it. Every use below is innermost where it runs.
@@ -119,6 +116,10 @@ private:
     static inline thread_local std::optional<SerializationContext> s_current;
 
     std::optional<SerializationContext> _outer;
+
+    /// Routes generated entity fields through SceneSerializer's hooks while this
+    /// context is live; without it they would write null.
+    ECS::ScopedEntityRefCodec _codec{ECS::EntityRefCodec{SceneSerializer::EntityToRef, SceneSerializer::RefToEntity}};
 };
 
 // Raw-entity (identity) context — engaged by ScopedRawEntityContext. When set,
@@ -157,8 +158,7 @@ constexpr uint64_t PackEntity(ECS::Entity entity)
 /// per-entity — a name, a set index — that the message wants and the handle alone
 /// would have to look back up. Each site words its own message: the two say the
 /// same thing but not about the same destination.
-template <typename Fn>
-void ForEachRefLeavingSet(ECS::Scene &scene, std::span<const ECS::Entity> entities, Fn &&report)
+template <typename Fn> void ForEachRefLeavingSet(ECS::Scene &scene, std::span<const ECS::Entity> entities, Fn &&report)
 {
     std::unordered_set<uint64_t> inSet;
     inSet.reserve(entities.size());
@@ -181,8 +181,8 @@ void ForEachRefLeavingSet(ECS::Scene &scene, std::span<const ECS::Entity> entiti
                 if (field.type != Core::Reflect::FieldType::EntityRef || field.transient)
                     continue;
 
-                const auto target = *reinterpret_cast<const ECS::Entity *>(
-                    static_cast<const char *>(component) + field.offset);
+                const auto target =
+                    *reinterpret_cast<const ECS::Entity *>(static_cast<const char *>(component) + field.offset);
                 if (target == ECS::NullEntity || inSet.contains(EntityKey(target.index, target.generation)))
                     continue;
 

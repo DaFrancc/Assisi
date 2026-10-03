@@ -31,9 +31,9 @@
 #if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetComponents.hpp>
 #endif
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
@@ -215,14 +215,14 @@ RadioVisibility EvaluateRadio(const void *component, std::span<const Assisi::Cor
     // ReadEnumValue: a bool field carries no enumSize, so that would read a
     // zero-width integer rather than the byte.
     const auto readSource = [component](const FieldMeta *fm) -> std::int64_t
-    {
-        const void *fp = static_cast<const char *>(component) + fm->offset;
-        if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
-        {
-            return *static_cast<const bool *>(fp) ? 1 : 0;
-        }
-        return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
-    };
+                            {
+                                const void *fp = static_cast<const char *>(component) + fm->offset;
+                                if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
+                                {
+                                    return *static_cast<const bool *>(fp) ? 1 : 0;
+                                }
+                                return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
+                            };
 
     // Fold from the root down toward `field` (chain front). `state` holds the
     // resolved visibility of the source one level up.
@@ -515,7 +515,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::LinearColor4:
         edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
                                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
-                                       ImGuiColorEditFlags_AlphaPreviewHalf);
+                                   ImGuiColorEditFlags_AlphaPreviewHalf);
         break;
     // sRGB colours are display values, which the picker's own 0-1 range is.
     case FieldType::SrgbColor3:
@@ -893,17 +893,17 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                 }
                 _scene->ForEachEntity(
                     [&](Assisi::ECS::Entity e)
-                    {
-                        const std::string label = DescribeEntity(e);
-                        const bool selected = (e == *ref);
-                        if (ImGui::Selectable(label.c_str(), selected))
                         {
-                            *ref = e;
-                            edited = true;
-                        }
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    });
+                            const std::string label = DescribeEntity(e);
+                            const bool selected = (e == *ref);
+                            if (ImGui::Selectable(label.c_str(), selected))
+                            {
+                                *ref = e;
+                                edited = true;
+                            }
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        });
                 ImGui::EndCombo();
             }
             break;
@@ -925,16 +925,16 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Named by source and id rather than by id alone: the number is a
             // per-world counter and means nothing to the author on its own.
             const auto describe = [this](Assisi::ECS::InstanceId id) -> std::string
-            {
-                if (!id.IsValid())
-                    return "(none)";
-                if (_world == nullptr)
-                    return std::format("instance {}", id.value);
-                const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
-                if (row == nullptr)
-                    return std::format("instance {} (missing)", id.value);
-                return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
-            };
+                                  {
+                                      if (!id.IsValid())
+                                          return "(none)";
+                                      if (_world == nullptr)
+                                          return std::format("instance {}", id.value);
+                                      const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
+                                      if (row == nullptr)
+                                          return std::format("instance {} (missing)", id.value);
+                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+                                  };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
             {
@@ -1306,7 +1306,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         // Rebuild rather than add: the entity may already have the other kind of
         // physics, and building both would have a character collide with its own
         // inner body. The rebuild refuses that pair and says so.
-        if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity, Assisi::App::ParentWorldResolver(*_scene)))
+        if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity))
         {
             Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics - it already has a "
                                     "collider of the other kind, or no Transform.",
@@ -1394,9 +1394,9 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(bodied ? "Simulated locally and re-anchored by the host's corrections. Renders at "
-                                       "host time minus transit."
+                              "host time minus transit."
                                      : "No local simulation, so it is interpolated between received snapshots — "
-                                       "about two snapshot intervals behind.");
+                              "about two snapshot intervals behind.");
         }
 
         // Derived from the components that arrived, **never** from this mirror's
@@ -1465,7 +1465,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
     // The EntityRef machinery works; what is unsolved is the semantics — mirrored
     // children of local parents, transform spaces, world-space body state under a
     // parent-relative Transform.
-    if (_scene->Get<Assisi::Runtime::Parent>(_selectedEntity) != nullptr)
+    if (_scene->Get<Assisi::ECS::Parent>(_selectedEntity) != nullptr)
     {
         ImGui::TextColored(kWarnColor, "Parented — mirrors are flat in v1, so clients see this at world space.");
     }
@@ -1476,7 +1476,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         {
             if (hasChildren)
                 return;
-            const auto *parent = _scene->Get<Assisi::Runtime::Parent>(candidate);
+            const auto *parent = _scene->Get<Assisi::ECS::Parent>(candidate);
             hasChildren = parent != nullptr && parent->parent == _selectedEntity;
         });
     if (hasChildren)
@@ -1500,7 +1500,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         if (marker->excluded.Test(transformOrdinal) && placementDependent)
         {
             ImGui::TextColored(kWarnColor, "Transform is unticked, but this entity is placed — mirrors will sit at the "
-                                           "level file's pose and never move.");
+                               "level file's pose and never move.");
         }
     }
 
@@ -2007,7 +2007,7 @@ void EditorApp::DrawTimeOfDayControls()
     if (ButtonRow("Season", {"Spring eq.", "Summer", "Autumn eq.", "Winter"}, pressed))
     {
         edited |= Assisi::Runtime::JumpSeason(*clock, 0.25 * static_cast<double>(pressed) *
-                                                          static_cast<double>(clock->yearLengthDays));
+                                              static_cast<double>(clock->yearLengthDays));
     }
     ImGui::SetItemTooltip("Northern names. A southern latitude gets the opposite season, which is correct.");
 
@@ -2340,7 +2340,7 @@ void EditorApp::DrawInspector()
         // header's hit box swallows it first. The send-toggle glyph below sits
         // exactly there.
         const bool headerOpen = ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen |
-                                                                                ImGuiTreeNodeFlags_AllowOverlap);
+                                                        ImGuiTreeNodeFlags_AllowOverlap);
 
         // The per-component send toggle, on the header. Drawn only on an entity
         // that replicates at all — nothing travels from a local entity, so the
@@ -2407,7 +2407,7 @@ void EditorApp::DrawInspector()
             ImGui::SameLine();
             ImGui::BeginDisabled(!editable);
             if (ImGui::SmallButton("Reset##component"))
-                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/{}};
+                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/ {}};
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Drop this instance's claim and follow the blueprint again.");
@@ -2538,11 +2538,11 @@ void EditorApp::DrawInspector()
                                           ImGuiSuggestionNavCallback, &nav);
 
     const auto toLower = [](std::string text)
-    {
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return text;
-    };
+                         {
+                             std::transform(text.begin(), text.end(), text.begin(),
+                                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                             return text;
+                         };
     const std::string queryLower = toLower(_addComponentBuf);
 
     if (queryLower.empty())
@@ -2575,13 +2575,13 @@ void EditorApp::DrawInspector()
         }
         std::sort(matches.begin(), matches.end(),
                   [](const Match &a, const Match &b)
-                  {
-                      if (a.pos != b.pos)
-                          return a.pos < b.pos;
-                      if (a.meta->name.size() != b.meta->name.size())
-                          return a.meta->name.size() < b.meta->name.size();
-                      return a.meta->name < b.meta->name;
-                  });
+            {
+                if (a.pos != b.pos)
+                    return a.pos < b.pos;
+                if (a.meta->name.size() != b.meta->name.size())
+                    return a.meta->name.size() < b.meta->name.size();
+                return a.meta->name < b.meta->name;
+            });
 
         constexpr std::size_t kMaxSuggestions = 8;
         const std::size_t shown = std::min(matches.size(), kMaxSuggestions);

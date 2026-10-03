@@ -68,7 +68,7 @@ struct SampleAllTypes
     AFIELD(transient) float runtimeCache = 0.0f; // must not appear in (de)serialize
 };
 
-// Distinct component to prove the SceneSerializer include is emitted once an
+// Distinct component to prove the EntityRef include is emitted once an
 // EntityRef field exists, and that multiple components in one header register.
 ACOMP()
 struct SampleRef

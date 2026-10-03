@@ -5,7 +5,8 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 
 #include <fstream>
@@ -64,7 +65,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
 
     const auto parentComesAlong = [&](ECS::Entity entity)
                                   {
-                                      const Parent *parent = scene.Get<Parent>(entity);
+                                      const ECS::Parent *parent = scene.Get<ECS::Parent>(entity);
                                       return parent != nullptr && parent->parent != ECS::NullEntity &&
                                              inSet.contains(EntityKey(parent->parent.index, parent->parent.generation));
                                   };
@@ -76,7 +77,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
     // Names first, so a reference between two selected entities resolves whichever
     // order they serialize in.
     std::unordered_set<std::string> usedNames;
-    std::vector<std::string>        names;
+    std::vector<std::string> names;
     names.reserve(entities.size());
     for (const ECS::Entity entity : entities)
     {
@@ -97,12 +98,12 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         {
             Core::Log::Warn("Blueprint: {}::{} on '{}' references '{}', which is not in the "
                             "selection - it is null in '{}'.",
-                            meta.name, field.name, names[owner],
-                            AuthoredName(scene, target), path.string());
+                            meta.name, field.name, names[owner], AuthoredName(scene, target),
+                            path.string());
         });
 
     nlohmann::json doc;
-    doc["version"]  = 2;
+    doc["version"] = 2;
     doc["entities"] = nlohmann::json::array();
 
     for (std::size_t i = 0; i < entities.size(); ++i)
@@ -110,7 +111,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         const ECS::Entity entity = entities[i];
 
         nlohmann::json written;
-        written["name"]       = names[i];
+        written["name"] = names[i];
         written["components"] = nlohmann::json::object();
 
         for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
@@ -139,7 +140,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         {
             if (scene.Has<ECS::Transform>(entity))
                 written["components"]["Transform"] =
-                    TransformToJson(InverseComposeTransform(origin, WorldTransformOf(scene, entity)));
+                    TransformToJson(ECS::InverseComposeTransform(origin, ECS::WorldTransformOf(scene, entity)));
         }
 
         doc["entities"].push_back(std::move(written));

@@ -14,6 +14,7 @@
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/StringPool.hpp>
+#include <Assisi/ECS/Entity.hpp>
 
 #include <array>
 #include <vector>
@@ -53,6 +54,14 @@ struct Tracked
 ACOMP(transient)
 struct TransientTag
 {
+};
+
+/// @brief A reflected entity reference, so the generated JSON's route through
+/// the entity-reference codec is exercised by the code reflectgen writes.
+ACOMP()
+struct Link
+{
+    AFIELD() ECS::Entity target = NullEntity;
 };
 
 /// @brief One of each reflected string type, so the generated JSON and the

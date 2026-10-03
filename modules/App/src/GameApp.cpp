@@ -11,6 +11,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
@@ -18,7 +19,6 @@
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -390,7 +390,7 @@ void GameApp::StepWorlds(float dt)
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
                               {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
         });
 }
 
@@ -484,7 +484,7 @@ void GameApp::OnUpdate(float dt)
             {
                 if (world.state != WorldState::Loading)
                 {
-                    SettleWorld(WorldStartContext(world), /*assetsPending=*/false);
+                    SettleWorld(WorldStartContext(world), /*assetsPending=*/ false);
                 }
             });
     }
@@ -538,12 +538,9 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     {
         // Blend physics-driven Transforms between their last two fixed-step poses,
         // so bodies move at the display's refresh rate rather than the physics
-        // rate. The resolver is required: a parented body's pose comes back in
-        // world space while its Transform is an offset from its parent, so without
-        // it every parented body drifts by its parent's transform once per frame.
+        // rate.
         ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _world->physics.InterpolateTransforms(_world->scene, GetInterpolationAlpha(),
-                                              ParentWorldResolver(_world->scene));
+        _world->physics.InterpolateTransforms(_world->scene, GetInterpolationAlpha());
         PlaceCharacterEyes(_world->scene, _world->physics, GetInterpolationAlpha());
     }
 
@@ -551,7 +548,7 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // from its *world* matrix, and one parented to a character that just moved
     // would otherwise sit where the previous frame computed — permanently a frame
     // behind whatever it is attached to.
-    _world->propagationTick = Runtime::PropagateTransforms(_world->scene, _world->propagationTick);
+    _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
 
     // A benchmark flies its route from the scene camera's lens: the route says
     // where the camera is, the level's Camera still says what it sees.

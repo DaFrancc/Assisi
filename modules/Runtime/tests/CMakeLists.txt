@@ -15,7 +15,6 @@ add_executable(Assisi-Runtime-Tests
   TestPerfScenes.cpp
   TestFrustum.cpp
   TestSceneSerializer.cpp
-  TestHierarchy.cpp
   TestLifecycle.cpp
   TestLightingSystem.cpp
   TestLodSelection.cpp

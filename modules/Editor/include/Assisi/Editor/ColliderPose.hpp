@@ -19,14 +19,13 @@ namespace Assisi::Editor
 /// and the descriptor's dimensions are absolute world units, so the overlay
 /// traces the body rather than the mesh. A parented entity's Transform is an
 /// offset from its parent, so the parent's world matrix is composed in exactly as
-/// App::ParentWorldResolver hands it to Physics; for an unparented one @p local
+/// Physics does, through ECS::ParentWorldMatrix; for an unparented one @p local
 /// already is the world pose.
 ///
 /// Reads the *parent's* propagated Transform::worldMatrix, so propagation must
 /// have run this frame. Not the entity's own world matrix, which carries its
 /// local scale: physics ignores that scale, and a non-uniformly scaled body would
 /// shear the rotation out of it.
-[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity,
-                                          const ECS::Transform &local);
+[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local);
 
 } // namespace Assisi::Editor

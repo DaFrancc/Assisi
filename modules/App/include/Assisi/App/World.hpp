@@ -216,7 +216,7 @@ struct World
     /// which drives the one-tick tail that picks up the final resolve.
     bool streamingPending = false;
 
-    /// Change-detection bookmark for Runtime::PropagateTransforms — the scene
+    /// Change-detection bookmark for ECS::PropagateTransforms — the scene
     /// tick at the end of this world's last propagation. Per world, not per
     /// renderer: one renderer serving two worlds would skip propagation in
     /// whichever it drew second.
@@ -286,7 +286,7 @@ void RemoveScreen(World &world, Mondrian::Screen &screen);
 /// is simply unset.
 class WorldManager
 {
-  public:
+public:
     WorldManager() = default;
 
     /// Waits out any in-flight background load before the worlds are destroyed —
@@ -596,7 +596,7 @@ class WorldManager
     /// @return how many worlds were destroyed.
     std::size_t DestroyAllExcept(World &keep);
 
-  private:
+private:
     // A vector, not a map: worlds number in the handful, so the O(n) name lookup
     // is cheaper than hashing, and creation order gives deterministic iteration.
     // unique_ptr elements keep addresses stable across insert/erase, which the
@@ -685,23 +685,6 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
 /// matrices of stale spawn poses. Call once per frame, after the fixed-step loop,
 /// for every simulated world that is not the one being rendered.
 void SyncUnrenderedWorld(World &world);
-
-/// @brief Builds the parent-world lookup physics needs to place and read back a
-/// parented entity's pose (Physics::PhysicsWorld::ParentWorldFn).
-///
-/// Every path that creates bodies from a scene or writes physics poses into
-/// Transforms must pass this, or a parented body is created at its local pose and
-/// then drifts by its parent's transform every frame afterwards. Blueprint
-/// instances make parented bodies ordinary rather than exotic — a car's wheels
-/// are under its body.
-///
-/// The lookup reads `Transform::worldMatrix`, which is transient and computed by
-/// Runtime::PropagateTransforms, so **propagate before building bodies** from a
-/// freshly loaded or restored scene. App::BuildSceneBodies does that in the right
-/// order; prefer it over calling RebuildSceneBodies directly.
-///
-/// The returned callable borrows @p scene and is valid for as long as it is.
-[[nodiscard]] Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene);
 
 /// @brief Rebuilds a scene's physics bodies in the order that works: **propagate
 /// first, then create bodies**.

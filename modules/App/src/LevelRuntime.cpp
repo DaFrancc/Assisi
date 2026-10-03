@@ -8,11 +8,11 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstddef>
@@ -80,8 +80,8 @@ Runtime::LevelResult LoadLevel(World &world, std::string_view virtualPath, const
     return {};
 }
 
-Runtime::LevelResult LoadLevelFile(World &world, const std::filesystem::path &path,
-                                   const LevelServices &services, const LevelLoadOptions &options)
+Runtime::LevelResult LoadLevelFile(World &world, const std::filesystem::path &path, const LevelServices &services,
+                                   const LevelLoadOptions &options)
 {
     if (options.reset == AssetCacheReset::ClearFirst)
         Runtime::ClearBlueprintCache();
@@ -149,7 +149,8 @@ std::string JoinLevelErrorMessage(JoinLevelError error, std::string_view path)
     case JoinLevelError::Unreadable:
         return "cannot read '" + std::string{path} + "'.";
     case JoinLevelError::ContentMismatch:
-        return "your copy of '" + std::string{path} + "' differs from the host's; sync the file from the host and "
+        return "your copy of '" + std::string{path} +
+               "' differs from the host's; sync the file from the host and "
                "retry.";
     case JoinLevelError::SystemsMissing:
         return "'" + std::string{path} + "' names a system this build does not declare.";
@@ -166,8 +167,7 @@ std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetS
         return std::unexpected(JoinLevelError::NoLevel);
     case NetSync::LevelAddressing::Virtual:
     {
-        const std::expected<std::filesystem::path, Core::AssetError> resolved =
-            Core::AssetSystem::Resolve(level.path);
+        const std::expected<std::filesystem::path, Core::AssetError> resolved = Core::AssetSystem::Resolve(level.path);
         if (!resolved)
             return std::unexpected(JoinLevelError::Unresolvable);
         file = *resolved;
@@ -243,15 +243,15 @@ StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorl
     scene.ForEachEntity(
         [&](ECS::Entity entity)
         {
-            const auto *parent = scene.Get<Runtime::Parent>(entity);
+            const auto *parent = scene.Get<ECS::Parent>(entity);
             if (parent != nullptr && !scene.IsAlive(parent->parent))
                 orphans.push_back(entity);
         });
     for (const ECS::Entity entity : orphans)
-        scene.Remove<Runtime::Parent>(entity);
+        scene.Remove<ECS::Parent>(entity);
 
     stripped.entities = doomed.size();
-    stripped.orphans  = orphans.size();
+    stripped.orphans = orphans.size();
     return stripped;
 }
 

@@ -182,18 +182,20 @@ TYPES: dict[str, TypeCodegen] = {
         'Mat4',
         '{{ {a}[0][0], {a}[0][1], {a}[0][2], {a}[0][3], {a}[1][0], {a}[1][1], {a}[1][2], {a}[1][3], {a}[2][0], {a}[2][1], {a}[2][2], {a}[2][3], {a}[3][0], {a}[3][1], {a}[3][2], {a}[3][3] }}',
         '{{ float _v[16] = {{ {a}[0][0], {a}[0][1], {a}[0][2], {a}[0][3], {a}[1][0], {a}[1][1], {a}[1][2], {a}[1][3], {a}[2][0], {a}[2][1], {a}[2][2], {a}[2][3], {a}[3][0], {a}[3][1], {a}[3][2], {a}[3][3] }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 16, _v)) return false; {a} = glm::mat4{{ _v[0], _v[1], _v[2], _v[3], _v[4], _v[5], _v[6], _v[7], _v[8], _v[9], _v[10], _v[11], _v[12], _v[13], _v[14], _v[15] }}; }}'),
-    # ECS::Entity — serialized through SceneSerializer, whose active context
-    # decides whether the reference is a name (a level file), an index within a
-    # moved set (entity migration) or a packed handle (an undo payload). Accepts
-    # both qualified and unqualified spellings.
+    # ECS::Entity — serialized through the entity-reference codec the running
+    # serializer installs, which decides whether the reference is a name (a level
+    # file), an index within a moved set (entity migration) or a packed handle (an
+    # undo payload). The codec seam lives in ECS, so a component with an entity
+    # field can be reflected in any module that links ECS. Accepts both qualified
+    # and unqualified spellings.
     'ECS::Entity': TypeCodegen(
         'EntityRef',
-        'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
-        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Runtime::SceneSerializer::RefToEntity(*_r); else {a} = Assisi::ECS::NullEntity; }}'),
+        'Assisi::ECS::EntityRefToJson({a})',
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::ECS::EntityRefFromJson(*_r); else {a} = Assisi::ECS::NullEntity; }}'),
     'Assisi::ECS::Entity': TypeCodegen(
         'EntityRef',
-        'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
-        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Runtime::SceneSerializer::RefToEntity(*_r); else {a} = Assisi::ECS::NullEntity; }}'),
+        'Assisi::ECS::EntityRefToJson({a})',
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::ECS::EntityRefFromJson(*_r); else {a} = Assisi::ECS::NullEntity; }}'),
     # ECS::InstanceId — a uint32 underneath and its own type on purpose, so the
     # codec can tell "which blueprint instance" from every other unsigned integer
     # and translate it to the instance's baseNetId on the wire. JSON carries the
@@ -339,8 +341,8 @@ _COMPONENT_MASK_TYPES = {
 }
 
 # EntityRef is meaningless in a standalone asset (there is no scene to resolve
-# a serial index against), and its codegen references Runtime::SceneSerializer,
-# which an asset's home module (e.g. Geometry) does not link. Forbid it.
+# a serial index against), and its codegen references the ECS entity-reference
+# codec, which an asset's home module (e.g. Geometry) does not link. Forbid it.
 _ENTITY_REF_TYPES = {'ECS::Entity', 'Assisi::ECS::Entity'}
 
 # reflectgen is default-deny: any non-transient AFIELD whose type is not in

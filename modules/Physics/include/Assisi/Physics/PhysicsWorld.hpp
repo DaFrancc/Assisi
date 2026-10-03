@@ -40,9 +40,8 @@ enum class BodyMotion : std::uint8_t
 /// @brief A position and orientation in world space.
 ///
 /// Deliberately not ECS::Transform, which is a *local* pose — one under a parent
-/// is an offset from that parent, the mismatch ParentWorldFn exists to undo. It
-/// also carries a scale and a cached world matrix that mean nothing to a body
-/// whose size comes from its collider.
+/// is an offset from that parent. It also carries a scale and a cached world
+/// matrix that mean nothing to a body whose size comes from its collider.
 struct Pose
 {
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
@@ -148,7 +147,7 @@ struct ContactEvent
 /// Destruction cleans up all bodies and unregisters Jolt types.
 class PhysicsWorld
 {
-  public:
+public:
     PhysicsWorld();
     ~PhysicsWorld();
 
@@ -161,9 +160,9 @@ class PhysicsWorld
     struct ColliderShapeDesc
     {
         ColliderShape shape = ColliderShape::Box;
-        glm::vec3 halfExtents{0.5f, 0.5f, 0.5f};     ///< Box.
-        float radius     = 0.5f;                     ///< Sphere/Capsule/Cylinder.
-        float halfHeight = 0.5f;                     ///< Capsule/Cylinder cylindrical half-height.
+        glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box.
+        float radius = 0.5f;                     ///< Sphere/Capsule/Cylinder.
+        float halfHeight = 0.5f;                 ///< Capsule/Cylinder cylindrical half-height.
     };
 
     /// @brief Creates a rigid body with the given collider and returns its component.
@@ -180,29 +179,7 @@ class PhysicsWorld
     /// @param motion  Static bodies never move; dynamic bodies fall under gravity;
     ///                kinematic bodies move only when something sets their pose.
     /// @param filter  What this body is, and what it interacts with.
-    RigidBody AddBody(const Pose &pose, const ColliderShapeDesc &shape, BodyMotion motion,
-                      CollisionFilter filter);
-
-    /// @brief Answers "what world matrix is this entity's Transform relative to?"
-    /// — its parent's, or null if it has none.
-    ///
-    /// Physics reasons in world space; a Transform under a parent is an offset
-    /// *from* that parent. Nothing here knows that on its own, and the two
-    /// disagree silently: a body spawns at its local pose, and the world pose
-    /// written back is multiplied by the parent again by whatever propagates
-    /// transforms. A parented body therefore both starts in the wrong place and
-    /// drifts by its parent's transform every frame.
-    ///
-    /// Supplied by the caller rather than read here because the parent link lives
-    /// a layer up (Runtime::Parent) while Physics sits below it — Physics links
-    /// Core + ECS + Jolt and deliberately not Runtime, which links Render and
-    /// would poison the headless server's link. App provides one via
-    /// App::ParentWorldResolver. An empty function means "nothing in this scene
-    /// is parented", the common case, and costs a single branch.
-    ///
-    /// The parent's world matrix must be current, so propagate transforms before
-    /// building bodies from a freshly loaded scene.
-    using ParentWorldFn = std::function<const glm::mat4 *(Assisi::ECS::Entity entity)>;
+    RigidBody AddBody(const Pose &pose, const ColliderShapeDesc &shape, BodyMotion motion, CollisionFilter filter);
 
     /// @brief Creates a Jolt body for @p entity from its authored descriptor at
     /// @p transform's pose, and attaches the transient RigidBody component.
@@ -212,10 +189,12 @@ class PhysicsWorld
     /// `isStatic`, collider from the shape fields, CCD flag). Used by level
     /// load, play/stop scene restores, and live component-add in the editor.
     ///
-    /// @param parentWorld Optional; see ParentWorldFn. Pass it whenever the
-    ///                    entity might be parented.
+    /// Jolt works in world space and a parented @p transform is an offset from
+    /// its parent, so it is placed under the parent's world matrix — which must
+    /// already be propagated. Without that a parented body spawns at its local
+    /// pose and the writeback multiplies it by the parent again every frame.
     RigidBody AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                    const RigidBodyDescriptor &descriptor, const ParentWorldFn &parentWorld = {});
+                                    const RigidBodyDescriptor &descriptor);
 
     /// @brief Rebuilds every body and character from the scene's descriptors:
     /// Clear(), then RebuildEntityPhysics for each entity carrying either
@@ -230,9 +209,9 @@ class PhysicsWorld
     /// abandoning the rest of the scene: one bad descriptor should cost one
     /// object, not a level with no physics in it.
     ///
-    /// @param parentWorld Optional; see ParentWorldFn. The world matrices it
-    ///                    reads must already be propagated.
-    void RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &parentWorld = {});
+    /// Parented entities are placed under their parents' world matrices, which
+    /// must already be propagated.
+    void RebuildSceneBodies(ECS::Scene &scene);
 
     /// @brief Advances the simulation by `deltaTime` seconds.
     ///
@@ -317,9 +296,8 @@ class PhysicsWorld
     /// @param sweep   Direction and length together; a zero sweep finds nothing.
     /// @param filter  What is asking, and what it may find.
     /// @param ignore  An entity to skip, or NullEntity to skip nothing.
-    [[nodiscard]] std::optional<QueryHit> CastShape(const ColliderShapeDesc &shape, const Pose &start,
-                                                    glm::vec3 sweep, CollisionFilter filter,
-                                                    ECS::Entity ignore) const;
+    [[nodiscard]] std::optional<QueryHit> CastShape(const ColliderShapeDesc &shape, const Pose &start, glm::vec3 sweep,
+                                                    CollisionFilter filter, ECS::Entity ignore) const;
 
     /// @brief Every entity whose body intersects a shape held still.
     ///
@@ -372,10 +350,9 @@ class PhysicsWorld
     /// faces; that belongs to whatever is aiming it, and overwriting it here
     /// would snap a turning character back to forward every frame.
     ///
-    /// @param parentWorld Optional; see ParentWorldFn. Pass it whenever a body
-    ///                    might be parented — members of a blueprint instance
-    ///                    routinely are.
-    void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld = {});
+    /// A parented entity's pose is written back relative to its parent's world
+    /// matrix, so the parent is not applied twice by the next propagation.
+    void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha);
 
     /// @brief Writes each dynamic body's *last stepped* pose into its Transform,
     /// with no blend.
@@ -387,10 +364,7 @@ class PhysicsWorld
     /// InterpolateTransforms never runs for these worlds — so without this their
     /// Transforms would sit at spawn pose forever no matter how much the bodies
     /// move. Call once per frame after the fixed-step loop, before propagating.
-    void SyncTransforms(Assisi::ECS::Scene &scene, const ParentWorldFn &parentWorld = {})
-    {
-        InterpolateTransforms(scene, 1.f, parentWorld);
-    }
+    void SyncTransforms(Assisi::ECS::Scene &scene) { InterpolateTransforms(scene, 1.f); }
 
     // --- Authoritative body state (replication) -------------------------------
     //
@@ -566,11 +540,11 @@ class PhysicsWorld
     /// @p transform positions the character's **feet**, matching how the
     /// descriptor is authored — the capsule is built standing on that point.
     ///
-    /// @param parentWorld Optional; see ParentWorldFn. Pass it whenever the
-    ///                    entity might be parented.
-    std::expected<Character, PhysicsError> AddCharacterFromDescriptor(
-        ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-        const CharacterDescriptor &descriptor, const ParentWorldFn &parentWorld = {});
+    /// A parented @p transform is placed under the parent's propagated world
+    /// matrix, as AddBodyFromDescriptor does.
+    std::expected<Character, PhysicsError> AddCharacterFromDescriptor(ECS::Scene &scene, ECS::Entity entity,
+                                                                      const ECS::Transform &transform,
+                                                                      const CharacterDescriptor &descriptor);
 
     /// @brief Removes and destroys a character, inner body and all.
     ///
@@ -670,10 +644,8 @@ class PhysicsWorld
     /// entity, whichever kind it is. Rebuilding an entity that has no descriptor
     /// simply leaves it with none.
     ///
-    /// @param parentWorld Optional; see ParentWorldFn. Its world matrices must
-    ///                    already be propagated.
-    std::expected<void, PhysicsError> RebuildEntityPhysics(ECS::Scene &scene, ECS::Entity entity,
-                                                           const ParentWorldFn &parentWorld = {});
+    /// A parented entity's parent world matrix must already be propagated.
+    std::expected<void, PhysicsError> RebuildEntityPhysics(ECS::Scene &scene, ECS::Entity entity);
 
     /// @brief Destroys whatever physics @p entity has and removes its handle
     /// component. Does nothing to an entity that has none.
@@ -691,8 +663,7 @@ class PhysicsWorld
     ///
     /// Does nothing to an entity with no descriptor, or with a descriptor but no
     /// live object — use RebuildEntityPhysics to create one.
-    void ReconfigureEntityPhysics(ECS::Scene &scene, ECS::Entity entity,
-                                  const ParentWorldFn &parentWorld = {});
+    void ReconfigureEntityPhysics(ECS::Scene &scene, ECS::Entity entity);
 
     /// @brief Freezes @p entity's physics in place, or releases it.
     ///
@@ -703,8 +674,7 @@ class PhysicsWorld
     void SetEntityPhysicsFrozen(ECS::Scene &scene, ECS::Entity entity, bool frozen);
 
     /// @brief Moves @p entity's physics to a pose, whichever kind it has.
-    void SetEntityTransform(ECS::Scene &scene, ECS::Entity entity, glm::vec3 position,
-                            glm::quat rotation);
+    void SetEntityTransform(ECS::Scene &scene, ECS::Entity entity, glm::vec3 position, glm::quat rotation);
 
     /// @brief Moves a kinematic body to a pose *and gives it the velocity that
     /// move implies*, over a step of @p deltaTime.
@@ -718,8 +688,7 @@ class PhysicsWorld
     ///
     /// No-op for a static body, a non-positive @p deltaTime, or a handle not in
     /// the simulation.
-    void MoveBodyKinematic(const RigidBody &body, glm::vec3 position, glm::quat rotation,
-                           float deltaTime);
+    void MoveBodyKinematic(const RigidBody &body, glm::vec3 position, glm::quat rotation, float deltaTime);
 
     /// @brief Removes and destroys all bodies and characters, resetting the
     /// world to an empty state.
@@ -731,7 +700,7 @@ class PhysicsWorld
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
 
-  private:
+private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

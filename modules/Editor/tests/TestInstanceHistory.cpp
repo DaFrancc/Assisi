@@ -25,11 +25,11 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -62,12 +62,11 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 /// car.abp: a body with a Camera, and a wheel parented to it.
 nlohmann::json CarFile()
 {
-    return {{"version", 2},
-        {"entities",
-         nlohmann::json::array({{{"name", "body"},
-                                   {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
-                                   {{"name", "wheel_fl"},
-                                       {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
+    return {
+        {"version", 2},
+        {"entities", nlohmann::json::array(
+             {{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
+                 {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId id, std::string_view name)
@@ -115,15 +114,13 @@ TEST_CASE("EditHistory: editing a member records an override, and undo takes bot
     CHECK(scene.Get<Camera>(body)->fovDegrees == doctest::Approx(60.f));
     const Runtime::BlueprintInstance *reverted = table.Find(*id);
     REQUIRE(reverted != nullptr);
-    const bool stillClaimed =
-        reverted->overrides.contains("body") && reverted->overrides.at("body").contains("Camera");
+    const bool stillClaimed = reverted->overrides.contains("body") && reverted->overrides.at("body").contains("Camera");
     CHECK_FALSE(stillClaimed);
 
     // And redo puts both back.
     (void)history.Redo();
     CHECK(scene.Get<Camera>(body)->fovDegrees == doctest::Approx(90.f));
-    CHECK(table.Find(*id)->overrides.at("body").at("Camera").at("fovDegrees").get<float>() ==
-          doctest::Approx(90.f));
+    CHECK(table.Find(*id)->overrides.at("body").at("Camera").at("fovDegrees").get<float>() == doctest::Approx(90.f));
 }
 
 TEST_CASE("EditHistory: removing a component from a member records it as a removal")
@@ -155,8 +152,7 @@ TEST_CASE("EditHistory: removing a component from a member records it as a remov
     CHECK(scene.Get<Camera>(body) != nullptr);
     const Runtime::BlueprintInstance *reverted = table.Find(*id);
     REQUIRE(reverted != nullptr);
-    const bool stillClaimed =
-        reverted->overrides.contains("body") && reverted->overrides.at("body").contains("Camera");
+    const bool stillClaimed = reverted->overrides.contains("body") && reverted->overrides.at("body").contains("Camera");
     CHECK_FALSE(stillClaimed);
 }
 
@@ -170,7 +166,7 @@ TEST_CASE("EditHistory: a reference override is recorded by name, not by handle"
     const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
-    const ECS::Entity body  = MemberOf(scene, table, *id, "body");
+    const ECS::Entity body = MemberOf(scene, table, *id, "body");
     const ECS::Entity wheel = MemberOf(scene, table, *id, "wheel_fl");
     REQUIRE(body != ECS::NullEntity);
     REQUIRE(wheel != ECS::NullEntity);
@@ -179,9 +175,9 @@ TEST_CASE("EditHistory: a reference override is recorded by name, not by handle"
 
     // Unparent the wheel, then point it back at the body — the round trip a user
     // makes with the entity picker.
-    const auto parentId = Core::Reflect::ComponentIdOf<Runtime::Parent>();
+    const auto parentId = Core::Reflect::ComponentIdOf<ECS::Parent>();
     history.RecordBefore(wheel, parentId, "Edit Parent", wheel);
-    scene.GetMut<Runtime::Parent>(wheel)->parent = ECS::NullEntity;
+    scene.GetMut<ECS::Parent>(wheel)->parent = ECS::NullEntity;
     history.CommitGesture(wheel, parentId);
 
     const Runtime::BlueprintInstance *row = table.Find(*id);
@@ -189,7 +185,7 @@ TEST_CASE("EditHistory: a reference override is recorded by name, not by handle"
     CHECK(row->overrides.at("wheel_fl").at("Parent").at("parent").is_null());
 
     history.RecordBefore(wheel, parentId, "Edit Parent", wheel);
-    scene.GetMut<Runtime::Parent>(wheel)->parent = body;
+    scene.GetMut<ECS::Parent>(wheel)->parent = body;
     history.CommitGesture(wheel, parentId);
 
     // A name, not a raw handle: a capture serializes references as packed

@@ -12,6 +12,7 @@
 #include "PhysicsInternal.hpp"
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 
@@ -47,7 +48,7 @@ JPH::Vec3 ClampedBoxHalfExtents(glm::vec3 halfExtents)
 
 JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
 {
-    const float radius     = glm::max(shape.radius, JPH::cDefaultConvexRadius);
+    const float radius = glm::max(shape.radius, JPH::cDefaultConvexRadius);
     const float halfHeight = glm::max(shape.halfHeight, JPH::cDefaultConvexRadius);
     switch (shape.shape)
     {
@@ -70,15 +71,16 @@ JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
 // still slip past the fixed margin are handled per-body via CCD (enableCCD).
 // Jolt defaults: 0.02 m slop, 0.2 Baumgarte, 0.02 m speculative distance, 0.75
 // linear-cast threshold.
-constexpr float kPenetrationSlop          = 0.01f; ///< Allowed resting overlap (meters) — Unity-like contact offset.
-constexpr float kSpeculativeContactDist   = 0.05f; ///< Predictive contact margin (meters); catches moderate impacts in one solve.
+constexpr float kPenetrationSlop = 0.01f; ///< Allowed resting overlap (meters) — Unity-like contact offset.
+constexpr float kSpeculativeContactDist =
+    0.05f; ///< Predictive contact margin (meters); catches moderate impacts in one solve.
 // CCD (LinearCast) engages once a body moves more than this * its shape's inner
 // radius in a step. Below Jolt's 0.75 default so CCD-enabled bodies stop sinking
 // at lower speeds (no "floaty" landings), but not so low that they sweep on
 // nearly every step: 0.3 keeps sweeps to genuinely fast motion. Only costs CPU
 // for bodies with CCD on (enableCCD), so the perf downside is bounded. For a 1 m
 // box (inner radius 0.5) this triggers at ~9 m/s / a ~4 m drop.
-constexpr float kLinearCastThreshold      = 0.3f;
+constexpr float kLinearCastThreshold = 0.3f;
 
 PhysicsWorld::PhysicsWorld()
 {
@@ -94,10 +96,10 @@ PhysicsWorld::PhysicsWorld()
     // within a single step, and a small allowed overlap keeps resting contacts
     // from jittering. Baumgarte and solver iteration counts stay at Jolt's
     // defaults — a gentle correction is less visible than an aggressive one.
-    JPH::PhysicsSettings settings   = _impl->physicsSystem.GetPhysicsSettings();
-    settings.mPenetrationSlop            = kPenetrationSlop;
+    JPH::PhysicsSettings settings = _impl->physicsSystem.GetPhysicsSettings();
+    settings.mPenetrationSlop = kPenetrationSlop;
     settings.mSpeculativeContactDistance = kSpeculativeContactDist;
-    settings.mLinearCastThreshold        = kLinearCastThreshold;
+    settings.mLinearCastThreshold = kLinearCastThreshold;
     _impl->physicsSystem.SetPhysicsSettings(settings);
 
     /* Gravity: 9.81 m/s² downward (−Y). */
@@ -128,8 +130,7 @@ RigidBody PhysicsWorld::AddBody(const Pose &pose, const ColliderShapeDesc &shape
     // A sensor that fell under gravity would leave the volume it was authored as,
     // so Dynamic collapses to Kinematic here. Static stays static: that is the
     // cheap sensor, which notices only bodies that are awake.
-    const BodyMotion effective =
-        sensor && motion == BodyMotion::Dynamic ? BodyMotion::Kinematic : motion;
+    const BodyMotion effective = sensor && motion == BodyMotion::Dynamic ? BodyMotion::Kinematic : motion;
 
     JPH::EMotionType joltMotion = JPH::EMotionType::Dynamic;
     if (effective == BodyMotion::Static)
@@ -141,13 +142,12 @@ RigidBody PhysicsWorld::AddBody(const Pose &pose, const ColliderShapeDesc &shape
 
     JPH::BodyCreationSettings settings(
         MakeShape(shape), JPH::RVec3(pose.position.x, pose.position.y, pose.position.z),
-        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized(),
-        joltMotion, layer);
+        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized(), joltMotion, layer);
 
     // Always allocate motion properties so the motion type can be changed at runtime
     // (e.g. making a Static body Dynamic via SetBodyMotionType).
     settings.mAllowDynamicOrKinematic = true;
-    settings.mIsSensor                = sensor;
+    settings.mIsSensor = sensor;
 
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
@@ -184,13 +184,13 @@ RigidBody PhysicsWorld::AddBody(const Pose &pose, const ColliderShapeDesc &shape
 }
 
 RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                              const RigidBodyDescriptor &descriptor, const ParentWorldFn &parentWorld)
+                                              const RigidBodyDescriptor &descriptor)
 {
     const BodyMotion motion = descriptor.isStatic ? BodyMotion::Static : BodyMotion::Dynamic;
-    const ColliderShapeDesc shape{.shape       = descriptor.shape,
+    const ColliderShapeDesc shape{.shape = descriptor.shape,
                                   .halfExtents = descriptor.halfExtents,
-                                  .radius      = descriptor.radius,
-                                  .halfHeight  = descriptor.halfHeight};
+                                  .radius = descriptor.radius,
+                                  .halfHeight = descriptor.halfHeight};
 
     // Jolt places bodies in world space, and a parented Transform is an offset
     // from its parent — the same mismatch InterpolateTransforms undoes on the way
@@ -199,19 +199,15 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     // simply ignored.
     glm::vec3 position = transform.position;
     glm::quat rotation = transform.rotation;
-    if (parentWorld)
+    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
     {
-        if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
-        {
-            const ECS::Transform pose = ECS::PoseUnderParent(transform, *parent);
-            position                  = pose.position;
-            rotation                  = pose.rotation;
-        }
+        const ECS::Transform pose = ECS::PoseUnderParent(transform, *parent);
+        position = pose.position;
+        rotation = pose.rotation;
     }
 
     const RigidBody body =
-        AddBody(Pose{rotation, position}, shape, motion,
-                CollisionFilter{descriptor.collidesWith, descriptor.channel});
+        AddBody(Pose{rotation, position}, shape, motion, CollisionFilter{descriptor.collidesWith, descriptor.channel});
     if (descriptor.enableCCD)
         SetBodyCCD(body, true);
     (void)scene.Add<RigidBody>(entity, body);
@@ -223,13 +219,13 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     if (!ToJolt(body.bodyId).IsInvalid())
     {
         _impl->bodyEntities[ToJolt(body.bodyId).GetIndexAndSequenceNumber()] = entity;
-        _impl->entityBodies[entity]                                 = ToJolt(body.bodyId);
+        _impl->entityBodies[entity] = ToJolt(body.bodyId);
     }
 
     return body;
 }
 
-void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &parentWorld)
+void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene)
 {
     Clear();
 
@@ -240,7 +236,7 @@ void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &pa
     {
         (void)transform;
         (void)descriptor;
-        if (!RebuildEntityPhysics(scene, entity, parentWorld))
+        if (!RebuildEntityPhysics(scene, entity))
         {
             Assisi::Core::Log::Error("PhysicsWorld: entity {} has no usable physics.", entity.index);
         }
@@ -254,7 +250,7 @@ void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &pa
         {
             continue; // already built above, or refused there for carrying both
         }
-        if (!RebuildEntityPhysics(scene, entity, parentWorld))
+        if (!RebuildEntityPhysics(scene, entity))
         {
             Assisi::Core::Log::Error("PhysicsWorld: entity {} has no usable physics.", entity.index);
         }
@@ -353,8 +349,7 @@ void PhysicsWorld::Update(float deltaTime)
        Update() arguments; the pool is shared (one set of workers), the allocator
        is per-world so two worlds' steps never touch the same scratch stack (see
        JoltRuntime). */
-    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc,
-                                &_impl->jolt.JobSystem());
+    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jolt.JobSystem());
 
     _impl->ResolveContactEvents();
 }
@@ -392,8 +387,8 @@ void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
 
         const JPH::RVec3 position = bodies.GetPosition(id);
         const JPH::Quat rotation = bodies.GetRotation(id);
-        const JPH::Vec3 linear   = bodies.GetLinearVelocity(id);
-        const JPH::Vec3 angular  = bodies.GetAngularVelocity(id);
+        const JPH::Vec3 linear = bodies.GetLinearVelocity(id);
+        const JPH::Vec3 angular = bodies.GetAngularVelocity(id);
 
         out.push_back(ActiveBodyState{
                 entity,
@@ -447,7 +442,8 @@ void PhysicsWorld::ApplyBodyState(const RigidBody &body, glm::vec3 position, glm
         // to a sleeping body, so zeroing an about-to-sleep body has to happen
         // while it is still awake.
         bodies.SetLinearVelocity(ToJolt(body.bodyId), JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
-        bodies.SetAngularVelocity(ToJolt(body.bodyId), JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+        bodies.SetAngularVelocity(ToJolt(body.bodyId),
+                                  JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
 
         if (!activate)
             bodies.DeactivateBody(ToJolt(body.bodyId));
@@ -467,8 +463,7 @@ std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBody &
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::RVec3 pos = bodies.GetPosition(ToJolt(body.bodyId));
     const JPH::Quat rot = bodies.GetRotation(ToJolt(body.bodyId));
-    return {glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ()),
-            glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ())};
+    return {glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ()), glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ())};
 }
 
 std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetBodyVelocity(const RigidBody &body) const
@@ -485,8 +480,7 @@ std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetBodyVelocity(const RigidBody &b
 
     const JPH::Vec3 lin = bodies.GetLinearVelocity(ToJolt(body.bodyId));
     const JPH::Vec3 ang = bodies.GetAngularVelocity(ToJolt(body.bodyId));
-    return {glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()),
-            glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ())};
+    return {glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()), glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ())};
 }
 
 bool PhysicsWorld::IsBodyCCDEnabled(const RigidBody &body) const
@@ -559,13 +553,11 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
         // Outside the lock: waking takes its own body locks, and everything read
         // above came from the locked body rather than through an interface that
         // would have taken the same one again.
-        _impl->WakeInside(touched,
-                          CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))});
+        _impl->WakeInside(touched, CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))});
     }
 }
 
-void PhysicsWorld::MoveBodyKinematic(const RigidBody &body, glm::vec3 position, glm::quat rotation,
-                                     float deltaTime)
+void PhysicsWorld::MoveBodyKinematic(const RigidBody &body, glm::vec3 position, glm::quat rotation, float deltaTime)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     if (!bodies.IsAdded(ToJolt(body.bodyId)) || deltaTime <= 0.f)
@@ -582,8 +574,7 @@ void PhysicsWorld::MoveBodyKinematic(const RigidBody &body, glm::vec3 position, 
     // velocity is the whole point — it is what pushes resting bodies along and
     // what a character standing on this reads to ride it.
     bodies.MoveKinematic(ToJolt(body.bodyId), JPH::RVec3(position.x, position.y, position.z),
-                         JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
-                         deltaTime);
+                         JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), deltaTime);
 }
 
 void PhysicsWorld::SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity)
@@ -656,8 +647,7 @@ void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
     // quality is a stored property (our bodies always have motion properties, since
     // AddBody sets mAllowDynamicOrKinematic), so it sticks and takes effect once
     // the body is Dynamic again. Jolt no-ops safely if a body genuinely has none.
-    const JPH::EMotionQuality quality =
-        enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+    const JPH::EMotionQuality quality = enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
     bodies.SetMotionQuality(ToJolt(body.bodyId), quality);
 }
 
@@ -671,10 +661,8 @@ void PhysicsWorld::SetBodyMotionType(const RigidBody &body, BodyMotion motion)
 
     // Same rule AddBody applies: a sensor is never dynamic, because one falling
     // under gravity would leave the volume it was authored as.
-    const BodyMotion effective = filter.channel == CollisionChannel::Trigger &&
-                                 motion == BodyMotion::Dynamic
-                                     ? BodyMotion::Kinematic
-                                     : motion;
+    const BodyMotion effective =
+        filter.channel == CollisionChannel::Trigger && motion == BodyMotion::Dynamic ? BodyMotion::Kinematic : motion;
 
     auto &ids = _impl->movingBodyIds;
     if (effective == BodyMotion::Static)
@@ -686,9 +674,8 @@ void PhysicsWorld::SetBodyMotionType(const RigidBody &body, BodyMotion motion)
     }
     else
     {
-        const JPH::EMotionType motionType = effective == BodyMotion::Kinematic
-                                                ? JPH::EMotionType::Kinematic
-                                                : JPH::EMotionType::Dynamic;
+        const JPH::EMotionType motionType =
+            effective == BodyMotion::Kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
         bodies.SetMotionType(ToJolt(body.bodyId), motionType, JPH::EActivation::Activate);
 
         // Kinematic counts as moving: something can drive one through the

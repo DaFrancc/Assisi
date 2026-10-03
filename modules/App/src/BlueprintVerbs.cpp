@@ -5,8 +5,8 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <vector>
@@ -14,8 +14,7 @@
 namespace Assisi::App
 {
 
-std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source,
-                                              const ECS::Transform &placement)
+std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source, const ECS::Transform &placement)
 {
     const std::expected<ECS::InstanceId, Runtime::LevelError> id =
         Runtime::SceneSerializer::ExpandInstance(world.scene, world.instances, source, placement);
@@ -41,8 +40,7 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
     // exists: a member parented to another is placed from its parent's world
     // matrix, and the matrix does not exist until propagation has run over the
     // entities that were just created.
-    world.propagationTick = Runtime::PropagateTransforms(world.scene, world.propagationTick);
-    const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(world.scene);
+    world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
 
     for (const ECS::Entity member : members)
     {
@@ -52,7 +50,7 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
         if (world.scene.Get<Physics::RigidBody>(member) == nullptr &&
             world.scene.Get<Physics::Character>(member) == nullptr)
         {
-            (void)world.physics.RebuildEntityPhysics(world.scene, member, parentWorld);
+            (void)world.physics.RebuildEntityPhysics(world.scene, member);
         }
     }
 

@@ -9,6 +9,7 @@
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/NetSync/InstanceRecord.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
@@ -67,9 +68,8 @@ bool SameBytes(std::span<const std::byte> left, std::span<const std::byte> right
 /// Forward, not inverse-composing the live component: the pair is an exact inverse
 /// in arithmetic but not in float, and this ends in a byte comparison. Repeating
 /// the client's operation on the client's operands is what makes it exact.
-bool WritePlacedTransform(const Core::Reflect::ComponentMeta &meta,
-                          const std::vector<std::byte> &authored, const ECS::Transform &placement,
-                          Core::BitWriter &out)
+bool WritePlacedTransform(const Core::Reflect::ComponentMeta &meta, const std::vector<std::byte> &authored,
+                          const ECS::Transform &placement, Core::BitWriter &out)
 {
     Core::BitReader reader{authored};
     (void)Core::Reflect::ReadComponentId(reader); // the block leads with it
@@ -77,15 +77,14 @@ bool WritePlacedTransform(const Core::Reflect::ComponentMeta &meta,
     if (!Core::Reflect::ReadComponent(meta, &local, reader, /*appliedMask=*/ nullptr, nullptr))
         return false;
 
-    const ECS::Transform placed = Runtime::ComposeTransform(placement, local);
+    const ECS::Transform placed = ECS::ComposeTransform(placement, local);
     return Core::Reflect::WriteComponent(meta, &placed, out, Core::Reflect::kAllFields, nullptr);
 }
 
 class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
 {
 public:
-    WorldInstanceInfo(World &world, std::vector<std::string> manifest)
-        : _world(world), _manifest(std::move(manifest))
+    WorldInstanceInfo(World &world, std::vector<std::string> manifest) : _world(world), _manifest(std::move(manifest))
     {
     }
 
@@ -116,8 +115,8 @@ public:
             return false;
 
         out.blueprintIndex = static_cast<std::uint32_t>(index);
-        out.memberCount    = static_cast<std::uint32_t>((*definition)->members.size());
-        out.placement      = row->transform;
+        out.memberCount = static_cast<std::uint32_t>((*definition)->members.size());
+        out.placement = row->transform;
         return true;
     }
 
@@ -176,8 +175,7 @@ public:
         // A parented member is relative to one that already absorbed the placement,
         // so composing would apply it twice. No other component is rewritten after
         // it is decoded.
-        if (id == Core::Reflect::ComponentIdOf<ECS::Transform>() &&
-            !(*definition)->members[memberIndex].parented)
+        if (id == Core::Reflect::ComponentIdOf<ECS::Transform>() && !(*definition)->members[memberIndex].parented)
         {
             Core::BitWriter placed;
             if (!WritePlacedTransform(*meta, *authored, row->transform, placed))
@@ -214,7 +212,7 @@ public:
         }
 
         Runtime::LevelInstance entry;
-        entry.source    = _manifest[record.blueprintIndex];
+        entry.source = _manifest[record.blueprintIndex];
         entry.transform = record.placement;
         // No name: a name is what a *file* calls an instance, and no file placed
         // this one. No overrides either — the server sends member state as
@@ -291,16 +289,14 @@ private:
 
 } // namespace
 
-void InstallInstanceInfoProvider(NetSync::ReplicationServer &server, World &world,
-                                 std::vector<std::string> manifest)
+void InstallInstanceInfoProvider(NetSync::ReplicationServer &server, World &world, std::vector<std::string> manifest)
 {
     if (!ManifestIsUsable(manifest))
         return;
     server.SetInstanceInfoProvider(std::make_unique<WorldInstanceInfo>(world, std::move(manifest)));
 }
 
-void InstallInstanceExpander(NetSync::ReplicationClient &client, World &world,
-                             std::vector<std::string> manifest)
+void InstallInstanceExpander(NetSync::ReplicationClient &client, World &world, std::vector<std::string> manifest)
 {
     if (!ManifestIsUsable(manifest))
         return;

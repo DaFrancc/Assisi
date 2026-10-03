@@ -26,10 +26,10 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -72,7 +72,8 @@ ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::Instanc
 TEST_CASE("Prepared form: every component a member declares is encoded once")
 {
     const std::filesystem::path root = FreshRoot("blocks");
-    Write(root, "car.abp", {{"version", 2},
+    Write(root, "car.abp",
+          {{"version", 2},
               {"entities", nlohmann::json::array({{{"name", "body"},
                                                      {"components",
                                                       {{"Camera", {{"fovDegrees", 55.f}}},
@@ -104,11 +105,11 @@ TEST_CASE("Prepared form: every component a member declares is encoded once")
 TEST_CASE("Prepared form: a spawn decodes to the same values a JSON load produces")
 {
     const std::filesystem::path root = FreshRoot("equal");
-    Write(root, "car.abp", {{"version", 2},
+    Write(root, "car.abp",
+          {{"version", 2},
               {"entities", nlohmann::json::array({{{"name", "body"},
                                                      {"components",
-                                                      {{"Camera",
-                                                          {{"fovDegrees", 77.f}, {"isActive", true}}},
+                                                      {{"Camera", {{"fovDegrees", 77.f}, {"isActive", true}}},
                                                           {"Transform",
                                                            {{"position", {1.f, 2.f, 3.f}},
                                                                {"rotation", {1.f, 0.f, 0.f, 0.f}},
@@ -138,20 +139,20 @@ TEST_CASE("Prepared form: two spawns hold their own vector storage")
     const std::filesystem::path root = FreshRoot("vectors");
     // The case a byte copy would fail: materialOverrides is a std::vector, so its
     // bytes are a pointer.
-    Write(root, "car.abp",
-          {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"},
-                                                     {"components",
-                                                      {{"MeshRenderer",
-                                                          {{"mesh",
-                                                              {{"guid", "00000000-0000-0000-0000-000000000001"}}},
-                                                              {"materialOverrides",
-                                                               nlohmann::json::array(
-                                                                   {{{"guid", "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd"}}})}}}}}}})}});
+    Write(
+        root, "car.abp",
+        {{"version", 2},
+            {"entities", nlohmann::json::array(
+                 {{{"name", "body"},
+                     {"components",
+                      {{"MeshRenderer",
+                          {{"mesh", {{"guid", "00000000-0000-0000-0000-000000000001"}}},
+                              {"materialOverrides",
+                               nlohmann::json::array({{{"guid", "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd"}}})}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
-    const auto first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto first = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
@@ -175,15 +176,15 @@ TEST_CASE("Prepared form: two spawns hold their own vector storage")
 TEST_CASE("Prepared form: a reference decodes to this instance's member, not the other's")
 {
     const std::filesystem::path root = FreshRoot("refs");
-    Write(root, "car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"}, {"components", {}}},
-                                                     {{"name", "wheel"},
-                                                         {"components",
-                                                          {{"Parent", {{"parent", "body"}}}}}}})}});
+    Write(root, "car.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({{{"name", "body"}, {"components", {}}},
+                                         {{"name", "wheel"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
-    const auto first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto first = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
@@ -191,7 +192,7 @@ TEST_CASE("Prepared form: a reference decodes to this instance's member, not the
     // The block stores the *member index*; the codec's reference hook turns it into
     // a handle at decode time, which is why nothing has to walk the decoded
     // component afterwards looking for references to patch.
-    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(MemberOf(scene, table, *second, "wheel"));
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(MemberOf(scene, table, *second, "wheel"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == MemberOf(scene, table, *second, "body"));
     CHECK(parent->parent != MemberOf(scene, table, *first, "body"));
@@ -200,12 +201,11 @@ TEST_CASE("Prepared form: a reference decodes to this instance's member, not the
 TEST_CASE("Prepared form: an overridden component takes the JSON path and the override survives")
 {
     const std::filesystem::path root = FreshRoot("override");
-    Write(root, "car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"},
-                                                     {"components",
-                                                      {{"Camera",
-                                                          {{"fovDegrees", 55.f},
-                                                              {"isActive", true}}}}}}})}});
+    Write(root, "car.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 55.f}, {"isActive", true}}}}}}})}});
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array()},
@@ -229,10 +229,10 @@ TEST_CASE("Prepared form: an overridden component takes the JSON path and the ov
 TEST_CASE("Prepared form: a blueprint naming a reference it does not declare is unusable")
 {
     const std::filesystem::path root = FreshRoot("badref");
-    Write(root, "car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "wheel"},
-                                                     {"components",
-                                                      {{"Parent", {{"parent", "chassis"}}}}}}})}});
+    Write(root, "car.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "chassis"}}}}}}})}});
 
     // Caught when the definition is built rather than at every spawn: a blueprint
     // whose wiring names nothing is broken about itself, not about where it is used.
@@ -260,9 +260,8 @@ namespace
 nlohmann::json MistypedCar()
 {
     return {{"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "body"},
-                                               {"components",
-                                                {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+        {"entities",
+         nlohmann::json::array({{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
 }
 
 } // namespace
@@ -284,24 +283,24 @@ TEST_CASE("Prepared form: a member value of the wrong type is unusable, not a th
     CHECK_NOTHROW((void)Runtime::GetBlueprintDefinition("car.abp"));
     CHECK_FALSE(Runtime::GetBlueprintDefinition("car.abp").has_value());
 
-    Write(root, "car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"},
-                                                     {"components",
-                                                      {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
+    Write(root, "car.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
     CHECK(Runtime::GetBlueprintDefinition("car.abp").has_value());
 }
 
 TEST_CASE("Prepared form: FindMember on an instance whose file went bad answers, not throws")
 {
     const std::filesystem::path root = FreshRoot("mistyped_find");
-    Write(root, "car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"},
-                                                     {"components",
-                                                      {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "car.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"}}})}});
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -322,14 +321,14 @@ TEST_CASE("Prepared form: FindMember on an instance whose file went bad answers,
 TEST_CASE("Prepared form: saving a level whose blueprint went bad does not throw")
 {
     const std::filesystem::path root = FreshRoot("mistyped_save");
-    Write(root, "car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"},
-                                                     {"components",
-                                                      {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "car.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({{{"name", "body"}, {"components", {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"}}})}});
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     InstanceTable table;

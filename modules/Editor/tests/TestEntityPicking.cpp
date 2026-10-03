@@ -27,12 +27,12 @@
 #include <unordered_map>
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 
 using namespace Assisi;
 using Assisi::Editor::MeshPickBounds;
@@ -69,11 +69,11 @@ std::optional<Geometry::Aabb> LookupBounds(const ECS::Scene &, ECS::Entity entit
 /// oriented the way the renderer draws it.
 PickRay RayAt(glm::vec3 offset)
 {
-    return PickRay{.origin      = glm::vec3(0.f, 0.f, 20.f) + offset,
-                   .direction   = glm::vec3(0.f, 0.f, -1.f),
+    return PickRay{.origin = glm::vec3(0.f, 0.f, 20.f) + offset,
+                   .direction = glm::vec3(0.f, 0.f, -1.f),
                    .cameraRight = glm::vec3(1.f, 0.f, 0.f),
-                   .cameraUp    = glm::vec3(0.f, 1.f, 0.f),
-                   .valid       = true};
+                   .cameraUp = glm::vec3(0.f, 1.f, 0.f),
+                   .valid = true};
 }
 
 struct Fixture
@@ -101,7 +101,7 @@ struct Fixture
         return entity;
     }
 
-    void Propagate() { (void)Runtime::PropagateTransforms(scene, 0); }
+    void Propagate() { (void)ECS::PropagateTransforms(scene, 0); }
 
     ECS::Entity Pick(const PickRay &ray, float &tOut)
     {
@@ -159,7 +159,7 @@ TEST_CASE("PickEntityInScene: local bounds and the world matrix compose")
 TEST_CASE("PickEntityInScene: the nearest hit wins")
 {
     Fixture fixture;
-    const ECS::Entity behind  = fixture.SpawnMeshed(glm::vec3(0.f, 3.f, -6.f), 4.f);
+    const ECS::Entity behind = fixture.SpawnMeshed(glm::vec3(0.f, 3.f, -6.f), 4.f);
     const ECS::Entity inFront = fixture.SpawnMeshed(glm::vec3(0.f, 3.f, 6.f), 4.f);
 
     CHECK(fixture.Pick(RayAt(glm::vec3(0.f, 3.f, 0.f))) == inFront);
@@ -183,7 +183,7 @@ TEST_CASE("PickEntityInScene: an invalid ray picks nothing")
     fixture.SpawnMeshed(glm::vec3(0.f), 4.f);
 
     PickRay ray = RayAt(glm::vec3(0.f));
-    ray.valid   = false;
+    ray.valid = false;
     CHECK(fixture.Pick(ray) == ECS::NullEntity);
 }
 
