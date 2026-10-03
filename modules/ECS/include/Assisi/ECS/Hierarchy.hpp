@@ -44,14 +44,18 @@ struct Parent
     AFIELD() ECS::Entity parent = NullEntity;
 };
 
-/// @brief Refresh cached world-space matrices for entities whose transform changed.
+/// @brief Refresh the world matrices of entities whose drawn pose changed.
 ///
 /// Writes results into the Transform pool's world lane (see WorldMatrix). Must be
 /// called once per frame before DrawScene() or anything that reads a world
-/// matrix. Transform is ACOMP(tracked),
-/// so this only recomputes entities whose local TRS changed since `lastTick` (or
-/// whose ancestor changed) — a static scene costs almost nothing. Parent chains are
-/// resolved parent-before-child and each entity is visited at most once per pass.
+/// matrix. Visits only what can have changed: Transforms and Parent links written
+/// since `lastTick`, Parent links removed since then, entities blending between
+/// two fixed steps (when the blend alpha moved), entities whose blend just ended,
+/// entities with a RenderOffset, and the children of anything recomputed. A
+/// static scene costs a scan of two change-tick arrays.
+///
+/// A Transform written inside a FixedStepScope is drawn between its pose before
+/// that step and its current one, at the alpha SetBlendAlpha set.
 ///
 /// @param lastTick The scene change tick this system last ran at (pass 0 on the
 ///        first call, which recomputes everything).
@@ -59,6 +63,39 @@ struct Parent
 ///         to skip unchanged entities. Discarding it is safe (you simply lose the
 ///         skip, recomputing everything if you keep passing 0).
 uint64_t PropagateTransforms(Scene &scene, uint64_t lastTick);
+
+/// @brief How many entities the last PropagateTransforms on @p scene recomputed.
+[[nodiscard]] uint32_t LastPropagationResolved(const Scene &scene);
+
+/// @brief Marks one fixed step on @p scene for as long as it lives.
+///
+/// The first write to a Transform while one exists records the pose before it,
+/// and the entity is drawn blended from that pose until the next step. A scope
+/// rather than begin and end calls, so a step cannot be left open.
+class FixedStepScope
+{
+public:
+    explicit FixedStepScope(Scene &scene);
+    ~FixedStepScope();
+
+    FixedStepScope(const FixedStepScope &) = delete;
+    FixedStepScope &operator=(const FixedStepScope &) = delete;
+
+private:
+    Scene &_scene;
+};
+
+/// @brief How far drawn poses are from the previous fixed step's to the
+/// latest one's, in [0, 1]. Set once a frame, before propagation.
+void SetBlendAlpha(Scene &scene, float alpha);
+
+/// @brief Ends every blend, so the next propagation draws each entity at its
+/// current pose. For a world that is not stepping, whose alpha still moves.
+void SettleTransforms(Scene &scene);
+
+/// @brief Draws @p entity at its current pose, with no blend from where it
+/// was. Call after writing the Transform, for a teleport.
+void SnapTransform(Scene &scene, Entity entity);
 
 /// @brief Collects @p root plus every entity whose Parent chain leads to it.
 ///

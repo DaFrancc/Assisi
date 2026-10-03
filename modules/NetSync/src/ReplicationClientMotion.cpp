@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
@@ -145,14 +146,16 @@ void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
         if (entity == _entityByNetId.end() || !_scene.IsAlive(entity->second))
             continue;
 
-        // Before the GetMut: taking one marks the Transform changed, which the
-        // physics world would read as an outside move to push into the body.
         if (record.smoothingWindow <= 0.f)
-            continue; // nothing to hide
-
-        ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity->second);
-        if (transform == nullptr)
+        {
+            // Nothing to hide. An offset a correction snapped away is cleared, or
+            // the mirror would go on being drawn where the last one left it.
+            if (ECS::RenderOffset *offset = _scene.Get<ECS::RenderOffset>(entity->second); offset != nullptr)
+            {
+                *offset = ECS::RenderOffset{};
+            }
             continue;
+        }
 
         // Linear over the window, so the offset is gone by the deadline at a
         // constant on-screen speed. Advancing in *time* rather than per frame is
@@ -167,14 +170,18 @@ void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
                        // Orientation gets its own, shorter, window.
                        1.f - std::min(1.f, record.smoothingElapsed / smoothing.rotationCorrectionTime)));
 
-        // On top of the physics writeback's pose, which ran just before this.
-        transform->position += record.positionError;
-        transform->rotation = record.rotationError * transform->rotation;
-
-        // Only how it is drawn: the offset must not be pushed to the body as a
-        // move, and the writeback must lay the body's pose down again under next
-        // frame's offset rather than leave this one to be added to.
-        _physics->AdoptTransform(entity->second);
+        // Only how it is drawn: the Transform stays the corrected simulation
+        // pose, and the offset is added in world space after the render blend,
+        // which is right for a parented mirror too.
+        ECS::RenderOffset *offset = _scene.Get<ECS::RenderOffset>(entity->second);
+        if (offset == nullptr)
+        {
+            offset = _scene.Add<ECS::RenderOffset>(entity->second);
+        }
+        if (offset != nullptr)
+        {
+            *offset = ECS::RenderOffset{.rotation = record.rotationError, .position = record.positionError};
+        }
     }
 }
 

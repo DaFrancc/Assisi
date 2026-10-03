@@ -132,14 +132,13 @@ TEST_CASE("Writing a sleeping body's Transform moves it and wakes it")
 
 TEST_CASE("Turning a moving body leaves where it is alone")
 {
-    // The Transform trails the body by the render blend. A write that only turns
-    // it still holds that trailing position, which must not pull the body back.
+    // A write that only turns a body leaves its position as the last step wrote
+    // it, which is where the body is, so pushing the whole pose moves nothing.
     TestScene test;
     const ECS::Entity ball = AddBody(test.scene, {0.f, 50.f, 0.f}, Ball(0.5f, false));
     Step(test.world, 20);
-    test.world.InterpolateTransforms(0.25f);
     const glm::vec3 before = test.world.GetBodyPose(ball).position;
-    REQUIRE(test.scene.Get<ECS::Transform>(ball)->position != before);
+    REQUIRE(test.scene.Get<ECS::Transform>(ball)->position == before);
 
     test.scene.GetMut<ECS::Transform>(ball)->rotation = glm::angleAxis(1.f, glm::vec3(0.f, 1.f, 0.f));
     test.world.Reconcile();

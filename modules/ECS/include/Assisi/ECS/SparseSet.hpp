@@ -36,6 +36,10 @@ template <typename T> struct SparseSetLanes
     void Move(uint32_t /*to*/, uint32_t /*from*/) {}
     void Pop() {}
     void Clear() {}
+
+    /// Called on every Stamp of the component at dense slot @p slot, before the
+    /// caller writes it for GetMut and QueryMut, after for Add and MarkChanged.
+    void OnStamp(uint32_t /*slot*/, Entity /*entity*/, const T & /*component*/) {}
 };
 
 template <typename T> struct SparseSet
@@ -220,7 +224,11 @@ template <typename T> struct SparseSet
     void Stamp(Entity entity, uint64_t tick)
     {
         if (_tracksChanges && Has(entity))
-            _changeTicks[_sparse[entity.index]] = tick;
+        {
+            const uint32_t slot = _sparse[entity.index];
+            _lanes.OnStamp(slot, entity, _dense[slot]);
+            _changeTicks[slot] = tick;
+        }
     }
 
     /// @brief The entity's component's last-written tick, or 0 (never written /

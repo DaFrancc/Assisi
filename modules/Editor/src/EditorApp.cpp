@@ -934,21 +934,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         return;
     }
 
-    // Blend physics-driven Transforms between their last two fixed-step poses,
-    // before Render() propagates world matrices, so bodies move at the display's
-    // refresh rate rather than the physics rate. Only while simulating: paused or
-    // stopped, physics must not stomp the Transforms, because an inspector edit or
-    // the frozen pose is authoritative then. A game screen that pauses the world
-    // during play says the same thing from the other side.
-    if (IsSimulating() && (_world == nullptr || !_world->paused))
-    {
-        // Display rate over every physics-driven Transform, so it belongs in the
-        // render breakdown rather than being lumped in with physics.
-        ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _physics->InterpolateTransforms(GetInterpolationAlpha());
-        Assisi::App::PlaceCharacterEyes(*_scene, *_physics, GetInterpolationAlpha());
-    }
-    else
+    if (!IsSimulating() || (_world != nullptr && _world->paused))
     {
         // Nothing steps this world, and stepping is what reconciles it. Done here
         // instead, so a body added, moved, edited or deleted while editing is
@@ -1110,6 +1096,8 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
+                // Everything inside the scope is one fixed step to the render blend.
+                const Assisi::ECS::FixedStepScope step(world.scene);
                 world.systems.Run(Assisi::App::SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
 
                 {
@@ -1117,13 +1105,6 @@ void EditorApp::OnFixedUpdate(float dt)
                     // everything under `fixed-update` that is not a named ECS system.
                     ASSISI_PROFILE_SCOPE("physics-step");
                     world.physics.Update(dt);
-                }
-                {
-                    // Snapshot the new poses for OnRender to blend. Linear in the body
-                    // count and separable from the solve, so it gets its own slice: a
-                    // big scene then says which of the two grew.
-                    ASSISI_PROFILE_SCOPE("physics-capture");
-                    world.physics.CaptureState();
                 }
 
                 // The other half of the tick: what reacts to the step that just
@@ -1139,7 +1120,7 @@ void EditorApp::OnFixedUpdate(float dt)
     // Between the step and the snapshot, and it has to stay there. A mirrored body
     // woken by a contact the server never had (client poses differ by whatever the
     // last correction has not yet removed, and Jolt wakes by island) must be put
-    // back before anything reads it, including this frame's render writeback.
+    // back before anything reads it.
 #if defined(ASSISI_NETWORKING)
     if (_netSession)
         _netSession->AfterPhysicsStep();
@@ -1340,21 +1321,16 @@ void EditorApp::OnUpdate(float dt)
     }
 #endif
 
-    // Worlds that simulate but are not drawn get neither the pose write-back nor
-    // the transform propagation the render path performs for the world it draws.
-    // Give them both, in that order (see App::SyncUnrenderedWorld). Skipped while
-    // the session is frozen: nothing stepped, so there are no new poses.
-    if (IsSimulating())
-    {
-        _worlds.ForEach(
-            [this](Assisi::App::World &world)
-            {
-                if (world.simulate && world.state == Assisi::App::WorldState::Active && &world != _world)
-                {
-                    Assisi::App::SyncUnrenderedWorld(world);
-                }
-            });
-    }
+    // How far between its last two fixed steps each world is drawn. Editing,
+    // paused or frozen, a world is drawn exactly: the accumulator goes on
+    // cycling, and blending would shake what stopped.
+    _worlds.ForEach(
+        [this](Assisi::App::World &world)
+        {
+            const bool stepping = IsSimulating() && world.state == Assisi::App::WorldState::Active &&
+                                  world.simulate && !world.paused;
+            Assisi::App::BlendWorld(world, stepping, GetInterpolationAlpha());
+        });
 
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.

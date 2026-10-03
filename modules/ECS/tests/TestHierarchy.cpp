@@ -291,22 +291,11 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
     CHECK(TranslationOf(*WorldMatrix(scene, child)).x == doctest::Approx(11.f)); // 10 + 1
 }
 
-TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the child" * doctest::should_fail())
+TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the child")
 {
-    // Open, and the mirror of the attach case above. Attaching is caught
-    // because Parent is ACOMP(tracked) and Add stamps its change tick; detaching
-    // through Remove<Parent> stamps nothing and leaves no component behind to
-    // carry a tick, so Hierarchy.cpp:81's
-    //   Changed<Transform>(e, lastTick) || Changed<Parent>(e, lastTick)
-    // is false for the child on the next pass and it keeps the world matrix it
-    // had while it was still parented. The comment there already admits the gap
-    // and claims "no such site today"; that claim is what went unverified.
-    //
-    // The child below is left believing it sits at x = 11 after being detached
-    // from a parent at x = 10 — one full parent offset out, for as long as
-    // nothing else happens to move it.
-    //
-    // should_fail until detach dirties the child; the fix removes this decorator.
+    // The mirror of the attach case above. Remove<Parent> stamps nothing and
+    // leaves no component to carry a tick, so only the removal log says the
+    // child became a root again.
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child = scene.Create();
@@ -385,12 +374,8 @@ TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dir
     CHECK(scene.CurrentChangeTick() == afterMove);
 
     // And so a pass resuming from tick2 finds nothing dirty — no self-retrigger.
-    // Proven by the value, not just the tick: poke the world matrix to a
-    // sentinel and check the skipping pass leaves it alone.
-    scene.Lanes<Transform>()->world[scene.DenseIndexOf<Transform>(child)] =
-        glm::translate(glm::mat4(1.f), glm::vec3(-1.f, 0.f, 0.f));
     const uint64_t tick3 = PropagateTransforms(scene, tick2);
-    CHECK(TranslationOf(*WorldMatrix(scene, child)).x == doctest::Approx(-1.f)); // skipped
+    CHECK(Assisi::ECS::LastPropagationResolved(scene) == 0u);
     CHECK(tick3 == tick2);
 }
 

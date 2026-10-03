@@ -159,20 +159,27 @@ private:
     {
     }
 
-    /// Mirrors Scene::GetMut exactly, including the order of operations: check
-    /// the pool's opt-in first, and only then burn a tick. Bumping unconditionally
+    /// Mirrors Scene::GetMut, including the order of operations: check the
+    /// pool's opt-in first, and only then burn a tick. Bumping unconditionally
     /// would advance the scene's tick for untracked writes, inflating every
     /// consumer's bookmark against changes that were never recorded.
-    void Stamp() const
+    ///
+    /// Once per proxy: a loop body writing several fields is one change, and a
+    /// stamp per field would burn a tick and run the pool's stamp hooks for each.
+    void Stamp()
     {
-        if (_pool->TracksChanges())
+        if (!_stamped && _pool->TracksChanges())
+        {
             _pool->Stamp(_entity, ++*_changeTick);
+            _stamped = true;
+        }
     }
 
     T *_component;
     SparseSet<T> *_pool;
     Entity _entity;
     uint64_t *_changeTick; ///< &Scene::_changeTick — the sole allocator of ticks.
+    bool _stamped = false;
 };
 
 /// @brief Lazy view over entities matching a component signature.

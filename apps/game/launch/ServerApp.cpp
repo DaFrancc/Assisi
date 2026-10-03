@@ -9,6 +9,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
@@ -232,6 +233,10 @@ void ServerApp::BuildJoinedWorld()
 
 void ServerApp::OnFixedUpdate(float dt)
 {
+    // Every step is marked, here as in the windowed hosts, though nothing here
+    // is drawn.
+    const ECS::FixedStepScope step(_world.scene);
+
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
 #if defined(ASSISI_NETWORKING)

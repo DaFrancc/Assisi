@@ -81,13 +81,12 @@ inline ECS::Entity AddFloor(ECS::Scene &scene)
     return AddBody(scene, {0.f, -kHalfThickness, 0.f}, Box({kHalfWidth, kHalfThickness, kHalfWidth}, true));
 }
 
-/// Runs @p steps fixed steps, snapshotting after each as a game loop does.
+/// Runs @p steps fixed steps.
 inline void Step(Physics::PhysicsWorld &world, int32_t steps = 1)
 {
     for (int32_t i = 0; i < steps; ++i)
     {
         world.Update(kStep);
-        world.CaptureState();
     }
 }
 

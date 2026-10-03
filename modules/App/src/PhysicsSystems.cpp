@@ -155,12 +155,12 @@ void CharacterStateSystem(SystemContext &ctx)
     }
 }
 
-void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics, float alpha)
+void CharacterEyeSystem(SystemContext &ctx)
 {
+    ECS::Scene &scene = ctx.world.scene;
     for (auto [entity, character] : scene.Query<Physics::Character>())
     {
-        (void)character;
-        const float eyeHeight = physics.GetCharacterEyeHeight(entity, alpha);
+        const float eyeHeight = character.state.eyeHeight;
 
         for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
         {
@@ -172,7 +172,7 @@ void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics,
 
             // Compared first: a write stamps the Transform as changed, and a
             // character standing still would otherwise re-propagate its camera
-            // every frame.
+            // every step.
             const ECS::Transform *current = scene.Get<ECS::Transform>(child);
             if (current == nullptr || current->position.y == eyeHeight)
             {

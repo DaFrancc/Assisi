@@ -46,6 +46,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -398,6 +399,11 @@ JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float ta
 /// its direction.
 JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 
+/// The world matrix @p entity's Transform is relative to, composed from the
+/// local poses up its Parent chain: the simulation pose, not the drawn one the
+/// propagated world matrices hold. Null for a root.
+std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity);
+
 /// Builds the Jolt collision shape for a descriptor. Radii and half-heights are
 /// clamped to the convex radius, so a zeroed dimension field — reachable from an
 /// inspector drag — cannot create a degenerate, asserting shape.
@@ -440,24 +446,13 @@ struct PhysicsWorld::Impl
 
     ECS::Scene &scene;
 
-    /// The last two stepped poses of a moving body, blended at render time so
-    /// motion stays smooth when the display refreshes faster than physics steps.
-    struct MotionSnapshot
-    {
-        glm::quat prevRotation{1.f, 0.f, 0.f, 0.f};
-        glm::quat curRotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3 prevPosition{};
-        glm::vec3 curPosition{};
-    };
-
     /// The Transform values this world last wrote to an entity, or found there
     /// when it last pushed them to the body, and the change tick they carried.
     ///
-    /// A Transform whose tick differs was written by something else since. Which
-    /// fields differ from these says what that write changed, which matters
-    /// because the Transform holds the *render* pose: a write that only turned
-    /// a body still holds the blended position, and pushing that too would pull
-    /// the body back along its path.
+    /// A Transform whose tick differs was written by something else since.
+    /// Which fields differ from these says what that write changed: a changed
+    /// scale rebuilds the shape, and a character is only placed when its
+    /// position changed, since the look systems turn it every frame.
     struct TransformStamp
     {
         glm::quat rotation{1.f, 0.f, 0.f, 0.f};
@@ -482,7 +477,6 @@ struct PhysicsWorld::Impl
     /// beside it says which life of the index the slot belongs to.
     struct BodySlot
     {
-        MotionSnapshot snapshot;
         TransformStamp stamp;
 
         /// The descriptor values the body was built or last retuned from, so an
@@ -504,10 +498,6 @@ struct PhysicsWorld::Impl
         /// Followed by the writeback: woken in some step and not yet written at
         /// rest. See `awake`.
         bool followed = false;
-
-        /// Asleep, with its last two snapshots equal: the next writeback puts it
-        /// exactly at rest and stops following it.
-        bool settled = false;
     };
 
     std::vector<BodySlot> slots;
@@ -584,10 +574,6 @@ struct PhysicsWorld::Impl
     /// Records @p entity's current Transform as this world's own: what it last
     /// wrote, or what it has just pushed to the body.
     void StampTransform(ECS::Entity entity);
-
-    /// Collapses both snapshots onto @p pose, so the render blend arrives
-    /// rather than sliding across the gap.
-    static void CollapseSnapshot(BodySlot &slot, const Pose &pose);
 
     /// Starts following the slot at @p index in the writeback.
     void Follow(std::uint32_t index);
@@ -788,11 +774,6 @@ private:
         /// CharacterState::eyeHeight.
         float eyeHeight = 0.f;
 
-        /// @ref eyeHeight as the step before left it. The pair is blended at
-        /// render time like the two snapshot poses, so the eye moves every frame
-        /// instead of once per step.
-        float prevEyeHeight = 0.f;
-
         /// Seconds since last standing on walkable ground; what coyote time is
         /// measured against.
         float timeSinceGrounded = 0.f;
@@ -858,14 +839,10 @@ private:
     /// solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
 
-    /// Blends a snapshot's two poses, snapping instead when they are close
-    /// enough that blending would only add wobble.
-    static Pose BlendSnapshot(const MotionSnapshot &snapshot, float alpha);
-
-    /// Writes a world-space render pose into @p entity's Transform, unless
-    /// something else wrote it since this world last did: that write has not
-    /// reached the body yet, and overwriting it first would lose it.
-    void WriteRenderPose(ECS::Entity entity, Pose pose, bool writeRotation);
+    /// Writes each moving body's and every character's pose from the step
+    /// that just ran into its Transform. A body that fell asleep gets one last
+    /// write, at rest, and is then left alone.
+    void WriteBack();
 
     /// Writes a world-space pose into @p entity's Transform, converting out of a
     /// parent's space and skipping a write that would change nothing, then

@@ -11,11 +11,9 @@
 /// Update() runs it before every step, so nothing outside this module creates,
 /// moves or destroys a body.
 ///
-/// Per fixed step call Update() then CaptureState(); once per render frame call
-/// InterpolateTransforms() to blend the last two steps into the Transforms of
-/// the bodies that moved. Because physics steps at a fixed rate but rendering
-/// does not, that blend is what keeps physics-driven motion smooth on
-/// high-refresh displays instead of beating against the step rate.
+/// Transform is the simulation pose: Update() ends by writing each moving
+/// body's pose into it. Call Update() inside an ECS::FixedStepScope, so the
+/// ECS draws those Transforms blended between steps.
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -218,21 +216,17 @@ public:
     /// zeroes it, and the render blend does not slide the body across the gap.
     void Teleport(ECS::Entity entity, const Pose &pose);
 
-    /// @brief Takes @p entity's Transform as it stands as this world's own
-    /// write, so the next Reconcile() does not push it to the body.
-    ///
-    /// For a write that changes only how a simulated entity is drawn: the
-    /// replication view offset painted over the writeback's pose. The body is
-    /// followed by the next writeback even if it sleeps, which lays its pose
-    /// down again for the offset to be painted over rather than added to the
-    /// last frame's.
-    void AdoptTransform(ECS::Entity entity);
-
-    /// @brief Reconciles, then advances the simulation by `deltaTime` seconds.
+    /// @brief Reconciles, advances the simulation by `deltaTime` seconds, and
+    /// writes the result into the Transforms of the bodies that moved.
     ///
     /// Characters are swept first, then the bodies are solved. That order is
     /// what lets a character shove a crate and the crate move in the same step,
     /// and what lets it ride a platform whose velocity was set before this call.
+    ///
+    /// A body that fell asleep is written once more, at rest, and then costs
+    /// nothing until something wakes it. A character's rotation is never
+    /// written: the capsule is symmetric about its up axis, so the way it faces
+    /// belongs to whatever aims it.
     void Update(float deltaTime);
 
     // --- Contact events ------------------------------------------------------
@@ -338,58 +332,7 @@ public:
     /// @brief Current collision-substep count (see SetCollisionSteps).
     int32_t GetCollisionSteps() const;
 
-    /// @brief Snapshots each moving body's pose for render interpolation.
-    ///
-    /// Call once per fixed step, immediately after Update(): it shifts the
-    /// previous snapshot to the last-captured one and records the freshly
-    /// stepped pose as the new current. InterpolateTransforms() then blends
-    /// between those two.
-    ///
-    /// Only bodies the simulation has awake are snapshotted, plus every
-    /// character. A body that falls asleep is followed until its Transform holds
-    /// its resting pose exactly, and then left alone, so a settled world costs
-    /// nothing here.
-    void CaptureState();
-
-    /// @brief Blends each moving body's previous/current snapshots into its
-    /// Transform, `alpha` of the way from previous to current.
-    ///
-    /// Call once per render frame with the fixed-loop's interpolation alpha
-    /// (`Application::GetInterpolationAlpha()`), which is the fraction of a
-    /// physics step the accumulator holds. The written Transform is the
-    /// *render* pose — the authoritative physics state is the current snapshot.
-    ///
-    /// A Transform written by anything else since this world last wrote it is
-    /// left alone: the next Reconcile() pushes it to the body, and overwriting it
-    /// here first would lose it.
-    ///
-    /// A character's **rotation is left alone**. The capsule is symmetric about
-    /// its up axis, so the simulation has no opinion about which way a character
-    /// faces; that belongs to whatever is aiming it, and overwriting it here
-    /// would snap a turning character back to forward every frame.
-    ///
-    /// A parented entity's pose is written back relative to its parent's world
-    /// matrix, so the parent is not applied twice by the next propagation.
-    void InterpolateTransforms(float alpha);
-
-    /// @brief Writes each moving body's *last stepped* pose into its Transform,
-    /// with no blend.
-    ///
-    /// For worlds that simulate but are not rendered (a second resident level).
-    /// Interpolation exists to smooth
-    /// physics against a faster display; with nothing being displayed there is
-    /// nothing to smooth against, and the render path that would normally call
-    /// InterpolateTransforms never runs for these worlds — so without this their
-    /// Transforms would sit at spawn pose forever no matter how much the bodies
-    /// move. Call once per frame after the fixed-step loop, before propagating.
-    void SyncTransforms() { InterpolateTransforms(1.f); }
-
     // --- Authoritative body state (replication) -------------------------------
-    //
-    // Replication reads the simulation directly, not the render-side Transform:
-    // the render pose is not the physics truth, and a headless host never runs
-    // the writeback at all, so its physics-driven entities would replicate their
-    // load pose forever.
 
     /// @brief One active body's authoritative motion state.
     struct ActiveBodyState
@@ -423,11 +366,9 @@ public:
     /// a correction must be able to leave a body asleep, set its angular
     /// velocity, and land in this step rather than the next reconcile.
     ///
-    /// Collapses both render-interpolation snapshots onto the target. That is
-    /// load-bearing for the smoothing above this: the visual offset assumes the
-    /// rendered pose is *unchanged* at the instant of a correction, and if the
-    /// writeback also smeared the jump across a frame the two would double-count
-    /// into a wobble at every correction.
+    /// Writes the Transform and snaps it, so the drawn pose jumps with the
+    /// correction. The replication view offset relies on that: it hides the
+    /// jump, and a blend sliding after it would show twice.
     ///
     /// No-op for an entity with no body. A static body is placed and nothing more.
     void ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec3 linearVelocity, glm::vec3 angularVelocity,
@@ -528,15 +469,6 @@ public:
 
     /// @brief What @p entity's character's last step left behind.
     [[nodiscard]] CharacterState GetCharacterState(ECS::Entity entity) const;
-
-    /// @brief @p entity's character's eye height for a rendered frame: its last two
-    /// steps' values blended by @p alpha, the same fraction
-    /// InterpolateTransforms() is given.
-    ///
-    /// CharacterState::eyeHeight changes once per step. A camera placed from it
-    /// moves in visible steps whenever the display refreshes faster than the
-    /// simulation; one placed from this moves every frame.
-    [[nodiscard]] float GetCharacterEyeHeight(ECS::Entity entity, float alpha) const;
 
     /// @brief Sets the gravity vector (default: {0, −9.81, 0}).
     void SetGravity(glm::vec3 gravity);

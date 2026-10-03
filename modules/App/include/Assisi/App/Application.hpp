@@ -286,11 +286,11 @@ protected:
     }
 
     /// @brief Fraction of a fixed physics step left unconsumed by the current
-    /// frame — in [0, 1). Use it in OnRender() to blend physics-driven state
-    /// between its previous and current fixed-step poses (see
-    /// Physics::PhysicsWorld::InterpolateTransforms), so motion stays smooth
-    /// when the display refreshes faster than physics steps. Recomputed every
-    /// frame after the fixed-update loop and stable through OnUpdate/OnRender.
+    /// frame — in [0, 1). The render blend draws fixed-step motion this far
+    /// between the last two steps (see ECS::SetBlendAlpha), so motion stays
+    /// smooth when the display refreshes faster than physics steps. Recomputed
+    /// every frame after the fixed-update loop and stable through
+    /// OnUpdate/OnRender.
     float GetInterpolationAlpha() const { return _interpolationAlpha; }
 
     /// @brief The per-frame event queue, owned by Application and flushed once
@@ -548,8 +548,8 @@ private:
     double _gpuFrameMs = 0.0;
 
     // Leftover accumulator as a fraction of a physics step, in [0, 1). Set once
-    // per frame after the fixed-update loop; read by OnRender via
-    // GetInterpolationAlpha() to blend physics state between fixed steps.
+    // per frame after the fixed-update loop; read via GetInterpolationAlpha()
+    // to blend fixed-step motion for display.
     float _interpolationAlpha = 0.0f;
 
     // Per-frame cap passed to JobSystem::DrainMain (0 = unbounded). See

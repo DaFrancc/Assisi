@@ -9,6 +9,7 @@ target_sources(Assisi-ECS
     "include/Assisi/ECS/Hierarchy.hpp"
     "include/Assisi/ECS/Query.hpp"
     "include/Assisi/ECS/Registry.hpp"
+    "include/Assisi/ECS/RenderOffset.hpp"
     "include/Assisi/ECS/Scene.hpp"
     "include/Assisi/ECS/SparseSet.hpp"
     "include/Assisi/ECS/Transform.hpp"
@@ -18,6 +19,7 @@ target_sources(Assisi-ECS
     "src/Hierarchy.cpp"
     "src/Registry.cpp"
     "src/Scene.cpp"
+    "src/TransformLanes.cpp"
     "src/TransformPose.cpp"
 )
 
@@ -41,6 +43,7 @@ assisi_reflect(
   HEADERS
     include/Assisi/ECS/BlueprintMember.hpp
     include/Assisi/ECS/Hierarchy.hpp
+    include/Assisi/ECS/RenderOffset.hpp
     include/Assisi/ECS/Transform.hpp
 )
 

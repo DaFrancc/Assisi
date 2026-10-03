@@ -181,8 +181,6 @@ TEST_CASE("App: a child of a walking character follows it")
     {
         world.physics.MoveCharacter(body, {5.f, 0.f, 0.f}, /*jump=*/ false);
         world.physics.Update(kStep);
-        world.physics.CaptureState();
-        world.physics.InterpolateTransforms(1.f);
         tick = ECS::PropagateTransforms(world.scene, tick);
     }
 

@@ -421,9 +421,7 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
                                                 }
                                             }
                                             serverPhysics.Update(kFixedStep);
-                                            serverPhysics.CaptureState();
                                             clientPhysics.Update(kFixedStep);
-                                            clientPhysics.CaptureState();
                                             client.EnforceSleep();
                                             server.Tick(tick++);
                                         }

@@ -763,12 +763,16 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
     }
 }
 
-void SyncUnrenderedWorld(World &world)
+void BlendWorld(World &world, bool stepping, float alpha)
 {
-    // Poses first: without this the propagation below would compute correct
-    // matrices for positions the bodies left behind at spawn.
-    world.physics.SyncTransforms();
-    world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
+    if (stepping)
+    {
+        ECS::SetBlendAlpha(world.scene, alpha);
+    }
+    else
+    {
+        ECS::SettleTransforms(world.scene);
+    }
 }
 
 uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick)
