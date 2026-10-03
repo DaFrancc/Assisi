@@ -17,18 +17,18 @@
 
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
-#include <Assisi/ECS/Query.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
 #include <Jolt/Jolt.h>
 
 // A sanitized build steps physics on one thread — see JoltRuntime.cpp for why.
 #if defined(__SANITIZE_THREAD__)
-#    define ASSISI_PHYSICS_TSAN 1
+#define ASSISI_PHYSICS_TSAN 1
 #elif defined(__has_feature)
-#    if __has_feature(thread_sanitizer)
-#        define ASSISI_PHYSICS_TSAN 1
-#    endif
+#if __has_feature(thread_sanitizer)
+#define ASSISI_PHYSICS_TSAN 1
+#endif
 #endif
 
 #include <Jolt/Core/JobSystem.h>
@@ -53,26 +53,24 @@ namespace Assisi::Physics
 {
 
 // ---------------------------------------------------------------------------
-// Handles
+// Bodies and entities
 // ---------------------------------------------------------------------------
 //
-// The public BodyId is an opaque number; inside, it is Jolt's own packed
-// index+sequence. Keeping the two spellings apart is what lets the simulation
-// underneath be replaced without touching a component, a level file, or any code
-// that merely holds a handle.
+// Every body this world builds carries its entity in Jolt's per-body user data,
+// a character's inner body included (Jolt copies the character's onto it). The
+// packed handle is stored inverted so that NullEntity, all ones, stores as 0 —
+// which is also what Jolt reports for a body it cannot lock — and so that
+// Entity{0, 0}, the first entity of every scene, does not.
 
-static_assert(JPH::BodyID::cInvalidBodyID == InvalidPhysicsHandle,
-              "BodyId's empty value must be the one Jolt treats as invalid, or a default-constructed "
-              "RigidBody would name a real body.");
-
-inline JPH::BodyID ToJolt(BodyId id)
+inline JPH::uint64 UserDataOf(ECS::Entity entity)
 {
-    return JPH::BodyID(id.value);
+    return ~((static_cast<JPH::uint64>(entity.generation) << 32) | static_cast<JPH::uint64>(entity.index));
 }
 
-inline BodyId FromJolt(const JPH::BodyID &id)
+inline ECS::Entity EntityOfUserData(JPH::uint64 userData)
 {
-    return BodyId{id.GetIndexAndSequenceNumber()};
+    const JPH::uint64 packed = ~userData;
+    return ECS::Entity{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull), static_cast<std::uint32_t>(packed >> 32)};
 }
 
 // ---------------------------------------------------------------------------
@@ -98,16 +96,16 @@ static_assert(sizeof(JPH::ObjectLayer) == sizeof(std::uint32_t),
               "Assisi packs 22 bits into a Jolt ObjectLayer; build Jolt with OBJECT_LAYER_BITS=32.");
 
 static constexpr std::uint32_t ChannelBits = 4;
-static constexpr std::uint32_t MaskBits    = 16;
-static constexpr std::uint32_t MotionBits  = 2;
+static constexpr std::uint32_t MaskBits = 16;
+static constexpr std::uint32_t MotionBits = 2;
 
 static constexpr std::uint32_t ChannelShift = 0;
-static constexpr std::uint32_t MaskShift    = ChannelShift + ChannelBits;
-static constexpr std::uint32_t MotionShift  = MaskShift + MaskBits;
+static constexpr std::uint32_t MaskShift = ChannelShift + ChannelBits;
+static constexpr std::uint32_t MotionShift = MaskShift + MaskBits;
 
 static constexpr std::uint32_t ChannelMask = (1u << ChannelBits) - 1u;
-static constexpr std::uint32_t MaskMask    = (1u << MaskBits) - 1u;
-static constexpr std::uint32_t MotionMask  = (1u << MotionBits) - 1u;
+static constexpr std::uint32_t MaskMask = (1u << MaskBits) - 1u;
+static constexpr std::uint32_t MotionMask = (1u << MotionBits) - 1u;
 
 static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) <= MaskBits,
               "Every channel needs a bit in the collides-with mask.");
@@ -119,9 +117,9 @@ static_assert(static_cast<std::uint32_t>(BodyMotion::Count) <= MotionMask + 1u,
 inline JPH::ObjectLayer PackLayer(CollisionFilter filter, BodyMotion motion)
 {
     const std::uint32_t channel = static_cast<std::uint32_t>(filter.channel) & ChannelMask;
-    const std::uint32_t mask    = filter.collidesWith.bits & MaskMask;
-    const std::uint32_t packed  = (channel << ChannelShift) | (mask << MaskShift) |
-                                  ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
+    const std::uint32_t mask = filter.collidesWith.bits & MaskMask;
+    const std::uint32_t packed = (channel << ChannelShift) | (mask << MaskShift) |
+                                 ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
     return static_cast<JPH::ObjectLayer>(packed);
 }
 
@@ -262,8 +260,7 @@ class FilterLayerFilter final : public JPH::ObjectLayerFilter
 {
 public:
     explicit FilterLayerFilter(CollisionFilter filter)
-        : _mask(filter.collidesWith.bits),
-          _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
+        : _mask(filter.collidesWith.bits), _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
     {
     }
 
@@ -292,7 +289,7 @@ public:
     JoltRuntimeRef();
     ~JoltRuntimeRef();
 
-    JoltRuntimeRef(const JoltRuntimeRef &)            = delete;
+    JoltRuntimeRef(const JoltRuntimeRef &) = delete;
     JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
 
     // The base type, so the tsan build's single-threaded job system substitutes
@@ -406,6 +403,10 @@ JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 /// inspector drag — cannot create a degenerate, asserting shape.
 JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape);
 
+/// The same, at @p scale. A primitive that cannot take the scale as given — a
+/// sphere stretched along one axis — gets the nearest one it can.
+JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm::vec3 scale);
+
 // ---------------------------------------------------------------------------
 // Impl
 // ---------------------------------------------------------------------------
@@ -416,7 +417,8 @@ struct PhysicsWorld::Impl
        constructor allocates through Jolt, and releases it after they are gone. */
     JoltRuntimeRef jolt;
 
-    static constexpr uint32_t kMaxBodies = 1024;
+    explicit Impl(ECS::Scene &owner) : scene(owner) {}
+
     static constexpr uint32_t kMaxBodyPairs = 65536;
     static constexpr uint32_t kMaxContactConstraints = 10240;
 
@@ -424,8 +426,7 @@ struct PhysicsWorld::Impl
     // Defaults to 1 (a single solve, like Unity/Unreal at their fixed rate);
     // raise it to trade CPU for shallower impact penetration.
     static constexpr int32_t kDefaultCollisionSteps = 1;
-    static constexpr int32_t kMaxCollisionSteps     = 16;
-    int32_t collisionSteps = kDefaultCollisionSteps;
+    static constexpr int32_t kMaxCollisionSteps = 16;
 
     BPLayerInterface bpLayerInterface;
     ObjVsBPFilter objVsBPFilter;
@@ -437,47 +438,161 @@ struct PhysicsWorld::Impl
 
     JPH::PhysicsSystem physicsSystem;
 
-    std::vector<JPH::BodyID> allBodyIds; ///< Every body ever added; used by Clear().
+    ECS::Scene &scene;
 
-    /// Every body that can move — dynamic and kinematic both. The set whose pose
-    /// is worth snapshotting each step and writing back for rendering, and the
-    /// set to wake when gravity changes.
-    ///
-    /// Kinematic bodies belong here because something can drive one through the
-    /// simulation (MoveBodyKinematic), and a body that moves with no writeback
-    /// would be drawn wherever it was authored for the rest of the level's life.
-    std::vector<JPH::BodyID> movingBodyIds;
-
-    /// The last two stepped poses of a dynamic body, blended at render time so
+    /// The last two stepped poses of a moving body, blended at render time so
     /// motion stays smooth when the display refreshes faster than physics steps.
     struct MotionSnapshot
     {
-        glm::vec3 prevPosition{};
         glm::quat prevRotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3 curPosition{};
         glm::quat curRotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3 prevPosition{};
+        glm::vec3 curPosition{};
     };
 
-    /// Keyed by BodyID's packed index+sequence so a lookup survives a body
-    /// flipping motion type (which keeps its ID). Populated in AddBody, torn down
-    /// in Clear.
-    std::unordered_map<JPH::uint32, MotionSnapshot> snapshots;
+    /// The Transform values this world last wrote to an entity, or found there
+    /// when it last pushed them to the body, and the change tick they carried.
+    ///
+    /// A Transform whose tick differs was written by something else since. Which
+    /// fields differ from these says what that write changed, which matters
+    /// because the Transform holds the *render* pose: a write that only turned
+    /// a body still holds the blended position, and pushing that too would pull
+    /// the body back along its path.
+    struct TransformStamp
+    {
+        glm::quat rotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3 position{0.f};
+        glm::vec3 scale{1.f};
+        uint64_t tick = 0;
+    };
+
+    /// What an entity's slot holds.
+    enum class SlotKind : std::uint8_t
+    {
+        Empty,
+        Body,
+        Character,
+        Count,
+    };
+
+    /// Everything this world keeps about one entity, at that entity's index.
+    ///
+    /// Indexed rather than hashed: the reconcile and the writeback visit slots by
+    /// entity many times a frame, and entity indices are dense. The generation
+    /// beside it says which life of the index the slot belongs to.
+    struct BodySlot
+    {
+        MotionSnapshot snapshot;
+        TransformStamp stamp;
+
+        /// The descriptor values the body was built or last retuned from, so an
+        /// edit can be told apart from a write that changed nothing physical.
+        PhysicsWorld::ColliderShapeDesc shape;
+
+        /// The world-space scale the shape was built at.
+        glm::vec3 worldScale{1.f};
+
+        /// The body, or a character's inner body.
+        JPH::BodyID body;
+
+        CollisionFilter filter;
+        uint32_t generation = 0;
+        BodyMotion motion = BodyMotion::Static;
+        SlotKind kind = SlotKind::Empty;
+        bool ccd = false;
+
+        /// Followed by the writeback: woken in some step and not yet written at
+        /// rest. See `awake`.
+        bool followed = false;
+
+        /// Asleep, with its last two snapshots equal: the next writeback puts it
+        /// exactly at rest and stops following it.
+        bool settled = false;
+    };
+
+    std::vector<BodySlot> slots;
+
+    /// Entity indices of the bodies the writeback still follows. A body joins
+    /// when Jolt reports it awake after a step and leaves once its Transform
+    /// holds its resting pose, so a settled world costs the writeback nothing.
+    std::vector<std::uint32_t> awake;
+
+    /// Change tick the next reconcile reads the scene's logs from.
+    uint64_t changeCursor = 0;
+
+    /// The scene's clear epoch when this world last reconciled. A different one
+    /// means every entity handle in `slots` may name an unrelated entity.
+    uint32_t clearEpoch = 0;
+
+    uint32_t maxBodies = 0;
+    int32_t collisionSteps = kDefaultCollisionSteps;
+
+    /// True while Jolt is stepping. Nothing may call into the world then: the
+    /// bodies are locked by the step, and the contact callbacks are reading them.
+    bool stepping = false;
+
+    /// Scratch for the reconcile, kept so a frame that changes nothing allocates
+    /// nothing.
+    std::vector<ECS::Entity> scratchChanged;
+    std::vector<ECS::Entity> scratchRemoved;
+
+    /// The slot @p entity's index maps to, if it holds that entity.
+    BodySlot *SlotFor(ECS::Entity entity);
+    const BodySlot *SlotFor(ECS::Entity entity) const;
+
+    /// The slot at @p entity's index, created if the table is short.
+    BodySlot &SlotAt(ECS::Entity entity);
+
+    /// The entity a body was built for, or NullEntity for a body this world
+    /// does not know.
+    ECS::Entity EntityFor(const JPH::BodyID &id) const;
+
+    /// The body @p entity owns — a character's inner body for a character — or
+    /// an invalid id if it has none.
+    JPH::BodyID BodyFor(ECS::Entity entity) const;
+
+    // --- Reconcile (PhysicsReconcile.cpp) --------------------------------------
+
+    /// See PhysicsWorld::Reconcile. @p stepTime is the step about to run, or 0
+    /// when none is, which places kinematic bodies rather than sweeping them.
+    void ReconcileScene(float stepTime);
+
+    /// Builds, retunes or destroys @p entity's body or character to match its
+    /// components.
+    void SyncEntity(ECS::Entity entity);
+
+    /// Pushes a Transform written by something else to @p entity's body.
+    void PushTransform(ECS::Entity entity, float stepTime);
+
+    void CreateBody(ECS::Entity entity, const RigidBodyDescriptor &descriptor);
+    void EditBody(ECS::Entity entity, const RigidBodyDescriptor &descriptor);
+    void CreateCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor);
+
+    /// Retunes @p entity's character from an edited descriptor, keeping its
+    /// velocity, timers and stance. The capsule is rebuilt only when its size
+    /// changed, since the solver bakes that in.
+    void EditCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor);
+
+    /// Destroys whatever the slot at @p index holds, queuing the contact Exits
+    /// its departure causes.
+    void DestroySlot(std::uint32_t index);
+
+    /// Destroys every body and character without reporting Exits: what was
+    /// touching no longer exists to hear it.
+    void DestroyAll();
+
+    /// Records @p entity's current Transform as this world's own: what it last
+    /// wrote, or what it has just pushed to the body.
+    void StampTransform(ECS::Entity entity);
+
+    /// Collapses both snapshots onto @p pose, so the render blend arrives
+    /// rather than sliding across the gap.
+    static void CollapseSnapshot(BodySlot &slot, const Pose &pose);
+
+    /// Starts following the slot at @p index in the writeback.
+    void Follow(std::uint32_t index);
 
     // --- Contact events ------------------------------------------------------
-
-    /// The entity behind each body, keyed like `snapshots`. Only bodies created
-    /// through AddBodyFromDescriptor appear — it is the one entry point that knows
-    /// an entity — so a contact against a body from the raw AddBody reports
-    /// NullEntity for that side rather than a wrong handle. A character's inner
-    /// body is registered here too, which is what lets a cast or a contact name
-    /// the entity behind a character.
-    std::unordered_map<JPH::uint32, ECS::Entity> bodyEntities;
-
-    /// The same association read the other way, for the one question that asks it
-    /// that way: "which body is this entity's?". A query given an entity to ignore
-    /// resolves it once here, rather than mapping every candidate body back to an
-    /// entity to compare — the filter runs per body reached, and this runs once.
-    std::unordered_map<ECS::Entity, JPH::BodyID> entityBodies;
 
     /// One body pair seen touching during the step Jolt is running.
     ///
@@ -499,12 +614,16 @@ struct PhysicsWorld::Impl
     /// `stamp` is the step it was last seen in; the sweep after each step treats
     /// anything older as gone. The velocities are the last ones observed, which is
     /// all an Exit can carry — nothing measured the pair on the step it ended.
+    /// The entities are captured when the pair is seen, so an Exit for a body
+    /// destroyed since still names who it was.
     struct PairState
     {
         std::uint64_t stamp = 0;
         glm::vec3 normal{0.f};
         glm::vec3 velocity1{0.f};
         glm::vec3 velocity2{0.f};
+        ECS::Entity entity1{ECS::NullEntity};
+        ECS::Entity entity2{ECS::NullEntity};
         JPH::BodyID id1;
         JPH::BodyID id2;
         bool sensor = false;
@@ -522,8 +641,6 @@ struct PhysicsWorld::Impl
     std::unordered_map<PairKey, PairState, PairKeyHash> pairs;
 
     /// Exits for pairs whose body was destroyed before the next step could notice.
-    /// Held here because the entity behind a removed body is forgotten with it, so
-    /// the event has to be built while the answer is still knowable.
     std::vector<ContactEvent> pendingExits;
 
     std::vector<ContactEvent> events;
@@ -541,19 +658,6 @@ struct PhysicsWorld::Impl
         return PairKey{(static_cast<std::uint64_t>(hi) << 32) | static_cast<std::uint64_t>(lo)};
     }
 
-    ECS::Entity EntityFor(const JPH::BodyID &id) const
-    {
-        const auto it = bodyEntities.find(id.GetIndexAndSequenceNumber());
-        return it == bodyEntities.end() ? ECS::NullEntity : it->second;
-    }
-
-    /// The body @p entity owns, or an invalid id if it has none.
-    JPH::BodyID BodyFor(ECS::Entity entity) const
-    {
-        const auto it = entityBodies.find(entity);
-        return it == entityBodies.end() ? JPH::BodyID{} : it->second;
-    }
-
     /// Records that a pair touched. Called from Jolt's narrow phase — i.e.
     /// *before* the solver runs, which is the whole reason the velocities are
     /// captured here rather than read back afterwards.
@@ -566,7 +670,8 @@ struct PhysicsWorld::Impl
     ///
     /// A sleeping body reports no contacts, so a static sensor cannot discover one
     /// that settled before the sensor arrived — there is no step on which the pair
-    /// is ever tested. Waking the bodies is what creates that step. Costs one
+    /// is ever tested — and a body resting on a wall that moved would float
+    /// where the wall was. Waking the bodies is what creates that step. Costs one
     /// broad-phase query and a brief loss of rest for whatever was inside.
     void WakeInside(const JPH::AABox &bounds, CollisionFilter filter);
 
@@ -574,14 +679,16 @@ struct PhysicsWorld::Impl
     /// enclose, under its own filter.
     void WakeInside(const JPH::BodyID &id);
 
+    /// The world-space bounds of a body, or an empty box if it cannot be read.
+    JPH::AABox BoundsOf(const JPH::BodyID &id) const;
+
     /// The filter a body was created with, read back out of its packed layer.
     CollisionFilter FilterOf(const JPH::BodyID &id) const;
 
     /// Appends to @p out one event per side of a pair that has an entity.
-    void EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out);
+    static void EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out);
 
-    /// Emits an Exit for every pair naming @p id and forgets those pairs, while
-    /// the entity behind the body is still knowable.
+    /// Emits an Exit for every pair naming @p id and forgets those pairs.
     void EmitExitsFor(const JPH::BodyID &id, std::vector<ContactEvent> &out);
 
     /// Installed for the world's whole life. A trigger volume is authored data,
@@ -603,8 +710,8 @@ public:
         // Jolt called says only whether it saw the pair last step, and the pair
         // table already knows that — and knows it in the cases Jolt gets wrong,
         // where a body woke and Jolt reports a contact it never stopped having.
-        void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2,
-                                const JPH::ContactManifold &manifold, JPH::ContactSettings &settings) override
+        void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
+                                JPH::ContactSettings &settings) override
         {
             (void)settings;
             _owner.RecordTouch(body1, body2, manifold);
@@ -624,23 +731,17 @@ private:
 
     // --- Characters ----------------------------------------------------------
 
-    /// Reserved so a default-constructed Character component names nothing. A
-    /// handle that accidentally addressed the first character ever created would
-    /// steer somebody else's.
-    static constexpr std::uint32_t kInvalidCharacterId = 0;
-
     /// One character: the solver object, the two shapes it switches between, the
     /// authored numbers its step consults, and the intent it was last given.
     ///
     /// The descriptor's values are copied in rather than read back from the
-    /// scene each step, because the step runs inside PhysicsWorld, which has no
-    /// scene to read. Editing a descriptor therefore rebuilds the character —
-    /// see ReconfigureEntityPhysics.
+    /// scene each step, so the step reads no components; the reconcile copies
+    /// them again when the descriptor is edited.
     struct CharacterRecord
     {
         JPH::Ref<JPH::CharacterVirtual> character;
-        JPH::RefConst<JPH::Shape>       standingShape;
-        JPH::RefConst<JPH::Shape>       crouchingShape;
+        JPH::RefConst<JPH::Shape> standingShape;
+        JPH::RefConst<JPH::Shape> crouchingShape;
 
         /// The direction it is trying to go and the speed it is asking for, as
         /// set by MoveCharacter. Kept between steps so a caller that stops
@@ -652,12 +753,6 @@ private:
         /// itself is never turned; only BunnyHopPolicy::Boost reads this.
         glm::vec3 facing{0.f, 0.f, -1.f};
 
-        /// The last two stepped poses, for render interpolation. Held here
-        /// rather than in `snapshots` because that map is keyed by the ids of
-        /// bodies this world created and destroys, and a character's inner body
-        /// is created and destroyed by Jolt.
-        MotionSnapshot snapshot;
-
         ECS::Entity entity{ECS::NullEntity};
 
         /// What the character's sweep may be stopped by. The descriptor's mask
@@ -666,24 +761,24 @@ private:
         /// keeps the full mask, which is what lets the sensor see it.
         CollisionFilter queryFilter;
 
-        float jumpSpeed          = 0.f;
-        float walkSpeed          = 0.f;
-        float friction           = 0.f;
-        float stopSpeed          = 0.f;
+        float jumpSpeed = 0.f;
+        float walkSpeed = 0.f;
+        float friction = 0.f;
+        float stopSpeed = 0.f;
         float groundAcceleration = 0.f;
-        float airAcceleration    = 0.f;
-        float airWishSpeedCap    = 0.f;
-        float bunnyHopSpeedCap   = 0.f;
-        float standingEyeHeight  = 0.f;
-        float crouchEyeHeight    = 0.f;
-        float eyeSpeed           = 0.f;
-        float gravityScale       = 1.f;
-        float coyoteTime         = 0.f;
-        float jumpBufferTime     = 0.f;
-        float maxStepHeight      = 0.f;
-        float radius             = 0.f;
+        float airAcceleration = 0.f;
+        float airWishSpeedCap = 0.f;
+        float bunnyHopSpeedCap = 0.f;
+        float standingEyeHeight = 0.f;
+        float crouchEyeHeight = 0.f;
+        float eyeSpeed = 0.f;
+        float gravityScale = 1.f;
+        float coyoteTime = 0.f;
+        float jumpBufferTime = 0.f;
+        float maxStepHeight = 0.f;
+        float radius = 0.f;
         float standingHalfHeight = 0.f;
-        float crouchHalfHeight   = 0.f;
+        float crouchHalfHeight = 0.f;
 
         /// How much taller the standing capsule is than the crouching one (m),
         /// which is how far the feet move when the stance changes in the air.
@@ -694,8 +789,8 @@ private:
         float eyeHeight = 0.f;
 
         /// @ref eyeHeight as the step before left it. The pair is blended at
-        /// render time like the two poses in @ref snapshot, so the eye moves
-        /// every frame instead of once per step.
+        /// render time like the two snapshot poses, so the eye moves every frame
+        /// instead of once per step.
         float prevEyeHeight = 0.f;
 
         /// Seconds since last standing on walkable ground; what coyote time is
@@ -721,8 +816,11 @@ private:
         bool jumpedSinceGrounded = false;
 
         bool canPushBodies = true;
-        bool canBePushed   = true;
-        bool frozen        = false;
+        bool canBePushed = true;
+
+        /// Copies the tuning a step reads from @p descriptor, leaving the
+        /// character's motion, timers and stance as they are.
+        void Retune(const CharacterDescriptor &descriptor);
 
         /// The horizontal velocity, relative to the ground, that one step of
         /// intent turns @p velocity into. @p wish is the horizontal request;
@@ -737,18 +835,11 @@ private:
         JPH::Vec3 BoostTakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
     };
 
-    /// Ordered, not hashed: characters are stepped in this order, and one that
-    /// depended on the iteration order of an unordered_map would simulate
-    /// differently between two runs of the same level.
+    /// Keyed by entity index, and ordered rather than hashed: characters are
+    /// stepped in this order, and one that depended on the iteration order of an
+    /// unordered_map would simulate differently between two runs of the same
+    /// level.
     std::map<std::uint32_t, CharacterRecord> characters;
-
-    /// Which character an entity owns, for the entity-keyed entry points. The
-    /// mirror of `entityBodies`, and the reason a lookup does not have to go
-    /// through the scene — which matters where component destruction is deferred
-    /// and the handle component may already be gone.
-    std::unordered_map<ECS::Entity, std::uint32_t> entityCharacters;
-
-    std::uint32_t nextCharacterId = kInvalidCharacterId + 1;
 
     /// What every character collides against every other one through. A
     /// character is not in the broad phase, so without this registry two of them
@@ -756,19 +847,14 @@ private:
     /// straight through each other.
     JPH::CharacterVsCharacterCollisionSimple characterVsCharacter;
 
-    CharacterRecord *FindCharacter(const Character &character)
-    {
-        const auto it = characters.find(character.id.value);
-        return it == characters.end() ? nullptr : &it->second;
-    }
+    CharacterRecord *FindCharacter(ECS::Entity entity);
+    const CharacterRecord *FindCharacter(ECS::Entity entity) const;
 
-    const CharacterRecord *FindCharacter(const Character &character) const
-    {
-        const auto it = characters.find(character.id.value);
-        return it == characters.end() ? nullptr : &it->second;
-    }
+    /// Builds the CharacterVirtual for @p record from @p descriptor at a
+    /// world-space @p pose. False when the simulation is full.
+    bool BuildCharacterVirtual(CharacterRecord &record, const CharacterDescriptor &descriptor, const Pose &pose);
 
-    /// Sweeps every unfrozen character by one step, before the bodies are
+    /// Sweeps every character by one step, before the bodies are
     /// solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
 
@@ -776,14 +862,19 @@ private:
     /// enough that blending would only add wobble.
     static Pose BlendSnapshot(const MotionSnapshot &snapshot, float alpha);
 
-    /// Writes a world-space render pose into @p entity's Transform, converting
-    /// out of a parent's space and skipping a write that would change nothing.
+    /// Writes a world-space render pose into @p entity's Transform, unless
+    /// something else wrote it since this world last did: that write has not
+    /// reached the body yet, and overwriting it first would lose it.
+    void WriteRenderPose(ECS::Entity entity, Pose pose, bool writeRotation);
+
+    /// Writes a world-space pose into @p entity's Transform, converting out of a
+    /// parent's space and skipping a write that would change nothing, then
+    /// stamps it as this world's own write.
     ///
     /// @p writeRotation is false for characters: the capsule is symmetric about
     /// its up axis, so the simulation has no opinion on facing and overwriting it
     /// would snap a turning character back to forward every frame.
-    static void WriteRenderPose(ECS::Entity entity, ECS::Mut<ECS::Transform> transform, Pose pose,
-                                bool writeRotation, const ParentWorldFn &parentWorld);
+    void WritePose(ECS::Entity entity, Pose pose, bool writeRotation);
 
     /// Records that a character touched a body, from inside the character's own
     /// sweep. The body-vs-body listener cannot see these: a character's inner
@@ -807,11 +898,9 @@ public:
                             const JPH::SubShapeID &subShapeId, JPH::RVec3Arg contactPosition,
                             JPH::Vec3Arg contactNormal, JPH::CharacterContactSettings &settings) override;
 
-        void OnCharacterContactAdded(const JPH::CharacterVirtual *character,
-                                     const JPH::CharacterVirtual *other,
+        void OnCharacterContactAdded(const JPH::CharacterVirtual *character, const JPH::CharacterVirtual *other,
                                      const JPH::SubShapeID &subShapeId, JPH::RVec3Arg contactPosition,
-                                     JPH::Vec3Arg contactNormal,
-                                     JPH::CharacterContactSettings &settings) override;
+                                     JPH::Vec3Arg contactNormal, JPH::CharacterContactSettings &settings) override;
 
 private:
         Impl &_owner;

@@ -5,16 +5,17 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Math/GLM.hpp> // pulls GLMConfig (GLM_ENABLE_EXPERIMENTAL) before the gtx header below
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <imgui.h> // must precede ImGuizmo.h — it uses ImVec2/ImDrawList/ImU32 unguarded
+
 #include <ImGuizmo.h>
 
 namespace Assisi::Editor
@@ -29,9 +30,9 @@ namespace Assisi::Editor
 // Ctrl snaps.
 //
 // The gizmo edits a world-space matrix. We convert it back to the entity's local
-// TRS (so parented entities move correctly), write it through GetMut so the change
-// is stamped and PropagateTransforms re-runs, then push the new pose to any
-// RigidBody — in that order, always.
+// TRS (so parented entities move correctly) and write it through GetMut, so the
+// change is stamped: PropagateTransforms re-runs, and the physics world moves the
+// body on its next reconcile.
 //
 // Drawn into the background draw list: over the scene, under the ImGui panels.
 // IsUsingGizmo() lets entity picking ignore clicks meant for it.
@@ -43,17 +44,20 @@ namespace Rt = Assisi::Runtime;
 // Snap increments while Ctrl is held: metres, degrees, unit fraction. The same
 // increment on every axis.
 constexpr float kTranslateSnap = 0.5f;
-constexpr float kRotateSnap    = 15.f;
-constexpr float kScaleSnap     = 0.1f;
+constexpr float kRotateSnap = 15.f;
+constexpr float kScaleSnap = 0.1f;
 
 ImGuizmo::OPERATION ToOperation(EditorApp::GizmoOp op)
 {
     switch (op)
     {
-    case EditorApp::GizmoOp::Rotate: return ImGuizmo::ROTATE;
-    case EditorApp::GizmoOp::Scale:  return ImGuizmo::SCALE;
+    case EditorApp::GizmoOp::Rotate:
+        return ImGuizmo::ROTATE;
+    case EditorApp::GizmoOp::Scale:
+        return ImGuizmo::SCALE;
     case EditorApp::GizmoOp::Translate:
-    default:                          return ImGuizmo::TRANSLATE;
+    default:
+        return ImGuizmo::TRANSLATE;
     }
 }
 } // namespace
@@ -110,25 +114,24 @@ void EditorApp::DrawInstanceGizmo()
     // session is running — a gizmo projected from the editor's own would be drawn
     // and dragged somewhere the cursor is not.
     Rt::Transform viewPose;
-    Rt::Camera    viewCamera;
+    Rt::Camera viewCamera;
     ViewCamera(viewPose, viewCamera);
 
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view   = Rt::ViewMatrix(viewPose);
-    const glm::mat4 proj   = Rt::ProjectionMatrix(viewCamera, aspect);
+    const glm::mat4 view = Rt::ViewMatrix(viewPose);
+    const glm::mat4 proj = Rt::ProjectionMatrix(viewCamera, aspect);
 
     const Rt::Transform placementBefore = row->transform;
-    glm::mat4 world           = TransformMatrix(placementBefore);
+    glm::mat4 world = TransformMatrix(placementBefore);
 
     const float snapValue = _gizmoOp == GizmoOp::Translate ? kTranslateSnap
                             : _gizmoOp == GizmoOp::Rotate  ? kRotateSnap
                                                            : kScaleSnap;
     const glm::vec3 snap(snapValue);
 
-    const bool manipulated =
-        ImGuizmo::Manipulate(&view[0][0], &proj[0][0], ToOperation(_gizmoOp),
-                             _gizmoLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD, &world[0][0], nullptr,
-                             io.KeyCtrl ? &snap[0] : nullptr);
+    const bool manipulated = ImGuizmo::Manipulate(&view[0][0], &proj[0][0], ToOperation(_gizmoOp),
+                                                  _gizmoLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD, &world[0][0],
+                                                  nullptr, io.KeyCtrl ? &snap[0] : nullptr);
 
     const bool nowUsing = ImGuizmo::IsUsing();
 
@@ -151,7 +154,7 @@ void EditorApp::DrawInstanceGizmo()
             Rt::Transform placement;
             placement.position = translation;
             placement.rotation = glm::normalize(orientation);
-            placement.scale    = scale;
+            placement.scale = scale;
             ApplyInstancePlacement(_selectedInstance, placement);
         }
     }
@@ -193,7 +196,7 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
         return;
 
     Rt::Transform placement = requested;
-    placement.rotation      = glm::normalize(placement.rotation);
+    placement.rotation = glm::normalize(placement.rotation);
     // One number, not three: an instance may only translate, rotate, and scale
     // *uniformly*. Loading a non-uniform placement hard-fails; averaging here is the
     // half that keeps one from ever being written.
@@ -207,16 +210,14 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
     // re-expansion destroys and recreates entity handles behind undo's back, and
     // this runs every frame of a drag, so it has to stay cheap.
     const glm::mat4 delta = TransformMatrix(placement) * glm::inverse(TransformMatrix(row->transform));
-    const glm::quat deltaRotation =
-        glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
-    const float scaleRatio =
-        row->transform.scale.x != 0.f ? placement.scale.x / row->transform.scale.x : 1.f;
+    const glm::quat deltaRotation = glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
+    const float scaleRatio = row->transform.scale.x != 0.f ? placement.scale.x / row->transform.scale.x : 1.f;
 
     for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, instanceId))
     {
         // Only the members the placement reaches directly. A parented one rides along
         // through its parent, so moving it here would apply the delta twice.
-        if (_scene->Has<Rt::Parent>(member))
+        if (_scene->Has<Assisi::ECS::Parent>(member))
             continue;
 
         Rt::Transform *memberTransform = _scene->GetMut<Rt::Transform>(member);
@@ -226,15 +227,10 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
         memberTransform->position = glm::vec3(delta * glm::vec4(memberTransform->position, 1.f));
         memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
         memberTransform->scale *= scaleRatio;
-
-        // Body last, after the transform is written: it is being kept in step, never
-        // consulted.
-        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(member))
-            _physics->SetBodyTransform(*body, memberTransform->position, memberTransform->rotation);
     }
 
     Assisi::Runtime::BlueprintInstance updated = *row;
-    updated.transform                          = placement;
+    updated.transform = placement;
     _world->instances.RestoreAt(instanceId, std::move(updated));
 }
 
@@ -274,8 +270,7 @@ void EditorApp::DrawTransformGizmo()
     // frame, making one undo entry per frame the light sat selected.
     if (!_lightGizmoHeld)
     {
-        _lightDrag.Release(_scene, ActiveHistory(),
-                           Assisi::Core::Reflect::ComponentIdOf<Rt::DirectionalLight>());
+        _lightDrag.Release(_scene, ActiveHistory(), Assisi::Core::Reflect::ComponentIdOf<Rt::DirectionalLight>());
     }
 
     const bool held = !instanceMode && !aimingLight && DrawTransformGizmoHandles();
@@ -321,14 +316,14 @@ bool EditorApp::DrawTransformGizmoHandles()
             const bool isMember = _scene->Has<Assisi::ECS::BlueprintMember>(_selectedEntity);
             if (!isMember)
             {
-                _gizmoLocalSpace    = !_gizmoLocalSpace;
+                _gizmoLocalSpace = !_gizmoLocalSpace;
                 _gizmoInstanceSpace = false;
             }
             else if (!_gizmoLocalSpace && !_gizmoInstanceSpace)
                 _gizmoLocalSpace = true;
             else if (_gizmoLocalSpace)
             {
-                _gizmoLocalSpace    = false;
+                _gizmoLocalSpace = false;
                 _gizmoInstanceSpace = true;
             }
             else
@@ -345,17 +340,17 @@ bool EditorApp::DrawTransformGizmoHandles()
     // already flips the viewport, so what is on screen matches ImGuizmo's
     // convention as-is.
     Rt::Transform viewPose;
-    Rt::Camera    viewCamera;
+    Rt::Camera viewCamera;
     ViewCamera(viewPose, viewCamera);
 
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view   = Rt::ViewMatrix(viewPose);
-    const glm::mat4 proj   = Rt::ProjectionMatrix(viewCamera, aspect);
+    const glm::mat4 view = Rt::ViewMatrix(viewPose);
+    const glm::mat4 proj = Rt::ProjectionMatrix(viewCamera, aspect);
 
     // The frame the result is converted back through. Identity for a root, where
     // world and local are the same matrix.
     glm::mat4 parentWorld(1.f);
-    if (const Rt::Parent *parent = _scene->Get<Rt::Parent>(_selectedEntity))
+    if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(_selectedEntity))
     {
         if (const Rt::Transform *parentTransform = _scene->Get<Rt::Transform>(parent->parent))
         {
@@ -383,16 +378,16 @@ bool EditorApp::DrawTransformGizmoHandles()
         {
             if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
             {
-                instanceFrame   = TransformMatrix(row->transform);
-                gizmoView       = view * instanceFrame;
+                instanceFrame = TransformMatrix(row->transform);
+                gizmoView = view * instanceFrame;
                 inInstanceFrame = true;
             }
         }
     }
 
     const float snapValue = _gizmoOp == GizmoOp::Translate ? kTranslateSnap
-                            : _gizmoOp == GizmoOp::Rotate   ? kRotateSnap
-                                                            : kScaleSnap;
+                            : _gizmoOp == GizmoOp::Rotate  ? kRotateSnap
+                                                           : kScaleSnap;
     const glm::vec3 snap(snapValue);
 
     // A gizmo drag is a Transform edit, so it rides the *same* record-before-write
@@ -408,8 +403,7 @@ bool EditorApp::DrawTransformGizmoHandles()
     // so without this, collapsing that header lets the end-of-frame sweep commit and
     // drop the still-empty gesture a frame into the drag, after which the `!IsUsing()`
     // guard refuses to open a new one and the drag records no undo at all.
-    const Assisi::Core::Reflect::ComponentId transformId =
-        Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
+    const Assisi::Core::Reflect::ComponentId transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
     Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
         history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
@@ -455,8 +449,8 @@ bool EditorApp::DrawTransformGizmoHandles()
     if (inInstanceFrame)
         world = glm::inverse(instanceFrame) * world;
 
-    const bool manipulated = ImGuizmo::Manipulate(&gizmoView[0][0], &proj[0][0], operation, mode, &world[0][0],
-                                                  nullptr, io.KeyCtrl ? &snap[0] : nullptr);
+    const bool manipulated = ImGuizmo::Manipulate(&gizmoView[0][0], &proj[0][0], operation, mode, &world[0][0], nullptr,
+                                                  io.KeyCtrl ? &snap[0] : nullptr);
 
     if (inInstanceFrame)
         world = instanceFrame * world;
@@ -467,18 +461,6 @@ bool EditorApp::DrawTransformGizmoHandles()
     if (nowUsing)
     {
         _captureEditingActive = true;
-
-        // Take the body out of the solver's hands for the drag, as the inspector does
-        // for its fields. A body left Dynamic while it is teleported into whatever it
-        // overlaps makes the solver resolve that penetration every step: the object
-        // creeps and turns on its own under a rotate, and stutters free under a
-        // translate. You are placing it, not throwing it at something.
-        //
-        // Raised *before* the pose is applied below, so the drag's first frame is
-        // already frozen. The thaw is at the end of OnImGui, keyed on this request
-        // not being raised, so ending the drag by any route — release, deselect, the
-        // gizmo vanishing because the world selector moved — restores the body.
-        RequestPhysicsFreeze();
 
         // Opens the drag on the first frame it is held and fixes what it names;
         // every frame after this one only re-asserts the hold.
@@ -505,7 +487,7 @@ bool EditorApp::DrawTransformGizmoHandles()
                     continue;
 
                 glm::mat4 entityParentWorld(1.f);
-                if (const Rt::Parent *parent = _scene->Get<Rt::Parent>(entity))
+                if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(entity))
                 {
                     if (const Rt::Transform *parentTransform = _scene->Get<Rt::Transform>(parent->parent))
                         entityParentWorld = parentTransform->worldMatrix;
@@ -520,8 +502,7 @@ bool EditorApp::DrawTransformGizmoHandles()
     return nowUsing;
 }
 
-void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
-                                      const glm::mat4 &world)
+void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld, const glm::mat4 &world)
 {
     // Back to local against the parent's world; `parentWorld` is identity for a
     // root, where local and world are the same matrix.
@@ -540,14 +521,7 @@ void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat
         return;
     mutableTransform->position = translation;
     mutableTransform->rotation = glm::normalize(orientation);
-    mutableTransform->scale    = scale;
-
-    // Body last, after the pose is written. Position and rotation only — scale is not
-    // a body property, and the inspector syncs the same two.
-    if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
-    {
-        _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
-    }
+    mutableTransform->scale = scale;
 }
 
 } // namespace Assisi::Editor

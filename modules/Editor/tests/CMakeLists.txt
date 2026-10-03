@@ -58,6 +58,8 @@ target_link_libraries(Assisi-Editor-Tests
     # ImGui. It arrives through Assisi::Editor, which is the module that draws a
     # UI and therefore the one that links the toolkit.
     imgui::imgui
+    # Components with requires/excludes rules, shared with the Runtime suite.
+    Assisi-Runtime-TestComponents
 )
 
 # EditHistory walks ComponentRegistry, populated by the static initializers
@@ -68,6 +70,7 @@ target_link_libraries(Assisi-Editor-Tests
 target_sources(Assisi-Editor-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
+  $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
 )
 
 add_test(NAME Editor COMMAND Assisi-Editor-Tests)

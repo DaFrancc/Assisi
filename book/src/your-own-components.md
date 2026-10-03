@@ -206,6 +206,52 @@ And inside `ACOMP(...)`:
 | `tracked` | The engine records when this component changes. You'll rarely need this yourself. |
 | `replicable` | The component *can* be sent over the network. See [Multiplayer basics](multiplayer.md). |
 | `transient` | Never saved at all: a marker or runtime-only component with no fields to store. |
+| `requires = {A, B}` | Adding this component also adds `A` and `B`, with default values, if the entity doesn't have them. See below. |
+| `excludes = {A}` | This component and `A` can't be on the same entity. See below. |
+
+### Components that go together
+
+Some components only make sense with others. `requires` lists the components
+that must come along, and `excludes` lists the ones that can't share an entity:
+
+```cpp
+ACOMP()
+struct Health
+{
+    AFIELD() float current = 100.f;
+};
+
+ACOMP(requires = {Health}, excludes = {ECS::Parent})
+struct Enemy
+{
+};
+```
+
+Write each name as the plain struct name, without its namespace: `Parent`, not
+`ECS::Parent`. The engine names components that way in level files, so two
+components can't share a name.
+
+With these rules:
+
+- **Adding brings the requirements.** `scene.Add<Enemy>(entity)` also adds a
+  default `Health`, in the same call, so no system ever sees an `Enemy` without
+  one. A `Health` already on the entity is left as it is. A requirement's own
+  requirements come along too.
+- **Loading keeps saved values.** A level that saves both components loads the
+  saved `Health`, not the default `Enemy` brought with it.
+- **Excluded pairs are refused.** Adding a component that something on the
+  entity excludes, or that excludes something already there, adds nothing. Code
+  gets `nullptr`, an error in the log naming both components, and an assert in
+  debug builds. The editor greys the component out in Add Component. A level or
+  blueprint holding both keeps whichever it reads first, logs which one it
+  dropped, and loads the rest. `scene.ConflictOf(entity, id)` asks the question without the error.
+- **Removing is one way.** Removing `Enemy` leaves its `Health` in place.
+  Removing `Health` while the `Enemy` is still there is refused, and the
+  editor's remove button says which component needs it.
+
+The build checks the rules themselves. A name that isn't a component, a
+component that requires itself through a loop, and a component that could never
+be added because it brings in something it excludes all stop the build.
 
 <details>
 <summary>Showing and hiding fields based on other fields</summary>

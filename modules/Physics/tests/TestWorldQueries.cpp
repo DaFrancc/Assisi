@@ -24,6 +24,8 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include "PhysicsTestScene.hpp"
+
 using namespace Assisi;
 
 namespace
@@ -36,24 +38,15 @@ Physics::Pose At(glm::vec3 position)
     return Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, position};
 }
 
-/// A unit box with an entity, so a hit has something to name.
+/// A unit box, reconciled into @p world so a query can find it at once.
 ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, bool isStatic,
-                     Physics::CollisionChannel channel  = Physics::CollisionChannel::World,
-                     Core::Bitmask<Physics::CollisionChannel> collides = Physics::AllChannels)
+                     Physics::CollisionFilter filter = Physics::CollisionFilter{})
 {
-    const ECS::Entity entity = scene.Create();
-    ECS::Transform *transform = scene.Add<ECS::Transform>(entity);
-    REQUIRE(transform != nullptr);
-    transform->position = at;
-
-    Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents  = {0.5f, 0.5f, 0.5f};
-    descriptor.isStatic     = isStatic;
-    descriptor.channel      = channel;
-    descriptor.collidesWith = collides;
-    REQUIRE(scene.Add<Physics::RigidBodyDescriptor>(entity, descriptor) != nullptr);
-
-    (void)world.AddBodyFromDescriptor(scene, entity, *transform, descriptor);
+    Physics::RigidBodyDescriptor descriptor = PhysicsTests::Box({0.5f, 0.5f, 0.5f}, isStatic);
+    descriptor.channel      = filter.channel;
+    descriptor.collidesWith = filter.collidesWith;
+    const ECS::Entity entity = PhysicsTests::AddBody(scene, at, descriptor);
+    world.Reconcile();
     return entity;
 }
 
@@ -65,7 +58,7 @@ constexpr Physics::PhysicsWorld::ColliderShapeDesc kUnitBox{.shape       = Physi
 TEST_CASE("CastRay reports the nearest body along the sweep")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Entity near = SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true);
     (void)SpawnBox(scene, world, {10.f, 0.f, 0.f}, /*isStatic=*/ true);
@@ -85,7 +78,7 @@ TEST_CASE("CastRay reports the nearest body along the sweep")
 TEST_CASE("CastRay finds nothing when it reaches nothing")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
     (void)SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true);
 
     // Aimed the other way.
@@ -98,7 +91,7 @@ TEST_CASE("CastRay finds nothing when it reaches nothing")
 TEST_CASE("CastRay refuses a zero sweep instead of dividing by its length")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
     (void)SpawnBox(scene, world, {0.f, 0.f, 0.f}, /*isStatic=*/ true);
 
     // The origin is inside the box, so this is the case most likely to return a
@@ -110,7 +103,7 @@ TEST_CASE("CastRay refuses a zero sweep instead of dividing by its length")
 TEST_CASE("A ray starting inside a body hits it, and ignore is how you skip it")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Entity self   = SpawnBox(scene, world, {0.f, 0.f, 0.f}, /*isStatic=*/ true);
     const ECS::Entity beyond = SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true);
@@ -132,7 +125,7 @@ TEST_CASE("A ray starting inside a body hits it, and ignore is how you skip it")
 TEST_CASE("A query and a body must each admit the other's channel")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     // Visible to everything, on the World channel.
     (void)SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true);
@@ -152,11 +145,11 @@ TEST_CASE("A body refusing the query's channel is not found either")
     // would get wrong while passing every test above: a pane of glass declines to
     // be seen, and a line-of-sight ray passes through it.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const auto unseen = Physics::AllChannels.Without(Physics::CollisionChannel::Visibility);
-    (void)SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true, Physics::CollisionChannel::World,
-                   unseen);
+    (void)SpawnBox(scene, world, {5.f, 0.f, 0.f}, /*isStatic=*/ true,
+                   Physics::CollisionFilter{unseen, Physics::CollisionChannel::World});
 
     const Physics::CollisionFilter seeing{Physics::AllChannels, Physics::CollisionChannel::Visibility};
     CHECK_FALSE(world.CastRay({0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, seeing, ECS::NullEntity).has_value());
@@ -167,23 +160,10 @@ TEST_CASE("A body refusing the query's channel is not found either")
     CHECK(world.CastRay({0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, ordinary, ECS::NullEntity).has_value());
 }
 
-TEST_CASE("A hit on a body with no entity reports NullEntity rather than a wrong handle")
-{
-    ECS::Scene scene;
-    Physics::PhysicsWorld world;
-
-    // The raw AddBody knows no entity, so there is nothing truthful to name.
-    (void)world.AddBody(At({5.f, 0.f, 0.f}), kUnitBox, Physics::BodyMotion::Static, {});
-
-    const auto hit = world.CastRay({0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, {}, ECS::NullEntity);
-    REQUIRE(hit.has_value());
-    CHECK(hit->entity == ECS::NullEntity);
-}
-
 TEST_CASE("CastShape stops a swept volume at the surface it meets")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Entity floor = SpawnBox(scene, world, {0.f, 0.f, 0.f}, /*isStatic=*/ true);
 
@@ -210,7 +190,7 @@ TEST_CASE("A shape cast is wider than a ray, and catches what a ray slips past")
     // y = ±0.9 the gap between their faces is 0.8 — wide enough for a ray along
     // y = 0, too narrow for the 1.0-tall box swept down the same line.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     (void)SpawnBox(scene, world, {5.f, 0.9f, 0.f}, /*isStatic=*/ true);
     (void)SpawnBox(scene, world, {5.f, -0.9f, 0.f}, /*isStatic=*/ true);
@@ -224,7 +204,7 @@ TEST_CASE("Overlap lists what a shape encloses, statics included, once each")
     // The question a sensor cannot answer: static scenery never generates a
     // contact, so the only way to hear about it is to ask.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Entity ground = SpawnBox(scene, world, {0.f, 0.f, 0.f}, /*isStatic=*/ true);
     const ECS::Entity crate  = SpawnBox(scene, world, {0.5f, 0.f, 0.f}, /*isStatic=*/ false);
@@ -243,7 +223,7 @@ TEST_CASE("Overlap lists what a shape encloses, statics included, once each")
 TEST_CASE("Overlap honours the ignored entity")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Entity self  = SpawnBox(scene, world, {0.f, 0.f, 0.f}, /*isStatic=*/ false);
     const ECS::Entity other = SpawnBox(scene, world, {0.5f, 0.f, 0.f}, /*isStatic=*/ false);

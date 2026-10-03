@@ -26,10 +26,10 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -79,7 +79,7 @@ Selection BuildSelection(ECS::Scene &scene)
     out.lid = scene.Create();
     REQUIRE(scene.Add(out.lid, At(0.f, 1.f, 0.f)) != nullptr);
     REQUIRE(scene.Add(out.lid, Runtime::Name{Core::EntityName{"lid"}}) != nullptr);
-    REQUIRE(scene.Add(out.lid, Runtime::Parent{.parent = out.body}) != nullptr);
+    REQUIRE(scene.Add(out.lid, ECS::Parent{.parent = out.body}) != nullptr);
 
     out.all = {out.body, out.lid};
     return out;
@@ -116,11 +116,11 @@ TEST_CASE("Authoring: a selection saved as a blueprint places back exactly where
 
     // Placed back at the same origin, the copy stands where the original did.
     InstanceTable table;
-    const Runtime::LevelInstance entry{.name      = "crate_1",
-                                       .source    = "crate.abp",
+    const Runtime::LevelInstance entry{.name = "crate_1",
+                                       .source = "crate.abp",
                                        .transform = origin,
                                        .overrides = nlohmann::json::object(),
-                                       .removed   = {}};
+                                       .removed = {}};
     const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
     REQUIRE(placed->members.size() == 2);
@@ -131,7 +131,7 @@ TEST_CASE("Authoring: a selection saved as a blueprint places back exactly where
 
     // And the wiring survived: the copy's lid parents to the copy's body, not to
     // the original's.
-    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(placed->members[1]);
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(placed->members[1]);
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == placed->members[0]);
     CHECK(parent->parent != selection.body);
@@ -149,15 +149,15 @@ TEST_CASE("Authoring: a second copy stands where it was put, not where the first
     InstanceTable table;
     const auto place = [&](const char *name, float x)
                        {
-                           const Runtime::LevelInstance entry{.name      = name,
-                                                              .source    = "crate.abp",
+                           const Runtime::LevelInstance entry{.name = name,
+                                                              .source = "crate.abp",
                                                               .transform = At(x, 0.f, 0.f),
                                                               .overrides = nlohmann::json::object(),
-                                                              .removed   = {}};
+                                                              .removed = {}};
                            return SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
                        };
 
-    const auto first  = place("crate_1", 3.f);
+    const auto first = place("crate_1", 3.f);
     const auto second = place("crate_2", -7.f);
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
@@ -178,11 +178,11 @@ TEST_CASE("Authoring: an instance an author placed is written back; a runtime sp
     ECS::Scene level;
     InstanceTable table;
 
-    const Runtime::LevelInstance entry{.name      = "crate_1",
-                                       .source    = "crate.abp",
+    const Runtime::LevelInstance entry{.name = "crate_1",
+                                       .source = "crate.abp",
                                        .transform = At(4.f, 0.f, 0.f),
                                        .overrides = nlohmann::json::object(),
-                                       .removed   = {}};
+                                       .removed = {}};
     REQUIRE(SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/ true).has_value());
 
     // A runtime spawn exists because something in the game asked for it; writing it
@@ -211,19 +211,19 @@ TEST_CASE("Authoring: a save renumbers the rows it wrote to match the file it wr
     // position: nothing has written it into one yet.
     const auto place = [&](const char *name, float x)
                        {
-                           const Runtime::LevelInstance entry{.name      = name,
-                                                              .source    = "crate.abp",
+                           const Runtime::LevelInstance entry{.name = name,
+                                                              .source = "crate.abp",
                                                               .transform = At(x, 0.f, 0.f),
                                                               .overrides = nlohmann::json::object(),
-                                                              .removed   = {}};
+                                                              .removed = {}};
                            const auto placed = SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/ true);
                            REQUIRE(placed.has_value());
                            return placed->instanceId;
                        };
 
-    const ECS::InstanceId first  = place("crate_1", 4.f);
+    const ECS::InstanceId first = place("crate_1", 4.f);
     const ECS::InstanceId second = place("crate_2", 8.f);
-    const ECS::InstanceId third  = place("crate_3", 12.f);
+    const ECS::InstanceId third = place("crate_3", 12.f);
 
     REQUIRE(table.Find(first)->levelInstanceIndex == -1);
     REQUIRE(table.Find(second)->levelInstanceIndex == -1);
@@ -254,11 +254,11 @@ TEST_CASE("Authoring: a selection containing a blueprint member is refused")
                                                 *scene.Get<ECS::Transform>(selection.body)));
 
     InstanceTable table;
-    const Runtime::LevelInstance entry{.name      = "crate_1",
-                                       .source    = "crate.abp",
+    const Runtime::LevelInstance entry{.name = "crate_1",
+                                       .source = "crate.abp",
                                        .transform = {},
                                        .overrides = nlohmann::json::object(),
-                                       .removed   = {}};
+                                       .removed = {}};
     const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
 
@@ -283,7 +283,7 @@ TEST_CASE("Authoring: children saved without their parent stand where they stood
     // parts of a rig without the rig is a thing an author means to do, so it is
     // supported rather than refused.
     const Selection selection = BuildSelection(scene);
-    REQUIRE(scene.Add(selection.body, Runtime::Parent{.parent = rig}) != nullptr);
+    REQUIRE(scene.Add(selection.body, ECS::Parent{.parent = rig}) != nullptr);
 
     // The body's own Transform reads (10,0,0), but that is an offset from the rig:
     // it *stands* at (110,0,0). The origin has to be where it stands, or the
@@ -311,11 +311,11 @@ TEST_CASE("Authoring: children saved without their parent stand where they stood
     // Placed back at that origin, the swap is invisible: the body stands exactly
     // where it stood, and the lid keeps its offset under it.
     InstanceTable table;
-    const Runtime::LevelInstance entry{.name      = "crate_1",
-                                       .source    = "crate.abp",
+    const Runtime::LevelInstance entry{.name = "crate_1",
+                                       .source = "crate.abp",
                                        .transform = origin,
                                        .overrides = nlohmann::json::object(),
-                                       .removed   = {}};
+                                       .removed = {}};
     const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
     REQUIRE(placed->members.size() == 2);
@@ -336,7 +336,7 @@ TEST_CASE("Authoring: the origin comes from the set being written, not from besi
     ECS::Scene scene;
 
     ECS::Transform pose = At(4.f, 0.f, 0.f);
-    pose.scale          = {0.6f, 0.6f, 0.6f};
+    pose.scale = {0.6f, 0.6f, 0.6f};
     const ECS::Entity first = scene.Create();
     REQUIRE(scene.Add(first, pose) != nullptr);
 
@@ -350,8 +350,7 @@ TEST_CASE("Authoring: the origin comes from the set being written, not from besi
     CHECK(origin.scale.x == doctest::Approx(1.f));
 
     // Order is the set's, so the anchor does not drift with click order.
-    const ECS::Transform reversed =
-        Runtime::AuthoringOriginFor(scene, std::vector<ECS::Entity>{second, first});
+    const ECS::Transform reversed = Runtime::AuthoringOriginFor(scene, std::vector<ECS::Entity>{second, first});
     CHECK(reversed.position.x == doctest::Approx(-9.f));
 
     // An entity with no Transform anchors at the identity rather than at whatever
@@ -368,7 +367,7 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
     ECS::Scene scene;
     ECS::Entity cube = scene.Create();
     ECS::Transform pose = At(10.f, 0.f, 0.f);
-    pose.scale          = {0.6f, 0.6f, 0.6f};
+    pose.scale = {0.6f, 0.6f, 0.6f};
     REQUIRE(scene.Add(cube, pose) != nullptr);
     REQUIRE(scene.Add(cube, Runtime::Name{Core::EntityName{"cube"}}) != nullptr);
 
@@ -393,11 +392,11 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
 
     // A copy placed somewhere else entirely is still the size it was saved at.
     InstanceTable table;
-    const Runtime::LevelInstance entry{.name      = "small_crate_1",
-                                       .source    = "small_crate.abp",
+    const Runtime::LevelInstance entry{.name = "small_crate_1",
+                                       .source = "small_crate.abp",
                                        .transform = At(-4.f, 0.f, 0.f),
                                        .overrides = nlohmann::json::object(),
-                                       .removed   = {}};
+                                       .removed = {}};
     const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
 
@@ -409,12 +408,12 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
     // …and scaling the *instance* still multiplies on top, so the two are not the
     // same knob — one is what the thing is, the other is what this copy of it is.
     ECS::Transform doubled = At(0.f, 0.f, 0.f);
-    doubled.scale          = {2.f, 2.f, 2.f};
-    const Runtime::LevelInstance bigEntry{.name      = "small_crate_2",
-                                          .source    = "small_crate.abp",
+    doubled.scale = {2.f, 2.f, 2.f};
+    const Runtime::LevelInstance bigEntry{.name = "small_crate_2",
+                                          .source = "small_crate.abp",
                                           .transform = doubled,
                                           .overrides = nlohmann::json::object(),
-                                          .removed   = {}};
+                                          .removed = {}};
     const auto big = SceneSerializer::PlaceInstance(scene, table, bigEntry, /*authored=*/ true);
     REQUIRE(big.has_value());
     CHECK(scene.Get<ECS::Transform>(big->members[0])->scale.x == doctest::Approx(1.2f));
@@ -426,12 +425,12 @@ TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
 
     ECS::Scene scene;
     const Selection selection = BuildSelection(scene);
-    const ECS::Entity outsider  = scene.Create();
+    const ECS::Entity outsider = scene.Create();
     REQUIRE(scene.Add(outsider, At(0.f, 0.f, 0.f)) != nullptr);
     REQUIRE(scene.Add(outsider, Runtime::Name{Core::EntityName{"marker"}}) != nullptr);
 
     // The body now points at something the blueprint will not contain.
-    scene.GetMut<Runtime::Parent>(selection.lid)->parent = outsider;
+    scene.GetMut<ECS::Parent>(selection.lid)->parent = outsider;
 
     const Tests::LogCapture log;
 

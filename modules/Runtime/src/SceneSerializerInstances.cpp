@@ -6,6 +6,7 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
@@ -76,8 +77,8 @@ std::string UniqueName(std::string base, std::unordered_set<std::string> &used)
     // The same suffix walk the live scene is named by, asked of a set instead of
     // a world. One policy, so a name this save steps aside is a name the load
     // keeps as written.
-    std::string chosen = Runtime::UniqueName(
-        std::string_view{base}, [&used](std::string_view candidate) { return used.contains(std::string{candidate}); });
+    std::string chosen = Runtime::UniqueName(std::string_view{base}, [&used](std::string_view candidate)
+                                             { return used.contains(std::string{candidate}); });
     used.insert(chosen);
     return chosen;
 }
@@ -113,11 +114,14 @@ namespace
 /// precondition (see SceneSerializer::ReexpandInstance).
 void StripSerializable(ECS::Scene &scene, ECS::Entity entity)
 {
+    // As a set, so a requirement comes off after the components requiring it.
+    std::vector<Core::Reflect::ComponentId> ids;
     for (const Core::Reflect::ComponentMeta *meta :
          Core::Reflect::ComponentRegistry::Instance().SerializableComponents())
     {
-        scene.RemoveById(entity, meta->id);
+        ids.push_back(meta->id);
     }
+    (void)scene.RemoveManyById(entity, ids);
 }
 
 /// The last segment of a member path — what the member is called in its own file,
@@ -149,16 +153,15 @@ std::string_view LeafName(std::string_view path)
 /// @param names when non-null, the batch to claim member names from. A load
 ///        shares one across every instance in the file, so the scene is walked
 ///        once rather than once per instance.
-std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &table,
-                                              const LevelInstance &entry, int32_t levelInstanceIndex,
-                                              StagedInstance &staged, AdoptionSet *adopt, NameBatch *names)
+std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &table, const LevelInstance &entry,
+                                              int32_t levelInstanceIndex, StagedInstance &staged, AdoptionSet *adopt,
+                                              NameBatch *names)
 {
-    if (!HasUniformScale(entry.transform))
+    if (!ECS::HasUniformScale(entry.transform))
     {
         Core::Log::Error("Blueprint: instance '{}' has a non-uniform scale ({}, {}, {}); an instance may only "
                          "translate, rotate, or scale uniformly.",
-                         entry.name, entry.transform.scale.x, entry.transform.scale.y,
-                         entry.transform.scale.z);
+                         entry.name, entry.transform.scale.x, entry.transform.scale.y, entry.transform.scale.z);
         return std::unexpected(LevelError::NonUniformScale);
     }
 
@@ -174,23 +177,22 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
     const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
 
     staged.definition = definition;
-    staged.placement  = entry.transform;
-    staged.overrides  = entry.overrides;
+    staged.placement = entry.transform;
+    staged.overrides = entry.overrides;
     // A re-expansion keeps its row exactly as it is: placement, overrides and
     // removals belong to the level that placed the instance, not to the file being
     // edited.
-    staged.id = adopt != nullptr
-                    ? adopt->instanceId
-                    : table.Add(BlueprintInstance{.name      = entry.name,
-                                                  .source    = definition->source,
-                                                  .transform = entry.transform,
-                                                  // Anything the loader places came out of a file, so it is
-                                                  // authored by construction; a placement made outside a
-                                                  // load decides for itself (see PlaceInstance).
-                                                  .authored           = levelInstanceIndex >= 0,
-                                                  .levelInstanceIndex = levelInstanceIndex,
-                                                  .overrides          = entry.overrides,
-                                                  .removed            = entry.removed});
+    staged.id = adopt != nullptr ? adopt->instanceId
+                                 : table.Add(BlueprintInstance{.name = entry.name,
+                                                               .source = definition->source,
+                                                               .transform = entry.transform,
+                                                               // Anything the loader places came out of a file, so it
+                                                               // is authored by construction; a placement made outside
+                                                               // a load decides for itself (see PlaceInstance).
+                                                               .authored = levelInstanceIndex >= 0,
+                                                               .levelInstanceIndex = levelInstanceIndex,
+                                                               .overrides = entry.overrides,
+                                                               .removed = entry.removed});
 
     // A member is an entity, so it obeys the entity rule: one name, one entity.
     // The leaf below is what a member is called whenever that name is free, and
@@ -287,8 +289,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
         if (!index.has_value())
         {
             Core::Log::Warn("Blueprint: instance '{}' overrides '{}', which '{}' does not declare - dropped.",
-                            entry.name.empty() ? definition->source : entry.name, memberPath,
-                            definition->source);
+                            entry.name.empty() ? definition->source : entry.name, memberPath, definition->source);
             continue;
         }
         if (staged.members[*index] == ECS::NullEntity)
@@ -365,6 +366,10 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             const Core::Reflect::ComponentMeta *meta = registry.Find(prepared.name);
             if (meta == nullptr)
                 continue;
+            if (SkipExcluded(scene, e, *meta, desc.name, staged.definition->source))
+            {
+                continue;
+            }
 
             void *component = meta->construct(&scene, e.index, e.generation);
             if (component == nullptr)
@@ -413,6 +418,11 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
 
                 // A one-key wrapper because the qualifier takes a component *set* —
                 // it looks each component up to know which fields are references.
+                if (SkipExcluded(scene, e, *meta, desc.name, staged.definition->source))
+                {
+                    continue;
+                }
+
                 nlohmann::json wrapper{{componentName, componentData}};
                 QualifyInstanceReferences(wrapper, prefix);
                 // PrepareBlueprint already refused any member whose values do not
@@ -436,7 +446,7 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             if (ECS::Transform *transform = scene.GetMut<ECS::Transform>(e))
             {
                 *transform = desc.parented ? InverseComposeTransform(desc.placement, *transform)
-                                           : ComposeTransform(desc.placement, *transform);
+                                           : ECS::ComposeTransform(desc.placement, *transform);
             }
         }
 

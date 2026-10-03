@@ -25,34 +25,30 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include "PhysicsTestScene.hpp"
+
 using namespace Assisi;
+using Assisi::PhysicsTests::kStep;
 
 namespace
 {
 
-constexpr float kStep = 1.f / 60.f;
-
 /// Long enough for a dropped body to land and for Jolt to put it to sleep.
 constexpr int32_t kSleepSteps = 300;
 
-ECS::Entity Spawn(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, glm::vec3 halfExtents,
-                  bool isStatic, Physics::CollisionChannel channel,
-                  Core::Bitmask<Physics::CollisionChannel> collides = Physics::AllChannels)
+/// A filter on @p channel that collides with everything.
+Physics::CollisionFilter On(Physics::CollisionChannel channel)
 {
-    const ECS::Entity entity = scene.Create();
-    ECS::Transform *transform = scene.Add<ECS::Transform>(entity);
-    REQUIRE(transform != nullptr);
-    transform->position = at;
+    return Physics::CollisionFilter{Physics::AllChannels, channel};
+}
 
-    Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents  = halfExtents;
-    descriptor.isStatic     = isStatic;
-    descriptor.channel      = channel;
-    descriptor.collidesWith = collides;
-    REQUIRE(scene.Add<Physics::RigidBodyDescriptor>(entity, descriptor) != nullptr);
-
-    (void)world.AddBodyFromDescriptor(scene, entity, *transform, descriptor);
-    return entity;
+ECS::Entity Spawn(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, bool isStatic,
+                  Physics::CollisionFilter filter)
+{
+    Physics::RigidBodyDescriptor descriptor = PhysicsTests::Box(halfExtents, isStatic);
+    descriptor.channel      = filter.channel;
+    descriptor.collidesWith = filter.collidesWith;
+    return PhysicsTests::AddBody(scene, at, descriptor);
 }
 
 /// Counts the phases reported for @p entity over @p steps steps.
@@ -84,11 +80,10 @@ PhaseCounts CountPhases(Physics::PhysicsWorld &world, ECS::Entity entity, int32_
     return counts;
 }
 
-float HeightOf(ECS::Scene &scene, const Physics::PhysicsWorld &world, ECS::Entity entity)
+float HeightOf(const Physics::PhysicsWorld &world, ECS::Entity entity)
 {
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(entity);
-    REQUIRE(body != nullptr);
-    return world.GetBodyTransform(*body).first.y;
+    REQUIRE(world.HasBody(entity));
+    return world.GetBodyPose(entity).position.y;
 }
 
 } // namespace
@@ -96,16 +91,14 @@ float HeightOf(ECS::Scene &scene, const Physics::PhysicsWorld &world, ECS::Entit
 TEST_CASE("A body passes through a trigger and is reported doing it")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     // Floor top at y = 0, and a trigger volume hanging above it.
-    (void)Spawn(scene, world, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true,
-                Physics::CollisionChannel::World);
-    (void)Spawn(scene, world, {0.f, 2.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ true,
-                Physics::CollisionChannel::Trigger);
+    (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::World));
+    (void)Spawn(scene, {0.f, 2.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::Trigger));
 
-    const ECS::Entity box = Spawn(scene, world, {0.f, 6.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                  /*isStatic=*/ false, Physics::CollisionChannel::World);
+    const ECS::Entity box = Spawn(scene, {0.f, 6.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
+                                  On(Physics::CollisionChannel::World));
 
     bool sawSensorEnter = false;
     bool sawSensorExit  = false;
@@ -128,20 +121,21 @@ TEST_CASE("A body passes through a trigger and is reported doing it")
 
     // And the volume did not hold it up: it is resting on the floor below, not
     // sitting on top of the trigger.
-    CHECK(HeightOf(scene, world, box) == doctest::Approx(0.5f).epsilon(0.1));
+    CHECK(HeightOf(world, box) == doctest::Approx(0.5f).epsilon(0.1));
 }
 
 TEST_CASE("A trigger only reports the channels its mask admits")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
-    const auto charactersOnly = Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Character);
-    (void)Spawn(scene, world, {0.f, 2.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ true,
-                Physics::CollisionChannel::Trigger, charactersOnly);
+    const Core::Bitmask<Physics::CollisionChannel> charactersOnly =
+        Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Character);
+    (void)Spawn(scene, {0.f, 2.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ true,
+                Physics::CollisionFilter{charactersOnly, Physics::CollisionChannel::Trigger});
 
-    const ECS::Entity crate = Spawn(scene, world, {0.f, 6.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                    /*isStatic=*/ false, Physics::CollisionChannel::World);
+    const ECS::Entity crate = Spawn(scene, {0.f, 6.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
+                                    On(Physics::CollisionChannel::World));
 
     const PhaseCounts counts = CountPhases(world, crate, 120);
     CHECK(counts.enters == 0);
@@ -155,23 +149,19 @@ TEST_CASE("A kinematic trigger finds a body that was already asleep")
     // testing it; the volume is then created around it. A sensor that had gone to
     // sleep itself would never meet it.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
-    (void)Spawn(scene, world, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true,
-                Physics::CollisionChannel::World);
-    const ECS::Entity box = Spawn(scene, world, {0.f, 2.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                  /*isStatic=*/ false, Physics::CollisionChannel::World);
+    (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::World));
+    const ECS::Entity box = Spawn(scene, {0.f, 2.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
+                                  On(Physics::CollisionChannel::World));
 
     for (int32_t i = 0; i < kSleepSteps; ++i)
         world.Update(kStep);
 
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
-    REQUIRE(body != nullptr);
-    REQUIRE_FALSE(world.IsBodyActive(*body));
+    REQUIRE_FALSE(world.IsBodyActive(box));
 
     // isStatic false is the always-awake kind, and the descriptor's default.
-    (void)Spawn(scene, world, {0.f, 0.5f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false,
-                Physics::CollisionChannel::Trigger);
+    (void)Spawn(scene, {0.f, 0.5f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false, On(Physics::CollisionChannel::Trigger));
 
     const PhaseCounts counts = CountPhases(world, box, 10);
     CHECK(counts.enters == 1);
@@ -183,22 +173,18 @@ TEST_CASE("A static trigger finds a sleeping body because placing it wakes what 
     // sleeping body, so creating it wakes whatever it now contains and the next
     // step tests the pair normally.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
-    (void)Spawn(scene, world, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true,
-                Physics::CollisionChannel::World);
-    const ECS::Entity box = Spawn(scene, world, {0.f, 2.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                  /*isStatic=*/ false, Physics::CollisionChannel::World);
+    (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::World));
+    const ECS::Entity box = Spawn(scene, {0.f, 2.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
+                                  On(Physics::CollisionChannel::World));
 
     for (int32_t i = 0; i < kSleepSteps; ++i)
         world.Update(kStep);
 
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
-    REQUIRE(body != nullptr);
-    REQUIRE_FALSE(world.IsBodyActive(*body));
+    REQUIRE_FALSE(world.IsBodyActive(box));
 
-    (void)Spawn(scene, world, {0.f, 0.5f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ true,
-                Physics::CollisionChannel::Trigger);
+    (void)Spawn(scene, {0.f, 0.5f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::Trigger));
 
     const PhaseCounts counts = CountPhases(world, box, 10);
     CHECK(counts.enters == 1);
@@ -210,12 +196,11 @@ TEST_CASE("Two overlapping triggers report nothing about each other")
     // theoretical: the default trigger is kinematic, and Jolt does pair a
     // kinematic body with a sensor.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
-    const ECS::Entity first = Spawn(scene, world, {0.f, 0.f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false,
-                                    Physics::CollisionChannel::Trigger);
-    (void)Spawn(scene, world, {1.f, 0.f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false,
-                Physics::CollisionChannel::Trigger);
+    const ECS::Entity first = Spawn(scene, {0.f, 0.f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false,
+                                    On(Physics::CollisionChannel::Trigger));
+    (void)Spawn(scene, {1.f, 0.f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false, On(Physics::CollisionChannel::Trigger));
 
     const PhaseCounts counts = CountPhases(world, first, 60);
     CHECK(counts.enters == 0);
@@ -228,15 +213,13 @@ TEST_CASE("A kinematic trigger stays awake indefinitely")
     // which is the price of noticing bodies that are not moving. A trigger that
     // was allowed to sleep would go silent after a few seconds of quiet.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
-    const ECS::Entity volume = Spawn(scene, world, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f},
-                                     /*isStatic=*/ false, Physics::CollisionChannel::Trigger);
+    const ECS::Entity volume = Spawn(scene, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ false,
+                                     On(Physics::CollisionChannel::Trigger));
 
     for (int32_t i = 0; i < kSleepSteps; ++i)
         world.Update(kStep);
 
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(volume);
-    REQUIRE(body != nullptr);
-    CHECK(world.IsBodyActive(*body));
+    CHECK(world.IsBodyActive(volume));
 }

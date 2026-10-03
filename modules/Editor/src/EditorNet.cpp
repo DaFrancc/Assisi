@@ -27,18 +27,18 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
-#include <algorithm>
 #include <format>
 #include <optional>
 #include <string>
@@ -77,8 +77,7 @@ void LabelledValue(const char *label, const std::string &value)
 /// Each of these names a different problem, so only a row that is actually
 /// nonzero should draw the eye. The tooltip carries the diagnosis — a count
 /// nobody can interpret is a count nobody acts on.
-template <typename T>
-void NetCounterRow(const char *label, T value, const char *tooltip)
+template <typename T> void NetCounterRow(const char *label, T value, const char *tooltip)
 {
     ImGui::TextUnformatted(label);
     ImGui::SameLine(180.f);
@@ -100,7 +99,10 @@ std::string LevelStem(const std::string &virtualPath)
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
-bool EditorApp::IsNetSessionActive() const { return _netSession && _netSession->IsActive(); }
+bool EditorApp::IsNetSessionActive() const
+{
+    return _netSession && _netSession->IsActive();
+}
 
 Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
 {
@@ -114,8 +116,8 @@ Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
     if (!hash)
         return identity;
 
-    identity.addressing  = Assisi::NetSync::LevelAddressing::Virtual;
-    identity.path        = _world->levelPath;
+    identity.addressing = Assisi::NetSync::LevelAddressing::Virtual;
+    identity.path = _world->levelPath;
     identity.contentHash = *hash;
     return identity;
 }
@@ -139,7 +141,7 @@ void EditorApp::StripReplicatedEntities()
 
     // The engine's strip, shared with the headless client: one implementation, so
     // the two cannot disagree about bodies or orphaned parent links.
-    const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene, *_physics);
+    const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene);
 
     if (stripped.entities != 0 || stripped.orphans != 0)
     {
@@ -174,21 +176,20 @@ void EditorApp::BuildJoinedWorld()
     // Straight into the play scene: the pre-play snapshot already holds the
     // editing scene, so there is nothing here to preserve and nothing to confirm.
     Assisi::Runtime::LevelHeader header;
-    const auto reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
-                                                             : Assisi::App::AssetCacheReset::ClearFirst;
+    const auto reset =
+        _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep : Assisi::App::AssetCacheReset::ClearFirst;
     const Assisi::App::LevelServices services{_assetCache, _sceneRenderer};
     const Assisi::App::LevelLoadOptions options{.reset = reset, .header = &header};
-    const Assisi::Runtime::LevelResult loaded =
-        level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
-            ? Assisi::App::LoadLevelFile(*_world, file, services, options)
-            : Assisi::App::LoadLevel(*_world, level.path, services, options);
+    const Assisi::Runtime::LevelResult loaded = level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
+                                                    ? Assisi::App::LoadLevelFile(*_world, file, services, options)
+                                                    : Assisi::App::LoadLevel(*_world, level.path, services, options);
     if (!loaded)
     {
         // The reason, not just the fact: this string is what the host is told and
         // what the player sees, and "failed to load" has never helped anyone work
         // out which of a dozen things the level file did wrong.
-        FailJoin("'" + level.path + "' failed to load: " +
-                 std::string(Assisi::Runtime::Describe(loaded.error())) + ".");
+        FailJoin("'" + level.path + "' failed to load: " + std::string(Assisi::Runtime::Describe(loaded.error())) +
+                 ".");
         return;
     }
 
@@ -211,13 +212,13 @@ void EditorApp::BuildJoinedWorld()
 
     // The load rebuilt entity identity from scratch, so every handle kept from the
     // pre-join scene now aliases a live but unrelated entity. Clear them all.
-    _selectedEntity     = Assisi::ECS::NullEntity;
-    _eyedropperArmed    = false;
-    _eyedropperEntity   = Assisi::ECS::NullEntity;
-    _eyedropperMeta     = nullptr;
-    _assetBrowserOpen   = false;
+    _selectedEntity = Assisi::ECS::NullEntity;
+    _eyedropperArmed = false;
+    _eyedropperEntity = Assisi::ECS::NullEntity;
+    _eyedropperMeta = nullptr;
+    _assetBrowserOpen = false;
     _assetBrowserEntity = Assisi::ECS::NullEntity;
-    _assetBrowserMeta   = nullptr;
+    _assetBrowserMeta = nullptr;
 
     // Only now, because from here a NetId has somewhere to land.
     _netSession->ConfirmLevelReady();
@@ -262,9 +263,9 @@ bool EditorApp::WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel)
         return false;
     }
 
-    _pieTempLevel        = *resolved;
-    outLevel.addressing  = Assisi::NetSync::LevelAddressing::AbsolutePath;
-    outLevel.path        = resolved->string();
+    _pieTempLevel = *resolved;
+    outLevel.addressing = Assisi::NetSync::LevelAddressing::AbsolutePath;
+    outLevel.path = resolved->string();
     outLevel.contentHash = *hash;
     return true;
 }
@@ -288,8 +289,8 @@ void EditorApp::SpawnPieClients(std::int32_t count)
         // One user root per child, so options.json, the log and any capture land
         // in the child's own directory instead of over the parent's. The asset
         // root stays shared, opened read-only on the child's side.
-        std::filesystem::path userRoot = std::filesystem::temp_directory_path() /
-                                         ("assisi-pie-client-" + std::to_string(i));
+        std::filesystem::path userRoot =
+            std::filesystem::temp_directory_path() / ("assisi-pie-client-" + std::to_string(i));
         std::error_code ec;
         std::filesystem::create_directories(userRoot, ec);
 
@@ -383,7 +384,7 @@ void EditorApp::PollNetSession(float dt)
         {
             // Marshalled, not done here: building the world frees and re-resolves
             // GPU assets this frame's draws may already reference.
-            _joinPhase        = JoinPhase::Building;
+            _joinPhase = JoinPhase::Building;
             _pendingJoinBuild = true;
             return;
         }
@@ -426,7 +427,7 @@ void EditorApp::DrawHostAuthoringWarnings()
     // Both counts are a mismatch between what the author marked and what clients
     // will actually see — otherwise found by watching a second window and
     // wondering.
-    std::size_t marked          = 0;
+    std::size_t marked = 0;
     std::size_t unmarkedDynamic = 0;
     _scene->ForEachEntity(
         [&](Assisi::ECS::Entity entity)
@@ -596,9 +597,8 @@ void EditorApp::DrawNetworkWindow()
     // Where this session actually is. "It says Hosting" and "a client can reach
     // it at this address" are different claims, and only the second is what
     // someone on the other machine types into their Join field.
-    LabelledValue("Endpoint", _netSession->IsHost()
-                                  ? std::format("listening on :{}", _netPort)
-                                  : std::format("{}:{}", _netAddress.data(), _netPort));
+    LabelledValue("Endpoint", _netSession->IsHost() ? std::format("listening on :{}", _netPort)
+                                                    : std::format("{}:{}", _netAddress.data(), _netPort));
 
     if (_netSession->IsHost())
         DrawHostAuthoringWarnings();
@@ -617,13 +617,13 @@ void EditorApp::DrawNetworkWindow()
         // by construction: there is no client→server state channel, and this is
         // the server acting on its own world.
         const bool canNudge = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
-                              _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr &&
+                              _physics->HasBody(_selectedEntity) &&
                               _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
         ImGui::BeginDisabled(!canNudge);
         if (ImGui::Button("Nudge selected body") && canNudge)
         {
             constexpr glm::vec3 kNudge{2.f, 6.f, 0.f};
-            _physics->SetBodyLinearVelocity(*_scene->Get<Assisi::Physics::RigidBody>(_selectedEntity), kNudge);
+            _physics->SetBodyLinearVelocity(_selectedEntity, kNudge);
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -676,8 +676,7 @@ void EditorApp::DrawNetworkWindow()
         // exists to prevent. Watch for enters climbing in lockstep with exits.
         if (ImGui::TreeNodeEx("Relevancy", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            LabelledValue("Largest set", std::format("{} of {}", stats.relevantEntities,
-                                                     stats.replicatedEntities));
+            LabelledValue("Largest set", std::format("{} of {}", stats.relevantEntities, stats.replicatedEntities));
             LabelledValue("Entered", std::format("{}", stats.relevancyEnters));
 
             const bool thrashing = stats.relevancyExits > 0 && stats.relevancyEnters > stats.relevancyExits * 2;
@@ -747,9 +746,9 @@ void EditorApp::DrawNetworkWindow()
                 static_cast<float>(stats.correctionBytes - _lastCorrectionBytes) / _netSampleSeconds;
             _correctionsPerSecond =
                 static_cast<float>(stats.correctionsApplied - _lastCorrectionsApplied) / _netSampleSeconds;
-            _lastCorrectionBytes      = stats.correctionBytes;
-            _lastCorrectionsApplied   = stats.correctionsApplied;
-            _netSampleSeconds         = 0.f;
+            _lastCorrectionBytes = stats.correctionBytes;
+            _lastCorrectionsApplied = stats.correctionsApplied;
+            _netSampleSeconds = 0.f;
         }
 
         ImGui::SeparatorText("Corrections");
@@ -791,16 +790,16 @@ void EditorApp::DrawNetworkWindow()
         ImGui::SameLine();
         const bool canScramble = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
                                  _scene->Has<Assisi::NetSync::Mirrored>(_selectedEntity) &&
-                                 _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr;
+                                 _physics->HasBody(_selectedEntity);
         ImGui::BeginDisabled(!canScramble);
         if (ImGui::Button("Corrupt selected mirror") && canScramble)
         {
             // Client-side damage the host has no way to know about — the exact
             // failure class the keyframe sweep exists for.
-            const Assisi::Physics::RigidBody *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
-            const auto [position, rotation]        = _physics->GetBodyTransform(*body);
-            _physics->ApplyBodyState(*body, position + glm::vec3{0.f, 3.f, 1.5f}, rotation, glm::vec3{0.f},
-                                     glm::vec3{0.f}, /*activate=*/ false);
+            const Assisi::Physics::Pose pose = _physics->GetBodyPose(_selectedEntity);
+            _physics->ApplyBodyState(_selectedEntity,
+                                     Assisi::Physics::Pose{pose.rotation, pose.position + glm::vec3{0.f, 3.f, 1.5f}},
+                                     glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/ false);
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))

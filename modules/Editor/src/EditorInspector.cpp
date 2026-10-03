@@ -31,9 +31,9 @@
 #if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetComponents.hpp>
 #endif
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
@@ -215,14 +215,14 @@ RadioVisibility EvaluateRadio(const void *component, std::span<const Assisi::Cor
     // ReadEnumValue: a bool field carries no enumSize, so that would read a
     // zero-width integer rather than the byte.
     const auto readSource = [component](const FieldMeta *fm) -> std::int64_t
-    {
-        const void *fp = static_cast<const char *>(component) + fm->offset;
-        if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
-        {
-            return *static_cast<const bool *>(fp) ? 1 : 0;
-        }
-        return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
-    };
+                            {
+                                const void *fp = static_cast<const char *>(component) + fm->offset;
+                                if (fm->type == Assisi::Core::Reflect::FieldType::Bool)
+                                {
+                                    return *static_cast<const bool *>(fp) ? 1 : 0;
+                                }
+                                return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
+                            };
 
     // Fold from the root down toward `field` (chain front). `state` holds the
     // resolved visibility of the source one level up.
@@ -515,7 +515,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::LinearColor4:
         edited = ImGui::ColorEdit4(field.name.c_str(), static_cast<float *>(fp),
                                    ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
-                                       ImGuiColorEditFlags_AlphaPreviewHalf);
+                                   ImGuiColorEditFlags_AlphaPreviewHalf);
         break;
     // sRGB colours are display values, which the picker's own 0-1 range is.
     case FieldType::SrgbColor3:
@@ -893,17 +893,17 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                 }
                 _scene->ForEachEntity(
                     [&](Assisi::ECS::Entity e)
-                    {
-                        const std::string label = DescribeEntity(e);
-                        const bool selected = (e == *ref);
-                        if (ImGui::Selectable(label.c_str(), selected))
                         {
-                            *ref = e;
-                            edited = true;
-                        }
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    });
+                            const std::string label = DescribeEntity(e);
+                            const bool selected = (e == *ref);
+                            if (ImGui::Selectable(label.c_str(), selected))
+                            {
+                                *ref = e;
+                                edited = true;
+                            }
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        });
                 ImGui::EndCombo();
             }
             break;
@@ -925,16 +925,16 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Named by source and id rather than by id alone: the number is a
             // per-world counter and means nothing to the author on its own.
             const auto describe = [this](Assisi::ECS::InstanceId id) -> std::string
-            {
-                if (!id.IsValid())
-                    return "(none)";
-                if (_world == nullptr)
-                    return std::format("instance {}", id.value);
-                const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
-                if (row == nullptr)
-                    return std::format("instance {} (missing)", id.value);
-                return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
-            };
+                                  {
+                                      if (!id.IsValid())
+                                          return "(none)";
+                                      if (_world == nullptr)
+                                          return std::format("instance {}", id.value);
+                                      const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
+                                      if (row == nullptr)
+                                          return std::format("instance {} (missing)", id.value);
+                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+                                  };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
             {
@@ -1140,113 +1140,6 @@ bool EditorApp::AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id)
     return false;
 }
 
-void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
-{
-    if (anyFieldEdited)
-    {
-        // Both dispatch on whichever kind of physics the entity has, so this knows
-        // nothing about rigid bodies versus characters — which is the point, since
-        // every branch it used to carry had to be written twice the day the second
-        // kind existed.
-        if (const auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity))
-        {
-            _physics->SetEntityTransform(*_scene, _selectedEntity, tc->position, tc->rotation);
-        }
-
-        _physics->ReconfigureEntityPhysics(*_scene, _selectedEntity);
-    }
-
-    // IsAnyItemActive() is global: it fires for a drag in *any* window, so the AA
-    // combo or the Save-As field would otherwise freeze the selected body to
-    // Static. The IsWindowFocused test scopes it to the Inspector — this runs
-    // inside the Inspector's Begin/End, so "current window" means this panel.
-    const bool nowDragging = ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    if (nowDragging)
-        RequestPhysicsFreeze(); // the release is handled at end of frame, not here
-}
-
-void EditorApp::RequestPhysicsFreeze()
-{
-    // Raised every frame the gesture is held; OnImGui thaws on the first frame it
-    // is *not* raised. That is what makes the release survive this function not
-    // being called at all — nothing selected, entity destroyed mid-drag, the world
-    // selector moved to an inspect-only world.
-    _physicsFreezeRequested = true;
-
-    if (_frozenBodyEntity == _selectedEntity)
-        return; // already held
-
-    // Selection moved while a gesture was live. Release the previous body before
-    // taking this one, or it stays Static with a descriptor that still says
-    // dynamic — a body stuck in mid-air that nothing in the UI explains.
-    if (_frozenBodyEntity != Assisi::ECS::NullEntity)
-        ThawEditedBody();
-
-    // Everything below goes through _world, not the _scene/_physics shortcuts, so
-    // the hold is taken in exactly the world ThawEditedBody will look up by name.
-    // They track the same world today; not relying on that is cheap insurance.
-    if (_world == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_world->scene.IsAlive(_selectedEntity))
-        return;
-
-    // Nothing to hold if the entity has no physics; one added mid-gesture is
-    // picked up next frame.
-    if (_world->scene.Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr &&
-        _world->scene.Get<Assisi::Physics::Character>(_selectedEntity) == nullptr)
-    {
-        return;
-    }
-
-    _world->physics.SetEntityPhysicsFrozen(_world->scene, _selectedEntity, true);
-    _frozenBodyEntity = _selectedEntity;
-    _frozenBodyWorld = _world->name;
-}
-
-void EditorApp::ThawEditedBody()
-{
-    if (_frozenBodyEntity == Assisi::ECS::NullEntity)
-        return;
-
-    const Assisi::ECS::Entity entity = _frozenBodyEntity;
-    const std::string worldName = _frozenBodyWorld;
-
-    // Cleared up front so the bail-out paths below (world gone, entity destroyed)
-    // cannot leave a record pointing at something that no longer exists.
-    _frozenBodyEntity = Assisi::ECS::NullEntity;
-    _frozenBodyWorld.clear();
-
-    // By the recorded name, not the app's current _scene/_physics: the viewed world
-    // can have changed since the freeze, and thawing against the wrong one leaves
-    // the real body frozen while poking an unrelated body.
-    Assisi::App::World *world = _worlds.Find(worldName);
-    if (world == nullptr || !world->scene.IsAlive(entity))
-        return; // world or entity is gone; its body went with it
-
-    const auto *rbc = world->scene.Get<Assisi::Physics::RigidBody>(entity);
-    const auto *character = world->scene.Get<Assisi::Physics::Character>(entity);
-    if (rbc == nullptr && character == nullptr)
-    {
-        return; // collider removed during the drag
-    }
-
-    // Back to whatever the descriptor authored, never unconditionally Dynamic: the
-    // freeze must be invisible, including for bodies that were Static all along.
-    world->physics.SetEntityPhysicsFrozen(world->scene, entity, false);
-
-    // Land it on wherever the drag left the Transform, so it resumes from the pose
-    // the author sees rather than the pre-drag one. A static body is skipped
-    // because its Transform *is* where it already is, and re-placing a trigger
-    // volume would wake everything around it for nothing.
-    const auto *desc = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
-    const bool isStatic = rbc != nullptr && desc != nullptr && desc->isStatic;
-    if (!isStatic)
-    {
-        if (const auto *tc = world->scene.Get<Assisi::Runtime::Transform>(entity))
-        {
-            world->physics.SetEntityTransform(world->scene, entity, tc->position, tc->rotation);
-        }
-    }
-}
-
 void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
@@ -1260,13 +1153,38 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         return;
     }
 
+    // The Add Component field greys these out; this is the backstop.
+    if (_scene->ConflictOf(_selectedEntity, meta.id).has_value())
+    {
+        return;
+    }
+
     // One transaction: record the absent-before state here, commit only after the
     // add *and* its side effects below (camera-facing placement, physics body), so
-    // undo restores exactly what the author saw.
+    // undo restores exactly what the author saw. The components the add brings
+    // with it are recorded first, so undo takes this one off before them.
+    std::vector<Assisi::Core::Reflect::ComponentId> recorded;
+    for (const Assisi::Core::Reflect::ComponentId requirement : meta.required)
+    {
+        const Assisi::Core::Reflect::ComponentMeta *required =
+            Assisi::Core::Reflect::ComponentRegistry::Instance().ById(requirement);
+        if (required->serializable &&
+            required->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) == nullptr)
+        {
+            recorded.push_back(requirement);
+        }
+    }
+    recorded.push_back(meta.id);
+
     Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
-        history->RecordBefore(_selectedEntity, meta.id, EditLabel("Add " + meta.name, _selectedEntity),
-                              _selectedEntity);
+    {
+        for (const Assisi::Core::Reflect::ComponentId id : recorded)
+        {
+            history->RecordBefore(_selectedEntity, id, EditLabel("Add " + meta.name, _selectedEntity),
+                                  _selectedEntity);
+        }
+    }
 
     // Default-construct through the level loader's own path: its per-field
     // if-contains deserialization leaves every field at its default when given an
@@ -1300,22 +1218,9 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     {
         ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
     }
-    else if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) ||
-             IsComponent<Assisi::Physics::CharacterDescriptor>(meta))
-    {
-        // Rebuild rather than add: the entity may already have the other kind of
-        // physics, and building both would have a character collide with its own
-        // inner body. The rebuild refuses that pair and says so.
-        if (!_physics->RebuildEntityPhysics(*_scene, _selectedEntity, Assisi::App::ParentWorldResolver(*_scene)))
-        {
-            Assisi::Core::Log::Warn("Inspector: '{}' gave this entity no physics - it already has a "
-                                    "collider of the other kind, or no Transform.",
-                                    meta.name);
-        }
-    }
 
     if (history != nullptr)
-        history->CommitGesture(_selectedEntity, meta.id);
+        history->CommitGestures(_selectedEntity, recorded);
 }
 
 void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
@@ -1331,24 +1236,10 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
         history->RecordBefore(_selectedEntity, meta.id, EditLabel("Remove " + meta.name, _selectedEntity),
                               _selectedEntity);
 
-    // Tear down runtime state living outside the reflected fields, before the pool
-    // entry disappears. Either descriptor owns a simulated object through its
-    // transient handle, so both go.
-    //
-    // Transform is in this branch too: the pose is driven from it, so removing the
-    // Transform while the descriptor stays would leave a live object simulating
-    // with nothing to sync it — an orphan only a level reload clears. The
-    // descriptor itself survives either way.
-    //
-    // MeshRenderer needs nothing: its transient pointers are non-owning, the
-    // AssetCache owns the GPU resources.
-    if (IsComponent<Assisi::Physics::RigidBodyDescriptor>(meta) ||
-        IsComponent<Assisi::Physics::CharacterDescriptor>(meta) || IsComponent<Assisi::Runtime::Transform>(meta))
-    {
-        _physics->RemoveEntityPhysics(*_scene, _selectedEntity);
-    }
-
-    _scene->RemoveById(_selectedEntity, meta.id);
+    // A body goes with its descriptor on the world's next reconcile. MeshRenderer
+    // needs nothing either: its transient pointers are non-owning, the AssetCache
+    // owns the GPU resources.
+    (void)_scene->RemoveById(_selectedEntity, meta.id);
 
     if (history != nullptr)
         history->CommitGesture(_selectedEntity, meta.id);
@@ -1389,14 +1280,14 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         // Which of the two client timelines this entity is on. The discriminator
         // is a replicated RigidBodyDescriptor, invisible in the world, so "why do
         // these two lag differently" has no visible answer without this line.
-        const bool bodied = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr;
+        const bool bodied = _physics->HasBody(_selectedEntity);
         ImGui::TextDisabled("Replication path: %s", bodied ? "body-corrected" : "interpolated");
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(bodied ? "Simulated locally and re-anchored by the host's corrections. Renders at "
-                                       "host time minus transit."
+                              "host time minus transit."
                                      : "No local simulation, so it is interpolated between received snapshots — "
-                                       "about two snapshot intervals behind.");
+                              "about two snapshot intervals behind.");
         }
 
         // Derived from the components that arrived, **never** from this mirror's
@@ -1465,7 +1356,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
     // The EntityRef machinery works; what is unsolved is the semantics — mirrored
     // children of local parents, transform spaces, world-space body state under a
     // parent-relative Transform.
-    if (_scene->Get<Assisi::Runtime::Parent>(_selectedEntity) != nullptr)
+    if (_scene->Get<Assisi::ECS::Parent>(_selectedEntity) != nullptr)
     {
         ImGui::TextColored(kWarnColor, "Parented — mirrors are flat in v1, so clients see this at world space.");
     }
@@ -1476,7 +1367,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         {
             if (hasChildren)
                 return;
-            const auto *parent = _scene->Get<Assisi::Runtime::Parent>(candidate);
+            const auto *parent = _scene->Get<Assisi::ECS::Parent>(candidate);
             hasChildren = parent != nullptr && parent->parent == _selectedEntity;
         });
     if (hasChildren)
@@ -1500,7 +1391,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         if (marker->excluded.Test(transformOrdinal) && placementDependent)
         {
             ImGui::TextColored(kWarnColor, "Transform is unticked, but this entity is placed — mirrors will sit at the "
-                                           "level file's pose and never move.");
+                               "level file's pose and never move.");
         }
     }
 
@@ -2007,7 +1898,7 @@ void EditorApp::DrawTimeOfDayControls()
     if (ButtonRow("Season", {"Spring eq.", "Summer", "Autumn eq.", "Winter"}, pressed))
     {
         edited |= Assisi::Runtime::JumpSeason(*clock, 0.25 * static_cast<double>(pressed) *
-                                                          static_cast<double>(clock->yearLengthDays));
+                                              static_cast<double>(clock->yearLengthDays));
     }
     ImGui::SetItemTooltip("Northern names. A southern latitude gets the opposite season, which is correct.");
 
@@ -2286,7 +2177,7 @@ void EditorApp::DrawInspector()
         _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
 
     // SerializableComponents() already skips ACOMP(transient) id-only components
-    // (RigidBody, DestroyTag), which have no getByEntity hook and nothing to edit,
+    // (DestroyTag), which have no getByEntity hook and nothing to edit,
     // so no per-item guard is needed.
     for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
@@ -2305,7 +2196,19 @@ void EditorApp::DrawInspector()
         // [Delete] [Cancel]; either way the buttons sit left of the header, so the
         // row reads "[X] ComponentName".
         bool deleted = false;
-        if (_pendingDeleteComponent == meta->id)
+        const ComponentId requirer = _scene->RequirerOf(_selectedEntity, meta->id);
+        if (requirer != kInvalidComponentId)
+        {
+            // The scene would refuse the removal; say why instead of offering it.
+            ImGui::BeginDisabled();
+            ImGui::SmallButton("X");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("Required by %s", ComponentRegistry::Instance().ById(requirer)->name.c_str());
+            }
+        }
+        else if (_pendingDeleteComponent == meta->id)
         {
             if (ImGui::SmallButton("Delete"))
             {
@@ -2340,7 +2243,7 @@ void EditorApp::DrawInspector()
         // header's hit box swallows it first. The send-toggle glyph below sits
         // exactly there.
         const bool headerOpen = ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen |
-                                                                                ImGuiTreeNodeFlags_AllowOverlap);
+                                                        ImGuiTreeNodeFlags_AllowOverlap);
 
         // The per-component send toggle, on the header. Drawn only on an entity
         // that replicates at all — nothing travels from a local entity, so the
@@ -2407,7 +2310,7 @@ void EditorApp::DrawInspector()
             ImGui::SameLine();
             ImGui::BeginDisabled(!editable);
             if (ImGui::SmallButton("Reset##component"))
-                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/{}};
+                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/ {}};
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Drop this instance's claim and follow the blueprint again.");
@@ -2508,14 +2411,13 @@ void EditorApp::DrawInspector()
     if (anyFieldEdited)
         ReresolveEntityAssets(_selectedEntity);
 
-    // RigidBody is a runtime handle with no reflected fields, so the loop above
-    // cannot show its live simulation state. Read-only, because it changes every
-    // physics step.
-    if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
+    // The live simulation state is in the physics world, not in any component, so
+    // the loop above cannot show it. Read-only, because it changes every step.
+    if (_physics->HasBody(_selectedEntity) && _scene->Has<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity))
     {
-        if (ImGui::CollapsingHeader("RigidBody (runtime)", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::CollapsingHeader("Body (runtime)", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            const auto [linearVelocity, angularVelocity] = _physics->GetBodyVelocity(*rbc);
+            const auto [linearVelocity, angularVelocity] = _physics->GetBodyVelocity(_selectedEntity);
             // %f takes a double through varargs, so each float is promoted
             // regardless; the casts only make that explicit.
             ImGui::Text("Linear  (m/s):   %.3f, %.3f, %.3f", static_cast<double>(linearVelocity.x),
@@ -2523,7 +2425,7 @@ void EditorApp::DrawInspector()
             ImGui::Text("Angular (rad/s): %.3f, %.3f, %.3f", static_cast<double>(angularVelocity.x),
                         static_cast<double>(angularVelocity.y), static_cast<double>(angularVelocity.z));
             ImGui::Text("Speed:  %.3f m/s", static_cast<double>(glm::length(linearVelocity)));
-            ImGui::Text("CCD:    %s", _physics->IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
+            ImGui::Text("CCD:    %s", _physics->IsBodyCCDEnabled(_selectedEntity) ? "LinearCast (on)" : "Discrete (off)");
         }
     }
 
@@ -2538,11 +2440,11 @@ void EditorApp::DrawInspector()
                                           ImGuiSuggestionNavCallback, &nav);
 
     const auto toLower = [](std::string text)
-    {
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return text;
-    };
+                         {
+                             std::transform(text.begin(), text.end(), text.begin(),
+                                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                             return text;
+                         };
     const std::string queryLower = toLower(_addComponentBuf);
 
     if (queryLower.empty())
@@ -2554,11 +2456,14 @@ void EditorApp::DrawInspector()
         // Addable components (serializable, not already on the entity) whose
         // lowercased name contains the query, ranked by match position first so a
         // prefix wins, then by name length, then alphabetically. Recomputed every
-        // frame, so it tracks each keystroke and deletion.
+        // frame, so it tracks each keystroke and deletion. One the entity's
+        // components exclude is listed greyed out, naming the clash, rather than
+        // left out so the author is not left wondering where it went.
         struct Match
         {
             const ComponentMeta *meta;
             std::size_t pos;
+            std::optional<Assisi::ECS::ComponentConflict> conflict;
         };
         std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
@@ -2571,17 +2476,17 @@ void EditorApp::DrawInspector()
             const std::size_t pos = nameLower.find(queryLower);
             if (pos == std::string::npos)
                 continue;
-            matches.push_back(Match{meta, pos});
+            matches.push_back(Match{meta, pos, _scene->ConflictOf(_selectedEntity, meta->id)});
         }
         std::sort(matches.begin(), matches.end(),
                   [](const Match &a, const Match &b)
-                  {
-                      if (a.pos != b.pos)
-                          return a.pos < b.pos;
-                      if (a.meta->name.size() != b.meta->name.size())
-                          return a.meta->name.size() < b.meta->name.size();
-                      return a.meta->name < b.meta->name;
-                  });
+            {
+                if (a.pos != b.pos)
+                    return a.pos < b.pos;
+                if (a.meta->name.size() != b.meta->name.size())
+                    return a.meta->name.size() < b.meta->name.size();
+                return a.meta->name < b.meta->name;
+            });
 
         constexpr std::size_t kMaxSuggestions = 8;
         const std::size_t shown = std::min(matches.size(), kMaxSuggestions);
@@ -2594,9 +2499,10 @@ void EditorApp::DrawInspector()
         else
         {
             // Enter adds the highlighted row; clicking a row adds it directly.
-            if (entered)
+            const Match &highlighted = matches[static_cast<std::size_t>(_addComponentSelected)];
+            if (entered && !highlighted.conflict.has_value())
             {
-                AddComponentToSelected(*matches[static_cast<std::size_t>(_addComponentSelected)].meta);
+                AddComponentToSelected(*highlighted.meta);
                 _addComponentBuf[0] = '\0';
                 _addComponentSelected = 0;
                 // -1 re-focuses the previous widget, the input itself, so the
@@ -2608,12 +2514,21 @@ void EditorApp::DrawInspector()
                 for (std::size_t i = 0; i < shown; ++i)
                 {
                     ImGui::PushID(static_cast<int32_t>(i));
+                    const ImGuiSelectableFlags flags =
+                        matches[i].conflict.has_value() ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None;
                     if (ImGui::Selectable(matches[i].meta->name.c_str(),
-                                          static_cast<int32_t>(i) == _addComponentSelected))
+                                          static_cast<int32_t>(i) == _addComponentSelected, flags))
                     {
                         AddComponentToSelected(*matches[i].meta);
                         _addComponentBuf[0] = '\0';
                         _addComponentSelected = 0;
+                    }
+                    if (matches[i].conflict.has_value() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    {
+                        const Assisi::ECS::ComponentConflict &conflict = *matches[i].conflict;
+                        ImGui::SetTooltip("%s and %s exclude each other",
+                                          ComponentRegistry::Instance().ById(conflict.wanted)->name.c_str(),
+                                          ComponentRegistry::Instance().ById(conflict.present)->name.c_str());
                     }
                     ImGui::PopID();
                 }
@@ -2625,16 +2540,10 @@ void EditorApp::DrawInspector()
     // manipulated (a drag held, a text field focused) its gesture must stay open
     // until release. Scoped to this window and its children so activity elsewhere
     // — the AA combo, the Save-As field — cannot hold a component gesture open.
-    // Same shape as the freeze request in HandlePhysicsEditing, computed
-    // independently of it.
     if (ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
         _captureEditingActive = true;
 
     ImGui::EndDisabled();
-    if (editable)
-    {
-        HandlePhysicsEditing(anyFieldEdited);
-    }
     ImGui::PopID();
     ImGui::PopID();
     ImGui::End();

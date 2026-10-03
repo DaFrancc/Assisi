@@ -346,6 +346,34 @@ function(assisi_check_message_handlers)
     add_custom_target(Assisi-MessageHandlerCheck ALL DEPENDS "${_out}")
 endfunction()
 
+function(assisi_check_component_rules)
+    get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
+    if (NOT _headers)
+        message(FATAL_ERROR
+            "assisi_check_component_rules: no reflected headers registered. "
+            "Call this after the add_subdirectory() calls that invoke assisi_reflect().")
+    endif()
+
+    set(_dir "${CMAKE_BINARY_DIR}/generated/components")
+    set(_out "${_dir}/ComponentRules.txt")
+    set(_tmp "${_out}.tmp")
+
+    # Whole-tree, because a rule names components in other modules. The resolved
+    # table is written out so "what does adding this bring" can be answered
+    # without re-running the build.
+    add_custom_command(
+        OUTPUT  "${_out}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}"
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}" ${_headers} --check-component-rules "${_tmp}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_tmp}" "${_out}"
+        DEPENDS ${_headers} "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        COMMENT "reflectgen: checking component requires/excludes"
+        VERBATIM
+    )
+
+    add_custom_target(Assisi-ComponentRuleCheck ALL DEPENDS "${_out}")
+endfunction()
+
 # Call once on each final executable (or shared library) to force-include
 # all reflection registration code produced by assisi_reflect() calls.
 function(assisi_link_reflections target)

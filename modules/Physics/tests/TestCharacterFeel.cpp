@@ -21,46 +21,33 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include "PhysicsTestScene.hpp"
+
 using namespace Assisi;
+using Assisi::PhysicsTests::kStep;
 
 namespace
 {
 
-constexpr float kStep = 1.f / 60.f;
-
+/// A static box, reconciled into @p world at once.
 ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at = {0.f, -0.5f, 0.f},
-                       glm::vec3 halfExtents = {20.f, 0.5f, 20.f}, bool isStatic = true)
+                       glm::vec3 halfExtents = {20.f, 0.5f, 20.f})
 {
-    const ECS::Entity entity  = scene.Create();
-    ECS::Transform   *transform = scene.Add<ECS::Transform>(entity);
-    REQUIRE(transform != nullptr);
-    transform->position = at;
-
-    Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents = halfExtents;
-    descriptor.isStatic    = isStatic;
-    REQUIRE(scene.Add<Physics::RigidBodyDescriptor>(entity, descriptor) != nullptr);
-
-    (void)world.AddBodyFromDescriptor(scene, entity, *transform, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddBody(scene, at, PhysicsTests::Box(halfExtents, true));
+    world.Reconcile();
     return entity;
 }
 
-Physics::Character SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at,
-                                  const Physics::CharacterDescriptor &descriptor)
+ECS::Entity SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at,
+                           const Physics::CharacterDescriptor &descriptor)
 {
-    const ECS::Entity entity  = scene.Create();
-    ECS::Transform   *transform = scene.Add<ECS::Transform>(entity);
-    REQUIRE(transform != nullptr);
-    transform->position = at;
-    REQUIRE(scene.Add<Physics::CharacterDescriptor>(entity, descriptor) != nullptr);
-
-    const auto added = world.AddCharacterFromDescriptor(scene, entity, *transform, descriptor);
-    REQUIRE(added.has_value());
-    return *added;
+    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, descriptor);
+    world.Reconcile();
+    REQUIRE(world.HasBody(entity));
+    return entity;
 }
 
-void Step(Physics::PhysicsWorld &world, const Physics::Character &character, glm::vec3 move, bool jump,
-          float deltaTime = kStep)
+void Step(Physics::PhysicsWorld &world, ECS::Entity character, glm::vec3 move, bool jump, float deltaTime = kStep)
 {
     world.MoveCharacter(character, move, jump);
     world.Update(deltaTime);
@@ -68,13 +55,13 @@ void Step(Physics::PhysicsWorld &world, const Physics::Character &character, glm
 }
 
 /// Speed across the floor, whichever way it is heading.
-float HorizontalSpeed(const Physics::PhysicsWorld &world, const Physics::Character &character)
+float HorizontalSpeed(const Physics::PhysicsWorld &world, ECS::Entity character)
 {
     const glm::vec3 velocity = world.GetCharacterState(character).velocity;
     return glm::length(glm::vec2(velocity.x, velocity.z));
 }
 
-void Settle(Physics::PhysicsWorld &world, const Physics::Character &character, int32_t steps = 120)
+void Settle(Physics::PhysicsWorld &world, ECS::Entity character, int32_t steps = 120)
 {
     for (int32_t i = 0; i < steps; ++i)
     {
@@ -84,7 +71,7 @@ void Settle(Physics::PhysicsWorld &world, const Physics::Character &character, i
 
 glm::vec3 CharacterPosition(ECS::Scene &scene, Physics::PhysicsWorld &world)
 {
-    world.InterpolateTransforms(scene, 1.f);
+    world.InterpolateTransforms(1.f);
     glm::vec3 position{0.f};
     for (auto [entity, transform, character] : scene.Query<ECS::Transform, Physics::Character>())
     {
@@ -100,14 +87,14 @@ glm::vec3 CharacterPosition(ECS::Scene &scene, Physics::PhysicsWorld &world)
 TEST_CASE("Jumping from the ground leaves it, and jumping again in the air does not")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
     (void)SpawnFloor(scene, world);
 
     Physics::CharacterDescriptor descriptor{};
     descriptor.coyoteTime     = 0.f; // the plain case: ground only
     descriptor.jumpBufferTime = 0.f;
 
-    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
     Settle(world, character);
     REQUIRE(world.GetCharacterState(character).ground == Physics::GroundState::OnGround);
 
@@ -131,7 +118,7 @@ TEST_CASE("Coyote time lets a jump fire just after walking off a ledge")
     const auto jumpedAfterLeaving = [](float coyoteTime, int32_t stepsInAir)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
 
         // A ledge ending at x = 0, with nothing beyond it.
         (void)SpawnFloor(scene, world, {-2.f, -0.5f, 0.f}, {2.f, 0.5f, 5.f});
@@ -142,7 +129,7 @@ TEST_CASE("Coyote time lets a jump fire just after walking off a ledge")
         descriptor.groundAcceleration = 1000.f; // reach walking speed at once
         descriptor.walkSpeed          = 4.f;
 
-        const Physics::Character character = SpawnCharacter(scene, world, {-2.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {-2.f, 0.f, 0.f}, descriptor);
         Settle(world, character, 60);
 
         // Walk off the end.
@@ -174,7 +161,7 @@ TEST_CASE("A jump asked for just before landing fires on the landing step")
     const auto landedJumping = [](float bufferTime)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         Physics::CharacterDescriptor descriptor{};
@@ -183,7 +170,7 @@ TEST_CASE("A jump asked for just before landing fires on the landing step")
 
         // Dropped from just above the floor, so it lands well inside the buffer
         // below — a longer fall would expire the request and prove nothing.
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.1f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.1f, 0.f}, descriptor);
 
         // Ask once, while still falling, then stop asking.
         Step(world, character, glm::vec3(0.f), /*jump=*/ true);
@@ -214,7 +201,7 @@ TEST_CASE("airAcceleration decides whether a jump can be steered")
     const auto driftAfterJump = [](float airAcceleration)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         Physics::CharacterDescriptor descriptor{};
@@ -225,7 +212,7 @@ TEST_CASE("airAcceleration decides whether a jump can be steered")
         descriptor.coyoteTime         = 0.f;
         descriptor.jumpBufferTime     = 0.f;
 
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
         Settle(world, character, 60);
 
         // Build up speed along +x, then jump and ask for the opposite direction.
@@ -254,14 +241,14 @@ TEST_CASE("groundAcceleration decides how quickly walking speed is reached")
     const auto speedAfterOneStep = [](float groundAcceleration)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         Physics::CharacterDescriptor descriptor{};
         descriptor.groundAcceleration = groundAcceleration;
         descriptor.walkSpeed          = 10.f;
 
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
         Settle(world, character, 60);
 
         Step(world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
@@ -279,11 +266,11 @@ TEST_CASE("groundAcceleration decides how quickly walking speed is reached")
 TEST_CASE("With the defaults a character reaches its walk speed in about an eighth of a second")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
     (void)SpawnFloor(scene, world);
 
     const Physics::CharacterDescriptor descriptor{};
-    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
     Settle(world, character, 60);
 
     const glm::vec3 wish{descriptor.walkSpeed, 0.f, 0.f};
@@ -305,11 +292,11 @@ TEST_CASE("With the defaults a character reaches its walk speed in about an eigh
 TEST_CASE("Friction stops a character from walk speed in under half a second, and firmly")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
     (void)SpawnFloor(scene, world);
 
     const Physics::CharacterDescriptor descriptor{};
-    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
     Settle(world, character, 60);
 
     for (int32_t i = 0; i < 60; ++i)
@@ -337,12 +324,12 @@ TEST_CASE("Friction stops a character from walk speed in under half a second, an
 TEST_CASE("Holding one direction in the air never passes the air cap")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     // No floor and no gravity: airborne for as long as the case runs.
     Physics::CharacterDescriptor descriptor{};
     descriptor.gravityScale = 0.f;
-    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
 
     float fastest = 0.f;
     for (int32_t i = 0; i < 120; ++i)
@@ -358,11 +345,11 @@ TEST_CASE("Holding one direction in the air never passes the air cap")
 TEST_CASE("Turning the requested direction in the air gains speed past the air cap")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     Physics::CharacterDescriptor descriptor{};
     descriptor.gravityScale = 0.f;
-    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
 
     // A quarter turn a second, which is a slow sweep of the mouse.
     constexpr float kTurnRadiansPerSecond = 1.5708f;
@@ -385,7 +372,7 @@ TEST_CASE("The bunny-hop policy decides how much speed a jump leaves the ground 
     const auto takeOffSpeed = [](Physics::BunnyHopPolicy policy)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         Physics::CharacterDescriptor descriptor{};
@@ -396,7 +383,7 @@ TEST_CASE("The bunny-hop policy decides how much speed a jump leaves the ground 
         descriptor.coyoteTime = 0.f;
         descriptor.jumpBufferTime = 0.f;
 
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
         Settle(world, character, 60);
 
         // Faster than the walk speed, standing in for speed carried into a
@@ -431,7 +418,7 @@ TEST_CASE("Under the Boost policy a jump slows a character facing its travel and
     const auto takeOffSpeed = [](glm::vec3 facing)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         Physics::CharacterDescriptor descriptor{};
@@ -441,7 +428,7 @@ TEST_CASE("Under the Boost policy a jump slows a character facing its travel and
         descriptor.coyoteTime         = 0.f;
         descriptor.jumpBufferTime     = 0.f;
 
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
         Settle(world, character, 60);
         world.SetCharacterFacing(character, facing);
 
@@ -471,11 +458,11 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
     const auto distanceWalked = [](int32_t stepsPerSecond)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         const Physics::CharacterDescriptor descriptor{};
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
 
         const float deltaTime = 1.f / static_cast<float>(stepsPerSecond);
         for (int32_t i = 0; i < stepsPerSecond; ++i)
@@ -508,11 +495,11 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
     const auto speedPartWayUp = [](int32_t stepsPerSecond)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
         (void)SpawnFloor(scene, world);
 
         const Physics::CharacterDescriptor descriptor{};
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
 
         const float deltaTime = 1.f / static_cast<float>(stepsPerSecond);
         for (int32_t i = 0; i < stepsPerSecond; ++i)
@@ -532,11 +519,11 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
 TEST_CASE("The eye eases down when crouching on the ground")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
     (void)SpawnFloor(scene, world);
 
     const Physics::CharacterDescriptor descriptor{};
-    const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
     Settle(world, character, 60);
     REQUIRE(world.GetCharacterState(character).eyeHeight == doctest::Approx(descriptor.eyeHeight));
 
@@ -557,12 +544,12 @@ TEST_CASE("gravityScale changes how fast a character falls")
     const auto fallAfter = [](float gravityScale, int32_t steps)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world;
+        Physics::PhysicsWorld world{scene};
 
         Physics::CharacterDescriptor descriptor{};
         descriptor.gravityScale = gravityScale;
 
-        const Physics::Character character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
         Settle(world, character, steps);
         return CharacterPosition(scene, world).y;
     };
@@ -573,76 +560,4 @@ TEST_CASE("gravityScale changes how fast a character falls")
 
     CHECK(heavy < normal);           // twice the pull, further down
     CHECK(held == doctest::Approx(0.f).epsilon(0.01)); // no pull, no fall
-}
-
-TEST_CASE("A character riding a kinematic platform is carried along with it")
-{
-    // What MoveBodyKinematic exists for. Placing the platform with
-    // SetBodyTransform would teleport it with zero velocity, and the character
-    // standing on it would be standing on something the simulation believes is
-    // still — so it would slide off the back.
-    ECS::Scene scene;
-    Physics::PhysicsWorld world;
-
-    const ECS::Entity platform  = scene.Create();
-    ECS::Transform   *transform = scene.Add<ECS::Transform>(platform);
-    REQUIRE(transform != nullptr);
-    transform->position = {0.f, -0.5f, 0.f};
-
-    Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents = {4.f, 0.5f, 4.f};
-    descriptor.isStatic    = false;
-    REQUIRE(scene.Add<Physics::RigidBodyDescriptor>(platform, descriptor) != nullptr);
-
-    const Physics::RigidBody body =
-        world.AddBodyFromDescriptor(scene, platform, *transform, descriptor);
-    world.SetBodyMotionType(body, Physics::BodyMotion::Kinematic);
-
-    Physics::CharacterDescriptor characterDescriptor{};
-    const Physics::Character character =
-        SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, characterDescriptor);
-    Settle(world, character, 30);
-
-    // Standing on it before anything moves, or the rest of the case is measuring
-    // a character in free fall.
-    REQUIRE(world.GetCharacterState(character).ground == Physics::GroundState::OnGround);
-
-    // Drive the platform along +x at a steady 1 m/s for two seconds.
-    constexpr float kPlatformSpeed = 1.f;
-
-    // Seeded from the body, not from the Transform component: a kinematic body is
-    // never written back to its Transform, so driving from the component would
-    // aim every step at wherever the body was authored and yank it there.
-    glm::vec3 platformAt = world.GetBodyTransform(body).first;
-    for (int32_t i = 0; i < 120; ++i)
-    {
-        platformAt.x += kPlatformSpeed * kStep;
-        world.MoveBodyKinematic(body, platformAt, glm::quat{1.f, 0.f, 0.f, 0.f}, kStep);
-        Step(world, character, glm::vec3(0.f), /*jump=*/ false);
-    }
-
-    // The platform itself actually travelled, or the case proves nothing about
-    // the character.
-    REQUIRE(world.GetBodyTransform(body).first.x == doctest::Approx(platformAt.x).epsilon(0.1));
-
-    // It is standing on the platform, not on nothing — the rest of the case is
-    // meaningless if the ground underfoot is not the thing being moved.
-    const Physics::CharacterState state = world.GetCharacterState(character);
-    CHECK(state.ground == Physics::GroundState::OnGround);
-    CHECK(state.groundEntity == platform);
-    CHECK(state.groundVelocity.x == doctest::Approx(kPlatformSpeed).epsilon(0.2));
-
-    // The platform's own Transform followed it. A kinematic body that moves
-    // through the simulation and never writes back would be drawn where it was
-    // authored — the character would ride away from a platform still sitting at
-    // the origin on screen.
-    world.InterpolateTransforms(scene, 1.f);
-    const ECS::Transform *platformTransform = scene.Get<ECS::Transform>(platform);
-    REQUIRE(platformTransform != nullptr);
-    CHECK(platformTransform->position.x == doctest::Approx(platformAt.x).epsilon(0.1));
-
-    // It went with the platform rather than being left behind at the origin.
-    const glm::vec3 characterAt = CharacterPosition(scene, world);
-    CHECK(characterAt.x == doctest::Approx(platformAt.x).epsilon(0.25));
-    CHECK(characterAt.x > 1.f);
 }

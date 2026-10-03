@@ -13,20 +13,18 @@ namespace Assisi::Editor
 {
 
 /// @brief The model matrix a collider overlay for @p entity draws at: the world
-/// pose PhysicsWorld::AddBodyFromDescriptor created the body at.
+/// pose the physics world places its body at.
 ///
-/// Rotation and translation only, no scale — that is how the Jolt body was built,
-/// and the descriptor's dimensions are absolute world units, so the overlay
-/// traces the body rather than the mesh. A parented entity's Transform is an
+/// Rotation and translation only. A collider's scale is the shape's, which for a
+/// round shape is not the Transform's, so the caller composes in what
+/// PhysicsWorld::GetColliderScale reports. A parented entity's Transform is an
 /// offset from its parent, so the parent's world matrix is composed in exactly as
-/// App::ParentWorldResolver hands it to Physics; for an unparented one @p local
+/// Physics does, through ECS::ParentWorldMatrix; for an unparented one @p local
 /// already is the world pose.
 ///
 /// Reads the *parent's* propagated Transform::worldMatrix, so propagation must
-/// have run this frame. Not the entity's own world matrix, which carries its
-/// local scale: physics ignores that scale, and a non-uniformly scaled body would
-/// shear the rotation out of it.
-[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity,
-                                          const ECS::Transform &local);
+/// have run this frame. Not the entity's own world matrix, whose scale a
+/// non-uniformly scaled parent would shear into the rotation.
+[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local);
 
 } // namespace Assisi::Editor

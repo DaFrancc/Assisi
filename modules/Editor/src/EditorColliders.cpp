@@ -105,11 +105,13 @@ void EditorApp::SubmitColliderWireframes()
                                     : selected ? kSelectedColor
                                                : kUnselectedColor;
 
-        // The world pose the Jolt body was built at, position and rotation only —
-        // see ColliderBodyModel. A parented body lives at its resolved world pose,
-        // so tracing its local offset would put the wireframe somewhere the body
-        // is not, and disagree with the mesh silhouette drawn below.
-        const glm::mat4 bodyModel = ColliderBodyModel(*_scene, entity, tc);
+        // The world pose the Jolt body was built at — see ColliderBodyModel — and
+        // the scale its shape was built at, which for a round shape is not the
+        // Transform's. A parented body lives at its resolved world pose, so
+        // tracing its local offset would put the wireframe somewhere the body is
+        // not, and disagree with the mesh silhouette drawn below.
+        const glm::mat4 bodyModel =
+            glm::scale(ColliderBodyModel(*_scene, entity, tc), _physics->GetColliderScale(entity));
 
         // The traced edges go out for EVERY collider.
         std::vector<LineVertex> &lineOut =

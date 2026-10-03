@@ -23,10 +23,10 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -57,28 +57,28 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
     // through the parent's world matrix.
     Write(root / "crate.abp",
           {{"version", 2},
-           {"entities",
-            nlohmann::json::array(
-                {{{"name", "box"},
-                  {"components",
-                   {{"Transform",
-                     {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                    {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
-                 {{"name", "lid"},
-                  {"components",
-                   {{"Transform",
-                     {{"position", {0.f, 1.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                    {"Parent", {{"parent", "box"}}},
-                    {"RigidBodyDescriptor", {{"isStatic", true}}}}}}})}});
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "box"},
+                       {"components",
+                        {{"Transform",
+                            {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                            {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
+                       {{"name", "lid"},
+                           {"components",
+                            {{"Transform",
+                                {{"position", {0.f, 1.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                                {"Parent", {{"parent", "box"}}},
+                                {"RigidBodyDescriptor", {{"isStatic", true}}}}}}})}});
 
     Write(root / "levels" / "yard.alvl", {{"version", 2},
-                                          {"entities", nlohmann::json::array()},
-                                          {"instances", nlohmann::json::array({{{"name", "crate_a"},
-                                                                                {"source", "crate.abp"},
-                                                                                {"transform",
-                                                                                 {{"position", {30.f, 0.f, 0.f}},
-                                                                                  {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                                                  {"scale", {1.f, 1.f, 1.f}}}}}})}});
+              {"entities", nlohmann::json::array()},
+              {"instances", nlohmann::json::array({{{"name", "crate_a"},
+                                                      {"source", "crate.abp"},
+                                                      {"transform",
+                                                       {{"position", {30.f, 0.f, 0.f}},
+                                                           {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                           {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
     App::World world;
     REQUIRE(App::LoadLevelSim(world, "levels/yard.alvl"));
@@ -90,10 +90,12 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
     // not at the local (0,1,0) a physics layer that could not see Parent would
     // have used.
     int32_t bodies = 0;
-    for (auto [entity, body, tag] : world.scene.Query<Physics::RigidBody, ECS::BlueprintMember>())
+    for (auto [entity, descriptor, tag] : world.scene.Query<Physics::RigidBodyDescriptor, ECS::BlueprintMember>())
     {
+        (void)descriptor;
+        REQUIRE(world.physics.HasBody(entity));
         ++bodies;
-        const auto [position, rotation] = world.physics.GetBodyTransform(body);
+        const glm::vec3 position = world.physics.GetBodyPose(entity).position;
         CHECK(position.x == doctest::Approx(30.f));
         CHECK(position.y == doctest::Approx(tag.memberIndex == 0 ? 0.f : 1.f));
     }
@@ -118,37 +120,37 @@ TEST_CASE("App: a child of a walking character follows it")
 
     Write(root / "walker.abp",
           {{"version", 2},
-           {"entities",
-            nlohmann::json::array(
-                {{{"name", "body"},
-                  {"components",
-                   {{"Transform",
-                     {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                    {"CharacterDescriptor", {{"walkSpeed", 5.f}, {"groundAcceleration", 1000.f}}}}}},
-                 {{"name", "eye"},
-                  {"components",
-                   {{"Transform",
-                     {{"position", {0.f, 1.5f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                    {"Parent", {{"parent", "body"}}}}}}})}});
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "body"},
+                       {"components",
+                        {{"Transform",
+                            {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                            {"CharacterDescriptor", {{"walkSpeed", 5.f}, {"groundAcceleration", 1000.f}}}}}},
+                       {{"name", "eye"},
+                           {"components",
+                            {{"Transform",
+                                {{"position", {0.f, 1.5f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                                {"Parent", {{"parent", "body"}}}}}}})}});
 
     // A floor to stand on, and the instance placed off the origin so "followed"
     // cannot be confused with "happens to be at the spawn point".
     Write(
         root / "levels" / "walk.alvl",
         {{"version", 2},
-         {"entities",
-          nlohmann::json::array(
-              {{{"name", "floor"},
-                {"components",
-                 {{"Transform",
-                   {{"position", {0.f, -0.5f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                  {"RigidBodyDescriptor", {{"isStatic", true}, {"halfExtents", {50.f, 0.5f, 50.f}}}}}}}})},
-         {"instances",
-          nlohmann::json::array(
-              {{{"name", "walker_a"},
-                {"source", "walker.abp"},
-                {"transform",
-                 {{"position", {5.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
+            {"entities",
+             nlohmann::json::array(
+                 {{{"name", "floor"},
+                     {"components",
+                      {{"Transform",
+                          {{"position", {0.f, -0.5f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                          {"RigidBodyDescriptor", {{"isStatic", true}, {"halfExtents", {50.f, 0.5f, 50.f}}}}}}}})},
+            {"instances",
+             nlohmann::json::array(
+                 {{{"name", "walker_a"},
+                     {"source", "walker.abp"},
+                     {"transform",
+                      {{"position", {5.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
     App::World world;
     REQUIRE(App::LoadLevelSim(world, "levels/walk.alvl"));
@@ -163,25 +165,24 @@ TEST_CASE("App: a child of a walking character follows it")
     REQUIRE(body != ECS::NullEntity);
 
     ECS::Entity eye = ECS::NullEntity;
-    for (auto [entity, parent] : world.scene.Query<Runtime::Parent>())
+    for (auto [entity, parent] : world.scene.Query<ECS::Parent>())
     {
         if (parent.parent == body)
             eye = entity;
     }
     REQUIRE(eye != ECS::NullEntity); // the child's parent link survived expansion
 
-    const Physics::Character *character = world.scene.Get<Physics::Character>(body);
-    REQUIRE(character != nullptr);
+    REQUIRE(world.physics.HasBody(body));
 
     constexpr float kStep = 1.f / 60.f;
     uint64_t tick = 0;
     for (int32_t i = 0; i < 120; ++i)
     {
-        world.physics.MoveCharacter(*character, {5.f, 0.f, 0.f}, /*jump=*/false);
+        world.physics.MoveCharacter(body, {5.f, 0.f, 0.f}, /*jump=*/ false);
         world.physics.Update(kStep);
         world.physics.CaptureState();
-        world.physics.InterpolateTransforms(world.scene, 1.f, App::ParentWorldResolver(world.scene));
-        tick = Runtime::PropagateTransforms(world.scene, tick);
+        world.physics.InterpolateTransforms(1.f);
+        tick = ECS::PropagateTransforms(world.scene, tick);
     }
 
     const Runtime::Transform *bodyTransform = world.scene.Get<Runtime::Transform>(body);
@@ -218,27 +219,27 @@ TEST_CASE("App: a level runs the systems its blueprints require, not just its ow
     Runtime::ClearBlueprintCache();
 
     Write(root / "ticker.abp", {{"version", 2},
-                                {"systems", nlohmann::json::array({"Counter"})},
-                                {"entities", nlohmann::json::array({{{"name", "box"},
-                                                                     {"components",
-                                                                      {{"Transform",
-                                                                        {{"position", {0.f, 0.f, 0.f}},
-                                                                         {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                                         {"scale", {1.f, 1.f, 1.f}}}}}}}})}});
+              {"systems", nlohmann::json::array({"Counter"})},
+              {"entities", nlohmann::json::array({{{"name", "box"},
+                                                     {"components",
+                                                      {{"Transform",
+                                                          {{"position", {0.f, 0.f, 0.f}},
+                                                              {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                              {"scale", {1.f, 1.f, 1.f}}}}}}}})}});
 
     // The level names nothing itself, so anything installed came from the
     // instance — which is the whole point of the case.
     Write(
         root / "levels" / "yard.alvl",
         {{"version", 2},
-         {"systems", nlohmann::json::array()},
-         {"entities", nlohmann::json::array()},
-         {"instances",
-          nlohmann::json::array(
-              {{{"name", "ticker_a"},
-                {"source", "ticker.abp"},
-                {"transform",
-                 {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
+            {"systems", nlohmann::json::array()},
+            {"entities", nlohmann::json::array()},
+            {"instances",
+             nlohmann::json::array(
+                 {{{"name", "ticker_a"},
+                     {"source", "ticker.abp"},
+                     {"transform",
+                      {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
     App::WorldManager worlds;
     App::World *const world = worlds.LoadLevel("levels/yard.alvl");
@@ -281,14 +282,14 @@ TEST_CASE("App: a blueprint with no entities still brings its systems")
     Write(
         root / "levels" / "yard.alvl",
         {{"version", 2},
-         {"systems", nlohmann::json::array()},
-         {"entities", nlohmann::json::array()},
-         {"instances",
-          nlohmann::json::array(
-              {{{"name", "gameplay"},
-                {"source", "gameplay.abp"},
-                {"transform",
-                 {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
+            {"systems", nlohmann::json::array()},
+            {"entities", nlohmann::json::array()},
+            {"instances",
+             nlohmann::json::array(
+                 {{{"name", "gameplay"},
+                     {"source", "gameplay.abp"},
+                     {"transform",
+                      {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
     App::WorldManager worlds;
     App::World *const world = worlds.LoadLevel("levels/yard.alvl");

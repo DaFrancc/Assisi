@@ -38,9 +38,9 @@
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
-            8.0,
-            0.25,
-            8.0
+            0.5,
+            0.5,
+            0.5
           ],
           "isStatic": true
         },
@@ -81,9 +81,9 @@
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
-            4.0,
             0.5,
-            0.25
+            0.5,
+            0.5
           ],
           "isStatic": true
         },
@@ -124,9 +124,9 @@
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
-            4.0,
             0.5,
-            0.25
+            0.5,
+            0.5
           ],
           "isStatic": true
         },

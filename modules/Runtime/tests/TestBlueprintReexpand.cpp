@@ -25,10 +25,10 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -62,8 +62,7 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 
 nlohmann::json At(float x, float y, float z)
 {
-    return {{"Transform",
-        {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
+    return {{"Transform", {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
 }
 
 nlohmann::json Entity(const std::string &name, nlohmann::json components)
@@ -75,8 +74,7 @@ nlohmann::json Entity(const std::string &name, nlohmann::json components)
 nlohmann::json CrateFile()
 {
     return {{"version", 2},
-        {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                            Entity("lid", At(0.f, 1.f, 0.f))})}};
+        {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)), Entity("lid", At(0.f, 1.f, 0.f))})}};
 }
 
 /// The member names a definition currently declares — what ReexpandInstance needs
@@ -103,8 +101,8 @@ ECS::Entity MemberNamed(ECS::Scene &scene, const InstanceTable &table, ECS::Inst
 LevelInstance CrateAt(std::string name, float x)
 {
     LevelInstance entry;
-    entry.name               = std::move(name);
-    entry.source             = "crate.abp";
+    entry.name = std::move(name);
+    entry.source = "crate.abp";
     entry.transform.position = {x, 0.f, 0.f};
     return entry;
 }
@@ -123,7 +121,7 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
-    const ECS::Entity lidBefore  = MemberNamed(scene, table, placed->instanceId, "lid");
+    const ECS::Entity lidBefore = MemberNamed(scene, table, placed->instanceId, "lid");
     REQUIRE(bodyBefore != ECS::NullEntity);
     REQUIRE(lidBefore != ECS::NullEntity);
 
@@ -132,8 +130,7 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
     // The edit: the lid moves. Nothing is added or removed.
     Write(root, "crate.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                                  Entity("lid", At(0.f, 3.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)), Entity("lid", At(0.f, 3.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -142,7 +139,7 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
 
     // Same handles, generation included — this is the whole point.
     const ECS::Entity bodyAfter = MemberNamed(scene, table, placed->instanceId, "body");
-    const ECS::Entity lidAfter  = MemberNamed(scene, table, placed->instanceId, "lid");
+    const ECS::Entity lidAfter = MemberNamed(scene, table, placed->instanceId, "lid");
     CHECK(bodyAfter == bodyBefore);
     CHECK(lidAfter == lidBefore);
     CHECK(scene.IsAlive(bodyBefore));
@@ -184,8 +181,7 @@ TEST_CASE("Re-expand: a member's name does not drift with every edit to the file
     // An edit somewhere else entirely: the lid moves.
     Write(root, "crate.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                                  Entity("lid", At(0.f, 3.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)), Entity("lid", At(0.f, 3.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     REQUIRE(SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before).has_value());
@@ -208,7 +204,7 @@ TEST_CASE("Re-expand: reordering the file remaps every surviving member's index"
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
-    const ECS::Entity lidBefore  = MemberNamed(scene, table, placed->instanceId, "lid");
+    const ECS::Entity lidBefore = MemberNamed(scene, table, placed->instanceId, "lid");
     REQUIRE(bodyBefore != ECS::NullEntity);
     REQUIRE(lidBefore != ECS::NullEntity);
     REQUIRE(bodyBefore != lidBefore);
@@ -224,8 +220,7 @@ TEST_CASE("Re-expand: reordering the file remaps every surviving member's index"
     // which is why none of them can tell a working remap from no remap at all.
     Write(root, "crate.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("lid", At(0.f, 1.f, 0.f)),
-                                                  Entity("body", At(0.f, 0.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("lid", At(0.f, 1.f, 0.f)), Entity("body", At(0.f, 0.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -245,7 +240,7 @@ TEST_CASE("Re-expand: reordering the file remaps every surviving member's index"
     // that adopts by name but leaves `memberIndex` where it was leaves `body`
     // claiming to be member 0 — which the new definition calls `lid`.
     const ECS::BlueprintMember *bodyTag = scene.Get<ECS::BlueprintMember>(bodyBefore);
-    const ECS::BlueprintMember *lidTag  = scene.Get<ECS::BlueprintMember>(lidBefore);
+    const ECS::BlueprintMember *lidTag = scene.Get<ECS::BlueprintMember>(lidBefore);
     REQUIRE(bodyTag != nullptr);
     REQUIRE(lidTag != nullptr);
     CHECK(bodyTag->memberIndex == 1);
@@ -263,7 +258,7 @@ TEST_CASE("Re-expand: reordering the file remaps every surviving member's index"
     // ...and each carries its own value, composed onto the placement as ever —
     // which a swapped adoption would get backwards.
     const ECS::Transform *body = scene.Get<ECS::Transform>(bodyBefore);
-    const ECS::Transform *lid  = scene.Get<ECS::Transform>(lidBefore);
+    const ECS::Transform *lid = scene.Get<ECS::Transform>(lidBefore);
     REQUIRE(body != nullptr);
     REQUIRE(lid != nullptr);
     CHECK(body->position.y == doctest::Approx(0.f));
@@ -299,14 +294,14 @@ TEST_CASE("Re-expand: a deleted member is reported and destroyed, an added one a
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
-    const ECS::Entity lidBefore  = MemberNamed(scene, table, placed->instanceId, "lid");
+    const ECS::Entity lidBefore = MemberNamed(scene, table, placed->instanceId, "lid");
     const std::vector<std::string> before = MemberNames("crate.abp");
 
     // The lid goes, a handle arrives.
     Write(root, "crate.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                                  Entity("handle", At(1.f, 0.f, 0.f))})}});
+              {"entities",
+               nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)), Entity("handle", At(1.f, 0.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -343,11 +338,9 @@ TEST_CASE("Re-expand: the instance's own record survives an edit to the file it 
 
     // An instance that moved its own lid — the recorded override the whole format
     // exists to keep separate from the file's value.
-    LevelInstance entry     = CrateAt("crate_1", 0.f);
-    entry.overrides["lid"]  = {{"Transform",
-        {{"position", {0.f, 9.f, 0.f}},
-            {"rotation", {1.f, 0.f, 0.f, 0.f}},
-            {"scale", {1.f, 1.f, 1.f}}}}};
+    LevelInstance entry = CrateAt("crate_1", 0.f);
+    entry.overrides["lid"] = {
+        {"Transform", {{"position", {0.f, 9.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
     const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
 
@@ -358,8 +351,7 @@ TEST_CASE("Re-expand: the instance's own record survives an edit to the file it 
     // re-expansion.
     Write(root, "crate.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                                  Entity("lid", At(0.f, 2.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)), Entity("lid", At(0.f, 2.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -371,8 +363,7 @@ TEST_CASE("Re-expand: the instance's own record survives an edit to the file it 
     CHECK(row->authored);
     CHECK(row->overrides.contains("lid"));
 
-    const ECS::Transform *lid =
-        scene.Get<ECS::Transform>(MemberNamed(scene, table, placed->instanceId, "lid"));
+    const ECS::Transform *lid = scene.Get<ECS::Transform>(MemberNamed(scene, table, placed->instanceId, "lid"));
     REQUIRE(lid != nullptr);
     CHECK(lid->position.y == doctest::Approx(9.f)); // the override, not the file's 2
 }
@@ -389,15 +380,15 @@ TEST_CASE("Re-expand: a file that no longer loads changes nothing")
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
-    const ECS::Entity lidBefore  = MemberNamed(scene, table, placed->instanceId, "lid");
+    const ECS::Entity lidBefore = MemberNamed(scene, table, placed->instanceId, "lid");
     const std::vector<std::string> before = MemberNames("crate.abp");
 
     // Two entities of one name: refused by the loader, so there is no new definition
     // to re-expand to.
-    Write(root, "crate.abp",
-          {{"version", 2},
-              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                                  Entity("body", At(1.f, 0.f, 0.f))})}});
+    Write(
+        root, "crate.abp",
+        {{"version", 2},
+            {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)), Entity("body", At(1.f, 0.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     CHECK_FALSE(SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before).has_value());

@@ -25,7 +25,7 @@
 ///
 /// Destruction is by explicit verb. `Scene::Destroy` on a wheel destroys the
 /// wheel and nothing else — no existing destroy path anywhere in the engine
-/// acquires blueprint semantics, which matches how Runtime::GatherSubtree already
+/// acquires blueprint semantics, which matches how ECS::GatherSubtree already
 /// works: hierarchy-aware destruction is opt-in at the call site.
 ///
 /// There is **no adopt**. Entities may be created at runtime freely; they never
@@ -68,9 +68,8 @@ namespace Assisi::App
 /// @brief Destroys every live member of @p instanceId and drops its table row.
 ///
 /// Scans the tag pool for the id; a member already destroyed simply is not found,
-/// because there is no list to go stale. Each member's physics body is torn down
-/// first — destroying an entity drops its RigidBody *component* but leaves the
-/// Jolt body it referenced behind, still colliding.
+/// because there is no list to go stale. The members' bodies and characters go
+/// with them on the world's next reconcile.
 ///
 /// Safe from inside a system: Scene::Destroy is already deferred to
 /// FlushDestroyed.
@@ -125,8 +124,7 @@ bool ExplodeInstance(World &world, ECS::InstanceId instanceId);
 /// a library build has no blueprints opted in and must not require the file to
 /// exist.
 template <typename T>
-[[nodiscard]] std::optional<Runtime::InstanceView<T>> SpawnBlueprint(World &world,
-                                                                     const ECS::Transform &placement)
+[[nodiscard]] std::optional<Runtime::InstanceView<T>> SpawnBlueprint(World &world, const ECS::Transform &placement)
 {
     const std::optional<ECS::InstanceId> instanceId =
         SpawnBlueprint(world, Runtime::InstanceViewTraits<T>::kSource, placement);

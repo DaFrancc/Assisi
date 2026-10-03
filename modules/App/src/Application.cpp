@@ -37,6 +37,7 @@
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -734,7 +735,8 @@ void Application::Run()
             // slices would bury it.
             ASSISI_PROFILE_SCOPE("fixed-update");
             accumulator += SimulationSeconds(dt);
-            while (accumulator >= physicsStep)
+            uint32_t steps = 0;
+            while (accumulator >= physicsStep && steps < _config.maxFixedStepsPerFrame)
             {
                 // The network clock. Incremented with the step, before the hook,
                 // so OnFixedUpdate and every system it runs sees the tick they
@@ -742,6 +744,15 @@ void Application::Run()
                 ++_simTick;
                 OnFixedUpdate(static_cast<float>(physicsStep));
                 accumulator -= physicsStep;
+                ++steps;
+            }
+
+            // Past the cap the time is dropped rather than carried: carried, it
+            // would be owed again next frame, which runs the cap again, and the
+            // game would never get back to running one step a frame.
+            if (accumulator >= physicsStep)
+            {
+                accumulator = std::fmod(accumulator, physicsStep);
             }
         }
         const Clock::time_point fixedEnd = Clock::now();

@@ -90,11 +90,12 @@ enum class StartProgress : std::uint8_t
 /// references into a world, so WorldManager must never reseat one. That is why
 /// worlds are heap-allocated behind unique_ptr rather than stored by value.
 ///
-/// Non-copyable and non-movable: PhysicsWorld owns Jolt state that entity
-/// components point into, and ECS::Scene is likewise pinned.
+/// Non-copyable and non-movable: PhysicsWorld holds a reference to the scene it
+/// keeps in step with, and ECS::Scene is pinned.
 struct World
 {
-    World() = default;
+    /// @param maxBodies  The most physics bodies the world holds.
+    explicit World(uint32_t maxBodies = Physics::kDefaultMaxBodies) : physics(scene, maxBodies) {}
     ~World() = default;
 
     World(const World &) = delete;
@@ -102,6 +103,8 @@ struct World
     World(World &&) = delete;
     World &operator=(World &&) = delete;
 
+    /// Declared before `physics`, which is bound to it: constructed first and
+    /// destroyed last.
     ECS::Scene scene;
     Physics::PhysicsWorld physics;
 
@@ -216,7 +219,7 @@ struct World
     /// which drives the one-tick tail that picks up the final resolve.
     bool streamingPending = false;
 
-    /// Change-detection bookmark for Runtime::PropagateTransforms — the scene
+    /// Change-detection bookmark for ECS::PropagateTransforms — the scene
     /// tick at the end of this world's last propagation. Per world, not per
     /// renderer: one renderer serving two worlds would skip propagation in
     /// whichever it drew second.
@@ -286,7 +289,7 @@ void RemoveScreen(World &world, Mondrian::Screen &screen);
 /// is simply unset.
 class WorldManager
 {
-  public:
+public:
     WorldManager() = default;
 
     /// Waits out any in-flight background load before the worlds are destroyed —
@@ -428,6 +431,13 @@ class WorldManager
     /// starts, so travel behaves the way the boot level did.
     void SetSimulateFrom(SimulateFrom policy) { _simulateFrom = policy; }
     [[nodiscard]] SimulateFrom GetSimulateFrom() const { return _simulateFrom; }
+
+    /// @brief The most physics bodies each world this manager creates holds.
+    ///
+    /// Set from the game config at startup, before the first world exists:
+    /// Jolt sizes a world when it is built, so a world already made keeps its
+    /// size.
+    void SetMaxPhysicsBodies(uint32_t maxBodies) { _maxPhysicsBodies = maxBodies; }
 
     /// @brief The installed services. For code that has a World and needs the
     /// engine-wide pieces a load would use — App::SpawnBlueprint resolving a
@@ -596,7 +606,7 @@ class WorldManager
     /// @return how many worlds were destroyed.
     std::size_t DestroyAllExcept(World &keep);
 
-  private:
+private:
     // A vector, not a map: worlds number in the handful, so the O(n) name lookup
     // is cheaper than hashing, and creation order gives deterministic iteration.
     // unique_ptr elements keep addresses stable across insert/erase, which the
@@ -610,6 +620,9 @@ class WorldManager
     /// See SetSimulateFrom. Begin by default, which is how every world behaved
     /// before the policy existed.
     SimulateFrom _simulateFrom = SimulateFrom::Begin;
+
+    /// See SetMaxPhysicsBodies.
+    uint32_t _maxPhysicsBodies = Physics::kDefaultMaxBodies;
 
     // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
     // rather than invalidate it. A counter, not a flag, so nested iteration
@@ -686,31 +699,22 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
 /// for every simulated world that is not the one being rendered.
 void SyncUnrenderedWorld(World &world);
 
-/// @brief Builds the parent-world lookup physics needs to place and read back a
-/// parented entity's pose (Physics::PhysicsWorld::ParentWorldFn).
+/// @brief Builds a freshly loaded or restored scene's physics anew, in the order
+/// that works: **propagate first, then rebuild**.
 ///
-/// Every path that creates bodies from a scene or writes physics poses into
-/// Transforms must pass this, or a parented body is created at its local pose and
-/// then drifts by its parent's transform every frame afterwards. Blueprint
-/// instances make parented bodies ordinary rather than exotic — a car's wheels
-/// are under its body.
+/// Every body and character starts over — at its Transform, at rest — so
+/// nothing simulated before the load or restore carries into it. A restore that
+/// revives entities at their old handles would otherwise read as an edit and
+/// keep each body's momentum.
 ///
-/// The lookup reads `Transform::worldMatrix`, which is transient and computed by
-/// Runtime::PropagateTransforms, so **propagate before building bodies** from a
-/// freshly loaded or restored scene. App::BuildSceneBodies does that in the right
-/// order; prefer it over calling RebuildSceneBodies directly.
-///
-/// The returned callable borrows @p scene and is valid for as long as it is.
-[[nodiscard]] Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene);
-
-/// @brief Rebuilds a scene's physics bodies in the order that works: **propagate
-/// first, then create bodies**.
-///
-/// A body is created in world space and a parented entity's Transform is an
+/// A body is built in world space and a parented entity's Transform is an
 /// offset from its parent, so the parent's world matrix has to exist before the
 /// body can be placed. World matrices are transient — never serialized — so a
 /// freshly loaded or restored scene has none until propagation runs. Doing it the
 /// other way round places every parented body at its local pose.
+///
+/// A loader calls this so a world is handed over with its bodies already built,
+/// the async one on its worker.
 ///
 /// @param propagationTick The caller's propagation bookmark, or 0 to recompute
 ///        every matrix (correct for a scene whose entities were just replaced).

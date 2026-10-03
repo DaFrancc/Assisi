@@ -278,12 +278,10 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
 
 
 def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
-    """The trailing bool flags of a ComponentMeta initializer: serializable, then
-    tracksChanges and replicable when the annotations ask for them.
+    """The trailing members of a ComponentMeta initializer: the typeIndex, then
+    whichever bool flags differ from their defaults.
 
-    They are positional and defaulted, so a later flag forces every earlier one
-    to be emitted — and an unannotated component stays at the short, one-line
-    form the golden output pins. ACOMP(replicable) implies tracked (an untracked
+    ACOMP(replicable) implies tracked (an untracked
     component's change tick reads as "unchanged" forever, so it would replicate
     once at spawn and then go silent); the implication lives here rather than in
     the parser so the annotation stays the single source of truth.
@@ -294,20 +292,38 @@ def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
     silently strip tracking out from under it. Transform is the live case:
     PropagateTransforms wants its ticks whether or not anything is networked.
     """
-    values = ['true' if serializable else 'false']
-    names  = ['serializable']
+    lines = ['.typeIndex = typeid(T)']
+    if not serializable:
+        lines.append('.serializable = false')
     if comp.args.has('tracked') or comp.args.has('replicable'):
-        values.append('true')
-        names.append('tracksChanges')
+        lines.append('.tracksChanges = true')
     if comp.args.has('replicable'):
-        values.append('true')
-        names.append('replicable')
+        lines.append('.replicable = true')
+    return ',\n        '.join(lines)
 
-    lines = []
-    for index, (value, name) in enumerate(zip(values, names)):
-        text = value + (',' if index + 1 < len(values) else '')
-        lines.append(text.ljust(11) + f'// {name}')
-    return '\n        '.join(lines)
+
+def _gen_rule_lists(comp: ComponentInfo) -> str:
+    """The ACOMP(requires/excludes) names, as ComponentMeta initializer lines
+    ending in a comma, or nothing for a component without rules. The registry
+    resolves the names when it finalizes; a name is a registered component
+    name, which is all a rule in another module can be checked against."""
+    lines = ''
+    for member, names in (('requiredNames', comp.requires_), ('excludedNames', comp.excludes)):
+        if names:
+            quoted = ', '.join(f'"{name}"' for name in names)
+            lines += f'        .{member} = {{{quoted}}},\n'
+    return lines
+
+
+# Adds a default component unless one is there; emitted for every component,
+# transient ones included, because it is how Scene fills in a requirement.
+_ADD_DEFAULT = """\
+        .addDefault = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            (void)scene.Add<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+"""
 
 
 def _is_serializable(f: FieldInfo) -> bool:
@@ -317,8 +333,9 @@ def _is_serializable(f: FieldInfo) -> bool:
 
 # A message's EntityRef fields, for JSON only.
 #
-# The component path routes an EntityRef through Runtime::SceneSerializer, which
-# resolves it against the scene being saved. A message has no scene and is never
+# The component path routes an EntityRef through the entity-reference codec the
+# running serializer installs, which resolves it against the scene being saved.
+# A message has no scene and is never
 # saved — its JSON form exists for tests, tooling, and log lines — so it carries
 # the handle's two halves verbatim instead. The *binary* path is unaffected and
 # still translates through NetIds, which is the only form that means anything
@@ -382,7 +399,11 @@ def _gen_serialize(fields: list[FieldInfo]) -> str:
 def _gen_deserialize(fields: list[FieldInfo], name: str) -> str:
     """The addToScene body. Returns false without touching the scene when a field
     is present but unreadable — the component is never half-applied, because every
-    field lands on a local `comp` and only a complete one reaches Scene::Add."""
+    field lands on a local `comp` and only a complete one reaches the scene.
+
+    One the entity already has is overwritten in place, through GetMut so a
+    tracked type is stamped: a component another one requires may already hold
+    the default that requirer added, and the saved value has to win."""
     serializable = [f for f in fields if _is_serializable(f)]
 
     lines = [
@@ -399,7 +420,12 @@ def _gen_deserialize(fields: list[FieldInfo], name: str) -> str:
         for f in serializable:
             lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'comp.{f.name}'))
 
-    lines.append('(void)scene.Add(e, comp);')
+    lines.append('if (T* existing = scene.GetMut<T>(e))')
+    lines.append('{')
+    lines.append('    *existing = std::move(comp);')
+    lines.append('    return true;')
+    lines.append('}')
+    lines.append('(void)scene.Add(e, std::move(comp));')
     lines.append('return true;')
     return '\n'.join(lines)
 
@@ -995,7 +1021,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/Reflect/ComponentRegistry.hpp>')
         includes.append('#include <Assisi/ECS/Scene.hpp>')
         if has_entity_refs:
-            includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
+            includes.append('#include <Assisi/ECS/EntityRef.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
         # An asset type's construct hook allocates with std::nothrow.
@@ -1071,11 +1097,14 @@ namespace
 
         serial_yes = _gen_flag_tail(True, comp)
         serial_no  = _gen_flag_tail(False, comp)
+        rules       = _gen_rule_lists(comp)
+        add_default = _ADD_DEFAULT
 
         # ACOMP(transient): register only to receive a stable ComponentId (so a
         # Scene can store the type) with no serialization hooks. serializable is
         # false and every hook is null; consumers gate on ComponentMeta::
-        # serializable. See RigidBody / DestroyTag.
+        # serializable. It still gets addDefault, so another component can
+        # require it.
         if comp.args.has('transient'):
             blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
@@ -1084,16 +1113,8 @@ static const bool {var_name} = []() -> bool
 {{
     using T = {fqn};
     Assisi::Core::Reflect::ComponentRegistry::Instance().Register({{
-        "{comp.name}",
-        typeid(T),
-        {{}},      // fields: none reflected
-        nullptr,   // serialize
-        nullptr,   // addToScene
-        nullptr,   // iterateEntities
-        nullptr,   // getByEntity
-        nullptr,   // construct
-        nullptr,   // getMutable
-        {serial_no}
+        .name = "{comp.name}",
+{add_default}{rules}        {serial_no}
     }});
     return true;
 }}();
@@ -1111,31 +1132,27 @@ static const bool {var_name} = []() -> bool
 {{
     using T = {fqn};
     Assisi::Core::Reflect::ComponentRegistry::Instance().Register({{
-        "{comp.name}",
-        typeid(T),
-        {{
-            {field_metas}
-        }},
-        [](const void* ptr) -> nlohmann::json
+        .name = "{comp.name}",
+        .serialize = [](const void* ptr) -> nlohmann::json
         {{
 {serialize}
         }},
-        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
+        .addToScene = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
         {{
 {deserialize}
         }},
-        [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
+        .iterateEntities = [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
         {{
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             for (auto [e, comp] : scene.Query<T>())
                 cb(e.index, e.generation, &comp);
         }},
-        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        .getByEntity = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
         {{
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
         }},
-        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        .construct = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
         {{
             // Scene::Add rejects a duplicate rather than replacing it, so an
             // entity that already has this component is reset in place. Both
@@ -1149,13 +1166,16 @@ static const bool {var_name} = []() -> bool
             }}
             return scene.Add<T>(e, T{{}});
         }},
-        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        .getMutable = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
         {{
             // GetMut, not Get: this is the writing accessor, so it stamps.
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.GetMut<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
         }},
-        {serial_yes}
+{add_default}        .fields = {{
+            {field_metas}
+        }},
+{rules}        {serial_yes}
     }});
     return true;
 }}();

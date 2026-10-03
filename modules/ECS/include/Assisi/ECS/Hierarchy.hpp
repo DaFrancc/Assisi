@@ -12,6 +12,7 @@
 /// For root entities (no parent), worldMatrix == local TRS matrix.
 
 #include <cstdint>
+#include <vector>
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -19,7 +20,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Prelude.hpp>
 
-namespace Assisi::Runtime
+namespace Assisi::ECS
 {
 
 /// @brief Marks an entity as a child of another entity.
@@ -36,12 +37,11 @@ namespace Assisi::Runtime
 /// replicating the hierarchy itself — ordering guarantees so a child never
 /// arrives before its parent, cycle rejection on hostile input, and a decision
 /// about whether a mirrored child's pose is its own or its parent's. That is a
-/// project, not a flag; the replication design stripped hierarchy semantics for
-/// exactly this reason, and marking this type would quietly promise all of it.
+/// project, not a flag, and marking this type would quietly promise all of it.
 ACOMP(tracked)
 struct Parent
 {
-    AFIELD() ECS::Entity parent = ECS::NullEntity;
+    AFIELD() ECS::Entity parent = NullEntity;
 };
 
 /// @brief Refresh cached world-space matrices for entities whose transform changed.
@@ -57,7 +57,7 @@ struct Parent
 /// @return The scene's current change tick — pass it back as `lastTick` next frame
 ///         to skip unchanged entities. Discarding it is safe (you simply lose the
 ///         skip, recomputing everything if you keep passing 0).
-uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick);
+uint64_t PropagateTransforms(Scene &scene, uint64_t lastTick);
 
 /// @brief Collects @p root plus every entity whose Parent chain leads to it.
 ///
@@ -65,7 +65,7 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick);
 /// this scans the scene once per collected entity — fine at the scales this is
 /// used (deleting or migrating a subtree). Used by entity migration
 /// (App::MigrateEntity) and mirrors the editor's delete-subtree gather.
-std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root);
+std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 
 /// @brief @p entity's pose in world space, resolved by walking its Parent chain.
 ///
@@ -80,6 +80,15 @@ std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root);
 /// non-uniformly scaled ancestor cannot be expressed as one TRS, and the result
 /// is the closest one. An entity with no Transform is the identity, and a cycle
 /// in Parent terminates the walk rather than hanging on a corrupt scene.
-[[nodiscard]] ECS::Transform WorldTransformOf(const ECS::Scene &scene, ECS::Entity entity);
+[[nodiscard]] Transform WorldTransformOf(const Scene &scene, Entity entity);
 
-} // namespace Assisi::Runtime
+/// @brief The world matrix @p entity's Transform is relative to: its parent's
+/// propagated worldMatrix, or null when it has no Parent, its Parent names no
+/// entity, or that entity has no Transform.
+///
+/// Reads the cached matrix, so it is only as current as the last
+/// PropagateTransforms. A null answer means @p entity's local pose is its world
+/// pose.
+[[nodiscard]] const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity);
+
+} // namespace Assisi::ECS

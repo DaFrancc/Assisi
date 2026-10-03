@@ -102,6 +102,14 @@ void PhysicsWorld::Impl::WakeInside(const JPH::AABox &bounds, CollisionFilter fi
     physicsSystem.GetBodyInterface().ActivateBodiesInAABox(bounds, {}, layerFilter);
 }
 
+JPH::AABox PhysicsWorld::Impl::BoundsOf(const JPH::BodyID &id) const
+{
+    JPH::BodyLockRead lock(physicsSystem.GetBodyLockInterface(), id);
+    if (!lock.Succeeded())
+        return JPH::AABox{};
+    return lock.GetBody().GetWorldSpaceBounds();
+}
+
 void PhysicsWorld::Impl::WakeInside(const JPH::BodyID &id)
 {
     JPH::BodyLockRead lock(physicsSystem.GetBodyLockInterface(), id);
@@ -119,8 +127,8 @@ void PhysicsWorld::Impl::WakeInside(const JPH::BodyID &id)
 
 void PhysicsWorld::Impl::EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out)
 {
-    const ECS::Entity e1 = EntityFor(state.id1);
-    const ECS::Entity e2 = EntityFor(state.id2);
+    const ECS::Entity e1 = state.entity1;
+    const ECS::Entity e2 = state.entity2;
 
     // Each side is given the normal pointing away from the *other*, which is what
     // a reflection wants and what spares a consumer working out the pair's order.
@@ -164,6 +172,14 @@ void PhysicsWorld::Impl::ResolveContactEvents()
         // That is also what makes a character touching a dynamic body harmless to
         // record twice — once by its own sweep, once by the body-vs-body listener.
         const bool firstThisStep = state.stamp != step;
+
+        // Read while both bodies certainly exist, so the Exit a destroyed body
+        // causes later can still say who it was.
+        if (inserted)
+        {
+            state.entity1 = EntityFor(touch.id1);
+            state.entity2 = EntityFor(touch.id2);
+        }
 
         state.normal    = touch.normal;
         state.velocity1 = touch.velocity1;
@@ -235,12 +251,12 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
     (void)subShapeId;
     (void)contactPosition;
 
-    const auto it = _owner.characters.find(static_cast<std::uint32_t>(character->GetUserData()));
-    if (it == _owner.characters.end())
+    const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
+    if (found == nullptr)
     {
         return;
     }
-    const CharacterRecord &record = it->second;
+    const CharacterRecord &record = *found;
 
     // Jolt's spelling of these is from the body's point of view, which is the
     // opposite of how a character is authored: "can this body push the
@@ -262,12 +278,12 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
     (void)subShapeId;
     (void)contactPosition;
 
-    const auto it = _owner.characters.find(static_cast<std::uint32_t>(character->GetUserData()));
-    if (it == _owner.characters.end())
+    const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
+    if (found == nullptr)
     {
         return;
     }
-    const CharacterRecord &record = it->second;
+    const CharacterRecord &record = *found;
 
     settings.mCanPushCharacter = record.canBePushed;
 

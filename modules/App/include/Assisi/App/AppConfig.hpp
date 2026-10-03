@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file AppConfig.hpp
-/// @brief What the game ships with: window, clear colour, physics rate, the
-///        scene it boots into, and the diagnostics retention counts.
+/// @brief What the game ships with: window, clear colour, physics rate and
+///        limits, the scene it boots into, and the diagnostics retention counts.
 ///
 /// Everything here is fixed at build time and is not the player's to change.
 /// What the player changes lives in OptionsConfig, under the writable user root
@@ -14,6 +14,7 @@
 #include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Mondrian/ScaleMatch.hpp>
+#include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Window/InputEvent.hpp>
 
 #include <cstdint>
@@ -86,6 +87,23 @@ struct AppConfig
     /// practice: pruning runs at startup, before this run's report exists, so a
     /// run that crashes leaves keepDumps + 1 behind until the next launch.
     AFIELD() uint32_t keepDumps = 5;
+
+    /// @brief The most physics bodies one world holds, characters included.
+    ///
+    /// Jolt reserves room for every one up front, a pointer apiece, so this is
+    /// memory spent whether or not a level uses it. A body past it is not built
+    /// and the entity is named in the log.
+    AFIELD() uint32_t maxPhysicsBodies = Physics::kDefaultMaxBodies;
+
+    /// @brief The most fixed steps one frame runs before the simulation gives up
+    /// on catching up.
+    ///
+    /// A frame that falls behind runs extra steps to make up the time, and each
+    /// one makes the frame longer still. Past this many the remaining time is
+    /// dropped instead, so a slow machine runs the game slower rather than
+    /// grinding to a halt. Separate from the clamp on a single frame's length,
+    /// which bounds how much time one frame may claim at all.
+    AFIELD() uint32_t maxFixedStepsPerFrame = 8;
 
     /// @brief Whether the game starts simulating before its assets have settled.
     ///

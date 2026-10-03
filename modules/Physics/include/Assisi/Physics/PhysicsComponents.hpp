@@ -14,62 +14,6 @@
 namespace Assisi::Physics
 {
 
-/// @brief The value a handle carries when it names nothing.
-///
-/// All ones, which is also what the simulation underneath uses, so the two
-/// agree without a conversion having to special-case the empty handle.
-inline constexpr uint32_t InvalidPhysicsHandle = 0xFFFFFFFFu;
-
-/// @brief Opaque handle to one body in a PhysicsWorld.
-///
-/// A number only the world that issued it can interpret, and only for as long as
-/// that body lives. Nothing outside PhysicsWorld may take it apart — which is the
-/// point: the simulation behind it can be replaced without this type or anything
-/// holding one changing.
-///
-/// Deliberately **not** a Core::StrongId. That marker declares a type's wire
-/// form, and this one has none: a body handle means nothing in another process,
-/// so making it serializable could only ever produce a bug that surfaced in
-/// multiplayer.
-struct BodyId
-{
-    uint32_t value = InvalidPhysicsHandle;
-
-    /// @brief Whether this names a body at all. A default-constructed handle,
-    /// and the one a failed creation returns, do not.
-    [[nodiscard]] constexpr bool IsValid() const { return value != InvalidPhysicsHandle; }
-
-    friend constexpr bool operator==(BodyId, BodyId) = default;
-};
-
-/// @brief Opaque handle to one character controller in a PhysicsWorld.
-///
-/// The same contract as @ref BodyId, and not a Core::StrongId for the same
-/// reason.
-struct CharacterId
-{
-    uint32_t value = InvalidPhysicsHandle;
-
-    [[nodiscard]] constexpr bool IsValid() const { return value != InvalidPhysicsHandle; }
-
-    friend constexpr bool operator==(CharacterId, CharacterId) = default;
-};
-
-/// @brief Tags an entity as having a physics body.
-///
-/// Trivially copyable — safe to store in SparseSet<T>.
-/// The actual body is owned by the PhysicsWorld; this is just a handle.
-///
-/// ACOMP(transient): registered only so a Scene can store it by ComponentId.
-/// It is never serialized — the bodyId is a live runtime handle, meaningless
-/// across runs. RigidBodyDescriptor (below) is the serialized form; a RigidBody
-/// is (re)created from it at load time.
-ACOMP(transient)
-struct RigidBody
-{
-    BodyId bodyId;
-};
-
 /// @brief Which collision primitive a RigidBodyDescriptor builds.
 ///
 /// AENUM so it reflects as a dropdown and serializes by value. A 1-byte
@@ -115,8 +59,9 @@ inline constexpr Core::Bitmask<CollisionChannel> AllChannels = Core::Bitmask<Col
 
 /// @brief Serializable descriptor for a rigid body's collider.
 ///
-/// Stored in the level file; consumed at load time to create a RigidBody and the
-/// underlying Jolt body. `shape` is a radio source: each dimension field lists
+/// Stored in the level file. The PhysicsWorld builds a body for every entity
+/// carrying one and a Transform, keeps it in step with edits to either, and
+/// destroys it when either goes. `shape` is a radio source: each dimension field lists
 /// the shapes it applies to and vanishes from the inspector for the others (only
 /// the fields that shape uses matter — a Sphere ignores `halfExtents`/`halfHeight`).
 ///
@@ -125,7 +70,7 @@ inline constexpr Core::Bitmask<CollisionChannel> AllChannels = Core::Bitmask<Col
 /// it from. It is also the discriminator between the client's two kinds of
 /// mirror — an entity with one is body-corrected, an entity without one is
 /// interpolated.
-ACOMP(replicable)
+ACOMP(replicable, requires = {Transform}, excludes = {CharacterDescriptor})
 struct RigidBodyDescriptor
 {
     AFIELD(radioBroadcast) ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
@@ -171,7 +116,7 @@ struct RigidBodyDescriptor
 /// contact normal and scaling it by @ref rebound. Only the linear velocity is
 /// touched; spin, mass, and the solver's own response are left alone.
 ///
-/// Needs a RigidBody to act on. Acts only on the step a body arrives, never
+/// Needs a body to act on. Acts only on the step a body arrives, never
 /// while it rests, and never on a sensor — nothing passed through resisted it.
 ///
 /// Replicated, despite the bounce itself being a local guess at what the server's
@@ -316,7 +261,7 @@ enum class BunnyHopPolicy : std::uint8_t
 /// An entity carries this **or** a RigidBodyDescriptor, never both: a character
 /// already owns a rigid body (its inner body), and a second one would collide
 /// with its own character.
-ACOMP(replicable)
+ACOMP(replicable, requires = {Transform, Character}, excludes = {RigidBodyDescriptor})
 struct CharacterDescriptor
 {
     /// The channels this character collides with. Interaction needs both sides to
@@ -445,11 +390,10 @@ struct CharacterDescriptor
     AFIELD() bool canBePushed = true;
 };
 
-/// @brief Tags an entity as being driven by a character controller, and carries
-/// what it is being asked to do.
+/// @brief What a character is being asked to do, and what its last step did.
 ///
-/// Trivially copyable — safe to store in SparseSet<T>. The controller itself is
-/// owned by the PhysicsWorld; @ref id is a handle into it.
+/// Every CharacterDescriptor brings one. The controller itself is owned by the
+/// PhysicsWorld, keyed by the entity.
 ///
 /// The intent fields are the whole input surface. Whatever fills them — a
 /// keyboard, an AI, a replicated command — the character behaves the same, which
@@ -459,11 +403,8 @@ struct CharacterDescriptor
 /// **The entity's Transform sits at the character's feet**, not at the middle of
 /// the capsule, so an author places a character by standing it on the floor.
 ///
-/// ACOMP(transient): registered only so a Scene can store it by ComponentId. It
-/// is never serialized — @ref id is a live runtime handle, meaningless across
-/// runs, and @ref state describes a step that has already happened.
-/// CharacterDescriptor is the serialized form; a Character is (re)created from
-/// it at load time.
+/// ACOMP(transient): never serialized — @ref state describes a step that has
+/// already happened, and intent is asked for afresh every step.
 ACOMP(transient)
 struct Character
 {
@@ -478,9 +419,6 @@ struct Character
     /// for proportionally less speed. The vertical component is ignored: going
     /// up is @ref jump's business and going down is gravity's.
     glm::vec3 move{0.f};
-
-    /// Handle into the PhysicsWorld's characters.
-    CharacterId id;
 
     /// The stance being asked for, held for as long as it is wanted rather than
     /// pulsed. Asking to stand under something too low fails silently and is

@@ -70,9 +70,15 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
         return std::unexpected(LevelFailure{.kind = doc.error()});
     }
 
+    LoadOptions named = options;
+    if (named.source.empty())
+    {
+        named.source = assetPath;
+    }
+
     try
     {
-        return Load(scene, *doc, options);
+        return Load(scene, *doc, named);
     }
     catch (const std::exception &ex)
     {

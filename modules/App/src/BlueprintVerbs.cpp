@@ -5,8 +5,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
-#include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <vector>
@@ -14,8 +13,7 @@
 namespace Assisi::App
 {
 
-std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source,
-                                              const ECS::Transform &placement)
+std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source, const ECS::Transform &placement)
 {
     const std::expected<ECS::InstanceId, Runtime::LevelError> id =
         Runtime::SceneSerializer::ExpandInstance(world.scene, world.instances, source, placement);
@@ -37,24 +35,11 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
     // headless case and correct: a server never resolves GPU assets.
     ResolveEntityAssets(world, members);
 
-    // Propagate before building bodies, for the reason App::BuildSceneBodies
-    // exists: a member parented to another is placed from its parent's world
-    // matrix, and the matrix does not exist until propagation has run over the
-    // entities that were just created.
-    world.propagationTick = Runtime::PropagateTransforms(world.scene, world.propagationTick);
-    const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(world.scene);
-
-    for (const ECS::Entity member : members)
-    {
-        // Whichever kind of physics the member's descriptor asks for. A blueprint
-        // holding a character — a player, an NPC — would otherwise spawn with the
-        // descriptor and no controller, and stand there for the rest of the level.
-        if (world.scene.Get<Physics::RigidBody>(member) == nullptr &&
-            world.scene.Get<Physics::Character>(member) == nullptr)
-        {
-            (void)world.physics.RebuildEntityPhysics(world.scene, member, parentWorld);
-        }
-    }
+    // The members' bodies are built by the world's next reconcile. Propagated now,
+    // for the reason App::BuildSceneBodies exists: a member parented to another is
+    // placed from its parent's world matrix, and the matrix does not exist until
+    // propagation has run over the entities that were just created.
+    world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
 
     return *id;
 }
@@ -64,14 +49,9 @@ bool DestroyInstance(World &world, ECS::InstanceId instanceId)
     if (world.instances.Find(instanceId) == nullptr)
         return false;
 
+    // Their bodies and characters go with them, on the world's next reconcile.
     for (const ECS::Entity member : Runtime::MembersOf(world.scene, instanceId))
     {
-        // Before the entity goes: destroying it drops the RigidBody component but
-        // not the Jolt body it referenced, which is a separate handle in the
-        // physics world and would keep colliding.
-        if (const Physics::RigidBody *body = world.scene.Get<Physics::RigidBody>(member))
-            world.physics.RemoveBody(*body);
-
         world.scene.Destroy(member);
     }
 

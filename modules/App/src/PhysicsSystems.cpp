@@ -4,9 +4,9 @@
 
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
@@ -52,10 +52,7 @@ void BounceSystem(SystemContext &ctx)
 
         // The impact was logged against a live body during the last step; the
         // entity can still have been destroyed since, or had its collider removed.
-        if (!scene.IsAlive(contact.entity))
-            continue;
-        const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(contact.entity);
-        if (body == nullptr)
+        if (!scene.IsAlive(contact.entity) || !ctx.world.physics.HasBody(contact.entity))
             continue;
 
         // Only a body approaching hard enough bounces. Two things are being
@@ -90,8 +87,8 @@ void BounceSystem(SystemContext &ctx)
         // clamped rather than trusted: the inspector floors the field, but a level
         // file is just text and can hold anything.
         const glm::vec3 reflected = contact.velocity - 2.f * closingSpeed * contact.normal;
-        const float rebound   = glm::max(bounce->rebound, 0.f);
-        ctx.world.physics.SetBodyLinearVelocity(*body, reflected * rebound);
+        const float rebound = glm::max(bounce->rebound, 0.f);
+        ctx.world.physics.SetBodyLinearVelocity(contact.entity, reflected * rebound);
     }
 }
 
@@ -99,39 +96,37 @@ void CharacterMoveSystem(SystemContext &ctx)
 {
     ECS::Scene &scene = ctx.world.scene;
 
-    for (auto [entity, character, descriptor] :
-         scene.QueryMut<Physics::Character, Physics::CharacterDescriptor>())
+    for (auto [entity, character, descriptor] : scene.QueryMut<Physics::Character, Physics::CharacterDescriptor>())
     {
-        const Physics::Character           &intent   = character.Get();
+        const Physics::Character &intent = character.Get();
         const Physics::CharacterDescriptor &authored = descriptor.Get();
 
         const glm::vec3 move = intent.move;
-        const bool      jump = intent.jump;
+        const bool jump = intent.jump;
 
         // Facing lives on the Transform, which the controller never reads: it
         // moves the capsule and leaves turning it to gameplay.
         if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
         {
-            ctx.world.physics.SetCharacterFacing(intent, transform->rotation * glm::vec3(0.f, 0.f, -1.f));
+            ctx.world.physics.SetCharacterFacing(entity, transform->rotation * glm::vec3(0.f, 0.f, -1.f));
         }
 
         // Asked every step rather than on the edge of a keypress: standing up
         // under something low fails, and retrying is what lets a character stand
         // by itself once it has walked clear.
-        (void)ctx.world.physics.SetCharacterStance(intent, intent.stance);
+        (void)ctx.world.physics.SetCharacterStance(entity, intent.stance);
 
         // The crouch scale applies to the stance the character actually reached,
         // not the one it asked for — read back live, because a character blocked
         // under a ledge would otherwise walk at full speed while crouched.
-        const Physics::Stance stance = ctx.world.physics.GetCharacterState(intent).stance;
-        const float           speed  = stance == Physics::Stance::Crouching
-                                           ? authored.walkSpeed * authored.crouchSpeedScale
-                                           : authored.walkSpeed;
+        const Physics::Stance stance = ctx.world.physics.GetCharacterState(entity).stance;
+        const float speed =
+            stance == Physics::Stance::Crouching ? authored.walkSpeed * authored.crouchSpeedScale : authored.walkSpeed;
 
         // A request, not a velocity to take: the direction to gain speed along
         // and how much of it to ask for. What the character is already doing
         // stays in the controller between steps.
-        ctx.world.physics.MoveCharacter(intent, move * speed, jump);
+        ctx.world.physics.MoveCharacter(entity, move * speed, jump);
 
         // A request, consumed: one press is one jump however many steps pass
         // before it can fire.
@@ -143,18 +138,14 @@ void CharacterStateSystem(SystemContext &ctx)
 {
     for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
     {
-        (void)entity;
-
-        const Physics::CharacterState state = ctx.world.physics.GetCharacterState(character.Get());
+        const Physics::CharacterState state = ctx.world.physics.GetCharacterState(entity);
 
         // Skip the write when nothing moved, rather than stamp a change tick for
         // a state identical to the one already there. Character is transient and
         // untracked, so the tick costs nothing today — but a standing crowd of
         // characters would otherwise write every field every step for no reason.
-        if (character.Get().state.velocity == state.velocity &&
-            character.Get().state.ground == state.ground &&
-            character.Get().state.stance == state.stance &&
-            character.Get().state.eyeHeight == state.eyeHeight &&
+        if (character.Get().state.velocity == state.velocity && character.Get().state.ground == state.ground &&
+            character.Get().state.stance == state.stance && character.Get().state.eyeHeight == state.eyeHeight &&
             character.Get().state.groundEntity == state.groundEntity)
         {
             continue;
@@ -168,9 +159,10 @@ void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics,
 {
     for (auto [entity, character] : scene.Query<Physics::Character>())
     {
-        const float eyeHeight = physics.GetCharacterEyeHeight(character, alpha);
+        (void)character;
+        const float eyeHeight = physics.GetCharacterEyeHeight(entity, alpha);
 
-        for (auto [child, camera, parent] : scene.Query<Runtime::Camera, Runtime::Parent>())
+        for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
         {
             (void)camera;
             if (parent.parent != entity)
@@ -225,12 +217,11 @@ void CharacterLookSystem(SystemContext &ctx)
 
         const float yawDegrees = -delta.x * kLookDegreesPerPixel;
         transform->rotation =
-            glm::normalize(glm::angleAxis(glm::radians(yawDegrees), glm::vec3(0.f, 1.f, 0.f)) *
-                           transform->rotation);
+            glm::normalize(glm::angleAxis(glm::radians(yawDegrees), glm::vec3(0.f, 1.f, 0.f)) * transform->rotation);
 
         // Pitch on the camera parented to this character, so the body turns and
         // the head tilts — a pitched capsule would walk into the floor.
-        for (auto [child, camera, parent] : scene.Query<Runtime::Camera, Runtime::Parent>())
+        for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
         {
             (void)camera;
             if (parent.parent != entity)
@@ -252,8 +243,7 @@ void CharacterLookSystem(SystemContext &ctx)
             const float pitch =
                 glm::clamp(currentPitch - delta.y * kLookDegreesPerPixel, -kMaxPitchDegrees, kMaxPitchDegrees);
 
-            childTransform->rotation =
-                glm::normalize(glm::angleAxis(glm::radians(pitch), glm::vec3(1.f, 0.f, 0.f)));
+            childTransform->rotation = glm::normalize(glm::angleAxis(glm::radians(pitch), glm::vec3(1.f, 0.f, 0.f)));
         }
     }
 }
@@ -268,8 +258,8 @@ void CharacterInputSystem(SystemContext &ctx)
         return;
     }
 
-    const Window::InputContext &input   = *ctx.input;
-    const Window::ActionMap    &actions = *ctx.actions;
+    const Window::InputContext &input = *ctx.input;
+    const Window::ActionMap &actions = *ctx.actions;
 
     // Built in the character's own frame — forward is −Z — and rotated into the
     // world per character below, so walking follows where each one is looking
@@ -302,8 +292,7 @@ void CharacterInputSystem(SystemContext &ctx)
 
     const bool jump = actions.IsActionPressed(kActionJump, input);
     const Physics::Stance stance =
-        actions.IsActionDown(kActionCrouch, input) ? Physics::Stance::Crouching
-                                                   : Physics::Stance::Standing;
+        actions.IsActionDown(kActionCrouch, input) ? Physics::Stance::Crouching : Physics::Stance::Standing;
 
     for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
     {
@@ -313,7 +302,7 @@ void CharacterInputSystem(SystemContext &ctx)
         glm::vec3 worldMove = move;
         if (const ECS::Transform *transform = ctx.world.scene.Get<ECS::Transform>(entity))
         {
-            worldMove   = transform->rotation * move;
+            worldMove = transform->rotation * move;
             worldMove.y = 0.f;
             if (glm::dot(worldMove, worldMove) > 0.f)
             {
@@ -322,7 +311,7 @@ void CharacterInputSystem(SystemContext &ctx)
         }
 
         Physics::Character &intent = character.GetMut();
-        intent.move   = worldMove;
+        intent.move = worldMove;
         intent.stance = stance;
 
         // OR rather than assign: CharacterMoveSystem clears the request once it

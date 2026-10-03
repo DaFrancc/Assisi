@@ -26,9 +26,9 @@
 #include <string>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -51,14 +51,14 @@ std::filesystem::path LevelPath(const std::string &name)
 /// What a scene is worth asserting about: the content stats it publishes.
 struct SceneStats
 {
-    int32_t entities   = 0;
-    int32_t meshes     = 0;
-    int32_t triangles  = 0;
+    int32_t entities = 0;
+    int32_t meshes = 0;
+    int32_t triangles = 0;
     int32_t pointLights = 0;
-    int32_t spotLights  = 0;
+    int32_t spotLights = 0;
     int32_t directionalLights = 0;
-    int32_t movers     = 0;
-    int32_t cameras    = 0;
+    int32_t movers = 0;
+    int32_t cameras = 0;
 };
 
 /// Triangle count of each `prim://` rung at its pinned tessellation. Written out
@@ -69,15 +69,24 @@ struct SceneStats
 /// the two have to be changed together or one of them fails.
 int32_t TrianglesFor(const Core::AssetId &mesh)
 {
-    if (mesh == Core::BuiltinAssetId::Cube) return 12;
-    if (mesh == Core::BuiltinAssetId::SphereLow) return 144;
-    if (mesh == Core::BuiltinAssetId::Sphere) return 576;
-    if (mesh == Core::BuiltinAssetId::SphereHigh) return 4096;
-    if (mesh == Core::BuiltinAssetId::IcosphereLow) return 320;
-    if (mesh == Core::BuiltinAssetId::Icosphere) return 1280;
-    if (mesh == Core::BuiltinAssetId::IcosphereHigh) return 20480;
-    if (mesh == Core::BuiltinAssetId::Cylinder) return 96;
-    if (mesh == Core::BuiltinAssetId::CylinderHigh) return 256;
+    if (mesh == Core::BuiltinAssetId::Cube)
+        return 12;
+    if (mesh == Core::BuiltinAssetId::SphereLow)
+        return 144;
+    if (mesh == Core::BuiltinAssetId::Sphere)
+        return 576;
+    if (mesh == Core::BuiltinAssetId::SphereHigh)
+        return 4096;
+    if (mesh == Core::BuiltinAssetId::IcosphereLow)
+        return 320;
+    if (mesh == Core::BuiltinAssetId::Icosphere)
+        return 1280;
+    if (mesh == Core::BuiltinAssetId::IcosphereHigh)
+        return 20480;
+    if (mesh == Core::BuiltinAssetId::Cylinder)
+        return 96;
+    if (mesh == Core::BuiltinAssetId::CylinderHigh)
+        return 256;
     return -1; // an unreserved mesh: the scenes are primitives-only by design
 }
 
@@ -99,16 +108,36 @@ SceneStats LoadStats(const std::string &name)
         REQUIRE_MESSAGE(triangles > 0, "scene references a non-primitive mesh: " << name);
         stats.triangles += triangles;
     }
-    for (auto [entity, light] : scene.Query<Runtime::PointLight>()) { (void)entity; (void)light; ++stats.pointLights; }
-    for (auto [entity, light] : scene.Query<Runtime::SpotLight>()) { (void)entity; (void)light; ++stats.spotLights; }
+    for (auto [entity, light] : scene.Query<Runtime::PointLight>())
+    {
+        (void)entity;
+        (void)light;
+        ++stats.pointLights;
+    }
+    for (auto [entity, light] : scene.Query<Runtime::SpotLight>())
+    {
+        (void)entity;
+        (void)light;
+        ++stats.spotLights;
+    }
     for (auto [entity, light] : scene.Query<Runtime::DirectionalLight>())
     {
         (void)entity;
         (void)light;
         ++stats.directionalLights;
     }
-    for (auto [entity, mover] : scene.Query<Runtime::Oscillator>()) { (void)entity; (void)mover; ++stats.movers; }
-    for (auto [entity, camera] : scene.Query<Runtime::Camera>()) { (void)entity; (void)camera; ++stats.cameras; }
+    for (auto [entity, mover] : scene.Query<Runtime::Oscillator>())
+    {
+        (void)entity;
+        (void)mover;
+        ++stats.movers;
+    }
+    for (auto [entity, camera] : scene.Query<Runtime::Camera>())
+    {
+        (void)entity;
+        (void)camera;
+        ++stats.cameras;
+    }
 
     stats.entities = static_cast<int32_t>(scene.AliveCount());
     return stats;
@@ -126,9 +155,9 @@ SceneStats LoadStats(const std::string &name)
 // interacts with it, and wrong only to a capture, which never does.
 TEST_CASE("Perf scene cameras start level and face the scene")
 {
-    for (const std::string &name : {std::string{"PerfBlank"}, std::string{"PerfReferenceManyInstances"},
-                                    std::string{"PerfReferenceFewInstances"}, std::string{"PerfStress"},
-                                    std::string{"PerfGeometryStress"}})
+    for (const std::string &name :
+         {std::string{"PerfBlank"}, std::string{"PerfReferenceManyInstances"}, std::string{"PerfReferenceFewInstances"},
+          std::string{"PerfStress"}, std::string{"PerfGeometryStress"}})
     {
         CAPTURE(name);
         ECS::Scene scene;
@@ -212,7 +241,7 @@ TEST_CASE("PerfReferenceFewInstances matches its published contract")
 TEST_CASE("The reference pair isolates instance count from triangle count")
 {
     const SceneStats many = LoadStats("PerfReferenceManyInstances");
-    const SceneStats few  = LoadStats("PerfReferenceFewInstances");
+    const SceneStats few = LoadStats("PerfReferenceFewInstances");
 
     // Within 2% on triangles — close enough that the geometry load is not what
     // separates them.
@@ -232,7 +261,7 @@ TEST_CASE("The reference pair isolates instance count from triangle count")
 // 4x the reference scene's geometry and local lights — the no-cliff check.
 TEST_CASE("PerfStress is four times the reference scene")
 {
-    const SceneStats stress    = LoadStats("PerfStress");
+    const SceneStats stress = LoadStats("PerfStress");
     const SceneStats reference = LoadStats("PerfReferenceManyInstances");
 
     CHECK(stress.meshes == 1185);
@@ -278,7 +307,7 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
 {
     ECS::Scene scene;
     REQUIRE(SceneSerializer::LoadFromDisk(scene, LevelPath("Lights")).has_value());
-    (void)Runtime::PropagateTransforms(scene, 0u);
+    (void)ECS::PropagateTransforms(scene, 0u);
 
     int32_t checked = 0;
     for (auto [entity, transform, light] : scene.Query<Runtime::Transform, Runtime::SpotLight>())
@@ -286,7 +315,7 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
         (void)entity;
         (void)light;
         const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
-        const glm::vec3 aim      = Runtime::SpotWorldDirection(transform.worldMatrix);
+        const glm::vec3 aim = Runtime::SpotWorldDirection(transform.worldMatrix);
 
         // Down, and by much more than it leans: the ring lights a floor.
         CHECK(aim.y < -0.9f);
@@ -305,4 +334,3 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
     }
     CHECK(checked == 29);
 }
-

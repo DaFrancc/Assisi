@@ -24,10 +24,10 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -92,10 +92,9 @@ ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::Instanc
 nlohmann::json CarFile()
 {
     return {{"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "body"},
-                                               {"components", {{"Camera", CameraFields(60.f, true)}}}},
-                                               {{"name", "wheel_fl"},
-                                                   {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
+        {"entities",
+         nlohmann::json::array({{{"name", "body"}, {"components", {{"Camera", CameraFields(60.f, true)}}}},
+                                   {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 } // namespace
@@ -115,7 +114,7 @@ TEST_CASE("Overrides: a level's field claim wins, and the fields it did not name
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"body"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(90.f)); // the claim
     CHECK(camera->isActive == true);                    // un-overridden means un-resolved
@@ -136,10 +135,10 @@ TEST_CASE("Overrides: outermost wins per field, so two levels' claims both apply
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array(
-                   {{{"name", "lot_a"},
-                       {"source", "lot.abp"},
-                       {"overrides", {{"car_1/body", {{"Camera", {{"fovDegrees", 33.f}}}}}}}}})}});
+              {"instances",
+               nlohmann::json::array({{{"name", "lot_a"},
+                                         {"source", "lot.abp"},
+                                         {"overrides", {{"car_1/body", {{"Camera", {{"fovDegrees", 33.f}}}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -147,7 +146,7 @@ TEST_CASE("Overrides: outermost wins per field, so two levels' claims both apply
 
     // Both, not one replacing the other's whole object — the reading in which the
     // outer claim wipes the inner set is how someone loses edits.
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"car_1/body"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "car_1/body"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(33.f));
     CHECK(camera->isActive == false);
@@ -158,20 +157,20 @@ TEST_CASE("Overrides: null removes a component, and the removal beats an outer f
     const std::filesystem::path root = FreshRoot("removal");
     Write(root, "car.abp", CarFile());
     // The lot deletes the component...
-    Write(root, "lot.abp", {{"version", 2},
+    Write(root, "lot.abp",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_1"},
-                                                      {"source", "car.abp"},
-                                                      {"overrides",
-                                                       {{"body", {{"Camera", nullptr}}}}}}})}});
+              {"instances",
+               nlohmann::json::array(
+                   {{{"name", "car_1"}, {"source", "car.abp"}, {"overrides", {{"body", {{"Camera", nullptr}}}}}}})}});
     // ...and the level edits a field of it. Neither claim can be honoured.
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array(
-                   {{{"name", "lot_a"},
-                       {"source", "lot.abp"},
-                       {"overrides", {{"car_1/body", {{"Camera", {{"fovDegrees", 33.f}}}}}}}}})}});
+              {"instances",
+               nlohmann::json::array({{{"name", "lot_a"},
+                                         {"source", "lot.abp"},
+                                         {"overrides", {{"car_1/body", {{"Camera", {{"fovDegrees", 33.f}}}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -179,7 +178,7 @@ TEST_CASE("Overrides: null removes a component, and the removal beats an outer f
 
     // Removal wins. Resurrecting it from a field edit would silently bring back
     // every *other* field of a component somebody deliberately deleted.
-    CHECK(scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"car_1/body")) == nullptr);
+    CHECK(scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "car_1/body")) == nullptr);
 }
 
 TEST_CASE("Overrides: an add starts from C++ defaults, not from what was deleted")
@@ -199,7 +198,7 @@ TEST_CASE("Overrides: an add starts from C++ defaults, not from what was deleted
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(12.f));
     // The body's Camera says isActive=true; this one is a *new* component that
@@ -211,13 +210,11 @@ TEST_CASE("Overrides: a removed member is not created, and the ones around it ke
 {
     const std::filesystem::path root = FreshRoot("shrink");
     Write(root, "car.abp", CarFile());
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"},
-                                                      {"removed", {"wheel_fl"}}},
-                                                      {{"name", "car_4"},
-                                                          {"source", "car.abp"}}})}});
+              {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}, {"removed", {"wheel_fl"}}},
+                                                      {{"name", "car_4"}, {"source", "car.abp"}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -225,16 +222,18 @@ TEST_CASE("Overrides: a removed member is not created, and the ones around it ke
 
     // One car lost a wheel; the other did not.
     CHECK(scene.AliveCount() == 3);
-    CHECK(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl") == ECS::NullEntity);
-    CHECK(MemberOf(scene, table, ECS::InstanceId{2},"wheel_fl") != ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl") == ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{2}, "wheel_fl") != ECS::NullEntity);
 
     // And the survivor kept index 0 rather than sliding down into the hole: the
     // index is the NetId offset, so two instances of one file that removed
     // different members must still agree about which index names which member.
-    const ECS::BlueprintMember *body = scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, ECS::InstanceId{1},"body"));
+    const ECS::BlueprintMember *body =
+        scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
     REQUIRE(body != nullptr);
     CHECK(body->memberIndex == 0);
-    const ECS::BlueprintMember *wheel = scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, ECS::InstanceId{2},"wheel_fl"));
+    const ECS::BlueprintMember *wheel =
+        scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, ECS::InstanceId{2}, "wheel_fl"));
     REQUIRE(wheel != nullptr);
     CHECK(wheel->memberIndex == 1);
 }
@@ -243,7 +242,8 @@ TEST_CASE("Overrides: a reference to a removed member nulls, rather than refusin
 {
     const std::filesystem::path root = FreshRoot("dangling");
     Write(root, "car.abp", CarFile());
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
               {"instances", nlohmann::json::array({{{"name", "car_3"},
                                                       {"source", "car.abp"},
@@ -256,7 +256,7 @@ TEST_CASE("Overrides: a reference to a removed member nulls, rather than refusin
     // file never declared — so the wheel arrives with a null parent, not a refusal.
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
-    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == ECS::NullEntity);
 }
@@ -269,11 +269,10 @@ TEST_CASE("Overrides: a reference orphaned by an in-file removal nulls, exactly 
     // placement. It is baked into the member list rather than left as a hole — so
     // the reference car.abp wrote from wheel_fl to body now names nothing at all,
     // where the per-instance removal leaves the name claimed and mapped at nothing.
-    Write(root, "bodyless_car.abp", {{"version", 2},
+    Write(root, "bodyless_car.abp",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car"},
-                                                      {"source", "car.abp"},
-                                                      {"removed", {"body"}}}})}});
+              {"instances", nlohmann::json::array({{{"name", "car"}, {"source", "car.abp"}, {"removed", {"body"}}}})}});
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array()},
@@ -288,8 +287,7 @@ TEST_CASE("Overrides: a reference orphaned by an in-file removal nulls, exactly 
     // here takes down every instance of bodyless_car.abp and the level with them.
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
-    const Runtime::Parent *parent =
-        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "car/wheel_fl"));
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "car/wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == ECS::NullEntity);
 
@@ -305,15 +303,15 @@ TEST_CASE("Overrides: a level's reference into a member an inner file removed nu
     Write(root, "car.abp", CarFile());
     // wheel_fl is the member nothing inside car.abp references, so the definition
     // itself is intact and this is only about the name the *level* asks for.
-    Write(root, "wheelless_car.abp", {{"version", 2},
-              {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car"},
-                                                      {"source", "car.abp"},
-                                                      {"removed", {"wheel_fl"}}}})}});
+    Write(
+        root, "wheelless_car.abp",
+        {{"version", 2},
+            {"entities", nlohmann::json::array()},
+            {"instances", nlohmann::json::array({{{"name", "car"}, {"source", "car.abp"}, {"removed", {"wheel_fl"}}}})}});
     Write(root, "main.alvl",
           {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "watcher"},
-                                                     {"components", {{"Parent", {{"parent", "w/car/wheel_fl"}}}}}}})},
+              {"entities", nlohmann::json::array(
+                   {{{"name", "watcher"}, {"components", {{"Parent", {{"parent", "w/car/wheel_fl"}}}}}}})},
               {"instances", nlohmann::json::array({{{"name", "w"}, {"source", "wheelless_car.abp"}}})}});
 
     const Tests::LogCapture log;
@@ -332,7 +330,7 @@ TEST_CASE("Overrides: a level's reference into a member an inner file removed nu
     }
     REQUIRE(watcher != ECS::NullEntity);
 
-    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(watcher);
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(watcher);
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == ECS::NullEntity);
     CHECK(log.Mentions("'w/car/wheel_fl', which was removed"));
@@ -342,15 +340,15 @@ TEST_CASE("Overrides: removing a nested instance's name removes everything under
 {
     const std::filesystem::path root = FreshRoot("subtree");
     Write(root, "car.abp", CarFile());
-    Write(root, "lot.abp", {{"version", 2},
+    Write(root, "lot.abp",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
               {"instances", nlohmann::json::array({{{"name", "car_1"}, {"source", "car.abp"}},
                                                       {{"name", "car_2"}, {"source", "car.abp"}}})}});
-    Write(root, "main.alvl", {{"version", 2},
+    Write(root, "main.alvl",
+          {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "lot_a"},
-                                                      {"source", "lot.abp"},
-                                                      {"removed", {"car_2"}}}})}});
+              {"instances", nlohmann::json::array({{{"name", "lot_a"}, {"source", "lot.abp"}, {"removed", {"car_2"}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -359,20 +357,21 @@ TEST_CASE("Overrides: removing a nested instance's name removes everything under
     // A path removes the member it names and everything beneath it, so nothing has
     // to know whether the path named a member or a nested instance.
     CHECK(scene.AliveCount() == 2);
-    CHECK(MemberOf(scene, table, ECS::InstanceId{1},"car_1/body") != ECS::NullEntity);
-    CHECK(MemberOf(scene, table, ECS::InstanceId{1},"car_2/body") == ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{1}, "car_1/body") != ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{1}, "car_2/body") == ECS::NullEntity);
 }
 
 TEST_CASE("Overrides: a claim on a member the blueprint no longer declares is dropped, not fatal")
 {
     const std::filesystem::path root = FreshRoot("orphan");
     Write(root, "car.abp", CarFile());
-    Write(root, "main.alvl",
-          {{"version", 2},
-              {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"},
-                                                      {"overrides", {{"spoiler", {{"Camera", {{"fovDegrees", 1.f}}}}}}}}})}});
+    Write(
+        root, "main.alvl",
+        {{"version", 2},
+            {"entities", nlohmann::json::array()},
+            {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                    {"source", "car.abp"},
+                                                    {"overrides", {{"spoiler", {{"Camera", {{"fovDegrees", 1.f}}}}}}}}})}});
 
     // Banning renames is what makes this clean: a missing member can only mean
     // deliberate deletion, so dropping the claim cannot be discarding a real edit.
@@ -439,11 +438,11 @@ TEST_CASE("References: a level's override reaches its own entities through a lea
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array({{{"name", "spawn_marker"}}})},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"},
-                                                      // Written by the level, so '/' is the level's scope.
-                                                      {"overrides",
-                                                       {{"wheel_fl", {{"Parent", {{"parent", "/spawn_marker"}}}}}}}}})}});
+              {"instances",
+               nlohmann::json::array({{{"name", "car_3"},
+                                         {"source", "car.abp"},
+                                         // Written by the level, so '/' is the level's scope.
+                                         {"overrides", {{"wheel_fl", {{"Parent", {{"parent", "/spawn_marker"}}}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -458,8 +457,7 @@ TEST_CASE("References: a level's override reaches its own entities through a lea
     REQUIRE(marker != ECS::NullEntity);
 
     // Not car_3/spawn_marker, which does not exist and would refuse the file.
-    const Runtime::Parent *parent =
-        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == marker);
 }
@@ -473,10 +471,10 @@ TEST_CASE("References: a nested file's override resolves in that file, not the i
     Write(root, "car_with_antenna.abp",
           {{"version", 2},
               {"entities", nlohmann::json::array({{{"name", "antenna"}}})},
-              {"instances", nlohmann::json::array({{{"name", "car"},
-                                                      {"source", "car.abp"},
-                                                      {"overrides",
-                                                       {{"wheel_fl", {{"Parent", {{"parent", "/antenna"}}}}}}}}})}});
+              {"instances",
+               nlohmann::json::array({{{"name", "car"},
+                                         {"source", "car.abp"},
+                                         {"overrides", {{"wheel_fl", {{"Parent", {{"parent", "/antenna"}}}}}}}}})}});
     // Wrapped one level deeper on purpose. With car_with_antenna.abp as the root of
     // its own definition its scope and the definition root coincide, and an
     // unqualified '/antenna' resolves correctly by accident — the degenerate input
@@ -498,8 +496,7 @@ TEST_CASE("References: a nested file's override resolves in that file, not the i
     const ECS::Entity antenna = MemberOf(scene, table, ECS::InstanceId{1}, "rig/antenna");
     REQUIRE(antenna != ECS::NullEntity);
 
-    const Runtime::Parent *parent =
-        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "rig/car/wheel_fl"));
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "rig/car/wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == antenna);
 }
@@ -513,9 +510,9 @@ TEST_CASE("References: inside a file, a leading slash and a plain name mean the 
     // reference and a file's own reference arrive at expansion looking identical.
     Write(root, "slashy.abp",
           {{"version", 2},
-              {"entities", nlohmann::json::array({{{"name", "body"}},
-                                                     {{"name", "wheel_fl"},
-                                                         {"components", {{"Parent", {{"parent", "/body"}}}}}}})}});
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "body"}}, {{"name", "wheel_fl"}, {"components", {{"Parent", {{"parent", "/body"}}}}}}})}});
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array()},
@@ -533,8 +530,7 @@ TEST_CASE("References: inside a file, a leading slash and a plain name mean the 
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
-    const Runtime::Parent *parent =
-        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == MemberOf(scene, table, ECS::InstanceId{1}, "body"));
 }
@@ -558,12 +554,11 @@ nlohmann::json Place(float x)
 nlohmann::json RigFile()
 {
     return {{"version", 2},
-        {"entities", nlohmann::json::array({{{"name", "hub"}, {"components", {{"Transform", Place(0.f)}}}},
-                                               {{"name", "body"}, {"components", {{"Transform", Place(1.f)}}}},
-                                               {{"name", "wheel_fl"},
-                                                   {"components",
-                                                    {{"Transform", Place(2.f)},
-                                                        {"Parent", {{"parent", "body"}}}}}}})}};
+        {"entities",
+         nlohmann::json::array({{{"name", "hub"}, {"components", {{"Transform", Place(0.f)}}}},
+                                   {{"name", "body"}, {"components", {{"Transform", Place(1.f)}}}},
+                                   {{"name", "wheel_fl"},
+                                       {"components", {{"Transform", Place(2.f)}, {"Parent", {{"parent", "body"}}}}}}})}};
 }
 } // namespace
 
@@ -586,8 +581,7 @@ TEST_CASE("Placement: an override that adds Parent stops the placement composing
 
     // Now relative to hub, which already absorbed the placement — so body keeps its
     // authored 1.0 and does not also take the instance's 100.
-    const ECS::Transform *body =
-        scene.Get<ECS::Transform>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
+    const ECS::Transform *body = scene.Get<ECS::Transform>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
     REQUIRE(body != nullptr);
     CHECK(body->position.x == doctest::Approx(1.f));
 }
@@ -610,7 +604,7 @@ TEST_CASE("Placement: an override that removes Parent lets the placement compose
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const ECS::Entity wheel = MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl");
-    REQUIRE(scene.Get<Runtime::Parent>(wheel) == nullptr);
+    REQUIRE(scene.Get<ECS::Parent>(wheel) == nullptr);
 
     // Parentless now, so it is in world space and must carry the instance's 100.
     const ECS::Transform *transform = scene.Get<ECS::Transform>(wheel);
@@ -624,19 +618,19 @@ TEST_CASE("Placement: adding Parent to a nested member also undoes the placement
     Write(root, "rig.abp", RigFile());
     // rig is nested, so its parentless members had the *lot's* placement composed
     // into their Transform at flatten — before any override could say otherwise.
-    Write(root, "lot.abp",
-          {{"version", 2},
-              {"entities", nlohmann::json::array()},
-              {"instances",
-               nlohmann::json::array({{{"name", "r1"}, {"source", "rig.abp"}, {"transform", Place(10.f)}}})}});
-    Write(root, "main.alvl",
-          {{"version", 2},
-              {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "L"},
-                                                      {"source", "lot.abp"},
-                                                      {"transform", Place(100.f)},
-                                                      {"overrides",
-                                                       {{"r1/body", {{"Parent", {{"parent", "r1/hub"}}}}}}}}})}});
+    Write(
+        root, "lot.abp",
+        {{"version", 2},
+            {"entities", nlohmann::json::array()},
+            {"instances", nlohmann::json::array({{{"name", "r1"}, {"source", "rig.abp"}, {"transform", Place(10.f)}}})}});
+    Write(
+        root, "main.alvl",
+        {{"version", 2},
+            {"entities", nlohmann::json::array()},
+            {"instances", nlohmann::json::array({{{"name", "L"},
+                                                    {"source", "lot.abp"},
+                                                    {"transform", Place(100.f)},
+                                                    {"overrides", {{"r1/body", {{"Parent", {{"parent", "r1/hub"}}}}}}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -645,8 +639,7 @@ TEST_CASE("Placement: adding Parent to a nested member also undoes the placement
     // body is now relative to hub, which sits at the rig's origin. Its authored
     // local was 1, and neither the lot's 10 nor the level's 100 belongs to it any
     // more — the 10 was composed in at flatten and has to come back out.
-    const ECS::Transform *body =
-        scene.Get<ECS::Transform>(MemberOf(scene, table, ECS::InstanceId{1}, "r1/body"));
+    const ECS::Transform *body = scene.Get<ECS::Transform>(MemberOf(scene, table, ECS::InstanceId{1}, "r1/body"));
     REQUIRE(body != nullptr);
     CHECK(body->position.x == doctest::Approx(1.f));
 }
@@ -658,14 +651,14 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
     Write(root, "main.alvl",
           {{"version", 2},
               {"entities", nlohmann::json::array()},
-              {"instances", nlohmann::json::array({{{"name", "car_3"},
-                                                      {"source", "car.abp"},
-                                                      {"transform",
-                                                       {{"position", {7.f, 0.f, 0.f}},
-                                                           {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                           {"scale", {1.f, 1.f, 1.f}}}},
-                                                      {"overrides", {{"body", {{"Camera", {{"fovDegrees", 44.f}}}}}}},
-                                                      {"removed", {"wheel_fl"}}}})}});
+              {"instances",
+               nlohmann::json::array(
+                   {{{"name", "car_3"},
+                       {"source", "car.abp"},
+                       {"transform",
+                        {{"position", {7.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                       {"overrides", {{"body", {{"Camera", {{"fovDegrees", 44.f}}}}}}},
+                       {"removed", {"wheel_fl"}}}})}});
 
     ECS::Scene scene;
     InstanceTable table;
@@ -714,8 +707,7 @@ TEST_CASE("Overrides: an override may not rename the member it applies to")
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
-    const Runtime::Name *name =
-        scene.Get<Runtime::Name>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
+    const Runtime::Name *name = scene.Get<Runtime::Name>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
     REQUIRE(name != nullptr);
     CHECK(name->value.View() == "body");
 

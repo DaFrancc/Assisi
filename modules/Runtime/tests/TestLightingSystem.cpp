@@ -2,12 +2,12 @@
 
 #include <doctest/doctest.h>
 
-#include <glm/gtc/matrix_transform.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
@@ -58,7 +58,7 @@ TEST_CASE("SpotWorldDirection reads a spot's aim off its world matrix")
     SUBCASE("the result is normalized despite scale in the matrix")
     {
         const glm::mat4 scaled = glm::scale(glm::mat4(1.f), glm::vec3(5.f));
-        const glm::vec3 out    = SpotWorldDirection(scaled);
+        const glm::vec3 out = SpotWorldDirection(scaled);
         CHECK(glm::length(out) == doctest::Approx(1.f));
         CHECK(Approx3(out, down));
     }
@@ -77,8 +77,8 @@ TEST_CASE("SpotWorldDirection reads a spot's aim off its world matrix")
 // headlight, a held torch — aims where the mount faces.
 TEST_CASE("a parented spot aims with its parent")
 {
+    using Assisi::ECS::Parent;
     using Assisi::ECS::Transform;
-    using Assisi::Runtime::Parent;
     using Assisi::Runtime::SpotLight;
     using Assisi::Runtime::SpotWorldDirection;
 
@@ -86,8 +86,8 @@ TEST_CASE("a parented spot aims with its parent")
 
     // The mount is tipped a quarter turn about +X, which takes -Y to -Z and +Y to +Z.
     const Assisi::ECS::Entity mount = scene.Create();
-    REQUIRE(scene.Add(mount, Transform{.rotation = glm::angleAxis(glm::radians(90.f),
-                                                                 glm::vec3(1.f, 0.f, 0.f))}) != nullptr);
+    REQUIRE(scene.Add(mount, Transform{.rotation = glm::angleAxis(glm::radians(90.f), glm::vec3(1.f, 0.f, 0.f))}) !=
+            nullptr);
 
     // The light is unturned in the mount's space, so all of its aim is inherited.
     const Assisi::ECS::Entity light = scene.Create();
@@ -95,7 +95,7 @@ TEST_CASE("a parented spot aims with its parent")
     REQUIRE(scene.Add(light, SpotLight{}) != nullptr);
     REQUIRE(scene.Add(light, Parent{.parent = mount}) != nullptr);
 
-    (void)Assisi::Runtime::PropagateTransforms(scene, 0u);
+    (void)Assisi::ECS::PropagateTransforms(scene, 0u);
 
     const Transform *world = scene.Get<Transform>(light);
     REQUIRE(world != nullptr);
@@ -147,7 +147,7 @@ TEST_CASE("A night with nothing up uploads a dark sun, not the authored one")
     // which lit the world at full intensity from straight overhead in the middle
     // of the night, and fixed itself the moment either body came back up.
     ECS::Scene scene;
-    (void)AddClockedSunEntity(scene, 0.0, /*withMoon=*/false);
+    (void)AddClockedSunEntity(scene, 0.0, /*withMoon=*/ false);
 
     const Runtime::SkyResolution sky = Runtime::ResolveSky(scene);
     REQUIRE(sky.sun.directionToSun.y < 0.f);
@@ -173,7 +173,7 @@ TEST_CASE("The row the clock drives carries whichever body is lighting it")
     // Midnight with a full moon up: the row is the MOON's aim, not the sun's and
     // not the authored one.
     ECS::Scene scene;
-    (void)AddClockedSunEntity(scene, 0.0, /*withMoon=*/true);
+    (void)AddClockedSunEntity(scene, 0.0, /*withMoon=*/ true);
 
     const Runtime::SkyResolution night = Runtime::ResolveSky(scene);
     REQUIRE(night.light.body == LightingBody::Moon);
@@ -202,8 +202,8 @@ TEST_CASE("A light the clock does not drive is still gathered as authored")
     ECS::Scene scene;
     const glm::vec3 authored = glm::normalize(glm::vec3(1.f, -2.f, 0.5f));
     const ECS::Entity entity = scene.Create();
-    (void)scene.Add<DirectionalLight>(
-        entity, DirectionalLight{.direction = authored, .intensity = 2.f, .castsShadows = true});
+    (void)scene.Add<DirectionalLight>(entity,
+                                      DirectionalLight{.direction = authored, .intensity = 2.f, .castsShadows = true});
 
     const Runtime::SkyResolution sky = Runtime::ResolveSky(scene);
     REQUIRE(sky.status == Runtime::SkyStatus::NoSkybox);
@@ -213,4 +213,3 @@ TEST_CASE("A light the clock does not drive is still gathered as authored")
     REQUIRE(lighting.ShadowCastingSun().has_value());
     CHECK(Approx3(lighting.ShadowCastingSun()->direction, authored));
 }
-

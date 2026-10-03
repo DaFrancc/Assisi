@@ -31,19 +31,19 @@
 #include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/JobSystem.hpp>
-#include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
-#include <Assisi/App/TestStartContext.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
 using namespace Assisi;
@@ -71,19 +71,18 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 
 nlohmann::json At(float x, float y, float z)
 {
-    return {{"Transform",
-        {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
+    return {{"Transform", {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
 }
 
 /// A body and two wheels, every member replicated so the server hands the whole
 /// instance a block.
 nlohmann::json CarFile()
 {
-    auto body     = At(0.f, 0.f, 0.f);
+    auto body = At(0.f, 0.f, 0.f);
     body["Replicated"] = nlohmann::json::object();
-    auto left     = At(-1.f, 0.f, 0.f);
+    auto left = At(-1.f, 0.f, 0.f);
     left["Replicated"] = nlohmann::json::object();
-    auto right    = At(1.f, 0.f, 0.f);
+    auto right = At(1.f, 0.f, 0.f);
     right["Replicated"] = nlohmann::json::object();
 
     return {{"version", 2},
@@ -120,8 +119,8 @@ struct Fixture
     /// a delegating constructor would have to name `ownHost` as an argument
     /// before the delegated-to constructor has created it.
     Fixture(App::World &hostWorld, App::World &guestWorld)
-        : host(hostWorld), guest(guestWorld), pair(transport.CreateLoopbackPair()),
-        server(transport, host.scene), client(transport, guest.scene, pair.second)
+        : host(hostWorld), guest(guestWorld), pair(transport.CreateLoopbackPair()), server(transport, host.scene),
+        client(transport, guest.scene, pair.second)
     {
     }
 
@@ -207,7 +206,7 @@ TEST_CASE("Blueprint over the wire: the client expands the same file the host sp
     // ...and it landed where the host put it. The placement crossed once, in the
     // record; every member's pose was composed locally from it.
     const ECS::Entity guestBody = App::FindMember(fixture.guest, guestInstance, "wheel_r");
-    const ECS::Transform *pose  = fixture.guest.scene.Get<ECS::Transform>(guestBody);
+    const ECS::Transform *pose = fixture.guest.scene.Get<ECS::Transform>(guestBody);
     REQUIRE(pose != nullptr);
     CHECK(pose->position.x == doctest::Approx(13.f)); // 12 placement + 1 local
     CHECK(pose->position.z == doctest::Approx(3.f));
@@ -342,7 +341,7 @@ TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes
 
     const ECS::Transform origin;
     const std::uint64_t derived = CarBytes(content.paths, origin, /*moveOne=*/ false);
-    const std::uint64_t sent    = CarBytes({}, origin, /*moveOne=*/ false);
+    const std::uint64_t sent = CarBytes({}, origin, /*moveOne=*/ false);
 
     // The members are identical to the file, so with a manifest their components
     // are not on the wire at all — the client already has them.
@@ -365,9 +364,9 @@ TEST_CASE("Blueprint over the wire: the saving survives a placement that is not 
     Write(root, "car.abp", CarFile());
     const App::ContentSet content = App::BuildContentSet();
 
-    const ECS::Transform at      = MovedPlacement();
+    const ECS::Transform at = MovedPlacement();
     const std::uint64_t derived = CarBytes(content.paths, at, /*moveOne=*/ false);
-    const std::uint64_t sent    = CarBytes({}, at, /*moveOne=*/ false);
+    const std::uint64_t sent = CarBytes({}, at, /*moveOne=*/ false);
 
     // Nothing about a placement changes what the client can derive: it receives
     // the placement in the record and composes it onto the same file the host
@@ -461,8 +460,8 @@ TEST_CASE("Blueprint over the wire: the guest installs the systems the blueprint
     // A car that needs a system to behave. The guest never ran SpawnBlueprint,
     // so without the install hook it would hold the components and run none of
     // the code — the founding failure of this whole design, across machines.
-    nlohmann::json car   = CarFile();
-    car["systems"]       = nlohmann::json::array({"Counter"});
+    nlohmann::json car = CarFile();
+    car["systems"] = nlohmann::json::array({"Counter"});
     Write(root, "car.abp", car);
 
     const App::ContentSet content = App::BuildContentSet();
@@ -493,8 +492,7 @@ TEST_CASE("Blueprint over the wire: a guest with no render services expands anyw
     // car of bare Transforms would take the guarded path either way and this case
     // would pass with no guard at all.
     nlohmann::json car = CarFile();
-    car["entities"][0]["components"]["MeshRenderer"] = {
-        {"mesh", {{"guid", "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd"}}}};
+    car["entities"][0]["components"]["MeshRenderer"] = {{"mesh", {{"guid", "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd"}}}};
     Write(root, "car.abp", car);
 
     const App::ContentSet content = App::BuildContentSet();
@@ -506,7 +504,7 @@ TEST_CASE("Blueprint over the wire: a guest with no render services expands anyw
     // The standalone world every other case here uses (`manager == nullptr`) is
     // the other half of the same guard.
     App::WorldManager worlds;
-    App::World &host  = worlds.Create("Host");
+    App::World &host = worlds.Create("Host");
     App::World &guest = worlds.Create("Guest");
 
     Fixture fixture{host, guest};
@@ -624,7 +622,7 @@ TEST_CASE("Join: every target answers the host's level the same way")
     {
         NetSync::LevelIdentity level;
         level.addressing = NetSync::LevelAddressing::Virtual;
-        level.path       = "levels/NotHere.alvl";
+        level.path = "levels/NotHere.alvl";
 
         const auto resolved = App::ResolveJoinLevel(level);
         REQUIRE_FALSE(resolved.has_value());
@@ -635,7 +633,7 @@ TEST_CASE("Join: every target answers the host's level the same way")
     {
         NetSync::LevelIdentity level;
         level.addressing = NetSync::LevelAddressing::Virtual;
-        level.path       = "car.abp";
+        level.path = "car.abp";
         // Whatever this file hashes to, it is not this.
         level.contentHash = 0xDEADBEEFu;
 
@@ -650,8 +648,8 @@ TEST_CASE("Join: every target answers the host's level the same way")
         REQUIRE(hash.has_value());
 
         NetSync::LevelIdentity level;
-        level.addressing  = NetSync::LevelAddressing::Virtual;
-        level.path        = "car.abp";
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path = "car.abp";
         level.contentHash = *hash;
 
         const auto resolved = App::ResolveJoinLevel(level);
@@ -677,7 +675,7 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     // object in the file.
     const ECS::Entity child = world.scene.Create();
     (void)world.scene.Add<ECS::Transform>(child, ECS::Transform{});
-    (void)world.scene.Add<Runtime::Parent>(child, Runtime::Parent{replicated});
+    (void)world.scene.Add<ECS::Parent>(child, ECS::Parent{replicated});
 
     (void)App::BuildSceneBodies(world.scene, world.physics);
 
@@ -685,12 +683,13 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     world.physics.GetActiveBodyStates(before);
     REQUIRE(before.size() == 1);
 
-    const App::StrippedEntities stripped = App::StripReplicatedEntities(world.scene, world.physics);
+    const App::StrippedEntities stripped = App::StripReplicatedEntities(world.scene);
     CHECK(stripped.entities == 1);
     CHECK(stripped.orphans == 1);
 
-    // The body goes with the entity. Destroying the entity alone leaves a body in
-    // the simulation that nothing holds a handle to.
+    // The body goes with the entity, on the world's next reconcile.
+    world.physics.Reconcile();
+    CHECK_FALSE(world.physics.HasBody(replicated));
     std::vector<Physics::PhysicsWorld::ActiveBodyState> after;
     world.physics.GetActiveBodyStates(after);
     CHECK(after.empty());
@@ -698,5 +697,5 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     // ...and the child is not left pointing at a dead parent, which propagation
     // would read as a root and place at its local pose.
     CHECK(world.scene.IsAlive(child));
-    CHECK(world.scene.Get<Runtime::Parent>(child) == nullptr);
+    CHECK(world.scene.Get<ECS::Parent>(child) == nullptr);
 }

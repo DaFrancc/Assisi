@@ -8,28 +8,29 @@
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/Tests/RuleComponents.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
 
 using namespace Assisi;
-using ECS::Entity;
-using ECS::NullEntity;
-using ECS::Scene;
-using Runtime::Camera;
-using Runtime::Parent;
-using Runtime::SceneSerializer;
-using Runtime::Transform;
 using Assisi::Editor::AssetDelta;
 using Assisi::Editor::ComponentDelta;
 using Assisi::Editor::ComponentSnapshot;
 using Assisi::Editor::EditHistory;
 using Assisi::Editor::EntityDelta;
 using Assisi::Editor::Transaction;
+using ECS::Entity;
+using ECS::NullEntity;
+using ECS::Parent;
+using ECS::Scene;
+using Runtime::Camera;
+using Runtime::SceneSerializer;
+using Runtime::Transform;
 
 namespace
 {
@@ -97,15 +98,13 @@ TEST_CASE("EditHistory: an asset edit replays through the apply hook, both ways"
         nlohmann::json state;
     };
     std::vector<Applied> log;
-    hist.SetAssetApplyHook([&log](std::string_view typeName, const Core::AssetPath &path,
-                                  const nlohmann::json &state)
+    hist.SetAssetApplyHook([&log](std::string_view typeName, const Core::AssetPath &path, const nlohmann::json &state)
                            { log.push_back({std::string{typeName}, std::string{path.View()}, state}); });
 
     Transaction txn;
     txn.label = "Edit crate";
     txn.Add(AssetDelta{Core::AssetPath{std::string_view{"materials/crate.amat"}}, "MaterialData",
-                       nlohmann::json{{"RoughnessFactor", 0.25}},
-                       nlohmann::json{{"RoughnessFactor", 0.75}}});
+                       nlohmann::json{{"RoughnessFactor", 0.25}}, nlohmann::json{{"RoughnessFactor", 0.75}}});
     hist.Push(std::move(txn));
 
     REQUIRE(log.empty()); // pushing is not applying
@@ -146,7 +145,7 @@ TEST_CASE("EditHistory: field-edit transaction undoes and redoes a value")
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
 
-    const auto tid    = IdOf("Transform");
+    const auto tid = IdOf("Transform");
     const auto before = CaptureComponent(scene, e, tid);
 
     // The live edit already happened by the time we build the delta (record-before-
@@ -156,9 +155,9 @@ TEST_CASE("EditHistory: field-edit transaction undoes and redoes a value")
 
     EditHistory hist(scene);
     Transaction txn;
-    txn.label           = "Move";
+    txn.label = "Move";
     txn.selectionBefore = e;
-    txn.selectionAfter  = e;
+    txn.selectionAfter = e;
     txn.Add(ComponentDelta{e, tid, before, after});
     hist.Push(std::move(txn));
 
@@ -183,7 +182,7 @@ TEST_CASE("EditHistory: add-component transaction toggles presence")
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
 
-    const auto cid    = IdOf("Camera");
+    const auto cid = IdOf("Camera");
     const auto before = CaptureComponent(scene, e, cid); // absent
     REQUIRE_FALSE(before.has_value());
 
@@ -205,6 +204,66 @@ TEST_CASE("EditHistory: add-component transaction toggles presence")
     CHECK(scene.Get<Camera>(e)->fovDegrees == doctest::Approx(42.f));
 }
 
+TEST_CASE("EditHistory: a value edit of a required component undoes in place")
+{
+    using Runtime::Tests::LoadNeeds;
+    using Runtime::Tests::LoadState;
+    constexpr int32_t kBefore = 1;
+    constexpr int32_t kAfter = 9;
+
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<LoadNeeds>(e) != nullptr);
+    scene.GetMut<LoadState>(e)->value = kBefore;
+
+    const auto sid = IdOf("LoadState");
+    const auto before = CaptureComponent(scene, e, sid);
+    scene.GetMut<LoadState>(e)->value = kAfter;
+    const auto after = CaptureComponent(scene, e, sid);
+
+    EditHistory hist(scene);
+    Transaction txn;
+    txn.label = "Edit LoadState";
+    txn.Add(ComponentDelta{e, sid, before, after});
+    hist.Push(std::move(txn));
+
+    hist.Undo();
+    REQUIRE(scene.Get<LoadState>(e) != nullptr);
+    CHECK(scene.Get<LoadState>(e)->value == kBefore);
+
+    hist.Redo();
+    CHECK(scene.Get<LoadState>(e)->value == kAfter);
+}
+
+TEST_CASE("EditHistory: an add that brought its requirements undoes as one step")
+{
+    using Runtime::Tests::LoadNeeds;
+    using Runtime::Tests::LoadState;
+
+    Scene scene;
+    const Entity e = scene.Create();
+    EditHistory hist(scene);
+
+    // As the inspector records it: what the add brings first, the added one last.
+    const std::vector<Core::Reflect::ComponentId> recorded{IdOf("LoadState"), IdOf("LoadNeeds")};
+    for (const Core::Reflect::ComponentId id : recorded)
+    {
+        hist.RecordBefore(e, id, "Add LoadNeeds", e);
+    }
+    REQUIRE(scene.Add<LoadNeeds>(e) != nullptr);
+    hist.CommitGestures(e, recorded);
+    REQUIRE(hist.UndoDepth() == 1);
+    CHECK(hist.NextUndoLabel() == "Add LoadNeeds");
+
+    hist.Undo();
+    CHECK_FALSE(scene.Has<LoadNeeds>(e));
+    CHECK_FALSE(scene.Has<LoadState>(e));
+
+    hist.Redo();
+    CHECK(scene.Has<LoadNeeds>(e));
+    CHECK(scene.Has<LoadState>(e));
+}
+
 TEST_CASE("EditHistory: remove-component transaction toggles presence the other way")
 {
     Scene scene;
@@ -212,7 +271,7 @@ TEST_CASE("EditHistory: remove-component transaction toggles presence the other 
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     REQUIRE(scene.Add(e, Camera{.fovDegrees = 30.f}) != nullptr);
 
-    const auto cid    = IdOf("Camera");
+    const auto cid = IdOf("Camera");
     const auto before = CaptureComponent(scene, e, cid); // present
     REQUIRE(before.has_value());
 
@@ -243,9 +302,9 @@ TEST_CASE("EditHistory: entity-create transaction destroys on undo and revives e
 
     EditHistory hist(scene);
     Transaction txn;
-    txn.label           = "Create Entity";
+    txn.label = "Create Entity";
     txn.selectionBefore = NullEntity;
-    txn.selectionAfter  = e;
+    txn.selectionAfter = e;
     txn.Add(EntityDelta{e, std::nullopt, snap}); // before absent, after present
     hist.Push(std::move(txn));
 
@@ -269,14 +328,14 @@ TEST_CASE("EditHistory: subtree-delete revives entities and resolves the Parent 
 {
     Scene scene;
     const Entity parent = scene.Create();
-    const Entity child  = scene.Create();
+    const Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{}) != nullptr);
     REQUIRE(scene.Add(child, Transform{}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
     // Snapshot the subtree, then perform the delete the transaction describes.
     const auto parentSnap = SnapshotEntity(scene, parent);
-    const auto childSnap   = SnapshotEntity(scene, child);
+    const auto childSnap = SnapshotEntity(scene, child);
     scene.Destroy(parent);
     scene.Destroy(child);
     scene.FlushDestroyed();
@@ -285,9 +344,9 @@ TEST_CASE("EditHistory: subtree-delete revives entities and resolves the Parent 
 
     EditHistory hist(scene);
     Transaction txn;
-    txn.label           = "Delete Subtree";
+    txn.label = "Delete Subtree";
     txn.selectionBefore = child;
-    txn.selectionAfter  = NullEntity;
+    txn.selectionAfter = NullEntity;
     txn.Add(EntityDelta{parent, parentSnap, std::nullopt});
     txn.Add(EntityDelta{child, childSnap, std::nullopt});
     hist.Push(std::move(txn));
@@ -318,10 +377,11 @@ TEST_CASE("EditHistory: a new commit clears the redo stack")
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
-    const auto j   = CaptureComponent(scene, e, tid);
+    const auto j = CaptureComponent(scene, e, tid);
 
     EditHistory hist(scene);
-    const auto push = [&](const char *label) {
+    const auto push = [&](const char *label)
+                      {
                           Transaction txn;
                           txn.label = label;
                           txn.Add(ComponentDelta{e, tid, j, j}); // no-op values, still a command
@@ -343,7 +403,7 @@ TEST_CASE("EditHistory: the depth cap drops the oldest transactions")
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
-    const auto j   = CaptureComponent(scene, e, tid);
+    const auto j = CaptureComponent(scene, e, tid);
 
     EditHistory hist(scene);
     for (std::size_t i = 0; i < EditHistory::kMaxDepth + 5; ++i)
@@ -361,18 +421,20 @@ TEST_CASE("EditHistory: the rebind hook fires during apply and only during apply
     Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    const auto tid    = IdOf("Transform");
+    const auto tid = IdOf("Transform");
     const auto before = CaptureComponent(scene, e, tid);
     scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
     const auto after = CaptureComponent(scene, e, tid);
 
     RebindLog log;
     bool sawApplyingFalse = false;
-    const EditHistory *applier          = nullptr; // set to &hist after construction
+    const EditHistory *applier = nullptr; // set to &hist after construction
 
     // The hook reads IsApplying() on the very history it is bound to — resolved via
     // a back-pointer filled in once the object exists (ctor-argument chicken/egg).
-    EditHistory hist(scene, [&](Entity ent, Core::Reflect::ComponentId id, bool present) {
+    EditHistory hist(scene,
+                     [&](Entity ent, Core::Reflect::ComponentId id, bool present)
+        {
                      if (applier != nullptr && !applier->IsApplying())
                          sawApplyingFalse = true;
                      log.calls.push_back({ent, id, present});
@@ -568,7 +630,7 @@ TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cy
     const auto after = CaptureComponent(scene, a, tid);
     Transaction txn;
     txn.selectionBefore = a;
-    txn.selectionAfter  = a;
+    txn.selectionAfter = a;
     txn.Add(ComponentDelta{a, tid, before, after});
     hist.Push(std::move(txn));
 
@@ -611,10 +673,11 @@ TEST_CASE("EditHistory: labels and the dirty-state token track the stack")
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
-    const auto j   = CaptureComponent(scene, e, tid);
+    const auto j = CaptureComponent(scene, e, tid);
 
     EditHistory hist(scene);
-    const auto push = [&](const char *label) {
+    const auto push = [&](const char *label)
+                      {
                           Transaction txn;
                           txn.label = label;
                           // distinct before/after so the transaction isn't a no-op
@@ -650,7 +713,7 @@ TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round
     // CaptureEntityComponents helper, build one delete transaction, destroy, undo.
     Scene scene;
     const Entity parent = scene.Create();
-    const Entity child  = scene.Create();
+    const Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {2.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
@@ -658,9 +721,9 @@ TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round
     EditHistory hist(scene);
 
     Transaction txn;
-    txn.label           = "Delete Subtree";
+    txn.label = "Delete Subtree";
     txn.selectionBefore = parent;
-    txn.selectionAfter  = NullEntity;
+    txn.selectionAfter = NullEntity;
     for (Entity e : {parent, child})
         txn.Add(EntityDelta{e, hist.CaptureEntityComponents(e), std::nullopt});
 
@@ -762,13 +825,13 @@ TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component
 
     const auto cameraId = IdOf("Camera");
 
-    bool sawCameraRebind               = false;
+    bool sawCameraRebind = false;
     bool transformPresentAtCameraRebind = false;
     EditHistory::RebindHook hook = [&](Entity ent, Core::Reflect::ComponentId id, bool present)
                                    {
                                        if (present && id == cameraId)
                                        {
-                                           sawCameraRebind                = true;
+                                           sawCameraRebind = true;
                                            transformPresentAtCameraRebind = (scene.Get<Transform>(ent) != nullptr);
                                        }
                                    };
@@ -797,7 +860,7 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
     // everything *older* than it unreachable too — the rule is a suffix, not a
     // filter. See EditHistory::ForgetEntities.
     Scene scene;
-    const Entity kept  = scene.Create();
+    const Entity kept = scene.Create();
     const Entity doomed = scene.Create();
     REQUIRE(scene.Add(kept, Transform{}) != nullptr);
     REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
@@ -814,11 +877,11 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
                           hist.Push(std::move(txn));
                       };
 
-    push("A", kept);    // 1
-    push("B", doomed);  // 2  <- names the doomed member
-    push("C", kept);    // 3
-    push("D", doomed);  // 4  <- and so does this, the newest one that does
-    push("E", kept);    // 5
+    push("A", kept);   // 1
+    push("B", doomed); // 2  <- names the doomed member
+    push("C", kept);   // 3
+    push("D", doomed); // 4  <- and so does this, the newest one that does
+    push("E", kept);   // 5
     REQUIRE(hist.UndoDepth() == 5);
 
     const Entity destroyed[] = {doomed};
@@ -840,7 +903,7 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
     // from a second Scene would be {0,0} and alias `kept` — which is worth knowing
     // and is why nothing may compare handles across scenes.
     const Entity bystander = scene.Create();
-    const Entity none[]    = {bystander};
+    const Entity none[] = {bystander};
     CHECK(hist.CountForgettable(scene, none) == 0);
     CHECK(hist.ForgetEntities(scene, none) == 0);
     CHECK(hist.UndoDepth() == 1);

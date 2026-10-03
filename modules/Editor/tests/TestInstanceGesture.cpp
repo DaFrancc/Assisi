@@ -27,12 +27,12 @@
 #include <string>
 
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
-#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -71,11 +71,11 @@ void Write(const std::filesystem::path &path, const nlohmann::json &doc)
 /// what makes the committed transaction hold more than the record alone.
 nlohmann::json CartFile()
 {
-    const auto placed = [](float x) {
-                            return nlohmann::json{{"Transform",
-                                {{"position", {x, 0.0, 0.0}},
-                                    {"rotation", {1.0, 0.0, 0.0, 0.0}},
-                                    {"scale", {1.0, 1.0, 1.0}}}}};
+    const auto placed = [](float x)
+                        {
+                            return nlohmann::json{
+                                {"Transform",
+                                 {{"position", {x, 0.0, 0.0}}, {"rotation", {1.0, 0.0, 0.0, 0.0}}, {"scale", {1.0, 1.0, 1.0}}}}};
                         };
     return {{"version", 2},
         {"entities", nlohmann::json::array({{{"name", "body"}, {"components", placed(0.f)}},
@@ -94,7 +94,7 @@ void NudgeInstance(ECS::Scene &scene, InstanceTable &table, ECS::InstanceId id, 
 
     for (const ECS::Entity member : Runtime::MembersOf(scene, id))
     {
-        if (scene.Has<Runtime::Parent>(member))
+        if (scene.Has<ECS::Parent>(member))
             continue;
         if (Transform *transform = scene.GetMut<Transform>(member))
             transform->position.x += dx;
@@ -120,8 +120,7 @@ struct Fixture
     {
         Write(root / "cart.abp", CartFile());
 
-        const auto placed =
-            SceneSerializer::ExpandInstance(scene, table, "cart.abp", {});
+        const auto placed = SceneSerializer::ExpandInstance(scene, table, "cart.abp", {});
         REQUIRE(placed.has_value());
         id = *placed;
 
@@ -239,7 +238,7 @@ TEST_CASE("InstanceGesture: an all-parented instance still records its move")
     const ECS::Entity anchor = fixture.scene.Create();
     (void)fixture.scene.Add<Transform>(anchor);
     for (const ECS::Entity member : Runtime::MembersOf(fixture.scene, fixture.id))
-        (void)fixture.scene.Add<Runtime::Parent>(member, Runtime::Parent{anchor});
+        (void)fixture.scene.Add<ECS::Parent>(member, ECS::Parent{anchor});
 
     for (int32_t frame = 0; frame < 10; ++frame)
         fixture.HeldFrame(0.5f);

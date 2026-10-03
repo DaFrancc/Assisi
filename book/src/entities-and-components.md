@@ -56,7 +56,7 @@ to entities in the editor, but it helps to know what they are.
 | Component | Header | What it's for |
 |---|---|---|
 | `Transform` | `<Assisi/ECS/Transform.hpp>` | Position, rotation and scale. Almost every entity has one. |
-| `Parent` | `<Assisi/Runtime/Hierarchy.hpp>` | Attaches an entity to another, so it moves with it. |
+| `Parent` | `<Assisi/ECS/Hierarchy.hpp>` | Attaches an entity to another, so it moves with it. |
 | `MeshRenderer` | `<Assisi/Runtime/Components.hpp>` | Draws a mesh with materials. |
 | `Camera` | `<Assisi/Runtime/Components.hpp>` | A camera. The one with `isActive` set is the one you see through. |
 | `DirectionalLight`, `PointLight`, `SpotLight` | `<Assisi/Runtime/LightComponents.hpp>` | Lights. |

@@ -168,14 +168,11 @@ Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity enti
 
 bool ReplicationServer::ReplicatesAsBody(ECS::Entity entity, const Core::Reflect::ComponentMask &excluded) const
 {
-    if (_physics == nullptr || _scene.Get<Physics::RigidBody>(entity) == nullptr)
+    if (_physics == nullptr || !_physics->HasBody(entity))
         return false;
 
-    // Authored geometry is not simulated, whatever its live motion type says: a
-    // static body's pose is authored data and already replicates as the ordinary
-    // tracked-Transform delta. **Keyed off the descriptor, not the live motion
-    // type** — the editor holds a *dynamic* body Static for the length of a
-    // gizmo drag, and that body is still a simulated one being placed.
+    // Authored geometry is not simulated: a static body's pose is authored data
+    // and already replicates as the ordinary tracked-Transform delta.
     const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
     if (descriptor == nullptr || descriptor->isStatic)
         return false;
@@ -210,8 +207,7 @@ void ReplicationServer::CaptureBodyStates()
         if (entity == ECS::NullEntity)
             continue;
 
-        const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
-        if (body == nullptr)
+        if (!_physics->HasBody(entity))
             continue; // not a simulated entity; its Transform replicates normally
 
         if (!ReplicatesAsBody(entity, ExclusionMaskOf(entity)))
@@ -246,10 +242,8 @@ void ReplicationServer::CaptureBodyStates()
         //  - first sighting, so joining an already-settled world gives sleeping
         //    mirrors at the server's rest poses rather than a client re-settle;
         //  - it has just gone to sleep — the transition is the change;
-        //  - it *moved while not simulating*, which nothing wakes a body for, so
-        //    the active set says nothing about it: the editor gizmo and the
-        //    inspector both hold a *dynamic* body Static while it is being
-        //    moved, and gameplay can reposition a sleeping body. An
+        //  - it *moved while not simulating*, which the active set says nothing
+        //    about: a correction applied to a sleeping body leaves it asleep. An
         //    authored-static body never reaches here at all — ReplicatesAsBody
         //    refuses it and its pose travels as a Transform.
         //
@@ -261,7 +255,9 @@ void ReplicationServer::CaptureBodyStates()
         // A body asleep and unmoved records nothing, which is where the
         // idle-bandwidth property comes from.
         {
-            const auto [position, rotation] = _physics->GetBodyTransform(*body);
+            const Physics::Pose pose = _physics->GetBodyPose(entity);
+            const glm::vec3 position = pose.position;
+            const glm::quat rotation = pose.rotation;
 
             const bool firstSighting = record.tick == 0;
             const bool justSlept     = !firstSighting && !record.state.asleep;

@@ -5,12 +5,11 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
-#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
@@ -117,7 +116,7 @@ World &WorldManager::Create(std::string_view label)
     // Not refusable: Create returns a reference, so there is no failure value.
     // The mutators above are the ones a system could plausibly reach for, and
     // LoadLevel (which calls this) is already guarded at its own entry.
-    std::unique_ptr<World> world = std::make_unique<World>();
+    std::unique_ptr<World> world = std::make_unique<World>(_maxPhysicsBodies);
     world->name.assign(label).append("#").append(std::to_string(_nextId++));
     world->manager = this;
 
@@ -400,7 +399,7 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         Runtime::LevelHeader header;
         const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path,
                                                                {.header = &header, .instances = &incoming.instances})
-                            .has_value();
+                        .has_value();
         if (ok)
         {
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
@@ -429,27 +428,27 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
     Core::Task<bool> task =
         _services.jobs->Run(Core::Pool::Worker,
                             [w, path, deserProgress]() -> bool
-                            {
-                                // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
-                                // cost); building bodies is the cheap tail to 1.0.
-                                Runtime::LevelHeader header;
-                                const bool ok =
-                                    Runtime::SceneSerializer::LoadFromFile(
-                                        w->scene, path,
-                                        {.onProgress = [deserProgress](float f) { deserProgress->store(f * 0.9f); },
-                                         .header = &header,
-                                         .instances = &w->instances})
-                                        .has_value();
-                                if (!ok)
-                                    return false;
-                                w->propagationTick = BuildSceneBodies(w->scene, w->physics);
-                                // Park the level's choice on the world itself; installing it is main-
-                                // thread work (an installer may touch anything) and happens at
-                                // promotion, after this task is joined.
-                                w->systemNames = std::move(header.systems);
-                                deserProgress->store(1.f);
-                                return true;
-                            });
+        {
+            // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
+            // cost); building bodies is the cheap tail to 1.0.
+            Runtime::LevelHeader header;
+            const bool ok =
+                Runtime::SceneSerializer::LoadFromFile(
+                    w->scene, path,
+                    {.onProgress = [deserProgress](float f) { deserProgress->store(f * 0.9f); },
+                     .header = &header,
+                     .instances = &w->instances})
+                .has_value();
+            if (!ok)
+                return false;
+            w->propagationTick = BuildSceneBodies(w->scene, w->physics);
+            // Park the level's choice on the world itself; installing it is main-
+            // thread work (an installer may touch anything) and happens at
+            // promotion, after this task is joined.
+            w->systemNames = std::move(header.systems);
+            deserProgress->store(1.f);
+            return true;
+        });
 
     _pending = PendingLoad{.world = &incoming, .task = std::move(task), .path = path};
     _pending->deserProgress = deserProgress;
@@ -641,48 +640,24 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
     // The whole subtree travels with the root — a player carries whatever is
     // parented to it. The set is closed under Parent, so TransferEntities never
     // has to null an in-subtree child ref.
-    const std::vector<ECS::Entity> subtree = Runtime::GatherSubtree(src.scene, root);
-
-    // Tear down each migrated entity's Jolt body in the SOURCE world before the
-    // ECS entities leave. Destroying an entity drops its RigidBody component but
-    // not the Jolt body it referenced — that is a separate handle in src.physics,
-    // and would leak (and keep colliding) otherwise.
-    for (const ECS::Entity e : subtree)
-    {
-        if (const Physics::RigidBody *body = src.scene.Get<Physics::RigidBody>(e))
-            src.physics.RemoveBody(*body);
-    }
+    const std::vector<ECS::Entity> subtree = ECS::GatherSubtree(src.scene, root);
 
     // Move the component data. This creates the destination entities, remaps
-    // in-set EntityRefs, and destroys the source entities (deferred).
+    // in-set EntityRefs, and destroys the source entities (deferred). Each world's
+    // physics follows its own scene: the source's bodies go with the entities, and
+    // the destination builds bodies for the arrivals on its next step.
     const std::vector<ECS::Entity> arrived = Runtime::SceneSerializer::TransferEntities(src.scene, dst.scene, subtree);
     src.scene.FlushDestroyed();
 
-    // Before the bodies below, and for the same reason App::BuildSceneBodies
-    // propagates first: a migrated subtree is parented by definition, and a body
-    // is placed in world space from a parent matrix the destination has not
-    // computed for these entities yet.
-    dst.propagationTick = Runtime::PropagateTransforms(dst.scene, dst.propagationTick);
-    const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(dst.scene);
+    // A migrated subtree is parented by definition, and its bodies are placed in
+    // world space from parent matrices the destination has not computed for these
+    // entities yet.
+    dst.propagationTick = ECS::PropagateTransforms(dst.scene, dst.propagationTick);
 
-    // Rebuild transients in the DESTINATION world. The physics handles and the
     // MeshRenderer pointers are transient (never serialized), so the arrived
-    // entities have the durable descriptors and mesh ids but no live object or
-    // resolved GPU pointers yet.
-    //
-    // Either kind of descriptor: the player is the entity most likely to travel,
-    // and a character that arrived without its controller would be exactly the
-    // thing this call exists to carry across.
-    for (const ECS::Entity e : arrived)
-    {
-        if (dst.scene.Get<Physics::RigidBody>(e) == nullptr && dst.scene.Get<Physics::Character>(e) == nullptr)
-        {
-            (void)dst.physics.RebuildEntityPhysics(dst.scene, e, parentWorld);
-        }
-    }
-
-    // The other transient, through the shared path: dst is one of this manager's
-    // worlds (checked above), so its back-pointer reaches these same services.
+    // entities have their mesh ids but no resolved GPU pointers yet. Through the
+    // shared path: dst is one of this manager's worlds (checked above), so its
+    // back-pointer reaches these same services.
     ResolveEntityAssets(dst, arrived);
 
     // arrived is parallel to subtree, and subtree[0] is the root (GatherSubtree is
@@ -792,30 +767,14 @@ void SyncUnrenderedWorld(World &world)
 {
     // Poses first: without this the propagation below would compute correct
     // matrices for positions the bodies left behind at spawn.
-    world.physics.SyncTransforms(world.scene, ParentWorldResolver(world.scene));
-    world.propagationTick = Runtime::PropagateTransforms(world.scene, world.propagationTick);
-}
-
-Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene)
-{
-    // Physics reasons in world space, a parented Transform is an offset from its
-    // parent, and Physics sits below the layer that owns the parent link — so the
-    // answer is handed down rather than looked up there.
-    return [&scene](ECS::Entity entity) -> const glm::mat4 *
-    {
-        const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
-        if (parent == nullptr || parent->parent == ECS::NullEntity)
-            return nullptr;
-
-        const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
-        return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
-    };
+    world.physics.SyncTransforms();
+    world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
 }
 
 uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick)
 {
-    const uint64_t tick = Runtime::PropagateTransforms(scene, propagationTick);
-    physics.RebuildSceneBodies(scene, ParentWorldResolver(scene));
+    const uint64_t tick = ECS::PropagateTransforms(scene, propagationTick);
+    physics.Rebuild();
     return tick;
 }
 

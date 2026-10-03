@@ -137,6 +137,11 @@ class ComponentInfo:
     fields:     list   # list[FieldInfo]
     is_asset:   bool = False  # True for AASSET (standalone asset), False for ACOMP
     is_struct:  bool = False  # True for ASTRUCT (a value struct others hold inline)
+    # ACOMP(requires = {...}, excludes = {...}): registered component names.
+    # Trailing underscore because `requires` is a C++ keyword the generated
+    # member cannot use either, and the two spellings should not drift apart.
+    requires_:  list = field(default_factory=list)
+    excludes:   list = field(default_factory=list)
 
     @property
     def fqn(self) -> str:
@@ -281,6 +286,37 @@ def parse_annot_args(content: str, where: str) -> AnnotArgs:
         else:
             args.flags.add(token)
     return args
+
+
+_IDENTIFIER_RE = re.compile(r'^[A-Za-z_]\w*$')
+
+# The ACOMP keys whose value is a list of component names.
+_RULE_KEYS = ('requires', 'excludes')
+
+
+def parse_rule_list(value: str, key: str, where: str) -> list[str]:
+    """Parse `{A, B}` from ACOMP(requires = ...) or ACOMP(excludes = ...).
+
+    Each entry is a registered component name, which is the unqualified struct
+    name, so a qualified one is refused rather than stripped: the registry could
+    not tell two `State`s in different namespaces apart either.
+    """
+    if not (value.startswith('{') and value.endswith('}')):
+        raise ValueError(f"{where}: '{key} = {value}' must be a braced list of component names, "
+                         f"e.g. '{key} = {{A, B}}'.")
+    names = [entry.strip() for entry in _split_args(value[1:-1])]
+    names = [name for name in names if name]
+    if not names:
+        raise ValueError(f"{where}: '{key} = {{}}' names nothing. Drop the key instead.")
+    for name in names:
+        if not _IDENTIFIER_RE.match(name):
+            raise ValueError(f"{where}: '{name}' in '{key}' is not a component name. Components are "
+                             f"named by their unqualified struct name, which is what the registry keys "
+                             f"them by.")
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"{where}: '{key}' names {duplicates} more than once.")
+    return names
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1603,6 +1639,17 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
                 body, end = _extract_brace_body(text, struct_m.end())
                 if body is not None:
                     fields = _find_fields_in_body(body, str(path))
+                    rules = {}
+                    for key in _RULE_KEYS:
+                        value = pending_acomp.get(key)
+                        if value is None:
+                            rules[key] = []
+                            continue
+                        if pending_is_asset:
+                            raise ValueError(
+                                f"{path.name}: AASSET '{name}' declares '{key}', but an asset is not "
+                                f"on an entity, so there is nothing for the rule to hold against.")
+                        rules[key] = parse_rule_list(value, key, f"{path.name}: component '{name}'")
                     components.append(ComponentInfo(
                         name=name,
                         namespaces=list(ns_stack),
@@ -1610,6 +1657,8 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
                         fields=fields,
                         is_asset=pending_is_asset,
                         is_struct=pending_is_struct,
+                        requires_=rules['requires'],
+                        excludes=rules['excludes'],
                     ))
                     pending_acomp = None
                     pending_is_asset = False

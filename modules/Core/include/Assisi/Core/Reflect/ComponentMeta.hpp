@@ -7,6 +7,9 @@
 /// addToScene uses a fully type-erased signature so Core does not need to
 /// depend on ECS.  Generated code in higher-level modules (Runtime, etc.)
 /// provides a lambda that casts scene_ptr back to the concrete Scene type.
+///
+/// Generated code fills it with designated initializers, so members sit in
+/// size order and a new one is added without shifting any other.
 
 #include <cstdint>
 #include <functional>
@@ -24,13 +27,11 @@ namespace Assisi::Core::Reflect
 
 struct ComponentMeta
 {
-    std::string name;
-    std::type_index typeIndex;
-    std::vector<FieldMeta> fields;
+    std::string name{};
 
     /// @brief Serialize a component instance to JSON.
     /// @param component_ptr  Pointer to a live component of this type.
-    std::function<nlohmann::json(const void *component_ptr)> serialize;
+    std::function<nlohmann::json(const void *component_ptr)> serialize{};
 
     /// @brief Deserialize a component from JSON and add it to a scene.
     ///
@@ -48,9 +49,14 @@ struct ComponentMeta
     ///         An **absent** key is not a failure; it leaves the field at its C++
     ///         default, which is what lets a component gain a field without
     ///         refusing every level saved before it.
+    ///
+    /// An entity that already has this component has it overwritten in place,
+    /// so a saved value wins over the default a requiring component added
+    /// first. A component the entity's others exclude is refused by Scene::Add
+    /// as from anywhere else; loaders ask Scene::ConflictOf first.
     std::function<bool(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
                        const nlohmann::json &j)>
-    addToScene;
+    addToScene{};
 
     /// @brief Iterate all entities in a scene that have this component type.
     ///
@@ -58,7 +64,7 @@ struct ComponentMeta
     ///   scene_ptr — pointer to an ECS::Scene, cast to void*.
     ///   cb        — called once per entity: (entity_index, entity_gen, component_ptr).
     std::function<void(void *scene_ptr, std::function<void(uint32_t, uint32_t, const void *)>)>
-    iterateEntities;
+    iterateEntities{};
 
     /// @brief Direct O(1) lookup of one entity's component, or nullptr if absent.
     ///
@@ -69,7 +75,7 @@ struct ComponentMeta
     ///   entity_index — Entity::index of the target entity.
     ///   entity_gen   — Entity::generation of the target entity.
     std::function<const void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)>
-    getByEntity;
+    getByEntity{};
 
     /// @brief Default-construct this component on an entity and return a
     /// writable pointer to it, replacing any existing one.
@@ -82,7 +88,7 @@ struct ComponentMeta
     /// routes a binary path through the JSON codec for no reason.
     ///
     /// Type-erased for the same reason as addToScene.
-    std::function<void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> construct;
+    std::function<void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> construct{};
 
     /// @brief Mutable counterpart of getByEntity: the entity's component, or
     /// nullptr if it does not have one.
@@ -91,7 +97,41 @@ struct ComponentMeta
     /// the change tick** for an ACOMP(tracked) type. Reach for getByEntity when
     /// reading; reach for this when writing, and expect the write to be
     /// observable through `Changed<T>`.
-    std::function<void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> getMutable;
+    std::function<void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> getMutable{};
+
+    /// @brief Add a default-constructed component of this type unless the
+    /// entity already has one, through `Scene::Add<T>`.
+    ///
+    /// How Scene fills in the components another one requires, so unlike the
+    /// hooks above it exists for ACOMP(transient) components too.
+    std::function<void(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> addDefault{};
+
+    std::vector<FieldMeta> fields{};
+
+    /// @brief The names ACOMP(requires = {...}) and ACOMP(excludes = {...})
+    /// declare, as written. The registry resolves them into the id lists below.
+    std::vector<std::string> requiredNames{};
+    std::vector<std::string> excludedNames{};
+
+    /// @brief Every component adding this one brings with it: its requirements,
+    /// theirs, and so on. Filled when the registry finalizes.
+    std::vector<ComponentId> required{};
+
+    /// @brief Every component that cannot share an entity with this one, from
+    /// either side's declaration. Filled when the registry finalizes.
+    std::vector<ComponentId> excluded{};
+
+    /// @brief Every component whose `required` holds this one, so this one
+    /// cannot be removed while any of them stays. Filled when the registry
+    /// finalizes.
+    std::vector<ComponentId> requiredBy{};
+
+    std::type_index typeIndex;
+
+    /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
+    /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry
+    /// finalizes.
+    ComponentId id = kInvalidComponentId;
 
     /// @brief Whether this component participates in serialization/introspection.
     ///
@@ -101,8 +141,7 @@ struct ComponentMeta
     /// construct/getMutable hooks — those are all null. This is the explicit
     /// gate consumers must check before invoking a hook; do not probe the hooks
     /// for null yourself.
-    /// Examples: Physics::RigidBody (wraps a live Jolt handle that must never be
-    /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).
+    /// Example: Runtime::DestroyTag (a transient per-frame lifecycle marker).
     bool serializable = true;
 
     /// @brief Whether this component opts into ECS change detection (ACOMP(tracked)).
@@ -140,12 +179,6 @@ struct ComponentMeta
     /// False for ACOMP(transient) components by construction: reflectgen rejects
     /// `replicable` together with `transient`, since there is nothing to encode.
     bool replicable = false;
-
-    /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
-    /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry
-    /// finalizes. Placed last and defaulted so generated positional aggregate
-    /// initialization of the preceding members is unaffected.
-    ComponentId id = kInvalidComponentId;
 };
 
 /// @brief Whether @p meta describes the component type @p T.

@@ -1361,6 +1361,9 @@ endif()
 # arrays of component names on disk and on the wire alike.
 assisi_generate_replicable_limits()
 
+# Same contract: a requires or excludes may name a component in any module.
+assisi_check_component_rules()
+
 # Same contract, same reason it is here rather than in a module: the handler
 # table binds every AMSG_HANDLER declaration in the tree, so the header list has
 # to be complete before it can be written. Gated on networking because the table

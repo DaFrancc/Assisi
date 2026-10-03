@@ -236,12 +236,11 @@ struct StrippedEntities
 /// exists twice: once as the file's authored copy, once as the mirror arriving on
 /// the wire. These are the authored ones.
 ///
-/// Three steps, and the last two are why this is shared rather than written twice.
-/// A stripped entity's rigid body has to leave the physics world *before* the
-/// entity does, or the body outlives every handle to it. And a child of a stripped
-/// entity is left holding a dead parent, which transform propagation reads as a
-/// root and places at its local pose — visibly adrift in a windowed client,
-/// silently mis-simulated in a headless one.
-StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorld &physics);
+/// The second step is why this is shared rather than written twice: a child of a
+/// stripped entity is left holding a dead parent, which transform propagation
+/// reads as a root and places at its local pose — visibly adrift in a windowed
+/// client, silently mis-simulated in a headless one. The stripped entities'
+/// bodies go with them, on the world's next reconcile.
+StrippedEntities StripReplicatedEntities(ECS::Scene &scene);
 
 } // namespace Assisi::App

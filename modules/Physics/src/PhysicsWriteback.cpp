@@ -1,8 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file PhysicsWriteback.cpp
-/// @brief Getting simulated poses back out: snapshots, render interpolation, and
-///        the authoritative state replication reads.
+/// @brief Getting simulated poses back out: snapshots and render interpolation.
 ///
 /// Physics steps at a fixed rate and rendering does not, so a pose written
 /// straight from the last step beats against the step rate on a high-refresh
@@ -10,14 +9,18 @@
 /// two — which is why CaptureState and InterpolateTransforms are a pair, and why
 /// anything that teleports an object has to collapse both halves of its snapshot
 /// or the jump is smeared across a frame.
+///
+/// Only bodies the simulation woke are followed, until each is written at rest,
+/// so the cost is the number of things moving rather than the number of things.
 
 #include "PhysicsInternal.hpp"
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 
-#include <Jolt/Physics/Body/BodyLock.h>
-
+#include <cstdint>
+#include <map>
 #include <vector>
 
 namespace Assisi::Physics
@@ -25,43 +28,55 @@ namespace Assisi::Physics
 
 void PhysicsWorld::CaptureState()
 {
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    // The no-lock interface: no step is running, and every read below would
+    // otherwise take and release a lock per body for nothing.
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterfaceNoLock();
 
-    for (const JPH::BodyID &id : _impl->movingBodyIds)
+    // Whatever the step left awake joins the bodies being followed. Characters'
+    // inner bodies are among them and are skipped: a character is followed
+    // through its own record below.
+    JPH::BodyIDVector active;
+    _impl->physicsSystem.GetActiveBodies(JPH::EBodyType::RigidBody, active);
+    for (const JPH::BodyID &id : active)
     {
-        if (!bodies.IsAdded(id) || bodies.GetMotionType(id) == JPH::EMotionType::Static)
+        const ECS::Entity entity = EntityOfUserData(bodies.GetUserData(id));
+        const Impl::BodySlot *slot = _impl->SlotFor(entity);
+        if (slot != nullptr && slot->kind == Impl::SlotKind::Body)
         {
-            continue;
+            _impl->Follow(entity.index);
         }
-
-        const auto it = _impl->snapshots.find(id.GetIndexAndSequenceNumber());
-        if (it == _impl->snapshots.end())
-        {
-            continue;
-        }
-
-        const JPH::RVec3 pos = bodies.GetPosition(id);
-        const JPH::Quat rot = bodies.GetRotation(id);
-
-        // Retire the previous current, then record this step's pose as current.
-        it->second.prevPosition = it->second.curPosition;
-        it->second.prevRotation = it->second.curRotation;
-        it->second.curPosition  = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
-        it->second.curRotation  = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
     }
 
-    // Characters are swept rather than solved, so they are not in the body set —
-    // but they move every step they are not frozen, and want the same blend.
-    for (auto &[id, record] : _impl->characters)
+    for (const std::uint32_t index : _impl->awake)
     {
-        (void)id;
-        const JPH::RVec3 pos = record.character->GetPosition();
-        const JPH::Quat  rot = record.character->GetRotation();
+        Impl::BodySlot &slot = _impl->slots[index];
+        const JPH::RVec3 pos = bodies.GetPosition(slot.body);
+        const JPH::Quat rot = bodies.GetRotation(slot.body);
 
-        record.snapshot.prevPosition = record.snapshot.curPosition;
-        record.snapshot.prevRotation = record.snapshot.curRotation;
-        record.snapshot.curPosition  = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
-        record.snapshot.curRotation  = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
+        // Retire the previous current, then record this step's pose as current.
+        slot.snapshot.prevPosition = slot.snapshot.curPosition;
+        slot.snapshot.prevRotation = slot.snapshot.curRotation;
+        slot.snapshot.curPosition = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        slot.snapshot.curRotation = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
+
+        // Asleep and no longer moving: one more write puts its Transform exactly
+        // at rest, and after that there is nothing to follow.
+        slot.settled = !bodies.IsActive(slot.body) && slot.snapshot.prevPosition == slot.snapshot.curPosition &&
+                       slot.snapshot.prevRotation == slot.snapshot.curRotation;
+    }
+
+    // Characters are swept rather than solved and are never asleep, so every
+    // one is snapshotted every step.
+    for (std::pair<const std::uint32_t, Impl::CharacterRecord> &entry : _impl->characters)
+    {
+        Impl::BodySlot &slot = _impl->slots[entry.first];
+        const JPH::RVec3 pos = entry.second.character->GetPosition();
+        const JPH::Quat rot = entry.second.character->GetRotation();
+
+        slot.snapshot.prevPosition = slot.snapshot.curPosition;
+        slot.snapshot.prevRotation = slot.snapshot.curRotation;
+        slot.snapshot.curPosition = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        slot.snapshot.curRotation = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
     }
 }
 
@@ -71,7 +86,7 @@ namespace
 // Below these per-physics-step deltas a pose is treated as at rest, so it is
 // snapped to the current step instead of blended (see BlendSnapshot).
 constexpr float kRestPositionDeltaSq = 1e-8f; // (0.1 mm)^2 of translation between steps
-constexpr float kRestRotationDelta   = 1e-7f; // 1 - |dot(prev, cur)|; ~0.0009 rad between steps
+constexpr float kRestRotationDelta = 1e-7f;   // 1 - |dot(prev, cur)|; ~0.0009 rad between steps
 
 } // namespace
 
@@ -99,104 +114,102 @@ Pose PhysicsWorld::Impl::BlendSnapshot(const MotionSnapshot &snapshot, float alp
     return pose;
 }
 
-void PhysicsWorld::Impl::WriteRenderPose(ECS::Entity entity, ECS::Mut<ECS::Transform> transform,
-                                         Pose pose, bool writeRotation,
-                                         const ParentWorldFn &parentWorld)
+void PhysicsWorld::Impl::WriteRenderPose(ECS::Entity entity, Pose pose, bool writeRotation)
 {
+    const BodySlot *slot = SlotFor(entity);
+    if (slot == nullptr)
+    {
+        return;
+    }
+
+    // Held back while a field the reconcile still has to push was written from
+    // outside: this write re-stamps the Transform, which would mark that field
+    // as handled. A write to anything else — a look system turning a
+    // character, which the reconcile does not push, or a mutable access that
+    // changed nothing — holds nothing back, or the entity would render frozen
+    // until the next step.
+    if (scene.ChangeTick<ECS::Transform>(entity) != slot->stamp.tick)
+    {
+        const ECS::Transform *current = scene.Get<ECS::Transform>(entity);
+        if (current == nullptr || current->position != slot->stamp.position ||
+            current->scale != slot->stamp.scale || (writeRotation && current->rotation != slot->stamp.rotation))
+        {
+            return;
+        }
+    }
+    WritePose(entity, pose, writeRotation);
+}
+
+void PhysicsWorld::Impl::WritePose(ECS::Entity entity, Pose pose, bool writeRotation)
+{
+    const ECS::Transform *current = scene.Get<ECS::Transform>(entity);
+    if (current == nullptr)
+    {
+        return;
+    }
+
     // Jolt reports world space; a Transform under a parent is an offset *from*
     // that parent. Writing one into the other and letting PropagateTransforms
     // multiply by the parent again applies the parent twice — silently, and once
     // more every frame. Convert instead.
-    if (parentWorld)
+    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
     {
-        if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
-        {
-            pose.position = glm::vec3(glm::inverse(*parent) * glm::vec4(pose.position, 1.f));
-            pose.rotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * pose.rotation);
-        }
+        pose.position = glm::vec3(glm::inverse(*parent) * glm::vec4(pose.position, 1.f));
+        pose.rotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * pose.rotation);
     }
 
     // Nothing moved: skip the write rather than stamp a change tick for a pose
-    // identical to the one already there. Every mutable access through the proxy
-    // stamps, so a resting body would otherwise read as changed every frame for
-    // the rest of the session — dirty-subtree work for PropagateTransforms, and
-    // bandwidth for a visual-only mirror, which has no body channel and travels
-    // by Transform delta.
+    // identical to the one already there. A resting body would otherwise read as
+    // changed every frame — dirty-subtree work for PropagateTransforms, and
+    // bandwidth for a visual-only mirror, which travels by Transform delta.
     //
     // Exact comparison rather than epsilon'd: a resting body's snapshot poses are
     // frozen, so the computed target is bit-identical frame to frame, and the
     // rest-snap branches above already absorbed the near-rest jitter. Anything
     // genuinely in motion differs in the low bits and is written.
-    const ECS::Transform &current = transform.Get();
-    if (current.position == pose.position && (!writeRotation || current.rotation == pose.rotation))
+    if (current->position == pose.position && (!writeRotation || current->rotation == pose.rotation))
     {
         return;
     }
 
-    // Taken once, after the skip: binding the reference costs one tick per object
-    // that actually moves rather than one per field written.
-    ECS::Transform &t = transform.GetMut();
-    t.position        = pose.position;
+    // GetMut, so the write stamps a change tick: PropagateTransforms's dirty-skip
+    // and network delta replication both filter on it.
+    ECS::Transform &transform = *scene.GetMut<ECS::Transform>(entity);
+    transform.position = pose.position;
     if (writeRotation)
     {
-        t.rotation = pose.rotation;
+        transform.rotation = pose.rotation;
     }
+    StampTransform(entity);
 }
 
-void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld)
+void PhysicsWorld::InterpolateTransforms(float alpha)
 {
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-
-    // QueryMut, not Query: Transform is ACOMP(tracked) and this is the physics
-    // writeback, so the new pose has to stamp a change tick. PropagateTransforms's
-    // dirty-skip and network delta replication both filter on that tick, and a
-    // write through a plain Query's `Transform&` stamps nothing — the body would
-    // move with both consumers still reporting it unchanged. The proxy stamps
-    // exactly like Scene::GetMut.
-    //
-    // RigidBody comes along as a Mut proxy because QueryMut wraps every type, but
-    // it is only read — through the const Get(), which never stamps (and RigidBody
-    // is ACOMP(transient) and untracked anyway, so there is no tick lane to touch).
-    for (auto [entity, transform, rb] :
-         scene.QueryMut<Assisi::ECS::Transform, RigidBody>())
+    // Ordered removal is not needed — the writes are independent of one another —
+    // so a body that settles is swapped out of the list.
+    for (std::size_t i = 0; i < _impl->awake.size();)
     {
-        // Only a body that moves has a pose worth writing back. A static one never
-        // does, so its Transform is the authored truth and writing to it would
-        // overwrite the author with a snapshot CaptureState never refreshes.
-        //
-        // A kinematic body *is* written back, because something can drive one
-        // through the simulation (MoveBodyKinematic) — a moving platform whose
-        // Transform never moved would be drawn where it was authored while the
-        // thing standing on it rode away.
-        const JPH::BodyID bodyId = ToJolt(rb.Get().bodyId);
-        if (!bodies.IsAdded(bodyId) || bodies.GetMotionType(bodyId) == JPH::EMotionType::Static)
+        const std::uint32_t index = _impl->awake[i];
+        Impl::BodySlot &slot = _impl->slots[index];
+        _impl->WriteRenderPose(ECS::Entity{index, slot.generation}, Impl::BlendSnapshot(slot.snapshot, alpha),
+                               /*writeRotation=*/ true);
+
+        if (slot.settled)
         {
+            slot.followed = false;
+            slot.settled = false;
+            _impl->awake[i] = _impl->awake.back();
+            _impl->awake.pop_back();
             continue;
         }
-
-        const auto it = _impl->snapshots.find(bodyId.GetIndexAndSequenceNumber());
-        if (it == _impl->snapshots.end())
-        {
-            continue;
-        }
-
-        Impl::WriteRenderPose(entity, transform, Impl::BlendSnapshot(it->second, alpha),
-                              /*writeRotation=*/ true, parentWorld);
+        ++i;
     }
 
-    // Characters, on the same two helpers. Their snapshots live on the character
-    // record rather than in `snapshots`, because a character's inner body is
-    // created and destroyed by Jolt and never enters this world's body set.
-    for (auto [entity, transform, character] : scene.QueryMut<Assisi::ECS::Transform, Character>())
+    for (const std::pair<const std::uint32_t, Impl::CharacterRecord> &entry : _impl->characters)
     {
-        const Impl::CharacterRecord *record = _impl->FindCharacter(character.Get());
-        if (record == nullptr)
-        {
-            continue;
-        }
-
-        Impl::WriteRenderPose(entity, transform, Impl::BlendSnapshot(record->snapshot, alpha),
-                              /*writeRotation=*/ false, parentWorld);
+        const Impl::BodySlot &slot = _impl->slots[entry.first];
+        _impl->WriteRenderPose(entry.second.entity, Impl::BlendSnapshot(slot.snapshot, alpha),
+                               /*writeRotation=*/ false);
     }
 }
 

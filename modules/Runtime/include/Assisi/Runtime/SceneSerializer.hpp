@@ -73,6 +73,7 @@
 #include <nlohmann/json.hpp>
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/EntityRef.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/LevelError.hpp>
@@ -135,6 +136,10 @@ struct LoadOptions
     /// *has* instances fails the load rather than dropping them: a silently
     /// instance-free level is a level missing most of its content.
     InstanceTable *instances = nullptr;
+
+    /// The file the document came from, for the messages a load logs about its
+    /// contents. LoadFromFile and LoadFromDisk fill it in when it is empty.
+    std::string_view source = {};
 };
 
 class SceneSerializer
@@ -165,8 +170,7 @@ public:
     /// Takes @p instances mutably: writing the file is what decides each row's
     /// position in it, and the rows are renumbered to match — see
     /// InstanceTable::SetLevelInstanceIndex.
-    static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {},
-                               InstanceTable *instances = nullptr);
+    static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {}, InstanceTable *instances = nullptr);
 
     /// @brief Deserialize entities and components from a JSON value into the scene.
     ///
@@ -192,8 +196,7 @@ public:
     ///
     /// The return type is the error channel and has to stay one: a bare bool makes
     /// a version mismatch read as a *successful* load of an empty level.
-    [[nodiscard]] static LevelResult Load(ECS::Scene &scene, const nlohmann::json &j,
-                                          const LoadOptions &options = {});
+    [[nodiscard]] static LevelResult Load(ECS::Scene &scene, const nlohmann::json &j, const LoadOptions &options = {});
 
     /// @brief Expands one instance of @p source into @p scene at @p placement,
     /// outside any level load.
@@ -206,9 +209,10 @@ public:
     /// spawn has no file around it to point at.
     ///
     /// @return the new instance id, or why the blueprint could not be used.
-    [[nodiscard]] static std::expected<ECS::InstanceId, LevelError>
-    ExpandInstance(ECS::Scene &scene, InstanceTable &instances, std::string_view source,
-                   const ECS::Transform &placement);
+    [[nodiscard]] static std::expected<ECS::InstanceId, LevelError> ExpandInstance(ECS::Scene &scene,
+                                                                                   InstanceTable &instances,
+                                                                                   std::string_view source,
+                                                                                   const ECS::Transform &placement);
 
     /// @brief What a placement produced.
     struct ExpandedInstance
@@ -233,8 +237,10 @@ public:
     ///        A runtime spawn is false: it exists because something in the game
     ///        asked for it, and writing it into the file would make it authored the
     ///        next time the level loads.
-    [[nodiscard]] static std::expected<ExpandedInstance, LevelError>
-    PlaceInstance(ECS::Scene &scene, InstanceTable &instances, const LevelInstance &entry, bool authored);
+    [[nodiscard]] static std::expected<ExpandedInstance, LevelError> PlaceInstance(ECS::Scene &scene,
+                                                                                   InstanceTable &instances,
+                                                                                   const LevelInstance &entry,
+                                                                                   bool authored);
 
     /// @brief What a re-expansion left behind.
     struct ReexpandedInstance
@@ -284,9 +290,9 @@ public:
     ///         (InstanceNotLive) or its file no longer loads (BlueprintUnusable).
     ///         Both are checked before the first member is touched, which is what
     ///         makes "changed nothing" true.
-    [[nodiscard]] static std::expected<ReexpandedInstance, LevelError>
-    ReexpandInstance(ECS::Scene &scene, InstanceTable &instances, ECS::InstanceId instanceId,
-                     std::span<const std::string> previousMemberNames);
+    [[nodiscard]] static std::expected<ReexpandedInstance, LevelError> ReexpandInstance(
+        ECS::Scene &scene, InstanceTable &instances, ECS::InstanceId instanceId,
+        std::span<const std::string> previousMemberNames);
 
     /// @brief Writes @p entities as a standalone file — the "create blueprint from
     /// selection" half of authoring.
@@ -345,8 +351,8 @@ public:
     ///
     /// @return the names, or why the file could not be read or parsed. An absent
     ///   `systems` array is success with an empty list, which is the normal case.
-    [[nodiscard]] static std::expected<std::vector<std::string>, LevelError>
-    ReadLevelSystems(std::string_view assetPath);
+    [[nodiscard]] static std::expected<std::vector<std::string>, LevelError> ReadLevelSystems(
+        std::string_view assetPath);
 
     /// @brief Reads a level or blueprint document by virtual path.
     ///
@@ -414,7 +420,7 @@ public:
     /// remapped to the new destination entities. A ref that points OUTSIDE the
     /// set — at an entity left behind in @p src — resolves to NullEntity, and
     /// each such dropped ref is logged: it is silent data loss otherwise. Pass a
-    /// set closed under the subtree relation (Runtime::GatherSubtree) so a child's
+    /// set closed under the subtree relation (ECS::GatherSubtree) so a child's
     /// Parent is never the thing left behind.
     ///
     /// Transients are NOT rebuilt here — SceneSerializer links neither Physics nor
@@ -431,7 +437,9 @@ public:
     /// @brief Serialize an EntityRef field's value the way the active context
     /// addresses entities.
     ///
-    /// Called only from a component's generated serialize lambda. The JSON *type*
+    /// Installed as the ECS entity-reference codec by every serialization scope,
+    /// so a component's generated serialize reaches it through
+    /// ECS::EntityRefToJson. The JSON *type*
     /// is the mode, which is what lets one pair of functions serve all three:
     ///   - a **string** — the target's name — inside Save/Load of a file;
     ///   - a **number** — an index within the moved set — inside TransferEntities;
@@ -449,7 +457,8 @@ public:
     /// @brief Resolve an EntityRef field's serialized value against the active
     /// context. The inverse of EntityToRef; same three modes.
     ///
-    /// Called only from a component's generated addToScene lambda. Returns
+    /// Reached from a component's generated addToScene through
+    /// ECS::EntityRefFromJson while a serialization scope is live. Returns
     /// NullEntity when the value is null, when no context is active, or when the
     /// reference cannot be resolved. In a *file* load an unresolvable name is not
     /// merely nulled: it is recorded, and Load refuses the whole file once the
@@ -493,10 +502,15 @@ public:
         explicit ScopedRawEntityContext(ECS::Scene &scene);
         ~ScopedRawEntityContext();
 
-        ScopedRawEntityContext(const ScopedRawEntityContext &)            = delete;
+        ScopedRawEntityContext(const ScopedRawEntityContext &) = delete;
         ScopedRawEntityContext &operator=(const ScopedRawEntityContext &) = delete;
-        ScopedRawEntityContext(ScopedRawEntityContext &&)                 = delete;
-        ScopedRawEntityContext &operator=(ScopedRawEntityContext &&)      = delete;
+        ScopedRawEntityContext(ScopedRawEntityContext &&) = delete;
+        ScopedRawEntityContext &operator=(ScopedRawEntityContext &&) = delete;
+
+private:
+        /// Routes generated entity fields through EntityToRef/RefToEntity while
+        /// this scope is live; without it they would write null.
+        ECS::ScopedEntityRefCodec _codec{ECS::EntityRefCodec{EntityToRef, RefToEntity}};
     };
 };
 

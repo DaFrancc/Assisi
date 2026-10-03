@@ -19,6 +19,7 @@
 #include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Editor/EditorChiaraPanel.hpp>
 #include <Assisi/Editor/TextureFile.hpp>
@@ -31,7 +32,6 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -321,6 +321,7 @@ void EditorApp::OnStart()
     // that waits for its assets in the shipped game waits here too, or testing a
     // travel in the editor would not be testing what ships.
     _worlds.SetSimulateFrom(GetConfig().simulateFrom);
+    _worlds.SetMaxPhysicsBodies(GetConfig().maxPhysicsBodies);
 
     // Warn about Render systems the game declared. Systems come from each level's
     // own list, resolved through SystemCatalog, which every ASYSTEM declaration in
@@ -446,18 +447,18 @@ void EditorApp::OnStart()
                       [this](Assisi::App::SystemContext &) { HandleEntityPicking(); });
 
     _systems
-        .Register(Assisi::App::SystemPhase::Update, "CameraController",
-                  [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
-        .After("EntityPicking");
+    .Register(Assisi::App::SystemPhase::Update, "CameraController",
+              [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
+    .After("EntityPicking");
 
     _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
                       [this](Assisi::App::SystemContext &ctx)
-                      {
-                          for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
-                          {
-                              SelectEntity(e.entity, e.additive ? SelectMode::Toggle : SelectMode::Replace);
-                          }
-                      });
+        {
+            for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
+            {
+                SelectEntity(e.entity, e.additive ? SelectMode::Toggle : SelectMode::Replace);
+            }
+        });
 }
 
 void EditorApp::ReimportAssets()
@@ -541,29 +542,29 @@ bool EditorApp::ReconcileMeshMaterials()
 {
     // Case-insensitive glTF-extension test on the virtual path.
     const auto isGltf = [](std::string_view path)
-    {
-        const auto endsWith = [path](std::string_view suffix)
-        {
-            if (path.size() < suffix.size())
-                return false;
-            const std::string_view tail = path.substr(path.size() - suffix.size());
-            for (std::size_t i = 0; i < suffix.size(); ++i)
-                if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
-                    return false;
-            return true;
-        };
-        return endsWith(".gltf") || endsWith(".glb");
-    };
+                        {
+                            const auto endsWith = [path](std::string_view suffix)
+                                                  {
+                                                      if (path.size() < suffix.size())
+                                                          return false;
+                                                      const std::string_view tail = path.substr(path.size() - suffix.size());
+                                                      for (std::size_t i = 0; i < suffix.size(); ++i)
+                                                          if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
+                                                              return false;
+                                                      return true;
+                                                  };
+                            return endsWith(".gltf") || endsWith(".glb");
+                        };
 
     // Texture channels in the written `.amat`s resolve through the database, the
     // same map the asset cache uses, so an exploded material references the same
     // texture GUIDs the mesh would have imported.
     const auto resolveTextureId = [this](std::string_view vpath) -> Assisi::Core::AssetId
-    { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
+                                  { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
     // Existing `.amat` files, by their GUID, so the reconciler can load and
     // compare them against the fresh material table.
     const auto resolveMaterialPath = [this](const Assisi::Core::AssetId &id) -> std::string
-    { return _assetDatabase.PathFor(id).value_or(std::string{}); };
+                                     { return _assetDatabase.PathFor(id).value_or(std::string{}); };
 
     _staleMeshes.clear();
     bool changed = false;
@@ -806,13 +807,13 @@ void EditorApp::DrawStaleResolutionModal()
 
     if (ImGui::Button("Regenerate from source"))
     {
-        ApplyStaleResolution(/*regenerate=*/true);
+        ApplyStaleResolution(/*regenerate=*/ true);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Keep my materials"))
     {
-        ApplyStaleResolution(/*regenerate=*/false);
+        ApplyStaleResolution(/*regenerate=*/ false);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -883,7 +884,7 @@ void EditorApp::SetupScene()
     // Application because the editor is what draws a UI: an application that
     // overrides no UI hook links no toolkit at all.
     Assisi::Debug::DebugUI::Initialize(GetWindow(), *Assisi::Render::RenderSystem::GetVulkanContext(),
-                                       /*persistLayout=*/!IsRestrictedViewer());
+                                       /*persistLayout=*/ !IsRestrictedViewer());
     _debugUiBrought = true;
 
     _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
@@ -900,7 +901,7 @@ void EditorApp::SetupScene()
     _thumbnailCache.Initialize(device, &Jobs());
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Linear for the same reason as the thumbnails: ImGui, not the mesh shader.
-        Assisi::Editor::LoadTextureFile(_helloTexture, device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
+            Assisi::Editor::LoadTextureFile(_helloTexture, device, "textures/hello.png", Assisi::Image::ColorSpace::Linear);
         !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/hello.png for the ImGui image test.");
@@ -945,11 +946,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // Display rate over every physics-driven Transform, so it belongs in the
         // render breakdown rather than being lumped in with physics.
         ASSISI_PROFILE_SCOPE("physics-interpolate");
-        // The resolver is required: a parented body's pose comes back in world
-        // space while its Transform is an offset from its parent, so without it
-        // every parented body drifts by its parent's transform once per frame.
-        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha(), Assisi::App::ParentWorldResolver(*_scene));
+        _physics->InterpolateTransforms(GetInterpolationAlpha());
         Assisi::App::PlaceCharacterEyes(*_scene, *_physics, GetInterpolationAlpha());
+    }
+    else
+    {
+        // Nothing steps this world, and stepping is what reconciles it. Done here
+        // instead, so a body added, moved, edited or deleted while editing is
+        // where picking and every other cast expects it.
+        ASSISI_PROFILE_SCOPE("physics-reconcile");
+        _physics->Reconcile();
     }
 
     // Must stay between the writeback above and Render()'s propagation: a bodied
@@ -1021,7 +1027,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // the tick by value, so the world's copy never advanced and every frame
     // recomputed every matrix. With this, that pass becomes the cheap no-op it was
     // always meant to be.
-    _world->propagationTick = Assisi::Runtime::PropagateTransforms(*_scene, _world->propagationTick);
+    _world->propagationTick = Assisi::ECS::PropagateTransforms(*_scene, _world->propagationTick);
 
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
@@ -1127,7 +1133,7 @@ void EditorApp::OnFixedUpdate(float dt)
                 // them rather than only the last.
                 world.systems.Run(Assisi::App::SystemPhase::PostFixedUpdate,
                                   {world, dt, GetSimTick(), &GetInput(), &GetActions(), GetEvents(),
-                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds, GetUi()});
+                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
             });
     }
 
@@ -1288,9 +1294,9 @@ void EditorApp::OnUpdate(float dt)
     // frame time from the world being played; a foreground load has nothing to
     // protect and gets the generous one. A no-op on an empty queue.
     if (_worlds.HasPendingLoad())
-        _assetCache.PumpPublishes(/*timeBudgetMs=*/2.0, /*byteBudget=*/16ull << 20);
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/ 2.0, /*byteBudget=*/ 16ull << 20);
     else
-        _assetCache.PumpPublishes(/*timeBudgetMs=*/10.0, /*byteBudget=*/128ull << 20);
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/ 10.0, /*byteBudget=*/ 128ull << 20);
 
     // Swap billboard placeholders for the real mesh/material as each finishes
     // streaming. A UI-requested level load is marshalled via Jobs().RunOnMain (see
@@ -1443,7 +1449,7 @@ void EditorApp::InstallHistoryHooks(Assisi::Editor::EditHistory &history)
 Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
-    { ApplyEditRebind(entity, id, present); };
+           { ApplyEditRebind(entity, id, present); };
 }
 
 // **Keep this definition here, not in EditorNet.cpp.** Everything it does is
@@ -1612,43 +1618,12 @@ std::string EditorApp::EditLabel(std::string_view action, Assisi::ECS::Entity en
 void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
 {
     // Dispatch by component identity to the same transient-rebuild paths the live
-    // edits use. Ids resolve once, via the function-local statics in ComponentIdOf.
+    // edits use. Physics needs nothing here: a restored Transform or descriptor is
+    // a component write like any other, and the world follows it.
     using namespace Assisi;
-    static const Core::Reflect::ComponentId kTransform = Core::Reflect::ComponentIdOf<Runtime::Transform>();
-    static const Core::Reflect::ComponentId kRigidBodyDesc =
-        Core::Reflect::ComponentIdOf<Physics::RigidBodyDescriptor>();
-    static const Core::Reflect::ComponentId kCharacterDesc =
-        Core::Reflect::ComponentIdOf<Physics::CharacterDescriptor>();
     static const Core::Reflect::ComponentId kMeshRenderer = Core::Reflect::ComponentIdOf<Runtime::MeshRenderer>();
 
-    if (id == kTransform)
-    {
-        // A restored or edited Transform drags whatever physics the entity has to
-        // the new pose. Add already re-stamped the change tick, so
-        // PropagateTransforms reruns.
-        if (present)
-        {
-            if (const auto *tc = _scene->Get<Runtime::Transform>(entity))
-            {
-                _physics->SetEntityTransform(*_scene, entity, tc->position, tc->rotation);
-            }
-        }
-    }
-    else if (id == kRigidBodyDesc || id == kCharacterDesc)
-    {
-        // Descriptor came back: rebuild from it, mirroring the component-add path.
-        // Gone: tear down the simulated object and its transient handle, which is
-        // ACOMP(transient) and so never in the payload either way.
-        if (present)
-        {
-            (void)_physics->RebuildEntityPhysics(*_scene, entity, Assisi::App::ParentWorldResolver(*_scene));
-        }
-        else
-        {
-            _physics->RemoveEntityPhysics(*_scene, entity);
-        }
-    }
-    else if (id == kMeshRenderer)
+    if (id == kMeshRenderer)
     {
         // Rebuild the mesh/material GPU pointers from the restored ids.
         if (present)
@@ -1846,10 +1821,6 @@ void EditorApp::DrawPanels()
     // the inspector below and read by the end-of-frame capture sweep.
     _captureEditingActive = false;
 
-    // Same shape, for the physics freeze the Inspector and the gizmo raise while a
-    // placement gesture is held. Released at the end of this function.
-    _physicsFreezeRequested = false;
-
     // One profile scope per panel, so the breakdown names the panel rather than
     // "the editor UI". A closed ImGui window still runs its Draw function — Begin()
     // returns false and it early-outs — so collapsed panels show up here too.
@@ -1961,15 +1932,7 @@ void EditorApp::DrawPanels()
     }
 #endif
 
-    // **Release the physics freeze here, unconditionally, not inside the panel.**
-    // DrawInspector early-returns when nothing is selected, so deselecting or
-    // destroying the entity on the frame the drag ends would skip the restore
-    // entirely and leave the body Static for the rest of the session — stuck in
-    // mid-air with a descriptor that still reads dynamic.
-    if (!_physicsFreezeRequested)
-        ThawEditedBody();
-
-    // The same shape one gesture up. The gizmo and the Inspector both move an
+    // One gesture up from the capture sweep below. The gizmo and the Inspector both move an
     // instance's placement and neither can see whether the other still holds it;
     // the gizmo draws first, so closing the gesture there would cut an Inspector
     // scrub into one transaction per frame. Both only raise a hold, and here, with

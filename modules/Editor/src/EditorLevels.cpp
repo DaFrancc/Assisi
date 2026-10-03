@@ -13,16 +13,16 @@
 
 #include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
-#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
@@ -102,8 +102,7 @@ void EditorApp::DrawLevelsWindow()
             ImGui::EndCombo();
         }
 
-        const float halfW =
-            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        const float halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         // The load is marshalled to the next frame's main-thread drain, and must
         // never run from here: OnImGui runs mid-frame, after the scene draws that
         // bind the asset cache's bindless table have been recorded, and LoadLevel
@@ -119,7 +118,9 @@ void EditorApp::DrawLevelsWindow()
         if (ImGui::Button("Load", ImVec2(halfW, 0.0f)) && canOpen)
         {
             _pendingLevelLoad = _levelFiles[static_cast<std::size_t>(_selectedLevel)];
-            Jobs().RunOnMain([this, name = *_pendingLevelLoad] {
+            Jobs().RunOnMain(
+                [this, name = *_pendingLevelLoad]
+                {
                     LoadLevel(name);
                     _pendingLevelLoad.reset();
                 });
@@ -142,7 +143,7 @@ void EditorApp::DrawLevelsWindow()
         //    so reading it here writes the open level over whatever file happens to
         //    be selected — and SaveLevelToPath then retargets levelPath to it and
         //    marks the editor clean, so nothing warns.
-        const bool named   = IsEditable() && !_world->levelPath.empty();
+        const bool named = IsEditable() && !_world->levelPath.empty();
         const bool canSave = (_playState == PlayState::Editing) && named;
         ImGui::BeginDisabled(!canSave);
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
@@ -163,8 +164,8 @@ void EditorApp::DrawLevelsWindow()
     ImGui::Separator();
     const bool canSaveAs = (_playState == PlayState::Editing) && IsEditable();
     ImGui::BeginDisabled(!canSaveAs);
-    ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Save As").x - ImGui::GetStyle().ItemSpacing.x
-                            - ImGui::GetStyle().FramePadding.x * 2.0f);
+    ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Save As").x - ImGui::GetStyle().ItemSpacing.x -
+                            ImGui::GetStyle().FramePadding.x * 2.0f);
     ImGui::InputText("##saveas", _saveAsName, sizeof(_saveAsName));
     ImGui::SameLine();
     if (ImGui::Button("Save As") && _saveAsName[0] != '\0')
@@ -218,8 +219,7 @@ void EditorApp::DrawBlueprintsWindow()
     }
     else
     {
-        _selectedBlueprint =
-            std::clamp(_selectedBlueprint, 0, static_cast<int32_t>(_blueprintFiles.size()) - 1);
+        _selectedBlueprint = std::clamp(_selectedBlueprint, 0, static_cast<int32_t>(_blueprintFiles.size()) - 1);
 
         const std::string &selected = _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)];
 
@@ -329,16 +329,15 @@ void EditorApp::DrawBlueprintsWindow()
     // --- Make one out of what is selected -----------------------------------
     ImGui::Separator();
 
-    const bool haveSelection = !_selection.empty() && _scene != nullptr &&
-                               _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity);
+    const bool haveSelection =
+        !_selection.empty() && _scene != nullptr && _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity);
     // Any member anywhere in the selection, not just the active one: the refusal is
     // about what would be written into the file, and that is every selected entity.
     bool selectionIsMember = false;
     if (haveSelection)
     {
         for (const Assisi::ECS::Entity entity : _selection)
-            selectionIsMember =
-                selectionIsMember || _scene->Has<Assisi::ECS::BlueprintMember>(entity);
+            selectionIsMember = selectionIsMember || _scene->Has<Assisi::ECS::BlueprintMember>(entity);
     }
 
     ImGui::BeginDisabled(!editable || !haveSelection || selectionIsMember);
@@ -399,8 +398,7 @@ void EditorApp::ScanLevels()
     }
     catch (const std::filesystem::filesystem_error &e)
     {
-        Assisi::Core::Log::Warn("ScanLevels: cannot list levels directory '{}': {}", resolved->string(),
-                                e.what());
+        Assisi::Core::Log::Warn("ScanLevels: cannot list levels directory '{}': {}", resolved->string(), e.what());
     }
     std::sort(_levelFiles.begin(), _levelFiles.end());
     _selectedLevel = 0;
@@ -482,14 +480,11 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
 
     // A name unique in this level, because it is the prefix its members are
     // addressed by: `car_3/wheel_fl` has to name exactly one entity.
-    const std::string name = Assisi::Runtime::UniqueInstanceName(
-        _world->instances, std::filesystem::path(source).stem().string());
+    const std::string name =
+        Assisi::Runtime::UniqueInstanceName(_world->instances, std::filesystem::path(source).stem().string());
 
-    const Assisi::Runtime::LevelInstance entry{.name      = name,
-                                               .source    = source,
-                                               .transform = placement,
-                                               .overrides = nlohmann::json::object(),
-                                               .removed   = {}};
+    const Assisi::Runtime::LevelInstance entry{
+        .name = name, .source = source, .transform = placement, .overrides = nlohmann::json::object(), .removed = {}};
 
     const auto placed = Assisi::Runtime::SceneSerializer::PlaceInstance(*_scene, _world->instances, entry,
                                                                         /*authored=*/ true);
@@ -508,8 +503,7 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     // piece of content needs travels with it. Without this the Systems panel
     // reports them as inherited, from the instance table, while nothing has
     // installed them — a required system that visibly does nothing.
-    if (const Assisi::Runtime::BlueprintResult definition =
-            Assisi::Runtime::GetBlueprintDefinition(source))
+    if (const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(source))
     {
         Assisi::App::QueueSystemInstall(*_world, (*definition)->systems, source);
     }
@@ -519,16 +513,16 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
         Assisi::Editor::Transaction txn;
-        txn.label           = "Place " + name;
+        txn.label = "Place " + name;
         txn.selectionBefore = _selectedEntity;
-        txn.selectionAfter  = Assisi::ECS::NullEntity;
-        txn.Add(Assisi::Editor::InstanceDelta{
-                .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
+        txn.selectionAfter = Assisi::ECS::NullEntity;
+        txn.Add(Assisi::Editor::InstanceDelta{.instanceId = placed->instanceId,
+                                              .before = std::nullopt,
+                                              .after = *_world->instances.Find(placed->instanceId)});
         for (const Assisi::ECS::Entity member : placed->members)
         {
             if (member != Assisi::ECS::NullEntity)
-                txn.Add(Assisi::Editor::EntityDelta{member, std::nullopt,
-                                                    history->CaptureEntityComponents(member)});
+                txn.Add(Assisi::Editor::EntityDelta{member, std::nullopt, history->CaptureEntityComponents(member)});
         }
         history->Push(std::move(txn));
     }
@@ -567,7 +561,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     // that one field is dropped.
     const Assisi::Runtime::Transform placement = Assisi::Runtime::AuthoringOriginFor(*_scene, subtree);
 
-    const std::string source   = "blueprints/" + name + ".abp";
+    const std::string source = "blueprints/" + name + ".abp";
     const auto resolved = Assisi::Core::AssetSystem::Resolve(source);
     if (!resolved)
     {
@@ -587,19 +581,18 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     // their components have to still be alive to serialize.
     Assisi::Editor::EditHistory *history = ActiveHistory();
     Assisi::Editor::Transaction txn;
-    txn.label           = "Create " + name;
+    txn.label = "Create " + name;
     txn.selectionBefore = _selectedEntity;
-    txn.selectionAfter  = Assisi::ECS::NullEntity;
+    txn.selectionAfter = Assisi::ECS::NullEntity;
     if (history != nullptr)
     {
         for (const Assisi::ECS::Entity entity : subtree)
-            txn.Add(
-                Assisi::Editor::EntityDelta{entity, history->CaptureEntityComponents(entity), std::nullopt});
+            txn.Add(Assisi::Editor::EntityDelta{entity, history->CaptureEntityComponents(entity), std::nullopt});
     }
 
+    // Their bodies go with them, on the world's next reconcile.
     for (const Assisi::ECS::Entity entity : subtree)
     {
-        _physics->RemoveEntityPhysics(*_scene, entity);
         _scene->Destroy(entity);
     }
     // Now, not at end of frame: the placement below creates entities, and a deferred
@@ -615,11 +608,11 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     // on.
     const std::string instanceName = Assisi::Runtime::UniqueInstanceName(_world->instances, name);
 
-    const Assisi::Runtime::LevelInstance entry{.name      = instanceName,
-                                               .source    = source,
+    const Assisi::Runtime::LevelInstance entry{.name = instanceName,
+                                               .source = source,
                                                .transform = placement,
                                                .overrides = nlohmann::json::object(),
-                                               .removed   = {}};
+                                               .removed = {}};
 
     const auto placed = Assisi::Runtime::SceneSerializer::PlaceInstance(*_scene, _world->instances, entry,
                                                                         /*authored=*/ true);
@@ -639,13 +632,13 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 
     if (history != nullptr)
     {
-        txn.Add(Assisi::Editor::InstanceDelta{
-                .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
+        txn.Add(Assisi::Editor::InstanceDelta{.instanceId = placed->instanceId,
+                                              .before = std::nullopt,
+                                              .after = *_world->instances.Find(placed->instanceId)});
         for (const Assisi::ECS::Entity member : placed->members)
         {
             if (member != Assisi::ECS::NullEntity)
-                txn.Add(Assisi::Editor::EntityDelta{member, std::nullopt,
-                                                    history->CaptureEntityComponents(member)});
+                txn.Add(Assisi::Editor::EntityDelta{member, std::nullopt, history->CaptureEntityComponents(member)});
         }
         history->Push(std::move(txn));
     }
@@ -660,8 +653,7 @@ void EditorApp::RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> m
     RebuildInstanceTransients(*_world, members);
 }
 
-void EditorApp::RebuildInstanceTransients(Assisi::App::World &world,
-                                          std::span<const Assisi::ECS::Entity> members)
+void EditorApp::RebuildInstanceTransients(Assisi::App::World &world, std::span<const Assisi::ECS::Entity> members)
 {
     for (const Assisi::ECS::Entity member : members)
     {
@@ -671,24 +663,11 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World &world,
             Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache);
     }
 
-    // Propagate before building bodies, for the same reason App::BuildSceneBodies
-    // does: a parented member is placed from a parent matrix that does not exist
-    // until propagation has run over the entities just created.
-    world.propagationTick  = Assisi::Runtime::PropagateTransforms(world.scene, world.propagationTick);
-    const auto parentWorld = Assisi::App::ParentWorldResolver(world.scene);
-
-    for (const Assisi::ECS::Entity member : members)
-    {
-        if (member == Assisi::ECS::NullEntity)
-            continue;
-        // Whichever kind of physics the member's descriptor asks for; a member
-        // with neither simply gets none.
-        if (world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr &&
-            world.scene.Get<Assisi::Physics::Character>(member) == nullptr)
-        {
-            (void)world.physics.RebuildEntityPhysics(world.scene, member, parentWorld);
-        }
-    }
+    // The members' bodies are built by the world's next reconcile. Propagated now,
+    // for the same reason App::BuildSceneBodies does: a parented member is placed
+    // from a parent matrix that does not exist until propagation has run over the
+    // entities just created.
+    world.propagationTick = Assisi::ECS::PropagateTransforms(world.scene, world.propagationTick);
 }
 
 const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, const std::string &component) const
@@ -704,8 +683,7 @@ const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, co
     if (row == nullptr || !row->overrides.is_object())
         return nullptr;
 
-    const Assisi::Runtime::BlueprintResult definition =
-        Assisi::Runtime::GetBlueprintDefinition(row->source);
+    const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(row->source);
     if (!definition || tag->memberIndex >= (*definition)->members.size())
         return nullptr;
 
@@ -717,8 +695,7 @@ const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, co
     return claim == member->end() ? nullptr : &*claim;
 }
 
-void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &component,
-                              const std::string &field)
+void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &component, const std::string &field)
 {
     if (_scene == nullptr || _world == nullptr || !IsEditable(entity))
         return;
@@ -731,8 +708,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (row == nullptr)
         return;
 
-    const Assisi::Runtime::BlueprintResult definition =
-        Assisi::Runtime::GetBlueprintDefinition(row->source);
+    const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(row->source);
     if (!definition || tag->memberIndex >= (*definition)->members.size())
         return;
 
@@ -745,7 +721,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     const Assisi::Runtime::BlueprintInstance original = *row;
 
     Assisi::Runtime::BlueprintInstance updated = original;
-    const auto member  = updated.overrides.find(desc.name);
+    const auto member = updated.overrides.find(desc.name);
     if (member == updated.overrides.end() || !member->is_object() || !member->contains(component))
         return;
 
@@ -767,8 +743,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     // What is left of this member's claim on this component, read out **before** the
     // member entry can be erased below: `member` would be an iterator into an erased
     // entry.
-    const nlohmann::json survivingClaim =
-        member->contains(component) ? member->at(component) : nlohmann::json{};
+    const nlohmann::json survivingClaim = member->contains(component) ? member->at(component) : nlohmann::json{};
     const bool stillClaimed = !survivingClaim.is_null();
 
     if (member->empty())
@@ -799,28 +774,32 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
 
     // Re-apply from the blueprint, plus whatever claim survives — a one-member
     // re-expansion, so the value lands exactly as a fresh load would produce it.
-    nlohmann::json resolved = desc.components.contains(component) ? desc.components.at(component)
-                                                                 : nlohmann::json::object();
+    nlohmann::json resolved =
+        desc.components.contains(component) ? desc.components.at(component) : nlohmann::json::object();
     if (survivingClaim.is_object())
     {
         for (const auto &[key, value] : survivingClaim.items())
             resolved[key] = value;
     }
 
-    _scene->RemoveById(entity, meta->id);
     if (desc.components.contains(component) || stillClaimed)
     {
         nlohmann::json wrapper{{component, resolved}};
         Assisi::Runtime::QualifyReferences(wrapper, original.name.empty() ? "" : original.name + "/");
         // `resolved` is either the blueprint's own value or an override the editor
-        // wrote, so a refusal means one of those is malformed on disk. The reset
-        // leaves the component off rather than half-applied, and says so.
+        // wrote, so a refusal means one of those is malformed on disk. addToScene
+        // overwrites whole or not at all, so the reset leaves the component as it
+        // was rather than half-applied, and says so.
         if (!meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component)))
         {
             Assisi::Core::Log::Error("Editor: resetting '{}' on '{}' failed - its stored value is not "
-                                     "readable, so the component is now absent.",
+                                     "readable, so the component is unchanged.",
                                      component, original.name);
         }
+    }
+    else
+    {
+        (void)_scene->RemoveById(entity, meta->id);
     }
 
     _world->instances.RestoreAt(tag->instanceId, updated);
@@ -828,13 +807,11 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (history != nullptr)
     {
         Assisi::Editor::Transaction txn;
-        txn.label           = field.empty() ? "Reset " + component : "Reset " + component + "." + field;
+        txn.label = field.empty() ? "Reset " + component : "Reset " + component + "." + field;
         txn.selectionBefore = _selectedEntity;
-        txn.selectionAfter  = _selectedEntity;
-        txn.Add(Assisi::Editor::ComponentDelta{entity, meta->id, before,
-                                               history->CaptureComponent(entity, meta->id)});
-        txn.Add(
-            Assisi::Editor::InstanceDelta{.instanceId = tag->instanceId, .before = original, .after = updated});
+        txn.selectionAfter = _selectedEntity;
+        txn.Add(Assisi::Editor::ComponentDelta{entity, meta->id, before, history->CaptureComponent(entity, meta->id)});
+        txn.Add(Assisi::Editor::InstanceDelta{.instanceId = tag->instanceId, .before = original, .after = updated});
         history->Push(std::move(txn));
     }
 
@@ -885,7 +862,7 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     std::vector<PendingReexpand> reexpandTargets = CollectReexpandTargets(virtualPath);
 
     const std::string previousLevelPath = _world->levelPath;
-    const bool blueprint         = InBlueprintMode();
+    const bool blueprint = InBlueprintMode();
     const std::uint64_t previousSavedToken = blueprint ? _blueprintSavedToken : _savedStateToken;
     const bool previousSystemsEdited = blueprint ? _blueprintSystemsEdited : _systemsEdited;
 
@@ -933,12 +910,12 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     // that destroys a member, and it has not run.
     if (_pendingReexpandUndoLoss > 0)
     {
-        _pendingSaveConfirm = PendingSaveConfirm{.virtualPath           = virtualPath,
-                                                 .resolved              = *resolved,
-                                                 .previousBytes         = std::move(previousBytes),
-                                                 .world                 = _world,
-                                                 .previousLevelPath     = previousLevelPath,
-                                                 .previousSavedToken    = previousSavedToken,
+        _pendingSaveConfirm = PendingSaveConfirm{.virtualPath = virtualPath,
+                                                 .resolved = *resolved,
+                                                 .previousBytes = std::move(previousBytes),
+                                                 .world = _world,
+                                                 .previousLevelPath = previousLevelPath,
+                                                 .previousSavedToken = previousSavedToken,
                                                  .savedTokenIsBlueprint = blueprint,
                                                  .previousSystemsEdited = previousSystemsEdited};
     }
@@ -957,8 +934,7 @@ void EditorApp::CancelPendingSave()
     {
         if (WriteWholeFile(save.resolved, *save.previousBytes))
         {
-            Assisi::Core::Log::Info("Editor: save of '{}' cancelled; the file is as it was.",
-                                    save.virtualPath);
+            Assisi::Core::Log::Info("Editor: save of '{}' cancelled; the file is as it was.", save.virtualPath);
         }
         else
         {
@@ -983,8 +959,7 @@ void EditorApp::CancelPendingSave()
         }
         else
         {
-            Assisi::Core::Log::Info("Editor: save of '{}' cancelled; the file it created is gone.",
-                                    save.virtualPath);
+            Assisi::Core::Log::Info("Editor: save of '{}' cancelled; the file it created is gone.", save.virtualPath);
         }
     }
 
@@ -1001,13 +976,13 @@ void EditorApp::CancelPendingSave()
         _world->levelPath = save.previousLevelPath;
         if (save.savedTokenIsBlueprint)
         {
-            _blueprintSavedToken    = save.previousSavedToken;
+            _blueprintSavedToken = save.previousSavedToken;
             _blueprintSystemsEdited = save.previousSystemsEdited;
         }
         else
         {
             _savedStateToken = save.previousSavedToken;
-            _systemsEdited   = save.previousSystemsEdited;
+            _systemsEdited = save.previousSystemsEdited;
         }
     }
 
@@ -1041,12 +1016,12 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     // scene, and after the dense rebuild that handle can resolve to a live but
     // entirely different entity — passing IsAlive — so the pick would silently write
     // into the wrong entity's field.
-    _eyedropperArmed  = false;
+    _eyedropperArmed = false;
     _eyedropperEntity = Assisi::ECS::NullEntity;
-    _eyedropperMeta   = nullptr;
-    _assetBrowserOpen   = false;
+    _eyedropperMeta = nullptr;
+    _assetBrowserOpen = false;
     _assetBrowserEntity = Assisi::ECS::NullEntity;
-    _assetBrowserMeta   = nullptr;
+    _assetBrowserMeta = nullptr;
 
     // Wipe the history: a fresh scene rebuilds entity identity densely from {0,0}
     // (Load's Scene::Clear reset the registry), so every handle the undo stacks hold
@@ -1059,10 +1034,10 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     _instanceGesture.Abandon();
     _gizmoDrag.Abandon();
     _lightDrag.Abandon();
-    _pausedHistory.reset(); // a load ends any play session, scratch history included
-    _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
-    _systemsEdited   = false; // ...and its system list is the one the file named
-    _addSystemBuf[0] = '\0';  // a half-typed search names systems of the level that left
+    _pausedHistory.reset();  // a load ends any play session, scratch history included
+    _savedStateToken = 0;    // freshly loaded scene == on disk (empty history, token 0)
+    _systemsEdited = false;  // ...and its system list is the one the file named
+    _addSystemBuf[0] = '\0'; // a half-typed search names systems of the level that left
     _addSystemSelected = 0;
 
     // A load expands every instance from the files as they are now, so nothing this
@@ -1093,12 +1068,10 @@ void EditorApp::AbandonReplacedScene(std::string_view virtualPath)
                              "closing the level rather than leaving a half-loaded one open.",
                              virtualPath);
 
+    // The physics world sees the clear on its next reconcile and drops the
+    // previous level's bodies.
     _scene->Clear();
     _world->instances.Clear();
-    // The rebind never ran, so the physics world is still holding the *previous*
-    // level's bodies — over a scene that no longer has the entities they belong to.
-    // Rebuilding against the empty scene is what takes them out.
-    (void)Assisi::App::BuildSceneBodies(*_scene, *_physics);
     // An empty list cannot fail to resolve, and clears the registry, the queued
     // installs and the contact-reporting switch in the one call that owns all three.
     (void)_worlds.ApplySystems(*_world, {}, virtualPath);

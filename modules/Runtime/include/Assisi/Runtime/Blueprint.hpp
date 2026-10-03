@@ -167,15 +167,15 @@ struct BlueprintDefinition
 /// Same split as NameError in Naming.hpp.
 enum class BlueprintError : std::uint8_t
 {
-    FileUnreadable,    ///< The asset system could not read the file, or one it instances.
-    MalformedJson,     ///< Read, but not parseable as JSON.
-    UnsupportedVersion,///< A `version` this build does not read.
-    MissingName,       ///< An entity or instance entry with no usable `name`.
-    MissingSource,     ///< An instance entry that names no `source`.
-    InstanceCycle,     ///< A file reachable from itself by instancing; expands forever.
-    DuplicateMember,   ///< Two members would flatten to one name, making references ambiguous.
-    NonUniformScale,   ///< An instance placement that shears; cannot compose exactly (§3).
-    ComponentRejected, ///< A member's component values the reflection layer refuses.
+    FileUnreadable,     ///< The asset system could not read the file, or one it instances.
+    MalformedJson,      ///< Read, but not parseable as JSON.
+    UnsupportedVersion, ///< A `version` this build does not read.
+    MissingName,        ///< An entity or instance entry with no usable `name`.
+    MissingSource,      ///< An instance entry that names no `source`.
+    InstanceCycle,      ///< A file reachable from itself by instancing; expands forever.
+    DuplicateMember,    ///< Two members would flatten to one name, making references ambiguous.
+    NonUniformScale,    ///< An instance placement that shears; cannot compose exactly (§3).
+    ComponentRejected,  ///< A member's component values the reflection layer refuses.
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.
@@ -429,35 +429,6 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// row, and the file follows.
 [[nodiscard]] std::vector<LevelInstance> InstancesForSave(InstanceTable &table);
 
-/// @brief Composes @p placement onto @p local, the way an instance's root reaches
-/// a member.
-///
-/// Exact only because an instance's scale is constrained to be uniform (§3):
-/// uniform scale commutes with rotation, so the product decomposes cleanly back to
-/// TRS. A non-uniform scale anywhere in the chain introduces shear, and the result
-/// cannot be represented as a Transform at all — which is why a file carrying one
-/// fails the load rather than being clamped.
-///
-/// **One function, called by both sides.** Client expansion has to agree with host
-/// expansion field for field, because the first snapshot is a delta against the
-/// blueprint; two spellings of this that differ in the low bits are a silent
-/// cross-build desync.
-[[nodiscard]] ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Transform &local);
-
-/// @brief The exact inverse: what @p local would have to be for
-/// `ComposeTransform(placement, local)` to equal @p world.
-///
-/// This is how an override is recorded relative to its instance, and how "create
-/// a blueprint from this selection" writes members around the new file's own
-/// origin rather than around wherever they happened to be standing. Kept beside
-/// its forward form on purpose — the two must agree to the bit, and they are the
-/// pair a cross-build desync would come from.
-[[nodiscard]] ECS::Transform InverseComposeTransform(const ECS::Transform &placement,
-                                                     const ECS::Transform &world);
-
-/// @brief Whether @p transform's scale is uniform enough to compose exactly.
-[[nodiscard]] bool HasUniformScale(const ECS::Transform &transform);
-
 /// @brief The origin a selection is authored around when it becomes a blueprint:
 /// @p root's position and rotation, with unit scale.
 ///
@@ -485,8 +456,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// (round-7 S16). The front is the anchor because the *first* entity selected is
 /// a stable choice and the last is not — an author Ctrl-clicking three more
 /// things should not move the origin.
-[[nodiscard]] ECS::Transform AuthoringOriginFor(const ECS::Scene &scene,
-                                                std::span<const ECS::Entity> entities);
+[[nodiscard]] ECS::Transform AuthoringOriginFor(const ECS::Scene &scene, std::span<const ECS::Entity> entities);
 
 /// @brief Rewrites every reflected EntityRef field in @p components by prepending
 /// @p prefix to the name it holds.

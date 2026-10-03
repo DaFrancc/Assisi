@@ -14,6 +14,7 @@
 #include <Assisi/Core/DisplayedString.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/StringPool.hpp>
+#include <Assisi/ECS/Entity.hpp>
 
 #include <array>
 #include <vector>
@@ -53,6 +54,57 @@ struct Tracked
 ACOMP(transient)
 struct TransientTag
 {
+};
+
+/// @brief Requires Position, so adding it adds a default Position.
+ACOMP(requires = {Position})
+struct Needs
+{
+    AFIELD() int32_t value = 0;
+};
+
+/// @brief Requires Needs, so adding it reaches Position through Needs.
+ACOMP(requires = {Needs})
+struct NeedsNeeds
+{
+};
+
+/// @brief Cannot share an entity with Position, declared from this side only.
+ACOMP(excludes = {Position})
+struct Shuns
+{
+};
+
+/// @brief Requires Shuns, so an entity with Position can take neither.
+ACOMP(requires = {Shuns})
+struct NeedsShuns
+{
+};
+
+/// @brief A transient requirement: it has no serialization hooks, but adding
+/// NeedsGhost must still add it.
+ACOMP(transient)
+struct Ghost
+{
+};
+
+ACOMP(requires = {Ghost})
+struct NeedsGhost
+{
+};
+
+/// @brief Excludes the hierarchy's Parent, as a body whose pose physics owns does.
+ACOMP(excludes = {Parent})
+struct Rooted
+{
+};
+
+/// @brief A reflected entity reference, so the generated JSON's route through
+/// the entity-reference codec is exercised by the code reflectgen writes.
+ACOMP()
+struct Link
+{
+    AFIELD() ECS::Entity target = NullEntity;
 };
 
 /// @brief One of each reflected string type, so the generated JSON and the

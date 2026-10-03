@@ -579,15 +579,8 @@ void EditorApp::ApplyPendingReexpand()
     {
         Assisi::App::World &world = *pending.world;
 
-        // ReexpandInstance's precondition: engine-side state it cannot see has to
-        // come off first, or the strip leaves a Jolt body wired to a component about
-        // to be rewritten from a file.
-        for (const Assisi::ECS::Entity member :
-             Assisi::Runtime::MembersOf(world.scene, pending.instanceId))
-        {
-            world.physics.RemoveEntityPhysics(world.scene, member);
-        }
-
+        // The members' bodies follow the rewritten components on the world's next
+        // reconcile.
         const auto result = Assisi::Runtime::SceneSerializer::ReexpandInstance(
             world.scene, world.instances, pending.instanceId, pending.previousMemberNames);
         if (!result)

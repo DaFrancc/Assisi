@@ -1,16 +1,15 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
-#include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Runtime/Blueprint.hpp>
-#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 
 #include <algorithm>
 #include <cstdint>
 #include <unordered_set>
 #include <vector>
 
-namespace Assisi::Runtime
+namespace Assisi::ECS
 {
 
 namespace
@@ -27,13 +26,13 @@ glm::mat4 LocalMatrix(const Transform &t)
 // passes); `resolving` marks entities on the recursion stack for cycle detection.
 struct PassState
 {
-    uint32_t passId       = 0;
+    uint32_t passId = 0;
     bool worldChanged = false;
-    bool resolving    = false;
+    bool resolving = false;
 };
 } // namespace
 
-uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
+uint64_t PropagateTransforms(Scene &scene, uint64_t lastTick)
 {
     // Reused across calls; grows to the largest entity index seen. thread_local so
     // propagation driven from another thread can't interleave with this one.
@@ -50,7 +49,9 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
     auto slot = [&](uint32_t index) -> PassState &
                 {
                     if (index >= passState.size())
+                    {
                         passState.resize(index + 1);
+                    }
                     return passState[index];
                 };
 
@@ -58,19 +59,23 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
     // (per the ECS change tick, since `lastTick`) or an ancestor changed; returns
     // whether it changed this pass so a child can decide if it must recompute too.
     // Recursive via C++23 deducing this (self), so parents resolve before children.
-    auto resolve = [&](this const auto &self, ECS::Entity e) -> bool
+    auto resolve = [&](this const auto &self, Entity e) -> bool
                    {
                        Transform *t = scene.Get<Transform>(e);
                        if (t == nullptr)
+                       {
                            return false; // a parent without a Transform contributes identity
+                       }
 
                        // Note: `slot()` may resize `passState` (invalidating references) during
                        // the parent recursion below, so never hold a PassState& across a self()
                        // call — re-fetch by index each time.
                        if (slot(e.index).passId == pass)
+                       {
                            return slot(e.index).worldChanged; // already resolved this pass (shared parent)
+                       }
 
-                       slot(e.index).passId    = pass;
+                       slot(e.index).passId = pass;
                        slot(e.index).resolving = true; // on the resolve stack, for cycle detection
 
                        // Recompute when the local TRS changed OR the parent link changed (attach /
@@ -78,12 +83,11 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
                        // without it, attaching a parent after a pass leaves a stale worldMatrix until
                        // something else moves the child. (Detach via Remove<Parent> doesn't stamp, so
                        // a site that detaches should stamp the child's Transform — no such site today.)
-                       const bool localChanged =
-                           scene.Changed<Transform>(e, lastTick) || scene.Changed<Parent>(e, lastTick);
+                       const bool localChanged = scene.Changed<Transform>(e, lastTick) || scene.Changed<Parent>(e, lastTick);
 
                        bool parentChanged = false;
-                       const glm::mat4 *parentWorld   = nullptr;
-                       if (const Parent *p = scene.Get<Parent>(e); p != nullptr && p->parent != ECS::NullEntity)
+                       const glm::mat4 *parentWorld = nullptr;
+                       if (const Parent *p = scene.Get<Parent>(e); p != nullptr && p->parent != NullEntity)
                        {
                            Transform *parentTransform = scene.Get<Transform>(p->parent);
                            const bool parentOnStack =
@@ -96,15 +100,14 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
                                const uint64_t packed = (static_cast<uint64_t>(e.generation) << 32u) | e.index;
                                if (reportedCycles.insert(packed).second)
                                {
-                                   Core::Log::Error(
-                                       "PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
-                                       e.index, e.generation);
+                                   Core::Log::Error("PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
+                                                    e.index, e.generation);
                                }
                            }
                            else if (parentTransform != nullptr)
                            {
                                parentChanged = self(p->parent);
-                               parentWorld   = &parentTransform->worldMatrix;// finalised by the recursion; pool ptr stays valid
+                               parentWorld = &parentTransform->worldMatrix; // finalised by the recursion; pool ptr stays valid
                            }
                        }
 
@@ -122,7 +125,7 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
                        }
 
                        slot(e.index).worldChanged = worldChanged;
-                       slot(e.index).resolving    = false;
+                       slot(e.index).resolving = false;
                        return worldChanged;
                    };
 
@@ -132,16 +135,18 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
     // delta replication a full Transform set per tick. Same reason as the
     // non-stamping worldMatrix store in resolve().
     for (auto [entity, transform] : scene.Query<Transform>())
+    {
         resolve(entity);
+    }
 
     // The tick a caller should pass as `lastTick` next frame: everything written
     // up to now has been accounted for.
     return scene.CurrentChangeTick();
 }
 
-std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root)
+std::vector<Entity> GatherSubtree(Scene &scene, Entity root)
 {
-    std::vector<ECS::Entity> result{root};
+    std::vector<Entity> result{root};
 
     // Breadth-first: for each collected entity, sweep for entities whose Parent
     // points at it. `result` grows as we go and the index walk visits each new
@@ -149,47 +154,69 @@ std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root)
     // so this scans — acceptable at subtree-edit scale.
     for (std::size_t i = 0; i < result.size(); ++i)
     {
-        const ECS::Entity current = result[i];
+        const Entity current = result[i];
         scene.ForEachEntity(
-            [&](ECS::Entity e)
+            [&](Entity e)
             {
                 const Parent *parent = scene.Get<Parent>(e);
                 if (parent == nullptr || parent->parent != current)
+                {
                     return;
+                }
                 if (std::find(result.begin(), result.end(), e) == result.end())
+                {
                     result.push_back(e);
+                }
             });
     }
     return result;
 }
 
-ECS::Transform WorldTransformOf(const ECS::Scene &scene, ECS::Entity entity)
+Transform WorldTransformOf(const Scene &scene, Entity entity)
 {
     const Transform *local = scene.Get<Transform>(entity);
     if (local == nullptr)
+    {
         return {};
+    }
 
-    ECS::Transform world = *local;
+    Transform world = *local;
 
     // Bounded rather than walked to the root: a cycle in Parent is a corrupt
     // scene, and the answer to a corrupt chain is a wrong pose, not a hang. The
     // bound is generous enough that no real hierarchy reaches it.
     constexpr uint32_t kMaxDepth = 256;
-    ECS::Entity current   = entity;
+    Entity current = entity;
     for (uint32_t depth = 0; depth < kMaxDepth; ++depth)
     {
         const Parent *parent = scene.Get<Parent>(current);
-        if (parent == nullptr || parent->parent == ECS::NullEntity)
+        if (parent == nullptr || parent->parent == NullEntity)
+        {
             break;
+        }
 
         const Transform *parentLocal = scene.Get<Transform>(parent->parent);
         if (parentLocal == nullptr)
+        {
             break; // a parent with no pose defines no space; the chain ends here
+        }
 
-        world   = ComposeTransform(*parentLocal, world);
+        world = ComposeTransform(*parentLocal, world);
         current = parent->parent;
     }
     return world;
 }
 
-} // namespace Assisi::Runtime
+const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity)
+{
+    const Parent *parent = scene.Get<Parent>(entity);
+    if (parent == nullptr || parent->parent == NullEntity)
+    {
+        return nullptr;
+    }
+
+    const Transform *parentTransform = scene.Get<Transform>(parent->parent);
+    return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
+}
+
+} // namespace Assisi::ECS

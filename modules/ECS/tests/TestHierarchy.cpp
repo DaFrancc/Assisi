@@ -6,14 +6,14 @@
 #include <cstdint>
 #include <vector>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/ECS/Transform.hpp>
 
 using namespace Assisi;
-using Assisi::Runtime::Parent;
-using Assisi::Runtime::PropagateTransforms;
-using Assisi::Runtime::Transform;
+using Assisi::ECS::Parent;
+using Assisi::ECS::PropagateTransforms;
+using Assisi::ECS::Transform;
 
 TEST_CASE("PropagateTransforms: a root's world matrix equals its local translation")
 {
@@ -33,7 +33,7 @@ TEST_CASE("PropagateTransforms: a child composes its parent's world transform")
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
@@ -49,8 +49,8 @@ TEST_CASE("PropagateTransforms: a child composes its parent's world transform")
 TEST_CASE("PropagateTransforms: a three-deep chain composes transitively")
 {
     ECS::Scene scene;
-    const ECS::Entity gp    = scene.Create();
-    const ECS::Entity par   = scene.Create();
+    const ECS::Entity gp = scene.Create();
+    const ECS::Entity par = scene.Create();
     const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(gp, Transform{.position = {100.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(par, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
@@ -67,8 +67,8 @@ TEST_CASE("PropagateTransforms: siblings sharing a parent each compose correctly
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity c1     = scene.Create();
-    const ECS::Entity c2     = scene.Create();
+    const ECS::Entity c1 = scene.Create();
+    const ECS::Entity c2 = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(c1, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(c2, Transform{.position = {2.f, 0.f, 0.f}}) != nullptr);
@@ -85,7 +85,7 @@ TEST_CASE("PropagateTransforms: a parent without a Transform acts as identity")
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create(); // no Transform
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(child, Transform{.position = {3.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
@@ -142,8 +142,8 @@ TEST_CASE("PropagateTransforms: a shared ancestor is memoised correctly across b
 {
     ECS::Scene scene;
     const ECS::Entity gp = scene.Create();
-    const ECS::Entity a  = scene.Create(); // branch A root
-    const ECS::Entity b  = scene.Create(); // branch B root
+    const ECS::Entity a = scene.Create();  // branch A root
+    const ECS::Entity b = scene.Create();  // branch B root
     const ECS::Entity la = scene.Create(); // leaf under A
     const ECS::Entity lb = scene.Create(); // leaf under B
     REQUIRE(scene.Add(gp, Transform{.position = {100.f, 0.f, 0.f}}) != nullptr);
@@ -227,7 +227,7 @@ TEST_CASE("PropagateTransforms: moving a parent recomputes an unchanged child")
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
@@ -250,7 +250,7 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
 
@@ -265,8 +265,7 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 + 1
 }
 
-TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the child" *
-          doctest::should_fail())
+TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the child" * doctest::should_fail())
 {
     // Open, and the mirror of the attach case above. Attaching is caught
     // because Parent is ACOMP(tracked) and Add stamps its change tick; detaching
@@ -284,7 +283,7 @@ TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the
     // should_fail until detach dirties the child; the fix removes this decorator.
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
@@ -306,8 +305,8 @@ TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the
 TEST_CASE("PropagateTransforms: reparenting a child to a different parent follows the new parent")
 {
     ECS::Scene scene;
-    const ECS::Entity p1    = scene.Create();
-    const ECS::Entity p2    = scene.Create();
+    const ECS::Entity p1 = scene.Create();
+    const ECS::Entity p2 = scene.Create();
     const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(p1, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(p2, Transform{.position = {20.f, 0.f, 0.f}}) != nullptr);
@@ -342,7 +341,7 @@ TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dir
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
@@ -375,7 +374,7 @@ TEST_CASE("PropagateTransforms: moving a parent leaves the child's local Transfo
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
-    const ECS::Entity child  = scene.Create();
+    const ECS::Entity child = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
