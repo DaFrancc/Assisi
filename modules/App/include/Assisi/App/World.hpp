@@ -90,11 +90,12 @@ enum class StartProgress : std::uint8_t
 /// references into a world, so WorldManager must never reseat one. That is why
 /// worlds are heap-allocated behind unique_ptr rather than stored by value.
 ///
-/// Non-copyable and non-movable: PhysicsWorld owns Jolt state that entity
-/// components point into, and ECS::Scene is likewise pinned.
+/// Non-copyable and non-movable: PhysicsWorld holds a reference to the scene it
+/// keeps in step with, and ECS::Scene is pinned.
 struct World
 {
-    World() = default;
+    /// @param maxBodies  The most physics bodies the world holds.
+    explicit World(uint32_t maxBodies = Physics::kDefaultMaxBodies) : physics(scene, maxBodies) {}
     ~World() = default;
 
     World(const World &) = delete;
@@ -102,6 +103,8 @@ struct World
     World(World &&) = delete;
     World &operator=(World &&) = delete;
 
+    /// Declared before `physics`, which is bound to it: constructed first and
+    /// destroyed last.
     ECS::Scene scene;
     Physics::PhysicsWorld physics;
 
@@ -429,6 +432,13 @@ public:
     void SetSimulateFrom(SimulateFrom policy) { _simulateFrom = policy; }
     [[nodiscard]] SimulateFrom GetSimulateFrom() const { return _simulateFrom; }
 
+    /// @brief The most physics bodies each world this manager creates holds.
+    ///
+    /// Set from the game config at startup, before the first world exists:
+    /// Jolt sizes a world when it is built, so a world already made keeps its
+    /// size.
+    void SetMaxPhysicsBodies(uint32_t maxBodies) { _maxPhysicsBodies = maxBodies; }
+
     /// @brief The installed services. For code that has a World and needs the
     /// engine-wide pieces a load would use — App::SpawnBlueprint resolving a
     /// freshly spawned instance's assets, notably.
@@ -611,6 +621,9 @@ private:
     /// before the policy existed.
     SimulateFrom _simulateFrom = SimulateFrom::Begin;
 
+    /// See SetMaxPhysicsBodies.
+    uint32_t _maxPhysicsBodies = Physics::kDefaultMaxBodies;
+
     // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
     // rather than invalidate it. A counter, not a flag, so nested iteration
     // unwinds correctly.
@@ -686,14 +699,22 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
 /// for every simulated world that is not the one being rendered.
 void SyncUnrenderedWorld(World &world);
 
-/// @brief Rebuilds a scene's physics bodies in the order that works: **propagate
-/// first, then create bodies**.
+/// @brief Builds a freshly loaded or restored scene's physics anew, in the order
+/// that works: **propagate first, then rebuild**.
 ///
-/// A body is created in world space and a parented entity's Transform is an
+/// Every body and character starts over — at its Transform, at rest — so
+/// nothing simulated before the load or restore carries into it. A restore that
+/// revives entities at their old handles would otherwise read as an edit and
+/// keep each body's momentum.
+///
+/// A body is built in world space and a parented entity's Transform is an
 /// offset from its parent, so the parent's world matrix has to exist before the
 /// body can be placed. World matrices are transient — never serialized — so a
 /// freshly loaded or restored scene has none until propagation runs. Doing it the
 /// other way round places every parented body at its local pose.
+///
+/// A loader calls this so a world is handed over with its bodies already built,
+/// the async one on its worker.
 ///
 /// @param propagationTick The caller's propagation bookmark, or 0 to recompute
 ///        every matrix (correct for a scene whose entities were just replaced).

@@ -182,6 +182,24 @@ TEST_CASE("Scene: clear resets entity ids and leaves pools reusable")
     CHECK(scene.Get<Position>(fresh)->x == doctest::Approx(7.0f));
 }
 
+// After a Clear the first entity created is {0, 0} again, so a handle kept from
+// before names a live entity that is not the one it was taken from. The epoch is
+// how a reader holding handles across frames tells the two apart.
+TEST_CASE("Scene: clear advances the clear epoch, and nothing else does")
+{
+    Scene scene;
+    const uint32_t before = scene.ClearEpoch();
+
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
+    scene.Destroy(e);
+    scene.FlushDestroyed();
+    CHECK(scene.ClearEpoch() == before);
+
+    scene.Clear();
+    CHECK(scene.ClearEpoch() != before);
+}
+
 // A stale handle must never add a component, even when the reused slot is still
 // empty in that pool — the SparseSet-level check alone can't catch this (it only
 // fires once the live occupant populates the same pool), so Scene::Add gates on

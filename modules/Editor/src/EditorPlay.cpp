@@ -715,13 +715,12 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
             txn.Add(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
-    // Tear down each entity's simulated object, then queue the entity for
-    // destruction. The handles are transient — never captured; undo rebuilds them
-    // from the descriptor through the rebind hook. Destroy is deferred, so the
-    // slots free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
+    // Queue each entity for destruction; its body goes with it on the world's next
+    // reconcile, and an undo that revives it brings the body back the same way.
+    // Destroy is deferred, so the slots free at the frame's FlushDestroyed, ready
+    // for a later undo's ReviveAt.
     for (const Assisi::ECS::Entity e : doomed)
     {
-        _physics->RemoveEntityPhysics(*_scene, e);
         _scene->Destroy(e);
     }
 

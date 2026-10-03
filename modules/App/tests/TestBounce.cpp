@@ -45,7 +45,7 @@ Assisi::ECS::Entity BuildDropScene(World &world, glm::vec3 dropFrom)
                            descriptor.isStatic    = isStatic;
                            (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
 
-                           (void)world.physics.AddBodyFromDescriptor(world.scene, entity, *transform, descriptor);
+                           world.physics.Reconcile();
                            return entity;
                        };
 
@@ -147,9 +147,8 @@ TEST_CASE("A pair enters once and then stays, however long it rests")
 
     // It went to sleep somewhere in there — which is what makes the Stay count
     // interesting, since Jolt reports nothing for a sleeping pair.
-    const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-    REQUIRE(body != nullptr);
-    REQUIRE_FALSE(world.physics.IsBodyActive(*body));
+    REQUIRE(world.physics.HasBody(ball));
+    REQUIRE_FALSE(world.physics.IsBodyActive(ball));
 
     CHECK(stays == 600);
     CHECK(enters == 0);
@@ -169,16 +168,15 @@ TEST_CASE("A pair that really separates reports one Exit")
 
     // Let it settle all the way to sleep first, so the Exit has to survive the
     // dormant case rather than being handed an already-awake pair.
-    const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-    REQUIRE(body != nullptr);
+    REQUIRE(world.physics.HasBody(ball));
     for (int32_t i = 0; i < 300; ++i)
     {
         world.physics.Update(kStep);
         world.physics.CaptureState();
     }
-    REQUIRE_FALSE(world.physics.IsBodyActive(*body));
+    REQUIRE_FALSE(world.physics.IsBodyActive(ball));
 
-    world.physics.SetBodyTransform(*body, {0.f, 40.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f});
+    world.physics.Teleport(ball, Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 40.f, 0.f}});
 
     int32_t exits = 0;
     for (int32_t i = 0; i < 20; ++i)
@@ -269,9 +267,8 @@ BounceOutcome RunUntilBounce(WorldManager &worlds, World &world, Assisi::ECS::En
 
         if (outcome.impactSpeed > 0.f)
         {
-            const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-            REQUIRE(body != nullptr);
-            outcome.launchSpeed = world.physics.GetBodyVelocity(*body).first.y;
+            REQUIRE(world.physics.HasBody(ball));
+            outcome.launchSpeed = world.physics.GetBodyVelocity(ball).first.y;
         }
 
         world.physics.Update(kStep);
@@ -334,9 +331,8 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
 
             if (entered)
             {
-                const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-                REQUIRE(body != nullptr);
-                afterContact = world.physics.GetBodyVelocity(*body).first.y;
+                REQUIRE(world.physics.HasBody(ball));
+                afterContact = world.physics.GetBodyVelocity(ball).first.y;
                 bounced      = true;
             }
 
@@ -378,9 +374,8 @@ TEST_CASE("A body already at rest never launches itself, even at rebound > 1")
         world.physics.Update(kStep);
         world.physics.CaptureState();
 
-        const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-        REQUIRE(body != nullptr);
-        highest = std::max(highest, world.physics.GetBodyTransform(*body).first.y);
+        REQUIRE(world.physics.HasBody(ball));
+        highest = std::max(highest, world.physics.GetBodyPose(ball).position.y);
     }
 
     CHECK(highest < 0.8f); // never left the floor
@@ -429,9 +424,8 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
         world.physics.Update(kStep);
         world.physics.CaptureState();
 
-        const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-        REQUIRE(body != nullptr);
-        highest = std::max(highest, world.physics.GetBodyTransform(*body).first.y);
+        REQUIRE(world.physics.HasBody(ball));
+        highest = std::max(highest, world.physics.GetBodyPose(ball).position.y);
     }
 
     // The seed really is a settling nudge, not a miss and not a real impact.
@@ -497,10 +491,8 @@ TEST_CASE("A body with no Bounce component is left alone")
 
         if (landed)
         {
-            const Assisi::Physics::RigidBody *body = world.scene.Get<Assisi::Physics::RigidBody>(ball);
-            REQUIRE(body != nullptr);
-            highestAfterLanding =
-                std::max(highestAfterLanding, world.physics.GetBodyVelocity(*body).first.y);
+            REQUIRE(world.physics.HasBody(ball));
+            highestAfterLanding = std::max(highestAfterLanding, world.physics.GetBodyVelocity(ball).first.y);
         }
     }
 

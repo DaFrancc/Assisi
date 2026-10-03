@@ -20,38 +20,27 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include "PhysicsTestScene.hpp"
+
 using namespace Assisi;
+using Assisi::PhysicsTests::kStep;
 
 namespace
 {
 
-constexpr float kStep = 1.f / 60.f;
-
 /// Long enough for a dropped body to land and for Jolt to put it to sleep.
 constexpr int32_t kSleepSteps = 300;
 
-ECS::Entity Spawn(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, glm::vec3 halfExtents,
-                  bool isStatic)
+ECS::Entity Spawn(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, bool isStatic)
 {
-    const ECS::Entity entity = scene.Create();
-    ECS::Transform *transform = scene.Add<ECS::Transform>(entity);
-    REQUIRE(transform != nullptr);
-    transform->position = at;
-
-    Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents = halfExtents;
-    descriptor.isStatic    = isStatic;
-    REQUIRE(scene.Add<Physics::RigidBodyDescriptor>(entity, descriptor) != nullptr);
-
-    (void)world.AddBodyFromDescriptor(scene, entity, *transform, descriptor);
-    return entity;
+    return PhysicsTests::AddBody(scene, at, PhysicsTests::Box(halfExtents, isStatic));
 }
 
 /// Floor with its top at y = 0, plus a box dropped from @p dropFrom.
-ECS::Entity BuildDrop(ECS::Scene &scene, Physics::PhysicsWorld &world, float dropFrom)
+ECS::Entity BuildDrop(ECS::Scene &scene, float dropFrom)
 {
-    (void)Spawn(scene, world, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
-    return Spawn(scene, world, {0.f, dropFrom, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
+    return Spawn(scene, {0.f, dropFrom, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
 }
 
 int32_t CountPhase(const Physics::PhysicsWorld &world, ECS::Entity entity, Physics::ContactPhase phase)
@@ -86,8 +75,8 @@ TEST_CASE("A pair reports Enter exactly once, however many contact points it has
     // collision substeps per Update. All of that has to collapse into one event,
     // or a consumer counting entries counts corners.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
-    const ECS::Entity box = BuildDrop(scene, world, 3.f);
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
     CHECK(CountPhase(world, box, Physics::ContactPhase::Enter) == 1);
@@ -100,8 +89,8 @@ TEST_CASE("A resting pair keeps reporting Stay after the body falls asleep")
     // anything built on that callback would announce the box had left the floor it
     // is still sitting on.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
-    const ECS::Entity box = BuildDrop(scene, world, 3.f);
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
 
@@ -114,9 +103,7 @@ TEST_CASE("A resting pair keeps reporting Stay after the body falls asleep")
         exits += CountPhase(world, box, Physics::ContactPhase::Exit);
     }
 
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
-    REQUIRE(body != nullptr);
-    REQUIRE_FALSE(world.IsBodyActive(*body)); // it really did go to sleep
+    REQUIRE_FALSE(world.IsBodyActive(box)); // it really did go to sleep
 
     CHECK(stays == kSleepSteps);
     CHECK(exits == 0);
@@ -127,20 +114,18 @@ TEST_CASE("A body woken while still touching does not report a second Enter")
     // The other half of dormancy. Jolt re-adds the contact when the body wakes,
     // which reads as brand new; the pair table remembers it never ended.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
-    const ECS::Entity box = BuildDrop(scene, world, 3.f);
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
     for (int32_t i = 0; i < kSleepSteps; ++i)
         world.Update(kStep);
 
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
-    REQUIRE(body != nullptr);
-    REQUIRE_FALSE(world.IsBodyActive(*body));
+    REQUIRE_FALSE(world.IsBodyActive(box));
 
     // A nudge along the floor: it wakes and keeps touching.
-    world.SetBodyLinearVelocity(*body, {0.2f, 0.f, 0.f});
-    REQUIRE(world.IsBodyActive(*body));
+    world.SetBodyLinearVelocity(box, {0.2f, 0.f, 0.f});
+    REQUIRE(world.IsBodyActive(box));
 
     int32_t enters = 0;
     for (int32_t i = 0; i < 30; ++i)
@@ -151,23 +136,21 @@ TEST_CASE("A body woken while still touching does not report a second Enter")
     CHECK(enters == 0);
 }
 
-TEST_CASE("Destroying a body reports one Exit for what it was touching")
+TEST_CASE("Destroying an entity reports one Exit for what its body was touching")
 {
-    // The entity behind a body stops being knowable the moment the body goes, so
-    // the event has to be built during removal and delivered on the next step. A
-    // consumer holding "who is inside me" would otherwise keep a destroyed entity
-    // in it forever.
+    // The event has to be built when the body goes and delivered on the next
+    // step. A consumer holding "who is inside me" would otherwise keep a destroyed
+    // entity in it forever.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
-    const ECS::Entity floor = Spawn(scene, world, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
-    const ECS::Entity box   = Spawn(scene, world, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
+    const ECS::Entity box   = Spawn(scene, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
 
-    const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(box);
-    REQUIRE(body != nullptr);
-    world.RemoveBody(*body);
+    scene.Destroy(box);
+    scene.FlushDestroyed();
 
     world.Update(kStep);
 
@@ -190,8 +173,8 @@ TEST_CASE("Destroying a body reports one Exit for what it was touching")
 TEST_CASE("Events describe one step and are dropped at the next")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
-    const ECS::Entity box = BuildDrop(scene, world, 3.f);
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
     const std::size_t landed = world.ContactEvents().size();
@@ -203,20 +186,18 @@ TEST_CASE("Events describe one step and are dropped at the next")
     CHECK(CountPhase(world, box, Physics::ContactPhase::Enter) == 0);
 }
 
-TEST_CASE("Clear drops every pair without inventing departures")
+TEST_CASE("Clearing the scene drops every pair without inventing departures")
 {
     // A world being emptied is not a world where things left each other, and there
     // is nothing left that could act on the event anyway — the entities are about
     // to mean something else entirely.
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
-    const ECS::Entity box = BuildDrop(scene, world, 3.f);
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
 
-    world.Clear();
-    CHECK(world.ContactEvents().empty());
-
+    scene.Clear();
     world.Update(kStep);
     CHECK(world.ContactEvents().empty());
 }

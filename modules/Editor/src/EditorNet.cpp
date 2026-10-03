@@ -141,7 +141,7 @@ void EditorApp::StripReplicatedEntities()
 
     // The engine's strip, shared with the headless client: one implementation, so
     // the two cannot disagree about bodies or orphaned parent links.
-    const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene, *_physics);
+    const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene);
 
     if (stripped.entities != 0 || stripped.orphans != 0)
     {
@@ -617,13 +617,13 @@ void EditorApp::DrawNetworkWindow()
         // by construction: there is no client→server state channel, and this is
         // the server acting on its own world.
         const bool canNudge = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
-                              _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr &&
+                              _physics->HasBody(_selectedEntity) &&
                               _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
         ImGui::BeginDisabled(!canNudge);
         if (ImGui::Button("Nudge selected body") && canNudge)
         {
             constexpr glm::vec3 kNudge{2.f, 6.f, 0.f};
-            _physics->SetBodyLinearVelocity(*_scene->Get<Assisi::Physics::RigidBody>(_selectedEntity), kNudge);
+            _physics->SetBodyLinearVelocity(_selectedEntity, kNudge);
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -790,16 +790,16 @@ void EditorApp::DrawNetworkWindow()
         ImGui::SameLine();
         const bool canScramble = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
                                  _scene->Has<Assisi::NetSync::Mirrored>(_selectedEntity) &&
-                                 _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr;
+                                 _physics->HasBody(_selectedEntity);
         ImGui::BeginDisabled(!canScramble);
         if (ImGui::Button("Corrupt selected mirror") && canScramble)
         {
             // Client-side damage the host has no way to know about — the exact
             // failure class the keyframe sweep exists for.
-            const Assisi::Physics::RigidBody *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
-            const auto [position, rotation] = _physics->GetBodyTransform(*body);
-            _physics->ApplyBodyState(*body, position + glm::vec3{0.f, 3.f, 1.5f}, rotation, glm::vec3{0.f},
-                                     glm::vec3{0.f}, /*activate=*/ false);
+            const Assisi::Physics::Pose pose = _physics->GetBodyPose(_selectedEntity);
+            _physics->ApplyBodyState(_selectedEntity,
+                                     Assisi::Physics::Pose{pose.rotation, pose.position + glm::vec3{0.f, 3.f, 1.5f}},
+                                     glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/ false);
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))

@@ -90,10 +90,12 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
     // not at the local (0,1,0) a physics layer that could not see Parent would
     // have used.
     int32_t bodies = 0;
-    for (auto [entity, body, tag] : world.scene.Query<Physics::RigidBody, ECS::BlueprintMember>())
+    for (auto [entity, descriptor, tag] : world.scene.Query<Physics::RigidBodyDescriptor, ECS::BlueprintMember>())
     {
+        (void)descriptor;
+        REQUIRE(world.physics.HasBody(entity));
         ++bodies;
-        const auto [position, rotation] = world.physics.GetBodyTransform(body);
+        const glm::vec3 position = world.physics.GetBodyPose(entity).position;
         CHECK(position.x == doctest::Approx(30.f));
         CHECK(position.y == doctest::Approx(tag.memberIndex == 0 ? 0.f : 1.f));
     }
@@ -170,17 +172,16 @@ TEST_CASE("App: a child of a walking character follows it")
     }
     REQUIRE(eye != ECS::NullEntity); // the child's parent link survived expansion
 
-    const Physics::Character *character = world.scene.Get<Physics::Character>(body);
-    REQUIRE(character != nullptr);
+    REQUIRE(world.physics.HasBody(body));
 
     constexpr float kStep = 1.f / 60.f;
     uint64_t tick = 0;
     for (int32_t i = 0; i < 120; ++i)
     {
-        world.physics.MoveCharacter(*character, {5.f, 0.f, 0.f}, /*jump=*/ false);
+        world.physics.MoveCharacter(body, {5.f, 0.f, 0.f}, /*jump=*/ false);
         world.physics.Update(kStep);
         world.physics.CaptureState();
-        world.physics.InterpolateTransforms(world.scene, 1.f);
+        world.physics.InterpolateTransforms(1.f);
         tick = ECS::PropagateTransforms(world.scene, tick);
     }
 

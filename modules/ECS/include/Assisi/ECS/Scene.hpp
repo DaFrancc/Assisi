@@ -138,7 +138,17 @@ struct Scene
                 storage.clear(storage.pool);
         _registry.Reset();
         _pendingDestroy.clear();
+        ++_clearEpoch;
     }
+
+    /// @brief How many times Clear() has run on this scene.
+    ///
+    /// After a Clear the next Create() returns Entity{0, 0} again, so a handle
+    /// kept from before it names a live entity that is not the one it was taken
+    /// from, and neither IsAlive nor the change ticks can tell. A reader that
+    /// holds handles across frames compares this instead and starts over when
+    /// it moved.
+    [[nodiscard]] uint32_t ClearEpoch() const { return _clearEpoch; }
 
     /// @brief Adds a component of type T to the entity, with every component T
     /// requires that the entity lacks, default-constructed.
@@ -616,6 +626,8 @@ private:
     /// Monotonic change-detection tick, bumped on each mutable access to a tracked
     /// component (Add / GetMut / MarkChanged). See the Change detection section.
     uint64_t _changeTick = 0;
+
+    uint32_t _clearEpoch = 0; ///< Incremented by Clear(); see ClearEpoch().
 };
 
 } // namespace Assisi::ECS

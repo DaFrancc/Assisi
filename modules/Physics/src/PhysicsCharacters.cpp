@@ -29,8 +29,8 @@
 #include <Jolt/Physics/PhysicsSettings.h>
 
 #include <cstdint>
-#include <expected>
 #include <limits>
+#include <map>
 #include <utility>
 
 namespace Assisi::Physics
@@ -169,15 +169,6 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         (void)id;
         JPH::CharacterVirtual &character = *record.character;
 
-        // Frozen: held exactly where it is, gravity included. A character that
-        // kept falling would drop out from under the cursor dragging it.
-        if (record.frozen)
-        {
-            record.prevEyeHeight = record.eyeHeight;
-            character.SetLinearVelocity(JPH::Vec3::sZero());
-            continue;
-        }
-
         // Fold in the motion of whatever is underfoot before reading it, or a
         // character on a platform rides last step's velocity.
         character.UpdateGroundVelocity();
@@ -289,29 +280,67 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
     }
 }
 
-std::expected<Character, PhysicsWorld::PhysicsError> PhysicsWorld::AddCharacterFromDescriptor(
-    ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform, const CharacterDescriptor &descriptor)
+void PhysicsWorld::Impl::CharacterRecord::Retune(const CharacterDescriptor &descriptor)
 {
-    // A character is placed in world space, and a parented Transform is an offset
-    // from its parent — the same mismatch AddBodyFromDescriptor undoes.
-    glm::vec3 position = transform.position;
-    glm::quat rotation = transform.rotation;
-    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
-    {
-        const ECS::Transform pose = ECS::PoseUnderParent(transform, *parent);
-        position = pose.position;
-        rotation = pose.rotation;
-    }
-
     // A crouch taller than standing is not a crouch, and a step taller than the
     // character is a wall. Both are clamped rather than refused: they arrive from
     // an inspector drag, where a refusal would mean a character that vanishes
     // partway through typing a number.
-    const float crouchHalfHeight = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
+    const float clampedCrouch = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
     const float standingHeight = CharacterHalfHeight(descriptor.radius, descriptor.halfHeight);
-    const float maxStepHeight = glm::min(descriptor.maxStepHeight, standingHeight * kMaxStepHeightFraction);
 
-    Impl::CharacterRecord record;
+    // The sweep must not be stopped by sensors; the inner body still is seen by
+    // them.
+    queryFilter = CollisionFilter{descriptor.collidesWith, CollisionChannel::Character}.Without(CollisionChannel::Trigger);
+
+    jumpSpeed = descriptor.jumpSpeed;
+    walkSpeed = descriptor.walkSpeed;
+    friction = descriptor.friction;
+    stopSpeed = descriptor.stopSpeed;
+    groundAcceleration = descriptor.groundAcceleration;
+    airAcceleration = descriptor.airAcceleration;
+    airWishSpeedCap = descriptor.airWishSpeedCap;
+    bunnyHopSpeedCap = descriptor.bunnyHopSpeedCap;
+    bunnyHop = descriptor.bunnyHop;
+    standingEyeHeight = descriptor.eyeHeight;
+    crouchEyeHeight = descriptor.crouchEyeHeight;
+    eyeSpeed = descriptor.eyeSpeed;
+    stanceLift = 2.f * (standingHeight - CharacterHalfHeight(descriptor.radius, clampedCrouch));
+    gravityScale = descriptor.gravityScale;
+    coyoteTime = descriptor.coyoteTime;
+    jumpBufferTime = descriptor.jumpBufferTime;
+    maxStepHeight = glm::min(descriptor.maxStepHeight, standingHeight * kMaxStepHeightFraction);
+    radius = descriptor.radius;
+    standingHalfHeight = descriptor.halfHeight;
+    crouchHalfHeight = clampedCrouch;
+    canPushBodies = descriptor.canPushBodies;
+    canBePushed = descriptor.canBePushed;
+}
+
+PhysicsWorld::Impl::CharacterRecord *PhysicsWorld::Impl::FindCharacter(ECS::Entity entity)
+{
+    if (SlotFor(entity) == nullptr)
+    {
+        return nullptr;
+    }
+    const std::map<std::uint32_t, CharacterRecord>::iterator it = characters.find(entity.index);
+    return it == characters.end() ? nullptr : &it->second;
+}
+
+const PhysicsWorld::Impl::CharacterRecord *PhysicsWorld::Impl::FindCharacter(ECS::Entity entity) const
+{
+    if (SlotFor(entity) == nullptr)
+    {
+        return nullptr;
+    }
+    const std::map<std::uint32_t, CharacterRecord>::const_iterator it = characters.find(entity.index);
+    return it == characters.end() ? nullptr : &it->second;
+}
+
+bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const CharacterDescriptor &descriptor,
+                                               const Pose &pose)
+{
+    const float crouchHalfHeight = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
     record.standingShape = MakeCharacterShape(descriptor.radius, descriptor.halfHeight);
     record.crouchingShape = MakeCharacterShape(descriptor.radius, crouchHalfHeight);
 
@@ -340,115 +369,133 @@ std::expected<Character, PhysicsWorld::PhysicsError> PhysicsWorld::AddCharacterF
     settings.mInnerBodyLayer =
         PackLayer(CollisionFilter{descriptor.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
 
-    const std::uint32_t id = _impl->nextCharacterId;
-
-    record.character = new JPH::CharacterVirtual(&settings, JPH::RVec3(position.x, position.y, position.z),
-                                                 JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
-                                                 id, &_impl->physicsSystem);
-
-    if (record.character->GetInnerBodyID().IsInvalid())
+    // The entity rides in the character's user data, which Jolt copies onto the
+    // inner body, so a contact or a cast that finds a character names it exactly
+    // as it does a rigid body.
+    JPH::Ref<JPH::CharacterVirtual> built = new JPH::CharacterVirtual(
+        &settings, JPH::RVec3(pose.position.x, pose.position.y, pose.position.z),
+        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized(),
+        UserDataOf(record.entity), &physicsSystem);
+    if (built->GetInnerBodyID().IsInvalid())
     {
-        Assisi::Core::Log::Error(
-            "PhysicsWorld: failed to create character body (body limit of {} reached?); entity will "
-            "not simulate.",
-            Impl::kMaxBodies);
-        return std::unexpected(PhysicsError::BodyLimit);
+        return false;
     }
 
+    if (record.character != nullptr)
+    {
+        characterVsCharacter.Remove(record.character);
+    }
+    record.character = built;
+    record.character->SetListener(&characterContacts);
+    record.character->SetCharacterVsCharacterCollision(&characterVsCharacter);
+    characterVsCharacter.Add(record.character);
+    return true;
+}
+
+void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor)
+{
+    const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
+
+    // A character is placed in world space, and a parented Transform is an
+    // offset from its parent.
+    Pose pose{transform.rotation, transform.position};
+    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
+    {
+        const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
+        pose = Pose{world.rotation, world.position};
+    }
+
+    CharacterRecord record;
     record.entity = entity;
-
-    // The sweep must not be stopped by sensors; the inner body above still is
-    // seen by them.
-    record.queryFilter =
-        CollisionFilter{descriptor.collidesWith, CollisionChannel::Character}.Without(CollisionChannel::Trigger);
-
-    record.jumpSpeed = descriptor.jumpSpeed;
-    record.walkSpeed = descriptor.walkSpeed;
-    record.friction = descriptor.friction;
-    record.stopSpeed = descriptor.stopSpeed;
-    record.groundAcceleration = descriptor.groundAcceleration;
-    record.airAcceleration = descriptor.airAcceleration;
-    record.airWishSpeedCap = descriptor.airWishSpeedCap;
-    record.bunnyHopSpeedCap = descriptor.bunnyHopSpeedCap;
-    record.bunnyHop = descriptor.bunnyHop;
-    record.standingEyeHeight = descriptor.eyeHeight;
-    record.crouchEyeHeight = descriptor.crouchEyeHeight;
-    record.eyeSpeed = descriptor.eyeSpeed;
+    record.Retune(descriptor);
     record.eyeHeight = descriptor.eyeHeight;
     record.prevEyeHeight = descriptor.eyeHeight;
-    record.stanceLift = 2.f * (standingHeight - CharacterHalfHeight(descriptor.radius, crouchHalfHeight));
-    record.gravityScale = descriptor.gravityScale;
-    record.coyoteTime = descriptor.coyoteTime;
-    record.jumpBufferTime = descriptor.jumpBufferTime;
-    record.maxStepHeight = maxStepHeight;
-    record.radius = descriptor.radius;
-    record.standingHalfHeight = descriptor.halfHeight;
-    record.crouchHalfHeight = crouchHalfHeight;
-    record.canPushBodies = descriptor.canPushBodies;
-    record.canBePushed = descriptor.canBePushed;
+    if (!BuildCharacterVirtual(record, descriptor, pose))
+    {
+        Core::Log::Error("PhysicsWorld: entity {} (gen {}) gets no character - the world holds at most {} bodies.",
+                         entity.index, entity.generation, maxBodies);
+        return;
+    }
 
-    // Seed both snapshots with the spawn pose so the first interpolated frame,
-    // before any step has run, resolves to exactly where it was placed.
-    record.snapshot = Impl::MotionSnapshot{position, rotation, position, rotation};
+    BodySlot &slot = SlotAt(entity);
+    slot = BodySlot{};
+    slot.body = record.character->GetInnerBodyID();
+    slot.filter = CollisionFilter{descriptor.collidesWith, CollisionChannel::Character};
+    slot.generation = entity.generation;
+    slot.motion = BodyMotion::Kinematic;
+    slot.kind = SlotKind::Character;
+    CollapseSnapshot(slot, pose);
 
-    record.character->SetListener(&_impl->characterContacts);
-    record.character->SetCharacterVsCharacterCollision(&_impl->characterVsCharacter);
-    _impl->characterVsCharacter.Add(record.character);
-
-    const JPH::BodyID innerBody = record.character->GetInnerBodyID();
-
-    _impl->characters.emplace(id, std::move(record));
-    ++_impl->nextCharacterId;
-    _impl->entityCharacters[entity] = id;
-
-    // Through the inner body, so a contact or a cast that finds a character can
-    // name the entity behind it exactly as it does for a rigid body.
-    _impl->bodyEntities[innerBody.GetIndexAndSequenceNumber()] = entity;
-    _impl->entityBodies[entity] = innerBody;
+    CharacterRecord &placed = characters.insert_or_assign(entity.index, std::move(record)).first->second;
+    StampTransform(entity);
 
     // Found now rather than on the first step: a stance asked for before then
     // has to know whether the character is standing on something, or a crouch
     // at spawn is taken for one in the air and lifts the feet off the floor.
-    const FilterLayerFilter layerFilter{_impl->characters.at(id).queryFilter};
-    _impl->characters.at(id).character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
-
-    const Character character{CharacterState{}, glm::vec3{0.f}, CharacterId{id}, Stance::Standing, false};
-    (void)scene.Add<Character>(entity, character);
-    return character;
+    const FilterLayerFilter layerFilter{placed.queryFilter};
+    placed.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
 }
 
-void PhysicsWorld::RemoveCharacter(const Character &character)
+void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor)
 {
-    const auto it = _impl->characters.find(character.id.value);
-    if (it == _impl->characters.end())
+    CharacterRecord &record = *FindCharacter(entity);
+    BodySlot &slot = *SlotFor(entity);
+    const float crouchHalfHeight = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
+    const bool resized = descriptor.radius != record.radius || descriptor.halfHeight != record.standingHalfHeight ||
+                         crouchHalfHeight != record.crouchHalfHeight;
+
+    record.Retune(descriptor);
+
+    JPH::CharacterVirtual &character = *record.character;
+    if (resized)
     {
+        // The capsule is baked into the solver, so a new one is built where the
+        // old one stands, carrying its velocity across. The timers, stance and
+        // intent live on the record and are untouched.
+        const JPH::Vec3 velocity = character.GetLinearVelocity();
+        const JPH::RVec3 position = character.GetPosition();
+        const JPH::Quat rotation = character.GetRotation();
+        const Pose pose{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
+                        glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
+        const Stance stance = record.stance;
+
+        // The old inner body goes with the old capsule, and its pairs with it.
+        EmitExitsFor(slot.body, pendingExits);
+        if (!BuildCharacterVirtual(record, descriptor, pose))
+        {
+            Core::Log::Error("PhysicsWorld: entity {} (gen {}) could not be resized - the world is full.",
+                             entity.index, entity.generation);
+            return;
+        }
+        record.character->SetLinearVelocity(velocity);
+        slot.body = record.character->GetInnerBodyID();
+
+        // Built standing; a crouched character goes back into its crouch,
+        // which is a shrink and always fits.
+        if (stance == Stance::Crouching)
+        {
+            const FilterLayerFilter layerFilter{record.queryFilter};
+            const float maxPenetration =
+                kStanceChangePenetrationSlopFactor * physicsSystem.GetPhysicsSettings().mPenetrationSlop;
+            (void)record.character->SetShape(record.crouchingShape, maxPenetration, {}, layerFilter, {}, {}, tempAlloc);
+            record.character->SetInnerBodyShape(record.crouchingShape);
+        }
         return;
     }
-    Impl::CharacterRecord &record = it->second;
 
-    // While the entity behind the inner body is still knowable — the same reason
-    // RemoveBody builds its Exits before destroying anything.
-    const JPH::BodyID innerBody = record.character->GetInnerBodyID();
-    _impl->EmitExitsFor(innerBody, _impl->pendingExits);
+    // Everything else the solver holds can be changed on the one it has.
+    character.SetMaxSlopeAngle(glm::radians(descriptor.maxSlopeDegrees));
+    character.SetMass(descriptor.mass);
+    character.SetMaxStrength(descriptor.canPushBodies ? descriptor.pushStrength : 0.f);
 
-    _impl->characterVsCharacter.Remove(record.character);
-
-    const ECS::Entity entity = record.entity;
-    _impl->bodyEntities.erase(innerBody.GetIndexAndSequenceNumber());
-    if (entity != ECS::NullEntity)
-    {
-        _impl->entityBodies.erase(entity);
-        _impl->entityCharacters.erase(entity);
-    }
-
-    // Last: the CharacterVirtual owns its inner body and destroys it here, so
-    // everything above had to read the id while it still meant something.
-    _impl->characters.erase(it);
+    const CollisionFilter filter{descriptor.collidesWith, CollisionChannel::Character};
+    physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, PackLayer(filter, BodyMotion::Kinematic));
+    slot.filter = filter;
 }
 
-void PhysicsWorld::MoveCharacter(const Character &character, glm::vec3 wishVelocity, bool jump)
+void PhysicsWorld::MoveCharacter(ECS::Entity entity, glm::vec3 wishVelocity, bool jump)
 {
-    Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
     if (record == nullptr)
     {
         return;
@@ -465,9 +512,9 @@ void PhysicsWorld::MoveCharacter(const Character &character, glm::vec3 wishVeloc
     }
 }
 
-void PhysicsWorld::SetCharacterFacing(const Character &character, glm::vec3 forward)
+void PhysicsWorld::SetCharacterFacing(ECS::Entity entity, glm::vec3 forward)
 {
-    Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
     if (record == nullptr)
     {
         return;
@@ -475,9 +522,9 @@ void PhysicsWorld::SetCharacterFacing(const Character &character, glm::vec3 forw
     record->facing = forward;
 }
 
-bool PhysicsWorld::SetCharacterStance(const Character &character, Stance stance)
+bool PhysicsWorld::SetCharacterStance(ECS::Entity entity, Stance stance)
 {
-    Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
     if (record == nullptr)
     {
         return false;
@@ -522,16 +569,17 @@ bool PhysicsWorld::SetCharacterStance(const Character &character, Stance stance)
     // blended across the shift and the other not would show the feet
     // travelling under an eye height that had already changed, and the view
     // would dip for a frame.
+    Impl::BodySlot &slot = *_impl->SlotFor(entity);
     record->eyeHeight -= feetShift;
     record->prevEyeHeight -= feetShift;
-    record->snapshot.prevPosition.y += feetShift;
-    record->snapshot.curPosition.y += feetShift;
+    slot.snapshot.prevPosition.y += feetShift;
+    slot.snapshot.curPosition.y += feetShift;
     return true;
 }
 
-CharacterState PhysicsWorld::GetCharacterState(const Character &character) const
+CharacterState PhysicsWorld::GetCharacterState(ECS::Entity entity) const
 {
-    const Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    const Impl::CharacterRecord *record = _impl->FindCharacter(entity);
     if (record == nullptr)
     {
         return CharacterState{};
@@ -577,243 +625,14 @@ CharacterState PhysicsWorld::GetCharacterState(const Character &character) const
     return state;
 }
 
-float PhysicsWorld::GetCharacterEyeHeight(const Character &character, float alpha) const
+float PhysicsWorld::GetCharacterEyeHeight(ECS::Entity entity, float alpha) const
 {
-    const Impl::CharacterRecord *record = _impl->FindCharacter(character);
+    const Impl::CharacterRecord *record = _impl->FindCharacter(entity);
     if (record == nullptr)
     {
         return 0.f;
     }
     return glm::mix(record->prevEyeHeight, record->eyeHeight, alpha);
-}
-
-void PhysicsWorld::SetCharacterTransform(const Character &character, glm::vec3 position, glm::quat rotation)
-{
-    Impl::CharacterRecord *record = _impl->FindCharacter(character);
-    if (record == nullptr)
-    {
-        return;
-    }
-
-    const JPH::Quat joltRotation = JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
-    record->character->SetPosition(JPH::RVec3(position.x, position.y, position.z));
-    record->character->SetRotation(joltRotation);
-
-    // The character moves its inner body only as far as its own bookkeeping —
-    // the body interface has to be told, or a cast made before the next step
-    // finds the character where it used to be.
-    const JPH::BodyID innerBody = record->character->GetInnerBodyID();
-    if (!innerBody.IsInvalid())
-    {
-        _impl->physicsSystem.GetBodyInterface().SetPositionAndRotation(
-            innerBody, JPH::RVec3(position.x, position.y, position.z), joltRotation, JPH::EActivation::Activate);
-    }
-
-    // Collapse both snapshots onto the target, or the next frame blends from
-    // where it was and slides across the gap instead of arriving.
-    record->snapshot = Impl::MotionSnapshot{position, rotation, position, rotation};
-
-    // What it was touching is about to be wrong. Re-finding it here rather than
-    // waiting a step keeps the ground state honest for anything that reads it
-    // between the teleport and the next Update.
-    const FilterLayerFilter layerFilter{record->queryFilter};
-    record->character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
-}
-
-void PhysicsWorld::SetCharacterFrozen(const Character &character, bool frozen)
-{
-    Impl::CharacterRecord *record = _impl->FindCharacter(character);
-    if (record == nullptr)
-    {
-        return;
-    }
-
-    record->frozen = frozen;
-
-    // Cleared in both directions: freezing must not leave a jump queued to fire
-    // the instant it thaws, and thawing must not resume a velocity earned before
-    // the drag that moved it somewhere else entirely.
-    record->character->SetLinearVelocity(JPH::Vec3::sZero());
-    record->wishVelocity = glm::vec3(0.f);
-    record->jumpBufferRemaining = 0.f;
-    record->jumpRequested = false;
-}
-
-// ---------------------------------------------------------------------------
-// Physics by entity
-// ---------------------------------------------------------------------------
-
-std::expected<void, PhysicsWorld::PhysicsError> PhysicsWorld::RebuildEntityPhysics(ECS::Scene &scene,
-                                                                                   ECS::Entity entity)
-{
-    RemoveEntityPhysics(scene, entity);
-
-    const RigidBodyDescriptor *bodyDescriptor = scene.Get<RigidBodyDescriptor>(entity);
-    const CharacterDescriptor *characterDescriptor = scene.Get<CharacterDescriptor>(entity);
-
-    if (bodyDescriptor == nullptr && characterDescriptor == nullptr)
-    {
-        return {};
-    }
-
-    // A character already owns a rigid body. Building both would have it collide
-    // with its own, so neither is built rather than one silently winning.
-    if (bodyDescriptor != nullptr && characterDescriptor != nullptr)
-    {
-        return std::unexpected(PhysicsError::ConflictingDescriptors);
-    }
-
-    const ECS::Transform *transform = scene.Get<ECS::Transform>(entity);
-    if (transform == nullptr)
-    {
-        return std::unexpected(PhysicsError::NoTransform);
-    }
-
-    if (characterDescriptor != nullptr)
-    {
-        const std::expected<Character, PhysicsError> added =
-            AddCharacterFromDescriptor(scene, entity, *transform, *characterDescriptor);
-        if (!added)
-        {
-            return std::unexpected(added.error());
-        }
-        return {};
-    }
-
-    const RigidBody body = AddBodyFromDescriptor(scene, entity, *transform, *bodyDescriptor);
-    if (!body.bodyId.IsValid())
-    {
-        return std::unexpected(PhysicsError::BodyLimit);
-    }
-    return {};
-}
-
-void PhysicsWorld::RemoveEntityPhysics(ECS::Scene &scene, ECS::Entity entity)
-{
-    // Resolved through this world's own maps rather than through the scene: a
-    // play-session teardown defers component destruction, so the handle
-    // component may already be gone while the object is still here.
-    if (const auto it = _impl->entityCharacters.find(entity); it != _impl->entityCharacters.end())
-    {
-        RemoveCharacter(Character{CharacterState{}, glm::vec3{0.f}, CharacterId{it->second}, Stance::Standing, false});
-    }
-    else if (const auto body = _impl->entityBodies.find(entity); body != _impl->entityBodies.end())
-    {
-        RemoveBody(RigidBody{FromJolt(body->second)});
-    }
-
-    if (!scene.IsAlive(entity))
-    {
-        return;
-    }
-    scene.Remove<Character>(entity);
-    scene.Remove<RigidBody>(entity);
-}
-
-void PhysicsWorld::ReconfigureEntityPhysics(ECS::Scene &scene, ECS::Entity entity)
-{
-    if (const CharacterDescriptor *descriptor = scene.Get<CharacterDescriptor>(entity))
-    {
-        const Character *character = scene.Get<Character>(entity);
-        if (character == nullptr)
-        {
-            return;
-        }
-
-        // A character's shape, slope and step height are baked into the solver
-        // when it is created, so there is nothing to retune in place. Position
-        // and stance are carried across; velocity is not, which is invisible in
-        // an editor and a small jolt if something edits a descriptor mid-play.
-        const Impl::CharacterRecord *record = _impl->FindCharacter(*character);
-        if (record == nullptr)
-        {
-            return;
-        }
-
-        const JPH::RVec3 position = record->character->GetPosition();
-        const JPH::Quat rotation = record->character->GetRotation();
-        const Stance stance = record->stance;
-
-        RemoveEntityPhysics(scene, entity);
-
-        const ECS::Transform *transform = scene.Get<ECS::Transform>(entity);
-        if (transform == nullptr)
-        {
-            return;
-        }
-
-        const std::expected<Character, PhysicsError> rebuilt =
-            AddCharacterFromDescriptor(scene, entity, *transform, *descriptor);
-        if (!rebuilt)
-        {
-            return;
-        }
-
-        SetCharacterTransform(*rebuilt, glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-                              glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()));
-        (void)SetCharacterStance(*rebuilt, stance);
-        return;
-    }
-
-    const RigidBodyDescriptor *descriptor = scene.Get<RigidBodyDescriptor>(entity);
-    const RigidBody *body = scene.Get<RigidBody>(entity);
-    if (descriptor == nullptr || body == nullptr)
-    {
-        return;
-    }
-
-    ReshapeBody(*body, ColliderShapeDesc{.shape = descriptor->shape,
-                                         .halfExtents = descriptor->halfExtents,
-                                         .radius = descriptor->radius,
-                                         .halfHeight = descriptor->halfHeight});
-    SetBodyCCD(*body, descriptor->enableCCD);
-
-    // The channel and its mask live on the body's collision layer, which nothing
-    // else here writes. Left out, an edit changes the descriptor and not the
-    // simulation, and only shows up once something rebuilds the body from the
-    // descriptor — a play session later.
-    SetBodyCollisionFilter(*body, CollisionFilter{descriptor->collidesWith, descriptor->channel});
-}
-
-void PhysicsWorld::SetEntityPhysicsFrozen(ECS::Scene &scene, ECS::Entity entity, bool frozen)
-{
-    if (const Character *character = scene.Get<Character>(entity))
-    {
-        SetCharacterFrozen(*character, frozen);
-        return;
-    }
-
-    const RigidBody *body = scene.Get<RigidBody>(entity);
-    if (body == nullptr)
-    {
-        return;
-    }
-
-    if (frozen)
-    {
-        SetBodyMotionType(*body, BodyMotion::Static);
-        return;
-    }
-
-    // Back to whatever the descriptor authored, never unconditionally Dynamic:
-    // the freeze has to be invisible, including for bodies that were Static all
-    // along.
-    const RigidBodyDescriptor *descriptor = scene.Get<RigidBodyDescriptor>(entity);
-    const bool isStatic = descriptor != nullptr && descriptor->isStatic;
-    SetBodyMotionType(*body, isStatic ? BodyMotion::Static : BodyMotion::Dynamic);
-}
-
-void PhysicsWorld::SetEntityTransform(ECS::Scene &scene, ECS::Entity entity, glm::vec3 position, glm::quat rotation)
-{
-    if (const Character *character = scene.Get<Character>(entity))
-    {
-        SetCharacterTransform(*character, position, rotation);
-        return;
-    }
-    if (const RigidBody *body = scene.Get<RigidBody>(entity))
-    {
-        SetBodyTransform(*body, position, rotation);
-    }
 }
 
 } // namespace Assisi::Physics

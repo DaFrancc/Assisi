@@ -590,9 +590,9 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
             txn.Add(Assisi::Editor::EntityDelta{entity, history->CaptureEntityComponents(entity), std::nullopt});
     }
 
+    // Their bodies go with them, on the world's next reconcile.
     for (const Assisi::ECS::Entity entity : subtree)
     {
-        _physics->RemoveEntityPhysics(*_scene, entity);
         _scene->Destroy(entity);
     }
     // Now, not at end of frame: the placement below creates entities, and a deferred
@@ -663,23 +663,11 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World &world, std::span<c
             Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache);
     }
 
-    // Propagate before building bodies, for the same reason App::BuildSceneBodies
-    // does: a parented member is placed from a parent matrix that does not exist
-    // until propagation has run over the entities just created.
+    // The members' bodies are built by the world's next reconcile. Propagated now,
+    // for the same reason App::BuildSceneBodies does: a parented member is placed
+    // from a parent matrix that does not exist until propagation has run over the
+    // entities just created.
     world.propagationTick = Assisi::ECS::PropagateTransforms(world.scene, world.propagationTick);
-
-    for (const Assisi::ECS::Entity member : members)
-    {
-        if (member == Assisi::ECS::NullEntity)
-            continue;
-        // Whichever kind of physics the member's descriptor asks for; a member
-        // with neither simply gets none.
-        if (world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr &&
-            world.scene.Get<Assisi::Physics::Character>(member) == nullptr)
-        {
-            (void)world.physics.RebuildEntityPhysics(world.scene, member);
-        }
-    }
 }
 
 const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, const std::string &component) const
@@ -1080,12 +1068,10 @@ void EditorApp::AbandonReplacedScene(std::string_view virtualPath)
                              "closing the level rather than leaving a half-loaded one open.",
                              virtualPath);
 
+    // The physics world sees the clear on its next reconcile and drops the
+    // previous level's bodies.
     _scene->Clear();
     _world->instances.Clear();
-    // The rebind never ran, so the physics world is still holding the *previous*
-    // level's bodies — over a scene that no longer has the entities they belong to.
-    // Rebuilding against the empty scene is what takes them out.
-    (void)Assisi::App::BuildSceneBodies(*_scene, *_physics);
     // An empty list cannot fail to resolve, and clears the registry, the queued
     // installs and the contact-reporting switch in the one call that owns all three.
     (void)_worlds.ApplySystems(*_world, {}, virtualPath);

@@ -56,7 +56,7 @@ Assisi::ECS::Entity SpawnFloor(World &world)
     descriptor.isStatic = true;
     (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
 
-    (void)world.physics.AddBodyFromDescriptor(world.scene, entity, *transform, descriptor);
+    world.physics.Reconcile();
     return entity;
 }
 
@@ -67,8 +67,8 @@ Assisi::ECS::Entity SpawnCharacter(World &world, const Assisi::Physics::Characte
     transform->position = {0.f, 0.f, 0.f};
     (void)world.scene.Add<Assisi::Physics::CharacterDescriptor>(entity, descriptor);
 
-    const auto added = world.physics.AddCharacterFromDescriptor(world.scene, entity, *transform, descriptor);
-    REQUIRE(added.has_value());
+    world.physics.Reconcile();
+    REQUIRE(world.physics.HasBody(entity));
     return entity;
 }
 
@@ -205,7 +205,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
     Tick(world, events);
     const float afterOneStep =
-        world.physics.GetCharacterState(*world.scene.Get<Assisi::Physics::Character>(entity)).eyeHeight;
+        world.physics.GetCharacterState(entity).eyeHeight;
     REQUIRE(afterOneStep < descriptor.eyeHeight);
 
     PlaceCharacterEyes(world.scene, world.physics, 0.5f);

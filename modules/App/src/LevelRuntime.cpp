@@ -10,7 +10,6 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -210,7 +209,7 @@ std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetS
     return file;
 }
 
-StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorld &physics)
+StrippedEntities StripReplicatedEntities(ECS::Scene &scene)
 {
     StrippedEntities stripped;
 
@@ -222,15 +221,9 @@ StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorl
                 doomed.push_back(entity);
         });
 
+    // The world's physics follows: each body goes on its next reconcile.
     for (const ECS::Entity entity : doomed)
     {
-        // Out of the physics world first: Destroy only ends the entity, and a body
-        // left behind is one nothing holds a handle to any more.
-        if (const auto *body = scene.Get<Physics::RigidBody>(entity))
-        {
-            physics.RemoveBody(*body);
-            scene.Remove<Physics::RigidBody>(entity);
-        }
         scene.Destroy(entity);
     }
     scene.FlushDestroyed();

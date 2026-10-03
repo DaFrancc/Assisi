@@ -85,7 +85,7 @@ target_link_libraries(Assisi-App-Tests
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen
 # emits into the *-Generated OBJECT libraries populate. Without their objects in
-# the link, Transform/RigidBody have no id and Scene::Add asserts. TestWorld
+# the link, Transform/RigidBodyDescriptor have no id and Scene::Add asserts. TestWorld
 # steps real physics, so Physics-Generated is wanted here (unlike the Runtime
 # tests, which deliberately avoid dragging in Jolt).
 target_sources(Assisi-App-Tests PRIVATE

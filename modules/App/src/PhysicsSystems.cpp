@@ -52,10 +52,7 @@ void BounceSystem(SystemContext &ctx)
 
         // The impact was logged against a live body during the last step; the
         // entity can still have been destroyed since, or had its collider removed.
-        if (!scene.IsAlive(contact.entity))
-            continue;
-        const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(contact.entity);
-        if (body == nullptr)
+        if (!scene.IsAlive(contact.entity) || !ctx.world.physics.HasBody(contact.entity))
             continue;
 
         // Only a body approaching hard enough bounces. Two things are being
@@ -91,7 +88,7 @@ void BounceSystem(SystemContext &ctx)
         // file is just text and can hold anything.
         const glm::vec3 reflected = contact.velocity - 2.f * closingSpeed * contact.normal;
         const float rebound = glm::max(bounce->rebound, 0.f);
-        ctx.world.physics.SetBodyLinearVelocity(*body, reflected * rebound);
+        ctx.world.physics.SetBodyLinearVelocity(contact.entity, reflected * rebound);
     }
 }
 
@@ -111,25 +108,25 @@ void CharacterMoveSystem(SystemContext &ctx)
         // moves the capsule and leaves turning it to gameplay.
         if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
         {
-            ctx.world.physics.SetCharacterFacing(intent, transform->rotation * glm::vec3(0.f, 0.f, -1.f));
+            ctx.world.physics.SetCharacterFacing(entity, transform->rotation * glm::vec3(0.f, 0.f, -1.f));
         }
 
         // Asked every step rather than on the edge of a keypress: standing up
         // under something low fails, and retrying is what lets a character stand
         // by itself once it has walked clear.
-        (void)ctx.world.physics.SetCharacterStance(intent, intent.stance);
+        (void)ctx.world.physics.SetCharacterStance(entity, intent.stance);
 
         // The crouch scale applies to the stance the character actually reached,
         // not the one it asked for — read back live, because a character blocked
         // under a ledge would otherwise walk at full speed while crouched.
-        const Physics::Stance stance = ctx.world.physics.GetCharacterState(intent).stance;
+        const Physics::Stance stance = ctx.world.physics.GetCharacterState(entity).stance;
         const float speed =
             stance == Physics::Stance::Crouching ? authored.walkSpeed * authored.crouchSpeedScale : authored.walkSpeed;
 
         // A request, not a velocity to take: the direction to gain speed along
         // and how much of it to ask for. What the character is already doing
         // stays in the controller between steps.
-        ctx.world.physics.MoveCharacter(intent, move * speed, jump);
+        ctx.world.physics.MoveCharacter(entity, move * speed, jump);
 
         // A request, consumed: one press is one jump however many steps pass
         // before it can fire.
@@ -141,9 +138,7 @@ void CharacterStateSystem(SystemContext &ctx)
 {
     for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
     {
-        (void)entity;
-
-        const Physics::CharacterState state = ctx.world.physics.GetCharacterState(character.Get());
+        const Physics::CharacterState state = ctx.world.physics.GetCharacterState(entity);
 
         // Skip the write when nothing moved, rather than stamp a change tick for
         // a state identical to the one already there. Character is transient and
@@ -164,7 +159,8 @@ void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics,
 {
     for (auto [entity, character] : scene.Query<Physics::Character>())
     {
-        const float eyeHeight = physics.GetCharacterEyeHeight(character, alpha);
+        (void)character;
+        const float eyeHeight = physics.GetCharacterEyeHeight(entity, alpha);
 
         for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
         {
