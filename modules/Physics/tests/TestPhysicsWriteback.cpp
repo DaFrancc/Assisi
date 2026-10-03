@@ -1,17 +1,15 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestPhysicsWriteback.cpp
-/// @brief Change detection on PhysicsWorld::InterpolateTransforms — the engine's
-/// one system that writes ECS::Transform every frame from outside the ECS.
+/// @brief PhysicsWorld::InterpolateTransforms — the engine's one system that
+/// writes ECS::Transform every frame from outside the ECS.
 ///
 /// Transform is ACOMP(tracked), so the pose this writes must stamp a change tick:
 /// PropagateTransforms's dirty-skip and network delta replication both decide
-/// whether to act on `Scene::Changed<Transform>`. A writeback through a plain
-/// Query yields a bare `Transform&` that cannot stamp, which reads as "the body
-/// moved but nothing changed" — the world matrix goes stale and the wire silently
-/// omits the entity. These cases pin the stamping down, and equally pin down that
-/// bodies the writeback *skips* are not stamped (an over-stamp would replicate the
-/// whole scene's transforms every tick).
+/// whether to act on `Scene::Changed<Transform>`. These cases pin the stamping
+/// down, pin down that bodies the writeback skips are not stamped (an over-stamp
+/// would replicate the whole scene's transforms every tick), and pin down that
+/// the writeback and a Transform written by anything else never undo each other.
 
 #include <doctest/doctest.h>
 
@@ -23,117 +21,193 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include "PhysicsTestScene.hpp"
+
 using namespace Assisi;
+using namespace Assisi::PhysicsTests;
 
 namespace
 {
 
-constexpr float kStep = 1.f / 60.f;
-
-/// A sphere is the cheapest shape with no orientation subtleties.
-constexpr Physics::PhysicsWorld::ColliderShapeDesc kBall{.shape  = Physics::ColliderShape::Sphere,
-                                                         .radius = 0.5f};
-
-/// Spawns an entity carrying a Transform plus a live Jolt body of @p motion at
-/// @p position, and steps the world twice so both interpolation snapshots exist.
-ECS::Entity SpawnSimulatedBody(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 position,
-                               Physics::BodyMotion motion)
+/// A body of @p isStatic at @p position, stepped twice so both interpolation
+/// snapshots straddle a real displacement.
+ECS::Entity SpawnSimulatedBody(TestScene &test, glm::vec3 position, bool isStatic)
 {
-    const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, ECS::Transform{.position = position}) != nullptr);
-
-    const Physics::RigidBody body =
-        world.AddBody(Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), position}, kBall, motion, {});
-    REQUIRE(scene.Add(e, body) != nullptr);
-
-    // Two steps: CaptureState retires the previous snapshot each time, so after two
-    // the prev/cur pair actually straddles a real displacement.
-    for (int32_t i = 0; i < 2; ++i)
-    {
-        world.Update(kStep);
-        world.CaptureState();
-    }
+    const ECS::Entity e = AddBody(test.scene, position, Ball(0.5f, isStatic));
+    Step(test.world, 2);
     return e;
 }
+
+/// Steps long enough for a body dropped onto the floor to come to rest and fall
+/// asleep.
+constexpr int32_t kSettleSteps = 600;
 
 } // namespace
 
 TEST_CASE("InterpolateTransforms: the physics writeback stamps the Transform change tick")
 {
-    ECS::Scene scene;
-    Physics::PhysicsWorld world;
-
-    const ECS::Entity e = SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Dynamic);
+    TestScene test;
+    const ECS::Entity e = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
 
     // Bookmark taken after every setup write, exactly as a replication or
     // propagation consumer would record it at the end of its own pass.
-    const uint64_t since = scene.CurrentChangeTick();
-    REQUIRE_FALSE(scene.Changed<ECS::Transform>(e, since));
+    const uint64_t since = test.scene.CurrentChangeTick();
+    REQUIRE_FALSE(test.scene.Changed<ECS::Transform>(e, since));
 
-    world.InterpolateTransforms(scene, 0.5f);
+    test.world.InterpolateTransforms(0.5f);
 
     // The body fell, so the pose really did change...
-    const ECS::Transform *t = scene.Get<ECS::Transform>(e);
+    const ECS::Transform *t = test.scene.Get<ECS::Transform>(e);
     REQUIRE(t != nullptr);
     REQUIRE(t->position.y < 10.f);
 
-    // ...and the change must be observable. Written through a plain Query this
-    // assertion fails while the value above still passes: the exact silent hole.
-    CHECK(scene.Changed<ECS::Transform>(e, since));
+    // ...and the change must be observable.
+    CHECK(test.scene.Changed<ECS::Transform>(e, since));
 }
 
 TEST_CASE("InterpolateTransforms: a static body is skipped and never stamped")
 {
-    ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    TestScene test;
+    const ECS::Entity e = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, true);
 
-    const ECS::Entity e = SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Static);
+    const uint64_t since = test.scene.CurrentChangeTick();
+    test.world.InterpolateTransforms(0.5f);
 
-    const uint64_t since = scene.CurrentChangeTick();
-    world.InterpolateTransforms(scene, 0.5f);
-
-    // The mutable reference is taken after the motion-type/snapshot skips, so a
-    // body the writeback declines to move burns no tick and stays off the wire.
-    CHECK_FALSE(scene.Changed<ECS::Transform>(e, since));
-    CHECK(scene.CurrentChangeTick() == since);
-
-    // And its authored pose is left exactly as placed.
-    const ECS::Transform *t = scene.Get<ECS::Transform>(e);
-    REQUIRE(t != nullptr);
-    CHECK(t->position.y == doctest::Approx(10.f));
+    CHECK_FALSE(test.scene.Changed<ECS::Transform>(e, since));
+    CHECK(test.scene.CurrentChangeTick() == since);
+    CHECK(test.scene.Get<ECS::Transform>(e)->position.y == doctest::Approx(10.f));
 }
 
-TEST_CASE("InterpolateTransforms: an entity without a RigidBody is untouched")
+TEST_CASE("InterpolateTransforms: an entity without a body is untouched")
 {
-    ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    TestScene test;
+    const ECS::Entity simulated = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
+    const ECS::Entity placement = test.scene.Create();
+    REQUIRE(test.scene.Add(placement, ECS::Transform{.position = {5.f, 5.f, 5.f}}) != nullptr);
 
-    // A plain placement entity, alongside a simulated one so the query is non-empty.
-    const ECS::Entity simulated = SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Dynamic);
-    const ECS::Entity placement = scene.Create();
-    REQUIRE(scene.Add(placement, ECS::Transform{.position = {5.f, 5.f, 5.f}}) != nullptr);
+    const uint64_t since = test.scene.CurrentChangeTick();
+    test.world.InterpolateTransforms(0.5f);
 
-    const uint64_t since = scene.CurrentChangeTick();
-    world.InterpolateTransforms(scene, 0.5f);
-
-    CHECK(scene.Changed<ECS::Transform>(simulated, since));
-    CHECK_FALSE(scene.Changed<ECS::Transform>(placement, since));
+    CHECK(test.scene.Changed<ECS::Transform>(simulated, since));
+    CHECK_FALSE(test.scene.Changed<ECS::Transform>(placement, since));
 }
 
 TEST_CASE("InterpolateTransforms: one moved body costs exactly one change tick")
 {
-    ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    TestScene test;
+    (void)SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
 
-    (void)SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Dynamic);
+    const uint64_t since = test.scene.CurrentChangeTick();
+    test.world.InterpolateTransforms(0.5f);
 
-    const uint64_t since = scene.CurrentChangeTick();
-    world.InterpolateTransforms(scene, 0.5f);
+    // Position and rotation are both written, but through a single reference:
+    // every mutable access stamps, and at hundreds of bodies a frame the extra
+    // ticks would inflate every consumer's bookmark for nothing.
+    CHECK(test.scene.CurrentChangeTick() == since + 1);
+}
 
-    // Position and rotation are both written, but through a single reference taken
-    // from the Mut proxy — every mutable access stamps, so writing the two fields
-    // through the proxy directly would burn two ticks per body per frame. Not a
-    // correctness bug (ticks are uint64_t and over-reporting is safe), but at
-    // hundreds of bodies × frames it inflates every consumer's bookmark for free.
-    CHECK(scene.CurrentChangeTick() == since + 1);
+TEST_CASE("InterpolateTransforms: a Transform written since the last writeback is left for the reconcile")
+{
+    // A gizmo drag on a frame that runs no fixed step: the write has not reached
+    // the body yet, and the writeback must not put the old pose back over it.
+    TestScene test;
+    const ECS::Entity e = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
+    test.world.InterpolateTransforms(0.5f);
+
+    const glm::vec3 dragged{4.f, 20.f, 4.f};
+    test.scene.GetMut<ECS::Transform>(e)->position = dragged;
+    test.world.InterpolateTransforms(0.75f);
+
+    CHECK(test.scene.Get<ECS::Transform>(e)->position == dragged);
+}
+
+TEST_CASE("InterpolateTransforms: turning a character between steps does not stop it being drawn moving")
+{
+    // A look system turns the character every frame. The writeback never writes
+    // a character's rotation, so that write holds nothing back: the position has
+    // to keep following, or the character renders frozen between steps and
+    // jumps at each one.
+    TestScene test;
+    AddFloor(test.scene);
+    const ECS::Entity walker = AddCharacter(test.scene, {0.f, 0.f, 0.f});
+    constexpr glm::vec3 kWalk{3.f, 0.f, 0.f};
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        test.world.MoveCharacter(walker, kWalk, /*jump=*/ false);
+        Step(test.world);
+    }
+    test.world.InterpolateTransforms(0.f);
+    const glm::vec3 before = test.scene.Get<ECS::Transform>(walker)->position;
+
+    const glm::quat turned = glm::angleAxis(1.f, glm::vec3(0.f, 1.f, 0.f));
+    test.scene.GetMut<ECS::Transform>(walker)->rotation = turned;
+    test.world.InterpolateTransforms(1.f);
+
+    const ECS::Transform *after = test.scene.Get<ECS::Transform>(walker);
+    CHECK(after->position.x > before.x);
+    CHECK(after->rotation == turned);
+}
+
+TEST_CASE("InterpolateTransforms: a mutable access that changes nothing does not stop the writeback")
+{
+    TestScene test;
+    const ECS::Entity e = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
+    test.world.InterpolateTransforms(0.f);
+    const float before = test.scene.Get<ECS::Transform>(e)->position.y;
+
+    (void)test.scene.GetMut<ECS::Transform>(e);
+    test.world.InterpolateTransforms(1.f);
+
+    CHECK(test.scene.Get<ECS::Transform>(e)->position.y < before);
+}
+
+TEST_CASE("InterpolateTransforms: a scale written between steps still reaches the collider")
+{
+    TestScene test;
+    const ECS::Entity e = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
+    test.world.InterpolateTransforms(0.f);
+
+    const glm::vec3 grown{2.f, 2.f, 2.f};
+    test.scene.GetMut<ECS::Transform>(e)->scale = grown;
+    test.world.InterpolateTransforms(1.f);
+    test.world.Reconcile();
+
+    CHECK(test.world.GetColliderScale(e) == grown);
+}
+
+TEST_CASE("InterpolateTransforms: the writeback's own writes are never pushed back to the body")
+{
+    // The same fall run twice, once with a render-time blend between steps.
+    // Were the blended Transform read back as someone else's write, the second
+    // body would be dragged a fraction of a step behind every frame.
+    TestScene plain;
+    TestScene rendered;
+    const ECS::Entity a = AddBody(plain.scene, {0.f, 30.f, 0.f}, Ball(0.5f, false));
+    const ECS::Entity b = AddBody(rendered.scene, {0.f, 30.f, 0.f}, Ball(0.5f, false));
+
+    constexpr int32_t kSteps = 30;
+    for (int32_t i = 0; i < kSteps; ++i)
+    {
+        Step(plain.world);
+        Step(rendered.world);
+        rendered.world.InterpolateTransforms(0.5f);
+    }
+
+    CHECK(rendered.world.GetBodyPose(b).position.y == doctest::Approx(plain.world.GetBodyPose(a).position.y));
+}
+
+TEST_CASE("InterpolateTransforms: a body that falls asleep ends with its Transform exactly at rest")
+{
+    TestScene test;
+    AddFloor(test.scene);
+    const ECS::Entity e = AddBody(test.scene, {0.f, 2.f, 0.f}, Ball(0.5f, false));
+
+    for (int32_t i = 0; i < kSettleSteps; ++i)
+    {
+        Step(test.world);
+        test.world.InterpolateTransforms(0.5f);
+    }
+    REQUIRE_FALSE(test.world.IsBodyActive(e));
+
+    CHECK(test.scene.Get<ECS::Transform>(e)->position == test.world.GetBodyPose(e).position);
 }

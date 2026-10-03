@@ -141,8 +141,7 @@ struct ComponentMeta
     /// construct/getMutable hooks — those are all null. This is the explicit
     /// gate consumers must check before invoking a hook; do not probe the hooks
     /// for null yourself.
-    /// Examples: Physics::RigidBody (wraps a live Jolt handle that must never be
-    /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).
+    /// Example: Runtime::DestroyTag (a transient per-frame lifecycle marker).
     bool serializable = true;
 
     /// @brief Whether this component opts into ECS change detection (ACOMP(tracked)).

@@ -115,13 +115,13 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
     REQUIRE(id.has_value());
     CHECK(world.scene.AliveCount() == 2);
 
-    // Placed, and with a live Jolt body — the spawn runs the same physics build a
-    // level load does, or a spawned car would have no collision at all.
+    // Placed, and with a live Jolt body once the world reconciles, at the pose the
+    // spawn propagated — or a spawned car would have no collision at all.
     const ECS::Entity body = App::FindMember(world, *id, "body");
     REQUIRE(body != ECS::NullEntity);
-    const Physics::RigidBody *rb = world.scene.Get<Physics::RigidBody>(body);
-    REQUIRE(rb != nullptr);
-    CHECK(world.physics.GetBodyTransform(*rb).first.x == doctest::Approx(12.f));
+    world.physics.Reconcile();
+    REQUIRE(world.physics.HasBody(body));
+    CHECK(world.physics.GetBodyPose(body).position.x == doctest::Approx(12.f));
 
     // The source check is the whole reason the table exists.
     CHECK(App::FindInstance(world, *id, "car.abp") != nullptr);
@@ -152,17 +152,39 @@ TEST_CASE("Verbs: spawning a blueprint holding a character builds the controller
         walker = entity;
     }
     REQUIRE(walker != ECS::NullEntity);
+    world.physics.Reconcile();
 
     // The controller exists, and the entity did not also acquire a rigid body —
     // a character owns one internally, and a second would collide with its own.
     CHECK(world.scene.Get<Physics::Character>(walker) != nullptr);
-    CHECK(world.scene.Get<Physics::RigidBody>(walker) == nullptr);
+    CHECK(world.scene.Get<Physics::RigidBodyDescriptor>(walker) == nullptr);
+    CHECK(world.physics.HasBody(walker));
 
     // And it is really in the simulation: a ray from above finds it and can name
     // the entity behind it.
     const auto hit = world.physics.CastRay({0.f, 5.f, 0.f}, {0.f, -10.f, 0.f}, {}, ECS::NullEntity);
     REQUIRE(hit.has_value());
     CHECK(hit->entity == walker);
+}
+
+TEST_CASE("Verbs: destroying a blueprint holding a character takes the controller with it")
+{
+    const std::filesystem::path root = FreshRoot("character_destroy");
+    Write(root, "walker.abp", WalkerFile());
+
+    App::World world;
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "walker.abp", {});
+    REQUIRE(id.has_value());
+    world.physics.Reconcile();
+
+    // The control: the character is there to be hit before the destroy.
+    REQUIRE(world.physics.CastRay({0.f, 5.f, 0.f}, {0.f, -10.f, 0.f}, {}, ECS::NullEntity).has_value());
+
+    REQUIRE(App::DestroyInstance(world, *id));
+    world.scene.FlushDestroyed();
+    world.physics.Reconcile();
+
+    CHECK_FALSE(world.physics.CastRay({0.f, 5.f, 0.f}, {0.f, -10.f, 0.f}, {}, ECS::NullEntity).has_value());
 }
 
 TEST_CASE("Verbs: a failed spawn leaves nothing")
@@ -205,11 +227,9 @@ TEST_CASE("Verbs: destroy reaches only tagged members and spares the loose neigh
 
 TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components")
 {
-    // A Jolt body is a handle in the physics world, not the RigidBody component
-    // that names it. Destroying the entity drops the component and leaves the body
-    // simulating, so the car keeps colliding after every last trace of it has left
-    // the scene — invisible to any assertion about entities, which is why the
-    // existing destroy case stays green with the RemoveBody call deleted.
+    // Destroying the entities has to take their Jolt bodies too, or the car keeps
+    // colliding after every last trace of it has left the scene — invisible to any
+    // assertion about entities alone.
     const std::filesystem::path root = FreshRoot("destroy_bodies");
     Write(root, "car.abp", CarFile());
 
@@ -221,29 +241,31 @@ TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components
     // The car's body is a static half-metre box at the origin, so a ball dropped
     // down the y axis lands on top of it at about y = 0.75.
     constexpr float kStep = 1.f / 60.f;
-    constexpr Physics::PhysicsWorld::ColliderShapeDesc kBall{.shape = Physics::ColliderShape::Sphere,
-                                                             .radius = 0.25f};
-    const Physics::RigidBody probe =
-        world.physics.AddBody(Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {0.f, 3.f, 0.f}}, kBall,
-                              Physics::BodyMotion::Dynamic, {});
+    const ECS::Entity probe = world.scene.Create();
+    ECS::Transform start;
+    start.position = {0.f, 3.f, 0.f};
+    (void)world.scene.Add(probe, start);
+    Physics::RigidBodyDescriptor ball{};
+    ball.shape  = Physics::ColliderShape::Sphere;
+    ball.radius = 0.25f;
+    (void)world.scene.Add(probe, ball);
 
     for (int32_t i = 0; i < 180; ++i)
         world.physics.Update(kStep);
 
     // The control. Without it the case below would pass on a world where the ball
     // never had anything to land on in the first place.
-    REQUIRE(world.physics.GetBodyTransform(probe).first.y > 0.f);
+    REQUIRE(world.physics.GetBodyPose(probe).position.y > 0.f);
 
     REQUIRE(App::DestroyInstance(world, *id));
     world.scene.FlushDestroyed();
 
     // Same ball, same drop, nothing left to catch it.
-    world.physics.SetBodyTransform(probe, {0.f, 3.f, 0.f}, glm::quat(1.f, 0.f, 0.f, 0.f));
-    world.physics.SetBodyLinearVelocity(probe, {0.f, 0.f, 0.f});
+    world.physics.Teleport(probe, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {0.f, 3.f, 0.f}});
     for (int32_t i = 0; i < 180; ++i)
         world.physics.Update(kStep);
 
-    CHECK(world.physics.GetBodyTransform(probe).first.y < -5.f);
+    CHECK(world.physics.GetBodyPose(probe).position.y < -5.f);
 }
 
 TEST_CASE("Verbs: a pruned member lives on, and destroy no longer reaches it")

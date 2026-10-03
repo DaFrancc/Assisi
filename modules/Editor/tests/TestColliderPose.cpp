@@ -4,19 +4,19 @@
 /// @brief The collider overlay draws where the body is, not where its Transform
 /// says it is relative to a parent.
 ///
-/// Jolt places bodies in world space, so PhysicsWorld::AddBodyFromDescriptor
-/// resolves a parented entity through its parent's world matrix before creating
-/// the body. Tracing the entity's *local* pose instead would outline every rigid
+/// Jolt places bodies in world space, so the physics world resolves a parented
+/// entity through its parent's world matrix before creating the body. Tracing the entity's *local* pose instead would outline every rigid
 /// body under a Parent — every physics-driven member of a blueprint instance — at
 /// its parent-relative offset, while the mesh silhouette drawn in the same loop,
 /// which does use the world matrix, sits correctly on the mesh. The collider view
 /// is what someone turns on to find out where a body actually is, so the two
 /// disagreeing on screen is worse than either being wrong alone.
 ///
-/// The pose is also deliberately scale-free at both ends: a collider's dimensions
-/// are absolute world units, so neither the parent's scale nor the body's own may
-/// stretch the wireframe. That is what rules out the tempting one-liner of
-/// reading Transform::worldMatrix, which carries both.
+/// The pose is also deliberately scale-free at both ends: the collider's scale is
+/// the shape's, which the caller composes in from the physics world, so neither
+/// the parent's scale nor the body's own may reach the pose. That is what rules
+/// out the tempting one-liner of reading Transform::worldMatrix, which carries
+/// both.
 
 #include <doctest/doctest.h>
 
@@ -140,12 +140,12 @@ TEST_CASE("ColliderBodyModel: a parent's scale moves the body but never stretche
 
     // The offset is in the parent's space, so it scales with it...
     CHECK(NearlyEqual(TranslationOf(model), ECS::ComposeTransform(parentPose, local).position));
-    // ...but the collider's dimensions are absolute world units, exactly as
-    // PhysicsWorld built the shape, so nothing scales the wireframe itself.
+    // ...but the pose carries none of it: the collider's scale is the caller's
+    // to compose in.
     CHECK(IsUnscaled(model));
 }
 
-TEST_CASE("ColliderBodyModel: the body's own scale does not reach the wireframe")
+TEST_CASE("ColliderBodyModel: the body's own scale does not reach the pose")
 {
     const ECS::Transform parentPose = ParentPose();
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
@@ -156,9 +156,8 @@ TEST_CASE("ColliderBodyModel: the body's own scale does not reach the wireframe"
     const ECS::Entity body = AddParentedBody(scene, parentPose, local);
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
-    // Physics ignores the entity's scale when it builds the body. Non-uniform at
-    // that, so composing it in would shear the basis rather than merely stretch
-    // it — the rotation read back would not even be the body's.
+    // Non-uniform, so composing it in here would shear the basis rather than
+    // merely stretch it — the rotation read back would not even be the body's.
     CHECK(IsUnscaled(model));
     CHECK(NearlyEqual(RotationOf(model), ECS::ComposeTransform(parentPose, local).rotation));
 }

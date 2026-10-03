@@ -25,12 +25,13 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include "PhysicsTestScene.hpp"
+
 using namespace Assisi;
+using Assisi::PhysicsTests::kStep;
 
 namespace
 {
-
-constexpr float kStep = 1.f / 60.f;
 
 /// Loose enough for a quaternion round-tripped through two matrix casts, tight
 /// enough that applying a 90° parent rotation one time too many cannot pass.
@@ -66,12 +67,19 @@ glm::mat4 ParentUnder(ECS::Scene &scene, ECS::Entity child)
     return scene.Get<ECS::Transform>(parent)->worldMatrix;
 }
 
+/// Gives @p entity a ball body, built by the next reconcile.
+void AddBall(ECS::Scene &scene, Physics::PhysicsWorld &world, ECS::Entity entity)
+{
+    REQUIRE(scene.Add(entity, kBall) != nullptr);
+    world.Reconcile();
+}
+
 } // namespace
 
-TEST_CASE("AddBodyFromDescriptor: a parented body is created at its composed world pose")
+TEST_CASE("A parented body is created at its composed world pose")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
@@ -80,32 +88,31 @@ TEST_CASE("AddBodyFromDescriptor: a parented body is created at its composed wor
     REQUIRE(scene.Add(entity, local) != nullptr);
     const glm::mat4 parent = ParentUnder(scene, entity);
 
-    const Physics::RigidBody body = world.AddBodyFromDescriptor(scene, entity, local, kBall);
+    AddBall(scene, world, entity);
 
-    const auto [position, rotation] = world.GetBodyTransform(body);
-    CHECK(NearlyEqual(position, glm::vec3(parent * glm::vec4(local.position, 1.f))));
-    CHECK(NearlyEqual(rotation, glm::quat_cast(glm::mat3(parent)) * local.rotation));
+    const Physics::Pose pose = world.GetBodyPose(entity);
+    CHECK(NearlyEqual(pose.position, glm::vec3(parent * glm::vec4(local.position, 1.f))));
+    CHECK(NearlyEqual(pose.rotation, glm::quat_cast(glm::mat3(parent)) * local.rotation));
 }
 
-TEST_CASE("AddBodyFromDescriptor: an entity without a Parent takes its local pose as world")
+TEST_CASE("An entity without a Parent takes its local pose as world")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, local) != nullptr);
 
-    const Physics::RigidBody body = world.AddBodyFromDescriptor(scene, entity, local, kBall);
-    const auto [position, rotation] = world.GetBodyTransform(body);
-    CHECK(NearlyEqual(position, local.position));
+    AddBall(scene, world, entity);
+    CHECK(NearlyEqual(world.GetBodyPose(entity).position, local.position));
 }
 
-TEST_CASE("AddBodyFromDescriptor: a parent with no Transform defines no space, so the local pose is world")
+TEST_CASE("A parent with no Transform defines no space, so the local pose is world")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
@@ -115,15 +122,14 @@ TEST_CASE("AddBodyFromDescriptor: a parent with no Transform defines no space, s
     REQUIRE(scene.Add(entity, ECS::Parent{.parent = poseless}) != nullptr);
     (void)ECS::PropagateTransforms(scene, 0);
 
-    const Physics::RigidBody body = world.AddBodyFromDescriptor(scene, entity, local, kBall);
-    const auto [position, rotation] = world.GetBodyTransform(body);
-    CHECK(NearlyEqual(position, local.position));
+    AddBall(scene, world, entity);
+    CHECK(NearlyEqual(world.GetBodyPose(entity).position, local.position));
 }
 
 TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back to the local field")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
@@ -131,7 +137,7 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, local) != nullptr);
     const glm::mat4 parent = ParentUnder(scene, entity);
-    const Physics::RigidBody body = world.AddBodyFromDescriptor(scene, entity, local, kBall);
+    AddBall(scene, world, entity);
 
     // Two steps so both interpolation snapshots straddle a real displacement; the
     // ball falls under gravity, so the world pose is now something the parent
@@ -142,7 +148,7 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
         world.CaptureState();
     }
 
-    world.InterpolateTransforms(scene, 1.f);
+    world.InterpolateTransforms(1.f);
 
     const ECS::Transform *written = scene.Get<ECS::Transform>(entity);
     REQUIRE(written != nullptr);
@@ -150,9 +156,9 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
     // Recomposed rather than re-derived: asserting that parent × local equals the
     // body's world pose tests the round trip without restating the same algebra
     // the writeback used, which would pass even if both halves were wrong.
-    const auto [worldPosition, worldRotation] = world.GetBodyTransform(body);
-    CHECK(NearlyEqual(glm::vec3(parent * glm::vec4(written->position, 1.f)), worldPosition));
-    CHECK(NearlyEqual(glm::quat_cast(glm::mat3(parent)) * written->rotation, worldRotation));
+    const Physics::Pose worldPose = world.GetBodyPose(entity);
+    CHECK(NearlyEqual(glm::vec3(parent * glm::vec4(written->position, 1.f)), worldPose.position));
+    CHECK(NearlyEqual(glm::quat_cast(glm::mat3(parent)) * written->rotation, worldPose.rotation));
 
     // And it actually fell: a writeback that silently did nothing would satisfy the
     // round trip above with the spawn pose still in place.
@@ -162,7 +168,7 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
 TEST_CASE("InterpolateTransforms: an unparented body in a parented scene is untouched by the conversion")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world;
+    Physics::PhysicsWorld world{scene};
 
     // One parented entity beside a loose one — the ordinary case in any scene
     // holding one instance and a hundred loose entities. The loose one must come
@@ -175,17 +181,17 @@ TEST_CASE("InterpolateTransforms: an unparented body in a parented scene is unto
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, local) != nullptr);
 
-    const Physics::RigidBody body = world.AddBodyFromDescriptor(scene, entity, local, kBall);
-    CHECK(NearlyEqual(world.GetBodyTransform(body).first, local.position));
+    AddBall(scene, world, entity);
+    CHECK(NearlyEqual(world.GetBodyPose(entity).position, local.position));
 
     for (int32_t i = 0; i < 2; ++i)
     {
         world.Update(kStep);
         world.CaptureState();
     }
-    world.InterpolateTransforms(scene, 1.f);
+    world.InterpolateTransforms(1.f);
 
     const ECS::Transform *written = scene.Get<ECS::Transform>(entity);
     REQUIRE(written != nullptr);
-    CHECK(NearlyEqual(written->position, world.GetBodyTransform(body).first));
+    CHECK(NearlyEqual(written->position, world.GetBodyPose(entity).position));
 }

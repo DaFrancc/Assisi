@@ -147,6 +147,7 @@ void GameApp::OnStart()
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
     _worlds.SetSimulateFrom(GetConfig().simulateFrom);
+    _worlds.SetMaxPhysicsBodies(GetConfig().maxPhysicsBodies);
 
     // Before the level load and not after it: the load publishes meshes and
     // materials into the asset cache, which the renderer owns the bindless table
@@ -540,7 +541,7 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         // so bodies move at the display's refresh rate rather than the physics
         // rate.
         ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _world->physics.InterpolateTransforms(_world->scene, GetInterpolationAlpha());
+        _world->physics.InterpolateTransforms(GetInterpolationAlpha());
         PlaceCharacterEyes(_world->scene, _world->physics, GetInterpolationAlpha());
     }
 

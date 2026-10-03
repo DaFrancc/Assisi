@@ -11,6 +11,7 @@ target_sources(Assisi-Physics
     "src/PhysicsWorld.cpp"
     "src/PhysicsContacts.cpp"
     "src/PhysicsQueries.cpp"
+    "src/PhysicsReconcile.cpp"
     "src/PhysicsCharacters.cpp"
     "src/PhysicsWriteback.cpp"
 )

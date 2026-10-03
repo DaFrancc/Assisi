@@ -30,9 +30,9 @@ namespace Assisi::Editor
 // Ctrl snaps.
 //
 // The gizmo edits a world-space matrix. We convert it back to the entity's local
-// TRS (so parented entities move correctly), write it through GetMut so the change
-// is stamped and PropagateTransforms re-runs, then push the new pose to any
-// RigidBody — in that order, always.
+// TRS (so parented entities move correctly) and write it through GetMut, so the
+// change is stamped: PropagateTransforms re-runs, and the physics world moves the
+// body on its next reconcile.
 //
 // Drawn into the background draw list: over the scene, under the ImGui panels.
 // IsUsingGizmo() lets entity picking ignore clicks meant for it.
@@ -227,11 +227,6 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
         memberTransform->position = glm::vec3(delta * glm::vec4(memberTransform->position, 1.f));
         memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
         memberTransform->scale *= scaleRatio;
-
-        // Body last, after the transform is written: it is being kept in step, never
-        // consulted.
-        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(member))
-            _physics->SetBodyTransform(*body, memberTransform->position, memberTransform->rotation);
     }
 
     Assisi::Runtime::BlueprintInstance updated = *row;
@@ -467,18 +462,6 @@ bool EditorApp::DrawTransformGizmoHandles()
     {
         _captureEditingActive = true;
 
-        // Take the body out of the solver's hands for the drag, as the inspector does
-        // for its fields. A body left Dynamic while it is teleported into whatever it
-        // overlaps makes the solver resolve that penetration every step: the object
-        // creeps and turns on its own under a rotate, and stutters free under a
-        // translate. You are placing it, not throwing it at something.
-        //
-        // Raised *before* the pose is applied below, so the drag's first frame is
-        // already frozen. The thaw is at the end of OnImGui, keyed on this request
-        // not being raised, so ending the drag by any route — release, deselect, the
-        // gizmo vanishing because the world selector moved — restores the body.
-        RequestPhysicsFreeze();
-
         // Opens the drag on the first frame it is held and fixes what it names;
         // every frame after this one only re-asserts the hold.
         _gizmoDrag.Hold(_selectedEntity, alsoDragged);
@@ -539,13 +522,6 @@ void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat
     mutableTransform->position = translation;
     mutableTransform->rotation = glm::normalize(orientation);
     mutableTransform->scale = scale;
-
-    // Body last, after the pose is written. Position and rotation only — scale is not
-    // a body property, and the inspector syncs the same two.
-    if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
-    {
-        _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
-    }
 }
 
 } // namespace Assisi::Editor

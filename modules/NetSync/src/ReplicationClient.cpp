@@ -44,7 +44,6 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
 {
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
     _descriptorComponentId                          = registry.IdOf(typeid(Physics::RigidBodyDescriptor));
-    _rigidBodyComponentId                           = registry.IdOf(typeid(Physics::RigidBody));
 }
 
 void ReplicationClient::SendHello()
@@ -779,16 +778,11 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                 return false;
 
             // Losing the descriptor is not an ordinary removal: the mirror stops
-            // being body-corrected and becomes an interpolated visual, so its
-            // Jolt body must go too. Left behind, the body outlives its authority
-            // and keeps colliding — an invisible obstacle — and the stale
-            // transient RigidBody blocks any future rebuild, since SyncMirrorBody
-            // keys off its presence.
-            if (_physics != nullptr && componentId == _descriptorComponentId &&
-                _scene.Get<Physics::RigidBody>(entity) != nullptr)
+            // being body-corrected and becomes an interpolated visual. Its body
+            // goes on the physics world's next reconcile.
+            if (componentId == _descriptorComponentId)
             {
                 DestroyMirrorBody(netId);
-                _scene.RemoveById(entity, _rigidBodyComponentId);
             }
 
             removed.push_back(componentId);

@@ -203,6 +203,27 @@ TEST_CASE("DestroyAllExcept keeps one world and gives it both roles")
     CHECK(worlds.Edited() == &keep);
 }
 
+namespace
+{
+
+/// A box entity at @p at, given a body by the world's next reconcile.
+Assisi::ECS::Entity SpawnBox(World &world, glm::vec3 at, glm::vec3 halfExtents, bool isStatic)
+{
+    const Assisi::ECS::Entity entity = world.scene.Create();
+    world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
+
+    Assisi::Physics::RigidBodyDescriptor descriptor{};
+    descriptor.halfExtents = halfExtents;
+    descriptor.isStatic    = isStatic;
+    (void)world.scene.Add(entity, descriptor);
+    return entity;
+}
+
+/// The half extents RigidBodyDescriptor defaults to.
+const glm::vec3 kUnitBox = Assisi::Physics::RigidBodyDescriptor{}.halfExtents;
+
+} // namespace
+
 TEST_CASE("An unrendered world's transforms follow its physics")
 {
     // The S2 mechanism, and the reason it is two steps: Jolt poses reach Transform
@@ -212,15 +233,7 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     WorldManager worlds;
     World &world = worlds.Create("Falling");
 
-    const Assisi::ECS::Entity entity = world.scene.Create();
-    auto *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
-    REQUIRE(transform != nullptr);
-    transform->position = {0.f, 10.f, 0.f};
-
-    const Assisi::Physics::RigidBody body = world.physics.AddBody(
-        Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 10.f, 0.f}},
-        Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic, {});
-    REQUIRE(world.scene.Add<Assisi::Physics::RigidBody>(entity, body) != nullptr);
+    const Assisi::ECS::Entity entity = SpawnBox(world, {0.f, 10.f, 0.f}, kUnitBox, /*isStatic=*/ false);
 
     constexpr float kStep = 1.f / 60.f;
     for (int32_t i = 0; i < 30; ++i) // half a second of free fall
@@ -244,6 +257,31 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     CHECK(world.propagationTick > 0u);
 }
 
+TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
+{
+    // The editor's Stop puts every entity back at its own handle and calls this:
+    // a body still falling when play stopped must not still be falling when
+    // play starts again.
+    WorldManager worlds;
+    World &world = worlds.Create("Restarted");
+    const glm::vec3 spawn{0.f, 10.f, 0.f};
+    const Assisi::ECS::Entity entity = SpawnBox(world, spawn, kUnitBox, /*isStatic=*/ false);
+
+    constexpr float kStep = 1.f / 60.f;
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        world.physics.Update(kStep);
+        world.physics.CaptureState();
+    }
+    REQUIRE(world.physics.GetBodyVelocity(entity).first.y < 0.f);
+
+    world.scene.GetMut<Assisi::ECS::Transform>(entity)->position = spawn;
+    (void)BuildSceneBodies(world.scene, world.physics);
+
+    CHECK(world.physics.GetBodyVelocity(entity).first == glm::vec3(0.f));
+    CHECK(world.physics.GetBodyPose(entity).position == spawn);
+}
+
 TEST_CASE("Resident worlds simulate independently and outlive each other")
 {
     // Two levels resident at once must be two physics spaces, not one shared one:
@@ -255,24 +293,11 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     worlds.SetActive(falling);
     worlds.SetEdited(falling);
 
-    const auto spawnBody = [](World &world, glm::vec3 at)
-                           {
-                               const Assisi::ECS::Entity entity = world.scene.Create();
-                               world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
-                               const Assisi::Physics::RigidBody body = world.physics.AddBody(
-                                   Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, at},
-                                   Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic, {});
-                               (void)world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
-                               return entity;
-                           };
-
-    const Assisi::ECS::Entity a = spawnBody(falling, {0.f, 5.f, 0.f});
-    const Assisi::ECS::Entity b = spawnBody(caught, {0.f, 5.f, 0.f});
+    const Assisi::ECS::Entity a = SpawnBox(falling, {0.f, 5.f, 0.f}, kUnitBox, /*isStatic=*/ false);
+    const Assisi::ECS::Entity b = SpawnBox(caught, {0.f, 5.f, 0.f}, kUnitBox, /*isStatic=*/ false);
 
     // Only the second world has ground under it.
-    caught.physics.AddBody(Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}},
-                           Assisi::Physics::PhysicsWorld::ColliderShapeDesc{.halfExtents = {50.f, 0.5f, 50.f}},
-                           Assisi::Physics::BodyMotion::Static, {});
+    (void)SpawnBox(caught, {0.f, 0.f, 0.f}, {50.f, 0.5f, 50.f}, /*isStatic=*/ true);
 
     falling.simulate = true;
     caught.simulate = true;
@@ -394,13 +419,9 @@ TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destina
 
     // A parent with a dynamic body, a child parented to it, and a bystander the
     // child also references (which will be left behind).
-    const Assisi::ECS::Entity parent = src.scene.Create();
-    src.scene.Add<Assisi::ECS::Transform>(parent)->position = {1.f, 2.f, 3.f};
-    (void)src.scene.Add<Assisi::Physics::RigidBodyDescriptor>(parent, Assisi::Physics::RigidBodyDescriptor{});
-    const Assisi::Physics::RigidBody body =
-        src.physics.AddBodyFromDescriptor(src.scene, parent, *src.scene.Get<Assisi::ECS::Transform>(parent),
-                                          *src.scene.Get<Assisi::Physics::RigidBodyDescriptor>(parent));
-    (void)src.scene.Add<Assisi::Physics::RigidBody>(parent, body);
+    const Assisi::ECS::Entity parent = SpawnBox(src, {1.f, 2.f, 3.f}, kUnitBox, /*isStatic=*/ false);
+    src.physics.Reconcile();
+    REQUIRE(src.physics.HasBody(parent));
 
     const Assisi::ECS::Entity child = src.scene.Create();
     (void)src.scene.Add<Assisi::ECS::Transform>(child);
@@ -447,8 +468,11 @@ TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destina
     CHECK(dst.scene.Get<Assisi::ECS::Parent>(movedChild)->parent == movedRoot);
 
     // The migrated parent has a live body in the DESTINATION world and it falls
-    // there, independently of the (now empty of dynamics) source world.
-    REQUIRE(dst.scene.Get<Assisi::Physics::RigidBody>(movedRoot) != nullptr);
+    // there, while the source world let its own go.
+    src.physics.Reconcile();
+    dst.physics.Reconcile();
+    CHECK_FALSE(src.physics.HasBody(parent));
+    REQUIRE(dst.physics.HasBody(movedRoot));
     dst.simulate = true;
     constexpr float kStep = 1.f / 60.f;
     for (int32_t i = 0; i < 30; ++i)
@@ -546,9 +570,7 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
 
     // A live dynamic body in the running world, so its Update() does real solver
     // work (island builder, temp allocator) concurrently with the worker's build.
-    (void)start.physics.AddBody(Assisi::Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, {0.f, 20.f, 0.f}},
-                                Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
-                                Assisi::Physics::BodyMotion::Dynamic, {});
+    (void)SpawnBox(start, {0.f, 20.f, 0.f}, kUnitBox, /*isStatic=*/ false);
 
     World *const loading = worlds.BeginLoadLevel("levels/Big.alvl");
     REQUIRE(loading != nullptr);

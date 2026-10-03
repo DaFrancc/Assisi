@@ -42,9 +42,9 @@
           "collidesWith": 31,
           "enableCCD": false,
           "halfExtents": [
-            10.0,
             0.5,
-            10.0
+            0.5,
+            0.5
           ],
           "halfHeight": 0.5,
           "isStatic": true,

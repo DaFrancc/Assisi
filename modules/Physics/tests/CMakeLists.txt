@@ -10,6 +10,7 @@ add_executable(Assisi-Physics-Tests
   TestContactEvents.cpp
   TestParentedBodies.cpp
   TestPhysicsWriteback.cpp
+  TestTransformPush.cpp
   TestTriggers.cpp
   TestWorldQueries.cpp
 )

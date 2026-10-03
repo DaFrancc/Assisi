@@ -53,8 +53,8 @@ struct PhysicsHarness
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    Physics::PhysicsWorld serverPhysics;
-    Physics::PhysicsWorld clientPhysics;
+    Physics::PhysicsWorld serverPhysics{serverScene};
+    Physics::PhysicsWorld clientPhysics{clientScene};
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -99,7 +99,7 @@ struct PhysicsHarness
         serverPhysics.Update(kFixedStep);
         serverPhysics.CaptureState();
         if (runRenderWriteback)
-            serverPhysics.InterpolateTransforms(serverScene, 1.f);
+            serverPhysics.InterpolateTransforms(1.f);
 
         clientPhysics.Update(kFixedStep);
         clientPhysics.CaptureState();
@@ -109,7 +109,7 @@ struct PhysicsHarness
         // The client's render path, in the order a windowed one runs it: the
         // physics writeback first, then the view-side smoothing *on top of* the
         // pose it just wrote. Reversed, the offset would simply be overwritten.
-        clientPhysics.InterpolateTransforms(clientScene, 1.f);
+        clientPhysics.InterpolateTransforms(1.f);
         client.SmoothView(0.0, kFixedStep);
 
         server.Tick(tick++);
@@ -143,7 +143,9 @@ ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &physics, glm::vec
     if (replicated)
         (void)scene.Add<Replicated>(entity, Replicated{});
 
-    (void)physics.AddBodyFromDescriptor(scene, entity, transform, descriptor);
+    // Built now rather than on the next step, so a test can ask about the body
+    // straight away.
+    physics.Reconcile();
     return entity;
 }
 
@@ -169,16 +171,11 @@ float PoseError(PhysicsHarness &harness, ECS::Entity entity)
     if (mirror == ECS::NullEntity)
         return std::numeric_limits<float>::infinity();
 
-    const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
-    const Physics::RigidBody *replica       = harness.clientScene.Get<Physics::RigidBody>(mirror);
-    if (authoritative == nullptr || replica == nullptr)
+    if (!harness.serverPhysics.HasBody(entity) || !harness.clientPhysics.HasBody(mirror))
         return std::numeric_limits<float>::infinity();
 
-    const auto [truthPosition, truthRotation]   = harness.serverPhysics.GetBodyTransform(*authoritative);
-    const auto [mirrorPosition, mirrorRotation] = harness.clientPhysics.GetBodyTransform(*replica);
-    (void)truthRotation;
-    (void)mirrorRotation;
-    return glm::length(truthPosition - mirrorPosition);
+    return glm::length(harness.serverPhysics.GetBodyPose(entity).position -
+                       harness.clientPhysics.GetBodyPose(mirror).position);
 }
 
 } // namespace
@@ -209,18 +206,16 @@ TEST_CASE("a pile settles on the server, and the client's own bodies settle to t
 
         // The client built a real dynamic body from the replicated descriptor —
         // not a kinematic ghost, and not an interpolated Transform.
-        const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
-        REQUIRE(replica != nullptr);
+        REQUIRE(harness.clientPhysics.HasBody(mirror));
 
         CHECK(PoseError(harness, entity) < 0.05f);
 
         // ...and both sides agree it has stopped. The sleep bit is replicated
         // state, so this is the client obeying a verdict rather than reaching
         // the same conclusion independently.
-        const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
-        REQUIRE(authoritative != nullptr);
-        CHECK_FALSE(harness.serverPhysics.IsBodyActive(*authoritative));
-        CHECK_FALSE(harness.clientPhysics.IsBodyActive(*replica));
+        REQUIRE(harness.serverPhysics.HasBody(entity));
+        CHECK_FALSE(harness.serverPhysics.IsBodyActive(entity));
+        CHECK_FALSE(harness.clientPhysics.IsBodyActive(mirror));
     }
 
     CHECK(harness.client.SnapshotsRejected() == 0);
@@ -426,36 +421,29 @@ TEST_CASE("a client body woken by something the server never saw is put back to 
 
     const ECS::Entity mirror = MirrorOf(harness, entity);
     REQUIRE(mirror != ECS::NullEntity);
-    const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
-    REQUIRE(replica != nullptr);
-    REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(*replica));
+    REQUIRE(harness.clientPhysics.HasBody(mirror));
+    REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(mirror));
 
-    const auto [restPosition, restRotation] = harness.clientPhysics.GetBodyTransform(*replica);
-    (void)restRotation;
+    const glm::vec3 restPosition = harness.clientPhysics.GetBodyPose(mirror).position;
 
     // Shove it, locally, the way a spurious contact would.
-    harness.clientPhysics.SetBodyLinearVelocity(*replica, {5.f, 5.f, 0.f});
-    REQUIRE(harness.clientPhysics.IsBodyActive(*replica));
+    harness.clientPhysics.SetBodyLinearVelocity(mirror, {5.f, 5.f, 0.f});
+    REQUIRE(harness.clientPhysics.IsBodyActive(mirror));
 
     harness.Step(1);
 
-    CHECK_FALSE(harness.clientPhysics.IsBodyActive(*replica));
-    const auto [afterPosition, afterRotation] = harness.clientPhysics.GetBodyTransform(*replica);
-    (void)afterRotation;
+    CHECK_FALSE(harness.clientPhysics.IsBodyActive(mirror));
+    const glm::vec3 afterPosition = harness.clientPhysics.GetBodyPose(mirror).position;
     CHECK(glm::length(afterPosition - restPosition) < 1e-3f);
 }
 
-TEST_CASE("a body moved while it is not simulating still reaches clients")
+TEST_CASE("a sleeping body dragged by its Transform reaches clients")
 {
-    // The editor's gizmo drag, exactly: hold the body Static for the gesture (so
-    // the solver does not fight a teleport into whatever it overlaps), move it
-    // each frame, then restore its authored motion type. Nothing in that
-    // sequence ever makes the body *active* — so a capture that only watches the
-    // active set never notices it moved, and the client keeps rendering the
+    // The editor's gizmo drag, exactly: the Transform is written each frame and
+    // the physics world moves the body to it. The body was asleep when the drag
+    // began, so a capture that only watched the active set from before the drag
+    // would never notice it moved, and the client would keep rendering the
     // pre-drag pose forever.
-    //
-    // The same hole swallows an inspector Transform edit, and any gameplay that
-    // teleports a sleeping body.
     PhysicsHarness harness;
     harness.Step(4);
     SpawnSharedFloor(harness);
@@ -464,20 +452,16 @@ TEST_CASE("a body moved while it is not simulating still reaches clients")
                                         /*isStatic=*/ false);
     harness.Step(400);
 
-    const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
-    REQUIRE(authoritative != nullptr);
-    REQUIRE_FALSE(harness.serverPhysics.IsBodyActive(*authoritative)); // settled and asleep
+    REQUIRE(harness.serverPhysics.HasBody(entity));
+    REQUIRE_FALSE(harness.serverPhysics.IsBodyActive(entity)); // settled and asleep
     REQUIRE(PoseError(harness, entity) < 0.05f);
 
     // --- the drag ---------------------------------------------------------
-    harness.serverPhysics.SetBodyMotionType(*authoritative, Physics::BodyMotion::Static);
-
-    const auto [startPosition, startRotation] = harness.serverPhysics.GetBodyTransform(*authoritative);
+    const glm::vec3 startPosition = harness.serverScene.Get<ECS::Transform>(entity)->position;
     for (int32_t step = 1; step <= 20; ++step)
     {
-        harness.serverPhysics.SetBodyTransform(*authoritative,
-                                               startPosition + glm::vec3{0.1f * static_cast<float>(step), 0.f, 0.f},
-                                               startRotation);
+        harness.serverScene.GetMut<ECS::Transform>(entity)->position =
+            startPosition + glm::vec3{0.1f * static_cast<float>(step), 0.f, 0.f};
         harness.Step(3);
     }
 
@@ -485,8 +469,7 @@ TEST_CASE("a body moved while it is not simulating still reaches clients")
     // gesture to end: the author is looking at both windows.
     CHECK(PoseError(harness, entity) < 0.15f);
 
-    harness.serverPhysics.SetBodyMotionType(*authoritative, Physics::BodyMotion::Dynamic);
-    harness.serverPhysics.SetBodyTransform(*authoritative, startPosition + glm::vec3{2.f, 0.f, 0.f}, startRotation);
+    harness.serverScene.GetMut<ECS::Transform>(entity)->position = startPosition + glm::vec3{2.f, 0.f, 0.f};
     harness.Step(400); // let it settle again wherever it was dropped
 
     CHECK(PoseError(harness, entity) < 0.05f);
@@ -510,19 +493,15 @@ TEST_CASE("a static replicated body moved by an author reaches clients")
     REQUIRE(MirrorOf(harness, wall) != ECS::NullEntity);
     REQUIRE(PoseError(harness, wall) < 0.01f);
 
-    const Physics::RigidBody *body = harness.serverScene.Get<Physics::RigidBody>(wall);
-    REQUIRE(body != nullptr);
+    REQUIRE(harness.serverPhysics.HasBody(wall));
 
-    // Exactly what the gizmo does, in the order it does it: write the Transform
-    // through GetMut — which is what stamps the change tick everything downstream
-    // filters on — and then bring the body along. An author who moved only the
-    // Jolt body would be writing through a path that stamps nothing, which is the
-    // same engine-wide rule that governs every other consumer of change ticks.
+    // Exactly what the gizmo does: write the Transform through GetMut, which is
+    // what stamps the change tick everything downstream filters on — the physics
+    // world, which moves the collider, among them.
     {
         ECS::Transform *transform = harness.serverScene.GetMut<ECS::Transform>(wall);
         REQUIRE(transform != nullptr);
         transform->position += glm::vec3{0.f, 0.f, 4.f};
-        harness.serverPhysics.SetBodyTransform(*body, transform->position, transform->rotation);
     }
 
     harness.Step(60);
@@ -553,7 +532,7 @@ TEST_CASE("a mirror destroyed by client-side gameplay comes back, and says so")
 
     const ECS::Entity mirror = MirrorOf(harness, entity);
     REQUIRE(mirror != ECS::NullEntity);
-    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) != nullptr);
+    REQUIRE(harness.clientPhysics.HasBody(mirror));
     REQUIRE(harness.client.MirrorsResurrected() == 0);
 
     // Gameplay runs over the play world, mirrors included — a kill-Z volume or a
@@ -579,7 +558,7 @@ TEST_CASE("a mirror destroyed by client-side gameplay comes back, and says so")
 
     const ECS::Entity anchored = MirrorOf(harness, entity);
     REQUIRE(anchored != ECS::NullEntity);
-    CHECK(harness.clientScene.Get<Physics::RigidBody>(anchored) != nullptr);
+    CHECK(harness.clientPhysics.HasBody(anchored));
     CHECK(PoseError(harness, entity) < 0.5f);
 }
 
@@ -623,7 +602,7 @@ TEST_CASE("a client joining a world that settled before it connected gets the re
         harness.server.Tick(harness.tick++);
     }
     for (const ECS::Entity entity : pile)
-        REQUIRE_FALSE(harness.serverPhysics.IsBodyActive(*harness.serverScene.Get<Physics::RigidBody>(entity)));
+        REQUIRE_FALSE(harness.serverPhysics.IsBodyActive(entity));
 
     harness.Step(60);
 
@@ -632,10 +611,9 @@ TEST_CASE("a client joining a world that settled before it connected gets the re
         CAPTURE(entity.index);
         const ECS::Entity mirror = MirrorOf(harness, entity);
         REQUIRE(mirror != ECS::NullEntity);
-        const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
-        REQUIRE(replica != nullptr);
+        REQUIRE(harness.clientPhysics.HasBody(mirror));
         CHECK(PoseError(harness, entity) < 0.05f);
-        CHECK_FALSE(harness.clientPhysics.IsBodyActive(*replica));
+        CHECK_FALSE(harness.clientPhysics.IsBodyActive(mirror));
     }
 }
 
@@ -648,8 +626,8 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    Physics::PhysicsWorld serverPhysics;
-    Physics::PhysicsWorld clientPhysics;
+    Physics::PhysicsWorld serverPhysics{serverScene};
+    Physics::PhysicsWorld clientPhysics{clientScene};
 
     Net::SimulatedConditions conditions;
     conditions.sendLossPercent = 5.f;
@@ -716,15 +694,11 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
         const ECS::Entity mirror = client.EntityOf(netId);
         REQUIRE(mirror != ECS::NullEntity);
 
-        const Physics::RigidBody *authoritative = serverScene.Get<Physics::RigidBody>(entity);
-        const Physics::RigidBody *replica       = clientScene.Get<Physics::RigidBody>(mirror);
-        REQUIRE(authoritative != nullptr);
-        REQUIRE(replica != nullptr);
+        REQUIRE(serverPhysics.HasBody(entity));
+        REQUIRE(clientPhysics.HasBody(mirror));
 
-        const auto [truth, truthRotation]   = serverPhysics.GetBodyTransform(*authoritative);
-        const auto [shown, shownRotation]   = clientPhysics.GetBodyTransform(*replica);
-        (void)truthRotation;
-        (void)shownRotation;
+        const glm::vec3 truth = serverPhysics.GetBodyPose(entity).position;
+        const glm::vec3 shown = clientPhysics.GetBodyPose(mirror).position;
         CHECK(glm::length(truth - shown) < 0.2f);
     }
 }
@@ -746,19 +720,19 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
 
     const ECS::Entity mirror = MirrorOf(harness, entity);
     REQUIRE(mirror != ECS::NullEntity);
-    const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
-    REQUIRE(replica != nullptr);
-    REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(*replica));
+    REQUIRE(harness.clientPhysics.HasBody(mirror));
+    REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(mirror));
 
-    const auto [restPosition, restRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+    const Physics::Pose rest = harness.clientPhysics.GetBodyPose(mirror);
+    const glm::vec3 restPosition = rest.position;
 
     // Client-side damage: shove the mirror a metre off and leave it asleep, so
     // sleep enforcement has nothing to notice and the delta path has nothing to
     // say. Exactly what the editor's "corrupt selected mirror" poke does.
     const glm::vec3 displaced = restPosition + glm::vec3{0.f, 0.f, 1.f};
-    harness.clientPhysics.ApplyBodyState(*replica, displaced, restRotation, glm::vec3{0.f}, glm::vec3{0.f},
-                                         /*activate=*/ false);
-    harness.clientPhysics.InterpolateTransforms(harness.clientScene, 1.f);
+    harness.clientPhysics.ApplyBodyState(mirror, Physics::Pose{rest.rotation, displaced}, glm::vec3{0.f},
+                                         glm::vec3{0.f}, /*activate=*/ false);
+    harness.clientPhysics.InterpolateTransforms(1.f);
     harness.client.SmoothView(0.0, kFixedStep);
     REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
 
@@ -770,8 +744,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     REQUIRE(harness.client.Corrections().applied > correctionsBefore);
 
     // The simulation is back where the server said, immediately...
-    const auto [correctedPosition, correctedRotation] = harness.clientPhysics.GetBodyTransform(*replica);
-    (void)correctedRotation;
+    const glm::vec3 correctedPosition = harness.clientPhysics.GetBodyPose(mirror).position;
     CHECK(glm::length(correctedPosition - restPosition) < 1e-3f);
 
     // ...and the picture did not follow it there. What continuity means with a
@@ -832,35 +805,30 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
                          harness.Step(60);
 
                          const ECS::Entity mirror        = MirrorOf(harness, entity);
-                         const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
-                         const Physics::RigidBody *replica       = harness.clientScene.Get<Physics::RigidBody>(mirror);
-                         REQUIRE(authoritative != nullptr);
-                         REQUIRE(replica != nullptr);
+                         REQUIRE(harness.serverPhysics.HasBody(entity));
+                         REQUIRE(harness.clientPhysics.HasBody(mirror));
 
                          Result result;
                          double lagSum     = 0.0;
                          int32_t lagSamples = 0;
                          for (int32_t step = 0; step < 240; ++step)
                          {
-                             const auto bounce = [](Physics::PhysicsWorld &world, const Physics::RigidBody &body)
+                             const auto bounce = [](Physics::PhysicsWorld &world, ECS::Entity body)
                                                  {
-                                                     const auto [pose, rotation] = world.GetBodyTransform(body);
-                                                     (void)rotation;
-                                                     if (pose.y < 0.7f)
+                                                     if (world.GetBodyPose(body).position.y < 0.7f)
                                                          world.SetBodyLinearVelocity(body, {0.f, 7.f, 0.f});
                                                  };
 
-                             bounce(harness.serverPhysics, *authoritative);
+                             bounce(harness.serverPhysics, entity);
                              if (clientRunsTheRule)
-                                 bounce(harness.clientPhysics, *replica);
+                                 bounce(harness.clientPhysics, mirror);
 
                              harness.Step();
 
                              // The rendered pose against the client's own simulated one: their
                              // difference *is* the visual offset, since the writeback wrote the
                              // physics pose and the smoothing then added the offset on top of it.
-                             const auto [simulated, simulatedRotation] = harness.clientPhysics.GetBodyTransform(*replica);
-                             (void)simulatedRotation;
+                             const glm::vec3 simulated = harness.clientPhysics.GetBodyPose(mirror).position;
                              const glm::vec3 rendered = harness.clientScene.Get<ECS::Transform>(mirror)->position;
                              const float lag      = glm::length(rendered - simulated);
                              result.worstLag          = std::max(result.worstLag, lag);
@@ -930,12 +898,12 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     harness.Step(400);
 
     const ECS::Entity mirror  = MirrorOf(harness, entity);
-    const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
-    REQUIRE(replica != nullptr);
-    const auto [restPosition, restRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+    REQUIRE(harness.clientPhysics.HasBody(mirror));
+    const Physics::Pose rest = harness.clientPhysics.GetBodyPose(mirror);
+    const glm::vec3 restPosition = rest.position;
 
     // Well past the 2.5 m bound.
-    harness.clientPhysics.ApplyBodyState(*replica, restPosition + glm::vec3{0.f, 0.f, 8.f}, restRotation,
+    harness.clientPhysics.ApplyBodyState(mirror, Physics::Pose{rest.rotation, restPosition + glm::vec3{0.f, 0.f, 8.f}},
                                          glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/ false);
 
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
@@ -993,7 +961,7 @@ TEST_CASE("a descriptor-excluded entity becomes a visual-only mirror")
     // No descriptor arrived, so the client never built a body — the mirror is
     // rendered by interpolation, not corrected by the solver.
     CHECK(harness.clientScene.Get<Physics::RigidBodyDescriptor>(mirror) == nullptr);
-    CHECK(harness.clientScene.Get<Physics::RigidBody>(mirror) == nullptr);
+    CHECK(!harness.clientPhysics.HasBody(mirror));
 
     // ...and its Transform is *not* suppressed, which is the half that would be
     // easy to get wrong: the body channel normally owns motion for a bodied
@@ -1056,8 +1024,7 @@ TEST_CASE("a resting visual-only mirror stops costing bandwidth")
 TEST_CASE("excluding a descriptor mid-session tears the mirror's body down")
 {
     // The invisible-obstacle bug class: without the teardown the Jolt body
-    // outlives the authority that justified it and keeps colliding, and the
-    // stale transient RigidBody blocks any future rebuild.
+    // outlives the authority that justified it and keeps colliding.
     PhysicsHarness harness;
     SpawnSharedFloor(harness);
 
@@ -1067,7 +1034,7 @@ TEST_CASE("excluding a descriptor mid-session tears the mirror's body down")
 
     const ECS::Entity mirror = MirrorOf(harness, crate);
     REQUIRE(mirror != ECS::NullEntity);
-    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) != nullptr);
+    REQUIRE(harness.clientPhysics.HasBody(mirror));
 
     ExcludeDescriptor(harness.serverScene, crate);
     harness.Step(30);
@@ -1075,7 +1042,7 @@ TEST_CASE("excluding a descriptor mid-session tears the mirror's body down")
     CHECK(harness.clientScene.Get<Physics::RigidBodyDescriptor>(mirror) == nullptr);
     // Both halves: the component is gone *and* the body behind it, or the world
     // keeps an obstacle nobody can see.
-    CHECK(harness.clientScene.Get<Physics::RigidBody>(mirror) == nullptr);
+    CHECK(!harness.clientPhysics.HasBody(mirror));
     CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
 }
 
@@ -1095,7 +1062,7 @@ TEST_CASE("re-including a descriptor rebuilds the body at the authoritative pose
 
     const ECS::Entity mirror = MirrorOf(harness, crate);
     REQUIRE(mirror != ECS::NullEntity);
-    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) == nullptr);
+    REQUIRE(!harness.clientPhysics.HasBody(mirror));
 
     Replicated *marker = harness.serverScene.GetMut<Replicated>(crate);
     REQUIRE(marker != nullptr);
@@ -1103,7 +1070,7 @@ TEST_CASE("re-including a descriptor rebuilds the body at the authoritative pose
 
     harness.Step(40);
     REQUIRE(harness.clientScene.Get<Physics::RigidBodyDescriptor>(mirror) != nullptr);
-    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) != nullptr);
+    REQUIRE(harness.clientPhysics.HasBody(mirror));
     // Built from the correction stream, so it starts where the server says rather
     // than re-settling from the level pose.
     CHECK(PoseError(harness, crate) < 0.2f);
@@ -1133,9 +1100,10 @@ TEST_CASE("a stale body record cannot outlive the exclusion that ended it")
 
 TEST_CASE("a bodied entity that withholds its Transform sends no body state either")
 {
-    // Both client-side body builders require a Transform, so no body can ever be
-    // built — and body states it must drop on arrival are pure waste. The editor
-    // warns about this shape; the server simply does not spend bandwidth on it.
+    // The mirror's Transform comes from the descriptor's requirement, at its
+    // defaults rather than from the wire, so body states would correct a pose the
+    // client was never told. The editor warns about this shape; the server simply
+    // does not spend bandwidth on it.
     PhysicsHarness harness;
     SpawnSharedFloor(harness);
 
@@ -1151,6 +1119,5 @@ TEST_CASE("a bodied entity that withholds its Transform sends no body state eith
 
     const ECS::Entity mirror = MirrorOf(harness, crate);
     REQUIRE(mirror != ECS::NullEntity);
-    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) == nullptr);
     CHECK(harness.client.Corrections().applied == 0);
 }

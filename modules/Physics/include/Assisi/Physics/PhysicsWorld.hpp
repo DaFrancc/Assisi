@@ -4,12 +4,18 @@
 /// @file PhysicsWorld.hpp
 /// @brief Jolt physics simulation wrapper.
 ///
-/// One PhysicsWorld per scene. Per fixed step call Update() then CaptureState()
-/// to snapshot the new body poses; once per render frame call
-/// InterpolateTransforms() to blend the last two snapshots into ECS Transforms.
-/// Because physics steps at a fixed rate but rendering does not, that blend is
-/// what keeps physics-driven motion smooth on high-refresh displays instead of
-/// beating against the step rate.
+/// One PhysicsWorld per scene, bound to it for life. The scene's components are
+/// the whole interface: an entity with a RigidBodyDescriptor or a
+/// CharacterDescriptor and a Transform has a body, an edit to either is applied
+/// to it, and a write to its Transform moves it. Reconcile() is what notices, and
+/// Update() runs it before every step, so nothing outside this module creates,
+/// moves or destroys a body.
+///
+/// Per fixed step call Update() then CaptureState(); once per render frame call
+/// InterpolateTransforms() to blend the last two steps into the Transforms of
+/// the bodies that moved. Because physics steps at a fixed rate but rendering
+/// does not, that blend is what keeps physics-driven motion smooth on
+/// high-refresh displays instead of beating against the step rate.
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -85,9 +91,8 @@ struct QueryHit
     /// caller knowing which cast produced the hit.
     glm::vec3 normal{0.f};
 
-    /// The entity whose body was struck, or NullEntity when that body has none —
-    /// only AddBodyFromDescriptor knows an entity. The handle is the one the body
-    /// was created with, so check it is still alive before acting on it.
+    /// The entity whose body was struck. The handle is the one the body was
+    /// built for, so check it is still alive before acting on it.
     ECS::Entity entity{ECS::NullEntity};
 
     /// Distance from the cast's origin to @ref position along the cast. Zero when
@@ -108,9 +113,7 @@ enum class ContactPhase : std::uint8_t
 ///
 /// Reported per participant rather than per pair: two bodies touching produce
 /// two events, one from each point of view, so a consumer never has to work out
-/// which end of the pair it is looking at. A body whose entity is unknown to
-/// this world (created through the raw AddBody, which takes no entity) is only
-/// ever the @ref other side.
+/// which end of the pair it is looking at.
 ///
 /// Exactly one event per pair per participant per step, whatever the pair's
 /// contact geometry did: several manifolds and several collision substeps
@@ -141,79 +144,91 @@ struct ContactEvent
     bool sensor = false;
 };
 
-/// @brief Wraps a Jolt PhysicsSystem and exposes a minimal API for the game loop.
+/// @brief The most bodies a PhysicsWorld holds unless told otherwise. Jolt
+/// reserves room for all of them up front, a pointer apiece.
+inline constexpr uint32_t kDefaultMaxBodies = 65536;
+
+/// @brief Wraps a Jolt PhysicsSystem and keeps it in step with one scene.
 ///
-/// Construction initialises the Jolt library (RegisterTypes, Factory).
-/// Destruction cleans up all bodies and unregisters Jolt types.
+/// Construction brings the shared Jolt runtime up if this is the first world.
+/// Destruction destroys every body and character this world built.
 class PhysicsWorld
 {
 public:
-    PhysicsWorld();
+    /// @param scene      The scene whose bodies this world simulates. Must
+    ///                   outlive the world.
+    /// @param maxBodies  The most bodies this world can hold, characters'
+    ///                   included. A body past it is not built, and the entity
+    ///                   is named in the log.
+    explicit PhysicsWorld(ECS::Scene &scene, uint32_t maxBodies = kDefaultMaxBodies);
     ~PhysicsWorld();
 
     PhysicsWorld(const PhysicsWorld &) = delete;
     PhysicsWorld &operator=(const PhysicsWorld &) = delete;
 
     /// @brief The collider primitive + its dimensions, gathered into one struct so
-    /// the body-creation calls don't take a growing pile of shape parameters. Only
-    /// the fields the chosen `shape` uses are read.
+    /// the shape queries don't take a growing pile of shape parameters. Only the
+    /// fields the chosen `shape` uses are read.
     struct ColliderShapeDesc
     {
         ColliderShape shape = ColliderShape::Box;
         glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box.
         float radius = 0.5f;                     ///< Sphere/Capsule/Cylinder.
         float halfHeight = 0.5f;                 ///< Capsule/Cylinder cylindrical half-height.
+
+        friend bool operator==(const ColliderShapeDesc &, const ColliderShapeDesc &) = default;
     };
 
-    /// @brief Creates a rigid body with the given collider and returns its component.
+    /// @brief Brings the simulation into line with the scene.
     ///
-    /// A body on the Trigger channel is created as a sensor: detected by whatever
-    /// enters it, blocking nothing. Its motion chooses how faithfully it detects
-    /// rather than whether it moves — Static sees only bodies that are awake,
-    /// while Dynamic and Kinematic both build an activated kinematic sensor that
-    /// never sleeps and so also sees bodies at rest. Dynamic is folded into
-    /// Kinematic because a sensor falling under gravity is never what was meant.
+    /// Builds a body or character for every entity that gained a descriptor,
+    /// applies descriptor edits in place, destroys what lost its descriptor or
+    /// its Transform or was destroyed, and pushes every Transform written by
+    /// anything but this world to the body:
     ///
-    /// @param pose    Centre and orientation in world space (rotation is normalized internally).
-    /// @param shape   Collider primitive and its dimensions.
-    /// @param motion  Static bodies never move; dynamic bodies fall under gravity;
-    ///                kinematic bodies move only when something sets their pose.
-    /// @param filter  What this body is, and what it interacts with.
-    RigidBody AddBody(const Pose &pose, const ColliderShapeDesc &shape, BodyMotion motion, CollisionFilter filter);
+    ///   - a static body is placed;
+    ///   - a kinematic body is swept there over the step Update() is about to
+    ///     run, so it pushes what it meets; called on its own it is placed;
+    ///   - a dynamic body is placed and keeps its velocity;
+    ///   - a character is placed when its position changed. Its rotation is the
+    ///     way it faces, which the controller does not use.
+    ///
+    /// A changed scale rebuilds the shape at the new size.
+    ///
+    /// Update() calls this first. Call it yourself when the scene changed and no
+    /// step is coming: a loader that wants bodies in place before the world is
+    /// handed over, or an editor that is not simulating but still casts rays.
+    void Reconcile();
 
-    /// @brief Creates a Jolt body for @p entity from its authored descriptor at
-    /// @p transform's pose, and attaches the transient RigidBody component.
+    /// @brief Drops every body and character and builds them again from the scene.
     ///
-    /// The durable RigidBodyDescriptor is what a level stores; this is the one
-    /// place that turns it into live simulation state (motion type from
-    /// `isStatic`, collider from the shape fields, CCD flag). Used by level
-    /// load, play/stop scene restores, and live component-add in the editor.
-    ///
-    /// Jolt works in world space and a parented @p transform is an offset from
-    /// its parent, so it is placed under the parent's world matrix — which must
-    /// already be propagated. Without that a parented body spawns at its local
-    /// pose and the writeback multiplies it by the parent again every frame.
-    RigidBody AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                    const RigidBodyDescriptor &descriptor);
+    /// For a scene that was replaced wholesale — a level load, or the editor
+    /// putting back the scene it had before play — where nothing simulated
+    /// should carry over: every body starts at its Transform, at rest, and every
+    /// character with no momentum and its default stance.
+    void Rebuild();
 
-    /// @brief Rebuilds every body and character from the scene's descriptors:
-    /// Clear(), then RebuildEntityPhysics for each entity carrying either
-    /// descriptor alongside a Transform.
-    ///
-    /// For use when the scene's entities were replaced wholesale (level load, a
-    /// play-session restore) and every live body is stale. Entities are expected
-    /// not to carry a RigidBody or Character component yet — both are transient
-    /// and never serialized, so a freshly loaded/restored scene never has one.
-    ///
-    /// An entity that cannot be built is logged and skipped rather than
-    /// abandoning the rest of the scene: one bad descriptor should cost one
-    /// object, not a level with no physics in it.
-    ///
-    /// Parented entities are placed under their parents' world matrices, which
-    /// must already be propagated.
-    void RebuildSceneBodies(ECS::Scene &scene);
+    /// @brief Whether @p entity has a body or a character in this world.
+    [[nodiscard]] bool HasBody(ECS::Entity entity) const;
 
-    /// @brief Advances the simulation by `deltaTime` seconds.
+    /// @brief Moves @p entity's body or character to a world-space @p pose and
+    /// stops it, writing its Transform to match.
+    ///
+    /// Unlike a Transform write, which keeps a dynamic body's velocity, this
+    /// zeroes it, and the render blend does not slide the body across the gap.
+    void Teleport(ECS::Entity entity, const Pose &pose);
+
+    /// @brief Takes @p entity's Transform as it stands as this world's own
+    /// write, so the next Reconcile() does not push it to the body.
+    ///
+    /// For a write that changes only how a simulated entity is drawn: the
+    /// replication view offset painted over the writeback's pose. The body is
+    /// followed by the next writeback even if it sleeps, which lays its pose
+    /// down again for the offset to be painted over rather than added to the
+    /// last frame's.
+    void AdoptTransform(ECS::Entity entity);
+
+    /// @brief Reconciles, then advances the simulation by `deltaTime` seconds.
     ///
     /// Characters are swept first, then the bodies are solved. That order is
     /// what lets a character shove a crate and the crate move in the same step,
@@ -323,27 +338,30 @@ public:
     /// @brief Current collision-substep count (see SetCollisionSteps).
     int32_t GetCollisionSteps() const;
 
-    /// @brief Snapshots each dynamic body's pose for render interpolation.
+    /// @brief Snapshots each moving body's pose for render interpolation.
     ///
     /// Call once per fixed step, immediately after Update(): it shifts the
     /// previous snapshot to the last-captured one and records the freshly
     /// stepped pose as the new current. InterpolateTransforms() then blends
     /// between those two.
     ///
-    /// Everything that can move is snapshotted — dynamic bodies, kinematic ones
-    /// (something can drive those through the simulation), and characters. Only
-    /// static bodies are skipped, because their Transform is what placed them.
+    /// Only bodies the simulation has awake are snapshotted, plus every
+    /// character. A body that falls asleep is followed until its Transform holds
+    /// its resting pose exactly, and then left alone, so a settled world costs
+    /// nothing here.
     void CaptureState();
 
-    /// @brief Blends each dynamic body's previous/current snapshots into its
+    /// @brief Blends each moving body's previous/current snapshots into its
     /// Transform, `alpha` of the way from previous to current.
     ///
     /// Call once per render frame with the fixed-loop's interpolation alpha
     /// (`Application::GetInterpolationAlpha()`), which is the fraction of a
-    /// physics step the accumulator holds. Only entities with a Transform and
-    /// either a RigidBody or a Character are touched; static bodies are skipped,
-    /// so their authored Transform is left intact. The written Transform is the
+    /// physics step the accumulator holds. The written Transform is the
     /// *render* pose — the authoritative physics state is the current snapshot.
+    ///
+    /// A Transform written by anything else since this world last wrote it is
+    /// left alone: the next Reconcile() pushes it to the body, and overwriting it
+    /// here first would lose it.
     ///
     /// A character's **rotation is left alone**. The capsule is symmetric about
     /// its up axis, so the simulation has no opinion about which way a character
@@ -352,9 +370,9 @@ public:
     ///
     /// A parented entity's pose is written back relative to its parent's world
     /// matrix, so the parent is not applied twice by the next propagation.
-    void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha);
+    void InterpolateTransforms(float alpha);
 
-    /// @brief Writes each dynamic body's *last stepped* pose into its Transform,
+    /// @brief Writes each moving body's *last stepped* pose into its Transform,
     /// with no blend.
     ///
     /// For worlds that simulate but are not rendered (a second resident level).
@@ -364,15 +382,14 @@ public:
     /// InterpolateTransforms never runs for these worlds — so without this their
     /// Transforms would sit at spawn pose forever no matter how much the bodies
     /// move. Call once per frame after the fixed-step loop, before propagating.
-    void SyncTransforms(Assisi::ECS::Scene &scene) { InterpolateTransforms(scene, 1.f); }
+    void SyncTransforms() { InterpolateTransforms(1.f); }
 
     // --- Authoritative body state (replication) -------------------------------
     //
     // Replication reads the simulation directly, not the render-side Transform:
-    // the render pose is not the physics truth. A headless host never runs the
-    // writeback at all (its physics-driven entities would replicate their load
-    // pose forever), and the writeback covers every body every frame including
-    // sleeping ones (a settled world would never stop costing bandwidth).
+    // the render pose is not the physics truth, and a headless host never runs
+    // the writeback at all, so its physics-driven entities would replicate their
+    // load pose forever.
 
     /// @brief One active body's authoritative motion state.
     struct ActiveBodyState
@@ -384,118 +401,71 @@ public:
         glm::vec3 angularVelocity;
     };
 
-    /// @brief Every currently-awake dynamic body, with its pose and velocities.
+    /// @brief Every currently-awake body, with its pose and velocities.
     ///
-    /// Only bodies created through AddBodyFromDescriptor appear — it is the one
-    /// entry point that knows an entity, and a body with no entity is nothing a
-    /// replication layer could name. The order Jolt returns active bodies in is
-    /// unspecified, which is fine: every consumer of this re-sorts by its own
-    /// identity.
+    /// The order Jolt returns active bodies in is unspecified, which is fine:
+    /// every consumer of this re-sorts by its own identity.
     void GetActiveBodyStates(std::vector<ActiveBodyState> &out) const;
 
-    /// @brief Whether the simulation currently considers @p body awake.
-    [[nodiscard]] bool IsBodyActive(const RigidBody &body) const;
+    /// @brief Whether the simulation currently considers @p entity's body awake.
+    [[nodiscard]] bool IsBodyActive(ECS::Entity entity) const;
 
-    /// @brief Put @p body to sleep without moving it.
+    /// @brief Put @p entity's body to sleep without moving it.
     ///
     /// A kinematic sensor put to sleep stops detecting anything, since a sleeping
-    /// body generates no contacts. Nothing prevents it; a trigger that has to be
-    /// switched off is better expressed by removing the body.
-    void DeactivateBody(const RigidBody &body);
+    /// body generates no contacts.
+    void DeactivateBody(ECS::Entity entity);
 
-    /// @brief Set pose, both velocities, and activation in one call.
+    /// @brief Set pose, both velocities, and activation in one call — what a
+    /// replication correction is.
     ///
-    /// Deliberately not composed from the pieces above, because those have the
-    /// wrong semantics for a correction three times over: SetBodyTransform
-    /// reactivates every non-static body (so an "asleep" correction applied through
-    /// it would wake the body), it zeroes the velocities, and there is no
-    /// angular-velocity setter at all.
+    /// Deliberately not composed from a Transform write and a velocity setter:
+    /// a correction must be able to leave a body asleep, set its angular
+    /// velocity, and land in this step rather than the next reconcile.
     ///
-    /// Like SetBodyTransform it collapses both render-interpolation snapshots
-    /// onto the target. That is load-bearing for the smoothing above this: the
-    /// visual offset assumes the rendered pose is *unchanged* at the instant of
-    /// a correction, and if the writeback also smeared the jump across a frame
-    /// the two would double-count into a wobble at every correction.
+    /// Collapses both render-interpolation snapshots onto the target. That is
+    /// load-bearing for the smoothing above this: the visual offset assumes the
+    /// rendered pose is *unchanged* at the instant of a correction, and if the
+    /// writeback also smeared the jump across a frame the two would double-count
+    /// into a wobble at every correction.
     ///
-    /// No-op for a static body or a handle not in the simulation.
-    void ApplyBodyState(const RigidBody &body, glm::vec3 position, glm::quat rotation, glm::vec3 linearVelocity,
-                        glm::vec3 angularVelocity, bool activate);
+    /// No-op for an entity with no body. A static body is placed and nothing more.
+    void ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec3 linearVelocity, glm::vec3 angularVelocity,
+                        bool activate);
 
-    /// @brief Returns the current world-space position and rotation of a body.
-    std::pair<glm::vec3, glm::quat> GetBodyTransform(const RigidBody &body) const;
+    /// @brief The current world-space pose of @p entity's body, or the identity
+    /// pose when it has none.
+    [[nodiscard]] Pose GetBodyPose(ECS::Entity entity) const;
 
     /// @brief Returns a body's current linear (m/s) and angular (rad/s) velocity.
     ///
-    /// Both are zero for a static body or one that isn't in the simulation, so
-    /// callers can display the result unconditionally.
-    std::pair<glm::vec3, glm::vec3> GetBodyVelocity(const RigidBody &body) const;
+    /// Both are zero for a static body or an entity with no body, so callers can
+    /// display the result unconditionally.
+    [[nodiscard]] std::pair<glm::vec3, glm::vec3> GetBodyVelocity(ECS::Entity entity) const;
 
     /// @brief Whether a body's motion quality is currently LinearCast (CCD on).
-    /// False for Discrete bodies, static bodies, or handles not in the simulation.
-    bool IsBodyCCDEnabled(const RigidBody &body) const;
+    /// False for Discrete bodies, static bodies, or an entity with no body.
+    [[nodiscard]] bool IsBodyCCDEnabled(ECS::Entity entity) const;
 
-    /// @brief Teleports a body to the given position and rotation, and reactivates it.
+    /// @brief The scale @p entity's collider was built at, in its own axes.
     ///
-    /// Moving a static sensor also wakes whatever lies in the space it left and
-    /// the space it now occupies. Neither set would otherwise be re-tested — a
-    /// sleeping body generates no contacts — so the volume would keep reporting
-    /// what it no longer contains and stay silent about what it now does.
-    ///
-    /// This is a teleport, not a swept move: a small, fast-moving volume can pass
-    /// through a thin body between steps without ever overlapping it on one.
-    void SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation);
+    /// The Transform's world scale where the shape can take it. A sphere or a
+    /// capsule has one radius, so it is built at one scale on every axis, and a
+    /// cylinder at one across its round axes. One on every axis for an unscaled
+    /// collider, a character, or an entity with no body.
+    [[nodiscard]] glm::vec3 GetColliderScale(ECS::Entity entity) const;
 
     /// @brief Replaces a body's linear velocity (m/s), waking it.
     ///
-    /// Unlike SetBodyTransform this does not touch the pose or the interpolation
-    /// snapshots — the change shows up through the simulation, over the following
-    /// steps, exactly as if the solver had produced it. The wake is deliberate: a
-    /// body that had gone to sleep on a surface would otherwise keep the new
-    /// velocity on paper and never move. No-op on a static body, which has no
-    /// velocity to set.
-    void SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity);
+    /// The change shows up through the simulation, over the following steps,
+    /// exactly as if the solver had produced it. The wake is deliberate: a body
+    /// that had gone to sleep on a surface would otherwise keep the new velocity
+    /// on paper and never move. No-op on a static body, which has no velocity to
+    /// set.
+    void SetBodyLinearVelocity(ECS::Entity entity, glm::vec3 velocity);
 
-    /// @brief Changes what an existing body is and what it interacts with.
-    ///
-    /// Use this to apply inspector edits to the channel or the collides-with mask
-    /// at runtime. Without it the descriptor and the live body disagree, and the
-    /// edit appears to do nothing until something rebuilds the body from the
-    /// descriptor — which reads as the change taking effect one play session late.
-    ///
-    /// Moving a body onto or off the Trigger channel makes it a sensor or stops
-    /// it being one. A body that becomes a sensor while dynamic is made kinematic,
-    /// the same rule AddBody applies; one that stops being a sensor keeps whatever
-    /// motion it had, so restore that from the descriptor if it matters.
-    void SetBodyCollisionFilter(const RigidBody &body, CollisionFilter filter);
-
-    /// @brief What @p body is, and what it interacts with.
-    [[nodiscard]] CollisionFilter GetBodyCollisionFilter(const RigidBody &body) const;
-
-    /// @brief Replaces the collision shape of an existing body.
-    ///
-    /// Use this to apply inspector edits to the collider (shape type or its
-    /// dimensions) at runtime without recreating the body.
-    void ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape);
-
-    /// @brief Removes and destroys a single body, dropping it from the simulation.
-    ///
-    /// Use when an entity's collider is deleted at runtime (the inspector's remove
-    /// button). No-op for an invalid handle; the RigidBody component should be
-    /// removed from the entity alongside this call.
-    void RemoveBody(const RigidBody &body);
-
-    /// @brief Enables or disables continuous collision detection (CCD) on a body.
-    ///
-    /// Only meaningful for dynamic bodies; no-op on static bodies.
-    /// Uses Jolt's LinearCast motion quality for CCD, Discrete otherwise.
-    void SetBodyCCD(const RigidBody &body, bool enable);
-
-    /// @brief Changes the motion type of an existing body at runtime.
-    ///
-    /// Useful for temporarily freezing a dynamic body (e.g. while editing in an
-    /// inspector) and restoring it afterwards.  Switching to Dynamic also activates
-    /// the body so gravity takes effect immediately.
-    void SetBodyMotionType(const RigidBody &body, BodyMotion motion);
+    /// @brief What @p entity's body is, and what it interacts with.
+    [[nodiscard]] CollisionFilter GetBodyCollisionFilter(ECS::Entity entity) const;
 
     // --- Characters -----------------------------------------------------------
     //
@@ -516,44 +486,7 @@ public:
     // reacts to where the world was at the start of the step and whatever it
     // pushed is solved in the same step rather than the next one.
 
-    /// @brief Why a physics object could not be created for an entity.
-    enum class PhysicsError : std::uint8_t
-    {
-        /// The simulation is full. The entity gets no body and no character
-        /// rather than a handle that silently does nothing.
-        BodyLimit,
-
-        /// The entity carries both a RigidBodyDescriptor and a
-        /// CharacterDescriptor. A character already owns a rigid body, so
-        /// building both would have it collide with itself; neither is built.
-        ConflictingDescriptors,
-
-        /// The entity has no Transform, so there is nowhere to put it.
-        NoTransform,
-
-        Count,
-    };
-
-    /// @brief Creates a character for @p entity from its authored descriptor at
-    /// @p transform's pose, and attaches the transient Character component.
-    ///
-    /// @p transform positions the character's **feet**, matching how the
-    /// descriptor is authored — the capsule is built standing on that point.
-    ///
-    /// A parented @p transform is placed under the parent's propagated world
-    /// matrix, as AddBodyFromDescriptor does.
-    std::expected<Character, PhysicsError> AddCharacterFromDescriptor(ECS::Scene &scene, ECS::Entity entity,
-                                                                      const ECS::Transform &transform,
-                                                                      const CharacterDescriptor &descriptor);
-
-    /// @brief Removes and destroys a character, inner body and all.
-    ///
-    /// Emits the same contact Exits a destroyed body does, so whatever the
-    /// character was standing in hears that it left. The Character component
-    /// should be removed from the entity alongside this call.
-    void RemoveCharacter(const Character &character);
-
-    /// @brief Sets what @p character is trying to do on the next step.
+    /// @brief Sets what @p entity's character is trying to do on the next step.
     ///
     /// @p wishVelocity is a world-space request: its direction is where the
     /// character wants to go and its length is the speed it wants, already
@@ -568,18 +501,18 @@ public:
     /// off a ledge it still counts as a ground jump. Asked for while genuinely
     /// airborne it is dropped rather than queued, so a held button cannot bank
     /// jumps.
-    void MoveCharacter(const Character &character, glm::vec3 wishVelocity, bool jump);
+    void MoveCharacter(ECS::Entity entity, glm::vec3 wishVelocity, bool jump);
 
-    /// @brief Tells the controller which way @p character is looking.
+    /// @brief Tells the controller which way @p entity's character is looking.
     ///
     /// The controller moves a character and never turns it, so it does not know
     /// this unless told. Only BunnyHopPolicy::Boost uses it, where a jump adds
     /// and removes speed along the facing; under any other policy it changes
     /// nothing. @p forward is a world-space direction; its vertical part is
     /// ignored and it need not be unit length. Kept until set again.
-    void SetCharacterFacing(const Character &character, glm::vec3 forward);
+    void SetCharacterFacing(ECS::Entity entity, glm::vec3 forward);
 
-    /// @brief Asks @p character to stand or crouch.
+    /// @brief Asks @p entity's character to stand or crouch.
     ///
     /// @return false when the change could not be made, which in practice means
     /// standing up under something too low. The stance is unchanged in that
@@ -591,108 +524,19 @@ public:
     /// stays put and the feet move, so crouching mid-jump lifts them over a
     /// ledge; standing again in the air is refused while there is no room below
     /// for the legs.
-    bool SetCharacterStance(const Character &character, Stance stance);
+    bool SetCharacterStance(ECS::Entity entity, Stance stance);
 
-    /// @brief What @p character's last step left behind.
-    [[nodiscard]] CharacterState GetCharacterState(const Character &character) const;
+    /// @brief What @p entity's character's last step left behind.
+    [[nodiscard]] CharacterState GetCharacterState(ECS::Entity entity) const;
 
-    /// @brief @p character's eye height for a rendered frame: its last two
+    /// @brief @p entity's character's eye height for a rendered frame: its last two
     /// steps' values blended by @p alpha, the same fraction
     /// InterpolateTransforms() is given.
     ///
     /// CharacterState::eyeHeight changes once per step. A camera placed from it
     /// moves in visible steps whenever the display refreshes faster than the
     /// simulation; one placed from this moves every frame.
-    [[nodiscard]] float GetCharacterEyeHeight(const Character &character, float alpha) const;
-
-    /// @brief Teleports a character to a pose, feet first like the spawn.
-    ///
-    /// Moves the inner body with it rather than leaving that to the next step:
-    /// a cast made between this call and the next Update() would otherwise find
-    /// the character where it used to be. Collapses both render-interpolation
-    /// snapshots onto the target, so the jump is not smeared across a frame, and
-    /// re-finds what the character is touching at the destination.
-    void SetCharacterTransform(const Character &character, glm::vec3 position, glm::quat rotation);
-
-    /// @brief Freezes a character in place, or releases it.
-    ///
-    /// A frozen character keeps its pose, does not fall, and ignores whatever it
-    /// was asked to do — the character equivalent of pinning a body to Static
-    /// while an author drags it. **Gravity included**: a character that kept
-    /// falling would drop away from under the cursor. Its velocity is zeroed
-    /// rather than resumed on release, since the pose it was dragged to says
-    /// nothing about how fast it was going.
-    ///
-    /// While frozen it reports no contacts, because it is not being swept and so
-    /// nothing is measuring what it touches. Its inner body stays where it is,
-    /// so casts and sensors still find it.
-    void SetCharacterFrozen(const Character &character, bool frozen);
-
-    // --- Physics by entity ----------------------------------------------------
-    //
-    // The same operations addressed by entity rather than by handle, dispatching
-    // on whichever descriptor the entity carries. What a caller outside this
-    // module almost always wants: the editor, a level load and a blueprint spawn
-    // all know an entity and none of them should have to ask which of two kinds
-    // of physics it has, fetch the matching handle component, and get the pair
-    // wrong for the kind they forgot about.
-
-    /// @brief Destroys whatever physics @p entity has and rebuilds it from its
-    /// descriptor, dropping the old handle component and attaching a new one.
-    ///
-    /// The one call that turns authored data into simulation for a single
-    /// entity, whichever kind it is. Rebuilding an entity that has no descriptor
-    /// simply leaves it with none.
-    ///
-    /// A parented entity's parent world matrix must already be propagated.
-    std::expected<void, PhysicsError> RebuildEntityPhysics(ECS::Scene &scene, ECS::Entity entity);
-
-    /// @brief Destroys whatever physics @p entity has and removes its handle
-    /// component. Does nothing to an entity that has none.
-    void RemoveEntityPhysics(ECS::Scene &scene, ECS::Entity entity);
-
-    /// @brief Makes an existing object match its descriptor again, after the
-    /// descriptor was edited.
-    ///
-    /// A body is retuned in place — shape, CCD and collision filter — because it
-    /// can be. A character is destroyed and rebuilt, because its shape, slope
-    /// and step height are baked into the solver at creation; it keeps its
-    /// position and stance across the rebuild but **loses its velocity and its
-    /// jump timers**, which is invisible in an editor and a small jolt if
-    /// something edits a descriptor mid-play.
-    ///
-    /// Does nothing to an entity with no descriptor, or with a descriptor but no
-    /// live object — use RebuildEntityPhysics to create one.
-    void ReconfigureEntityPhysics(ECS::Scene &scene, ECS::Entity entity);
-
-    /// @brief Freezes @p entity's physics in place, or releases it.
-    ///
-    /// A body goes Static and comes back to whatever its descriptor authored; a
-    /// character is frozen (see SetCharacterFrozen). For an author dragging an
-    /// object in an inspector, where the thing being dragged must not fall away
-    /// under the cursor.
-    void SetEntityPhysicsFrozen(ECS::Scene &scene, ECS::Entity entity, bool frozen);
-
-    /// @brief Moves @p entity's physics to a pose, whichever kind it has.
-    void SetEntityTransform(ECS::Scene &scene, ECS::Entity entity, glm::vec3 position, glm::quat rotation);
-
-    /// @brief Moves a kinematic body to a pose *and gives it the velocity that
-    /// move implies*, over a step of @p deltaTime.
-    ///
-    /// The call a moving platform needs. SetBodyTransform teleports: it zeroes
-    /// the body's velocity, so anything standing on the result is standing on
-    /// something the simulation believes is stationary, and slides off the back
-    /// of a platform that is visibly moving. This sets the velocity that carries
-    /// the body there instead, which is both what pushes resting bodies along
-    /// and what a character reads to ride it.
-    ///
-    /// No-op for a static body, a non-positive @p deltaTime, or a handle not in
-    /// the simulation.
-    void MoveBodyKinematic(const RigidBody &body, glm::vec3 position, glm::quat rotation, float deltaTime);
-
-    /// @brief Removes and destroys all bodies and characters, resetting the
-    /// world to an empty state.
-    void Clear();
+    [[nodiscard]] float GetCharacterEyeHeight(ECS::Entity entity, float alpha) const;
 
     /// @brief Sets the gravity vector (default: {0, −9.81, 0}).
     void SetGravity(glm::vec3 gravity);

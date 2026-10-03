@@ -384,8 +384,8 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    Physics::PhysicsWorld serverPhysics;
-    Physics::PhysicsWorld clientPhysics;
+    Physics::PhysicsWorld serverPhysics{serverScene};
+    Physics::PhysicsWorld clientPhysics{clientScene};
 
     const auto pair = transport.CreateLoopbackPair();
     ReplicationServer server(transport, serverScene, &serverPhysics);
@@ -445,7 +445,7 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
                               descriptor.isStatic    = false;
                               (void)serverScene.Add<Physics::RigidBodyDescriptor>(entity, descriptor);
                               (void)serverScene.Add<Replicated>(entity, Replicated{});
-                              (void)serverPhysics.AddBodyFromDescriptor(serverScene, entity, transform, descriptor);
+                              serverPhysics.Reconcile();
                               return entity;
                           };
 

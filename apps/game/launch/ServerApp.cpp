@@ -218,11 +218,10 @@ void ServerApp::BuildJoinedWorld()
     }
 
     // The host owns these; they arrive as mirrors. The file's copies are the
-    // host's authored originals, and keeping both would double the world.
-    // LoadLevelSim already built their bodies, which is why the shared strip has
-    // to take them out of the physics world rather than only ending the entities.
+    // host's authored originals, and keeping both would double the world. Their
+    // bodies go with them on the world's next reconcile.
     const Assisi::App::StrippedEntities stripped =
-        Assisi::App::StripReplicatedEntities(_world.scene, _world.physics);
+        Assisi::App::StripReplicatedEntities(_world.scene);
 
     _session->ConfirmLevelReady();
     Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "

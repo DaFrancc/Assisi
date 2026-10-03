@@ -21,50 +21,22 @@ namespace Assisi::NetSync
 {
 void ReplicationClient::DestroyMirrorBody(NetId netId)
 {
-    const auto found = _bodies.find(netId);
-    if (found == _bodies.end())
-        return;
-
-    // Without this the Jolt body outlives its entity and keeps colliding — an
-    // invisible obstacle in the middle of the world.
-    if (_physics != nullptr)
-        _physics->RemoveBody(found->second.body);
-    _bodies.erase(found);
+    _bodies.erase(netId);
 }
 
 void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
 {
-    if (_physics == nullptr || !_scene.IsAlive(entity))
+    if (_physics == nullptr || !_scene.IsAlive(entity) || _bodies.contains(netId))
         return;
 
-    const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
-    const ECS::Transform *transform  = _scene.Get<ECS::Transform>(entity);
-    if (descriptor == nullptr || transform == nullptr)
+    if (!_scene.Has<Physics::RigidBodyDescriptor>(entity) || !_scene.Has<ECS::Transform>(entity))
         return; // not a physical entity, or not fully described yet
 
-    if (_scene.Get<Physics::RigidBody>(entity) == nullptr)
-    {
-        (void)_physics->AddBodyFromDescriptor(_scene, entity, *transform, *descriptor);
-        const Physics::RigidBody *created = _scene.Get<Physics::RigidBody>(entity);
-        if (created == nullptr)
-            return;
-
-        _bodies[netId].body = *created;
-        // It is a simulated mirror now, not an interpolated one.
-        _transformHistory.erase(netId);
-        return;
-    }
-
-    // A dynamic body is owned by the correction stream from here on; touching it
-    // from the component path would fight it every snapshot.
-    if (!descriptor->isStatic)
-        return;
-
-    // Static geometry moves by being authored, so its Transform is the truth and
-    // the collider has to follow it. Without this the visual moves and the
-    // collision does not — invisible until something falls through it.
-    const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
-    _physics->SetBodyTransform(*body, transform->position, transform->rotation);
+    // It is a simulated mirror now, not an interpolated one. The physics world
+    // builds its body; nothing sends body state for a static mirror, so that is
+    // the only way one exists for the client's own bodies to rest on.
+    _bodies.try_emplace(netId);
+    _transformHistory.erase(netId);
 }
 
 void ReplicationClient::ApplyBodyState(const BodyState &state)
@@ -77,45 +49,27 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         return; // a body record for an entity we do not have: benign under loss
 
     const ECS::Entity entity = it->second;
-    if (_scene.Get<Physics::RigidBody>(entity) == nullptr)
+    if (!_physics->HasBody(entity))
     {
-        // First state for this mirror: build the body the server described. Both
-        // halves must have arrived — descriptor says what, Transform says where.
-        // If either has not, drop this record; the delta path resends until acked.
-        const ECS::Transform *transform  = _scene.Get<ECS::Transform>(entity);
-        const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
-        if (transform == nullptr || descriptor == nullptr)
+        // First state for this mirror: the body has to exist before it can be
+        // corrected, and it is built from the descriptor and Transform the server
+        // sent. If either has not arrived, nothing is built and this record is
+        // dropped; the delta path resends until acked.
+        _physics->Reconcile();
+        if (!_physics->HasBody(entity))
             return;
-
-        (void)_physics->AddBodyFromDescriptor(_scene, entity, *transform, *descriptor);
-        const Physics::RigidBody *created = _scene.Get<Physics::RigidBody>(entity);
-        if (created == nullptr)
-            return;
-        _bodies[state.netId].body = *created;
-
-        // It is a simulated mirror now, not an interpolated one.
-        _transformHistory.erase(state.netId);
     }
 
-    const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
-    // Never inserts, though the branch above makes it look like it can: a mirror
-    // carrying a RigidBody always has a `_bodies` entry. Both places that build
-    // one (SyncMirrorBody, and the block above) set `_bodies[netId].body` in the
-    // same breath, and DestroyMirrorBody's callers either erase the
-    // `_entityByNetId` mapping first — so the lookup at the top of this function
-    // returns — or drop the RigidBody component in the next statement.
-    //
-    // A blank handle would be refused anyway: a default JPH::BodyID is invalid
-    // and RemoveBody returns on it, which TestBodyLifetime.cpp pins. The thinnest
-    // leg is the editor's AddComponentToSelected, which builds a body into this
-    // scene without asking whether the entity is a mirror — only a disabled ImGui
-    // region stops it.
+    // It is a simulated mirror now, not an interpolated one.
     MirrorBody &record = _bodies[state.netId];
+    _transformHistory.erase(state.netId);
 
     // How far the two simulations drifted apart since the last correction. Taken
     // before the snap and against the *physics* pose, not the rendered one:
     // folding in the cosmetic offset would flatter the number.
-    const auto [simulatedPosition, simulatedRotation] = _physics->GetBodyTransform(*body);
+    const Physics::Pose simulated = _physics->GetBodyPose(entity);
+    const glm::vec3 simulatedPosition = simulated.position;
+    const glm::quat simulatedRotation = simulated.rotation;
     const float divergence                            = glm::length(simulatedPosition - state.position);
 
     ++_corrections.applied;
@@ -132,8 +86,8 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // Snapped hard, with no smoothing: extrapolation has to proceed from a valid
     // physics state, and a half-applied correction is not one. Hiding the jump
     // belongs to the view.
-    _physics->ApplyBodyState(*body, state.position, state.rotation, state.linearVelocity, state.angularVelocity,
-                             /*activate=*/ !state.asleep);
+    _physics->ApplyBodyState(entity, Physics::Pose{state.rotation, state.position}, state.linearVelocity,
+                             state.angularVelocity, /*activate=*/ !state.asleep);
 
     record.positionError = renderedPosition - state.position;
     record.rotationError = glm::normalize(renderedRotation * glm::inverse(state.rotation));
@@ -191,12 +145,14 @@ void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
         if (entity == _entityByNetId.end() || !_scene.IsAlive(entity->second))
             continue;
 
+        // Before the GetMut: taking one marks the Transform changed, which the
+        // physics world would read as an outside move to push into the body.
+        if (record.smoothingWindow <= 0.f)
+            continue; // nothing to hide
+
         ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity->second);
         if (transform == nullptr)
             continue;
-
-        if (record.smoothingWindow <= 0.f)
-            continue; // nothing to hide
 
         // Linear over the window, so the offset is gone by the deadline at a
         // constant on-screen speed. Advancing in *time* rather than per frame is
@@ -214,6 +170,11 @@ void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
         // On top of the physics writeback's pose, which ran just before this.
         transform->position += record.positionError;
         transform->rotation = record.rotationError * transform->rotation;
+
+        // Only how it is drawn: the offset must not be pushed to the body as a
+        // move, and the writeback must lay the body's pose down again under next
+        // frame's offset rather than leave this one to be added to.
+        _physics->AdoptTransform(entity->second);
     }
 }
 
@@ -243,14 +204,13 @@ void ReplicationClient::EnforceSleep()
         if (it == _entityByNetId.end() || !_scene.IsAlive(it->second))
             continue;
 
-        const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(it->second);
-        if (body == nullptr || !_physics->IsBodyActive(*body))
+        if (!_physics->IsBodyActive(it->second))
             continue;
 
         // Woken by something the server never saw. Put it back and hold it there
         // — the server's own correction is the only thing allowed to wake it.
-        _physics->ApplyBodyState(*body, record.restPosition, record.restRotation, glm::vec3{0.f}, glm::vec3{0.f},
-                                 /*activate=*/ false);
+        _physics->ApplyBodyState(it->second, Physics::Pose{record.restRotation, record.restPosition}, glm::vec3{0.f},
+                                 glm::vec3{0.f}, /*activate=*/ false);
     }
 }
 
@@ -417,11 +377,7 @@ void ReplicationClient::Reset()
         ++_structureRevision;
     _entityByNetId.clear();
 
-    if (_physics != nullptr)
-    {
-        for (const auto &[netId, record] : _bodies)
-            _physics->RemoveBody(record.body);
-    }
+    // The mirrors' bodies go with the entities destroyed above.
     _bodies.clear();
     _transformHistory.clear();
     _pendingRefs.clear();

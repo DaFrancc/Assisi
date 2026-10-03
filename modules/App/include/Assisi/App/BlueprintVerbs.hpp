@@ -68,9 +68,8 @@ namespace Assisi::App
 /// @brief Destroys every live member of @p instanceId and drops its table row.
 ///
 /// Scans the tag pool for the id; a member already destroyed simply is not found,
-/// because there is no list to go stale. Each member's physics body is torn down
-/// first — destroying an entity drops its RigidBody *component* but leaves the
-/// Jolt body it referenced behind, still colliding.
+/// because there is no list to go stale. The members' bodies and characters go
+/// with them on the world's next reconcile.
 ///
 /// Safe from inside a system: Scene::Destroy is already deferred to
 /// FlushDestroyed.

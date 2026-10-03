@@ -653,7 +653,7 @@ private:
     /// sent — a mirror frozen at its load pose.
     ///
     /// False in four cases, the last two by policy:
-    ///  - no physics world, or no RigidBody — nothing to observe;
+    ///  - no physics world, or no body in it — nothing to observe;
     ///  - an authored-static descriptor, whose pose is authored data and travels
     ///    as a Transform;
     ///  - the descriptor is *excluded*, so the client will never build a body to

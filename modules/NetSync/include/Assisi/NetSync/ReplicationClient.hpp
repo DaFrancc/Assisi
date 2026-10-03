@@ -347,14 +347,11 @@ private:
     bool ApplySnapshot(Core::BitReader &reader);
     void ApplyBodyState(const BodyState &state);
 
-    /// Bring one mirror's Jolt body in line with the components just applied to
-    /// it: build it if the descriptor has arrived and it has none, and — for
-    /// authored-static geometry, whose pose travels as a Transform rather than
-    /// as body state — move it to wherever that Transform now says.
-    ///
-    /// The build half is load-bearing: nothing sends body state for a static
-    /// mirror, and body state is what otherwise builds bodies, so without it the
-    /// client's own dynamic bodies fall through a wall the host sees them rest on.
+    /// Mark one mirror as body-corrected once the components just applied to it
+    /// describe a body. The physics world builds the body itself from those
+    /// components, and moves a static one to wherever its Transform now says;
+    /// what is kept here is only that the mirror is simulated rather than
+    /// interpolated.
     void SyncMirrorBody(NetId netId, ECS::Entity entity);
     void SendAck(std::uint64_t serverTick);
     void SendHello();
@@ -452,7 +449,6 @@ private:
     /// local contact has woken it, where it *is* is no longer that.
     struct MirrorBody
     {
-        Physics::RigidBody body;   ///< Kept so the body can be removed after its entity is gone.
         bool asleep = false;
         glm::vec3 restPosition{};
         glm::quat restRotation{1.f, 0.f, 0.f, 0.f};
@@ -478,10 +474,10 @@ private:
         float smoothingWindow  = 0.f;     ///< Seconds; 0 = nothing to smooth.
     };
 
-    /// Destroy the Jolt body behind a mirror, if it has one. Keyed by NetId
-    /// rather than read back off the entity because two of its three callers — a
-    /// despawn and a locally-destroyed mirror — have already lost the entity by
-    /// then; only the descriptor-removal path still holds it.
+    /// Forget that a mirror is body-corrected. The body itself goes with the
+    /// entity or its descriptor, on the physics world's next reconcile. Keyed by
+    /// NetId because two of its three callers — a despawn and a locally-destroyed
+    /// mirror — have already lost the entity by then.
     void DestroyMirrorBody(NetId netId);
 
     Net::NetTransport &_transport;
@@ -491,11 +487,9 @@ private:
     Net::ConnectionId _connection;
 
     /// Resolved once, because the removal path sees only ids, never types. A
-    /// descriptor *removal* is the one component removal with a side effect: the
-    /// mirror stops being body-corrected, so its Jolt body and the transient
-    /// RigidBody handle must go with it.
+    /// descriptor *removal* is the one component removal with a side effect here:
+    /// the mirror stops being body-corrected.
     Core::Reflect::ComponentId _descriptorComponentId = Core::Reflect::kInvalidComponentId;
-    Core::Reflect::ComponentId _rigidBodyComponentId  = Core::Reflect::kInvalidComponentId;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
 

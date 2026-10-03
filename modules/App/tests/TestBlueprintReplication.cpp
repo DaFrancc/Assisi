@@ -683,12 +683,13 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     world.physics.GetActiveBodyStates(before);
     REQUIRE(before.size() == 1);
 
-    const App::StrippedEntities stripped = App::StripReplicatedEntities(world.scene, world.physics);
+    const App::StrippedEntities stripped = App::StripReplicatedEntities(world.scene);
     CHECK(stripped.entities == 1);
     CHECK(stripped.orphans == 1);
 
-    // The body goes with the entity. Destroying the entity alone leaves a body in
-    // the simulation that nothing holds a handle to.
+    // The body goes with the entity, on the world's next reconcile.
+    world.physics.Reconcile();
+    CHECK_FALSE(world.physics.HasBody(replicated));
     std::vector<Physics::PhysicsWorld::ActiveBodyState> after;
     world.physics.GetActiveBodyStates(after);
     CHECK(after.empty());

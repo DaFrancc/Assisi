@@ -23,18 +23,39 @@ editor, that's **Add Component → RigidBodyDescriptor** on the selected object.
 
 The editor only shows the size fields that apply to the chosen shape.
 
-When the level starts, the engine creates the real physics body. From then on
-**physics owns the entity's position**: it falls, collides and comes to rest on
-its own, and the engine copies the result into the `Transform` each step.
+## How the scene and physics stay in step
 
-> A physics body's `Transform` belongs to physics while the game runs. Don't
-> move it by writing to its `Transform`; use the calls below.
+Each world's physics follows its scene by itself. At the start of every step it
+looks at what changed since the last one:
+
+- An entity that gained a descriptor gets a body. One that lost its descriptor,
+  or was destroyed, loses its body.
+- A changed descriptor changes the live body. A new size or shape takes effect
+  at once, and so does switching `isStatic`.
+- A changed `Transform` moves the body there. Scale counts too: a scaled
+  entity has a scaled collider. A sphere or capsule has a single radius, so it
+  is scaled by the same amount on every axis.
+
+While a body moves, the engine copies its pose into the `Transform` every frame.
+A body at rest is left alone, so a level full of sleeping objects costs nothing.
+
+### What writing a `Transform` does
+
+You can move any physics object by writing its `Transform`. What happens next
+depends on the kind of body:
+
+| Body | What a `Transform` write does |
+|---|---|
+| Static | The collider is moved there, and anything resting on it wakes up. |
+| Dynamic | The body is placed there and keeps its velocity. |
+| Character | Only a change of position moves it; turning it is the controller's job. |
+
+To place a body and stop it as well, call `Teleport(entity, pose)`.
 
 ## Moving bodies from code
 
-Each world has its own physics, at `ctx.world.physics`. You work with a body
-through its **`RigidBody`** component, which the engine adds when it creates the
-body.
+Each world has its own physics, at `ctx.world.physics`. Its calls take the
+entity the body belongs to.
 
 ```cpp
 #include <Assisi/App/World.hpp>
@@ -42,9 +63,9 @@ body.
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
 // Launch every body upward.
-for (auto [entity, body] : scene.Query<Physics::RigidBody>())
+for (auto [entity, descriptor] : scene.Query<Physics::RigidBodyDescriptor>())
 {
-    ctx.world.physics.SetBodyLinearVelocity(body, glm::vec3(0.f, 10.f, 0.f));
+    ctx.world.physics.SetBodyLinearVelocity(entity, glm::vec3(0.f, 10.f, 0.f));
 }
 ```
 
@@ -52,11 +73,23 @@ The calls you'll use most:
 
 | Call | What it does |
 |---|---|
-| `SetBodyLinearVelocity(body, velocity)` | Sets how fast the body moves, in meters per second. |
-| `GetBodyVelocity(body)` | Returns `{linear, angular}` velocity. |
-| `GetBodyTransform(body)` | Returns `{position, rotation}` straight from physics. |
-| `SetBodyTransform(body, position, rotation)` | Teleports the body. |
+| `SetBodyLinearVelocity(entity, velocity)` | Sets how fast the body moves, in meters per second. |
+| `GetBodyVelocity(entity)` | Returns `{linear, angular}` velocity. |
+| `GetBodyPose(entity)` | Returns the body's world `position` and `rotation`, straight from physics. |
+| `Teleport(entity, pose)` | Places the body at a world pose and stops it. |
+| `HasBody(entity)` | Whether the entity has a body or a character yet. |
 | `SetGravity(gravity)` | Changes gravity for the whole world. The default points down. |
+
+An entity added this step gets its body at the start of the next one. Call
+`Reconcile()` to build it straight away, for example to cast a ray at it
+before anything has stepped.
+
+### Limits
+
+`AppConfig::maxPhysicsBodies` sets how many bodies one world can hold. The
+default is 65536. `AppConfig::maxFixedStepsPerFrame` (default 8) caps how many
+physics steps one slow frame may run to catch up; any time beyond that is
+dropped, so the game slows down instead of freezing.
 
 **Put code that changes velocities in a `FixedUpdate` system**, so it runs in
 step with physics and behaves the same at any frame rate.
@@ -111,9 +144,9 @@ An entity has a `CharacterDescriptor` or a `RigidBodyDescriptor`, never both.
 
 ### Telling it what to do
 
-When the level starts the engine adds a **`Character`** component. Three of its
-fields are the character's input, and anything can write them: the keyboard, an
-AI, or a network command.
+A `CharacterDescriptor` brings a **`Character`** component with it. Three of
+its fields are the character's input, and anything can write them: the
+keyboard, an AI, or a network command.
 
 | Field | Meaning |
 |---|---|

@@ -1,26 +1,25 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file PhysicsWorld.cpp
-/// @brief The world itself: bringing it up, stepping it, and the rigid bodies in
-///        it — creating, destroying, and editing one.
+/// @brief The world itself: bringing it up, stepping it, and reading and
+///        writing one entity's body.
 ///
-/// The rest of PhysicsWorld lives beside this file rather than in it. Contacts
-/// are in PhysicsContacts.cpp, scene queries in PhysicsQueries.cpp, characters in
+/// The rest of PhysicsWorld lives beside this file rather than in it. Keeping
+/// bodies in step with the scene is in PhysicsReconcile.cpp, contacts in
+/// PhysicsContacts.cpp, scene queries in PhysicsQueries.cpp, characters in
 /// PhysicsCharacters.cpp, and the render/replication writeback in
 /// PhysicsWriteback.cpp; what they share is PhysicsInternal.hpp.
 
 #include "PhysicsInternal.hpp"
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/ECS/TransformPose.hpp>
 
-#include <Jolt/Physics/Body/BodyCreationSettings.h>
-#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 
@@ -44,6 +43,10 @@ JPH::Vec3 ClampedBoxHalfExtents(glm::vec3 halfExtents)
     const glm::vec3 clamped = glm::max(halfExtents, glm::vec3(JPH::cDefaultConvexRadius));
     return {clamped.x, clamped.y, clamped.z};
 }
+
+/// Closer to 1 than this on every axis, a scale is no scale: wrapping the shape
+/// would cost a level of indirection on every collision test for nothing.
+constexpr float kUnitScaleTolerance = 1e-6f;
 } // namespace
 
 JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
@@ -64,6 +67,17 @@ JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
     return new JPH::BoxShape(ClampedBoxHalfExtents(shape.halfExtents));
 }
 
+JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm::vec3 scale)
+{
+    JPH::ShapeRefC base = MakeShape(shape);
+    if (glm::all(glm::lessThan(glm::abs(scale - glm::vec3(1.f)), glm::vec3(kUnitScaleTolerance))))
+    {
+        return base;
+    }
+    const JPH::Vec3 valid = base->MakeScaleValid(JPH::Vec3(scale.x, scale.y, scale.z));
+    return new JPH::ScaledShape(base, valid);
+}
+
 // Contact-solver tuning (see the constructor). Rather than brute-forcing high
 // step rates, we lean on the same cheap mechanism Unity/Unreal use: speculative
 // contacts (a predictive margin that stops a body at a surface within one solve)
@@ -82,13 +96,15 @@ constexpr float kSpeculativeContactDist =
 // box (inner radius 0.5) this triggers at ~9 m/s / a ~4 m drop.
 constexpr float kLinearCastThreshold = 0.3f;
 
-PhysicsWorld::PhysicsWorld()
+PhysicsWorld::PhysicsWorld(ECS::Scene &scene, uint32_t maxBodies)
 {
     /* Impl's first member acquires the shared Jolt runtime, so the library is up
        (allocator/Factory/types) before any of its other members construct. */
-    _impl = std::make_unique<Impl>();
+    _impl = std::make_unique<Impl>(scene);
+    _impl->maxBodies = maxBodies;
+    _impl->clearEpoch = scene.ClearEpoch();
 
-    _impl->physicsSystem.Init(Impl::kMaxBodies, 0u, Impl::kMaxBodyPairs, Impl::kMaxContactConstraints,
+    _impl->physicsSystem.Init(maxBodies, 0u, Impl::kMaxBodyPairs, Impl::kMaxContactConstraints,
                               _impl->bpLayerInterface, _impl->objVsBPFilter, _impl->objLayerFilter);
 
     // Prevent impact penetration the cheap way (see the constant block above):
@@ -116,222 +132,118 @@ PhysicsWorld::PhysicsWorld()
 
 PhysicsWorld::~PhysicsWorld()
 {
-    /* Impl's members are destroyed in reverse declaration order, so the shared
-       runtime handle (its first member) is released after this world's
-       PhysicsSystem and bodies are gone. */
+    // Characters own inner bodies they destroy themselves, so everything goes
+    // before the PhysicsSystem those bodies live in. Impl's members are then
+    // destroyed in reverse declaration order, releasing the shared runtime last.
+    _impl->DestroyAll();
     _impl.reset();
 }
 
-RigidBody PhysicsWorld::AddBody(const Pose &pose, const ColliderShapeDesc &shape, BodyMotion motion,
-                                CollisionFilter filter)
+// ---------------------------------------------------------------------------
+// Slots
+// ---------------------------------------------------------------------------
+
+PhysicsWorld::Impl::BodySlot *PhysicsWorld::Impl::SlotFor(ECS::Entity entity)
 {
-    const bool sensor = filter.channel == CollisionChannel::Trigger;
-
-    // A sensor that fell under gravity would leave the volume it was authored as,
-    // so Dynamic collapses to Kinematic here. Static stays static: that is the
-    // cheap sensor, which notices only bodies that are awake.
-    const BodyMotion effective = sensor && motion == BodyMotion::Dynamic ? BodyMotion::Kinematic : motion;
-
-    JPH::EMotionType joltMotion = JPH::EMotionType::Dynamic;
-    if (effective == BodyMotion::Static)
-        joltMotion = JPH::EMotionType::Static;
-    else if (effective == BodyMotion::Kinematic)
-        joltMotion = JPH::EMotionType::Kinematic;
-
-    const JPH::ObjectLayer layer = PackLayer(filter, effective);
-
-    JPH::BodyCreationSettings settings(
-        MakeShape(shape), JPH::RVec3(pose.position.x, pose.position.y, pose.position.z),
-        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized(), joltMotion, layer);
-
-    // Always allocate motion properties so the motion type can be changed at runtime
-    // (e.g. making a Static body Dynamic via SetBodyMotionType).
-    settings.mAllowDynamicOrKinematic = true;
-    settings.mIsSensor = sensor;
-
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-
-    // A kinematic sensor is activated and then never sleeps on its own, which is
-    // what lets it find bodies that are already at rest — including ones it is
-    // later moved onto.
-    const JPH::BodyID bodyId = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
-    if (bodyId.IsInvalid())
+    if (entity.index >= slots.size())
     {
-        Assisi::Core::Log::Error(
-            "PhysicsWorld: failed to create body (body limit of {} reached?); entity will not simulate.",
-            Impl::kMaxBodies);
-        return RigidBody{FromJolt(bodyId)};
+        return nullptr;
     }
-
-    _impl->allBodyIds.push_back(bodyId);
-    if (effective != BodyMotion::Static)
+    BodySlot &slot = slots[entity.index];
+    if (slot.kind == SlotKind::Empty || slot.generation != entity.generation)
     {
-        _impl->movingBodyIds.push_back(bodyId);
+        return nullptr;
     }
-
-    // Seed both snapshots with the spawn pose so the first interpolated frame
-    // (before any step has run) resolves to exactly where the body was placed.
-    _impl->snapshots[bodyId.GetIndexAndSequenceNumber()] =
-        Impl::MotionSnapshot{pose.position, pose.rotation, pose.position, pose.rotation};
-
-    // A static sensor is told about bodies that touch it, and a sleeping body
-    // touches nothing. Waking whatever it now encloses is what lets it report the
-    // things that were already sitting there when it appeared.
-    if (sensor && effective == BodyMotion::Static)
-        _impl->WakeInside(bodyId);
-
-    return RigidBody{FromJolt(bodyId)};
+    return &slot;
 }
 
-RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                              const RigidBodyDescriptor &descriptor)
+const PhysicsWorld::Impl::BodySlot *PhysicsWorld::Impl::SlotFor(ECS::Entity entity) const
 {
-    const BodyMotion motion = descriptor.isStatic ? BodyMotion::Static : BodyMotion::Dynamic;
-    const ColliderShapeDesc shape{.shape = descriptor.shape,
-                                  .halfExtents = descriptor.halfExtents,
-                                  .radius = descriptor.radius,
-                                  .halfHeight = descriptor.halfHeight};
-
-    // Jolt places bodies in world space, and a parented Transform is an offset
-    // from its parent — the same mismatch InterpolateTransforms undoes on the way
-    // back out. Without this a parented body spawns at its *local* pose and stays
-    // there, which for a blueprint member means the instance's placement is
-    // simply ignored.
-    glm::vec3 position = transform.position;
-    glm::quat rotation = transform.rotation;
-    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
+    if (entity.index >= slots.size())
     {
-        const ECS::Transform pose = ECS::PoseUnderParent(transform, *parent);
-        position = pose.position;
-        rotation = pose.rotation;
+        return nullptr;
     }
-
-    const RigidBody body =
-        AddBody(Pose{rotation, position}, shape, motion, CollisionFilter{descriptor.collidesWith, descriptor.channel});
-    if (descriptor.enableCCD)
-        SetBodyCCD(body, true);
-    (void)scene.Add<RigidBody>(entity, body);
-
-    // The only body-creation path that knows an entity, so the only one that can
-    // make a contact nameable in ECS terms. Recorded unconditionally: reporting can
-    // be switched on later in the world's life, and rebuilding the map then would
-    // mean walking the scene.
-    if (!ToJolt(body.bodyId).IsInvalid())
+    const BodySlot &slot = slots[entity.index];
+    if (slot.kind == SlotKind::Empty || slot.generation != entity.generation)
     {
-        _impl->bodyEntities[ToJolt(body.bodyId).GetIndexAndSequenceNumber()] = entity;
-        _impl->entityBodies[entity] = ToJolt(body.bodyId);
+        return nullptr;
     }
-
-    return body;
+    return &slot;
 }
 
-void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene)
+PhysicsWorld::Impl::BodySlot &PhysicsWorld::Impl::SlotAt(ECS::Entity entity)
 {
-    Clear();
-
-    // One entity is built once however many descriptors it has, which is what
-    // makes carrying both an error the entity-keyed path can report rather than
-    // two objects fighting each other.
-    for (auto [entity, transform, descriptor] : scene.Query<ECS::Transform, RigidBodyDescriptor>())
+    if (entity.index >= slots.size())
     {
-        (void)transform;
-        (void)descriptor;
-        if (!RebuildEntityPhysics(scene, entity))
-        {
-            Assisi::Core::Log::Error("PhysicsWorld: entity {} has no usable physics.", entity.index);
-        }
+        slots.resize(static_cast<std::size_t>(entity.index) + 1u);
     }
-
-    for (auto [entity, transform, descriptor] : scene.Query<ECS::Transform, CharacterDescriptor>())
-    {
-        (void)transform;
-        (void)descriptor;
-        if (scene.Get<Character>(entity) != nullptr)
-        {
-            continue; // already built above, or refused there for carrying both
-        }
-        if (!RebuildEntityPhysics(scene, entity))
-        {
-            Assisi::Core::Log::Error("PhysicsWorld: entity {} has no usable physics.", entity.index);
-        }
-    }
+    return slots[entity.index];
 }
 
-void PhysicsWorld::Clear()
+ECS::Entity PhysicsWorld::Impl::EntityFor(const JPH::BodyID &id) const
 {
-    // Characters first: each owns an inner body that it destroys itself, and one
-    // outliving the body set would be destroyed after the bodies it points into.
-    _impl->entityCharacters.clear();
-    for (auto &[id, record] : _impl->characters)
-    {
-        (void)id;
-        _impl->characterVsCharacter.Remove(record.character);
-    }
-    _impl->characters.clear();
-
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    for (const JPH::BodyID &id : _impl->allBodyIds)
-    {
-        if (bodies.IsAdded(id))
-            bodies.RemoveBody(id);
-        bodies.DestroyBody(id);
-    }
-    _impl->allBodyIds.clear();
-    _impl->movingBodyIds.clear();
-    _impl->snapshots.clear();
-    _impl->bodyEntities.clear();
-    _impl->entityBodies.clear();
-
-    // Every pair and event names bodies that no longer exist — and, after a level
-    // load, entity handles that mean something entirely different. No Exit is
-    // emitted for what was touching: nothing survives that could act on one, and a
-    // world being emptied is not a world where things left each other.
-    _impl->pairs.clear();
-    _impl->touchedThisStep.clear();
-    _impl->pendingExits.clear();
-    _impl->events.clear();
-}
-
-void PhysicsWorld::RemoveBody(const RigidBody &body)
-{
-    const JPH::BodyID id = ToJolt(body.bodyId);
     if (id.IsInvalid())
-        return;
+    {
+        return ECS::NullEntity;
+    }
+    return EntityOfUserData(physicsSystem.GetBodyInterface().GetUserData(id));
+}
 
-    // Everything this body was touching has stopped touching it, and the next
-    // step cannot say so — the body will be gone and the entity behind it
-    // forgotten. Build those Exits now, while both are still knowable, and let the
-    // next Update() deliver them.
-    _impl->EmitExitsFor(id, _impl->pendingExits);
+JPH::BodyID PhysicsWorld::Impl::BodyFor(ECS::Entity entity) const
+{
+    const BodySlot *slot = SlotFor(entity);
+    return slot == nullptr ? JPH::BodyID{} : slot->body;
+}
 
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (bodies.IsAdded(id))
-        bodies.RemoveBody(id);
-    bodies.DestroyBody(id);
+void PhysicsWorld::Impl::CollapseSnapshot(BodySlot &slot, const Pose &pose)
+{
+    slot.snapshot = MotionSnapshot{pose.rotation, pose.rotation, pose.position, pose.position};
+}
 
-    // Drop it from the bookkeeping so CaptureState/InterpolateTransforms and a
-    // later Clear() never touch the freed id. Match on the index+sequence key
-    // rather than BodyID identity to avoid depending on operator==.
-    const std::uint32_t key = id.GetIndexAndSequenceNumber();
-    const auto matches = [key](const JPH::BodyID &b) { return b.GetIndexAndSequenceNumber() == key; };
-    std::erase_if(_impl->allBodyIds, matches);
-    std::erase_if(_impl->movingBodyIds, matches);
-    _impl->snapshots.erase(key);
+void PhysicsWorld::Impl::Follow(std::uint32_t index)
+{
+    BodySlot &slot = slots[index];
+    slot.settled = false;
+    if (!slot.followed)
+    {
+        slot.followed = true;
+        awake.push_back(index);
+    }
+}
 
-    // Last, because the Exits queued above were built from it: the entity behind
-    // this body stops being knowable here.
-    const ECS::Entity gone = _impl->EntityFor(id);
-    _impl->bodyEntities.erase(key);
-    if (gone != ECS::NullEntity)
-        _impl->entityBodies.erase(gone);
+// ---------------------------------------------------------------------------
+// Stepping
+// ---------------------------------------------------------------------------
+
+void PhysicsWorld::Reconcile()
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::Reconcile called while the world is stepping");
+    _impl->ReconcileScene(0.f);
+}
+
+void PhysicsWorld::Rebuild()
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::Rebuild called while the world is stepping");
+    _impl->DestroyAll();
+    // From the start of the scene's history, so the reconcile below finds every
+    // descriptor it holds and builds each one new.
+    _impl->changeCursor = 0;
+    _impl->ReconcileScene(0.f);
 }
 
 void PhysicsWorld::Update(float deltaTime)
 {
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::Update called while the world is stepping");
+
     // The events describe the step about to run, not the one before it — clearing
     // here is what guarantees a consumer sees each one exactly once. Safe without
     // the mutex: no Jolt worker is inside a callback at this point.
     _impl->events.clear();
+
+    // First, so the step simulates the scene as it is now: bodies for what was
+    // added, none for what was destroyed, and every Transform written since the
+    // last step already pushed. The Exits of what it destroys join those below.
+    _impl->ReconcileScene(deltaTime);
 
     // Exits recorded when a body was destroyed. They belong to this step: the pair
     // ended when the body went away, and there was no step in between.
@@ -339,6 +251,8 @@ void PhysicsWorld::Update(float deltaTime)
     _impl->pendingExits.clear();
 
     ++_impl->step;
+
+    _impl->stepping = true;
 
     // Characters first. They are swept rather than solved, so they react to the
     // world as the step found it; whatever they push then has the rest of this
@@ -350,6 +264,8 @@ void PhysicsWorld::Update(float deltaTime)
        is per-world so two worlds' steps never touch the same scratch stack (see
        JoltRuntime). */
     _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jolt.JobSystem());
+
+    _impl->stepping = false;
 
     _impl->ResolveContactEvents();
 }
@@ -365,8 +281,76 @@ int32_t PhysicsWorld::GetCollisionSteps() const
 }
 
 // ---------------------------------------------------------------------------
-// Body state
+// One entity's body
 // ---------------------------------------------------------------------------
+
+bool PhysicsWorld::HasBody(ECS::Entity entity) const
+{
+    return _impl->SlotFor(entity) != nullptr;
+}
+
+void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::Teleport called while the world is stepping");
+
+    Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr)
+    {
+        return;
+    }
+
+    const JPH::Quat rotation =
+        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized();
+    const JPH::RVec3 position(pose.position.x, pose.position.y, pose.position.z);
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    if (slot->kind == Impl::SlotKind::Character)
+    {
+        Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+        record->character->SetPosition(position);
+        record->character->SetRotation(rotation);
+        record->character->SetLinearVelocity(JPH::Vec3::sZero());
+        bodies.SetPositionAndRotation(slot->body, position, rotation, JPH::EActivation::Activate);
+
+        // What it was touching is about to be wrong. Re-finding it here rather
+        // than waiting a step keeps the ground state honest for anything that
+        // reads it between the teleport and the next Update.
+        const FilterLayerFilter layerFilter{record->queryFilter};
+        record->character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
+    }
+    else
+    {
+        const bool isStatic = slot->motion == BodyMotion::Static;
+        bodies.SetPositionAndRotation(slot->body, position, rotation,
+                                      isStatic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+        if (!isStatic)
+        {
+            bodies.SetLinearVelocity(slot->body, JPH::Vec3::sZero());
+            bodies.SetAngularVelocity(slot->body, JPH::Vec3::sZero());
+        }
+    }
+    Impl::CollapseSnapshot(*slot, pose);
+
+    // The Transform is written now rather than left to the writeback, which
+    // follows only bodies that are awake: a static or sleeping one would be drawn
+    // where it was for good. Stamped as this world's own, so it is not pushed back,
+    // and written over any write still waiting to be pushed, which this replaces.
+    _impl->WritePose(entity, pose, slot->kind != Impl::SlotKind::Character);
+}
+
+void PhysicsWorld::AdoptTransform(ECS::Entity entity)
+{
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr)
+    {
+        return;
+    }
+    _impl->StampTransform(entity);
+    if (slot->kind == Impl::SlotKind::Body && slot->motion != BodyMotion::Static)
+    {
+        _impl->Follow(entity.index);
+    }
+}
 
 void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
 {
@@ -383,7 +367,7 @@ void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
     {
         const ECS::Entity entity = _impl->EntityFor(id);
         if (entity == ECS::NullEntity)
-            continue; // a raw AddBody body: nothing a caller could name it by
+            continue;
 
         const JPH::RVec3 position = bodies.GetPosition(id);
         const JPH::Quat rotation = bodies.GetRotation(id);
@@ -400,39 +384,44 @@ void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
     }
 }
 
-bool PhysicsWorld::IsBodyActive(const RigidBody &body) const
+bool PhysicsWorld::IsBodyActive(ECS::Entity entity) const
 {
-    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    return bodies.IsAdded(ToJolt(body.bodyId)) && bodies.IsActive(ToJolt(body.bodyId));
+    const JPH::BodyID id = _impl->BodyFor(entity);
+    return !id.IsInvalid() && _impl->physicsSystem.GetBodyInterface().IsActive(id);
 }
 
-void PhysicsWorld::DeactivateBody(const RigidBody &body)
+void PhysicsWorld::DeactivateBody(ECS::Entity entity)
 {
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
+    const JPH::BodyID id = _impl->BodyFor(entity);
+    if (id.IsInvalid())
         return;
-    bodies.DeactivateBody(ToJolt(body.bodyId));
+    _impl->physicsSystem.GetBodyInterface().DeactivateBody(id);
 }
 
-void PhysicsWorld::ApplyBodyState(const RigidBody &body, glm::vec3 position, glm::quat rotation,
-                                  glm::vec3 linearVelocity, glm::vec3 angularVelocity, bool activate)
+void PhysicsWorld::ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec3 linearVelocity,
+                                  glm::vec3 angularVelocity, bool activate)
 {
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ApplyBodyState called while the world is stepping");
+
+    Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr || slot->kind != Impl::SlotKind::Body)
         return;
 
-    // A static body can be *placed*, it just has no motion to place it with —
-    // the same split SetBodyTransform makes. Refusing the whole call for one
-    // would be a trap: a correction for a body the two ends disagree about the
-    // motion type of would silently do nothing, which is the worst available
-    // outcome for a peer that is trying to tell us where something is.
-    const bool isStatic = bodies.GetMotionType(ToJolt(body.bodyId)) == JPH::EMotionType::Static;
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
-    // Normalized for the same reason AddBody and SetBodyTransform do it: a
-    // quaternion that crossed a wire (or a level file) is often a hair off unit
+    // A static body can be *placed*, it just has no motion to place it with.
+    // Refusing the whole call for one would be a trap: a correction for a body
+    // the two ends disagree about the motion type of would silently do nothing,
+    // which is the worst available outcome for a peer that is trying to tell us
+    // where something is.
+    const bool isStatic = slot->motion == BodyMotion::Static;
+
+    // Normalized: a quaternion that crossed a wire is often a hair off unit
     // length, and Jolt asserts IsNormalized() when it rotates with one.
-    bodies.SetPositionAndRotation(ToJolt(body.bodyId), JPH::RVec3(position.x, position.y, position.z),
-                                  JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
+    const JPH::Quat rotation =
+        JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w).Normalized();
+    bodies.SetPositionAndRotation(slot->body, JPH::RVec3(pose.position.x, pose.position.y, pose.position.z),
+                                  rotation,
                                   (activate && !isStatic) ? JPH::EActivation::Activate
                                                           : JPH::EActivation::DontActivate);
 
@@ -441,255 +430,98 @@ void PhysicsWorld::ApplyBodyState(const RigidBody &body, glm::vec3 position, glm
         // Before the deactivate below, not after: Jolt ignores velocity written
         // to a sleeping body, so zeroing an about-to-sleep body has to happen
         // while it is still awake.
-        bodies.SetLinearVelocity(ToJolt(body.bodyId), JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
-        bodies.SetAngularVelocity(ToJolt(body.bodyId),
-                                  JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+        bodies.SetLinearVelocity(slot->body, JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
+        bodies.SetAngularVelocity(slot->body, JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
 
         if (!activate)
-            bodies.DeactivateBody(ToJolt(body.bodyId));
+            bodies.DeactivateBody(slot->body);
     }
 
-    // Collapse both snapshots onto the corrected pose. Without this the next
-    // InterpolateTransforms() blends from the pre-correction pose and smears the
-    // jump across a frame — which the view-side error smoothing is *also* trying
-    // to absorb, so the two double-count into a wobble at every correction.
-    const auto it = _impl->snapshots.find(ToJolt(body.bodyId).GetIndexAndSequenceNumber());
-    if (it != _impl->snapshots.end())
-        it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
+    Impl::CollapseSnapshot(*slot, pose);
+
+    // Followed until the writeback has put the Transform at the corrected pose,
+    // which for a body left asleep would otherwise never happen.
+    _impl->Follow(entity.index);
 }
 
-std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBody &body) const
+Pose PhysicsWorld::GetBodyPose(ECS::Entity entity) const
 {
+    const JPH::BodyID id = _impl->BodyFor(entity);
+    if (id.IsInvalid())
+    {
+        return Pose{};
+    }
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    const JPH::RVec3 pos = bodies.GetPosition(ToJolt(body.bodyId));
-    const JPH::Quat rot = bodies.GetRotation(ToJolt(body.bodyId));
-    return {glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ()), glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ())};
+    const JPH::RVec3 pos = bodies.GetPosition(id);
+    const JPH::Quat rot = bodies.GetRotation(id);
+    return Pose{glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ()), glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ())};
 }
 
-std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetBodyVelocity(const RigidBody &body) const
+std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetBodyVelocity(ECS::Entity entity) const
 {
-    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-
-    // Static bodies have no motion state; querying velocity on them is meaningless
-    // (and GetLinearVelocity would just return zero anyway). Report zero for those
-    // and for handles whose body isn't in the simulation.
-    if (!bodies.IsAdded(ToJolt(body.bodyId)) || bodies.GetMotionType(ToJolt(body.bodyId)) == JPH::EMotionType::Static)
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr || slot->motion == BodyMotion::Static)
     {
         return {glm::vec3(0.f), glm::vec3(0.f)};
     }
 
-    const JPH::Vec3 lin = bodies.GetLinearVelocity(ToJolt(body.bodyId));
-    const JPH::Vec3 ang = bodies.GetAngularVelocity(ToJolt(body.bodyId));
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    const JPH::Vec3 lin = bodies.GetLinearVelocity(slot->body);
+    const JPH::Vec3 ang = bodies.GetAngularVelocity(slot->body);
     return {glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()), glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ())};
 }
 
-bool PhysicsWorld::IsBodyCCDEnabled(const RigidBody &body) const
+bool PhysicsWorld::IsBodyCCDEnabled(ECS::Entity entity) const
 {
-    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr || slot->motion == BodyMotion::Static)
     {
         return false;
     }
-    return bodies.GetMotionQuality(ToJolt(body.bodyId)) == JPH::EMotionQuality::LinearCast;
+    return _impl->physicsSystem.GetBodyInterface().GetMotionQuality(slot->body) == JPH::EMotionQuality::LinearCast;
 }
 
-void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation)
+glm::vec3 PhysicsWorld::GetColliderScale(ECS::Entity entity) const
 {
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
-        return;
-
-    const bool isStatic = bodies.GetMotionType(ToJolt(body.bodyId)) == JPH::EMotionType::Static;
-
-    // A static sensor only hears about bodies that are awake, so the space it is
-    // leaving has to be woken as well as the space it is arriving in: whatever it
-    // was containing must be re-tested to notice the pair ended, and whatever it
-    // lands on must be re-tested to notice the pair began. Captured before the
-    // move, used after it.
-    const bool wakesAround = isStatic && IsTriggerLayer(bodies.GetObjectLayer(ToJolt(body.bodyId)));
-    JPH::AABox touched;
-    if (wakesAround)
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr || slot->kind != Impl::SlotKind::Body)
     {
-        JPH::BodyLockRead lock(_impl->physicsSystem.GetBodyLockInterface(), ToJolt(body.bodyId));
-        if (lock.Succeeded())
-            touched = lock.GetBody().GetWorldSpaceBounds();
+        return glm::vec3(1.f);
     }
-
-    // Normalize before handing the quaternion to Jolt: a hand-authored or imported
-    // rotation is often a hair off unit length (e.g. a level's [0.707, 0.707, 0, 0]
-    // has length^2 0.9997), and Jolt asserts IsNormalized() when it rotates with it.
-    // AddBody normalizes for the same reason.
-    bodies.SetPositionAndRotation(ToJolt(body.bodyId), JPH::RVec3(position.x, position.y, position.z),
-                                  JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
-                                  isStatic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
-
-    // Velocity is only meaningful for dynamic bodies; static bodies have no active motion.
-    if (!isStatic)
+    // Read back from the shape rather than recomputed, so it is whatever Jolt
+    // made of the scale it was asked for.
+    const JPH::ShapeRefC shape = _impl->physicsSystem.GetBodyInterface().GetShape(slot->body);
+    if (shape->GetSubType() != JPH::EShapeSubType::Scaled)
     {
-        bodies.SetLinearVelocity(ToJolt(body.bodyId), JPH::Vec3::sZero());
-        bodies.SetAngularVelocity(ToJolt(body.bodyId), JPH::Vec3::sZero());
+        return glm::vec3(1.f);
     }
-
-    // Collapse both snapshots onto the teleport target. Without this the next
-    // InterpolateTransforms() would blend from the pre-teleport pose and slide
-    // the body across the gap over one frame instead of snapping to it.
-    const auto it = _impl->snapshots.find(ToJolt(body.bodyId).GetIndexAndSequenceNumber());
-    if (it != _impl->snapshots.end())
-    {
-        it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
-    }
-
-    if (wakesAround)
-    {
-        JPH::ObjectLayer layer = 0;
-        {
-            JPH::BodyLockRead lock(_impl->physicsSystem.GetBodyLockInterface(), ToJolt(body.bodyId));
-            if (!lock.Succeeded())
-                return;
-            touched.Encapsulate(lock.GetBody().GetWorldSpaceBounds());
-            layer = lock.GetBody().GetObjectLayer();
-        }
-
-        // Outside the lock: waking takes its own body locks, and everything read
-        // above came from the locked body rather than through an interface that
-        // would have taken the same one again.
-        _impl->WakeInside(touched, CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))});
-    }
+    const JPH::Vec3 scale = static_cast<const JPH::ScaledShape *>(shape.GetPtr())->GetScale();
+    return glm::vec3(scale.GetX(), scale.GetY(), scale.GetZ());
 }
 
-void PhysicsWorld::MoveBodyKinematic(const RigidBody &body, glm::vec3 position, glm::quat rotation, float deltaTime)
+void PhysicsWorld::SetBodyLinearVelocity(ECS::Entity entity, glm::vec3 velocity)
 {
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)) || deltaTime <= 0.f)
-    {
-        return;
-    }
-    if (bodies.GetMotionType(ToJolt(body.bodyId)) == JPH::EMotionType::Static)
-    {
-        return;
-    }
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::SetBodyLinearVelocity called while the world is stepping");
 
-    // MoveKinematic, not SetPositionAndRotation: it works out the velocity that
-    // carries the body there over the step and leaves it on the body. That
-    // velocity is the whole point — it is what pushes resting bodies along and
-    // what a character standing on this reads to ride it.
-    bodies.MoveKinematic(ToJolt(body.bodyId), JPH::RVec3(position.x, position.y, position.z),
-                         JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), deltaTime);
-}
-
-void PhysicsWorld::SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity)
-{
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)) || bodies.GetMotionType(ToJolt(body.bodyId)) == JPH::EMotionType::Static)
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion == BodyMotion::Static)
         return;
 
     // Activate first, then set: a body Jolt has put to sleep on a surface ignores
     // velocity written while it is asleep, which reads as the call silently doing
     // nothing — exactly the case a contact response hits, since landing is what
     // puts a body to sleep in the first place.
-    bodies.ActivateBody(ToJolt(body.bodyId));
-    bodies.SetLinearVelocity(ToJolt(body.bodyId), JPH::Vec3(velocity.x, velocity.y, velocity.z));
-}
-
-void PhysicsWorld::SetBodyCollisionFilter(const RigidBody &body, CollisionFilter filter)
-{
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
-        return;
-
-    const bool sensor = filter.channel == CollisionChannel::Trigger;
-
-    // The motion type rides in the layer beside the channel, so it has to be
-    // carried across rather than defaulted — repacking without it would quietly
-    // move the body to another broad-phase tree.
-    BodyMotion motion = MotionOf(bodies.GetObjectLayer(ToJolt(body.bodyId)));
-    if (sensor && motion == BodyMotion::Dynamic)
-        motion = BodyMotion::Kinematic;
-
-    bodies.SetObjectLayer(ToJolt(body.bodyId), PackLayer(filter, motion));
-
-    if (motion != BodyMotion::Static)
-        bodies.ActivateBody(ToJolt(body.bodyId));
-
-    // Sensor-ness is a body flag rather than part of the layer, and Jolt exposes
-    // no interface-level setter for it.
-    JPH::BodyLockWrite lock(_impl->physicsSystem.GetBodyLockInterface(), ToJolt(body.bodyId));
-    if (lock.Succeeded())
-        lock.GetBody().SetIsSensor(sensor);
+    bodies.ActivateBody(slot->body);
+    bodies.SetLinearVelocity(slot->body, JPH::Vec3(velocity.x, velocity.y, velocity.z));
 }
 
-CollisionFilter PhysicsWorld::GetBodyCollisionFilter(const RigidBody &body) const
+CollisionFilter PhysicsWorld::GetBodyCollisionFilter(ECS::Entity entity) const
 {
-    if (!_impl->physicsSystem.GetBodyInterface().IsAdded(ToJolt(body.bodyId)))
+    const JPH::BodyID id = _impl->BodyFor(entity);
+    if (id.IsInvalid())
         return CollisionFilter{};
-    return _impl->FilterOf(ToJolt(body.bodyId));
-}
-
-void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape)
-{
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
-        return;
-
-    bodies.SetShape(ToJolt(body.bodyId), MakeShape(shape), /*inUpdateMassProperties=*/ true,
-                    JPH::EActivation::DontActivate);
-}
-
-void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
-{
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
-        return;
-
-    // Set motion quality even when the body is currently Static, rather than
-    // guarding on Dynamic: the inspector freezes the selected body to Static while
-    // a widget is active, so a guard would silently drop the CCD checkbox. Motion
-    // quality is a stored property (our bodies always have motion properties, since
-    // AddBody sets mAllowDynamicOrKinematic), so it sticks and takes effect once
-    // the body is Dynamic again. Jolt no-ops safely if a body genuinely has none.
-    const JPH::EMotionQuality quality = enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
-    bodies.SetMotionQuality(ToJolt(body.bodyId), quality);
-}
-
-void PhysicsWorld::SetBodyMotionType(const RigidBody &body, BodyMotion motion)
-{
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(ToJolt(body.bodyId)))
-        return;
-
-    const CollisionFilter filter = _impl->FilterOf(ToJolt(body.bodyId));
-
-    // Same rule AddBody applies: a sensor is never dynamic, because one falling
-    // under gravity would leave the volume it was authored as.
-    const BodyMotion effective =
-        filter.channel == CollisionChannel::Trigger && motion == BodyMotion::Dynamic ? BodyMotion::Kinematic : motion;
-
-    auto &ids = _impl->movingBodyIds;
-    if (effective == BodyMotion::Static)
-    {
-        // Jolt asserts that a body is inactive before switching it to Static.
-        bodies.DeactivateBody(ToJolt(body.bodyId));
-        bodies.SetMotionType(ToJolt(body.bodyId), JPH::EMotionType::Static, JPH::EActivation::DontActivate);
-        ids.erase(std::remove(ids.begin(), ids.end(), ToJolt(body.bodyId)), ids.end());
-    }
-    else
-    {
-        const JPH::EMotionType motionType =
-            effective == BodyMotion::Kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
-        bodies.SetMotionType(ToJolt(body.bodyId), motionType, JPH::EActivation::Activate);
-
-        // Kinematic counts as moving: something can drive one through the
-        // simulation, and its render pose has to follow when it does.
-        if (std::find(ids.begin(), ids.end(), ToJolt(body.bodyId)) == ids.end())
-        {
-            ids.push_back(ToJolt(body.bodyId));
-        }
-    }
-
-    // The layer records the motion type, and the broad-phase tree a body lives in
-    // is read from it. Left stale, a body made dynamic would keep saying it never
-    // moves and would never be tested against the things it now falls onto.
-    bodies.SetObjectLayer(ToJolt(body.bodyId), PackLayer(filter, effective));
+    return _impl->FilterOf(id);
 }
 
 void PhysicsWorld::SetGravity(glm::vec3 gravity)
@@ -700,11 +532,11 @@ void PhysicsWorld::SetGravity(glm::vec3 gravity)
        A kinematic body among them ignores gravity and is simply woken for
        nothing, which is cheaper than keeping a second list to spare it. */
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    for (const JPH::BodyID &id : _impl->movingBodyIds)
+    for (const Impl::BodySlot &slot : _impl->slots)
     {
-        if (bodies.IsAdded(id))
+        if (slot.kind == Impl::SlotKind::Body && slot.motion != BodyMotion::Static)
         {
-            bodies.ActivateBody(id);
+            bodies.ActivateBody(slot.body);
         }
     }
 }

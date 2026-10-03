@@ -321,6 +321,7 @@ void EditorApp::OnStart()
     // that waits for its assets in the shipped game waits here too, or testing a
     // travel in the editor would not be testing what ships.
     _worlds.SetSimulateFrom(GetConfig().simulateFrom);
+    _worlds.SetMaxPhysicsBodies(GetConfig().maxPhysicsBodies);
 
     // Warn about Render systems the game declared. Systems come from each level's
     // own list, resolved through SystemCatalog, which every ASYSTEM declaration in
@@ -945,8 +946,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // Display rate over every physics-driven Transform, so it belongs in the
         // render breakdown rather than being lumped in with physics.
         ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
+        _physics->InterpolateTransforms(GetInterpolationAlpha());
         Assisi::App::PlaceCharacterEyes(*_scene, *_physics, GetInterpolationAlpha());
+    }
+    else
+    {
+        // Nothing steps this world, and stepping is what reconciles it. Done here
+        // instead, so a body added, moved, edited or deleted while editing is
+        // where picking and every other cast expects it.
+        ASSISI_PROFILE_SCOPE("physics-reconcile");
+        _physics->Reconcile();
     }
 
     // Must stay between the writeback above and Render()'s propagation: a bodied
@@ -1609,43 +1618,12 @@ std::string EditorApp::EditLabel(std::string_view action, Assisi::ECS::Entity en
 void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
 {
     // Dispatch by component identity to the same transient-rebuild paths the live
-    // edits use. Ids resolve once, via the function-local statics in ComponentIdOf.
+    // edits use. Physics needs nothing here: a restored Transform or descriptor is
+    // a component write like any other, and the world follows it.
     using namespace Assisi;
-    static const Core::Reflect::ComponentId kTransform = Core::Reflect::ComponentIdOf<Runtime::Transform>();
-    static const Core::Reflect::ComponentId kRigidBodyDesc =
-        Core::Reflect::ComponentIdOf<Physics::RigidBodyDescriptor>();
-    static const Core::Reflect::ComponentId kCharacterDesc =
-        Core::Reflect::ComponentIdOf<Physics::CharacterDescriptor>();
     static const Core::Reflect::ComponentId kMeshRenderer = Core::Reflect::ComponentIdOf<Runtime::MeshRenderer>();
 
-    if (id == kTransform)
-    {
-        // A restored or edited Transform drags whatever physics the entity has to
-        // the new pose. Add already re-stamped the change tick, so
-        // PropagateTransforms reruns.
-        if (present)
-        {
-            if (const auto *tc = _scene->Get<Runtime::Transform>(entity))
-            {
-                _physics->SetEntityTransform(*_scene, entity, tc->position, tc->rotation);
-            }
-        }
-    }
-    else if (id == kRigidBodyDesc || id == kCharacterDesc)
-    {
-        // Descriptor came back: rebuild from it, mirroring the component-add path.
-        // Gone: tear down the simulated object and its transient handle, which is
-        // ACOMP(transient) and so never in the payload either way.
-        if (present)
-        {
-            (void)_physics->RebuildEntityPhysics(*_scene, entity);
-        }
-        else
-        {
-            _physics->RemoveEntityPhysics(*_scene, entity);
-        }
-    }
-    else if (id == kMeshRenderer)
+    if (id == kMeshRenderer)
     {
         // Rebuild the mesh/material GPU pointers from the restored ids.
         if (present)
@@ -1843,10 +1821,6 @@ void EditorApp::DrawPanels()
     // the inspector below and read by the end-of-frame capture sweep.
     _captureEditingActive = false;
 
-    // Same shape, for the physics freeze the Inspector and the gizmo raise while a
-    // placement gesture is held. Released at the end of this function.
-    _physicsFreezeRequested = false;
-
     // One profile scope per panel, so the breakdown names the panel rather than
     // "the editor UI". A closed ImGui window still runs its Draw function — Begin()
     // returns false and it early-outs — so collapsed panels show up here too.
@@ -1958,15 +1932,7 @@ void EditorApp::DrawPanels()
     }
 #endif
 
-    // **Release the physics freeze here, unconditionally, not inside the panel.**
-    // DrawInspector early-returns when nothing is selected, so deselecting or
-    // destroying the entity on the frame the drag ends would skip the restore
-    // entirely and leave the body Static for the rest of the session — stuck in
-    // mid-air with a descriptor that still reads dynamic.
-    if (!_physicsFreezeRequested)
-        ThawEditedBody();
-
-    // The same shape one gesture up. The gizmo and the Inspector both move an
+    // One gesture up from the capture sweep below. The gizmo and the Inspector both move an
     // instance's placement and neither can see whether the other still holds it;
     // the gizmo draws first, so closing the gesture there would cut an Inspector
     // scrub into one transaction per frame. Both only raise a hold, and here, with
