@@ -270,6 +270,12 @@ class InputContext
     glm::vec2 _frameScroll{0.f, 0.f};
     uint32_t _nextModeId = 1;
     InputMode _gameMode = InputMode::GameAndUi;
+    /// Whether the cursor was last captured, so a switch can be told from a
+    /// mode change that leaves the cursor as it was.
+    bool _cursorCaptured = false;
+    /// Set by a switch: the next cursor position is where movement starts from,
+    /// not movement. Captured and free positions are not in the same space.
+    bool _rebaseCursor = false;
 };
 
 } // namespace Assisi::Window

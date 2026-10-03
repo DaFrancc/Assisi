@@ -129,6 +129,44 @@ TEST_CASE("InputContext: the cursor's delta is its movement between frames")
     CHECK(input.MouseDelta() == glm::vec2(0.f, 0.f));
 }
 
+TEST_CASE("InputContext: capturing or freeing the cursor starts its movement over")
+{
+    // Captured, the window reports a virtual cursor rather than the pointer on
+    // screen, so the first position after the switch can be anywhere. Read as
+    // movement, it would turn the view by however far that is, in one frame.
+    InputContext input;
+    input.OnCursorPosition(100.0, 100.0);
+    input.Poll();
+
+    input.SetInputMode(InputMode::Game);
+    input.OnCursorPosition(5000.0, -3000.0);
+    input.Poll();
+    CHECK(input.MouseDelta() == glm::vec2(0.f, 0.f));
+
+    input.OnCursorPosition(5003.0, -3000.0);
+    input.Poll();
+    CHECK(input.MouseDelta() == glm::vec2(3.f, 0.f));
+
+    input.SetInputMode(InputMode::GameAndUi);
+    input.OnCursorPosition(640.0, 360.0);
+    input.Poll();
+    CHECK(input.MouseDelta() == glm::vec2(0.f, 0.f));
+}
+
+TEST_CASE("InputContext: a mode change that keeps the cursor as it was keeps its movement")
+{
+    InputContext input;
+    input.SetInputMode(InputMode::Game);
+    input.OnCursorPosition(10.0, 10.0);
+    input.Poll();
+
+    const InputModeHandle covered = input.PushInputMode(InputMode::Game);
+    input.OnCursorPosition(14.0, 10.0);
+    input.Poll();
+    CHECK(input.MouseDelta() == glm::vec2(4.f, 0.f));
+    input.PopInputMode(covered);
+}
+
 TEST_CASE("InputContext: scrolling sums within a frame and resets after it")
 {
     InputContext input;

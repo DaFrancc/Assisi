@@ -154,6 +154,11 @@ uint32_t InputContext::ClickCount(MouseButton button) const
 void InputContext::OnCursorPosition(double x, double y)
 {
     _livePosition = {static_cast<float>(x), static_cast<float>(y)};
+    if (_rebaseCursor)
+    {
+        _framePosition = _livePosition;
+        _rebaseCursor = false;
+    }
 }
 
 void InputContext::OnScroll(double xOffset, double yOffset)
@@ -288,6 +293,17 @@ InputMode InputContext::GetInputMode() const
 
 void InputContext::ApplyCursorMode()
 {
+    // Captured, the window reports a virtual cursor rather than the pointer on
+    // screen, and the first position after a switch can be anywhere: read as
+    // movement, it would turn the view by that much in one frame. So movement
+    // starts over, both from now and from the first position reported after.
+    if (const bool captured = IsMouseCaptured(); captured != _cursorCaptured)
+    {
+        _cursorCaptured = captured;
+        _framePosition = _livePosition;
+        _rebaseCursor = true;
+    }
+
     if (_window == nullptr)
     {
         return;
