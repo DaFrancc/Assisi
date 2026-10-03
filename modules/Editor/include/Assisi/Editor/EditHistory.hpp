@@ -219,6 +219,12 @@ public:
     /// No-op if no gesture is open for the key, or while applying.
     void CommitGesture(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
 
+    /// @brief Closes the gestures for @p ids on @p entity as one transaction,
+    /// in that order, so undo replays them in reverse. For an add that brought
+    /// the components it requires: list those first and the added one last, and
+    /// undo takes the requirer off before what it required.
+    void CommitGestures(Assisi::ECS::Entity entity, std::span<const Assisi::Core::Reflect::ComponentId> ids);
+
     /// @brief End-of-frame sweep for drag/type gestures. Commits any open gesture
     /// whose widget is no longer being manipulated (or whose component block is no
     /// longer drawn), drops no-ops, and abandons gestures whose entity has died.
@@ -353,6 +359,9 @@ private:
     /// @brief Turn a resolved gesture into a transaction if before != after.
     /// Returns true if a transaction was pushed.
     bool CommitOpenGesture(const OpenGesture &gesture);
+
+    /// @brief Adds @p gesture's deltas to @p txn unless it changed nothing.
+    bool AppendGesture(Transaction &txn, const OpenGesture &gesture);
 
     /// @brief If @p entity is a blueprint member, folds the gesture's own change
     /// into its instance's override record and returns the record's before/after.

@@ -13,6 +13,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/Tests/RuleComponents.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
 
@@ -201,6 +202,66 @@ TEST_CASE("EditHistory: add-component transaction toggles presence")
     hist.Redo();
     REQUIRE(scene.Has<Camera>(e));
     CHECK(scene.Get<Camera>(e)->fovDegrees == doctest::Approx(42.f));
+}
+
+TEST_CASE("EditHistory: a value edit of a required component undoes in place")
+{
+    using Runtime::Tests::LoadNeeds;
+    using Runtime::Tests::LoadState;
+    constexpr int32_t kBefore = 1;
+    constexpr int32_t kAfter = 9;
+
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<LoadNeeds>(e) != nullptr);
+    scene.GetMut<LoadState>(e)->value = kBefore;
+
+    const auto sid = IdOf("LoadState");
+    const auto before = CaptureComponent(scene, e, sid);
+    scene.GetMut<LoadState>(e)->value = kAfter;
+    const auto after = CaptureComponent(scene, e, sid);
+
+    EditHistory hist(scene);
+    Transaction txn;
+    txn.label = "Edit LoadState";
+    txn.Add(ComponentDelta{e, sid, before, after});
+    hist.Push(std::move(txn));
+
+    hist.Undo();
+    REQUIRE(scene.Get<LoadState>(e) != nullptr);
+    CHECK(scene.Get<LoadState>(e)->value == kBefore);
+
+    hist.Redo();
+    CHECK(scene.Get<LoadState>(e)->value == kAfter);
+}
+
+TEST_CASE("EditHistory: an add that brought its requirements undoes as one step")
+{
+    using Runtime::Tests::LoadNeeds;
+    using Runtime::Tests::LoadState;
+
+    Scene scene;
+    const Entity e = scene.Create();
+    EditHistory hist(scene);
+
+    // As the inspector records it: what the add brings first, the added one last.
+    const std::vector<Core::Reflect::ComponentId> recorded{IdOf("LoadState"), IdOf("LoadNeeds")};
+    for (const Core::Reflect::ComponentId id : recorded)
+    {
+        hist.RecordBefore(e, id, "Add LoadNeeds", e);
+    }
+    REQUIRE(scene.Add<LoadNeeds>(e) != nullptr);
+    hist.CommitGestures(e, recorded);
+    REQUIRE(hist.UndoDepth() == 1);
+    CHECK(hist.NextUndoLabel() == "Add LoadNeeds");
+
+    hist.Undo();
+    CHECK_FALSE(scene.Has<LoadNeeds>(e));
+    CHECK_FALSE(scene.Has<LoadState>(e));
+
+    hist.Redo();
+    CHECK(scene.Has<LoadNeeds>(e));
+    CHECK(scene.Has<LoadState>(e));
 }
 
 TEST_CASE("EditHistory: remove-component transaction toggles presence the other way")

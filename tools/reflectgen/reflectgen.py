@@ -373,6 +373,91 @@ def check_systems(headers) -> list:
     return lines
 
 
+def check_component_rules(headers) -> list:
+    """Unknown names, self-reference, requires cycles and contradictions — whole-tree.
+
+    Whole-tree because a rule names components in other modules: a physics body
+    excluding the hierarchy's Parent is a name only the full header set can
+    resolve. A contradiction is any component that, together with everything it
+    pulls in, would hold two components one of which excludes the other. No
+    entity could ever carry it, so Scene::Add would refuse it every time.
+    """
+    components: list = []
+    for header in headers:
+        try:
+            components.extend(c for c in parse_header(Path(header).resolve())
+                              if not c.is_asset and not c.is_struct)
+        except ValueError:
+            raise
+        except Exception:
+            # A header that will not parse is already a hard error in the
+            # per-header pass; repeating it here would bury the real message.
+            continue
+
+    known = {c.name for c in components}
+    requires: dict = {}
+    excludes: dict = {}
+    for c in components:
+        requires.setdefault(c.name, set()).update(c.requires_)
+        excludes.setdefault(c.name, set()).update(c.excludes)
+
+    ruled = sorted(name for name in known if requires[name] or excludes[name])
+    for name in ruled:
+        for key, targets in (('requires', requires[name]), ('excludes', excludes[name])):
+            for target in sorted(targets):
+                if target == name:
+                    raise ValueError(f"component '{name}' {key} itself, which says nothing an entity could "
+                                     f"follow. Drop '{target}' from its '{key}'.")
+                if target not in known:
+                    raise ValueError(f"component '{name}' {key} '{target}', which no ACOMP declares. A rule "
+                                     f"naming nothing would never hold. Fix the name or drop it.")
+
+    # Depth-first with a colour mark: grey means "on the current path", which is
+    # exactly a cycle when we meet it again.
+    WHITE, GREY, BLACK = 0, 1, 2
+    colour = {name: WHITE for name in known}
+
+    def visit(name: str, path: list) -> None:
+        colour[name] = GREY
+        for dependency in sorted(requires[name]):
+            if colour[dependency] == GREY:
+                loop = path[path.index(dependency):]
+                raise ValueError(
+                    f"components require each other in a cycle: {' -> '.join(loop + [dependency])}. "
+                    f"Adding any one of them would add itself, so one of the requires has to go.")
+            if colour[dependency] == WHITE:
+                visit(dependency, path + [dependency])
+        colour[name] = BLACK
+
+    for name in ruled:
+        if colour[name] == WHITE:
+            visit(name, [name])
+
+    def closure(name: str) -> set:
+        found: set = set()
+        pending = [name]
+        while pending:
+            for dependency in requires[pending.pop()]:
+                if dependency not in found:
+                    found.add(dependency)
+                    pending.append(dependency)
+        return found
+
+    lines = []
+    for name in ruled:
+        pulled = closure(name)
+        held = pulled | {name}
+        for member in sorted(held):
+            for excluded in sorted(excludes[member] & held):
+                raise ValueError(
+                    f"component '{name}' can never be added: with what it requires, an entity would hold "
+                    f"both '{member}' and '{excluded}', and '{member}' excludes '{excluded}'. Remove the "
+                    f"requirement or the exclusion.")
+        lines.append(f"  {name}: requires {sorted(pulled)}, excludes {sorted(excludes[name])}")
+
+    return [f'{len(ruled)} component(s) with rules'] + lines
+
+
 def main():
     parser = argparse.ArgumentParser(description='Assisi reflection code generator')
     # Optional only because --instance-views reads .abp files instead; every
@@ -395,6 +480,9 @@ def main():
                         help='Instead of generating registrations, check that no message type '
                              'has two AMSG_HANDLER declarations across every header given, and '
                              'write the handler map to this path.')
+    parser.add_argument('--check-component-rules', dest='rules_out', type=Path, default=None,
+                        help='Instead of generating registrations, check every ACOMP requires/excludes '
+                             'rule across the headers given, and write the resolved rules to this path.')
     parser.add_argument('--instance-views', dest='views_out', type=Path, default=None,
                         help='Instead of generating registrations, write the generated '
                              'InstanceView<T> specializations for every blueprint given '
@@ -468,6 +556,17 @@ def main():
             sys.exit(1)
         args.check_out.write_text(text, encoding='utf-8')
         print(f'reflectgen: {text.splitlines()[0]}')
+        sys.exit(0)
+
+    if args.rules_out is not None:
+        args.rules_out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lines = check_component_rules(args.headers)
+        except Exception as error:
+            print(f'reflectgen: error: {error}', file=sys.stderr)
+            sys.exit(1)
+        args.rules_out.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        print(f'reflectgen: {lines[0]}')
         sys.exit(0)
 
     if args.count_out is not None:

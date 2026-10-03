@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "ReplicationInternal.hpp"
 
@@ -767,6 +768,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             reader.Invalidate();
             return false;
         }
+        // Removed together, so a requirement the server dropped along with its
+        // requirer comes off whichever order the snapshot lists them in.
+        std::vector<Core::Reflect::ComponentId> removed;
+        removed.reserve(removedCount);
         for (std::uint32_t i = 0; i < removedCount; ++i)
         {
             const Core::Reflect::ComponentId componentId{reader.ReadVarUInt32()}; // wire read
@@ -786,9 +791,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                 _scene.RemoveById(entity, _rigidBodyComponentId);
             }
 
-            _scene.RemoveById(entity, componentId);
+            removed.push_back(componentId);
             ++_structureRevision;
         }
+        (void)_scene.RemoveManyById(entity, removed);
 
         while (reader.Ok() && reader.ReadBool())
         {

@@ -191,17 +191,10 @@ ComponentMeta MakeGatedMeta()
 {
     ComponentMeta meta{.name = "Gated",
                        .typeIndex = std::type_index(typeid(Gated)),
-                       .fields = {},
-                       .serialize = {},
-                       .addToScene = {},
-                       .iterateEntities = {},
-                       .getByEntity = {},
-                       .construct = {},
-                       .getMutable = {},
+                       .id = ComponentId{5},
                        .serializable = true,
                        .tracksChanges = true,
-                       .replicable = true,
-                       .id = ComponentId{5}};
+                       .replicable = true};
 
     meta.fields.push_back(Field("shared", FieldType::Int32, OffsetOf(&Gated::shared)));
     meta.fields.push_back(Field("secret", FieldType::Int32, OffsetOf(&Gated::secret), false, true));
@@ -215,17 +208,10 @@ ComponentMeta MakeAllTypesMeta()
 {
     ComponentMeta meta{.name = "AllTypes",
                        .typeIndex = std::type_index(typeid(AllTypes)),
-                       .fields = {},
-                       .serialize = {},
-                       .addToScene = {},
-                       .iterateEntities = {},
-                       .getByEntity = {},
-                       .construct = {},
-                       .getMutable = {},
+                       .id = ComponentId{3},
                        .serializable = true,
                        .tracksChanges = true,
-                       .replicable = true,
-                       .id = ComponentId{3}};
+                       .replicable = true};
 
     meta.fields.push_back(Field("floatValue", FieldType::Float, OffsetOf(&AllTypes::floatValue)));
     meta.fields.push_back(Field("doubleValue", FieldType::Double, OffsetOf(&AllTypes::doubleValue)));

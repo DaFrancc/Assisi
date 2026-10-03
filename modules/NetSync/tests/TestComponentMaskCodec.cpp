@@ -61,18 +61,10 @@ struct CapturingSink final : Assisi::Core::Sink
 /// means the registry has not assigned wire identities yet).
 ComponentMeta MaskHolderMeta()
 {
-    // Exhaustive rather than partial: typeIndex has no default constructor, so
-    // this has to be aggregate-initialized, and a partial list is what
-    // -Wmissing-field-initializers is for. The hooks are unused here.
-    ComponentMeta meta{.name            = "MaskHolder",
-                       .typeIndex       = std::type_index(typeid(ComponentMask)),
-                       .fields          = {},
-                       .serialize       = {},
-                       .addToScene      = {},
-                       .iterateEntities = {},
-                       .getByEntity     = {},
-                       .construct       = {},
-                       .getMutable      = {}};
+    // typeIndex has no default constructor, so this has to be
+    // aggregate-initialized. The hooks are unused here and default to empty.
+    ComponentMeta meta{.name = "MaskHolder",
+                       .typeIndex = std::type_index(typeid(ComponentMask))};
     FieldMeta field;
     field.name   = "excluded";
     field.type   = FieldType::ComponentMask;

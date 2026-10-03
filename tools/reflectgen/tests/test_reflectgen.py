@@ -77,7 +77,7 @@ class ParseTest(unittest.TestCase):
         # GhostComponent lives inside a // comment and must not be parsed.
         self.assertEqual(
             [c.name for c in self.components],
-            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio",
+            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleRules", "SampleTransient", "SampleRadio",
              "SampleReplicated", "SampleContainers"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
@@ -288,11 +288,11 @@ class CodegenTest(unittest.TestCase):
         # The transient component is registered (for its id) but marked
         # non-serializable with null hooks, and its field is not (de)serialized.
         self.assertIn('"SampleTransient"', cpp)
-        self.assertIn("false      // serializable", cpp)
+        self.assertIn(".serializable = false", cpp)
         self.assertNotIn("c.ignored", cpp)
         self.assertNotIn("comp.ignored", cpp)
-        # Normal components carry the serializable=true marker.
-        self.assertIn("true       // serializable", cpp)
+        # Exactly one component is transient, so only one says so.
+        self.assertEqual(cpp.count(".serializable = false"), 1)
 
     def test_entity_ref_pulls_in_entity_ref_include(self):
         with_ref = reflectgen.parse_header(FIXTURES / "Sample.hpp")
@@ -854,9 +854,8 @@ class ReplicationAnnotationTest(unittest.TestCase):
         # replicable implies tracked, so both trailing flags are emitted — the
         # implication is what stops a replicable component reporting change tick
         # 0 forever and going silent after its spawn.
-        self.assertIn("true,      // serializable\n"
-                      "        true,      // tracksChanges\n"
-                      "        true       // replicable", cpp)
+        self.assertIn(".tracksChanges = true,\n"
+                      "        .replicable = true", cpp)
 
     def test_replicable_with_explicit_tracked_is_accepted(self):
         # Not redundancy: one change-tick lane, two readers. The implication
@@ -866,7 +865,7 @@ class ReplicationAnnotationTest(unittest.TestCase):
         src = ("namespace N {\nACOMP(replicable, tracked)\n"
                "struct C { AFIELD() int32_t a = 0; };\n}\n")
         cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
-        self.assertIn("true       // replicable", cpp)
+        self.assertIn(".replicable = true", cpp)
 
     def test_the_retired_replicated_spelling_is_rejected_by_name(self):
         # It would otherwise parse as an unknown flag and be silently ignored,
@@ -878,8 +877,8 @@ class ReplicationAnnotationTest(unittest.TestCase):
 
     def test_unmarked_component_emits_neither_flag(self):
         cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
-        # SampleRef is plain ACOMP(): its registration keeps the short form.
-        self.assertIn("true       // serializable", cpp)
+        # SampleRef is plain ACOMP(): its registration ends at the type.
+        self.assertIn('.typeIndex = typeid(T)\n    });', cpp)
 
     def test_norep_field_is_flagged_but_still_serialized_to_disk(self):
         cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
@@ -1938,6 +1937,114 @@ class SystemTest(unittest.TestCase):
             path.write_text(self.SOURCE, encoding="utf-8")
             lines = reflectgen.check_systems([path])
             self.assertIn("2 system(s)", lines[0])
+
+
+class ComponentRuleTest(unittest.TestCase):
+    """ACOMP(requires = {...}, excludes = {...}): parsing, emission, and the
+    whole-tree check that refuses a set of rules no entity could satisfy."""
+
+    def _check(self, source: str):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "Rules.hpp"
+            path.write_text(source, encoding="utf-8")
+            return reflectgen.check_component_rules([path])
+
+    def test_the_lists_are_parsed_as_names(self):
+        components = _parse_source("ACOMP(tracked, requires = {A, B}, excludes = {C})\nstruct Holder {};\n")
+        self.assertEqual(components[0].requires_, ["A", "B"])
+        self.assertEqual(components[0].excludes, ["C"])
+        self.assertTrue(components[0].args.has("tracked"))
+
+    def test_a_component_without_rules_has_empty_lists(self):
+        components = _parse_source("ACOMP()\nstruct Plain {};\n")
+        self.assertEqual(components[0].requires_, [])
+        self.assertEqual(components[0].excludes, [])
+
+    def test_malformed_lists_are_refused(self):
+        for value in ("A", "{}", "{A::B}", "{A, A}", "{1A}"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    _parse_source("ACOMP(requires = %s)\nstruct Holder {};\n" % value)
+
+    def test_an_asset_cannot_carry_rules(self):
+        with self.assertRaises(ValueError) as caught:
+            _parse_source("AASSET(requires = {A})\nstruct Thing {};\n")
+        self.assertIn("AASSET", str(caught.exception))
+
+    def test_the_rules_are_emitted_into_the_registration(self):
+        components = _parse_source("ACOMP()\nstruct A {};\nACOMP()\nstruct B {};\n"
+                                   "ACOMP(requires = {A}, excludes = {B})\nstruct Holder {};\n")
+        cpp = reflectgen.generate_cpp(components, "Rules.hpp")
+        self.assertIn('.requiredNames = {"A"}', cpp)
+        self.assertIn('.excludedNames = {"B"}', cpp)
+
+    def test_a_transient_component_still_gets_add_default(self):
+        components = _parse_source("ACOMP(transient)\nstruct Ghost {};\n")
+        cpp = reflectgen.generate_cpp(components, "Rules.hpp")
+        self.assertIn(".addDefault", cpp)
+
+    def test_an_unknown_name_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP(requires = {Ghost})\nstruct Holder {};\n")
+        self.assertIn("Ghost", str(caught.exception))
+
+    def test_an_unknown_excluded_name_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP(excludes = {Ghost})\nstruct Holder {};\n")
+        self.assertIn("Ghost", str(caught.exception))
+
+    def test_a_component_naming_itself_is_refused(self):
+        for key in ("requires", "excludes"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError) as caught:
+                    self._check("ACOMP(%s = {Holder})\nstruct Holder {};\n" % key)
+                self.assertIn("Holder", str(caught.exception))
+
+    def test_a_requires_cycle_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP(requires = {B})\nstruct A {};\nACOMP(requires = {C})\nstruct B {};\n"
+                        "ACOMP(requires = {A})\nstruct C {};\n")
+        self.assertIn("cycle", str(caught.exception))
+
+    def test_requiring_and_excluding_the_same_component_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP()\nstruct B {};\nACOMP(requires = {B}, excludes = {B})\nstruct A {};\n")
+        self.assertIn("'A'", str(caught.exception))
+        self.assertIn("'B'", str(caught.exception))
+
+    def test_a_requirement_excluding_its_requirer_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP(excludes = {A})\nstruct B {};\nACOMP(requires = {B})\nstruct A {};\n")
+        self.assertIn("'A'", str(caught.exception))
+
+    def test_a_transitive_contradiction_is_refused(self):
+        # A pulls in B, B pulls in C, and A excludes C: no entity can hold A.
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP()\nstruct C {};\nACOMP(requires = {C})\nstruct B {};\n"
+                        "ACOMP(requires = {B}, excludes = {C})\nstruct A {};\n")
+        self.assertIn("'C'", str(caught.exception))
+
+    def test_two_requirements_excluding_each_other_are_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._check("ACOMP()\nstruct C {};\nACOMP(excludes = {C})\nstruct B {};\n"
+                        "ACOMP(requires = {B, C})\nstruct A {};\n")
+        self.assertIn("'A'", str(caught.exception))
+
+    def test_names_resolve_across_headers(self):
+        with tempfile.TemporaryDirectory() as d:
+            first = Path(d) / "A.hpp"
+            first.write_text("namespace X {\nACOMP()\nstruct Parent {};\n}\n", encoding="utf-8")
+            second = Path(d) / "B.hpp"
+            second.write_text("namespace Y {\nACOMP()\nstruct State {};\n"
+                              "ACOMP(requires = {State}, excludes = {Parent})\nstruct Body {};\n}\n",
+                              encoding="utf-8")
+            lines = reflectgen.check_component_rules([first, second])
+        self.assertIn("1 component(s) with rules", lines[0])
+
+    def test_a_consistent_set_lists_what_it_found(self):
+        lines = self._check("ACOMP()\nstruct C {};\nACOMP(requires = {C})\nstruct B {};\n"
+                            "ACOMP(requires = {B})\nstruct A {};\n")
+        self.assertIn("2 component(s) with rules", lines[0])
 
 
 class ContainerFieldTest(unittest.TestCase):

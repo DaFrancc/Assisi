@@ -1260,13 +1260,38 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         return;
     }
 
+    // The Add Component field greys these out; this is the backstop.
+    if (_scene->ConflictOf(_selectedEntity, meta.id).has_value())
+    {
+        return;
+    }
+
     // One transaction: record the absent-before state here, commit only after the
     // add *and* its side effects below (camera-facing placement, physics body), so
-    // undo restores exactly what the author saw.
+    // undo restores exactly what the author saw. The components the add brings
+    // with it are recorded first, so undo takes this one off before them.
+    std::vector<Assisi::Core::Reflect::ComponentId> recorded;
+    for (const Assisi::Core::Reflect::ComponentId requirement : meta.required)
+    {
+        const Assisi::Core::Reflect::ComponentMeta *required =
+            Assisi::Core::Reflect::ComponentRegistry::Instance().ById(requirement);
+        if (required->serializable &&
+            required->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) == nullptr)
+        {
+            recorded.push_back(requirement);
+        }
+    }
+    recorded.push_back(meta.id);
+
     Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
-        history->RecordBefore(_selectedEntity, meta.id, EditLabel("Add " + meta.name, _selectedEntity),
-                              _selectedEntity);
+    {
+        for (const Assisi::Core::Reflect::ComponentId id : recorded)
+        {
+            history->RecordBefore(_selectedEntity, id, EditLabel("Add " + meta.name, _selectedEntity),
+                                  _selectedEntity);
+        }
+    }
 
     // Default-construct through the level loader's own path: its per-field
     // if-contains deserialization leaves every field at its default when given an
@@ -1315,7 +1340,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     }
 
     if (history != nullptr)
-        history->CommitGesture(_selectedEntity, meta.id);
+        history->CommitGestures(_selectedEntity, recorded);
 }
 
 void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
@@ -2305,7 +2330,19 @@ void EditorApp::DrawInspector()
         // [Delete] [Cancel]; either way the buttons sit left of the header, so the
         // row reads "[X] ComponentName".
         bool deleted = false;
-        if (_pendingDeleteComponent == meta->id)
+        const ComponentId requirer = _scene->RequirerOf(_selectedEntity, meta->id);
+        if (requirer != kInvalidComponentId)
+        {
+            // The scene would refuse the removal; say why instead of offering it.
+            ImGui::BeginDisabled();
+            ImGui::SmallButton("X");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("Required by %s", ComponentRegistry::Instance().ById(requirer)->name.c_str());
+            }
+        }
+        else if (_pendingDeleteComponent == meta->id)
         {
             if (ImGui::SmallButton("Delete"))
             {
@@ -2554,11 +2591,14 @@ void EditorApp::DrawInspector()
         // Addable components (serializable, not already on the entity) whose
         // lowercased name contains the query, ranked by match position first so a
         // prefix wins, then by name length, then alphabetically. Recomputed every
-        // frame, so it tracks each keystroke and deletion.
+        // frame, so it tracks each keystroke and deletion. One the entity's
+        // components exclude is listed greyed out, naming the clash, rather than
+        // left out so the author is not left wondering where it went.
         struct Match
         {
             const ComponentMeta *meta;
             std::size_t pos;
+            std::optional<Assisi::ECS::ComponentConflict> conflict;
         };
         std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
@@ -2571,7 +2611,7 @@ void EditorApp::DrawInspector()
             const std::size_t pos = nameLower.find(queryLower);
             if (pos == std::string::npos)
                 continue;
-            matches.push_back(Match{meta, pos});
+            matches.push_back(Match{meta, pos, _scene->ConflictOf(_selectedEntity, meta->id)});
         }
         std::sort(matches.begin(), matches.end(),
                   [](const Match &a, const Match &b)
@@ -2594,9 +2634,10 @@ void EditorApp::DrawInspector()
         else
         {
             // Enter adds the highlighted row; clicking a row adds it directly.
-            if (entered)
+            const Match &highlighted = matches[static_cast<std::size_t>(_addComponentSelected)];
+            if (entered && !highlighted.conflict.has_value())
             {
-                AddComponentToSelected(*matches[static_cast<std::size_t>(_addComponentSelected)].meta);
+                AddComponentToSelected(*highlighted.meta);
                 _addComponentBuf[0] = '\0';
                 _addComponentSelected = 0;
                 // -1 re-focuses the previous widget, the input itself, so the
@@ -2608,12 +2649,21 @@ void EditorApp::DrawInspector()
                 for (std::size_t i = 0; i < shown; ++i)
                 {
                     ImGui::PushID(static_cast<int32_t>(i));
+                    const ImGuiSelectableFlags flags =
+                        matches[i].conflict.has_value() ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None;
                     if (ImGui::Selectable(matches[i].meta->name.c_str(),
-                                          static_cast<int32_t>(i) == _addComponentSelected))
+                                          static_cast<int32_t>(i) == _addComponentSelected, flags))
                     {
                         AddComponentToSelected(*matches[i].meta);
                         _addComponentBuf[0] = '\0';
                         _addComponentSelected = 0;
+                    }
+                    if (matches[i].conflict.has_value() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    {
+                        const Assisi::ECS::ComponentConflict &conflict = *matches[i].conflict;
+                        ImGui::SetTooltip("%s and %s exclude each other",
+                                          ComponentRegistry::Instance().ById(conflict.wanted)->name.c_str(),
+                                          ComponentRegistry::Instance().ById(conflict.present)->name.c_str());
                     }
                     ImGui::PopID();
                 }

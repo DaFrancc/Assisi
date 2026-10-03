@@ -1,8 +1,12 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <string>
 #include <string_view>
 #include <typeindex>
+#include <utility>
+#include <vector>
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -48,20 +52,38 @@ struct M4DupB
 
 ComponentMeta Meta(const char *name, std::type_index type, bool serializable = true)
 {
-    // Every member listed so -Wmissing-field-initializers stays quiet; the
-    // type-erased hooks are unused by these tests. Keep it exhaustive as
-    // ComponentMeta gains members.
-    return ComponentMeta{.name            = name,
-                         .typeIndex       = type,
-                         .fields          = {},
-                         .serialize       = {},
-                         .addToScene      = {},
-                         .iterateEntities = {},
-                         .getByEntity     = {},
-                         .construct       = {},
-                         .getMutable      = {},
-                         .serializable    = serializable,
-                         .id              = kInvalidComponentId};
+    // The type-erased hooks are unused by these tests and default to empty.
+    return ComponentMeta{.name = name,
+                         .typeIndex = type,
+                         .id = kInvalidComponentId,
+                         .serializable = serializable};
+}
+
+// Fixtures for the rule resolution case: Top requires Mid requires Base, Shy
+// excludes Base from its own side only, and Orphan names nothing registered.
+struct RuleTop
+{
+};
+struct RuleMid
+{
+};
+struct RuleBase
+{
+};
+struct RuleShy
+{
+};
+struct RuleOrphan
+{
+};
+
+ComponentMeta RuleMeta(const char *name, std::type_index type, std::vector<std::string> requiredNames,
+                       std::vector<std::string> excludedNames)
+{
+    ComponentMeta meta = Meta(name, type);
+    meta.requiredNames = std::move(requiredNames);
+    meta.excludedNames = std::move(excludedNames);
+    return meta;
 }
 
 // Registered from a static initializer, before main and therefore before any
@@ -79,6 +101,12 @@ const bool s_fixturesRegistered = []
                                       registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
                                       registry.Register(Meta("M4_DupName", typeid(M4DupA)));
                                       registry.Register(Meta("M4_DupName", typeid(M4DupB))); // duplicate on purpose
+                                      registry.Register(RuleMeta("RuleTop", typeid(RuleTop), {"RuleMid"}, {}));
+                                      registry.Register(RuleMeta("RuleMid", typeid(RuleMid), {"RuleBase"}, {}));
+                                      registry.Register(Meta("RuleBase", typeid(RuleBase)));
+                                      registry.Register(RuleMeta("RuleShy", typeid(RuleShy), {}, {"RuleBase"}));
+                                      registry.Register(RuleMeta("RuleOrphan", typeid(RuleOrphan),
+                                                                 {"RuleNowhere"}, {}));
                                       return true;
                                   }();
 } // namespace
@@ -228,6 +256,39 @@ TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both k
             ++count;
 
     CHECK(count == 1); // the duplicate was dropped, not kept alongside
+}
+
+TEST_CASE("ComponentRegistry resolves requires and excludes when it finalizes")
+{
+    ComponentRegistry &registry = ComponentRegistry::Instance();
+    const ComponentId top  = registry.IdOf("RuleTop");
+    const ComponentId mid  = registry.IdOf("RuleMid");
+    const ComponentId base = registry.IdOf("RuleBase");
+    const ComponentId shy  = registry.IdOf("RuleShy");
+
+    SUBCASE("required follows requirements of requirements")
+    {
+        CHECK(registry.ById(top)->required == std::vector<ComponentId>{std::min(mid, base), std::max(mid, base)});
+        CHECK(registry.ById(mid)->required == std::vector<ComponentId>{base});
+        CHECK(registry.ById(base)->required.empty());
+    }
+
+    SUBCASE("requiredBy lists every component that brings this one")
+    {
+        CHECK(registry.ById(base)->requiredBy == std::vector<ComponentId>{std::min(top, mid), std::max(top, mid)});
+        CHECK(registry.ById(mid)->requiredBy == std::vector<ComponentId>{top});
+    }
+
+    SUBCASE("an exclusion declared on one side holds on both")
+    {
+        CHECK(registry.ById(shy)->excluded == std::vector<ComponentId>{base});
+        CHECK(registry.ById(base)->excluded == std::vector<ComponentId>{shy});
+    }
+
+    SUBCASE("a name this program does not register is dropped, not resolved")
+    {
+        CHECK(registry.Find("RuleOrphan")->required.empty());
+    }
 }
 
 // ---------------------------------------------------------------------------

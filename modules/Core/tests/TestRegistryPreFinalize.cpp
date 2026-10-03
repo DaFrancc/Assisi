@@ -52,20 +52,11 @@ struct PreFinalizeMsgDupB
 
 ComponentMeta Component(const char *name, std::type_index type)
 {
-    // Every member listed so -Wmissing-field-initializers stays quiet; the
-    // type-erased hooks are unused here. Keep it exhaustive as ComponentMeta
-    // gains members.
-    return ComponentMeta{.name            = name,
-                         .typeIndex       = type,
-                         .fields          = {},
-                         .serialize       = {},
-                         .addToScene      = {},
-                         .iterateEntities = {},
-                         .getByEntity     = {},
-                         .construct       = {},
-                         .getMutable      = {},
-                         .serializable    = true,
-                         .id              = kInvalidComponentId};
+    // The type-erased hooks are unused here and default to empty.
+    return ComponentMeta{.name = name,
+                         .typeIndex = type,
+                         .id = kInvalidComponentId,
+                         .serializable = true};
 }
 
 MessageMeta Message(const char *name, std::type_index type)

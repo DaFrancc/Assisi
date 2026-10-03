@@ -12,6 +12,8 @@
 ///   ACOMP(tracked)               -- opts into ECS change detection
 ///   ACOMP(transient)             -- id-only registration, never serialized
 ///   ACOMP(replicable)            -- *can* travel over the network (implies tracked)
+///   ACOMP(requires = {A, B})     -- adding it adds A and B with defaults if absent
+///   ACOMP(excludes = {C})        -- it and C cannot share an entity
 ///   AFIELD()
 ///   AFIELD(transient)            -- excluded from serialization
 ///   AFIELD(norep)                -- saved to disk, never sent over the network
@@ -66,6 +68,12 @@
 /// whose mirrored `isActive` would hand a client a view it did not choose — the
 /// reason belongs in that type's header comment, where every other design
 /// rationale in this codebase lives.
+///
+/// Rule names are registered component names (the unqualified struct name), and
+/// may name a component in any module. The whole-tree pass fails the build on a
+/// name no ACOMP declares, a requires cycle, and a component that, with what it
+/// requires, would hold two components one of which excludes the other.
+/// ECS::Scene enforces the rules on every add and remove.
 ///
 /// reflectgen hard-fails on ACOMP(replicable, transient) (nothing to encode), on
 /// AASSET(replicable) (assets are not entities), on AFIELD(transient, norep)

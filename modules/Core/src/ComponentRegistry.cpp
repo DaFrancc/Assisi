@@ -7,7 +7,10 @@
 
 #include <algorithm>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -16,6 +19,102 @@ namespace
 /// singleton, and a second instance in a test sharing this lock is merely
 /// coarser, never wrong.
 std::mutex g_finalizeMutex;
+
+using Assisi::Core::Reflect::ComponentId;
+using Assisi::Core::Reflect::ComponentMeta;
+using Assisi::Core::Reflect::kInvalidComponentId;
+
+/// The id of the component named @p name in the name-sorted @p metas, or
+/// kInvalidComponentId. Find() cannot be used while finalizing: it finalizes.
+ComponentId IdInSorted(const std::vector<ComponentMeta> &metas, std::string_view name)
+{
+    std::vector<ComponentMeta>::const_iterator it =
+        std::lower_bound(metas.begin(), metas.end(), name,
+                         [](const ComponentMeta &meta, std::string_view wanted) { return meta.name < wanted; });
+    if (it == metas.end() || it->name != name)
+    {
+        return kInvalidComponentId;
+    }
+    return it->id;
+}
+
+/// Resolves @p names to ids. A name this program does not register is logged and
+/// skipped: the build-wide check already refused names that exist nowhere, so
+/// one missing here is a component from a module this program does not link.
+std::vector<ComponentId> ResolveNames(const std::vector<ComponentMeta> &metas, const ComponentMeta &owner,
+                                      const std::vector<std::string> &names, std::string_view rule)
+{
+    std::vector<ComponentId> ids;
+    for (const std::string &name : names)
+    {
+        const ComponentId id = IdInSorted(metas, name);
+        if (id == kInvalidComponentId)
+        {
+            Assisi::Core::Log::Error("ComponentRegistry: '{}' {} '{}', which this program does not register - "
+                                     "the rule is dropped.",
+                                     owner.name, rule, name);
+            continue;
+        }
+        ids.push_back(id);
+    }
+    return ids;
+}
+
+void SortUnique(std::vector<ComponentId> &ids)
+{
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+}
+
+/// Fills every meta's required (transitively), excluded (from either side) and
+/// requiredBy lists from the names reflectgen recorded. Ids must be assigned.
+void ResolveRules(std::vector<ComponentMeta> &metas)
+{
+    std::vector<std::vector<ComponentId>> direct(metas.size());
+    for (std::size_t i = 0; i < metas.size(); ++i)
+    {
+        direct[i] = ResolveNames(metas, metas[i], metas[i].requiredNames, "requires");
+        for (const ComponentId excluded : ResolveNames(metas, metas[i], metas[i].excludedNames, "excludes"))
+        {
+            // .value: array index into metas.
+            metas[i].excluded.push_back(excluded);
+            metas[excluded.value].excluded.push_back(metas[i].id);
+        }
+    }
+
+    // Walked rather than recursed, and guarded by `seen`, so a cycle the build
+    // check somehow missed ends the walk instead of the stack.
+    for (std::size_t i = 0; i < metas.size(); ++i)
+    {
+        std::vector<bool> seen(metas.size(), false);
+        seen[i] = true;
+        std::vector<ComponentId> pending = direct[i];
+        while (!pending.empty())
+        {
+            const ComponentId next = pending.back();
+            pending.pop_back();
+            // .value: array index into seen/direct.
+            if (seen[next.value])
+            {
+                continue;
+            }
+            seen[next.value] = true;
+            metas[i].required.push_back(next);
+            pending.insert(pending.end(), direct[next.value].begin(), direct[next.value].end());
+        }
+    }
+
+    for (ComponentMeta &meta : metas)
+    {
+        SortUnique(meta.required);
+        SortUnique(meta.excluded);
+        for (const ComponentId requirement : meta.required)
+        {
+            // .value: array index into metas.
+            metas[requirement.value].requiredBy.push_back(meta.id);
+        }
+    }
+}
 } // namespace
 
 namespace Assisi::Core::Reflect
@@ -130,6 +229,8 @@ void ComponentRegistry::EnsureFinalized() const
             _replicable.push_back(&_metas[i]);
         }
     }
+
+    ResolveRules(_metas);
 
     // The aggregator-vs-reality check. reflectgen counts ACOMP(replicable) types
     // across the tree at build time and sizes ComponentMask from it, so this can

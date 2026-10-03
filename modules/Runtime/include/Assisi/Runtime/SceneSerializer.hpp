@@ -136,6 +136,10 @@ struct LoadOptions
     /// *has* instances fails the load rather than dropping them: a silently
     /// instance-free level is a level missing most of its content.
     InstanceTable *instances = nullptr;
+
+    /// The file the document came from, for the messages a load logs about its
+    /// contents. LoadFromFile and LoadFromDisk fill it in when it is empty.
+    std::string_view source = {};
 };
 
 class SceneSerializer
