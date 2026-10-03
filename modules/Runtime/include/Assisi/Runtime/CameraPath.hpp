@@ -114,11 +114,10 @@ struct CameraRouteLeg
 /// An empty route gives a default CameraAim.
 [[nodiscard]] CameraAim EvaluateCameraRoute(const std::vector<CameraRouteLeg> &route, float seconds);
 
-/// @brief A camera Transform at @p aim, with its world matrix filled in.
+/// @brief The world matrix of a camera at @p aim.
 ///
-/// The world matrix is filled because Runtime::ViewMatrix reads that and
-/// nothing else. Up is world +Y, except when looking straight up or down, where
-/// +Y is parallel to the view and gives no roll, so +Z stands in for it.
-[[nodiscard]] Transform CameraTransformFor(const CameraAim &aim);
+/// Up is world +Y, except when looking straight up or down, where +Y is
+/// parallel to the view and gives no roll, so +Z stands in for it.
+[[nodiscard]] glm::mat4 CameraWorldFor(const CameraAim &aim);
 
 } // namespace Assisi::Runtime

@@ -7,6 +7,7 @@
 #include <span>
 #include <vector>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Frustum.hpp>
@@ -58,6 +59,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
         builder.Reset();
         for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
         {
+            const glm::mat4 &world = *Assisi::ECS::WorldMatrix(scene, entity);
             const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
             if (mesh == nullptr)
             {
@@ -68,7 +70,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
             const uint32_t level = named >= 0     ? static_cast<uint32_t>(named)
                                    : canMeasure ? Assisi::Render::kMeasureLod
                                                 : 0u;
-            builder.AddInstance(mesh, transform.worldMatrix,
+            builder.AddInstance(mesh, world,
                                 std::span<const Assisi::Render::Material *const>(meshRenderer.materials.data(),
                                                                                  meshRenderer.materials.size()),
                                 level);
@@ -162,6 +164,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
         ASSISI_PROFILE_SCOPE("draw-extract");
         for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
         {
+            const glm::mat4 &world = *Assisi::ECS::WorldMatrix(scene, entity);
             const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
             if (mesh == nullptr)
             {
@@ -169,7 +172,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
             }
 
             const Assisi::Geometry::BoundingSphere worldSphere =
-                Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
+                Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world);
 
             if (params.frustumCulling)
             {
@@ -184,7 +187,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
                     continue;
                 }
                 const Assisi::Geometry::Aabb worldAabb =
-                    Assisi::Geometry::TransformedAabb(mesh->LocalAabb(), transform.worldMatrix);
+                    Assisi::Geometry::TransformedAabb(mesh->LocalAabb(), world);
                 if (!frustum.IntersectsAabb(worldAabb))
                 {
                     ++stats.culledMeshes;
@@ -195,7 +198,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
             // One depth for the whole mesh (its center's view-space distance). All its
             // submeshes share it — they sort together by mesh anyway; the depth field
             // only orders distinct meshes front-to-back within a material run.
-            const glm::vec3 centerWorld = glm::vec3(transform.worldMatrix * glm::vec4(mesh->LocalBounds().center, 1.f));
+            const glm::vec3 centerWorld = glm::vec3(world * glm::vec4(mesh->LocalBounds().center, 1.f));
             const float viewDistance = -(view * glm::vec4(centerWorld, 1.f)).z; // camera looks down -Z
             const uint16_t depth = Assisi::Render::QuantizeDepthFrontToBack(viewDistance, params.nearZ, params.farZ);
 
@@ -229,7 +232,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
                                                          .submeshIndex = submeshIndex,
                                                          .castsShadows = meshRenderer.castsShadows,
                                                          .material = material,
-                                                         .model = transform.worldMatrix});
+                                                         .model = world});
             }
 
             // After the loop: an instance whose every slot went unresolved drew

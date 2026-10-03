@@ -10,6 +10,7 @@
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
@@ -232,7 +233,7 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
-void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
                            const Camera &camera, uint64_t &propagationTick)
 {
     if (!_meshPass.IsValid())
@@ -251,7 +252,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     const glm::mat4 projection =
         ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
-    const glm::mat4 view = ViewMatrix(cameraTransform);
+    const glm::mat4 view = ViewMatrix(cameraWorld);
 
     // Keep the froxel grid aligned with the render projection; a drift (window
     // resize, runtime FOV/near/far edit) makes peripheral froxels stop matching
@@ -292,10 +293,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // all three passes measure with the one view set here. The GPU cull holds no
     // dead band, so while it draws the gathers hold none either.
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
-    _lodSelector.BeginFrame(CameraLodView(cameraTransform, camera));
+    _lodSelector.BeginFrame(CameraLodView(cameraWorld, camera));
 
     Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
-    RenderLocalShadows(frame, scene, camera, cameraTransform, shadows);
+    RenderLocalShadows(frame, scene, camera, cameraWorld, shadows);
     // After both, because it reports on both — and outside them, because every
     // early return either of them takes is still a frame with an answer.
     BuildShadowDiagnostics();
@@ -362,7 +363,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // own world and a light that moves takes the sky with it.
     if (sky.status == SkyStatus::Ready)
     {
-        _skyPass.Draw(frame, projection * view, glm::vec3(cameraTransform.worldMatrix[3]), sky.sun, sky.moon,
+        _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraWorld), sky.sun, sky.moon,
                       sky.settings);
     }
     // Said once, because silently dropping the sky sends someone reading shader
@@ -573,9 +574,9 @@ void SceneRenderer::PinLod(ECS::Entity entity, int32_t level)
     ForgetKeptShadows();
 }
 
-LodView SceneRenderer::CameraLodView(const Transform &cameraTransform, const Camera &camera)
+LodView SceneRenderer::CameraLodView(const glm::mat4 &cameraWorld, const Camera &camera)
 {
-    return LodView{.cameraPosition = glm::vec3(cameraTransform.worldMatrix[3]),
+    return LodView{.cameraPosition = Math::TranslationOf(cameraWorld),
                    .tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f)};
 }
 

@@ -118,7 +118,7 @@ CameraAim EvaluateCameraRoute(const std::vector<CameraRouteLeg> &route, float se
     return EvaluateCameraLeg(route.back(), 1.f);
 }
 
-Transform CameraTransformFor(const CameraAim &aim)
+glm::mat4 CameraWorldFor(const CameraAim &aim)
 {
     glm::vec3 forward = aim.target - aim.eye;
     if (glm::length(forward) <= kDegenerateLength)
@@ -130,11 +130,7 @@ Transform CameraTransformFor(const CameraAim &aim)
     const bool vertical = std::abs(glm::dot(forward, glm::vec3(0.f, 1.f, 0.f))) > kParallelDot;
     const glm::vec3 up = vertical ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
 
-    Transform transform;
-    transform.worldMatrix = glm::inverse(glm::lookAt(aim.eye, aim.eye + forward, up));
-    transform.position = aim.eye;
-    transform.rotation = glm::quat_cast(glm::mat3(transform.worldMatrix));
-    return transform;
+    return glm::inverse(glm::lookAt(aim.eye, aim.eye + forward, up));
 }
 
 } // namespace Assisi::Runtime

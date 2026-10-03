@@ -222,20 +222,20 @@ void EditorApp::EndCursorLoan()
     _cursorLoan = {};
 }
 
-void EditorApp::ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
+void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
 {
     // The one answer to "where is the viewport looking from". Everything that
     // projects or unprojects has to agree with what was drawn — a pick ray or a
     // gizmo built from a different camera lands where the cursor is not.
-    if (PlayViewCamera(pose, camera))
+    if (PlayViewCamera(world, camera))
     {
         return;
     }
-    pose = _cameraTransform;
+    world = _cameraWorld;
     camera = _camera;
 }
 
-bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
+bool EditorApp::PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
 {
     // Only while a play session is live. Editing looks through the editor's own
     // camera whatever the scene says, or placing a camera would take the viewport
@@ -259,7 +259,7 @@ bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime
         return false;
     }
 
-    pose = view->pose;
+    world = view->world;
     camera = view->camera;
     return true;
 }
@@ -279,9 +279,8 @@ void EditorApp::AdoptLevelCamera()
         return;
     }
 
-    // The local pose, not the whole Transform: this drives the editor's own
-    // camera, whose world matrix RefreshCameraMatrix rebuilds from yaw and pitch
-    // below. Copying the level camera's matrix in would be overwritten anyway.
+    // The local pose: this drives the editor's own camera, whose world matrix
+    // RefreshCameraMatrix rebuilds from yaw and pitch below.
     _cameraTransform.position = view->pose.position;
     _cameraTransform.rotation = view->pose.rotation;
     _camera = view->camera;
@@ -1032,16 +1031,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
-    Assisi::Runtime::Transform playPose;
+    glm::mat4 playWorld{1.f};
     Assisi::Runtime::Camera playCamera;
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    if (PlayViewCamera(playPose, playCamera))
+    if (PlayViewCamera(playWorld, playCamera))
     {
-        _sceneRenderer.Render(frame, *_scene, playPose, playCamera, _world->propagationTick);
+        _sceneRenderer.Render(frame, *_scene, playWorld, playCamera, _world->propagationTick);
         return;
     }
 
-    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
+    _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
 }
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
@@ -1052,15 +1051,15 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     }
     // Through the same camera the scene was drawn with, or an overlay would be
     // projected from somewhere the viewport is not looking from.
-    Assisi::Runtime::Transform playPose;
+    glm::mat4 playWorld{1.f};
     Assisi::Runtime::Camera playCamera;
-    if (PlayViewCamera(playPose, playCamera))
+    if (PlayViewCamera(playWorld, playCamera))
     {
-        _overlays.Render(frame, *_scene, playPose, playCamera, _sceneRenderer);
+        _overlays.Render(frame, *_scene, playWorld, playCamera, _sceneRenderer);
         return;
     }
 
-    _overlays.Render(frame, *_scene, _cameraTransform, _camera, _sceneRenderer);
+    _overlays.Render(frame, *_scene, _cameraWorld, _camera, _sceneRenderer);
 }
 
 void EditorApp::OnFixedUpdate(float dt)

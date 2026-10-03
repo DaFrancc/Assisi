@@ -64,7 +64,7 @@ glm::mat4 ParentUnder(ECS::Scene &scene, ECS::Entity child)
     REQUIRE(scene.Add(parent, kParentPose) != nullptr);
     REQUIRE(scene.Add(child, ECS::Parent{.parent = parent}) != nullptr);
     (void)ECS::PropagateTransforms(scene, 0);
-    return scene.Get<ECS::Transform>(parent)->worldMatrix;
+    return *ECS::WorldMatrix(scene, parent);
 }
 
 /// Gives @p entity a ball body, built by the next reconcile.

@@ -8,8 +8,8 @@
 /// parent. The parent needs no modification.
 ///
 /// Transform stores local-space TRS. PropagateTransforms() walks the
-/// parent chain and writes the result into Transform::worldMatrix.
-/// For root entities (no parent), worldMatrix == local TRS matrix.
+/// parent chain and writes each entity's world matrix (see WorldMatrix).
+/// For root entities (no parent), the world matrix is the local TRS matrix.
 
 #include <cstdint>
 #include <vector>
@@ -26,7 +26,7 @@ namespace Assisi::ECS
 /// @brief Marks an entity as a child of another entity.
 ///
 /// The parent entity must have a Transform. Entities without this
-/// component are treated as roots (worldMatrix == local TRS matrix).
+/// component are treated as roots (world matrix == local TRS matrix).
 ///
 /// ACOMP(tracked): PropagateTransforms's dirty-skip must recompute a child when its
 /// *parent link* changes (attach or reparent), not only when its Transform changes.
@@ -46,8 +46,9 @@ struct Parent
 
 /// @brief Refresh cached world-space matrices for entities whose transform changed.
 ///
-/// Writes results into Transform::worldMatrix. Must be called once per frame before
-/// DrawScene() or any system that reads worldMatrix. Transform is ACOMP(tracked),
+/// Writes results into the Transform pool's world lane (see WorldMatrix). Must be
+/// called once per frame before DrawScene() or anything that reads a world
+/// matrix. Transform is ACOMP(tracked),
 /// so this only recomputes entities whose local TRS changed since `lastTick` (or
 /// whose ancestor changed) — a static scene costs almost nothing. Parent chains are
 /// resolved parent-before-child and each entity is visited at most once per pass.
@@ -69,7 +70,7 @@ std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 
 /// @brief @p entity's pose in world space, resolved by walking its Parent chain.
 ///
-/// Composes local TRS up the chain rather than reading Transform::worldMatrix,
+/// Composes local TRS up the chain rather than reading the world matrix,
 /// so it answers without a propagation pass having run and returns a TRS the
 /// compose/inverse-compose pair can take. Callers that need world poses every
 /// frame want PropagateTransforms and the cached matrix instead; this is for the
@@ -82,8 +83,12 @@ std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 /// in Parent terminates the walk rather than hanging on a corrupt scene.
 [[nodiscard]] Transform WorldTransformOf(const Scene &scene, Entity entity);
 
+/// @brief @p entity's world matrix as the last PropagateTransforms left it, or
+/// null when it has no Transform.
+[[nodiscard]] const glm::mat4 *WorldMatrix(const Scene &scene, Entity entity);
+
 /// @brief The world matrix @p entity's Transform is relative to: its parent's
-/// propagated worldMatrix, or null when it has no Parent, its Parent names no
+/// propagated world matrix, or null when it has no Parent, its Parent names no
 /// entity, or that entity has no Transform.
 ///
 /// Reads the cached matrix, so it is only as current as the last

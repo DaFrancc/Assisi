@@ -4,9 +4,11 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Editor/Overlay/IconPass.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -216,9 +218,7 @@ void EditorApp::UpdateCamera(float dt)
 void EditorApp::RefreshCameraMatrix()
 {
     // The editor camera has no parent, so its world matrix is just its local TRS.
-    _cameraTransform.worldMatrix = glm::translate(glm::mat4(1.f), _cameraTransform.position) *
-                                   glm::mat4_cast(_cameraTransform.rotation) *
-                                   glm::scale(glm::mat4(1.f), _cameraTransform.scale);
+    _cameraWorld = Assisi::Runtime::CameraWorldMatrix(_cameraTransform);
 }
 
 void EditorApp::SyncYawPitchFromRotation()
@@ -270,8 +270,8 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     {
         return;
     }
-    const Assisi::Runtime::Transform *tc = _scene->Get<Assisi::Runtime::Transform>(entity);
-    if (tc == nullptr)
+    const glm::mat4 *placement = Assisi::ECS::WorldMatrix(*_scene, entity);
+    if (placement == nullptr)
     {
         return; // nothing to frame without a world placement
     }
@@ -282,14 +282,16 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc != nullptr && mrc->meshBuffer != nullptr && mrc->meshBuffer->LocalBounds().radius > 0.f)
     {
-        world = Assisi::Geometry::TransformedBoundingSphere(mrc->meshBuffer->LocalBounds(), tc->worldMatrix);
+        world = Assisi::Geometry::TransformedBoundingSphere(mrc->meshBuffer->LocalBounds(), *placement);
     }
     else
     {
-        world.center = glm::vec3(tc->worldMatrix[3]);
-        const float scaleX = glm::length(glm::vec3(tc->worldMatrix[0]));
-        const float scaleY = glm::length(glm::vec3(tc->worldMatrix[1]));
-        const float scaleZ = glm::length(glm::vec3(tc->worldMatrix[2]));
+        using Assisi::Math::ColumnOf;
+        using Assisi::Math::MatrixColumn;
+        world.center = Assisi::Math::TranslationOf(*placement);
+        const float scaleX = glm::length(ColumnOf(*placement, MatrixColumn::Right));
+        const float scaleY = glm::length(ColumnOf(*placement, MatrixColumn::Up));
+        const float scaleZ = glm::length(ColumnOf(*placement, MatrixColumn::Back));
         world.radius = 0.5f * glm::max(scaleX, glm::max(scaleY, scaleZ));
     }
     if (world.radius <= 0.f)
@@ -340,11 +342,11 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     // Whichever camera the viewport is actually drawn from. While a play session
     // looks through a scene camera, a ray built from the editor's own would select
     // whatever sits under the cursor *in a view nobody is looking at*.
-    Assisi::Runtime::Transform viewPose;
+    glm::mat4 viewWorld{1.f};
     Assisi::Runtime::Camera viewCamera;
-    ViewCamera(viewPose, viewCamera);
+    ViewCamera(viewWorld, viewCamera);
 
-    const glm::mat4 view = Assisi::Runtime::ViewMatrix(viewPose);
+    const glm::mat4 view = Assisi::Runtime::ViewMatrix(viewWorld);
     const auto fbSize = GetWindow().GetFramebufferSize();
     const float w = static_cast<float>(fbSize.Width);
     const float h = static_cast<float>(fbSize.Height);
@@ -359,7 +361,7 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     viewDir.w = 0.f;
 
     ray.direction = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    ray.origin = viewPose.position;
+    ray.origin = Assisi::Math::TranslationOf(viewWorld);
     // The camera's world basis, read out of the view matrix's rows. The billboards
     // are built from the same two axes, so a picked icon quad is exactly the drawn
     // one.

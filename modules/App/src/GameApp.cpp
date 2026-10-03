@@ -554,9 +554,8 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // A benchmark flies its route from the scene camera's lens: the route says
     // where the camera is, the level's Camera still says what it sees.
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const Runtime::Transform benchmarkPose =
-        _benchmark ? Runtime::CameraTransformFor(_benchmark->Aim()) : Runtime::Transform{};
-    const Runtime::Transform &pose = _benchmark ? benchmarkPose : view ? view->pose : _fallbackPose;
+    const glm::mat4 benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : glm::mat4(1.f);
+    const glm::mat4 &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
     const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
 
     // The game's own render systems, through the world's registry. After
@@ -566,13 +565,13 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     {
         const float aspectRatio =
             Runtime::AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
-        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(pose),
+        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(cameraWorld),
                                 Runtime::ProjectionMatrix(camera, aspectRatio)};
         _world->systems.RunRender(renderCtx);
     }
 
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    _sceneRenderer.Render(frame, _world->scene, pose, camera, _world->propagationTick);
+    _sceneRenderer.Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
 }
 
 void GameApp::OnResize(int32_t width, int32_t height)

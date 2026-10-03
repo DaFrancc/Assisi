@@ -113,12 +113,12 @@ void EditorApp::DrawInstanceGizmo()
     // The camera the viewport is drawn from, which is a scene camera while a play
     // session is running — a gizmo projected from the editor's own would be drawn
     // and dragged somewhere the cursor is not.
-    Rt::Transform viewPose;
+    glm::mat4 viewWorld{1.f};
     Rt::Camera viewCamera;
-    ViewCamera(viewPose, viewCamera);
+    ViewCamera(viewWorld, viewCamera);
 
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view = Rt::ViewMatrix(viewPose);
+    const glm::mat4 view = Rt::ViewMatrix(viewWorld);
     const glm::mat4 proj = Rt::ProjectionMatrix(viewCamera, aspect);
 
     const Rt::Transform placementBefore = row->transform;
@@ -339,12 +339,12 @@ bool EditorApp::DrawTransformGizmoHandles()
     // The same view/projection the scene renders with. Do not add a Y-flip: NVRHI
     // already flips the viewport, so what is on screen matches ImGuizmo's
     // convention as-is.
-    Rt::Transform viewPose;
+    glm::mat4 viewWorld{1.f};
     Rt::Camera viewCamera;
-    ViewCamera(viewPose, viewCamera);
+    ViewCamera(viewWorld, viewCamera);
 
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view = Rt::ViewMatrix(viewPose);
+    const glm::mat4 view = Rt::ViewMatrix(viewWorld);
     const glm::mat4 proj = Rt::ProjectionMatrix(viewCamera, aspect);
 
     // The frame the result is converted back through. Identity for a root, where
@@ -352,13 +352,13 @@ bool EditorApp::DrawTransformGizmoHandles()
     glm::mat4 parentWorld(1.f);
     if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(_selectedEntity))
     {
-        if (const Rt::Transform *parentTransform = _scene->Get<Rt::Transform>(parent->parent))
+        if (const glm::mat4 *parentMatrix = Assisi::ECS::WorldMatrix(*_scene, parent->parent))
         {
-            parentWorld = parentTransform->worldMatrix;
+            parentWorld = *parentMatrix;
         }
     }
 
-    glm::mat4 world = transform->worldMatrix;
+    glm::mat4 world = *Assisi::ECS::WorldMatrix(*_scene, _selectedEntity);
 
     const ImGuizmo::OPERATION operation = ToOperation(_gizmoOp);
     // Translate and rotate honour the toggle; scale is along the object's own axes
@@ -444,7 +444,7 @@ bool EditorApp::DrawTransformGizmoHandles()
     // The pose the handle started *this frame* at. The rest follow by the change in
     // it, so a rotate turns the group about the handle instead of spinning each one
     // in place.
-    const glm::mat4 worldBefore = transform->worldMatrix;
+    const glm::mat4 worldBefore = *Assisi::ECS::WorldMatrix(*_scene, _selectedEntity);
 
     if (inInstanceFrame)
         world = glm::inverse(instanceFrame) * world;
@@ -482,17 +482,17 @@ bool EditorApp::DrawTransformGizmoHandles()
             const glm::mat4 delta = world * glm::inverse(worldBefore);
             for (const Assisi::ECS::Entity entity : alsoDragged)
             {
-                const Rt::Transform *entityTransform = _scene->Get<Rt::Transform>(entity);
-                if (entityTransform == nullptr)
+                const glm::mat4 *entityWorld = Assisi::ECS::WorldMatrix(*_scene, entity);
+                if (entityWorld == nullptr)
                     continue;
 
                 glm::mat4 entityParentWorld(1.f);
                 if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(entity))
                 {
-                    if (const Rt::Transform *parentTransform = _scene->Get<Rt::Transform>(parent->parent))
-                        entityParentWorld = parentTransform->worldMatrix;
+                    if (const glm::mat4 *parentMatrix = Assisi::ECS::WorldMatrix(*_scene, parent->parent))
+                        entityParentWorld = *parentMatrix;
                 }
-                ApplyGizmoWorldMatrix(entity, entityParentWorld, delta * entityTransform->worldMatrix);
+                ApplyGizmoWorldMatrix(entity, entityParentWorld, delta * *entityWorld);
             }
         }
     }

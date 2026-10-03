@@ -2,6 +2,7 @@
 #include <Assisi/App/SceneCamera.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
 namespace Assisi::App
@@ -34,7 +35,7 @@ std::optional<SceneView> ActiveSceneCamera(ECS::Scene &scene)
             break;
         }
 
-        found = SceneView{.pose = *transform, .camera = sceneCamera};
+        found = SceneView{.world = *ECS::WorldMatrix(scene, entity), .pose = *transform, .camera = sceneCamera};
     }
 
     return found;

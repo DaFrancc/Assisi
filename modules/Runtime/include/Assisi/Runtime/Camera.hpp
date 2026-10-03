@@ -8,8 +8,8 @@
 /// (position and orientation) and a Camera (projection parameters).
 ///
 /// Orientation convention: the camera looks along its local -Z axis.
-/// All functions read from Transform::worldMatrix, so
-/// PropagateTransforms() must be called before using them each frame.
+/// The functions take the camera's world matrix — for a scene camera,
+/// ECS::WorldMatrix after PropagateTransforms has run this frame.
 
 #include <cstdint>
 
@@ -19,8 +19,8 @@
 namespace Assisi::Runtime
 {
 
-/// @brief Returns the view matrix derived from the camera's world transform.
-glm::mat4 ViewMatrix(const Transform &transform);
+/// @brief Returns the view matrix of a camera at @p world.
+glm::mat4 ViewMatrix(const glm::mat4 &world);
 
 /// @brief Returns a perspective projection matrix from the camera's parameters.
 glm::mat4 ProjectionMatrix(const Camera &camera, float aspectRatio);
@@ -30,12 +30,16 @@ glm::mat4 ProjectionMatrix(const Camera &camera, float aspectRatio);
 float AspectRatio(int32_t width, int32_t height);
 
 /// @brief World-space forward direction (-Z column of the world matrix).
-glm::vec3 ForwardDirection(const Transform &transform);
+glm::vec3 ForwardDirection(const glm::mat4 &world);
 
 /// @brief World-space right direction (+X column of the world matrix).
-glm::vec3 RightDirection(const Transform &transform);
+glm::vec3 RightDirection(const glm::mat4 &world);
 
 /// @brief World-space up direction (+Y column of the world matrix).
-glm::vec3 UpDirection(const Transform &transform);
+glm::vec3 UpDirection(const glm::mat4 &world);
+
+/// @brief The world matrix of a free camera posed by @p transform, which is
+/// in world space.
+glm::mat4 CameraWorldMatrix(const Transform &transform);
 
 } // namespace Assisi::Runtime

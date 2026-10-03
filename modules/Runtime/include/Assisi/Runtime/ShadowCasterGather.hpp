@@ -115,7 +115,7 @@ public:
     [[nodiscard]] const ShadowCasterGather &Result() const { return _result; }
 
 private:
-    void AddCaster(Assisi::ECS::Entity entity, const Transform &transform, const MeshRenderer &meshRenderer,
+    void AddCaster(Assisi::ECS::Entity entity, const glm::mat4 &world, const MeshRenderer &meshRenderer,
                    Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
 
     ShadowCasterGather _result;
@@ -180,7 +180,7 @@ public:
 private:
     /// Test one entity against this gather's lights and emit its casters with
     /// the lights they reach.
-    void AddCaster(Assisi::ECS::Entity entity, const Transform &transform, const MeshRenderer &meshRenderer,
+    void AddCaster(Assisi::ECS::Entity entity, const glm::mat4 &world, const MeshRenderer &meshRenderer,
                    Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
 
     std::vector<Assisi::Render::ShadowCaster> _casters;

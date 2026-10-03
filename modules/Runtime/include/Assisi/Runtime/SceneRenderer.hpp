@@ -14,10 +14,10 @@
 ///   Initialize(device, GetSceneFramebufferInfo(), w, h, camera);   // once
 ///   Resize(w, h, camera);                                          // on window resize
 ///   OnRenderTargetsChanged(framebufferInfo);                       // on AA/MSAA change
-///   Render(frame, scene, cameraTransform, camera);                 // every frame
+///   Render(frame, scene, cameraWorld, camera);                     // every frame
 ///
-/// The camera is passed as its two components (world transform + projection
-/// params) rather than pulled from the scene, so the camera may live in the
+/// The camera is passed as its world matrix and its projection params rather
+/// than pulled from the scene, so the camera may live in the
 /// game scene or a separate one. Projection is derived internally from the
 /// camera and the frame's dimensions — callers never build a projection matrix.
 
@@ -92,10 +92,10 @@ public:
     /// scene's transforms, refreshes lighting, rebuilds the froxel grid if the
     /// projection changed since last frame, and draws every mesh entity. No-op
     /// until Initialize() succeeds.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
                 const Camera &camera)
     {
-        Render(frame, scene, cameraTransform, camera, _lastPropagationTick);
+        Render(frame, scene, cameraWorld, camera, _lastPropagationTick);
     }
 
     /// @brief As above, with the transform-propagation bookmark supplied by the
@@ -108,7 +108,7 @@ public:
     /// several worlds resident stores the bookmark in the world
     /// (App::World::propagationTick) and passes it here; the overload above
     /// keeps the renderer's own for the single-scene case.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
                 const Camera &camera, uint64_t &propagationTick);
 
     [[nodiscard]] bool IsValid() const { return _meshPass.IsValid(); }
@@ -422,7 +422,7 @@ private:
     /// only window in which that stamp reaches the GPU. Fills in @p shadows'
     /// local half.
     void RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                            const Transform &cameraTransform, Render::MeshPass::ShadowFrameData &shadows);
+                            const glm::mat4 &cameraWorld, Render::MeshPass::ShadowFrameData &shadows);
 
     /// @brief Join this frame's selection, allocation and budget into one row
     /// per shadow-casting light. A no-op unless an editor asked for it.
@@ -446,7 +446,7 @@ private:
     /// pass: the draw path and the two shadow gathers select the same instance
     /// in the same frame, and a difference in what they measured with would put
     /// them on different levels.
-    [[nodiscard]] static LodView CameraLodView(const Transform &cameraTransform, const Camera &camera);
+    [[nodiscard]] static LodView CameraLodView(const glm::mat4 &cameraWorld, const Camera &camera);
 
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);

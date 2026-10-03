@@ -16,6 +16,7 @@
 #include <utility>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
@@ -255,7 +256,7 @@ float SceneRenderer::LocalLightScreenCoverage(const glm::vec3 &position, float r
 }
 
 void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                                       const Transform &cameraTransform, Render::MeshPass::ShadowFrameData &shadows)
+                                       const glm::mat4 &cameraWorld, Render::MeshPass::ShadowFrameData &shadows)
 {
     _lastLocalShadowStats = Render::LocalShadowPass::Stats{};
     _lastSelection.Clear();
@@ -300,7 +301,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         _shadowDepthRenderer.BeginFrame();
     }
 
-    const glm::vec3 cameraPosition = glm::vec3(cameraTransform.worldMatrix[3]);
+    const glm::vec3 cameraPosition = Math::TranslationOf(cameraWorld);
     const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
 
     _localCandidates.reserve(spots.size() + points.size());

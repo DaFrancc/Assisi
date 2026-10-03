@@ -11,6 +11,7 @@
 /// nominate", so the two hosts cannot disagree about it.
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -22,11 +23,12 @@ namespace Assisi::App
 /// @brief A camera and the pose it looks from, as a pair that travels together.
 struct SceneView
 {
-    /// The whole Transform, world matrix included. Runtime::ViewMatrix derives
-    /// the view from `worldMatrix` and reads no other field, so a pose carrying
-    /// only position and rotation renders from the origin looking down -Z
-    /// however far the camera actually is.
+    /// Where the camera is, as propagated; what Runtime::ViewMatrix takes.
+    glm::mat4 world{1.f};
+
+    /// The camera's own Transform, which is relative to its parent if it has one.
     Runtime::Transform pose;
+
     Runtime::Camera camera;
 };
 

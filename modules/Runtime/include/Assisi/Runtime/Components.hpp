@@ -79,7 +79,7 @@ struct MeshRenderer
 /// provides world-space position and orientation; this component stores projection
 /// settings and identifies which camera is active.
 ///
-/// Call Runtime::ViewMatrix(transform) and Runtime::ProjectionMatrix(camera, aspect)
+/// Call Runtime::ViewMatrix(*ECS::WorldMatrix(scene, entity)) and Runtime::ProjectionMatrix(camera, aspect)
 /// to obtain the matrices needed for rendering.
 ///
 /// Deliberately **not** ACOMP(replicable), and the founding case for opt-in wire

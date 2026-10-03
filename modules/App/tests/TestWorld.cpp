@@ -32,6 +32,7 @@
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
@@ -253,7 +254,8 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     CHECK(synced->position.y < 9.f); // gravity happened, and reached the component
     // ...and the world matrix agrees, i.e. propagation ran AFTER the write-back
     // rather than over the stale pose.
-    CHECK(synced->worldMatrix[3].y == doctest::Approx(synced->position.y));
+    CHECK(Assisi::Math::TranslationOf(*Assisi::ECS::WorldMatrix(world.scene, entity)).y ==
+          doctest::Approx(synced->position.y));
     CHECK(world.propagationTick > 0u);
 }
 

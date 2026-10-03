@@ -168,7 +168,7 @@ public:
     /// @p sceneRenderer is consulted for the LOD each mesh was actually drawn at:
     /// a border traced around a finer silhouette than the one on screen reads as a
     /// halo, so the outline asks rather than deciding for itself.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Runtime::Transform &cameraTransform,
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
                 const Runtime::Camera &camera, const Runtime::SceneRenderer &sceneRenderer);
 
 private:

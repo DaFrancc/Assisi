@@ -22,11 +22,13 @@
 #include <limits>
 #include <vector>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Editor/Overlay/LinePass.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -85,9 +87,9 @@ glm::vec4 UnselectedColor(const glm::vec3 &lightColor)
 /// the alternative to a fallback is a gizmo drawn nowhere.
 glm::vec3 EntityPosition(Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity)
 {
-    if (const Rt::Transform *transform = scene.Get<Rt::Transform>(entity))
+    if (const glm::mat4 *world = Assisi::ECS::WorldMatrix(scene, entity))
     {
-        return glm::vec3(transform->worldMatrix[3]);
+        return Assisi::Math::TranslationOf(*world);
     }
     return glm::vec3(0.f);
 }
@@ -176,13 +178,14 @@ void EditorApp::SubmitLightGizmos()
     for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::PointLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        AddPointLightOutline(*style.batch, style.color, transform.worldMatrix, light);
+        AddPointLightOutline(*style.batch, style.color, *Assisi::ECS::WorldMatrix(*_scene, entity), light);
     }
 
     for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::SpotLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        AddSpotLightOutline(*style.batch, style.color, transform.worldMatrix, light, style.detailed);
+        AddSpotLightOutline(*style.batch, style.color, *Assisi::ECS::WorldMatrix(*_scene, entity), light,
+                            style.detailed);
     }
 
     const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
@@ -255,13 +258,14 @@ Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
 
     for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::PointLight>())
     {
-        AddPointLightOutline(_lightPickOutline, kUnread, transform.worldMatrix, light);
+        AddPointLightOutline(_lightPickOutline, kUnread, *Assisi::ECS::WorldMatrix(*_scene, entity), light);
         takeNearest(entity);
     }
 
     for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::SpotLight>())
     {
-        AddSpotLightOutline(_lightPickOutline, kUnread, transform.worldMatrix, light, IsSelected(entity));
+        AddSpotLightOutline(_lightPickOutline, kUnread, *Assisi::ECS::WorldMatrix(*_scene, entity), light,
+                            IsSelected(entity));
         takeNearest(entity);
     }
 
@@ -314,7 +318,7 @@ bool EditorApp::DrawDirectionalLightGizmo()
 
     ImGuiIO &io = ImGui::GetIO();
     const float aspect = io.DisplaySize.y > 0.f ? io.DisplaySize.x / io.DisplaySize.y : 1.f;
-    const glm::mat4 view = Rt::ViewMatrix(_cameraTransform);
+    const glm::mat4 view = Rt::ViewMatrix(_cameraWorld);
     const glm::mat4 proj = Rt::ProjectionMatrix(_camera, aspect);
 
     // Where the arrow is, which is where its handles are. A directional light

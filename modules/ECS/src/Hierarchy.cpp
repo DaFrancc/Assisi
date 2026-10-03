@@ -30,113 +30,136 @@ struct PassState
     bool worldChanged = false;
     bool resolving = false;
 };
+
+/// One PropagateTransforms call: what it reads, what it writes, and the
+/// per-entity scratch it keeps.
+struct Propagation
+{
+    Scene &scene;
+    std::vector<glm::mat4> &world;
+    std::vector<PassState> &passState;
+
+    /// Entities (index and generation packed) whose parent cycle was already
+    /// reported, so a bad level logs it once rather than every frame.
+    std::unordered_set<uint64_t> &reportedCycles;
+
+    uint64_t lastTick;
+    uint32_t pass;
+
+    /// @p index's scratch, grown on demand. Growing invalidates earlier
+    /// references, so never hold one across a call to Resolve.
+    PassState &Slot(uint32_t index)
+    {
+        if (index >= passState.size())
+        {
+            passState.resize(index + 1);
+        }
+        return passState[index];
+    }
+
+    /// Resolves @p e's world matrix, recomputing it only when its local TRS or
+    /// its parent link changed since `lastTick`, or an ancestor's world matrix
+    /// changed this pass. Parents are resolved first, by recursion.
+    ///
+    /// @return whether @p e's world matrix changed this pass, so a child knows
+    /// it must recompute too.
+    bool Resolve(Entity e)
+    {
+        const Transform *t = scene.Get<Transform>(e);
+        if (t == nullptr)
+        {
+            return false; // a parent without a Transform contributes identity
+        }
+        if (Slot(e.index).passId == pass)
+        {
+            return Slot(e.index).worldChanged; // already resolved this pass (shared parent)
+        }
+        Slot(e.index).passId = pass;
+        Slot(e.index).resolving = true;
+
+        // The parent link counts as well as the TRS: Parent is ACOMP(tracked) so
+        // an attach or a reparent is seen. A detach through Remove<Parent> does
+        // not stamp; whatever detaches should stamp the child's Transform.
+        const bool localChanged = scene.Changed<Transform>(e, lastTick) || scene.Changed<Parent>(e, lastTick);
+
+        bool parentChanged = false;
+        const glm::mat4 *parentWorld = ResolveParent(e, parentChanged);
+
+        const bool worldChanged = localChanged || parentChanged;
+        if (worldChanged)
+        {
+            // The lane is derived output, not part of the component, so writing
+            // it stamps nothing and nothing is serialized or replicated.
+            const glm::mat4 local = LocalMatrix(*t);
+            world[scene.DenseIndexOf<Transform>(e)] = parentWorld != nullptr ? (*parentWorld * local) : local;
+        }
+
+        Slot(e.index).worldChanged = worldChanged;
+        Slot(e.index).resolving = false;
+        return worldChanged;
+    }
+
+    /// Resolves @p e's parent and returns its world matrix, or null when @p e is
+    /// a root. Sets @p parentChanged when that matrix changed this pass.
+    const glm::mat4 *ResolveParent(Entity e, bool &parentChanged)
+    {
+        const Parent *p = scene.Get<Parent>(e);
+        if (p == nullptr || p->parent == NullEntity || !scene.Has<Transform>(p->parent))
+        {
+            return nullptr;
+        }
+
+        // A hand-edited level can hold a parent loop (A->B->A). The parent is
+        // already on the resolve stack, so recursing would not terminate: this
+        // entity is treated as a root instead.
+        if (Slot(p->parent.index).passId == pass && Slot(p->parent.index).resolving)
+        {
+            const uint64_t packed = (static_cast<uint64_t>(e.generation) << 32u) | e.index;
+            if (reportedCycles.insert(packed).second)
+            {
+                Core::Log::Error("PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
+                                 e.index, e.generation);
+            }
+            return nullptr;
+        }
+
+        parentChanged = Resolve(p->parent);
+        // Finalised by the recursion; the lane does not move during a pass.
+        return &world[scene.DenseIndexOf<Transform>(p->parent)];
+    }
+};
 } // namespace
 
 uint64_t PropagateTransforms(Scene &scene, uint64_t lastTick)
 {
-    // Reused across calls; grows to the largest entity index seen. thread_local so
-    // propagation driven from another thread can't interleave with this one.
+    SparseSetLanes<Transform> *lanes = scene.Lanes<Transform>();
+    if (lanes == nullptr)
+    {
+        return scene.CurrentChangeTick();
+    }
+
+    // Reused across calls and grown to the largest entity index seen.
+    // thread_local so propagation driven from another thread can't interleave
+    // with this one.
     thread_local std::vector<PassState> passState;
-    thread_local uint32_t passCounter = 0;
-    const uint32_t pass = ++passCounter;
-
-    // Entities (index+generation packed) whose parent cycle was already
-    // reported. Propagation runs every frame, so without this a single bad
-    // .alvl loops one Error line forever. Bounded by the number of distinct
-    // cyclic entities ever seen — diagnostic-only state, never read back.
     thread_local std::unordered_set<uint64_t> reportedCycles;
+    thread_local uint32_t passCounter = 0;
 
-    auto slot = [&](uint32_t index) -> PassState &
-                {
-                    if (index >= passState.size())
-                    {
-                        passState.resize(index + 1);
-                    }
-                    return passState[index];
-                };
-
-    // Resolves e's worldMatrix, recomputing it only when e's local TRS changed
-    // (per the ECS change tick, since `lastTick`) or an ancestor changed; returns
-    // whether it changed this pass so a child can decide if it must recompute too.
-    // Recursive via C++23 deducing this (self), so parents resolve before children.
-    auto resolve = [&](this const auto &self, Entity e) -> bool
-                   {
-                       Transform *t = scene.Get<Transform>(e);
-                       if (t == nullptr)
-                       {
-                           return false; // a parent without a Transform contributes identity
-                       }
-
-                       // Note: `slot()` may resize `passState` (invalidating references) during
-                       // the parent recursion below, so never hold a PassState& across a self()
-                       // call — re-fetch by index each time.
-                       if (slot(e.index).passId == pass)
-                       {
-                           return slot(e.index).worldChanged; // already resolved this pass (shared parent)
-                       }
-
-                       slot(e.index).passId = pass;
-                       slot(e.index).resolving = true; // on the resolve stack, for cycle detection
-
-                       // Recompute when the local TRS changed OR the parent link changed (attach /
-                       // reparent). Parent is ACOMP(tracked) precisely so this second case is caught;
-                       // without it, attaching a parent after a pass leaves a stale worldMatrix until
-                       // something else moves the child. (Detach via Remove<Parent> doesn't stamp, so
-                       // a site that detaches should stamp the child's Transform — no such site today.)
-                       const bool localChanged = scene.Changed<Transform>(e, lastTick) || scene.Changed<Parent>(e, lastTick);
-
-                       bool parentChanged = false;
-                       const glm::mat4 *parentWorld = nullptr;
-                       if (const Parent *p = scene.Get<Parent>(e); p != nullptr && p->parent != NullEntity)
-                       {
-                           Transform *parentTransform = scene.Get<Transform>(p->parent);
-                           const bool parentOnStack =
-                               parentTransform != nullptr && slot(p->parent.index).passId == pass && slot(p->parent.index).resolving;
-                           if (parentOnStack)
-                           {
-                               /* A hand-edited .alvl can contain a parent loop (A->B->A). The
-                                  parent is already on this resolve stack, so recursing would not
-                                  terminate — break the cycle by treating this node as a root. */
-                               const uint64_t packed = (static_cast<uint64_t>(e.generation) << 32u) | e.index;
-                               if (reportedCycles.insert(packed).second)
-                               {
-                                   Core::Log::Error("PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
-                                                    e.index, e.generation);
-                               }
-                           }
-                           else if (parentTransform != nullptr)
-                           {
-                               parentChanged = self(p->parent);
-                               parentWorld = &parentTransform->worldMatrix; // finalised by the recursion; pool ptr stays valid
-                           }
-                       }
-
-                       const bool worldChanged = localChanged || parentChanged;
-                       if (worldChanged)
-                       {
-                           const glm::mat4 local = LocalMatrix(*t);
-                           // Written through the plain (non-stamping) Get, and it must stay that
-                           // way: stamping here re-marks the Transform changed, so the next pass
-                           // finds every resolved entity dirty and the dirty-skip becomes a no-op.
-                           // Safe because worldMatrix is derived output with no AFIELD — never
-                           // serialized, never replicated; peers recompute it from the local TRS
-                           // in their own propagation pass.
-                           t->worldMatrix = parentWorld != nullptr ? (*parentWorld * local) : local;
-                       }
-
-                       slot(e.index).worldChanged = worldChanged;
-                       slot(e.index).resolving = false;
-                       return worldChanged;
-                   };
+    Propagation propagation{.scene = scene,
+                            .world = lanes->world,
+                            .passState = passState,
+                            .reportedCycles = reportedCycles,
+                            .lastTick = lastTick,
+                            .pass = ++passCounter};
 
     // Deliberately the plain Query, and it must stay one: it only enumerates the
-    // Transform holders (resolve() re-fetches by entity), and QueryMut would stamp
+    // Transform holders (Resolve re-fetches by entity), and QueryMut would stamp
     // every Transform every frame — defeating the dirty-skip and handing network
-    // delta replication a full Transform set per tick. Same reason as the
-    // non-stamping worldMatrix store in resolve().
+    // delta replication a full Transform set per tick.
     for (auto [entity, transform] : scene.Query<Transform>())
     {
-        resolve(entity);
+        (void)transform;
+        (void)propagation.Resolve(entity);
     }
 
     // The tick a caller should pass as `lastTick` next frame: everything written
@@ -207,6 +230,17 @@ Transform WorldTransformOf(const Scene &scene, Entity entity)
     return world;
 }
 
+const glm::mat4 *WorldMatrix(const Scene &scene, Entity entity)
+{
+    const SparseSetLanes<Transform> *lanes = scene.Lanes<Transform>();
+    const uint32_t index = scene.DenseIndexOf<Transform>(entity);
+    if (lanes == nullptr || index == SparseSet<Transform>::Invalid)
+    {
+        return nullptr;
+    }
+    return &lanes->world[index];
+}
+
 const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity)
 {
     const Parent *parent = scene.Get<Parent>(entity);
@@ -214,9 +248,7 @@ const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity)
     {
         return nullptr;
     }
-
-    const Transform *parentTransform = scene.Get<Transform>(parent->parent);
-    return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
+    return WorldMatrix(scene, parent->parent);
 }
 
 } // namespace Assisi::ECS

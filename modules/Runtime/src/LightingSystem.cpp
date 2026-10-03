@@ -7,6 +7,8 @@
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 
 #include <algorithm>
@@ -113,9 +115,9 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
     _shadowSpots.clear();
     _shadowPoints.clear();
 
-    // World position comes from the propagated worldMatrix, not transform.position:
+    // World position comes from the propagated world matrix, not transform.position:
     // a parented light's local position is relative to its parent. For a root,
-    // worldMatrix[3] equals position.
+    // the matrix's translation equals position.
     //
     // A spot light's aim comes off the same matrix — it shines down its own local
     // -Y — so a headlight or a held torch points where its parent faces, and an
@@ -128,7 +130,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
 
         for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
         {
-            const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+            const glm::vec3 position = Math::TranslationOf(*ECS::WorldMatrix(scene, entity));
             // Every light starts holding no tile. The shadow pass stamps the
             // winners between here and Upload, so a light it never reaches is
             // unshadowed by default rather than by last frame's answer.
@@ -155,8 +157,9 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
         {
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
-            const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
-            const glm::vec3 direction = SpotWorldDirection(transform.worldMatrix);
+            const glm::mat4 &world = *ECS::WorldMatrix(scene, entity);
+            const glm::vec3 position = Math::TranslationOf(world);
+            const glm::vec3 direction = SpotWorldDirection(world);
             _spotLights.push_back({
                     .positionRadius = {position, light.radius},
                     .directionInner = {direction, innerCos},
