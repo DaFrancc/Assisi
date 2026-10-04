@@ -18,9 +18,14 @@ namespace Assisi::ECS
 /// between steps the two differ. Writing it does nothing lasting — the next
 /// propagation that touches the entity overwrites it.
 ///
+/// Tracked: a propagation that moves it on screen stamps its change tick, so
+/// ChangedSince<WorldMatrix> is everything whose drawn pose changed — a body
+/// blending between two fixed steps included, though its Transform is written
+/// only on step frames.
+///
 /// Identity until the first propagation after it is added. Removing only the
 /// Transform leaves it until that propagation, which removes it too.
-ACOMP(transient)
+ACOMP(transient, tracked)
 struct WorldMatrix
 {
     glm::mat4 matrix{1.f};

@@ -289,10 +289,16 @@ struct Propagation
         if (worldChanged)
         {
             const glm::mat4 local = DrawnLocalMatrix(slot, *scene.Get<Transform>(e));
-            world->matrix = parentWorld != nullptr ? MultiplyMatrices(*parentWorld, local) : local;
+            glm::mat4 drawn = parentWorld != nullptr ? MultiplyMatrices(*parentWorld, local) : local;
             if (const RenderOffset *offset = scene.Get<RenderOffset>(e); offset != nullptr)
             {
-                ApplyRenderOffset(world->matrix, *offset);
+                ApplyRenderOffset(drawn, *offset);
+            }
+            // Stamped only when it moved on screen, so a reader of the change
+            // ticks — the shadows — is not told about a matrix rebuilt the same.
+            if (drawn != world->matrix)
+            {
+                scene.GetMut<WorldMatrix>(e)->matrix = drawn;
             }
             ++resolved;
         }

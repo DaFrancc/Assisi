@@ -460,3 +460,37 @@ TEST_CASE("Mut: writing three fields through one proxy stamps one tick")
     CHECK(scene.CurrentChangeTick() == before + 1u);
     CHECK(scene.ChangeTick<Transform>(e) == before + 1u);
 }
+
+TEST_CASE("WorldMatrix: a rewritten matrix stamps a change, so a reader sees what moved on screen")
+{
+    // The shadows read what moved from these stamps. A body blending between
+    // two steps moves on screen every frame though its Transform is written
+    // only on step frames; read from Transform alone, its shadow would be kept
+    // from the last step frame while the body moved on.
+    ECS::Scene scene;
+    const ECS::Entity mover = Spawn(scene, {0.f, 0.f, 0.f});
+    const ECS::Entity child = Spawn(scene, {0.f, 1.f, 0.f});
+    const ECS::Entity resting = Spawn(scene, {5.f, 0.f, 0.f});
+    const ECS::Entity offset = Spawn(scene, {9.f, 0.f, 0.f});
+    REQUIRE(scene.Add(child, Parent{.parent = mover}) != nullptr);
+    REQUIRE(scene.Add(offset, RenderOffset{.rotation = glm::quat(1.f, 0.f, 0.f, 0.f), .position = {0.f, 1.f, 0.f}}) !=
+            nullptr);
+    uint64_t tick = PropagateTransforms(scene, 0);
+
+    StepTo(scene, mover, {10.f, 0.f, 0.f});
+    ECS::SetBlendAlpha(scene, 0.25f);
+    tick = PropagateTransforms(scene, tick);
+
+    // A frame that runs no step: nothing writes a Transform. The offset eases
+    // away, as replication's smoothing does.
+    const uint64_t since = scene.CurrentChangeTick();
+    scene.Get<RenderOffset>(offset)->position.y = 0.5f;
+    ECS::SetBlendAlpha(scene, 0.75f);
+    tick = PropagateTransforms(scene, tick);
+
+    CHECK(scene.Changed<ECS::WorldMatrix>(mover, since));
+    CHECK(scene.Changed<ECS::WorldMatrix>(child, since));
+    CHECK(scene.Changed<ECS::WorldMatrix>(offset, since));
+    CHECK_FALSE(scene.Changed<ECS::WorldMatrix>(resting, since));
+    CHECK_FALSE(scene.Changed<Transform>(mover, since));
+}

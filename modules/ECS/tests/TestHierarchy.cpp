@@ -407,7 +407,7 @@ TEST_CASE("PropagateTransforms: reparenting a child to a different parent follow
 // (the dirty-skip becomes a no-op) — and network delta replication, filtering on
 // the same signal, would ship every Transform every tick.
 
-TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dirty itself")
+TEST_CASE("PropagateTransforms: a pass stamps only the matrices it moved, and does not re-dirty itself")
 {
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
@@ -427,9 +427,12 @@ TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dir
     const uint64_t tick2 = PropagateTransforms(scene, tick);
     REQUIRE(TranslationOf(*WorldOf(scene, child)).x == doctest::Approx(101.f)); // recomputed
 
-    // Nothing in the pass stamped: the tick it returns is the one the move left.
-    CHECK(tick2 == afterMove);
-    CHECK(scene.CurrentChangeTick() == afterMove);
+    // The pass stamped the two matrices it moved and nothing else, and the
+    // tick it returns already counts them.
+    CHECK(tick2 == afterMove + 2u);
+    CHECK(scene.CurrentChangeTick() == tick2);
+    CHECK_FALSE(scene.Changed<Transform>(parent, afterMove));
+    CHECK(scene.Changed<Assisi::ECS::WorldMatrix>(child, afterMove));
 
     // And so a pass resuming from tick2 finds nothing dirty — no self-retrigger.
     const uint64_t tick3 = PropagateTransforms(scene, tick2);

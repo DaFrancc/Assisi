@@ -209,8 +209,8 @@ private:
 /// @brief The shadow casters among @p changed, with where they now stand.
 ///
 /// The invalidation input, and the reason it is cheap: @p changed comes from the
-/// Transform pool's change-tick lane, so it names what moved rather than what
-/// exists, and a frame in which nothing moved produces nothing here.
+/// WorldMatrix pool's change ticks, so it names what moved on screen rather than
+/// what exists, and a frame in which nothing moved produces nothing here.
 void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::Entity> changed,
                         std::vector<Assisi::Render::ShadowMover> &out);
 

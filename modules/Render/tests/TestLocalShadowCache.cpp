@@ -435,8 +435,8 @@ TEST_CASE("A moving layer is redrawn only when its movers have changed")
     RunFrame(cache, FrameAt(1, settings, requests, std::vector<ShadowMover>{still}), plans);
     REQUIRE(plans[0].redrawMovers);
 
-    // Movers are written on the game's tick, so a frame between ticks finds
-    // them exactly where the layer already has them.
+    // A frame in which no mover moved finds them exactly where the layer
+    // already has them.
     RunFrame(cache, FrameAt(2, settings, requests, std::vector<ShadowMover>{still}), plans);
     CHECK_FALSE(plans[0].redrawMovers);
     CHECK(plans[0].liveMoverFaces == plans[0].moverFaces); // still sampled
