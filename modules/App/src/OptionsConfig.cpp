@@ -348,11 +348,19 @@ OptionsConfig OptionsConfig::LoadFromJson()
     // options.json is per-user writable state, so it lives under the user root
     // (see SaveToJson), not the read-only asset root.
     const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
-    if (!text)
+    if (text && !nlohmann::json::accept(*text))
     {
-        return OptionsConfig{};
+        return FromJsonText(*text);
     }
-    return FromJsonText(*text);
+    const OptionsConfig options = text ? FromJsonText(*text) : OptionsConfig{};
+
+    // Written back whenever it would read differently, so the file is there to
+    // edit, with every setting in it, from the first launch on.
+    if (!text || *text != options.ToJsonText())
+    {
+        options.SaveToJson();
+    }
+    return options;
 }
 
 namespace

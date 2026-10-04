@@ -8,6 +8,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 
 #include <filesystem>
+#include <string_view>
 #include <string>
 
 using namespace Assisi::App;
@@ -311,6 +312,31 @@ TEST_CASE("A chosen tap interval survives a write and a read, and is used only w
 
     game.playerSetsMultiTap = false;
     CHECK(read.MultiTapSeconds(game) == game.multiTapSeconds);
+}
+
+TEST_CASE("Loading writes a missing or incomplete options.json back with every setting, and leaves a broken one")
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi-options-complete";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    REQUIRE(Assisi::Core::AssetSystem::SetUserRoot(root).has_value());
+    const std::filesystem::path file = root / "options.json";
+
+    (void)OptionsConfig::LoadFromJson();
+    REQUIRE(std::filesystem::exists(file));
+    CHECK(Assisi::Core::AssetSystem::ReadUserText("options.json").value() == OptionsConfig{}.ToJsonText());
+
+    REQUIRE(Assisi::Core::AssetSystem::WriteText("options.json", R"({"shadows": {"local": {"filter": "point"}}})"));
+    const OptionsConfig partial = OptionsConfig::LoadFromJson();
+    CHECK(partial.shadows.local.filter == ShadowFilter::Point);
+    CHECK(Assisi::Core::AssetSystem::ReadUserText("options.json").value() == partial.ToJsonText());
+
+    constexpr std::string_view kBroken = "{ \"shadows\": ";
+    REQUIRE(Assisi::Core::AssetSystem::WriteText("options.json", kBroken));
+    (void)OptionsConfig::LoadFromJson();
+    CHECK(Assisi::Core::AssetSystem::ReadUserText("options.json").value() == kBroken);
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("What the player changed survives a restart")
