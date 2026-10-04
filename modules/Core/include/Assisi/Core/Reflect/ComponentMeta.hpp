@@ -136,11 +136,12 @@ struct ComponentMeta
     /// @brief Whether this component participates in serialization/introspection.
     ///
     /// True for normal ACOMP components. False for ACOMP(transient) components,
-    /// which register only to receive a stable ComponentId (so a Scene can store
-    /// them) but carry no serialize/addToScene/iterateEntities/getByEntity/
-    /// construct/getMutable hooks — those are all null. This is the explicit
-    /// gate consumers must check before invoking a hook; do not probe the hooks
-    /// for null yourself.
+    /// which register to receive a stable ComponentId (so a Scene can store
+    /// them) but carry no serialize/addToScene/iterateEntities/construct/
+    /// getMutable hooks — those are all null. This is the explicit gate
+    /// consumers must check before invoking one of those; do not probe them for
+    /// null yourself. A transient component with AFIELDs still has its `fields`
+    /// and getByEntity, so a tool can show it read-only.
     /// Example: Runtime::DestroyTag (a transient per-frame lifecycle marker).
     bool serializable = true;
 

@@ -524,11 +524,10 @@ that is still iterating.
 
 ### Physics
 Physics wraps [Jolt Physics](https://github.com/jrouwe/JoltPhysics) for rigid-body simulation.
-`PhysicsWorld` owns the simulation — creating bodies, stepping it forward, gravity. A simulated entity
-carries two components: `RigidBodyDescriptor`, the saved description of the body (its shape, and whether
-it is static or dynamic), and `RigidBody`, the live handle to Jolt's copy of that body, which is created
-on load and never written to disk. Call `PhysicsWorld::Clear()` before loading a new level, or the
-previous level's bodies stay in the simulation.
+`PhysicsWorld` owns the simulation and keeps it in step with its scene: an entity with a `Collider` has a
+body, static unless it also has a `RigidBody`, and an entity with a `Character` is swept by the character
+controller. `BodyState`, `CharacterIntent` and `CharacterState` carry what gameplay asks for and what the
+step did. Nothing outside the module creates or destroys a body.
 
 ### Net
 Net moves bytes between two machines and has no idea what they mean — it knows nothing about entities or

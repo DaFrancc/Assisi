@@ -1593,7 +1593,7 @@ std::string EditorApp::EditLabel(std::string_view action, Assisi::ECS::Entity en
 void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
 {
     // Dispatch by component identity to the same transient-rebuild paths the live
-    // edits use. Physics needs nothing here: a restored Transform or descriptor is
+    // edits use. Physics needs nothing here: a restored Transform or Collider is
     // a component write like any other, and the world follows it.
     using namespace Assisi;
     static const Core::Reflect::ComponentId kMeshRenderer = Core::Reflect::ComponentIdOf<Runtime::MeshRenderer>();

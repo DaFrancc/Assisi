@@ -27,7 +27,7 @@ unless it's allowed at every level:
 
 1. **The component type allows it.** Only components declared
    `ACOMP(replicable)` can travel. `Transform`, `MeshRenderer` and
-   `RigidBodyDescriptor` are replicable, for example.
+   `Collider` are replicable, for example.
 2. **Your game doesn't block it.** `neverReplicate` in
    `assets/config/network.json` blocks a component type for your whole game.
 3. **The entity opts in.** Only entities with a **`Replicated`** component are

@@ -4,12 +4,14 @@
 add_executable(Assisi-Physics-Tests
   main.cpp
   TestBodyLifetime.cpp
+  TestBodyState.cpp
   TestCharacter.cpp
   TestCharacterFeel.cpp
   TestCollisionChannels.cpp
   TestContactEvents.cpp
   TestParentedBodies.cpp
   TestPhysicsWriteback.cpp
+  TestRigidBody.cpp
   TestTransformPush.cpp
   TestTriggers.cpp
   TestWorldQueries.cpp
@@ -30,7 +32,7 @@ target_link_libraries(Assisi-Physics-Tests
 
 # Scene stores components by ComponentId, which the static initializers reflectgen
 # emits into the *-Generated OBJECT libraries assign. Transform lives in the ECS
-# layer (Assisi-ECS-Generated); RigidBody / RigidBodyDescriptor in Physics's own.
+# layer (Assisi-ECS-Generated); Collider / RigidBody in Physics's own.
 # Without both, the pools these tests touch have no registration and Add<T> trips
 # its debug contract assert (and stores nothing).
 target_sources(Assisi-Physics-Tests PRIVATE

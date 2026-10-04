@@ -559,7 +559,7 @@ class EditorApp : public Assisi::App::Application
 
     // --- Collider visualisation ---
     // Builds collider wireframes AND silhouette outlines (collider volume + entity
-    // mesh) for every RigidBodyDescriptor and hands them to the renderer (green
+    // mesh) for every Collider and hands them to the renderer (green
     // depth-tested, orange x-ray for the selection), plus the list of collider
     // entities so their editor billboards are suppressed. Editor-only: a no-op
     // while the game is playing.
@@ -568,7 +568,7 @@ class EditorApp : public Assisi::App::Application
     // Submits the collider volume's silhouette outline for one body: a box/sphere/
     // cylinder unit mesh scaled to the descriptor, a capsule as a cylinder + two
     // end spheres whose union is the capsule.
-    void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
+    void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::Collider &desc,
                                const glm::vec3 &color);
 
     // --- Light visualisation ---
@@ -838,7 +838,7 @@ class EditorApp : public Assisi::App::Application
     void HandleUndoRedoHotkeys();
     /// @brief The EditHistory rebind hook: rebuilds the transient state that
     /// serialization excludes after a component is restored/removed by an apply —
-    /// physics body (RigidBodyDescriptor), body pose (Transform), resolved asset
+    /// physics body (Collider), body pose (Transform), resolved asset
     /// pointers (MeshRenderer). Routed through the same helpers the live edits use.
     void ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present);
     /// @brief Builds the rebind hook bound to this app (shared by both histories).
@@ -1365,7 +1365,7 @@ class EditorApp : public Assisi::App::Application
     /// Add Component field.
     void AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta);
     /// @brief Removes @p meta's component from the selected entity, cleaning up any
-    /// associated runtime state (e.g. a RigidBodyDescriptor's Jolt body). Used by
+    /// associated runtime state (e.g. a Collider's Jolt body). Used by
     /// the inspector's per-component delete button.
     void RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta);
 

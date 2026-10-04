@@ -400,16 +400,24 @@ static const bool _reflectgen_SampleRules = []() -> bool
 }();
 
 // ── SampleTransient ───────────────────────────────────────────────────────────
-// ACOMP(transient): id-only registration, not serialized.
+// ACOMP(transient): not serialized.
 static const bool _reflectgen_SampleTransient = []() -> bool
 {
     using T = Assisi::Runtime::SampleTransient;
     Assisi::Core::Reflect::ComponentRegistry::Instance().Register({
         .name = "SampleTransient",
+        .getByEntity = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
         .addDefault = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen)
         {
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             (void)scene.Add<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        .fields = {
+            { .name = "ignored", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, ignored) }
         },
         .typeIndex = typeid(T),
         .serializable = false

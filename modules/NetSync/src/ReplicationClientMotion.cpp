@@ -30,7 +30,8 @@ void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
     if (_physics == nullptr || !_scene.IsAlive(entity) || _bodies.contains(netId))
         return;
 
-    if (!_scene.Has<Physics::RigidBodyDescriptor>(entity) || !_scene.Has<ECS::Transform>(entity))
+    const bool physical = _scene.Has<Physics::Collider>(entity) || _scene.Has<Physics::Character>(entity);
+    if (!physical || !_scene.Has<ECS::Transform>(entity))
         return; // not a physical entity, or not fully described yet
 
     // It is a simulated mirror now, not an interpolated one. The physics world
@@ -53,7 +54,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     if (!_physics->HasBody(entity))
     {
         // First state for this mirror: the body has to exist before it can be
-        // corrected, and it is built from the descriptor and Transform the server
+        // corrected, and it is built from the components and Transform the server
         // sent. If either has not arrived, nothing is built and this record is
         // dropped; the delta path resends until acked.
         _physics->Reconcile();

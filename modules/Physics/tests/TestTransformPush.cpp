@@ -2,11 +2,11 @@
 
 /// @file TestTransformPush.cpp
 /// @brief Writing an entity's Transform moves its body, and editing its
-///        descriptor changes it, without anything telling the world to.
+///        Collider or RigidBody changes it, without anything telling the world to.
 ///
 /// Each motion type takes a write its own way: a static body is placed, a
 /// kinematic one is swept so it pushes what it meets, a dynamic one is placed
-/// and keeps going, and Teleport is the one that stops it. A descriptor edit is
+/// and keeps going, and Teleport is the one that stops it. A component edit is
 /// applied to the live body rather than waiting for a reload.
 
 #include <doctest/doctest.h>
@@ -39,12 +39,11 @@ bool SomethingAt(const Physics::PhysicsWorld &world, glm::vec3 point)
     return hit.has_value();
 }
 
-/// A kinematic body: today only a moving sensor is one.
-Physics::RigidBodyDescriptor KinematicSensor()
+/// A kinematic sensor that never sleeps.
+PhysicsTests::BodySpec KinematicSensor()
 {
-    Physics::RigidBodyDescriptor descriptor = Box({0.5f, 0.5f, 0.5f}, false);
-    descriptor.channel = Physics::CollisionChannel::Trigger;
-    return descriptor;
+    return WithFilter(Box({0.5f, 0.5f, 0.5f}, false),
+                      Physics::CollisionFilter{Physics::AllChannels, Physics::CollisionChannel::Trigger});
 }
 
 /// Steps long enough for a body dropped onto the floor to fall asleep.
@@ -189,7 +188,7 @@ TEST_CASE("Making a static body dynamic lets it fall")
     Step(test.world, 10);
     REQUIRE(test.world.GetBodyPose(box).position.y == doctest::Approx(10.f));
 
-    test.scene.GetMut<Physics::RigidBodyDescriptor>(box)->isStatic = false;
+    REQUIRE(test.scene.Add(box, Physics::RigidBody{}) != nullptr);
     Step(test.world, 10);
 
     CHECK(test.world.GetBodyPose(box).position.y < 10.f);
@@ -203,7 +202,7 @@ TEST_CASE("Editing a collider's size resizes the live body")
     const glm::vec3 beyond{1.5f, 0.f, 0.f};
     REQUIRE_FALSE(SomethingAt(test.world, beyond));
 
-    test.scene.GetMut<Physics::RigidBodyDescriptor>(box)->halfExtents = {2.f, 0.5f, 2.f};
+    test.scene.GetMut<Physics::Collider>(box)->halfExtents = {2.f, 0.5f, 2.f};
     test.world.Reconcile();
 
     CHECK(SomethingAt(test.world, beyond));
@@ -216,7 +215,7 @@ TEST_CASE("Turning on CCD reaches the live body")
     test.world.Reconcile();
     REQUIRE_FALSE(test.world.IsBodyCCDEnabled(ball));
 
-    test.scene.GetMut<Physics::RigidBodyDescriptor>(ball)->enableCCD = true;
+    test.scene.GetMut<Physics::RigidBody>(ball)->ccd = true;
     test.world.Reconcile();
 
     CHECK(test.world.IsBodyCCDEnabled(ball));
@@ -232,22 +231,22 @@ TEST_CASE("Editing a walking character keeps its momentum")
 
     for (int32_t i = 0; i < kWalkSteps; ++i)
     {
-        test.world.MoveCharacter(walker, {kWish, 0.f, 0.f}, false);
+        PhysicsTests::Drive(test.scene, walker, {kWish, 0.f, 0.f}, false);
         Step(test.world);
     }
-    const glm::vec3 walking = test.world.GetCharacterState(walker).velocity;
+    const glm::vec3 walking = PhysicsTests::StateOf(test.scene, walker).velocity;
     REQUIRE(walking.x > 1.f);
 
     SUBCASE("a tuning edit")
     {
-        test.scene.GetMut<Physics::CharacterDescriptor>(walker)->walkSpeed = 6.f;
+        test.scene.GetMut<Physics::Character>(walker)->walkSpeed = 6.f;
     }
     SUBCASE("a capsule edit, which rebuilds it")
     {
-        test.scene.GetMut<Physics::CharacterDescriptor>(walker)->radius = 0.35f;
+        test.scene.GetMut<Physics::Character>(walker)->radius = 0.35f;
     }
     test.world.Reconcile();
 
     CHECK(test.world.HasBody(walker));
-    CHECK(test.world.GetCharacterState(walker).velocity.x == doctest::Approx(walking.x));
+    CHECK(PhysicsTests::StateOf(test.scene, walker).velocity.x == doctest::Approx(walking.x));
 }

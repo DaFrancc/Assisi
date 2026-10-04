@@ -61,24 +61,48 @@ glm::vec3 WorldScaleOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::T
     return transform.scale;
 }
 
-PhysicsWorld::ColliderShapeDesc ShapeOf(const RigidBodyDescriptor &descriptor)
-{
-    return PhysicsWorld::ColliderShapeDesc{.shape = descriptor.shape,
-                                           .halfExtents = descriptor.halfExtents,
-                                           .radius = descriptor.radius,
-                                           .halfHeight = descriptor.halfHeight};
-}
+/// Every degree of freedom, as LockedAxis bits.
+constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count)) - 1u;
 
-/// The motion a descriptor asks for. A sensor that fell under gravity would
-/// leave the volume it was authored as, so a non-static sensor is kinematic: it
-/// never sleeps on its own, which is what lets it find bodies already at rest.
-BodyMotion MotionOf(const RigidBodyDescriptor &descriptor)
+/// The motion a body is built with: static without a RigidBody, and kinematic
+/// when every axis is locked, since Jolt cannot simulate a body with no freedom
+/// left and one that may not move is moved only by its Transform.
+BodyMotion MotionOf(const RigidBody *rigidBody)
 {
-    if (descriptor.isStatic)
+    if (rigidBody == nullptr)
     {
         return BodyMotion::Static;
     }
-    return descriptor.channel == CollisionChannel::Trigger ? BodyMotion::Kinematic : BodyMotion::Dynamic;
+    if (rigidBody->motion == MotionType::Kinematic || (rigidBody->lockedAxes.bits & kAllAxes) == kAllAxes)
+    {
+        return BodyMotion::Kinematic;
+    }
+    return BodyMotion::Dynamic;
+}
+
+/// The degrees of freedom @p rigidBody leaves free. LockedAxis numbers them in
+/// the order Jolt's flags do.
+JPH::EAllowedDOFs AllowedDOFsOf(const RigidBody &rigidBody)
+{
+    const uint32_t free = kAllAxes & ~rigidBody.lockedAxes.bits;
+    return free == 0u ? JPH::EAllowedDOFs::All : static_cast<JPH::EAllowedDOFs>(free);
+}
+
+JPH::EMotionQuality MotionQualityOf(const RigidBody &rigidBody)
+{
+    return rigidBody.ccd ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+}
+
+/// Orders entities by index, then generation, so repeats sit together.
+bool EntityBefore(ECS::Entity a, ECS::Entity b)
+{
+    return a.index < b.index || (a.index == b.index && a.generation < b.generation);
+}
+
+/// Whether two colliders build the same shape.
+bool SameShape(const Collider &a, const Collider &b)
+{
+    return ShapeOf(a) == ShapeOf(b) && a.offsetPosition == b.offsetPosition && a.offsetRotation == b.offsetRotation;
 }
 
 JPH::EMotionType JoltMotionOf(BodyMotion motion)
@@ -98,6 +122,11 @@ bool SameFilter(CollisionFilter a, CollisionFilter b)
 JPH::RVec3 ToJolt(glm::vec3 position)
 {
     return JPH::RVec3(position.x, position.y, position.z);
+}
+
+JPH::Vec3 ToJoltVector(glm::vec3 vector)
+{
+    return JPH::Vec3(vector.x, vector.y, vector.z);
 }
 
 /// Normalized: a hand-authored or imported rotation is often a hair off unit
@@ -128,13 +157,13 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
     // Removals first, so an index freed and handed to a new entity is empty by
     // the time the new entity's components are read.
     scratchRemoved.clear();
-    bool complete = scene.RemovedSince<RigidBodyDescriptor>(changeCursor, scratchRemoved);
-    complete = scene.RemovedSince<CharacterDescriptor>(changeCursor, scratchRemoved) && complete;
+    bool complete = scene.RemovedSince<Collider>(changeCursor, scratchRemoved);
+    complete = scene.RemovedSince<Character>(changeCursor, scratchRemoved) && complete;
     complete = scene.RemovedSince<ECS::Transform>(changeCursor, scratchRemoved) && complete;
     if (complete)
     {
         // Gone, even when it is back already: an entity revived at its own handle
-        // or a descriptor removed and added again is a new life, so it gets a new
+        // or a Collider removed and added again is a new life, so it gets a new
         // body rather than the old one's motion.
         for (const ECS::Entity entity : scratchRemoved)
         {
@@ -158,12 +187,36 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
         }
     }
 
+    // A RigidBody removed changes the body's kind rather than ending it, so it
+    // is synced like an edit.
     scratchChanged.clear();
-    scene.ChangedSince<RigidBodyDescriptor>(changeCursor, scratchChanged);
-    scene.ChangedSince<CharacterDescriptor>(changeCursor, scratchChanged);
+    scene.ChangedSince<Collider>(changeCursor, scratchChanged);
+    scene.ChangedSince<RigidBody>(changeCursor, scratchChanged);
+    scene.ChangedSince<Character>(changeCursor, scratchChanged);
+    if (!scene.RemovedSince<RigidBody>(changeCursor, scratchChanged))
+    {
+        for (std::uint32_t index = 0; index < slots.size(); ++index)
+        {
+            if (slots[index].kind == SlotKind::Body)
+            {
+                scratchChanged.push_back(ECS::Entity{index, slots[index].generation});
+            }
+        }
+    }
+    // An entity whose Collider and RigidBody both changed is listed twice, and
+    // is synced once.
+    std::sort(scratchChanged.begin(), scratchChanged.end(), EntityBefore);
+    scratchChanged.erase(std::unique(scratchChanged.begin(), scratchChanged.end()), scratchChanged.end());
     for (const ECS::Entity entity : scratchChanged)
     {
         SyncEntity(entity);
+    }
+
+    scratchChanged.clear();
+    scene.ChangedSince<BodyState>(changeCursor, scratchChanged);
+    for (const ECS::Entity entity : scratchChanged)
+    {
+        PushBodyState(entity);
     }
 
     scratchChanged.clear();
@@ -172,6 +225,9 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
     {
         PushTransform(entity, stepTime);
     }
+
+    StopFinishedSweeps();
+    ApplyAskedStances();
 
     changeCursor = now;
 }
@@ -191,17 +247,17 @@ void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
     }
 
     SlotKind wanted = SlotKind::Empty;
-    const CharacterDescriptor *character = nullptr;
-    const RigidBodyDescriptor *body = nullptr;
+    const Character *character = nullptr;
+    const Collider *collider = nullptr;
     if (scene.IsAlive(entity) && scene.Has<ECS::Transform>(entity))
     {
-        character = scene.Get<CharacterDescriptor>(entity);
-        body = scene.Get<RigidBodyDescriptor>(entity);
+        character = scene.Get<Character>(entity);
+        collider = scene.Get<Collider>(entity);
         if (character != nullptr)
         {
             wanted = SlotKind::Character;
         }
-        else if (body != nullptr)
+        else if (collider != nullptr)
         {
             wanted = SlotKind::Body;
         }
@@ -215,13 +271,14 @@ void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
 
     if (wanted == SlotKind::Body)
     {
+        const RigidBody *rigidBody = scene.Get<RigidBody>(entity);
         if (held == nullptr)
         {
-            CreateBody(entity, *body);
+            CreateBody(entity, *collider, rigidBody);
         }
         else
         {
-            EditBody(entity, *body);
+            EditBody(entity, *collider, rigidBody);
         }
     }
     else if (wanted == SlotKind::Character)
@@ -237,31 +294,51 @@ void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
     }
 }
 
-void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const RigidBodyDescriptor &descriptor)
+void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody)
 {
     const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
     const Pose pose = WorldPoseOf(scene, entity, transform);
     const glm::vec3 worldScale = WorldScaleOf(scene, entity, transform);
-    const ColliderShapeDesc shape = ShapeOf(descriptor);
-    const CollisionFilter filter{descriptor.collidesWith, descriptor.channel};
-    const BodyMotion motion = MotionOf(descriptor);
-    const bool sensor = descriptor.channel == CollisionChannel::Trigger;
+    const CollisionFilter filter{collider.collidesWith, collider.channel};
+    const BodyMotion motion = MotionOf(rigidBody);
+    const bool sensor = collider.channel == CollisionChannel::Trigger;
+    WarnOnClampedScale(entity, collider.shape, worldScale);
 
-    JPH::BodyCreationSettings settings(MakeScaledShape(shape, worldScale), ToJolt(pose.position),
+    JPH::BodyCreationSettings settings(MakeColliderShape(collider, worldScale), ToJolt(pose.position),
                                        ToJolt(pose.rotation), JoltMotionOf(motion), PackLayer(filter, motion));
-
-    // A static body carries no motion block. Making it move is an edit to the
-    // descriptor, which builds a new body rather than converting this one.
-    settings.mAllowDynamicOrKinematic = motion != BodyMotion::Static;
     settings.mIsSensor = sensor;
     settings.mUserData = UserDataOf(entity);
-    if (motion != BodyMotion::Static)
+    settings.mFriction = collider.friction;
+    settings.mRestitution = collider.restitution;
+
+    // A static body carries no motion block. Gaining a RigidBody builds a new
+    // body rather than converting this one.
+    settings.mAllowDynamicOrKinematic = rigidBody != nullptr;
+    if (rigidBody != nullptr)
     {
-        settings.mMotionQuality = descriptor.enableCCD ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+        settings.mMotionQuality = MotionQualityOf(*rigidBody);
+        settings.mLinearDamping = rigidBody->linearDamping;
+        settings.mAngularDamping = rigidBody->angularDamping;
+        settings.mGravityFactor = rigidBody->gravityScale;
+        settings.mAllowSleeping = rigidBody->allowSleep;
+        settings.mAllowedDOFs = AllowedDOFsOf(*rigidBody);
+        if (rigidBody->mass > 0.f)
+        {
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            settings.mMassPropertiesOverride.mMass = rigidBody->mass;
+        }
+
+        // A velocity written before the body existed — a projectile spawned
+        // moving — is where it starts.
+        if (const BodyState *state = scene.Get<BodyState>(entity); state != nullptr)
+        {
+            settings.mLinearVelocity = ToJoltVector(state->linearVelocity);
+            settings.mAngularVelocity = ToJoltVector(state->angularVelocity);
+        }
     }
 
-    // A kinematic sensor is activated and then never sleeps on its own, which is
-    // what lets it find bodies that are already at rest.
+    // A kinematic sensor is activated and then, unless it may sleep, never
+    // sleeps on its own, which is what lets it find bodies already at rest.
     const JPH::BodyID id = physicsSystem.GetBodyInterface().CreateAndAddBody(settings, JPH::EActivation::Activate);
     if (id.IsInvalid())
     {
@@ -272,15 +349,20 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const RigidBodyDescripto
 
     BodySlot &slot = SlotAt(entity);
     slot = BodySlot{};
-    slot.shape = shape;
+    slot.collider = collider;
+    slot.rigidBody = rigidBody != nullptr ? *rigidBody : RigidBody{};
+    slot.stateTick = scene.ChangeTick<BodyState>(entity);
     slot.worldScale = worldScale;
     slot.body = id;
     slot.filter = filter;
     slot.generation = entity.generation;
     slot.motion = motion;
     slot.kind = SlotKind::Body;
-    slot.ccd = descriptor.enableCCD;
     StampTransform(entity);
+    if (motion != BodyMotion::Static)
+    {
+        Follow(entity.index);
+    }
 
     // A static sensor is told about bodies that touch it, and a sleeping body
     // touches nothing. Waking whatever it now encloses is what lets it report the
@@ -291,34 +373,43 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const RigidBodyDescripto
     }
 }
 
-void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const RigidBodyDescriptor &descriptor)
+void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody)
 {
     BodySlot &slot = *SlotFor(entity);
 
-    // Static bodies are built without a motion block and a sensor's motion
-    // follows its channel, so a change of motion is a new body.
-    if (MotionOf(descriptor) != slot.motion)
+    // A static body is built without a motion block, so gaining or losing one is
+    // a new body.
+    const BodyMotion motion = MotionOf(rigidBody);
+    if ((motion == BodyMotion::Static) != (slot.motion == BodyMotion::Static))
     {
         DestroySlot(entity.index);
-        CreateBody(entity, descriptor);
+        CreateBody(entity, collider, rigidBody);
         return;
     }
 
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
-    const JPH::EActivation wake =
-        slot.motion == BodyMotion::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate;
+    const bool moving = motion != BodyMotion::Static;
+    const JPH::EActivation wake = moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate;
+    const RigidBody tuning = rigidBody != nullptr ? *rigidBody : RigidBody{};
 
-    const ColliderShapeDesc shape = ShapeOf(descriptor);
-    if (!(shape == slot.shape))
+    if (!SameShape(collider, slot.collider))
     {
-        bodies.SetShape(slot.body, MakeScaledShape(shape, slot.worldScale), /*inUpdateMassProperties=*/ true, wake);
-        slot.shape = shape;
+        bodies.SetShape(slot.body, MakeColliderShape(collider, slot.worldScale), /*inUpdateMassProperties=*/ true,
+                        wake);
+    }
+    if (collider.friction != slot.collider.friction)
+    {
+        bodies.SetFriction(slot.body, collider.friction);
+    }
+    if (collider.restitution != slot.collider.restitution)
+    {
+        bodies.SetRestitution(slot.body, collider.restitution);
     }
 
-    const CollisionFilter filter{descriptor.collidesWith, descriptor.channel};
-    if (!SameFilter(filter, slot.filter))
+    const CollisionFilter filter{collider.collidesWith, collider.channel};
+    if (!SameFilter(filter, slot.filter) || motion != slot.motion)
     {
-        bodies.SetObjectLayer(slot.body, PackLayer(filter, slot.motion));
+        bodies.SetObjectLayer(slot.body, PackLayer(filter, motion));
         {
             // Sensor-ness is a body flag rather than part of the layer, and Jolt
             // exposes no interface-level setter for it.
@@ -328,19 +419,107 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const RigidBodyDescriptor 
                 lock.GetBody().SetIsSensor(filter.channel == CollisionChannel::Trigger);
             }
         }
-        if (slot.motion != BodyMotion::Static)
-        {
-            bodies.ActivateBody(slot.body);
-        }
         slot.filter = filter;
     }
 
-    if (slot.motion != BodyMotion::Static && descriptor.enableCCD != slot.ccd)
+    if (moving)
     {
-        bodies.SetMotionQuality(slot.body,
-                                descriptor.enableCCD ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
-        slot.ccd = descriptor.enableCCD;
+        if (motion != slot.motion)
+        {
+            bodies.SetMotionType(slot.body, JoltMotionOf(motion), JPH::EActivation::Activate);
+
+            // Frozen where it is: a kinematic body moves at whatever velocity
+            // it holds, and one made kinematic to stop it should stop.
+            if (motion == BodyMotion::Kinematic)
+            {
+                bodies.SetLinearAndAngularVelocity(slot.body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+            }
+        }
+        if (tuning.ccd != slot.rigidBody.ccd)
+        {
+            bodies.SetMotionQuality(slot.body, MotionQualityOf(tuning));
+        }
+        if (tuning.gravityScale != slot.rigidBody.gravityScale)
+        {
+            bodies.SetGravityFactor(slot.body, tuning.gravityScale);
+        }
+        {
+            JPH::BodyLockWrite lock(physicsSystem.GetBodyLockInterface(), slot.body);
+            if (lock.Succeeded())
+            {
+                JPH::Body &body = lock.GetBody();
+                body.GetMotionProperties()->SetLinearDamping(tuning.linearDamping);
+                body.GetMotionProperties()->SetAngularDamping(tuning.angularDamping);
+                body.SetAllowSleeping(tuning.allowSleep);
+            }
+        }
+
+        // After SetShape, which resets the mass to the shape's own.
+        ApplyMass(slot.body, tuning);
+        bodies.ActivateBody(slot.body);
+        Follow(entity.index);
     }
+
+    slot.collider = collider;
+    slot.rigidBody = tuning;
+    slot.motion = motion;
+}
+
+void PhysicsWorld::Impl::ApplyMass(const JPH::BodyID &body, const RigidBody &rigidBody)
+{
+    JPH::BodyLockWrite lock(physicsSystem.GetBodyLockInterface(), body);
+    if (!lock.Succeeded() || !lock.GetBody().IsDynamic())
+    {
+        return;
+    }
+    JPH::MassProperties mass = lock.GetBody().GetShape()->GetMassProperties();
+    if (rigidBody.mass > 0.f)
+    {
+        mass.ScaleToMass(rigidBody.mass);
+    }
+    lock.GetBody().GetMotionProperties()->SetMassProperties(AllowedDOFsOf(rigidBody), mass);
+}
+
+void PhysicsWorld::Impl::PushBodyState(ECS::Entity entity)
+{
+    BodySlot *slot = SlotFor(entity);
+    if (slot == nullptr || slot->kind != SlotKind::Body || slot->motion == BodyMotion::Static)
+    {
+        return;
+    }
+
+    // This world's own write, or the one it already pushed.
+    const uint64_t tick = scene.ChangeTick<BodyState>(entity);
+    if (tick == slot->stateTick)
+    {
+        return;
+    }
+    slot->stateTick = tick;
+
+    const BodyState *state = scene.Get<BodyState>(entity);
+    if (state == nullptr)
+    {
+        return;
+    }
+
+    // Activated first: a body asleep on a surface ignores velocity written
+    // while it sleeps.
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    bodies.ActivateBody(slot->body);
+    bodies.SetLinearAndAngularVelocity(slot->body, ToJoltVector(state->linearVelocity),
+                                       ToJoltVector(state->angularVelocity));
+    Follow(entity.index);
+}
+
+void PhysicsWorld::Impl::WarnOnClampedScale(ECS::Entity entity, ColliderShape shape, glm::vec3 scale) const
+{
+    if (glm::all(glm::lessThan(glm::abs(ClampedShapeScale(shape, scale) - scale), glm::vec3(kScaleClampTolerance))))
+    {
+        return;
+    }
+    Core::Log::Warn("PhysicsWorld: entity {} (gen {}) has a round collider at a scale it cannot take ({}, {}, {}); "
+                    "it is built at the nearest one it can.",
+                    entity.index, entity.generation, scale.x, scale.y, scale.z);
 }
 
 void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
@@ -387,8 +566,13 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
     if (scaled)
     {
         slot->worldScale = WorldScaleOf(scene, entity, transform);
-        bodies.SetShape(slot->body, MakeScaledShape(slot->shape, slot->worldScale), /*inUpdateMassProperties=*/ true,
-                        wake);
+        WarnOnClampedScale(entity, slot->collider.shape, slot->worldScale);
+        bodies.SetShape(slot->body, MakeColliderShape(slot->collider, slot->worldScale),
+                        /*inUpdateMassProperties=*/ true, wake);
+        if (slot->motion != BodyMotion::Static)
+        {
+            ApplyMass(slot->body, slot->rigidBody);
+        }
     }
 
     if (moved || turned)
@@ -402,6 +586,7 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
             // carries it there is what pushes resting bodies along and what a
             // character standing on it reads to ride it.
             bodies.MoveKinematic(slot->body, position, rotation, stepTime);
+            sweptThisStep.push_back(entity.index);
         }
         else if (slot->motion == BodyMotion::Static)
         {
@@ -427,6 +612,45 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
     }
 
     StampTransform(entity);
+}
+
+void PhysicsWorld::Impl::StopFinishedSweeps()
+{
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    for (const std::uint32_t index : sweptLastStep)
+    {
+        if (std::find(sweptThisStep.begin(), sweptThisStep.end(), index) != sweptThisStep.end())
+        {
+            continue;
+        }
+        const BodySlot &slot = slots[index];
+        if (slot.kind == SlotKind::Body && slot.motion == BodyMotion::Kinematic)
+        {
+            bodies.SetLinearAndAngularVelocity(slot.body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+        }
+    }
+    sweptLastStep.swap(sweptThisStep);
+    sweptThisStep.clear();
+}
+
+void PhysicsWorld::Impl::ApplyAskedStances()
+{
+    for (std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
+    {
+        CharacterRecord &record = entry.second;
+        const CharacterIntent *intent = scene.Get<CharacterIntent>(record.entity);
+        if (intent == nullptr || intent->stance == record.stance)
+        {
+            continue;
+        }
+        // Asked every reconcile rather than on the edge of a change: standing
+        // up under something low fails, and retrying is what lets a character
+        // stand by itself once it has walked clear.
+        if (ApplyStance(record, intent->stance))
+        {
+            WriteCharacterState(record.entity, BuildCharacterState(record));
+        }
+    }
 }
 
 void PhysicsWorld::Impl::StampTransform(ECS::Entity entity)
@@ -470,6 +694,7 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
         JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
         bodies.RemoveBody(slot.body);
         bodies.DestroyBody(slot.body);
+        ForgetBodyState(ECS::Entity{index, slot.generation});
     }
 
     if (slot.followed)
@@ -477,6 +702,21 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
         std::erase(awake, index);
     }
     slot = BodySlot{};
+}
+
+void PhysicsWorld::Impl::ForgetBodyState(ECS::Entity entity)
+{
+    if (!scene.IsAlive(entity))
+    {
+        return;
+    }
+    const BodyState *state = scene.Get<BodyState>(entity);
+    if (state == nullptr ||
+        (state->linearVelocity == glm::vec3(0.f) && state->angularVelocity == glm::vec3(0.f) && !state->asleep))
+    {
+        return;
+    }
+    *scene.GetMut<BodyState>(entity) = BodyState{};
 }
 
 void PhysicsWorld::Impl::DestroyAll()
@@ -489,16 +729,20 @@ void PhysicsWorld::Impl::DestroyAll()
     characters.clear();
 
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
-    for (const BodySlot &slot : slots)
+    for (std::uint32_t index = 0; index < slots.size(); ++index)
     {
+        const BodySlot &slot = slots[index];
         if (slot.kind == SlotKind::Body)
         {
             bodies.RemoveBody(slot.body);
             bodies.DestroyBody(slot.body);
+            ForgetBodyState(ECS::Entity{index, slot.generation});
         }
     }
     slots.clear();
     awake.clear();
+    sweptThisStep.clear();
+    sweptLastStep.clear();
 
     // Every pair and event names bodies that no longer exist. No Exit is emitted
     // for what was touching: nothing survives that could act on one, and a world

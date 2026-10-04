@@ -1,23 +1,21 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestParentedBodies.cpp
-/// @brief PhysicsWorld's two conversions for a parented entity — local pose in on
-/// creation, world pose out on writeback.
+/// @brief A parented Collider is built at its composed world pose, and an
+/// entity the simulation moves cannot have a parent at all.
 ///
-/// Jolt places and reports bodies in world space; a Transform under a parent is an
-/// offset *from* that parent. Physics reads the parent's propagated world matrix
-/// through ECS::ParentWorldMatrix. Get either half wrong and the failure is
-/// silent: the body starts at its local pose, and every frame the writeback stores
-/// a world pose that transform propagation then multiplies by the parent again — a
-/// body that drifts by its parent's transform, forever.
+/// Jolt places bodies in world space; a Transform under a parent is an offset
+/// *from* that parent. A static collider placed at its local pose would sit
+/// wherever the parent's offset happens to put the origin.
 ///
-/// Blueprint members are routinely both parented and physics-driven — a car's
-/// wheels are exactly that.
+/// A RigidBody or a Character excludes Parent: the simulation owns its pose, so
+/// it cannot also be relative to another entity's.
 
 #include <doctest/doctest.h>
 
 #include <cstdint>
 
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -54,7 +52,14 @@ bool NearlyEqual(glm::quat a, glm::quat b, float epsilon = kEpsilon)
     return glm::abs(1.f - glm::abs(glm::dot(a, b))) < epsilon;
 }
 
-constexpr Physics::RigidBodyDescriptor kBall{.shape = Physics::ColliderShape::Sphere, .radius = 0.5f};
+/// A half-metre ball collider.
+Physics::Collider Ball()
+{
+    Physics::Collider collider;
+    collider.shape = Physics::ColliderShape::Sphere;
+    collider.radius = 0.5f;
+    return collider;
+}
 
 /// @p child placed under a new entity posed at kParentPose, with world matrices
 /// propagated so the parent's is current. Returns the parent's world matrix.
@@ -67,10 +72,10 @@ glm::mat4 ParentUnder(ECS::Scene &scene, ECS::Entity child)
     return scene.Get<ECS::WorldMatrix>(parent)->matrix;
 }
 
-/// Gives @p entity a ball body, built by the next reconcile.
+/// Gives @p entity a static ball collider, built by the next reconcile.
 void AddBall(ECS::Scene &scene, Physics::PhysicsWorld &world, ECS::Entity entity)
 {
-    REQUIRE(scene.Add(entity, kBall) != nullptr);
+    REQUIRE(scene.Add(entity, Ball()) != nullptr);
     world.Reconcile();
 }
 
@@ -126,39 +131,17 @@ TEST_CASE("A parent with no Transform defines no space, so the local pose is wor
     CHECK(NearlyEqual(world.GetBodyPose(entity).position, local.position));
 }
 
-TEST_CASE("Writeback: a parented body's world pose decomposes back to the local field")
+TEST_CASE("A parented entity cannot become a RigidBody or a Character")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
-
-    const ECS::Transform local{.position = {1.f, 0.f, 0.f},
-                               .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
-
     const ECS::Entity entity = scene.Create();
-    REQUIRE(scene.Add(entity, local) != nullptr);
-    const glm::mat4 parent = ParentUnder(scene, entity);
-    AddBall(scene, world, entity);
+    REQUIRE(scene.Add(entity, ECS::Transform{}) != nullptr);
+    (void)ParentUnder(scene, entity);
 
-    // The ball falls under gravity, so the world pose is now something the
-    // parent frame definitely does not equal.
-    for (int32_t i = 0; i < 2; ++i)
-    {
-        world.Update(kStep);
-    }
-
-    const ECS::Transform *written = scene.Get<ECS::Transform>(entity);
-    REQUIRE(written != nullptr);
-
-    // Recomposed rather than re-derived: asserting that parent × local equals the
-    // body's world pose tests the round trip without restating the same algebra
-    // the writeback used, which would pass even if both halves were wrong.
-    const Physics::Pose worldPose = world.GetBodyPose(entity);
-    CHECK(NearlyEqual(glm::vec3(parent * glm::vec4(written->position, 1.f)), worldPose.position));
-    CHECK(NearlyEqual(glm::quat_cast(glm::mat3(parent)) * written->rotation, worldPose.rotation));
-
-    // And it actually fell: a writeback that silently did nothing would satisfy the
-    // round trip above with the spawn pose still in place.
-    CHECK(written->position.y < local.position.y - 1e-3f);
+    using Core::Reflect::ComponentIdOf;
+    CHECK(scene.ConflictOf(entity, ComponentIdOf<Physics::RigidBody>()).has_value());
+    CHECK(scene.ConflictOf(entity, ComponentIdOf<Physics::Character>()).has_value());
+    CHECK_FALSE(scene.ConflictOf(entity, ComponentIdOf<Physics::Collider>()).has_value());
 }
 
 TEST_CASE("Writeback: an unparented body in a parented scene is untouched by the conversion")
@@ -178,6 +161,8 @@ TEST_CASE("Writeback: an unparented body in a parented scene is untouched by the
     REQUIRE(scene.Add(entity, local) != nullptr);
 
     AddBall(scene, world, entity);
+    REQUIRE(scene.Add(entity, Physics::RigidBody{}) != nullptr);
+    world.Reconcile();
     CHECK(NearlyEqual(world.GetBodyPose(entity).position, local.position));
 
     for (int32_t i = 0; i < 2; ++i)

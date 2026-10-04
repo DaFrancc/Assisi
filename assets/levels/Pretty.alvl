@@ -2,6 +2,18 @@
   "entities": [
     {
       "components": {
+        "Collider": {
+          "channel": 0,
+          "collidesWith": 31,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "halfHeight": 0.5,
+          "radius": 0.5,
+          "shape": 0
+        },
         "MeshRenderer": {
           "castsShadows": true,
           "materialOverrides": [],
@@ -9,20 +21,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "channel": 0,
-          "collidesWith": 31,
-          "enableCCD": false,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "halfHeight": 0.5,
-          "isStatic": true,
-          "radius": 0.5,
-          "shape": 0
         },
         "Transform": {
           "position": [
@@ -50,6 +48,18 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "channel": 0,
+          "collidesWith": 31,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "halfHeight": 0.5,
+          "radius": 1.0,
+          "shape": 1
+        },
         "MeshRenderer": {
           "castsShadows": true,
           "materialOverrides": [
@@ -63,19 +73,8 @@
             "path": "prim://sphere"
           }
         },
-        "RigidBodyDescriptor": {
-          "channel": 0,
-          "collidesWith": 31,
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "halfHeight": 0.5,
-          "isStatic": false,
-          "radius": 1.0,
-          "shape": 1
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -103,6 +102,18 @@
         "Bounce": {
           "rebound": 0.25
         },
+        "Collider": {
+          "channel": 0,
+          "collidesWith": 31,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "halfHeight": 0.5,
+          "radius": 0.5,
+          "shape": 0
+        },
         "MeshRenderer": {
           "castsShadows": true,
           "materialOverrides": [
@@ -116,19 +127,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "channel": 0,
-          "collidesWith": 31,
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "halfHeight": 0.5,
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 0
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [

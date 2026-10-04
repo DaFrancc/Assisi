@@ -51,8 +51,8 @@ void BounceSystem(SystemContext &ctx)
             continue;
 
         // The impact was logged against a live body during the last step; the
-        // entity can still have been destroyed since, or had its collider removed.
-        if (!scene.IsAlive(contact.entity) || !ctx.world.physics.HasBody(contact.entity))
+        // entity can still have been destroyed since, or lost its RigidBody.
+        if (!scene.IsAlive(contact.entity) || !scene.Has<Physics::BodyState>(contact.entity))
             continue;
 
         // Only a body approaching hard enough bounces. Two things are being
@@ -88,79 +88,16 @@ void BounceSystem(SystemContext &ctx)
         // file is just text and can hold anything.
         const glm::vec3 reflected = contact.velocity - 2.f * closingSpeed * contact.normal;
         const float rebound = glm::max(bounce->rebound, 0.f);
-        ctx.world.physics.SetBodyLinearVelocity(contact.entity, reflected * rebound);
-    }
-}
-
-void CharacterMoveSystem(SystemContext &ctx)
-{
-    ECS::Scene &scene = ctx.world.scene;
-
-    for (auto [entity, character, descriptor] : scene.QueryMut<Physics::Character, Physics::CharacterDescriptor>())
-    {
-        const Physics::Character &intent = character.Get();
-        const Physics::CharacterDescriptor &authored = descriptor.Get();
-
-        const glm::vec3 move = intent.move;
-        const bool jump = intent.jump;
-
-        // Facing lives on the Transform, which the controller never reads: it
-        // moves the capsule and leaves turning it to gameplay.
-        if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
-        {
-            ctx.world.physics.SetCharacterFacing(entity, transform->rotation * glm::vec3(0.f, 0.f, -1.f));
-        }
-
-        // Asked every step rather than on the edge of a keypress: standing up
-        // under something low fails, and retrying is what lets a character stand
-        // by itself once it has walked clear.
-        (void)ctx.world.physics.SetCharacterStance(entity, intent.stance);
-
-        // The crouch scale applies to the stance the character actually reached,
-        // not the one it asked for — read back live, because a character blocked
-        // under a ledge would otherwise walk at full speed while crouched.
-        const Physics::Stance stance = ctx.world.physics.GetCharacterState(entity).stance;
-        const float speed =
-            stance == Physics::Stance::Crouching ? authored.walkSpeed * authored.crouchSpeedScale : authored.walkSpeed;
-
-        // A request, not a velocity to take: the direction to gain speed along
-        // and how much of it to ask for. What the character is already doing
-        // stays in the controller between steps.
-        ctx.world.physics.MoveCharacter(entity, move * speed, jump);
-
-        // A request, consumed: one press is one jump however many steps pass
-        // before it can fire.
-        character.GetMut().jump = false;
-    }
-}
-
-void CharacterStateSystem(SystemContext &ctx)
-{
-    for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
-    {
-        const Physics::CharacterState state = ctx.world.physics.GetCharacterState(entity);
-
-        // Skip the write when nothing moved, rather than stamp a change tick for
-        // a state identical to the one already there. Character is transient and
-        // untracked, so the tick costs nothing today — but a standing crowd of
-        // characters would otherwise write every field every step for no reason.
-        if (character.Get().state.velocity == state.velocity && character.Get().state.ground == state.ground &&
-            character.Get().state.stance == state.stance && character.Get().state.eyeHeight == state.eyeHeight &&
-            character.Get().state.groundEntity == state.groundEntity)
-        {
-            continue;
-        }
-
-        character.GetMut().state = state;
+        scene.GetMut<Physics::BodyState>(contact.entity)->linearVelocity = reflected * rebound;
     }
 }
 
 void CharacterEyeSystem(SystemContext &ctx)
 {
     ECS::Scene &scene = ctx.world.scene;
-    for (auto [entity, character] : scene.Query<Physics::Character>())
+    for (auto [entity, state] : scene.Query<Physics::CharacterState>())
     {
-        const float eyeHeight = character.state.eyeHeight;
+        const float eyeHeight = state.eyeHeight;
 
         for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
         {
@@ -202,7 +139,7 @@ void CharacterLookSystem(SystemContext &ctx)
 
     ECS::Scene &scene = ctx.world.scene;
 
-    for (auto [entity, character] : scene.QueryMut<Physics::Character>())
+    for (auto [entity, character] : scene.Query<Physics::Character>())
     {
         (void)character;
 
@@ -294,7 +231,7 @@ void CharacterInputSystem(SystemContext &ctx)
     const Physics::Stance stance =
         actions.IsActionDown(kActionCrouch, input) ? Physics::Stance::Crouching : Physics::Stance::Standing;
 
-    for (auto [entity, character] : ctx.world.scene.QueryMut<Physics::Character>())
+    for (auto [entity, intentRef] : ctx.world.scene.QueryMut<Physics::CharacterIntent>())
     {
         // Into the world, through the character's own facing. The vertical part is
         // dropped: looking down must not walk a character into the floor, and the
@@ -310,13 +247,12 @@ void CharacterInputSystem(SystemContext &ctx)
             }
         }
 
-        Physics::Character &intent = character.GetMut();
+        Physics::CharacterIntent &intent = intentRef.GetMut();
         intent.move = worldMove;
         intent.stance = stance;
 
-        // OR rather than assign: CharacterMoveSystem clears the request once it
-        // has been consumed, and a press landing on a step this system happens to
-        // run twice for must not be wiped before that.
+        // OR rather than assign: the step clears the request once it has been
+        // consumed, and a press must survive frames that run no step.
         intent.jump = intent.jump || jump;
     }
 }

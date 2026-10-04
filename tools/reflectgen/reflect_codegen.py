@@ -1104,17 +1104,33 @@ namespace
         # Scene can store the type) with no serialization hooks. serializable is
         # false and every hook is null; consumers gate on ComponentMeta::
         # serializable. It still gets addDefault, so another component can
-        # require it.
+        # require it. One with AFIELDs also gets its field list and a reading
+        # hook, so a tool can show what it holds without being able to save it.
         if comp.args.has('transient'):
+            readable = ''
+            if comp.fields:
+                field_metas = ',\n            '.join(_gen_field_meta(f, comp.fields) for f in comp.fields)
+                readable = f"""\
+        .getByEntity = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {{
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
+        }},
+"""
+                add_default = add_default + f"""\
+        .fields = {{
+            {field_metas}
+        }},
+"""
             blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
-// ACOMP(transient): id-only registration, not serialized.
+// ACOMP(transient): not serialized.
 static const bool {var_name} = []() -> bool
 {{
     using T = {fqn};
     Assisi::Core::Reflect::ComponentRegistry::Instance().Register({{
         .name = "{comp.name}",
-{add_default}{rules}        {serial_no}
+{readable}{add_default}{rules}        {serial_no}
     }});
     return true;
 }}();

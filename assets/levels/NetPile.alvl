@@ -24,6 +24,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -35,14 +42,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -67,6 +66,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -78,14 +84,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -110,6 +108,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -121,14 +126,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -153,6 +150,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -168,14 +172,7 @@
         "Replicated": {
           "priority": 1.0
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             0.0,
@@ -199,6 +196,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -214,14 +218,7 @@
         "Replicated": {
           "priority": 1.0
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             0.12,
@@ -245,6 +242,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -260,14 +264,7 @@
         "Replicated": {
           "priority": 1.0
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             0.24,
@@ -291,6 +288,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -306,14 +310,7 @@
         "Replicated": {
           "priority": 1.0
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             0.36,
@@ -337,6 +334,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -352,14 +356,7 @@
         "Replicated": {
           "priority": 1.0
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             0.48,
@@ -383,6 +380,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -398,14 +402,7 @@
         "Replicated": {
           "priority": 1.0
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             0.6,
@@ -429,6 +426,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -441,14 +445,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             4.0,

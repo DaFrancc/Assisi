@@ -654,10 +654,10 @@ private:
     ///
     /// False in four cases, the last two by policy:
     ///  - no physics world, or no body in it — nothing to observe;
-    ///  - an authored-static descriptor, whose pose is authored data and travels
-    ///    as a Transform;
-    ///  - the descriptor is *excluded*, so the client will never build a body to
-    ///    correct — a visual-only mirror;
+    ///  - static geometry, a Collider with no RigidBody, whose pose is authored
+    ///    data and travels as a Transform;
+    ///  - its Collider, RigidBody or Character is *excluded*, so the client will
+    ///    never build a body to correct — a visual-only mirror;
     ///  - the Transform is excluded on a bodied entity, so the client could
     ///    never build a body even if it wanted to (both build paths need a
     ///    Transform), and sending body state it must drop is pure waste.
@@ -735,7 +735,7 @@ private:
 
     /// Scratch for CaptureBodyStates, kept so capturing does not allocate per
     /// tick.
-    std::vector<Physics::PhysicsWorld::ActiveBodyState> _activeBodies;
+    std::vector<ECS::Entity> _activeBodies;
 
     std::unordered_map<Net::ConnectionId, Connection> _connections;
 
@@ -908,10 +908,12 @@ private:
     /// a bodied entity without a registry lookup per component per entity.
     Core::Reflect::ComponentId _transformComponentId = Core::Reflect::kInvalidComponentId;
 
-    /// Exclusion-mask bit indices for the two components whose absence changes
-    /// how an entity replicates at all, resolved once for the same reason.
-    std::size_t _transformOrdinal  = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
-    std::size_t _descriptorOrdinal = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
+    /// Exclusion-mask bit indices for the components whose absence changes how
+    /// an entity replicates at all, resolved once for the same reason.
+    std::size_t _transformOrdinal = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
+    std::size_t _colliderOrdinal  = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
+    std::size_t _rigidBodyOrdinal = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
+    std::size_t _characterOrdinal = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
 };
 
 } // namespace Assisi::NetSync

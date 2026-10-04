@@ -171,18 +171,24 @@ bool ReplicationServer::ReplicatesAsBody(ECS::Entity entity, const Core::Reflect
     if (_physics == nullptr || !_physics->HasBody(entity))
         return false;
 
-    // Authored geometry is not simulated: a static body's pose is authored data
-    // and already replicates as the ordinary tracked-Transform delta.
-    const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
-    if (descriptor == nullptr || descriptor->isStatic)
-        return false;
-
-    // A client never builds a body it was sent no descriptor for, so correcting
+    // A client never builds a body it was sent no components for, so correcting
     // one would be talking to nobody. Its Transform replicates normally instead
     // and the mirror becomes an interpolated visual: "show this moving, don't
     // simulate it", which is a useful thing to author.
-    if (excluded.Test(_descriptorOrdinal))
-        return false;
+    if (_scene.Has<Physics::Character>(entity))
+    {
+        if (excluded.Test(_characterOrdinal))
+            return false;
+    }
+    else
+    {
+        // Static geometry is not simulated: its pose is authored data and
+        // already replicates as the ordinary tracked-Transform delta.
+        if (!_scene.Has<Physics::RigidBody>(entity))
+            return false;
+        if (excluded.Test(_rigidBodyOrdinal) || excluded.Test(_colliderOrdinal))
+            return false;
+    }
 
     // ...and both client-side body builders require a Transform, so withholding
     // one also means no body is ever built. Sending body state it must drop on
@@ -199,7 +205,7 @@ void ReplicationServer::CaptureBodyStates()
         return;
 
     ++_bodyStateTick;
-    _physics->GetActiveBodyStates(_activeBodies);
+    _physics->ActiveBodies(_activeBodies);
 
     for (const NetId netId : _liveNetIds)
     {
@@ -223,15 +229,25 @@ void ReplicationServer::CaptureBodyStates()
             continue;
         }
 
-        const auto active = std::find_if(_activeBodies.begin(), _activeBodies.end(),
-                                         [entity](const Physics::PhysicsWorld::ActiveBodyState &candidate)
-                                         { return candidate.entity == entity; });
-
+        // Bodies cannot be parented, so the Transform is the world pose.
+        const ECS::Transform &transform = *_scene.Get<ECS::Transform>(entity);
         BodyRecord &record = _bodyStates[netId];
-        if (active != _activeBodies.end())
+
+        // A character never sleeps and carries its velocity in CharacterState,
+        // so a client can carry it on between updates.
+        if (const Physics::CharacterState *character = _scene.Get<Physics::CharacterState>(entity))
         {
-            record.state = BodyState{netId,   active->position,        active->rotation,
-                                     active->linearVelocity, active->angularVelocity, /*asleep=*/ false};
+            record.state = BodyState{netId,          transform.position, transform.rotation,
+                                     character->velocity, glm::vec3{0.f},  /*asleep=*/ false};
+            record.tick  = _bodyStateTick;
+            continue;
+        }
+
+        if (std::find(_activeBodies.begin(), _activeBodies.end(), entity) != _activeBodies.end())
+        {
+            const Physics::BodyState &state = *_scene.Get<Physics::BodyState>(entity);
+            record.state = BodyState{netId,  transform.position,    transform.rotation,
+                                     state.linearVelocity, state.angularVelocity, /*asleep=*/ false};
             record.tick  = _bodyStateTick;
             continue;
         }
@@ -255,9 +271,8 @@ void ReplicationServer::CaptureBodyStates()
         // A body asleep and unmoved records nothing, which is where the
         // idle-bandwidth property comes from.
         {
-            const Physics::Pose pose = _physics->GetBodyPose(entity);
-            const glm::vec3 position = pose.position;
-            const glm::quat rotation = pose.rotation;
+            const glm::vec3 position = transform.position;
+            const glm::quat rotation = transform.rotation;
 
             const bool firstSighting = record.tick == 0;
             const bool justSlept     = !firstSighting && !record.state.asleep;

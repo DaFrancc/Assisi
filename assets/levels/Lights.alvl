@@ -20,6 +20,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -31,15 +38,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -64,6 +62,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -76,14 +81,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -108,6 +107,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -120,14 +126,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -152,6 +152,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -164,14 +171,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -196,6 +197,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -208,14 +216,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -240,6 +242,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -252,14 +261,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -284,6 +287,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -296,14 +306,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -328,6 +332,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -340,14 +351,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -372,6 +377,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -384,14 +396,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -416,6 +422,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -428,14 +441,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -460,6 +467,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -472,14 +486,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -504,6 +512,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -516,14 +531,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -548,6 +557,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -560,14 +576,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -592,6 +602,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -604,14 +621,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
@@ -636,6 +647,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -648,14 +666,8 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [

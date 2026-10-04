@@ -124,7 +124,8 @@ TEST_CASE("A body woken while still touching does not report a second Enter")
     REQUIRE_FALSE(world.IsBodyActive(box));
 
     // A nudge along the floor: it wakes and keeps touching.
-    world.SetBodyLinearVelocity(box, {0.2f, 0.f, 0.f});
+    scene.GetMut<Physics::BodyState>(box)->linearVelocity = {0.2f, 0.f, 0.f};
+    world.Reconcile();
     REQUIRE(world.IsBodyActive(box));
 
     int32_t enters = 0;

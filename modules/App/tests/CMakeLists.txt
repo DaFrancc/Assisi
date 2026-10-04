@@ -32,6 +32,7 @@ add_executable(Assisi-App-Tests
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp
   TestSceneCamera.cpp
+  TestShippedLevels.cpp
   TestStartupScene.cpp
   TestSystemRegistry.cpp
   TestUiInputBridge.cpp
@@ -85,7 +86,7 @@ target_link_libraries(Assisi-App-Tests
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen
 # emits into the *-Generated OBJECT libraries populate. Without their objects in
-# the link, Transform/RigidBodyDescriptor have no id and Scene::Add asserts. TestWorld
+# the link, Transform/Collider have no id and Scene::Add asserts. TestWorld
 # steps real physics, so Physics-Generated is wanted here (unlike the Runtime
 # tests, which deliberately avoid dragging in Jolt).
 target_sources(Assisi-App-Tests PRIVATE

@@ -289,14 +289,14 @@ TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is 
 
     int32_t ticks = 0;
     systems.Register(SystemPhase::Update, "EitherOr", [&](SystemContext &) { ++ticks; })
-    .RequireAny<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>();
+    .RequireAny<Assisi::ECS::Transform, Assisi::Physics::Collider>();
 
     systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
     CHECK(ticks == 0);
 
     // Only the SECOND of the two listed components exists — still eligible.
     const Assisi::ECS::Entity entity = world.scene.Create();
-    (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity);
+    (void)world.scene.Add<Assisi::Physics::Collider>(entity);
     systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
     CHECK(ticks == 1);
 }
