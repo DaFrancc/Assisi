@@ -42,9 +42,8 @@ Physics::Pose At(glm::vec3 position)
 ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, bool isStatic,
                      Physics::CollisionFilter filter = Physics::CollisionFilter{})
 {
-    Physics::RigidBodyDescriptor descriptor = PhysicsTests::Box({0.5f, 0.5f, 0.5f}, isStatic);
-    descriptor.channel      = filter.channel;
-    descriptor.collidesWith = filter.collidesWith;
+    const PhysicsTests::BodySpec descriptor =
+        PhysicsTests::WithFilter(PhysicsTests::Box({0.5f, 0.5f, 0.5f}, isStatic), filter);
     const ECS::Entity entity = PhysicsTests::AddBody(scene, at, descriptor);
     world.Reconcile();
     return entity;

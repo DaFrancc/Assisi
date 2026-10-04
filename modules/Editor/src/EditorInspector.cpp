@@ -1236,7 +1236,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
         history->RecordBefore(_selectedEntity, meta.id, EditLabel("Remove " + meta.name, _selectedEntity),
                               _selectedEntity);
 
-    // A body goes with its descriptor on the world's next reconcile. MeshRenderer
+    // A body goes with its Collider on the world's next reconcile. MeshRenderer
     // needs nothing either: its transient pointers are non-owning, the AssetCache
     // owns the GPU resources.
     (void)_scene->RemoveById(_selectedEntity, meta.id);
@@ -1278,7 +1278,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         ImGui::TextColored(ImVec4{0.55f, 0.75f, 1.f, 1.f}, "Mirrored — the host owns this entity.");
 
         // Which of the two client timelines this entity is on. The discriminator
-        // is a replicated RigidBodyDescriptor, invisible in the world, so "why do
+        // is a replicated RigidBody, invisible in the world, so "why do
         // these two lag differently" has no visible answer without this line.
         const bool bodied = _physics->HasBody(_selectedEntity);
         ImGui::TextDisabled("Replication path: %s", bodied ? "body-corrected" : "interpolated");
@@ -1386,7 +1386,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         const std::size_t transformOrdinal =
             ComponentRegistry::Instance().ReplicableOrdinalOf(ComponentIdOf<Assisi::ECS::Transform>());
         const bool placementDependent = _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity) != nullptr ||
-                                        _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity) != nullptr;
+                                        _scene->Get<Assisi::Physics::Collider>(_selectedEntity) != nullptr;
 
         if (marker->excluded.Test(transformOrdinal) && placementDependent)
         {
@@ -2176,9 +2176,8 @@ void EditorApp::DrawInspector()
     if (_pendingDeleteEntity != _selectedEntity)
         _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
 
-    // SerializableComponents() already skips ACOMP(transient) id-only components
-    // (DestroyTag), which have no getByEntity hook and nothing to edit,
-    // so no per-item guard is needed.
+    // SerializableComponents() skips ACOMP(transient) components, which have
+    // nothing to save and are shown read-only after this loop.
     for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
         // Name belongs to the rename box above, not to this generic list.
@@ -2411,22 +2410,28 @@ void EditorApp::DrawInspector()
     if (anyFieldEdited)
         ReresolveEntityAssets(_selectedEntity);
 
-    // The live simulation state is in the physics world, not in any component, so
-    // the loop above cannot show it. Read-only, because it changes every step.
-    if (_physics->HasBody(_selectedEntity) && _scene->Has<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity))
+    // Runtime components: what the simulation and other systems wrote this
+    // frame. Never saved, so shown read-only — an edit here would be gone the
+    // next step.
+    for (const ComponentMeta &meta : ComponentRegistry::Instance().All())
     {
-        if (ImGui::CollapsingHeader("Body (runtime)", ImGuiTreeNodeFlags_DefaultOpen))
+        if (meta.serializable || !meta.getByEntity || meta.fields.empty())
         {
-            const auto [linearVelocity, angularVelocity] = _physics->GetBodyVelocity(_selectedEntity);
-            // %f takes a double through varargs, so each float is promoted
-            // regardless; the casts only make that explicit.
-            ImGui::Text("Linear  (m/s):   %.3f, %.3f, %.3f", static_cast<double>(linearVelocity.x),
-                        static_cast<double>(linearVelocity.y), static_cast<double>(linearVelocity.z));
-            ImGui::Text("Angular (rad/s): %.3f, %.3f, %.3f", static_cast<double>(angularVelocity.x),
-                        static_cast<double>(angularVelocity.y), static_cast<double>(angularVelocity.z));
-            ImGui::Text("Speed:  %.3f m/s", static_cast<double>(glm::length(linearVelocity)));
-            ImGui::Text("CCD:    %s", _physics->IsBodyCCDEnabled(_selectedEntity) ? "LinearCast (on)" : "Discrete (off)");
+            continue;
         }
+        const void *compPtr = meta.getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
+        if (compPtr == nullptr)
+        {
+            continue;
+        }
+        ImGui::PushID(meta.name.c_str());
+        if (ImGui::CollapsingHeader((meta.name + " (runtime)").c_str()))
+        {
+            ImGui::BeginDisabled();
+            (void)EditComponentFields(const_cast<void *>(compPtr), meta);
+            ImGui::EndDisabled();
+        }
+        ImGui::PopID();
     }
 
     // --- Add Component ---------------------------------------------------------

@@ -43,7 +43,8 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
     : _transport(transport), _scene(scene), _physics(physics), _connection(connection)
 {
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
-    _descriptorComponentId                          = registry.IdOf(typeid(Physics::RigidBodyDescriptor));
+    _colliderComponentId                           = registry.IdOf(typeid(Physics::Collider));
+    _characterComponentId                           = registry.IdOf(typeid(Physics::Character));
 }
 
 void ReplicationClient::SendHello()
@@ -777,10 +778,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             if (!reader.Ok())
                 return false;
 
-            // Losing the descriptor is not an ordinary removal: the mirror stops
-            // being body-corrected and becomes an interpolated visual. Its body
-            // goes on the physics world's next reconcile.
-            if (componentId == _descriptorComponentId)
+            // Losing its Collider or Character is not an ordinary removal: the
+            // mirror stops being body-corrected and becomes an interpolated
+            // visual. Its body goes on the physics world's next reconcile.
+            if (componentId == _colliderComponentId || componentId == _characterComponentId)
             {
                 DestroyMirrorBody(netId);
             }
@@ -841,7 +842,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         return false;
 
     // Motion, for everything the server's physics world owns. It follows the
-    // entity blocks so the entity and its descriptor already exist: a body built
+    // entity blocks so the entity and its components already exist: a body built
     // here starts at the authoritative state rather than re-settling from the
     // level file's pose.
     const std::size_t bodySectionStart = reader.BitsRead();

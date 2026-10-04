@@ -10,13 +10,13 @@ need before anything else in this book, and it's simpler than it sounds.
   camera. On its own an entity is just an ID with no data and no behavior.
 - A **component** is a piece of data you attach to an entity. A `Transform` says
   where the entity is. A `MeshRenderer` says what it looks like. A
-  `RigidBodyDescriptor` says it takes part in physics.
+  `Collider` says it takes part in physics.
 - A **system** is a function that runs every frame and does something to every
   entity that has certain components. A spinning system turns everything that
   has a `Transform`. A gravity system moves everything that has a rigid body.
 
 So a crate isn't a `Crate` class. It's an entity with a `Transform`, a
-`MeshRenderer` and a `RigidBodyDescriptor`. To make it glow, you don't subclass
+`MeshRenderer`, a `Collider` and a `RigidBody`. To make it glow, you don't subclass
 it; you attach a light component.
 
 > **Why do it this way?** Behavior comes from combining small pieces rather than
@@ -60,7 +60,9 @@ to entities in the editor, but it helps to know what they are.
 | `MeshRenderer` | `<Assisi/Runtime/Components.hpp>` | Draws a mesh with materials. |
 | `Camera` | `<Assisi/Runtime/Components.hpp>` | A camera. The one with `isActive` set is the one you see through. |
 | `DirectionalLight`, `PointLight`, `SpotLight` | `<Assisi/Runtime/LightComponents.hpp>` | Lights. |
-| `RigidBodyDescriptor` | `<Assisi/Physics/PhysicsComponents.hpp>` | Makes the entity a physics body. See [Physics](physics.md). |
+| `Collider` | `<Assisi/Physics/PhysicsComponents.hpp>` | A collision shape. On its own, static geometry. See [Physics](physics.md). |
+| `RigidBody` | `<Assisi/Physics/PhysicsComponents.hpp>` | Makes a `Collider` move. |
+| `Character` | `<Assisi/Physics/PhysicsComponents.hpp>` | A player or NPC the character controller moves. |
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
 
@@ -273,7 +275,7 @@ Each loop gives you the entity and a reference to each component you asked for.
 ```cpp
 // Every Transform, except entities that are physics bodies.
 for (auto [entity, transform] :
-     scene.Query<ECS::Transform>(ECS::Without<Physics::RigidBodyDescriptor>{}))
+     scene.Query<ECS::Transform>(ECS::Without<Physics::RigidBody>{}))
 {
     Core::Log::Info("Entity {} has no physics body", entity.index);
 }

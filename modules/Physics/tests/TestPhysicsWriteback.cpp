@@ -97,7 +97,7 @@ TEST_CASE("Writeback: an entity without a body is untouched")
     CHECK_FALSE(test.scene.Changed<ECS::Transform>(placement, since));
 }
 
-TEST_CASE("Writeback: one moved body costs exactly one change tick")
+TEST_CASE("Writeback: one moved body costs one change tick per component written")
 {
     TestScene test;
     (void)SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
@@ -105,10 +105,10 @@ TEST_CASE("Writeback: one moved body costs exactly one change tick")
 
     Step(test.world);
 
-    // Position and rotation are both written, but through a single reference:
-    // at hundreds of bodies a step, extra ticks would inflate every consumer's
+    // Its Transform and its BodyState, each through a single reference: at
+    // hundreds of bodies a step, extra ticks would inflate every consumer's
     // bookmark for nothing.
-    CHECK(test.scene.CurrentChangeTick() == since + 1);
+    CHECK(test.scene.CurrentChangeTick() == since + 2);
 }
 
 TEST_CASE("Writeback: a Transform written between steps reaches the body rather than being overwritten")
@@ -138,7 +138,7 @@ TEST_CASE("Writeback: a character's position is written and its rotation left to
 
     for (int32_t i = 0; i < 30; ++i)
     {
-        test.world.MoveCharacter(walker, kWalk, /*jump=*/ false);
+        PhysicsTests::Drive(test.scene, walker, kWalk, /*jump=*/ false);
         Step(test.world);
     }
 

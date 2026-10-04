@@ -212,15 +212,18 @@ Assisi::ECS::Entity SpawnBox(World &world, glm::vec3 at, glm::vec3 halfExtents, 
     const Assisi::ECS::Entity entity = world.scene.Create();
     world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
 
-    Assisi::Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents = halfExtents;
-    descriptor.isStatic    = isStatic;
-    (void)world.scene.Add(entity, descriptor);
+    Assisi::Physics::Collider collider{};
+    collider.halfExtents = halfExtents;
+    (void)world.scene.Add(entity, collider);
+    if (!isStatic)
+    {
+        (void)world.scene.Add(entity, Assisi::Physics::RigidBody{});
+    }
     return entity;
 }
 
-/// The half extents RigidBodyDescriptor defaults to.
-const glm::vec3 kUnitBox = Assisi::Physics::RigidBodyDescriptor{}.halfExtents;
+/// The half extents Collider defaults to.
+const glm::vec3 kUnitBox = Assisi::Physics::Collider{}.halfExtents;
 
 } // namespace
 
@@ -532,7 +535,8 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
         {
             const Assisi::ECS::Entity e = scene.Create();
             (void)scene.Add<Assisi::ECS::Transform>(e);
-            (void)scene.Add<Assisi::Physics::RigidBodyDescriptor>(e, Assisi::Physics::RigidBodyDescriptor{});
+            (void)scene.Add<Assisi::Physics::Collider>(e, Assisi::Physics::Collider{});
+            (void)scene.Add<Assisi::Physics::RigidBody>(e, Assisi::Physics::RigidBody{});
         }
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "Big.alvl"));
     }

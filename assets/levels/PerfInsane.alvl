@@ -53,6 +53,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "castsShadows": true,
           "materialOverrides": [
@@ -65,14 +72,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -44626,6 +44625,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -44637,14 +44643,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -44669,6 +44667,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -44680,14 +44685,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -44712,6 +44709,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -44723,14 +44727,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -44755,6 +44751,13 @@
     },
     {
       "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -44766,14 +44769,6 @@
             "guid": "00000000-0000-0000-0000-000000000001",
             "path": "prim://cube"
           }
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -101276,6 +101271,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101288,14 +101290,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.293383,
@@ -101322,6 +101317,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101334,11 +101333,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -22.035981,
@@ -101365,6 +101360,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101377,14 +101379,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.648655,
@@ -101411,6 +101406,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101423,11 +101422,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -22.062982,
@@ -101454,6 +101449,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101466,14 +101468,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.849627,
@@ -101500,6 +101495,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101512,14 +101514,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -4.416608,
@@ -101546,6 +101541,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101558,11 +101557,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -4.225445,
@@ -101589,6 +101584,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101601,14 +101603,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -4.334735,
@@ -101635,6 +101630,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101647,11 +101646,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -4.68737,
@@ -101678,6 +101673,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101690,14 +101692,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -4.774383,
@@ -101724,6 +101719,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101736,14 +101738,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             3.899052,
@@ -101770,6 +101765,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101782,11 +101781,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             3.888026,
@@ -101813,6 +101808,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101825,14 +101827,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             3.47099,
@@ -101859,6 +101854,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101871,11 +101870,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             3.345483,
@@ -101902,6 +101897,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101914,14 +101916,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             3.593811,
@@ -101948,6 +101943,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -101960,14 +101962,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             25.554462,
@@ -101994,6 +101989,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102006,11 +102005,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             26.050508,
@@ -102037,6 +102032,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102049,14 +102051,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             25.324233,
@@ -102083,6 +102078,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102095,11 +102094,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             25.905797,
@@ -102126,6 +102121,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102138,14 +102140,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             25.766724,
@@ -102172,6 +102167,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102184,14 +102186,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.486364,
@@ -102218,6 +102213,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102230,11 +102229,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.543441,
@@ -102261,6 +102256,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102273,14 +102275,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.589326,
@@ -102307,6 +102302,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102319,11 +102318,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.537105,
@@ -102350,6 +102345,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102362,14 +102364,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -21.32381,
@@ -102396,6 +102391,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102408,14 +102410,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -10.800544,
@@ -102442,6 +102437,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102454,11 +102453,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -10.351444,
@@ -102485,6 +102480,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102497,14 +102499,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -10.654499,
@@ -102531,6 +102526,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102543,11 +102542,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -10.492674,
@@ -102574,6 +102569,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102586,14 +102588,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -10.301804,
@@ -102620,6 +102615,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102632,14 +102634,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             9.610493,
@@ -102666,6 +102661,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102678,11 +102677,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             9.540371,
@@ -102709,6 +102704,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102721,14 +102723,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             9.541926,
@@ -102755,6 +102750,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102767,11 +102766,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             9.784227,
@@ -102798,6 +102793,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102810,14 +102812,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             9.334399,
@@ -102844,6 +102839,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102856,14 +102858,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             24.504086,
@@ -102890,6 +102885,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102902,11 +102901,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             24.380043,
@@ -102933,6 +102928,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102945,14 +102947,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             24.514102,
@@ -102979,6 +102974,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -102991,11 +102990,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             24.185423,
@@ -103022,6 +103017,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103034,14 +103036,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             24.061856,
@@ -103068,6 +103063,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103080,14 +103082,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -20.259778,
@@ -103114,6 +103109,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103126,11 +103125,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -20.878194,
@@ -103157,6 +103152,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103169,14 +103171,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -20.708163,
@@ -103203,6 +103198,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103215,11 +103214,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -20.834099,
@@ -103246,6 +103241,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103258,14 +103260,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -20.263867,
@@ -103292,6 +103287,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103304,14 +103306,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -8.543245,
@@ -103338,6 +103333,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103350,11 +103349,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -8.189997,
@@ -103381,6 +103376,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103393,14 +103395,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -8.337076,
@@ -103427,6 +103422,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103439,11 +103438,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -8.454956,
@@ -103470,6 +103465,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103482,14 +103484,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             -8.166045,
@@ -103516,6 +103511,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103528,14 +103530,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             7.011538,
@@ -103562,6 +103557,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103574,11 +103573,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             7.248773,
@@ -103605,6 +103600,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103617,14 +103619,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             7.286486,
@@ -103651,6 +103646,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103663,11 +103662,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             7.186784,
@@ -103694,6 +103689,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103706,14 +103708,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             6.811597,
@@ -103740,6 +103735,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103752,14 +103754,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             22.943635,
@@ -103786,6 +103781,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103798,11 +103797,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             23.404192,
@@ -103829,6 +103824,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103841,14 +103843,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             22.999821,
@@ -103875,6 +103870,10 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103887,11 +103886,7 @@
             "path": "prim://sphere-low"
           }
         },
-        "RigidBodyDescriptor": {
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 1
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             23.088202,
@@ -103918,6 +103913,13 @@
         "Bounce": {
           "rebound": 1.0
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -103930,14 +103932,7 @@
             "path": "prim://cube"
           }
         },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
-        },
+        "RigidBody": {},
         "Transform": {
           "position": [
             22.896812,

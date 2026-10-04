@@ -3,7 +3,8 @@
 /// @file PhysicsWriteback.cpp
 /// @brief Getting simulated poses back out: after every step, each moving
 ///        body's pose is written into its Transform, which is the simulation
-///        pose. Smoothing between steps for display is the ECS's render blend.
+///        pose, and its velocities into its BodyState or CharacterState.
+///        Smoothing between steps for display is the ECS's render blend.
 ///
 /// Only bodies the simulation woke are followed, until each is written at rest,
 /// so the cost is the number of things moving rather than the number of things.
@@ -61,16 +62,24 @@ void PhysicsWorld::Impl::WriteBack()
     {
         const std::uint32_t index = awake[i];
         BodySlot &slot = slots[index];
+        const ECS::Entity entity{index, slot.generation};
         const JPH::RVec3 position = bodies.GetPosition(slot.body);
         const JPH::Quat rotation = bodies.GetRotation(slot.body);
-        WritePose(ECS::Entity{index, slot.generation},
+        WritePose(entity,
                   Pose{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
                        glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
                   /*writeRotation=*/ true);
 
-        // Asleep: that write put its Transform exactly at rest, and there is
-        // nothing more to follow until something wakes it.
-        if (!bodies.IsActive(slot.body))
+        const bool asleep = !bodies.IsActive(slot.body);
+        const JPH::Vec3 linear = bodies.GetLinearVelocity(slot.body);
+        const JPH::Vec3 angular = bodies.GetAngularVelocity(slot.body);
+        WriteBodyState(entity, BodyState{.linearVelocity = glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+                                         .angularVelocity = glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+                                         .asleep = asleep});
+
+        // Asleep: those writes put it exactly at rest, and there is nothing
+        // more to follow until something wakes it.
+        if (asleep)
         {
             slot.followed = false;
             awake[i] = awake.back();
@@ -84,10 +93,49 @@ void PhysicsWorld::Impl::WriteBack()
     // one is written every step.
     for (const std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
     {
-        const JPH::RVec3 position = entry.second.character->GetPosition();
+        const CharacterRecord &record = entry.second;
+        const JPH::RVec3 position = record.character->GetPosition();
         const Pose pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
-        WritePose(entry.second.entity, pose, /*writeRotation=*/ false);
+        WritePose(record.entity, pose, /*writeRotation=*/ false);
+        WriteCharacterState(record.entity, BuildCharacterState(record));
     }
+}
+
+void PhysicsWorld::Impl::WriteBodyState(ECS::Entity entity, const BodyState &state)
+{
+    BodySlot *slot = SlotFor(entity);
+    const BodyState *current = scene.Get<BodyState>(entity);
+    if (slot == nullptr || current == nullptr)
+    {
+        return;
+    }
+    if (current->linearVelocity == state.linearVelocity && current->angularVelocity == state.angularVelocity &&
+        current->asleep == state.asleep)
+    {
+        return;
+    }
+    // GetMut, so the write stamps; recorded as this world's own so the next
+    // reconcile does not push it back.
+    *scene.GetMut<BodyState>(entity) = state;
+    slot->stateTick = scene.ChangeTick<BodyState>(entity);
+}
+
+void PhysicsWorld::Impl::WriteCharacterState(ECS::Entity entity, const CharacterState &state)
+{
+    const CharacterState *current = scene.Get<CharacterState>(entity);
+    if (current == nullptr)
+    {
+        return;
+    }
+    // A standing crowd would otherwise rewrite every field every step.
+    if (current->velocity == state.velocity && current->groundNormal == state.groundNormal &&
+        current->groundVelocity == state.groundVelocity && current->groundEntity == state.groundEntity &&
+        current->timeSinceGrounded == state.timeSinceGrounded && current->eyeHeight == state.eyeHeight &&
+        current->ground == state.ground && current->stance == state.stance && current->canJump == state.canJump)
+    {
+        return;
+    }
+    *scene.GetMut<CharacterState>(entity) = state;
 }
 
 void PhysicsWorld::Impl::WritePose(ECS::Entity entity, Pose pose, bool writeRotation)

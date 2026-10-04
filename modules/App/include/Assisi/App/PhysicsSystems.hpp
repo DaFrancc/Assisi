@@ -89,72 +89,27 @@ inline constexpr std::string_view kActionMoveRight    = "MoveRight";
 inline constexpr std::string_view kActionJump         = "Jump";
 inline constexpr std::string_view kActionCrouch       = "Crouch";
 
-/// @brief Turns every Physics::Character's intent into motion.
-///
-/// Reads the pair (Character, CharacterDescriptor): asks for the stance the
-/// character wants, scales its `move` direction by the descriptor's speed for
-/// the stance it reached, and hands that to the controller as the direction and
-/// speed it is asking for. The controller keeps the character's velocity between
-/// steps; this never sets it.
-///
-/// Publishing the result is CharacterStateSystem's job, not this one's — see
-/// there for why it cannot be done here.
-///
-/// **This is the only thing that has to run for a character to move.** Whatever
-/// fills the intent — a keyboard, an AI, a replicated command — feeds this one
-/// system, which is what lets a player and an NPC share a controller.
-///
-/// @par Requirements
-/// Register it in **FixedUpdate**, which puts it immediately before its world's
-/// physics step: the intent it writes is what that step simulates, with no frame
-/// of wasted motion in between.
-///
-/// @par Behaviour worth knowing
-/// - The stance is asked for every step, not on the edge of a keypress. Standing
-///   up under something low fails silently and is retried, so a character stands
-///   by itself once it walks clear.
-/// - `Character::jump` is cleared once consumed, so a single press is one jump
-///   however many steps pass before it can fire.
-ASYSTEM(FixedUpdate, name = "CharacterMove") void CharacterMoveSystem(SystemContext &ctx);
-
-/// @brief Publishes each Physics::Character's post-step state onto its component.
-///
-/// **PostFixedUpdate, and that is the whole point.** Ordering with
-/// `after`/`before` only arranges systems *within* a phase, and every FixedUpdate
-/// system runs before its world's physics step — so a refresh there could only
-/// ever publish the step before the one it is about to cause. This phase is on
-/// the far side of the step, so what it publishes is what just happened.
-///
-/// Per tick rather than per frame, so a frame that runs three fixed steps
-/// publishes three times. PostUpdate would publish only the last of them, which
-/// is enough for rendering and wrong for anything that must see every tick.
-///
-/// Reading `Character::state` is a convenience: PhysicsWorld::GetCharacterState
-/// is live and answers correctly whenever it is called. The component copy exists
-/// so an animation graph or a gameplay system can read the character's footing
-/// without reaching for the physics world at all.
-ASYSTEM(PostFixedUpdate, name = "CharacterState") void CharacterStateSystem(SystemContext &ctx);
-
 /// @brief Puts every Camera parented to a character at that character's eye
 /// height, from the step that just ran.
 ///
-/// PostFixedUpdate, after CharacterState, so the height is the one the step
-/// left. The camera's Transform is written inside the step like the
+/// PostFixedUpdate, so the height is the one the step left in its
+/// CharacterState. The camera's Transform is written inside the step like the
 /// character's own, so the render blend moves both across the same two steps:
 /// a crouch is smooth at any refresh rate, and a crouch in the air — feet up,
 /// eye height down by as much — never shows one without the other.
-ASYSTEM(PostFixedUpdate, name = "CharacterEye", after = "CharacterState") void CharacterEyeSystem(SystemContext &ctx);
+ASYSTEM(PostFixedUpdate, name = "CharacterEye") void CharacterEyeSystem(SystemContext &ctx);
 
-/// @brief Drives every Physics::Character in the active world from the keyboard.
+/// @brief Drives every Physics::Character in the active world from the keyboard,
+/// through its CharacterIntent.
 ///
 /// **A stand-in, and deliberately a crude one.** It steers every character in the
 /// world at once, because nothing yet says which one the player is — possession
 /// is what replaces this, and when it lands this system is what gets deleted. It
 /// exists so a level can be walked around before that.
 ///
-/// A server writes `Character::move` from replicated input commands instead of
-/// polling devices, which is why the intent lives on the component rather than
-/// being read from a device inside the controller: the two paths meet at the same
+/// A server writes `CharacterIntent` from replicated input commands instead of
+/// polling devices, which is why the intent is a component rather than being
+/// read from a device inside the controller: the two paths meet at the same
 /// three fields.
 ///
 /// Movement is in world axes — forward is −Z — since there is no camera to be
@@ -176,7 +131,7 @@ void CharacterInputSystem(SystemContext &ctx);
 
 /// @brief Degrees of turn per pixel of mouse movement.
 ///
-/// A constant rather than a descriptor field because look sensitivity is a
+/// A constant rather than a Character field because look sensitivity is a
 /// *player's* preference, not a property of a character — it belongs in the
 /// options a person sets once, and authoring it per character would make every
 /// NPC carry a number that means nothing to it. Here until there is somewhere

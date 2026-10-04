@@ -410,7 +410,7 @@ private:
     ///
     /// Lets a whole entity's component set be restored before any rebind runs, so
     /// each hook sees all its siblings: the physics rebind needs the entity's
-    /// Transform, which sorts *after* RigidBodyDescriptor.
+    /// Transform, which sorts *after* Collider.
     bool AddComponentForRestore(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id,
                                 const nlohmann::json &data);
 

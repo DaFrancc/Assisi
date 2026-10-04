@@ -20,6 +20,8 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/ScaleHelpers.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -68,6 +70,27 @@ JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
     return new JPH::BoxShape(ClampedBoxHalfExtents(shape.halfExtents));
 }
 
+glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
+{
+    // The rules each Jolt primitive's MakeScaleValid applies, so the scale this
+    // reports is the one the shape is built at.
+    const JPH::Vec3 nonZero = JPH::ScaleHelpers::MakeNonZeroScale(JPH::Vec3(scale.x, scale.y, scale.z));
+    JPH::Vec3 valid = nonZero;
+    switch (shape)
+    {
+    case ColliderShape::Sphere:
+    case ColliderShape::Capsule:
+        valid = nonZero.GetSign() * JPH::ScaleHelpers::MakeUniformScale(nonZero.Abs());
+        break;
+    case ColliderShape::Cylinder:
+        valid = nonZero.GetSign() * JPH::ScaleHelpers::MakeUniformScaleXZ(nonZero.Abs());
+        break;
+    case ColliderShape::Box:
+        break;
+    }
+    return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
+}
+
 JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm::vec3 scale)
 {
     JPH::ShapeRefC base = MakeShape(shape);
@@ -75,15 +98,40 @@ JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm
     {
         return base;
     }
-    const JPH::Vec3 valid = base->MakeScaleValid(JPH::Vec3(scale.x, scale.y, scale.z));
-    return new JPH::ScaledShape(base, valid);
+    const glm::vec3 valid = ClampedShapeScale(shape.shape, scale);
+    return new JPH::ScaledShape(base, JPH::Vec3(valid.x, valid.y, valid.z));
+}
+
+PhysicsWorld::ColliderShapeDesc ShapeOf(const Collider &collider)
+{
+    return PhysicsWorld::ColliderShapeDesc{.shape = collider.shape,
+                                           .halfExtents = collider.halfExtents,
+                                           .radius = collider.radius,
+                                           .halfHeight = collider.halfHeight};
+}
+
+JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale)
+{
+    JPH::ShapeRefC scaled = MakeScaledShape(ShapeOf(collider), scale);
+    const bool offset = collider.offsetPosition != glm::vec3(0.f) ||
+                        collider.offsetRotation != glm::quat(1.f, 0.f, 0.f, 0.f);
+    if (!offset)
+    {
+        return scaled;
+    }
+    const glm::vec3 position = collider.offsetPosition * scale;
+    const glm::quat rotation = glm::normalize(collider.offsetRotation);
+    return JPH::RotatedTranslatedShapeSettings(JPH::Vec3(position.x, position.y, position.z),
+                                               JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w), scaled)
+           .Create()
+           .Get();
 }
 
 // Contact-solver tuning (see the constructor). Rather than brute-forcing high
 // step rates, we lean on the same cheap mechanism Unity/Unreal use: speculative
 // contacts (a predictive margin that stops a body at a surface within one solve)
 // plus a small allowed overlap that resolves gently. Fast free-fallers that
-// still slip past the fixed margin are handled per-body via CCD (enableCCD).
+// still slip past the fixed margin are handled per-body via CCD (RigidBody::ccd).
 // Jolt defaults: 0.02 m slop, 0.2 Baumgarte, 0.02 m speculative distance, 0.75
 // linear-cast threshold.
 constexpr float kPenetrationSlop = 0.01f; ///< Allowed resting overlap (meters) — Unity-like contact offset.
@@ -93,7 +141,7 @@ constexpr float kSpeculativeContactDist =
 // radius in a step. Below Jolt's 0.75 default so CCD-enabled bodies stop sinking
 // at lower speeds (no "floaty" landings), but not so low that they sweep on
 // nearly every step: 0.3 keeps sweeps to genuinely fast motion. Only costs CPU
-// for bodies with CCD on (enableCCD), so the perf downside is bounded. For a 1 m
+// for bodies with CCD on (RigidBody::ccd), so the perf downside is bounded. For a 1 m
 // box (inner radius 0.5) this triggers at ~9 m/s / a ~4 m drop.
 constexpr float kLinearCastThreshold = 0.3f;
 
@@ -221,7 +269,7 @@ void PhysicsWorld::Rebuild()
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::Rebuild called while the world is stepping");
     _impl->DestroyAll();
     // From the start of the scene's history, so the reconcile below finds every
-    // descriptor it holds and builds each one new.
+    // Collider and Character it holds and builds each one new.
     _impl->changeCursor = 0;
     _impl->ReconcileScene(0.f);
 }
@@ -337,35 +385,20 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
     ECS::SnapTransform(_impl->scene, entity);
 }
 
-void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
+void PhysicsWorld::ActiveBodies(std::vector<ECS::Entity> &out) const
 {
     out.clear();
 
     JPH::BodyIDVector active;
     _impl->physicsSystem.GetActiveBodies(JPH::EBodyType::RigidBody, active);
-    if (active.empty())
-        return;
-
-    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     out.reserve(active.size());
     for (const JPH::BodyID &id : active)
     {
         const ECS::Entity entity = _impl->EntityFor(id);
-        if (entity == ECS::NullEntity)
-            continue;
-
-        const JPH::RVec3 position = bodies.GetPosition(id);
-        const JPH::Quat rotation = bodies.GetRotation(id);
-        const JPH::Vec3 linear = bodies.GetLinearVelocity(id);
-        const JPH::Vec3 angular = bodies.GetAngularVelocity(id);
-
-        out.push_back(ActiveBodyState{
-                entity,
-                glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-                glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-                glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
-                glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
-            });
+        if (entity != ECS::NullEntity)
+        {
+            out.push_back(entity);
+        }
     }
 }
 
@@ -389,10 +422,24 @@ void PhysicsWorld::ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ApplyBodyState called while the world is stepping");
 
     Impl::BodySlot *slot = _impl->SlotFor(entity);
-    if (slot == nullptr || slot->kind != Impl::SlotKind::Body)
+    if (slot == nullptr)
         return;
 
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    if (slot->kind == Impl::SlotKind::Character)
+    {
+        Impl::CharacterRecord &record = *_impl->FindCharacter(entity);
+        const JPH::RVec3 position(pose.position.x, pose.position.y, pose.position.z);
+        record.character->SetPosition(position);
+        record.character->SetLinearVelocity(JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
+        bodies.SetPosition(slot->body, position, JPH::EActivation::Activate);
+        const FilterLayerFilter layerFilter{record.queryFilter};
+        record.character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
+        _impl->WritePose(entity, pose, /*writeRotation=*/ false);
+        ECS::SnapTransform(_impl->scene, entity);
+        return;
+    }
 
     // A static body can be *placed*, it just has no motion to place it with.
     // Refusing the whole call for one would be a trap: a correction for a body
@@ -473,32 +520,7 @@ glm::vec3 PhysicsWorld::GetColliderScale(ECS::Entity entity) const
     {
         return glm::vec3(1.f);
     }
-    // Read back from the shape rather than recomputed, so it is whatever Jolt
-    // made of the scale it was asked for.
-    const JPH::ShapeRefC shape = _impl->physicsSystem.GetBodyInterface().GetShape(slot->body);
-    if (shape->GetSubType() != JPH::EShapeSubType::Scaled)
-    {
-        return glm::vec3(1.f);
-    }
-    const JPH::Vec3 scale = static_cast<const JPH::ScaledShape *>(shape.GetPtr())->GetScale();
-    return glm::vec3(scale.GetX(), scale.GetY(), scale.GetZ());
-}
-
-void PhysicsWorld::SetBodyLinearVelocity(ECS::Entity entity, glm::vec3 velocity)
-{
-    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::SetBodyLinearVelocity called while the world is stepping");
-
-    const Impl::BodySlot *slot = _impl->SlotFor(entity);
-    if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion == BodyMotion::Static)
-        return;
-
-    // Activate first, then set: a body Jolt has put to sleep on a surface ignores
-    // velocity written while it is asleep, which reads as the call silently doing
-    // nothing — exactly the case a contact response hits, since landing is what
-    // puts a body to sleep in the first place.
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    bodies.ActivateBody(slot->body);
-    bodies.SetLinearVelocity(slot->body, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+    return ClampedShapeScale(slot->collider.shape, slot->worldScale);
 }
 
 CollisionFilter PhysicsWorld::GetBodyCollisionFilter(ECS::Entity entity) const

@@ -14,8 +14,8 @@
 ///
 /// All of that lives here rather than in a gameplay system because it needs the
 /// ground state the sweep produces, and that is stale by a tick anywhere else.
-/// What a gameplay system supplies is intent — a direction and a jump — through
-/// MoveCharacter.
+/// What a gameplay system supplies is intent — a direction, a stance and a
+/// jump — through the character's CharacterIntent.
 
 #include "PhysicsInternal.hpp"
 
@@ -170,6 +170,28 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         (void)id;
         JPH::CharacterVirtual &character = *record.character;
 
+        // The intent as gameplay left it. A jump is a request, so it is taken
+        // here and cleared; the rest is held for as long as it is wanted.
+        CharacterIntent intent;
+        if (const CharacterIntent *written = scene.Get<CharacterIntent>(record.entity); written != nullptr)
+        {
+            intent = *written;
+        }
+        if (intent.jump)
+        {
+            scene.GetMut<CharacterIntent>(record.entity)->jump = false;
+        }
+        if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
+        {
+            record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
+        }
+
+        // The crouch speed applies to the stance the character reached, not the
+        // one it asked for, so one held under a ledge walks crouched.
+        const float speed =
+            record.stance == Stance::Crouching ? record.walkSpeed * record.crouchSpeedScale : record.walkSpeed;
+        const glm::vec3 wishVelocity = intent.move * speed;
+
         // Fold in the motion of whatever is underfoot before reading it, or a
         // character on a platform rides last step's velocity.
         character.UpdateGroundVelocity();
@@ -198,12 +220,11 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         // A request is live on the step it arrives and for jumpBufferTime after,
         // so a character with no buffer at all still jumps on the step it was
         // asked — the buffer lengthens the request rather than creating it.
-        if (record.jumpRequested)
+        if (intent.jump)
         {
             record.jumpBufferRemaining = record.jumpBufferTime;
         }
-        const bool pending = record.jumpRequested || record.jumpBufferRemaining > 0.f;
-        record.jumpRequested = false;
+        const bool pending = intent.jump || record.jumpBufferRemaining > 0.f;
 
         // A jump may fire late (coyote time) but only once per time in the air:
         // without the flag, a character that jumped inside the coyote window
@@ -231,7 +252,7 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         const JPH::Vec3 relative = currentVelocity - reference;
         JPH::Vec3 relativeHorizontal = relative - kCharacterUp * relative.Dot(kCharacterUp);
 
-        JPH::Vec3 wish{record.wishVelocity.x, record.wishVelocity.y, record.wishVelocity.z};
+        JPH::Vec3 wish{wishVelocity.x, wishVelocity.y, wishVelocity.z};
         wish -= kCharacterUp * wish.Dot(kCharacterUp);
         if (standing)
         {
@@ -280,41 +301,42 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
     }
 }
 
-void PhysicsWorld::Impl::CharacterRecord::Retune(const CharacterDescriptor &descriptor)
+void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)
 {
     // A crouch taller than standing is not a crouch, and a step taller than the
     // character is a wall. Both are clamped rather than refused: they arrive from
     // an inspector drag, where a refusal would mean a character that vanishes
     // partway through typing a number.
-    const float clampedCrouch = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
-    const float standingHeight = CharacterHalfHeight(descriptor.radius, descriptor.halfHeight);
+    const float clampedCrouch = glm::min(tuning.crouchHalfHeight, tuning.halfHeight);
+    const float standingHeight = CharacterHalfHeight(tuning.radius, tuning.halfHeight);
 
     // The sweep must not be stopped by sensors; the inner body still is seen by
     // them.
-    queryFilter = CollisionFilter{descriptor.collidesWith, CollisionChannel::Character}.Without(CollisionChannel::Trigger);
+    queryFilter = CollisionFilter{tuning.collidesWith, CollisionChannel::Character}.Without(CollisionChannel::Trigger);
 
-    jumpSpeed = descriptor.jumpSpeed;
-    walkSpeed = descriptor.walkSpeed;
-    friction = descriptor.friction;
-    stopSpeed = descriptor.stopSpeed;
-    groundAcceleration = descriptor.groundAcceleration;
-    airAcceleration = descriptor.airAcceleration;
-    airWishSpeedCap = descriptor.airWishSpeedCap;
-    bunnyHopSpeedCap = descriptor.bunnyHopSpeedCap;
-    bunnyHop = descriptor.bunnyHop;
-    standingEyeHeight = descriptor.eyeHeight;
-    crouchEyeHeight = descriptor.crouchEyeHeight;
-    eyeSpeed = descriptor.eyeSpeed;
-    stanceLift = 2.f * (standingHeight - CharacterHalfHeight(descriptor.radius, clampedCrouch));
-    gravityScale = descriptor.gravityScale;
-    coyoteTime = descriptor.coyoteTime;
-    jumpBufferTime = descriptor.jumpBufferTime;
-    maxStepHeight = glm::min(descriptor.maxStepHeight, standingHeight * kMaxStepHeightFraction);
-    radius = descriptor.radius;
-    standingHalfHeight = descriptor.halfHeight;
+    jumpSpeed = tuning.jumpSpeed;
+    walkSpeed = tuning.walkSpeed;
+    crouchSpeedScale = tuning.crouchSpeedScale;
+    friction = tuning.friction;
+    stopSpeed = tuning.stopSpeed;
+    groundAcceleration = tuning.groundAcceleration;
+    airAcceleration = tuning.airAcceleration;
+    airWishSpeedCap = tuning.airWishSpeedCap;
+    bunnyHopSpeedCap = tuning.bunnyHopSpeedCap;
+    bunnyHop = tuning.bunnyHop;
+    standingEyeHeight = tuning.eyeHeight;
+    crouchEyeHeight = tuning.crouchEyeHeight;
+    eyeSpeed = tuning.eyeSpeed;
+    stanceLift = 2.f * (standingHeight - CharacterHalfHeight(tuning.radius, clampedCrouch));
+    gravityScale = tuning.gravityScale;
+    coyoteTime = tuning.coyoteTime;
+    jumpBufferTime = tuning.jumpBufferTime;
+    maxStepHeight = glm::min(tuning.maxStepHeight, standingHeight * kMaxStepHeightFraction);
+    radius = tuning.radius;
+    standingHalfHeight = tuning.halfHeight;
     crouchHalfHeight = clampedCrouch;
-    canPushBodies = descriptor.canPushBodies;
-    canBePushed = descriptor.canBePushed;
+    canPushBodies = tuning.canPushBodies;
+    canBePushed = tuning.canBePushed;
 }
 
 PhysicsWorld::Impl::CharacterRecord *PhysicsWorld::Impl::FindCharacter(ECS::Entity entity)
@@ -337,24 +359,24 @@ const PhysicsWorld::Impl::CharacterRecord *PhysicsWorld::Impl::FindCharacter(ECS
     return it == characters.end() ? nullptr : &it->second;
 }
 
-bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const CharacterDescriptor &descriptor,
+bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Character &tuning,
                                                const Pose &pose)
 {
-    const float crouchHalfHeight = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
-    record.standingShape = MakeCharacterShape(descriptor.radius, descriptor.halfHeight);
-    record.crouchingShape = MakeCharacterShape(descriptor.radius, crouchHalfHeight);
+    const float crouchHalfHeight = glm::min(tuning.crouchHalfHeight, tuning.halfHeight);
+    record.standingShape = MakeCharacterShape(tuning.radius, tuning.halfHeight);
+    record.crouchingShape = MakeCharacterShape(tuning.radius, crouchHalfHeight);
 
     JPH::CharacterVirtualSettings settings;
     settings.mShape = record.standingShape;
     settings.mUp = kCharacterUp;
-    settings.mMaxSlopeAngle = glm::radians(descriptor.maxSlopeDegrees);
-    settings.mMass = descriptor.mass;
-    settings.mMaxStrength = descriptor.canPushBodies ? descriptor.pushStrength : 0.f;
+    settings.mMaxSlopeAngle = glm::radians(tuning.maxSlopeDegrees);
+    settings.mMass = tuning.mass;
+    settings.mMaxStrength = tuning.canPushBodies ? tuning.pushStrength : 0.f;
 
     // Only contacts behind this plane hold the character up. At the bottom of
     // the capsule, so a hand brushing a wall at head height is something it
     // collides with rather than something it stands on.
-    settings.mSupportingVolume = JPH::Plane(kCharacterUp, -descriptor.radius);
+    settings.mSupportingVolume = JPH::Plane(kCharacterUp, -tuning.radius);
 
     settings.mPredictiveContactDistance = kCharacterPredictiveContactDistance;
     settings.mPenetrationRecoverySpeed = kCharacterPenetrationRecoverySpeed;
@@ -363,11 +385,11 @@ bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Ch
 
     // The inner body is what the rest of the simulation sees: without it a cast
     // passes through the character, a sensor never reports it, and a fast body
-    // tunnels through it. It keeps the descriptor's full mask, Trigger included,
+    // tunnels through it. It keeps the Character's full mask, Trigger included,
     // which is what lets a trigger volume find it.
     settings.mInnerBodyShape = record.standingShape;
     settings.mInnerBodyLayer =
-        PackLayer(CollisionFilter{descriptor.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
+        PackLayer(CollisionFilter{tuning.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
 
     // The entity rides in the character's user data, which Jolt copies onto the
     // inner body, so a contact or a cast that finds a character names it exactly
@@ -392,7 +414,7 @@ bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Ch
     return true;
 }
 
-void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor)
+void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tuning)
 {
     const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
 
@@ -407,9 +429,9 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDesc
 
     CharacterRecord record;
     record.entity = entity;
-    record.Retune(descriptor);
-    record.eyeHeight = descriptor.eyeHeight;
-    if (!BuildCharacterVirtual(record, descriptor, pose))
+    record.Retune(tuning);
+    record.eyeHeight = tuning.eyeHeight;
+    if (!BuildCharacterVirtual(record, tuning, pose))
     {
         Core::Log::Error("PhysicsWorld: entity {} (gen {}) gets no character - the world holds at most {} bodies.",
                          entity.index, entity.generation, maxBodies);
@@ -419,7 +441,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDesc
     BodySlot &slot = SlotAt(entity);
     slot = BodySlot{};
     slot.body = record.character->GetInnerBodyID();
-    slot.filter = CollisionFilter{descriptor.collidesWith, CollisionChannel::Character};
+    slot.filter = CollisionFilter{tuning.collidesWith, CollisionChannel::Character};
     slot.generation = entity.generation;
     slot.motion = BodyMotion::Kinematic;
     slot.kind = SlotKind::Character;
@@ -432,17 +454,18 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDesc
     // at spawn is taken for one in the air and lifts the feet off the floor.
     const FilterLayerFilter layerFilter{placed.queryFilter};
     placed.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
+    WriteCharacterState(entity, BuildCharacterState(placed));
 }
 
-void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor)
+void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuning)
 {
     CharacterRecord &record = *FindCharacter(entity);
     BodySlot &slot = *SlotFor(entity);
-    const float crouchHalfHeight = glm::min(descriptor.crouchHalfHeight, descriptor.halfHeight);
-    const bool resized = descriptor.radius != record.radius || descriptor.halfHeight != record.standingHalfHeight ||
+    const float crouchHalfHeight = glm::min(tuning.crouchHalfHeight, tuning.halfHeight);
+    const bool resized = tuning.radius != record.radius || tuning.halfHeight != record.standingHalfHeight ||
                          crouchHalfHeight != record.crouchHalfHeight;
 
-    record.Retune(descriptor);
+    record.Retune(tuning);
 
     JPH::CharacterVirtual &character = *record.character;
     if (resized)
@@ -459,7 +482,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const CharacterDescri
 
         // The old inner body goes with the old capsule, and its pairs with it.
         EmitExitsFor(slot.body, pendingExits);
-        if (!BuildCharacterVirtual(record, descriptor, pose))
+        if (!BuildCharacterVirtual(record, tuning, pose))
         {
             Core::Log::Error("PhysicsWorld: entity {} (gen {}) could not be resized - the world is full.",
                              entity.index, entity.generation);
@@ -482,108 +505,68 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const CharacterDescri
     }
 
     // Everything else the solver holds can be changed on the one it has.
-    character.SetMaxSlopeAngle(glm::radians(descriptor.maxSlopeDegrees));
-    character.SetMass(descriptor.mass);
-    character.SetMaxStrength(descriptor.canPushBodies ? descriptor.pushStrength : 0.f);
+    character.SetMaxSlopeAngle(glm::radians(tuning.maxSlopeDegrees));
+    character.SetMass(tuning.mass);
+    character.SetMaxStrength(tuning.canPushBodies ? tuning.pushStrength : 0.f);
 
-    const CollisionFilter filter{descriptor.collidesWith, CollisionChannel::Character};
+    const CollisionFilter filter{tuning.collidesWith, CollisionChannel::Character};
     physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, PackLayer(filter, BodyMotion::Kinematic));
     slot.filter = filter;
 }
 
-void PhysicsWorld::MoveCharacter(ECS::Entity entity, glm::vec3 wishVelocity, bool jump)
+bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)
 {
-    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
-    {
-        return;
-    }
-
-    record->wishVelocity = wishVelocity;
-
-    // Recorded rather than acted on: whether it fires is the step's decision, and
-    // the step is also what gives the request its lifetime, so one made just
-    // before landing is not thrown away.
-    if (jump)
-    {
-        record->jumpRequested = true;
-    }
-}
-
-void PhysicsWorld::SetCharacterFacing(ECS::Entity entity, glm::vec3 forward)
-{
-    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
-    {
-        return;
-    }
-    record->facing = forward;
-}
-
-bool PhysicsWorld::SetCharacterStance(ECS::Entity entity, Stance stance)
-{
-    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
-    {
-        return false;
-    }
-    if (record->stance == stance)
+    if (record.stance == stance)
     {
         return true;
     }
 
     const JPH::Shape *shape =
-        stance == Stance::Crouching ? record->crouchingShape.GetPtr() : record->standingShape.GetPtr();
+        stance == Stance::Crouching ? record.crouchingShape.GetPtr() : record.standingShape.GetPtr();
 
-    const FilterLayerFilter layerFilter{record->queryFilter};
+    const FilterLayerFilter layerFilter{record.queryFilter};
     const float maxPenetration =
-        kStanceChangePenetrationSlopFactor * _impl->physicsSystem.GetPhysicsSettings().mPenetrationSlop;
+        kStanceChangePenetrationSlopFactor * physicsSystem.GetPhysicsSettings().mPenetrationSlop;
 
     // On the ground the two shapes share their feet and the head moves. In the
     // air they share their head instead and the feet move: crouching pulls them
     // up, which is what lets a crouched jump clear a ledge the jump alone does
     // not, and standing puts them back down.
-    const bool airborne = record->character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround;
-    const float feetShift = !airborne ? 0.f : (stance == Stance::Crouching ? record->stanceLift : -record->stanceLift);
+    const bool airborne = record.character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround;
+    const float feetShift = !airborne ? 0.f : (stance == Stance::Crouching ? record.stanceLift : -record.stanceLift);
 
-    const JPH::RVec3 position = record->character->GetPosition();
-    record->character->SetPosition(position + kCharacterUp * feetShift);
+    const JPH::RVec3 position = record.character->GetPosition();
+    record.character->SetPosition(position + kCharacterUp * feetShift);
 
     // Growing into something solid fails and changes nothing, which is what makes
     // "stand up" a question rather than a command. Shrinking always succeeds.
-    if (!record->character->SetShape(shape, maxPenetration, {}, layerFilter, {}, {}, _impl->tempAlloc))
+    if (!record.character->SetShape(shape, maxPenetration, {}, layerFilter, {}, {}, tempAlloc))
     {
-        record->character->SetPosition(position);
+        record.character->SetPosition(position);
         return false;
     }
 
     // The inner body is a separate shape and Jolt does not carry this across to
     // it. Left out, a crouched character is still shot at head height.
-    record->character->SetInnerBodyShape(shape);
-    record->stance = stance;
+    record.character->SetInnerBodyShape(shape);
+    record.stance = stance;
 
     // The feet moved and the eye did not, so the eye is that much nearer to or
     // further from them. The Transform follows now rather than at the next
     // writeback, so nothing reading it in between sees the feet where they were.
-    record->eyeHeight -= feetShift;
+    record.eyeHeight -= feetShift;
     if (feetShift != 0.f)
     {
-        const JPH::RVec3 feet = record->character->GetPosition();
-        _impl->WritePose(entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+        const JPH::RVec3 feet = record.character->GetPosition();
+        WritePose(record.entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
                          /*writeRotation=*/ false);
     }
     return true;
 }
 
-CharacterState PhysicsWorld::GetCharacterState(ECS::Entity entity) const
+CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &record) const
 {
-    const Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
-    {
-        return CharacterState{};
-    }
-
-    const JPH::CharacterVirtual &virtualCharacter = *record->character;
+    const JPH::CharacterVirtual &virtualCharacter = *record.character;
 
     CharacterState state;
 
@@ -596,11 +579,11 @@ CharacterState PhysicsWorld::GetCharacterState(ECS::Entity entity) const
     const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity();
     state.groundVelocity = glm::vec3(groundVelocity.GetX(), groundVelocity.GetY(), groundVelocity.GetZ());
 
-    state.groundEntity = _impl->EntityFor(virtualCharacter.GetGroundBodyID());
-    state.timeSinceGrounded = record->timeSinceGrounded;
-    state.eyeHeight = record->eyeHeight;
-    state.stance = record->stance;
-    state.canJump = !record->jumpedSinceGrounded && record->timeSinceGrounded <= record->coyoteTime;
+    state.groundEntity = EntityFor(virtualCharacter.GetGroundBodyID());
+    state.timeSinceGrounded = record.timeSinceGrounded;
+    state.eyeHeight = record.eyeHeight;
+    state.stance = record.stance;
+    state.canJump = !record.jumpedSinceGrounded && record.timeSinceGrounded <= record.coyoteTime;
 
     // Every enumerator is spelled out rather than defaulted, so a Jolt release
     // that adds one fails the build here instead of silently reading as InAir.

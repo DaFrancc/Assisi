@@ -2,10 +2,13 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 
 #include <filesystem>
+#include <string_view>
 #include <string>
 
 using namespace Assisi::App;
@@ -220,26 +223,21 @@ TEST_CASE("A settings file from before ambient occlusion existed loads it off, a
     CHECK(read.ambientOcclusion == SsaoSettings{});
 }
 
-TEST_CASE("Only settings that differ from the defaults are written, so the rest follow the defaults")
+TEST_CASE("Every setting is written, defaults included, so the file shows what there is to change")
 {
-    // Nothing changed writes nothing: a default written out would pin it, and a
-    // later change to that default would never reach this file.
-    CHECK(OptionsConfig{}.ToJsonText() == "{}");
-
-    OptionsConfig one;
-    one.shadows.local.filter = ShadowFilter::Point;
-    const std::string text = one.ToJsonText();
-    CHECK(text.find("\"filter\"") != std::string::npos);
-    CHECK(text.find("depthBiasTexels") == std::string::npos);
-    CHECK(text.find("\"sun\"") == std::string::npos);
-    CHECK(text.find("antiAliasing") == std::string::npos);
+    const std::string text = OptionsConfig{}.ToJsonText();
+    CHECK(text.find("antiAliasing") != std::string::npos);
+    CHECK(text.find("\"sun\"") != std::string::npos);
+    CHECK(text.find("depthBiasTexels") != std::string::npos);
+    CHECK(text.find("\"cadence\"") != std::string::npos);
+    CHECK(text.find("redrawMovingLightsEveryFrame") != std::string::npos);
 }
 
 TEST_CASE("A float is saved to four decimal places, so a slider dragged back to its default is the default")
 {
     OptionsConfig nearly;
     nearly.shadows.local.depthBiasTexels += 0.00001f;
-    CHECK(nearly.ToJsonText() == "{}");
+    CHECK(nearly.ToJsonText() == OptionsConfig{}.ToJsonText());
 
     OptionsConfig moved;
     moved.shadows.local.depthBiasTexels = 0.123456f;
@@ -265,12 +263,12 @@ TEST_CASE("A fresh install pins neither the window size nor the bindings")
     const std::string text = OptionsConfig{}.ToJsonText();
     CHECK(text.find("window") == std::string::npos);
     CHECK(text.find("input") == std::string::npos);
-    CHECK(text == "{}");
 }
 
 TEST_CASE("Bus volumes the player set survive a write and a read, and none are written until one is set")
 {
-    CHECK(OptionsConfig{}.ToJsonText().find("audio") == std::string::npos);
+    // The section is there to show where volumes go, and holds none.
+    CHECK(nlohmann::json::parse(OptionsConfig{}.ToJsonText())["audio"]["volumes"].empty());
 
     OptionsConfig written;
     written.busVolumes["Music"]     = 0.5f;
@@ -314,6 +312,31 @@ TEST_CASE("A chosen tap interval survives a write and a read, and is used only w
 
     game.playerSetsMultiTap = false;
     CHECK(read.MultiTapSeconds(game) == game.multiTapSeconds);
+}
+
+TEST_CASE("Loading writes a missing or incomplete options.json back with every setting, and leaves a broken one")
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi-options-complete";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    REQUIRE(Assisi::Core::AssetSystem::SetUserRoot(root).has_value());
+    const std::filesystem::path file = root / "options.json";
+
+    (void)OptionsConfig::LoadFromJson();
+    REQUIRE(std::filesystem::exists(file));
+    CHECK(Assisi::Core::AssetSystem::ReadUserText("options.json").value() == OptionsConfig{}.ToJsonText());
+
+    REQUIRE(Assisi::Core::AssetSystem::WriteText("options.json", R"({"shadows": {"local": {"filter": "point"}}})"));
+    const OptionsConfig partial = OptionsConfig::LoadFromJson();
+    CHECK(partial.shadows.local.filter == ShadowFilter::Point);
+    CHECK(Assisi::Core::AssetSystem::ReadUserText("options.json").value() == partial.ToJsonText());
+
+    constexpr std::string_view kBroken = "{ \"shadows\": ";
+    REQUIRE(Assisi::Core::AssetSystem::WriteText("options.json", kBroken));
+    (void)OptionsConfig::LoadFromJson();
+    CHECK(Assisi::Core::AssetSystem::ReadUserText("options.json").value() == kBroken);
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("What the player changed survives a restart")

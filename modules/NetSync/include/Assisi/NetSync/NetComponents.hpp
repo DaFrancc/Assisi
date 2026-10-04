@@ -77,7 +77,7 @@ struct Replicated
     ///
     /// Empty by default, meaning "send every capable component present". That
     /// polarity is Unity's, and it is deliberate: `Transform`, `Name`,
-    /// `MeshRenderer`, and `RigidBodyDescriptor` are wanted on essentially every
+    /// `MeshRenderer`, and `Collider` are wanted on essentially every
     /// replicated entity, so requiring each level author to restate them would
     /// manufacture boilerplate and, worse, silent under-replication when someone
     /// forgets.

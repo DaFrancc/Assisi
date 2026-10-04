@@ -669,7 +669,8 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     pose.position = {0.f, 10.f, 0.f};
     (void)world.scene.Add<ECS::Transform>(replicated, pose);
     (void)world.scene.Add<NetSync::Replicated>(replicated, NetSync::Replicated{});
-    (void)world.scene.Add<Physics::RigidBodyDescriptor>(replicated, Physics::RigidBodyDescriptor{});
+    (void)world.scene.Add<Physics::Collider>(replicated, Physics::Collider{});
+    (void)world.scene.Add<Physics::RigidBody>(replicated, Physics::RigidBody{});
 
     // A child of it — a decoration, a light, anything parented to a replicated
     // object in the file.
@@ -679,8 +680,8 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
 
     (void)App::BuildSceneBodies(world.scene, world.physics);
 
-    std::vector<Physics::PhysicsWorld::ActiveBodyState> before;
-    world.physics.GetActiveBodyStates(before);
+    std::vector<ECS::Entity> before;
+    world.physics.ActiveBodies(before);
     REQUIRE(before.size() == 1);
 
     const App::StrippedEntities stripped = App::StripReplicatedEntities(world.scene);
@@ -690,8 +691,8 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     // The body goes with the entity, on the world's next reconcile.
     world.physics.Reconcile();
     CHECK_FALSE(world.physics.HasBody(replicated));
-    std::vector<Physics::PhysicsWorld::ActiveBodyState> after;
-    world.physics.GetActiveBodyStates(after);
+    std::vector<ECS::Entity> after;
+    world.physics.ActiveBodies(after);
     CHECK(after.empty());
 
     // ...and the child is not left pointing at a dead parent, which propagation

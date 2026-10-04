@@ -7,7 +7,7 @@
 ///
 /// SceneSerializer deserializes component *data*; Runtime::AssetResolve turns
 /// mesh/material GUIDs into GPU pointers; PhysicsWorld::RebuildSceneBodies
-/// turns RigidBodyDescriptors into Jolt bodies. This header is the layer that
+/// turns Colliders and Characters into Jolt bodies. This header is the layer that
 /// composes them — it lives in App because App is the only module that links
 /// both Runtime and Physics (Runtime deliberately does not link Physics).
 
@@ -48,7 +48,7 @@ struct World;
 /// @brief Rebuilds every transient from the scene's durable components, after
 /// the scene's entities were replaced wholesale (level load or a play-session
 /// restore): re-resolves each MeshRenderer's GPU pointers and rebuilds the
-/// physics world from the RigidBodyDescriptors.
+/// physics world from the physics components.
 void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, Physics::PhysicsWorld &physics);
 
 /// @brief What a load should do with the asset cache before resolving.

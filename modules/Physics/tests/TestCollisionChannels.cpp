@@ -42,9 +42,8 @@ Core::Bitmask<Physics::CollisionChannel> Without(Physics::CollisionChannel chann
 ECS::Entity SpawnBox(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, bool isStatic,
                      Physics::CollisionFilter filter)
 {
-    Physics::RigidBodyDescriptor descriptor = PhysicsTests::Box(halfExtents, isStatic);
-    descriptor.channel      = filter.channel;
-    descriptor.collidesWith = filter.collidesWith;
+    const PhysicsTests::BodySpec descriptor =
+        PhysicsTests::WithFilter(PhysicsTests::Box(halfExtents, isStatic), filter);
     return PhysicsTests::AddBody(scene, at, descriptor);
 }
 
@@ -122,7 +121,7 @@ TEST_CASE("Editing a body's filter takes effect on the next step, not the next r
                                      Physics::CollisionFilter{});
     test.world.Reconcile();
 
-    Physics::RigidBodyDescriptor &descriptor = *test.scene.GetMut<Physics::RigidBodyDescriptor>(box);
+    Physics::Collider &descriptor = *test.scene.GetMut<Physics::Collider>(box);
     descriptor.collidesWith = Without(Physics::CollisionChannel::World);
     descriptor.channel = Physics::CollisionChannel::Character;
     test.world.Reconcile();
@@ -148,7 +147,8 @@ TEST_CASE("A body moved onto the Trigger channel stops blocking immediately")
                                      Physics::CollisionFilter{});
     test.world.Reconcile();
 
-    test.scene.GetMut<Physics::RigidBodyDescriptor>(box)->channel = Physics::CollisionChannel::Trigger;
+    test.scene.GetMut<Physics::Collider>(box)->channel = Physics::CollisionChannel::Trigger;
+    test.scene.GetMut<Physics::RigidBody>(box)->motion = Physics::MotionType::Kinematic;
 
     Step(test.world);
     CHECK_FALSE(test.world.GetBodyPose(box).position.y < 0.f); // a sensor does not fall
@@ -169,7 +169,7 @@ TEST_CASE("A body made dynamic at runtime starts colliding with the static world
     Step(test.world, 10);
     REQUIRE(HeightOf(test.world, box) == doctest::Approx(3.f)); // static: still where it was put
 
-    test.scene.GetMut<Physics::RigidBodyDescriptor>(box)->isStatic = false;
+    REQUIRE(test.scene.Add(box, Physics::RigidBody{}) != nullptr);
 
     Step(test.world);
     CHECK(HeightOf(test.world, box) == doctest::Approx(0.5f).epsilon(0.1));

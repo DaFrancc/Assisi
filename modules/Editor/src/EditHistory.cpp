@@ -663,7 +663,7 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
                     // its siblings restored rather than only those that sort before it.
                     // Rebinding per component mid-restore drops the Jolt body on
                     // undo-of-delete: the physics rebind needs a Transform that sorts
-                    // after RigidBodyDescriptor.
+                    // after Collider.
                     for (const ComponentSnapshot &snap : *state)
                         AddComponentForRestore(ed.handle, snap.id, snap.data);
                     for (const ComponentSnapshot &snap : *state)

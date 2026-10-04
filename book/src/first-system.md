@@ -51,7 +51,7 @@ void SpinSystem(Assisi::App::SystemContext &ctx)
     ECS::Scene &scene = ctx.world.scene;
     // Physics bodies are moved by physics; leave them alone.
     for (auto [entity, transform] :
-         scene.QueryMut<ECS::Transform>(ECS::Without<Physics::RigidBodyDescriptor>{}))
+         scene.QueryMut<ECS::Transform>(ECS::Without<Physics::RigidBody>{}))
     {
         transform->rotation = step * transform->rotation;
     }

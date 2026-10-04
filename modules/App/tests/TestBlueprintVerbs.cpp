@@ -59,7 +59,7 @@ nlohmann::json CarFile()
                  {"components",
                   {{"Transform",
                       {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                      {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
+                      {"Collider", nlohmann::json::object()}}}},
                  {{"name", "wheel_fl"},
                      {"components",
                       {{"Transform",
@@ -81,7 +81,7 @@ nlohmann::json WalkerFile()
                  {"components",
                   {{"Transform",
                       {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                      {"CharacterDescriptor", {{"walkSpeed", 5.f}}}}}},
+                      {"Character", {{"walkSpeed", 5.f}}}}}},
                  {{"name", "eye"},
                      {"components",
                       {{"Transform",
@@ -146,7 +146,7 @@ TEST_CASE("Verbs: spawning a blueprint holding a character builds the controller
     REQUIRE(id.has_value());
 
     ECS::Entity walker = ECS::NullEntity;
-    for (auto [entity, descriptor] : world.scene.Query<Physics::CharacterDescriptor>())
+    for (auto [entity, descriptor] : world.scene.Query<Physics::Character>())
     {
         (void)descriptor;
         walker = entity;
@@ -154,10 +154,11 @@ TEST_CASE("Verbs: spawning a blueprint holding a character builds the controller
     REQUIRE(walker != ECS::NullEntity);
     world.physics.Reconcile();
 
-    // The controller exists, and the entity did not also acquire a rigid body —
-    // a character owns one internally, and a second would collide with its own.
-    CHECK(world.scene.Get<Physics::Character>(walker) != nullptr);
-    CHECK(world.scene.Get<Physics::RigidBodyDescriptor>(walker) == nullptr);
+    // The controller's intent came with it, and the entity did not also
+    // acquire a rigid body — a character owns one internally, and a second
+    // would collide with its own.
+    CHECK(world.scene.Get<Physics::CharacterIntent>(walker) != nullptr);
+    CHECK(world.scene.Get<Physics::RigidBody>(walker) == nullptr);
     CHECK(world.physics.HasBody(walker));
 
     // And it is really in the simulation: a ray from above finds it and can name
@@ -245,10 +246,11 @@ TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components
     ECS::Transform start;
     start.position = {0.f, 3.f, 0.f};
     (void)world.scene.Add(probe, start);
-    Physics::RigidBodyDescriptor ball{};
+    Physics::Collider ball{};
     ball.shape  = Physics::ColliderShape::Sphere;
     ball.radius = 0.25f;
     (void)world.scene.Add(probe, ball);
+    (void)world.scene.Add(probe, Physics::RigidBody{});
 
     for (int32_t i = 0; i < 180; ++i)
         world.physics.Update(kStep);

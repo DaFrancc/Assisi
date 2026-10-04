@@ -63,7 +63,8 @@ between sessions.
 4. To use a different mesh, click the **...** button next to the `mesh` field and
    pick one in the asset browser that opens. The `prim://` entries are built-in
    shapes: cubes, spheres, cylinders.
-5. Add a `RigidBodyDescriptor` if it should take part in physics.
+5. Add a `Collider` if it should take part in physics, and a `RigidBody` as well
+   if it should move.
 
 The **Add Component** box searches as you type, and includes the components you
 defined yourself.

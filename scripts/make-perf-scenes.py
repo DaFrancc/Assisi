@@ -352,13 +352,15 @@ def build_geometry_stress(icosphere_count=150, half_extent=45.0, seed=0x5EED0004
 PRIM_SPHERE_COLLIDER = 1  # Physics::ColliderShape::Sphere, which levels store as its number
 
 
-def static_body(half_extents):
-    return {"RigidBodyDescriptor": {"halfExtents": [round6(v) for v in half_extents], "isStatic": True}}
+def static_body():
+    """Static geometry the size of the unit cube it is drawn as: a Collider is
+    scaled by its entity's Transform, as the mesh is."""
+    return {"Collider": {"halfExtents": [0.5, 0.5, 0.5]}}
 
 
 def wall_entity(name, position, scale):
     entity = mesh_entity(name, "prim://cube", position, scale)
-    entity["components"].update(static_body([s * 0.5 for s in scale]))
+    entity["components"].update(static_body())
     return entity
 
 
@@ -367,11 +369,12 @@ def bouncing_body(name, position, sphere):
     the stage never settles: something is always moving, every run alike."""
     if sphere:
         entity = mesh_entity(name, "prim://sphere-low", position, (1.0, 1.0, 1.0))
-        body = {"isStatic": False, "radius": 0.5, "shape": PRIM_SPHERE_COLLIDER}
+        collider = {"radius": 0.5, "shape": PRIM_SPHERE_COLLIDER}
     else:
         entity = mesh_entity(name, "prim://cube", position, (1.0, 1.0, 1.0))
-        body = {"halfExtents": [0.5, 0.5, 0.5], "isStatic": False}
-    entity["components"]["RigidBodyDescriptor"] = body
+        collider = {"halfExtents": [0.5, 0.5, 0.5]}
+    entity["components"]["Collider"] = collider
+    entity["components"]["RigidBody"] = {}
     entity["components"]["Bounce"] = {"rebound": 1.0}
     return entity
 
@@ -408,7 +411,7 @@ def build_insane(half_extent=40.0, seed=0x5EED0005):
 
     for entity in entities:
         if entity["name"] == "Ground":
-            entity["components"].update(static_body((half_extent, 0.25, half_extent)))
+            entity["components"].update(static_body())
 
     # The stage's walls, taller than any body is dropped from.
     wall_height = 12.0

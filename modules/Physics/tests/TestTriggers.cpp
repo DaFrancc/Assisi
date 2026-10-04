@@ -4,7 +4,8 @@
 /// @brief Bodies on the Trigger channel: detected by what enters them, blocking
 /// nothing.
 ///
-/// Two kinds, chosen by the descriptor's `isStatic`, and the difference between
+/// Two kinds: a Collider alone is a static trigger, and one with a kinematic
+/// RigidBody that may not sleep is the always-awake kind. The difference between
 /// them is exactly one case: a body that was already asleep when the volume
 /// arrived. A kinematic trigger never sleeps and finds it; a static one is told
 /// about it only because creating or moving the volume wakes whatever it
@@ -45,9 +46,8 @@ Physics::CollisionFilter On(Physics::CollisionChannel channel)
 ECS::Entity Spawn(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, bool isStatic,
                   Physics::CollisionFilter filter)
 {
-    Physics::RigidBodyDescriptor descriptor = PhysicsTests::Box(halfExtents, isStatic);
-    descriptor.channel      = filter.channel;
-    descriptor.collidesWith = filter.collidesWith;
+    const PhysicsTests::BodySpec descriptor =
+        PhysicsTests::WithFilter(PhysicsTests::Box(halfExtents, isStatic), filter);
     return PhysicsTests::AddBody(scene, at, descriptor);
 }
 
@@ -160,7 +160,7 @@ TEST_CASE("A kinematic trigger finds a body that was already asleep")
 
     REQUIRE_FALSE(world.IsBodyActive(box));
 
-    // isStatic false is the always-awake kind, and the descriptor's default.
+    // A moving trigger is the always-awake kind.
     (void)Spawn(scene, {0.f, 0.5f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false, On(Physics::CollisionChannel::Trigger));
 
     const PhaseCounts counts = CountPhases(world, box, 10);

@@ -40,10 +40,13 @@ Assisi::ECS::Entity BuildDropScene(World &world, glm::vec3 dropFrom)
                            Assisi::ECS::Transform *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
                            transform->position                 = at;
 
-                           Assisi::Physics::RigidBodyDescriptor descriptor{};
-                           descriptor.halfExtents = halfExtents;
-                           descriptor.isStatic    = isStatic;
-                           (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
+                           Assisi::Physics::Collider collider{};
+                           collider.halfExtents = halfExtents;
+                           (void)world.scene.Add<Assisi::Physics::Collider>(entity, collider);
+                           if (!isStatic)
+                           {
+                               (void)world.scene.Add<Assisi::Physics::RigidBody>(entity);
+                           }
 
                            world.physics.Reconcile();
                            return entity;
@@ -264,7 +267,7 @@ BounceOutcome RunUntilBounce(WorldManager &worlds, World &world, Assisi::ECS::En
         if (outcome.impactSpeed > 0.f)
         {
             REQUIRE(world.physics.HasBody(ball));
-            outcome.launchSpeed = world.physics.GetBodyVelocity(ball).first.y;
+            outcome.launchSpeed = world.scene.Get<Assisi::Physics::BodyState>(ball)->linearVelocity.y;
         }
 
         world.physics.Update(kStep);
@@ -327,7 +330,7 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
             if (entered)
             {
                 REQUIRE(world.physics.HasBody(ball));
-                afterContact = world.physics.GetBodyVelocity(ball).first.y;
+                afterContact = world.scene.Get<Assisi::Physics::BodyState>(ball)->linearVelocity.y;
                 bounced      = true;
             }
 

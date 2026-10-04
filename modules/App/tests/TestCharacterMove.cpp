@@ -1,14 +1,14 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestCharacterMove.cpp
-/// @brief App::CharacterMoveSystem — the one thing that has to run for a
-///        character to move, and the only place intent becomes motion.
+/// @brief A character driven through its CharacterIntent, in a world ticked the
+///        way the hosts tick it.
 ///
 /// The controller itself is covered in the Physics suite. What is checked here is
-/// the translation: that the descriptor's speed is applied, that the crouch scale
-/// is applied to the stance actually reached rather than the one asked for, that
-/// a jump request is consumed exactly once, and that the camera is kept at the
-/// eye.
+/// the translation: that the Character's walk speed is applied, that the crouch
+/// scale is applied to the stance actually reached rather than the one asked for,
+/// that a jump request is consumed exactly once, that the step publishes its
+/// CharacterState, and that the camera is kept at the eye.
 
 #include <doctest/doctest.h>
 
@@ -30,20 +30,15 @@ namespace
 
 constexpr float kStep = 1.f / 60.f;
 
-/// One whole fixed tick, in the order the hosts run it: the pre-step systems,
-/// the step, then the post-step systems. Both halves matter here — the intent is
-/// consumed before the step and the state is published after it, which is the
-/// split PostFixedUpdate exists for.
+/// One whole fixed tick, in the order the hosts run it: the step, then the
+/// post-step systems, which read the CharacterState the step left.
 void Tick(World &world, Assisi::Core::EventQueue &events)
 {
     SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, nullptr, events, true, nullptr};
     const Assisi::ECS::FixedStepScope step(world.scene);
 
-    CharacterMoveSystem(ctx);
-
     world.physics.Update(kStep);
 
-    CharacterStateSystem(ctx);
     CharacterEyeSystem(ctx);
 }
 
@@ -53,21 +48,20 @@ Assisi::ECS::Entity SpawnFloor(World &world)
     Assisi::ECS::Transform *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
     transform->position = {0.f, -0.5f, 0.f};
 
-    Assisi::Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents = {20.f, 0.5f, 20.f};
-    descriptor.isStatic = true;
-    (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
+    Assisi::Physics::Collider collider{};
+    collider.halfExtents = {20.f, 0.5f, 20.f};
+    (void)world.scene.Add<Assisi::Physics::Collider>(entity, collider);
 
     world.physics.Reconcile();
     return entity;
 }
 
-Assisi::ECS::Entity SpawnCharacter(World &world, const Assisi::Physics::CharacterDescriptor &descriptor)
+Assisi::ECS::Entity SpawnCharacter(World &world, const Assisi::Physics::Character &descriptor)
 {
     const Assisi::ECS::Entity entity = world.scene.Create();
     Assisi::ECS::Transform *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
     transform->position = {0.f, 0.f, 0.f};
-    (void)world.scene.Add<Assisi::Physics::CharacterDescriptor>(entity, descriptor);
+    (void)world.scene.Add<Assisi::Physics::Character>(entity, descriptor);
 
     world.physics.Reconcile();
     REQUIRE(world.physics.HasBody(entity));
@@ -78,16 +72,16 @@ Assisi::ECS::Entity SpawnCharacter(World &world, const Assisi::Physics::Characte
 void Ask(World &world, Assisi::ECS::Entity entity, glm::vec3 move, bool jump,
          Assisi::Physics::Stance stance = Assisi::Physics::Stance::Standing)
 {
-    Assisi::Physics::Character *character = world.scene.GetMut<Assisi::Physics::Character>(entity);
-    REQUIRE(character != nullptr);
-    character->move = move;
-    character->jump = jump;
-    character->stance = stance;
+    Assisi::Physics::CharacterIntent *intent = world.scene.GetMut<Assisi::Physics::CharacterIntent>(entity);
+    REQUIRE(intent != nullptr);
+    intent->move = move;
+    intent->jump = jump;
+    intent->stance = stance;
 }
 
 } // namespace
 
-TEST_CASE("CharacterMoveSystem scales the move direction by the descriptor's walk speed")
+TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk speed")
 {
     WorldManager worlds;
     World &world = worlds.Create("Characters");
@@ -95,7 +89,7 @@ TEST_CASE("CharacterMoveSystem scales the move direction by the descriptor's wal
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::CharacterDescriptor descriptor{};
+    Assisi::Physics::Character descriptor{};
     descriptor.walkSpeed = 6.f;
     descriptor.groundAcceleration = 1000.f; // at speed within one step
     const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
@@ -110,15 +104,15 @@ TEST_CASE("CharacterMoveSystem scales the move direction by the descriptor's wal
     Ask(world, entity, {1.f, 0.f, 0.f}, /*jump=*/ false);
     Tick(world, events);
 
-    const Assisi::Physics::Character *character = world.scene.Get<Assisi::Physics::Character>(entity);
+    const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
 
     // A direction of magnitude 1 times walkSpeed — not the raw direction, which
     // would crawl at 1 m/s whatever the descriptor said.
-    CHECK(character->state.velocity.x == doctest::Approx(6.f).epsilon(0.1));
+    CHECK(character->velocity.x == doctest::Approx(6.f).epsilon(0.1));
 }
 
-TEST_CASE("Crouching applies the descriptor's speed scale")
+TEST_CASE("Crouching applies the Character's speed scale")
 {
     WorldManager worlds;
     World &world = worlds.Create("Characters");
@@ -126,7 +120,7 @@ TEST_CASE("Crouching applies the descriptor's speed scale")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::CharacterDescriptor descriptor{};
+    Assisi::Physics::Character descriptor{};
     descriptor.walkSpeed = 6.f;
     descriptor.crouchSpeedScale = 0.5f;
     descriptor.groundAcceleration = 1000.f;
@@ -142,10 +136,10 @@ TEST_CASE("Crouching applies the descriptor's speed scale")
     Ask(world, entity, {1.f, 0.f, 0.f}, /*jump=*/ false, Assisi::Physics::Stance::Crouching);
     Tick(world, events);
 
-    const Assisi::Physics::Character *character = world.scene.Get<Assisi::Physics::Character>(entity);
+    const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
-    CHECK(character->state.stance == Assisi::Physics::Stance::Crouching);
-    CHECK(character->state.velocity.x == doctest::Approx(3.f).epsilon(0.1));
+    CHECK(character->stance == Assisi::Physics::Stance::Crouching);
+    CHECK(character->velocity.x == doctest::Approx(3.f).epsilon(0.1));
 }
 
 TEST_CASE("A jump request is consumed once, not held")
@@ -158,7 +152,7 @@ TEST_CASE("A jump request is consumed once, not held")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::CharacterDescriptor descriptor{};
+    Assisi::Physics::Character descriptor{};
     const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
 
     for (int32_t i = 0; i < 60; ++i)
@@ -170,10 +164,8 @@ TEST_CASE("A jump request is consumed once, not held")
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ true);
     Tick(world, events);
 
-    const Assisi::Physics::Character *character = world.scene.Get<Assisi::Physics::Character>(entity);
-    REQUIRE(character != nullptr);
-    CHECK_FALSE(character->jump);
-    CHECK(character->state.velocity.y > 1.f);
+    CHECK_FALSE(world.scene.Get<Assisi::Physics::CharacterIntent>(entity)->jump);
+    CHECK(world.scene.Get<Assisi::Physics::CharacterState>(entity)->velocity.y > 1.f);
 }
 
 TEST_CASE("A camera parented to a character is placed at its eye height, blended between steps")
@@ -184,7 +176,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
 
     (void)SpawnFloor(world);
 
-    const Assisi::Physics::CharacterDescriptor descriptor{};
+    const Assisi::Physics::Character descriptor{};
     const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
 
     // Authored somewhere else on purpose: the height is the character's to set.
@@ -206,7 +198,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     // sees the eye half way between them: it moves every frame, not every step.
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
     Tick(world, events);
-    const float afterOneStep = world.physics.GetCharacterState(entity).eyeHeight;
+    const float afterOneStep = world.scene.Get<Assisi::Physics::CharacterState>(entity)->eyeHeight;
     REQUIRE(afterOneStep < descriptor.eyeHeight);
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(afterOneStep));
 
@@ -224,7 +216,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.crouchEyeHeight));
 }
 
-TEST_CASE("CharacterMoveSystem tells the controller which way the character's Transform faces")
+TEST_CASE("The step takes a character's facing from its Transform")
 {
     // Only the Boost policy reads the facing, so that is what shows it arrived:
     // a character over the limit and travelling backwards gains speed on a jump.
@@ -235,7 +227,7 @@ TEST_CASE("CharacterMoveSystem tells the controller which way the character's Tr
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::CharacterDescriptor descriptor{};
+    Assisi::Physics::Character descriptor{};
     descriptor.walkSpeed = 4.f;
     descriptor.groundAcceleration = 1000.f;
     descriptor.bunnyHop = Assisi::Physics::BunnyHopPolicy::Boost;
@@ -263,13 +255,13 @@ TEST_CASE("CharacterMoveSystem tells the controller which way the character's Tr
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ true);
     Tick(world, events);
 
-    const Assisi::Physics::Character *character = world.scene.Get<Assisi::Physics::Character>(entity);
+    const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
-    REQUIRE(character->state.velocity.y > 1.f);
-    CHECK(character->state.velocity.z < -13.f);
+    REQUIRE(character->velocity.y > 1.f);
+    CHECK(character->velocity.z < -13.f);
 }
 
-TEST_CASE("CharacterMoveSystem refreshes the state a later system would read")
+TEST_CASE("The step publishes the CharacterState a later system reads")
 {
     WorldManager worlds;
     World &world = worlds.Create("Characters");
@@ -277,14 +269,11 @@ TEST_CASE("CharacterMoveSystem refreshes the state a later system would read")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::CharacterDescriptor descriptor{};
+    Assisi::Physics::Character descriptor{};
     const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
 
-    // Straight after creation the component's state is still its default, which
-    // says InAir whatever the character is really doing.
-    const Assisi::Physics::Character *character = world.scene.Get<Assisi::Physics::Character>(entity);
+    const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
-    REQUIRE(character->state.ground == Assisi::Physics::GroundState::InAir);
 
     for (int32_t i = 0; i < 60; ++i)
     {
@@ -292,6 +281,6 @@ TEST_CASE("CharacterMoveSystem refreshes the state a later system would read")
         Tick(world, events);
     }
 
-    CHECK(character->state.ground == Assisi::Physics::GroundState::OnGround);
-    CHECK(character->state.canJump);
+    CHECK(character->ground == Assisi::Physics::GroundState::OnGround);
+    CHECK(character->canJump);
 }

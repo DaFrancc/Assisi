@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file EditorColliders.cpp
-/// @brief Collider wireframes: outline every RigidBodyDescriptor's shape while
+/// @brief Collider wireframes: outline every Collider's shape while
 /// authoring, so invisible collision geometry can be seen and picked.
 ///
 /// Built here, because the editor knows Physics, and drawn through the renderer's
@@ -27,6 +27,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Editor/Overlay/LinePass.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
@@ -48,9 +49,9 @@ constexpr glm::vec4 kUnselectedColor{0.40f, 0.95f, 0.45f, 1.0f}; // light green
 constexpr glm::vec4 kSelectedColor{Assisi::Editor::kSelectionOutline, 1.0f};
 constexpr glm::vec4 kActiveSelectedColor{Assisi::Editor::kActiveSelectionOutline, 1.0f};
 
-/// @brief Append the wireframe for one collider descriptor into @p out.
+/// @brief Append the wireframe for one collider into @p out.
 void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
-                             const Assisi::Physics::RigidBodyDescriptor &desc)
+                             const Assisi::Physics::Collider &desc)
 {
     using Assisi::Physics::ColliderShape;
     switch (desc.shape)
@@ -68,6 +69,26 @@ void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &mode
         AddBoxWireframe(out, model, color, desc.halfExtents);
         break;
     }
+}
+/// @brief Where @p collider's shape sits, given its body's world pose
+/// @p bodyModel, the scale the shape is built at, and the entity's world
+/// @p entityScale, which moves the offset as the physics world does.
+glm::mat4 ColliderShapeModel(const glm::mat4 &bodyModel, const Assisi::Physics::Collider &collider,
+                             const glm::vec3 &shapeScale, const glm::vec3 &entityScale)
+{
+    const glm::mat4 offset = glm::translate(bodyModel, collider.offsetPosition * entityScale) *
+                             glm::mat4_cast(glm::normalize(collider.offsetRotation));
+    return glm::scale(offset, shapeScale);
+}
+
+/// @brief The length of each axis of @p world: the entity's scale composed
+/// through its parents.
+glm::vec3 WorldScaleOf(const glm::mat4 &world)
+{
+    using Assisi::Math::ColumnOf;
+    using Assisi::Math::MatrixColumn;
+    return glm::vec3(glm::length(ColumnOf(world, MatrixColumn::Right)), glm::length(ColumnOf(world, MatrixColumn::Up)),
+                     glm::length(ColumnOf(world, MatrixColumn::Back)));
 }
 } // namespace
 
@@ -92,7 +113,7 @@ void EditorApp::SubmitColliderWireframes()
     std::vector<Assisi::ECS::Entity> outlinedAsBodies;
 
     for (auto [entity, tc, desc] :
-         _scene->Query<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>())
+         _scene->Query<Assisi::ECS::Transform, Assisi::Physics::Collider>())
     {
         _colliderEntities.push_back(entity);
 
@@ -112,7 +133,8 @@ void EditorApp::SubmitColliderWireframes()
         // tracing its local offset would put the wireframe somewhere the body is
         // not, and disagree with the mesh silhouette drawn below.
         const glm::mat4 bodyModel =
-            glm::scale(ColliderBodyModel(*_scene, entity, tc), _physics->GetColliderScale(entity));
+            ColliderShapeModel(ColliderBodyModel(*_scene, entity, tc), desc, _physics->GetColliderScale(entity),
+                               WorldScaleOf(_scene->Get<Assisi::ECS::WorldMatrix>(entity)->matrix));
 
         // The traced edges go out for EVERY collider.
         std::vector<LineVertex> &lineOut =
@@ -146,7 +168,7 @@ void EditorApp::SubmitColliderWireframes()
     // is lifted by its own half-height — drawn where the author placed the feet,
     // which is the whole reason a character is authored that way.
     for (auto [entity, tc, desc] :
-         _scene->Query<Assisi::ECS::Transform, Assisi::Physics::CharacterDescriptor>())
+         _scene->Query<Assisi::ECS::Transform, Assisi::Physics::Character>())
     {
         _colliderEntities.push_back(entity);
 
@@ -193,7 +215,7 @@ void EditorApp::SubmitColliderWireframes()
 }
 
 void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
-                                      const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
+                                      const Assisi::Physics::Collider &desc, const glm::vec3 &color)
 {
     using Assisi::Physics::ColliderShape;
     using Item = Assisi::Editor::OutlinePass::OutlineItem;

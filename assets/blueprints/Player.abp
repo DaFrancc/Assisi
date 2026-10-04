@@ -2,7 +2,7 @@
   "entities": [
     {
       "components": {
-        "CharacterDescriptor": {
+        "Character": {
           "airAcceleration": 10.0,
           "airWishSpeedCap": 0.5715,
           "bunnyHop": 1,
@@ -85,9 +85,7 @@
     }
   ],
   "systems": [
-    "CharacterMove",
     "CharacterLook",
-    "CharacterState",
     "CharacterEye",
     "CharacterInput"
   ],

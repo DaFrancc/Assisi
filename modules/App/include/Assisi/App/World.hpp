@@ -507,7 +507,7 @@ public:
     /// refs pointing outside it null with a warning (Runtime::TransferEntities).
     ///
     /// Transients are rebuilt per destination world: the Jolt body is removed
-    /// from @p src's PhysicsWorld and recreated from its RigidBodyDescriptor in
+    /// from @p src's PhysicsWorld and recreated from its Collider in
     /// @p dst's, and MeshRenderer pointers re-resolve against the cache. Needs the
     /// render Services installed (for the mesh re-resolve); without them the
     /// component data still moves and physics rebuilds, but meshes stay

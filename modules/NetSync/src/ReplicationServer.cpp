@@ -111,7 +111,9 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
 
     _transformComponentId = registry.IdOf(typeid(ECS::Transform));
     _transformOrdinal     = registry.ReplicableOrdinalOf(_transformComponentId);
-    _descriptorOrdinal    = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::RigidBodyDescriptor)));
+    _colliderOrdinal      = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::Collider)));
+    _rigidBodyOrdinal     = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::RigidBody)));
+    _characterOrdinal     = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::Character)));
 
     // Whatever control claims this scene arrived carrying were made in a session
     // that is over.

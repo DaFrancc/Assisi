@@ -5,15 +5,16 @@
 /// @brief Jolt physics simulation wrapper.
 ///
 /// One PhysicsWorld per scene, bound to it for life. The scene's components are
-/// the whole interface: an entity with a RigidBodyDescriptor or a
-/// CharacterDescriptor and a Transform has a body, an edit to either is applied
-/// to it, and a write to its Transform moves it. Reconcile() is what notices, and
+/// the whole interface: an entity with a Collider or a Character and a
+/// Transform has a body, an edit to any of its physics components is applied to
+/// it, and a write to its Transform moves it. Reconcile() is what notices, and
 /// Update() runs it before every step, so nothing outside this module creates,
 /// moves or destroys a body.
 ///
 /// Transform is the simulation pose: Update() ends by writing each moving
-/// body's pose into it. Call Update() inside an ECS::FixedStepScope, so the
-/// ECS draws those Transforms blended between steps.
+/// body's pose into it, with its BodyState or CharacterState beside it. Call
+/// Update() inside an ECS::FixedStepScope, so the ECS draws those Transforms
+/// blended between steps.
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -179,10 +180,11 @@ public:
 
     /// @brief Brings the simulation into line with the scene.
     ///
-    /// Builds a body or character for every entity that gained a descriptor,
-    /// applies descriptor edits in place, destroys what lost its descriptor or
-    /// its Transform or was destroyed, and pushes every Transform written by
-    /// anything but this world to the body:
+    /// Builds a body or character for every entity that gained a Collider or a
+    /// Character, applies edits to Collider, RigidBody and Character in place,
+    /// destroys what lost them or its Transform or was destroyed, pushes every
+    /// BodyState velocity written by anything but this world to the body, and
+    /// pushes every Transform written by anything but this world:
     ///
     ///   - a static body is placed;
     ///   - a kinematic body is swept there over the step Update() is about to
@@ -191,7 +193,8 @@ public:
     ///   - a character is placed when its position changed. Its rotation is the
     ///     way it faces, which the controller does not use.
     ///
-    /// A changed scale rebuilds the shape at the new size.
+    /// A changed scale rebuilds the shape at the new size, and a character whose
+    /// CharacterIntent asks for another stance takes it, if it fits.
     ///
     /// Update() calls this first. Call it yourself when the scene changed and no
     /// step is coming: a loader that wants bodies in place before the world is
@@ -219,7 +222,8 @@ public:
     /// @brief Reconciles, advances the simulation by `deltaTime` seconds, and
     /// writes the result into the Transforms of the bodies that moved.
     ///
-    /// Characters are swept first, then the bodies are solved. That order is
+    /// Each character reads its CharacterIntent, then the characters are swept,
+    /// then the bodies are solved. That order is
     /// what lets a character shove a crate and the crate move in the same step,
     /// and what lets it ride a platform whose velocity was set before this call.
     ///
@@ -334,21 +338,11 @@ public:
 
     // --- Authoritative body state (replication) -------------------------------
 
-    /// @brief One active body's authoritative motion state.
-    struct ActiveBodyState
-    {
-        ECS::Entity entity;
-        glm::vec3 position;
-        glm::quat rotation;
-        glm::vec3 linearVelocity;
-        glm::vec3 angularVelocity;
-    };
-
-    /// @brief Every currently-awake body, with its pose and velocities.
+    /// @brief Every entity whose body or character the simulation has awake.
     ///
     /// The order Jolt returns active bodies in is unspecified, which is fine:
     /// every consumer of this re-sorts by its own identity.
-    void GetActiveBodyStates(std::vector<ActiveBodyState> &out) const;
+    void ActiveBodies(std::vector<ECS::Entity> &out) const;
 
     /// @brief Whether the simulation currently considers @p entity's body awake.
     [[nodiscard]] bool IsBodyActive(ECS::Entity entity) const;
@@ -365,6 +359,9 @@ public:
     /// Deliberately not composed from a Transform write and a velocity setter:
     /// a correction must be able to leave a body asleep, set its angular
     /// velocity, and land in this step rather than the next reconcile.
+    ///
+    /// For a character, only the position and the linear velocity are taken:
+    /// it faces wherever gameplay turns it, and it never sleeps.
     ///
     /// Writes the Transform and snaps it, so the drawn pose jumps with the
     /// correction. The replication view offset relies on that: it hides the
@@ -396,15 +393,6 @@ public:
     /// collider, a character, or an entity with no body.
     [[nodiscard]] glm::vec3 GetColliderScale(ECS::Entity entity) const;
 
-    /// @brief Replaces a body's linear velocity (m/s), waking it.
-    ///
-    /// The change shows up through the simulation, over the following steps,
-    /// exactly as if the solver had produced it. The wake is deliberate: a body
-    /// that had gone to sleep on a surface would otherwise keep the new velocity
-    /// on paper and never move. No-op on a static body, which has no velocity to
-    /// set.
-    void SetBodyLinearVelocity(ECS::Entity entity, glm::vec3 velocity);
-
     /// @brief What @p entity's body is, and what it interacts with.
     [[nodiscard]] CollisionFilter GetBodyCollisionFilter(ECS::Entity entity) const;
 
@@ -417,58 +405,11 @@ public:
     //
     // Every character carries an ordinary kinematic body inside it, on
     // CollisionChannel::Character. That inner body is what makes a character
-    // *exist* to the rest of the simulation: without one, a cast would pass
-    // through it, a trigger would never report it, and two characters would walk
-    // through each other. Queries, contact events and collision filtering all
-    // reach a character through it, which is why they need no character-shaped
-    // API of their own.
+    // *exist* to the rest of the simulation: queries, contact events and
+    // collision filtering all reach a character through it.
     //
-    // Characters are stepped by Update(), before the bodies, so a character
-    // reacts to where the world was at the start of the step and whatever it
-    // pushed is solved in the same step rather than the next one.
-
-    /// @brief Sets what @p entity's character is trying to do on the next step.
-    ///
-    /// @p wishVelocity is a world-space request: its direction is where the
-    /// character wants to go and its length is the speed it wants, already
-    /// scaled to metres per second. The character is not set to it. Each step
-    /// the ground takes speed away by the descriptor's friction and the
-    /// character gains speed along that direction at the descriptor's ground or
-    /// air rate, so the velocity it already has carries over as momentum. The
-    /// vertical component is ignored; gravity and @p jump own that axis.
-    ///
-    /// @p jump is a request that survives a short time: asked for just before
-    /// landing it fires on the landing step, and asked for just after walking
-    /// off a ledge it still counts as a ground jump. Asked for while genuinely
-    /// airborne it is dropped rather than queued, so a held button cannot bank
-    /// jumps.
-    void MoveCharacter(ECS::Entity entity, glm::vec3 wishVelocity, bool jump);
-
-    /// @brief Tells the controller which way @p entity's character is looking.
-    ///
-    /// The controller moves a character and never turns it, so it does not know
-    /// this unless told. Only BunnyHopPolicy::Boost uses it, where a jump adds
-    /// and removes speed along the facing; under any other policy it changes
-    /// nothing. @p forward is a world-space direction; its vertical part is
-    /// ignored and it need not be unit length. Kept until set again.
-    void SetCharacterFacing(ECS::Entity entity, glm::vec3 forward);
-
-    /// @brief Asks @p entity's character to stand or crouch.
-    ///
-    /// @return false when the change could not be made, which in practice means
-    /// standing up under something too low. The stance is unchanged in that
-    /// case, and asking again once the character has moved clear succeeds — so
-    /// a caller holding a crouch simply asks every step rather than tracking
-    /// whether it is stuck.
-    ///
-    /// On the ground the feet stay put and the head moves. In the air the head
-    /// stays put and the feet move, so crouching mid-jump lifts them over a
-    /// ledge; standing again in the air is refused while there is no room below
-    /// for the legs.
-    bool SetCharacterStance(ECS::Entity entity, Stance stance);
-
-    /// @brief What @p entity's character's last step left behind.
-    [[nodiscard]] CharacterState GetCharacterState(ECS::Entity entity) const;
+    // A character is driven through its CharacterIntent and reports through its
+    // CharacterState; there is no character call here.
 
     /// @brief Sets the gravity vector (default: {0, −9.81, 0}).
     void SetGravity(glm::vec3 gravity);
