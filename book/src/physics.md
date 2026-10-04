@@ -48,6 +48,14 @@ is into the next step. Motion stays smooth on a display faster than the step
 rate, and gameplay never sees the in-between pose. See
 [Your first system](first-system.md#phases-when-a-system-runs).
 
+A spot or point light that moves in fixed steps is drawn smoothly too, but by
+default its shadow is redrawn only once per step, from where the step put the
+light. The shadow can trail the light by up to one step, and a moving light
+costs one shadow redraw per step rather than one per frame. To keep the shadow
+exactly on the light, set `shadows.local.cache.redrawMovingLightsEveryFrame` to
+`true` in `options.json`, or tick **Redraw Moving Lights Every Frame** in the
+editor's shadow options.
+
 ### What writing a `Transform` does
 
 You can move any physics object by writing its `Transform`. What happens next

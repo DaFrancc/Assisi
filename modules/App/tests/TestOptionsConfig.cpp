@@ -37,6 +37,7 @@ TEST_CASE("Shadow settings survive a write and a read")
     written.shadows.local.slopeBias = 1.25f;
     written.shadows.local.normalOffsetTexels = 4.f;
     written.shadows.local.sourceRadius = 0.3f;
+    written.shadows.local.cache.redrawMovingLightsEveryFrame = true;
     written.shadows.pcss = ShadowPcss::SunAndLocals;
 
     const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
@@ -64,6 +65,7 @@ TEST_CASE("Shadow settings survive a write and a read")
     CHECK(read.shadows.local.slopeBias == doctest::Approx(written.shadows.local.slopeBias));
     CHECK(read.shadows.local.normalOffsetTexels == doctest::Approx(written.shadows.local.normalOffsetTexels));
     CHECK(read.shadows.local.sourceRadius == doctest::Approx(written.shadows.local.sourceRadius));
+    CHECK(read.shadows.local.cache.redrawMovingLightsEveryFrame);
     CHECK(read.shadows.pcss == written.shadows.pcss);
 }
 
