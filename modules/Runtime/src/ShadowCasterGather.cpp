@@ -10,7 +10,7 @@
 
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Assert.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
@@ -127,11 +127,11 @@ template <typename Visit> void ForEachMovingCaster(Assisi::ECS::Scene &scene,
         {
             continue;
         }
-        const Transform *transform = scene.Get<Transform>(entity);
+        const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(entity);
         const MeshRenderer *meshRenderer = scene.Get<MeshRenderer>(entity);
-        if (transform != nullptr && meshRenderer != nullptr)
+        if (world != nullptr && meshRenderer != nullptr)
         {
-            visit(entity, *transform, *meshRenderer);
+            visit(entity, *world, *meshRenderer);
         }
     }
 }
@@ -164,13 +164,14 @@ void SunShadowCasterGather::Gather(Assisi::ECS::Scene &scene, Assisi::Render::Sh
     ASSISI_ASSERT(lodSelector == nullptr || lodSelector->ShadowViewCount() == _viewCount,
                   "LodSelector::SetShadowViews must describe the views being gathered for");
 
-    const auto add = [&](Assisi::ECS::Entity entity, const Transform &, const MeshRenderer &meshRenderer)
-                     { AddCaster(entity, *Assisi::ECS::WorldMatrix(scene, entity), meshRenderer, mobility, lodSelector); };
+    const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
+                         const MeshRenderer &meshRenderer)
+                     { AddCaster(entity, world.matrix, meshRenderer, mobility, lodSelector); };
     if (_stillViews > 0u)
     {
-        for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+        for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
-            add(entity, transform, meshRenderer);
+            add(entity, world, meshRenderer);
         }
     }
     else
@@ -255,7 +256,7 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
     for (const Assisi::ECS::Entity entity : changed)
     {
         const MeshRenderer *meshRenderer = scene.Get<MeshRenderer>(entity);
-        const glm::mat4 *world = Assisi::ECS::WorldMatrix(scene, entity);
+        const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(entity);
         if (meshRenderer == nullptr || world == nullptr || !meshRenderer->castsShadows ||
             meshRenderer->meshBuffer == nullptr)
         {
@@ -263,7 +264,7 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
         }
         out.push_back(Assisi::Render::ShadowMover{
                 ShadowCasterId(entity), Assisi::Geometry::TransformedBoundingSphere(meshRenderer->meshBuffer->LocalBounds(),
-                                                                                    *world)});
+                                                                                    world->matrix)});
     }
 }
 
@@ -296,15 +297,16 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
     // rest, so every one of them is taken to want its still casters.
     _stillRequests = stillRequests.size() == lightVolumes.size() ? stillRequests : std::span<const std::uint8_t>{};
 
-    const auto add = [&](Assisi::ECS::Entity entity, const Transform &, const MeshRenderer &meshRenderer)
-                     { AddCaster(entity, *Assisi::ECS::WorldMatrix(scene, entity), meshRenderer, mobility, lodSelector); };
+    const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
+                         const MeshRenderer &meshRenderer)
+                     { AddCaster(entity, world.matrix, meshRenderer, mobility, lodSelector); };
     const bool anyStill = _stillRequests.empty() ||
                           std::ranges::any_of(_stillRequests, [](std::uint8_t wanted) { return wanted != 0u; });
     if (anyStill)
     {
-        for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+        for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
-            add(entity, transform, meshRenderer);
+            add(entity, world, meshRenderer);
         }
         return;
     }

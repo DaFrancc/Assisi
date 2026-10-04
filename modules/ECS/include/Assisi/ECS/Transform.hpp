@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file Transform.hpp
-/// @brief Local-space TRS component, and the lanes its pool keeps beside it:
-///        the world matrices and the render blend.
+/// @brief Local-space TRS component, and the render-blend lanes its pool
+///        keeps beside it.
 ///
 /// Transform is the engine's most foundational component: rendering, physics,
 /// and the scene-graph hierarchy all read and write it. It lives here, in the
@@ -14,6 +14,7 @@
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/ECS/SparseSet.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 #include <cstdint>
@@ -31,13 +32,15 @@ namespace Assisi::ECS
 ///
 /// What is drawn is not always this. A Transform written during a fixed step
 /// (inside an ECS::FixedStepScope) is drawn blended between its pose before
-/// the step and this one, by the frame's blend alpha; see ECS::WorldMatrix.
+/// the step and this one, by the frame's blend alpha, into its WorldMatrix.
 ///
 /// `replicable` as well: pose is the one thing every mirrored entity needs.
 /// `tracked` is spelled out beside it rather than left to `replicable`'s
 /// implication, so that dropping `replicable` would not silently take
 /// PropagateTransforms's change signal with it.
-ACOMP(replicable, tracked)
+///
+/// Requires WorldMatrix, which PropagateTransforms writes and renderers read.
+ACOMP(replicable, tracked, requires = {WorldMatrix})
 struct Transform
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};
@@ -49,8 +52,8 @@ struct Scene;
 class FixedStepScope;
 struct Propagation;
 
-/// @brief The Transform pool's lanes: one world matrix per Transform, and what
-/// the render blend needs to draw an entity between two fixed steps.
+/// @brief The Transform pool's lanes: what the render blend needs to draw an
+/// entity between two fixed steps.
 ///
 /// The first write to a Transform in a fixed step records the pose before it
 /// (`prev`); the first write after the step ends records the pose the step left
@@ -66,21 +69,9 @@ template <> struct SparseSetLanes<Transform>
 {
 public:
     // Pool hooks; see SparseSetLanes.
-    void Push()
-    {
-        _world.emplace_back(1.f);
-        _marks.push_back(BlendMark{});
-    }
-    void Move(uint32_t to, uint32_t from)
-    {
-        _world[to] = _world[from];
-        _marks[to] = _marks[from];
-    }
-    void Pop()
-    {
-        _world.pop_back();
-        _marks.pop_back();
-    }
+    void Push() { _marks.push_back(BlendMark{}); }
+    void Move(uint32_t to, uint32_t from) { _marks[to] = _marks[from]; }
+    void Pop() { _marks.pop_back(); }
     void Clear();
 
     /// Records @p current, the Transform at dense slot @p slot owned by
@@ -102,9 +93,6 @@ public:
             RecordEnd(_current[mark.entry], current);
         }
     }
-
-    /// The world matrix at dense slot @p slot, as the last propagation left it.
-    [[nodiscard]] const glm::mat4 &World(uint32_t slot) const { return _world[slot]; }
 
 private:
     friend class FixedStepScope;
@@ -145,7 +133,6 @@ private:
     void BeginFixedStep();
     void EndFixedStep();
 
-    std::vector<glm::mat4> _world; ///< Per dense slot.
     std::vector<BlendMark> _marks; ///< Per dense slot.
 
     /// Entries made in the current step, in the order they were made.

@@ -210,7 +210,7 @@ TEST_CASE("Writeback: a teleport is drawn at its destination, not slid to")
     ECS::SetBlendAlpha(test.scene, 0.5f);
     tick = ECS::PropagateTransforms(test.scene, tick);
 
-    CHECK(Math::TranslationOf(*ECS::WorldMatrix(test.scene, e)) == glm::vec3(20.f, 5.f, 0.f));
+    CHECK(Math::TranslationOf(test.scene.Get<ECS::WorldMatrix>(e)->matrix) == glm::vec3(20.f, 5.f, 0.f));
 }
 
 TEST_CASE("Writeback: a falling body is drawn between its last two steps")
@@ -230,5 +230,6 @@ TEST_CASE("Writeback: a falling body is drawn between its last two steps")
     ECS::SetBlendAlpha(test.scene, 0.5f);
     tick = ECS::PropagateTransforms(test.scene, tick);
 
-    CHECK(Math::TranslationOf(*ECS::WorldMatrix(test.scene, e)).y == doctest::Approx(0.5f * (before + after)));
+    const glm::mat4 &world = test.scene.Get<ECS::WorldMatrix>(e)->matrix;
+    CHECK(Math::TranslationOf(world).y == doctest::Approx(0.5f * (before + after)));
 }

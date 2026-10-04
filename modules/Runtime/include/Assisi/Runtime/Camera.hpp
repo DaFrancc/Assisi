@@ -9,7 +9,7 @@
 ///
 /// Orientation convention: the camera looks along its local -Z axis.
 /// The functions take the camera's world matrix — for a scene camera,
-/// ECS::WorldMatrix after PropagateTransforms has run this frame.
+/// its ECS::WorldMatrix after PropagateTransforms has run this frame.
 
 #include <cstdint>
 

@@ -2,7 +2,7 @@
 
 #include <Assisi/Editor/ScenePick.hpp>
 
-#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -188,10 +188,9 @@ ECS::Entity PickEntityInScene(ECS::Scene &scene, const PickRay &ray, float iconH
     float closestT     = std::numeric_limits<float>::max();
     ECS::Entity result = ECS::NullEntity;
 
-    for (auto [e, tc] : scene.Query<Runtime::Transform>())
+    for (auto [e, worldMatrix] : scene.Query<ECS::WorldMatrix>())
     {
-        (void)tc;
-        const glm::mat4 &world = *ECS::WorldMatrix(scene, e);
+        const glm::mat4 &world = worldMatrix.matrix;
         // A meshed entity is picked by the bounds it reports; a placement-only one
         // by its icon quad alone, so it does not swallow clicks over a whole cube.
         const std::optional<Geometry::Aabb> bounds = boundsOf(scene, e);

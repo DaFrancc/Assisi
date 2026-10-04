@@ -7,7 +7,7 @@
 #include <span>
 #include <vector>
 
-#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Frustum.hpp>
@@ -57,9 +57,9 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     {
         ASSISI_PROFILE_SCOPE("cull-gather");
         builder.Reset();
-        for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+        for (auto [entity, worldMatrix, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
-            const glm::mat4 &world = *Assisi::ECS::WorldMatrix(scene, entity);
+            const glm::mat4 &world = worldMatrix.matrix;
             const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
             if (mesh == nullptr)
             {
@@ -162,9 +162,9 @@ DrawStats DrawScene(const DrawSceneParams &params)
     // mesh entity, and only the survivors reach `draw-sort`.
     {
         ASSISI_PROFILE_SCOPE("draw-extract");
-        for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+        for (auto [entity, worldMatrix, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
-            const glm::mat4 &world = *Assisi::ECS::WorldMatrix(scene, entity);
+            const glm::mat4 &world = worldMatrix.matrix;
             const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
             if (mesh == nullptr)
             {

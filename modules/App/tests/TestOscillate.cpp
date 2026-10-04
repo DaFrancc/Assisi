@@ -229,6 +229,6 @@ TEST_CASE("OscillateSystem: a mover is drawn between its last two steps at a fra
     Assisi::ECS::SetBlendAlpha(world.scene, 0.25f);
     propagationTick = Assisi::ECS::PropagateTransforms(world.scene, propagationTick);
 
-    const float drawn = Assisi::Math::TranslationOf(*Assisi::ECS::WorldMatrix(world.scene, entity)).x;
+    const float drawn = Assisi::Math::TranslationOf(world.scene.Get<Assisi::ECS::WorldMatrix>(entity)->matrix).x;
     CHECK(drawn == doctest::Approx(before + 0.25f * (after - before)));
 }

@@ -8,7 +8,7 @@
 /// parent. The parent needs no modification.
 ///
 /// Transform stores local-space TRS. PropagateTransforms() walks the
-/// parent chain and writes each entity's world matrix (see WorldMatrix).
+/// parent chain and writes each entity's WorldMatrix component.
 /// For root entities (no parent), the world matrix is the local TRS matrix.
 
 #include <cstdint>
@@ -46,7 +46,7 @@ struct Parent
 
 /// @brief Refresh the world matrices of entities whose drawn pose changed.
 ///
-/// Writes results into the Transform pool's world lane (see WorldMatrix). Must be
+/// Writes each result into the entity's WorldMatrix component. Must be
 /// called once per frame before DrawScene() or anything that reads a world
 /// matrix. Visits only what can have changed: Transforms and Parent links written
 /// since `lastTick`, Parent links removed since then, entities blending between
@@ -120,15 +120,11 @@ std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 /// in Parent terminates the walk rather than hanging on a corrupt scene.
 [[nodiscard]] Transform WorldTransformOf(const Scene &scene, Entity entity);
 
-/// @brief @p entity's world matrix as the last PropagateTransforms left it, or
-/// null when it has no Transform.
-[[nodiscard]] const glm::mat4 *WorldMatrix(const Scene &scene, Entity entity);
-
 /// @brief The world matrix @p entity's Transform is relative to: its parent's
 /// propagated world matrix, or null when it has no Parent, its Parent names no
 /// entity, or that entity has no Transform.
 ///
-/// Reads the cached matrix, so it is only as current as the last
+/// Reads the parent's WorldMatrix, so it is only as current as the last
 /// PropagateTransforms. A null answer means @p entity's local pose is its world
 /// pose.
 [[nodiscard]] const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity);

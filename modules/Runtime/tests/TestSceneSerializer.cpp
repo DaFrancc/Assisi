@@ -21,6 +21,8 @@
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
@@ -62,6 +64,34 @@ TEST_CASE("SceneSerializer: transform values survive a round-trip")
     CHECK(t->position.z == doctest::Approx(3.f));
     CHECK(t->scale.x == doctest::Approx(4.f));
     CHECK(t->scale.z == doctest::Approx(6.f));
+}
+
+TEST_CASE("SceneSerializer: a loaded Transform brings a WorldMatrix, which is never saved")
+{
+    ECS::Scene scene;
+    const ECS::Entity drawn = scene.Create();
+    const ECS::Entity unplaced = scene.Create();
+    REQUIRE(scene.Add(drawn, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
+    REQUIRE(scene.Add(drawn, MeshRenderer{}) != nullptr);
+    REQUIRE(scene.Add(unplaced, MeshRenderer{}) != nullptr);
+    const std::string saved = SceneSerializer::Save(scene).dump();
+    CHECK(saved.find("WorldMatrix") == std::string::npos);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+    (void)ECS::PropagateTransforms(loaded, 0u);
+
+    // Only the placed mesh is drawn, at its pose: a mesh with no Transform has
+    // nowhere to be drawn.
+    int32_t yielded = 0;
+    for (auto [entity, world, meshRenderer] : loaded.Query<ECS::WorldMatrix, MeshRenderer>())
+    {
+        (void)entity;
+        (void)meshRenderer;
+        CHECK(Math::TranslationOf(world.matrix) == glm::vec3(1.f, 2.f, 3.f));
+        ++yielded;
+    }
+    CHECK(yielded == 1);
 }
 
 // Regression for the forward-reference bug: a child whose serial index precedes

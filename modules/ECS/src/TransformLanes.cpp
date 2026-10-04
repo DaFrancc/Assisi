@@ -6,7 +6,6 @@ namespace Assisi::ECS
 
 void SparseSetLanes<Transform>::Clear()
 {
-    _world.clear();
     _marks.clear();
     _current.clear();
     _ended.clear();

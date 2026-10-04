@@ -352,13 +352,13 @@ bool EditorApp::DrawTransformGizmoHandles()
     glm::mat4 parentWorld(1.f);
     if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(_selectedEntity))
     {
-        if (const glm::mat4 *parentMatrix = Assisi::ECS::WorldMatrix(*_scene, parent->parent))
+        if (const Assisi::ECS::WorldMatrix *parentMatrix = _scene->Get<Assisi::ECS::WorldMatrix>(parent->parent))
         {
-            parentWorld = *parentMatrix;
+            parentWorld = parentMatrix->matrix;
         }
     }
 
-    glm::mat4 world = *Assisi::ECS::WorldMatrix(*_scene, _selectedEntity);
+    glm::mat4 world = _scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity)->matrix;
 
     const ImGuizmo::OPERATION operation = ToOperation(_gizmoOp);
     // Translate and rotate honour the toggle; scale is along the object's own axes
@@ -444,7 +444,7 @@ bool EditorApp::DrawTransformGizmoHandles()
     // The pose the handle started *this frame* at. The rest follow by the change in
     // it, so a rotate turns the group about the handle instead of spinning each one
     // in place.
-    const glm::mat4 worldBefore = *Assisi::ECS::WorldMatrix(*_scene, _selectedEntity);
+    const glm::mat4 worldBefore = _scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity)->matrix;
 
     if (inInstanceFrame)
         world = glm::inverse(instanceFrame) * world;
@@ -482,17 +482,20 @@ bool EditorApp::DrawTransformGizmoHandles()
             const glm::mat4 delta = world * glm::inverse(worldBefore);
             for (const Assisi::ECS::Entity entity : alsoDragged)
             {
-                const glm::mat4 *entityWorld = Assisi::ECS::WorldMatrix(*_scene, entity);
+                const Assisi::ECS::WorldMatrix *entityWorld = _scene->Get<Assisi::ECS::WorldMatrix>(entity);
                 if (entityWorld == nullptr)
                     continue;
 
                 glm::mat4 entityParentWorld(1.f);
                 if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(entity))
                 {
-                    if (const glm::mat4 *parentMatrix = Assisi::ECS::WorldMatrix(*_scene, parent->parent))
-                        entityParentWorld = *parentMatrix;
+                    if (const Assisi::ECS::WorldMatrix *parentMatrix =
+                            _scene->Get<Assisi::ECS::WorldMatrix>(parent->parent))
+                    {
+                        entityParentWorld = parentMatrix->matrix;
+                    }
                 }
-                ApplyGizmoWorldMatrix(entity, entityParentWorld, delta * *entityWorld);
+                ApplyGizmoWorldMatrix(entity, entityParentWorld, delta * entityWorld->matrix);
             }
         }
     }

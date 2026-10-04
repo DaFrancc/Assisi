@@ -213,7 +213,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     Assisi::ECS::SetBlendAlpha(world.scene, 0.5f);
     tick = Assisi::ECS::PropagateTransforms(world.scene, tick);
     const float feet = world.scene.Get<Assisi::ECS::Transform>(entity)->position.y;
-    const float drawnEye = Assisi::Math::TranslationOf(*Assisi::ECS::WorldMatrix(world.scene, eye)).y;
+    const float drawnEye = Assisi::Math::TranslationOf(world.scene.Get<Assisi::ECS::WorldMatrix>(eye)->matrix).y;
     CHECK(drawnEye - feet == doctest::Approx(0.5f * (descriptor.eyeHeight + afterOneStep)));
 
     for (int32_t i = 0; i < 60; ++i)

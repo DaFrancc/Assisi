@@ -98,11 +98,11 @@ TEST_CASE("a parented spot aims with its parent")
 
     (void)Assisi::ECS::PropagateTransforms(scene, 0u);
 
-    const glm::mat4 *world = Assisi::ECS::WorldMatrix(scene, light);
+    const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(light);
     REQUIRE(world != nullptr);
-    CHECK(Approx3(SpotWorldDirection(*world), glm::vec3(0.f, 0.f, -1.f)));
+    CHECK(Approx3(SpotWorldDirection(world->matrix), glm::vec3(0.f, 0.f, -1.f)));
     // Position follows the same matrix, and the two must agree about the turn.
-    CHECK(Approx3(Assisi::Math::TranslationOf(*world), glm::vec3(0.f, 0.f, 2.f)));
+    CHECK(Approx3(Assisi::Math::TranslationOf(world->matrix), glm::vec3(0.f, 0.f, 2.f)));
 }
 
 namespace

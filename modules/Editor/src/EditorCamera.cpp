@@ -4,7 +4,7 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/Core/EventQueue.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Editor/Overlay/IconPass.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
@@ -270,7 +270,7 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     {
         return;
     }
-    const glm::mat4 *placement = Assisi::ECS::WorldMatrix(*_scene, entity);
+    const Assisi::ECS::WorldMatrix *placement = _scene->Get<Assisi::ECS::WorldMatrix>(entity);
     if (placement == nullptr)
     {
         return; // nothing to frame without a world placement
@@ -282,16 +282,16 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc != nullptr && mrc->meshBuffer != nullptr && mrc->meshBuffer->LocalBounds().radius > 0.f)
     {
-        world = Assisi::Geometry::TransformedBoundingSphere(mrc->meshBuffer->LocalBounds(), *placement);
+        world = Assisi::Geometry::TransformedBoundingSphere(mrc->meshBuffer->LocalBounds(), placement->matrix);
     }
     else
     {
         using Assisi::Math::ColumnOf;
         using Assisi::Math::MatrixColumn;
-        world.center = Assisi::Math::TranslationOf(*placement);
-        const float scaleX = glm::length(ColumnOf(*placement, MatrixColumn::Right));
-        const float scaleY = glm::length(ColumnOf(*placement, MatrixColumn::Up));
-        const float scaleZ = glm::length(ColumnOf(*placement, MatrixColumn::Back));
+        world.center = Assisi::Math::TranslationOf(placement->matrix);
+        const float scaleX = glm::length(ColumnOf(placement->matrix, MatrixColumn::Right));
+        const float scaleY = glm::length(ColumnOf(placement->matrix, MatrixColumn::Up));
+        const float scaleZ = glm::length(ColumnOf(placement->matrix, MatrixColumn::Back));
         world.radius = 0.5f * glm::max(scaleX, glm::max(scaleY, scaleZ));
     }
     if (world.radius <= 0.f)

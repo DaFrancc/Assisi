@@ -14,6 +14,7 @@
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Math/Matrix.hpp>
 
@@ -30,7 +31,7 @@ namespace
 /// Where the last propagation drew @p entity.
 glm::vec3 Drawn(const ECS::Scene &scene, ECS::Entity entity)
 {
-    return Math::TranslationOf(*ECS::WorldMatrix(scene, entity));
+    return Math::TranslationOf(scene.Get<ECS::WorldMatrix>(entity)->matrix);
 }
 
 /// An entity at @p position.
@@ -139,7 +140,7 @@ TEST_CASE("TransformBlend: a write outside a fixed step shows at once while the 
     ECS::SetBlendAlpha(scene, 0.5f);
     tick = PropagateTransforms(scene, tick);
 
-    const glm::mat4 &world = *ECS::WorldMatrix(scene, e);
+    const glm::mat4 &world = scene.Get<ECS::WorldMatrix>(e)->matrix;
     CHECK(Math::TranslationOf(world).x == doctest::Approx(5.f));
     const glm::vec3 back = Math::ColumnOf(world, Math::MatrixColumn::Back);
     const glm::vec3 turned = kQuarterTurn * glm::vec3(0.f, 0.f, 1.f);
@@ -156,7 +157,7 @@ TEST_CASE("TransformBlend: an entity whose pose did not change is drawn exactly 
                                 .rotation = glm::normalize(glm::quat(0.3f, 0.5f, -0.2f, 0.7f)),
                                 .scale = {1.5f, 0.75f, 2.f}}) != nullptr);
     uint64_t tick = PropagateTransforms(scene, 0);
-    const glm::mat4 before = *ECS::WorldMatrix(scene, e);
+    const glm::mat4 before = scene.Get<ECS::WorldMatrix>(e)->matrix;
 
     {
         const FixedStepScope step(scene);
@@ -165,7 +166,7 @@ TEST_CASE("TransformBlend: an entity whose pose did not change is drawn exactly 
     ECS::SetBlendAlpha(scene, 0.37f);
     tick = PropagateTransforms(scene, tick);
 
-    CHECK(*ECS::WorldMatrix(scene, e) == before);
+    CHECK(scene.Get<ECS::WorldMatrix>(e)->matrix == before);
 }
 
 TEST_CASE("TransformBlend: an entity the next step leaves alone is drawn exactly where it stopped")
@@ -343,7 +344,8 @@ TEST_CASE("TransformBlend: a rotation blends along the short arc")
     ECS::SetBlendAlpha(scene, 0.5f);
     tick = PropagateTransforms(scene, tick);
 
-    const glm::vec3 right = glm::normalize(Math::ColumnOf(*ECS::WorldMatrix(scene, e), Math::MatrixColumn::Right));
+    const glm::mat4 &world = scene.Get<ECS::WorldMatrix>(e)->matrix;
+    const glm::vec3 right = glm::normalize(Math::ColumnOf(world, Math::MatrixColumn::Right));
     const float degrees = glm::degrees(std::atan2(-right.z, right.x));
     CHECK(degrees == doctest::Approx(5.f).epsilon(0.01));
 }
@@ -365,9 +367,10 @@ TEST_CASE("TransformBlend: a blended rotation stays unit length")
         ECS::SetBlendAlpha(scene, 0.5f);
         tick = PropagateTransforms(scene, tick);
 
-        const glm::mat4 &world = *ECS::WorldMatrix(scene, e);
-        CHECK(glm::length(Math::ColumnOf(world, Math::MatrixColumn::Right)) == doctest::Approx(1.f).epsilon(kUnitTolerance));
-        CHECK(glm::length(Math::ColumnOf(world, Math::MatrixColumn::Up)) == doctest::Approx(1.f).epsilon(kUnitTolerance));
+        const glm::mat4 &world = scene.Get<ECS::WorldMatrix>(e)->matrix;
+        const doctest::Approx unit = doctest::Approx(1.f).epsilon(kUnitTolerance);
+        CHECK(glm::length(Math::ColumnOf(world, Math::MatrixColumn::Right)) == unit);
+        CHECK(glm::length(Math::ColumnOf(world, Math::MatrixColumn::Up)) == unit);
     }
 }
 

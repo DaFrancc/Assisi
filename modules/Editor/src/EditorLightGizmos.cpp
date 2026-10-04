@@ -22,8 +22,8 @@
 #include <limits>
 #include <vector>
 
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
@@ -87,9 +87,9 @@ glm::vec4 UnselectedColor(const glm::vec3 &lightColor)
 /// the alternative to a fallback is a gizmo drawn nowhere.
 glm::vec3 EntityPosition(Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity)
 {
-    if (const glm::mat4 *world = Assisi::ECS::WorldMatrix(scene, entity))
+    if (const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(entity))
     {
-        return Assisi::Math::TranslationOf(*world);
+        return Assisi::Math::TranslationOf(world->matrix);
     }
     return glm::vec3(0.f);
 }
@@ -175,16 +175,16 @@ void EditorApp::SubmitLightGizmos()
                               return Style{&_lightLinesOnTop, active ? kActiveSelectedColor : kSelectedColor, true};
                           };
 
-    for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::PointLight>())
+    for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::PointLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        AddPointLightOutline(*style.batch, style.color, *Assisi::ECS::WorldMatrix(*_scene, entity), light);
+        AddPointLightOutline(*style.batch, style.color, world.matrix, light);
     }
 
-    for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::SpotLight>())
+    for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::SpotLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        AddSpotLightOutline(*style.batch, style.color, *Assisi::ECS::WorldMatrix(*_scene, entity), light,
+        AddSpotLightOutline(*style.batch, style.color, world.matrix, light,
                             style.detailed);
     }
 
@@ -256,15 +256,15 @@ Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
     // cone is on screen to be clicked at all.
     constexpr glm::vec4 kUnread{1.f};
 
-    for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::PointLight>())
+    for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::PointLight>())
     {
-        AddPointLightOutline(_lightPickOutline, kUnread, *Assisi::ECS::WorldMatrix(*_scene, entity), light);
+        AddPointLightOutline(_lightPickOutline, kUnread, world.matrix, light);
         takeNearest(entity);
     }
 
-    for (auto [entity, transform, light] : _scene->Query<Rt::Transform, Rt::SpotLight>())
+    for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::SpotLight>())
     {
-        AddSpotLightOutline(_lightPickOutline, kUnread, *Assisi::ECS::WorldMatrix(*_scene, entity), light,
+        AddSpotLightOutline(_lightPickOutline, kUnread, world.matrix, light,
                             IsSelected(entity));
         takeNearest(entity);
     }

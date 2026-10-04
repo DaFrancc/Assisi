@@ -4,6 +4,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -169,8 +170,10 @@ struct Propagation
             // Removing Parent or RenderOffset stamps nothing; the removal log is
             // what says it happened. A log that no longer reaches back far enough
             // redraws everything.
+            std::vector<Entity> unposed;
             const bool complete = scene.RemovedSince<Parent>(lastTick, changed) &&
-                                  scene.RemovedSince<RenderOffset>(lastTick, changed);
+                                  scene.RemovedSince<RenderOffset>(lastTick, changed) &&
+                                  scene.RemovedSince<Transform>(lastTick, unposed);
             if (!complete)
             {
                 lanes._redrawAll = true;
@@ -181,6 +184,7 @@ struct Propagation
             {
                 MarkDirty(entity);
             }
+            DropUnposedMatrices(unposed);
         }
 
         for (const Entity entity : lanes._ended)
@@ -198,6 +202,19 @@ struct Propagation
         {
             (void)offset;
             MarkDirty(entity);
+        }
+    }
+
+    /// Removes the WorldMatrix of each of @p unposed that no longer has a
+    /// Transform, so nothing draws it where it last stood.
+    void DropUnposedMatrices(const std::vector<Entity> &unposed)
+    {
+        for (const Entity entity : unposed)
+        {
+            if (scene.IsAlive(entity) && !scene.Has<Transform>(entity) && scene.Has<WorldMatrix>(entity))
+            {
+                (void)scene.Remove<WorldMatrix>(entity);
+            }
         }
     }
 
@@ -253,7 +270,8 @@ struct Propagation
     bool Resolve(Entity e)
     {
         const uint32_t slot = scene.DenseIndexOf<Transform>(e);
-        if (slot == SparseSet<Transform>::Invalid)
+        WorldMatrix *world = scene.Get<WorldMatrix>(e);
+        if (slot == SparseSet<Transform>::Invalid || world == nullptr)
         {
             return false; // gone, or a parent without a Transform: identity
         }
@@ -271,11 +289,10 @@ struct Propagation
         if (worldChanged)
         {
             const glm::mat4 local = DrawnLocalMatrix(slot, *scene.Get<Transform>(e));
-            glm::mat4 &world = lanes._world[slot];
-            world = parentWorld != nullptr ? MultiplyMatrices(*parentWorld, local) : local;
+            world->matrix = parentWorld != nullptr ? MultiplyMatrices(*parentWorld, local) : local;
             if (const RenderOffset *offset = scene.Get<RenderOffset>(e); offset != nullptr)
             {
-                ApplyRenderOffset(world, *offset);
+                ApplyRenderOffset(world->matrix, *offset);
             }
             ++resolved;
         }
@@ -290,7 +307,8 @@ struct Propagation
     const glm::mat4 *ResolveParent(Entity e, bool &parentChanged)
     {
         const Parent *p = scene.Get<Parent>(e);
-        if (p == nullptr || p->parent == NullEntity || !scene.Has<Transform>(p->parent))
+        if (p == nullptr || p->parent == NullEntity || !scene.Has<Transform>(p->parent) ||
+            !scene.Has<WorldMatrix>(p->parent))
         {
             return nullptr;
         }
@@ -310,8 +328,8 @@ struct Propagation
         }
 
         parentChanged = Resolve(p->parent);
-        // Finalised by the recursion; the lane does not move during a pass.
-        return &lanes._world[scene.DenseIndexOf<Transform>(p->parent)];
+        // Finalised by the recursion; no pool changes size during a pass.
+        return &scene.Get<WorldMatrix>(p->parent)->matrix;
     }
 
     /// Resolves every child of an entity whose world matrix changed this pass,
@@ -504,17 +522,6 @@ Transform WorldTransformOf(const Scene &scene, Entity entity)
     return world;
 }
 
-const glm::mat4 *WorldMatrix(const Scene &scene, Entity entity)
-{
-    const SparseSetLanes<Transform> *lanes = scene.Lanes<Transform>();
-    const uint32_t index = scene.DenseIndexOf<Transform>(entity);
-    if (lanes == nullptr || index == SparseSet<Transform>::Invalid)
-    {
-        return nullptr;
-    }
-    return &lanes->World(index);
-}
-
 const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity)
 {
     const Parent *parent = scene.Get<Parent>(entity);
@@ -522,7 +529,8 @@ const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity)
     {
         return nullptr;
     }
-    return WorldMatrix(scene, parent->parent);
+    const WorldMatrix *world = scene.Get<WorldMatrix>(parent->parent);
+    return world != nullptr ? &world->matrix : nullptr;
 }
 
 } // namespace Assisi::ECS

@@ -6,8 +6,8 @@
 
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -221,14 +221,13 @@ void OverlayRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const gl
     // unless it is beyond the LOD distance from the camera.
     if (_editorIconsVisible)
     {
-        for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
+        for (auto [entity, world] : scene.Query<ECS::WorldMatrix>(ECS::Without<MeshRenderer>{}))
         {
-            (void)transform;
             if (IsIconSuppressed(entity))
             {
                 continue;
             }
-            const glm::vec3 position = Math::TranslationOf(*ECS::WorldMatrix(scene, entity));
+            const glm::vec3 position = Math::TranslationOf(world.matrix);
             const glm::vec3 offset = position - cameraPosition;
             if (glm::dot(offset, offset) <= maxDistanceSq)
             {
@@ -300,11 +299,12 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
         return;
     }
 
-    const glm::mat4 *world = ECS::WorldMatrix(scene, entity);
-    if (world == nullptr)
+    const ECS::WorldMatrix *placement = scene.Get<ECS::WorldMatrix>(entity);
+    if (placement == nullptr)
     {
         return; // no placement — nothing to outline
     }
+    const glm::mat4 &world = placement->matrix;
     const MeshRenderer *renderer = scene.Get<MeshRenderer>(entity);
 
     // A placement-only entity shows a billboard only while icons are on. A
@@ -323,15 +323,15 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
         // border traced around a finer silhouette than the one on screen reads as
         // a halo.
         _outlinePass.Draw(frame, viewProjection,
-                          OutlinePass::OutlineItem{renderer->meshBuffer, *world,
+                          OutlinePass::OutlineItem{renderer->meshBuffer, world,
                                                    sceneRenderer.DrawnLodLevel(entity, *renderer->meshBuffer,
-                                                                               *world)},
+                                                                               world)},
                           color);
     }
     else if (placementIcon)
     {
         // Outline the billboard quad so its selection matches a mesh's.
-        const glm::vec3 center = Math::TranslationOf(*world);
+        const glm::vec3 center = Math::TranslationOf(world);
         const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
         _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,

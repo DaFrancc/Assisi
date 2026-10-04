@@ -14,6 +14,7 @@ target_sources(Assisi-ECS
     "include/Assisi/ECS/SparseSet.hpp"
     "include/Assisi/ECS/Transform.hpp"
     "include/Assisi/ECS/TransformPose.hpp"
+    "include/Assisi/ECS/WorldMatrix.hpp"
   PRIVATE
     "src/EntityRef.cpp"
     "src/Hierarchy.cpp"
@@ -45,6 +46,7 @@ assisi_reflect(
     include/Assisi/ECS/Hierarchy.hpp
     include/Assisi/ECS/RenderOffset.hpp
     include/Assisi/ECS/Transform.hpp
+    include/Assisi/ECS/WorldMatrix.hpp
 )
 
 add_library(Assisi::ECS ALIAS Assisi-ECS)

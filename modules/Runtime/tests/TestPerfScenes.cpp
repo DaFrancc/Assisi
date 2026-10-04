@@ -311,11 +311,11 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
     (void)ECS::PropagateTransforms(scene, 0u);
 
     int32_t checked = 0;
-    for (auto [entity, transform, light] : scene.Query<Runtime::Transform, Runtime::SpotLight>())
+    for (auto [entity, worldMatrix, light] : scene.Query<ECS::WorldMatrix, Runtime::SpotLight>())
     {
-        (void)transform;
+        (void)entity;
         (void)light;
-        const glm::mat4 &world = *ECS::WorldMatrix(scene, entity);
+        const glm::mat4 &world = worldMatrix.matrix;
         const glm::vec3 position = Math::TranslationOf(world);
         const glm::vec3 aim = Runtime::SpotWorldDirection(world);
 

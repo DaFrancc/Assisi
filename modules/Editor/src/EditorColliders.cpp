@@ -20,8 +20,8 @@
 #include <cstdint>
 #include <vector>
 
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Editor/ColliderPose.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -135,7 +135,8 @@ void EditorApp::SubmitColliderWireframes()
             if (const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
                 mrc != nullptr && mrc->meshBuffer != nullptr)
             {
-                _overlays.SubmitOutline(mrc->meshBuffer, *Assisi::ECS::WorldMatrix(*_scene, entity), outlineColor);
+                const glm::mat4 &world = _scene->Get<Assisi::ECS::WorldMatrix>(entity)->matrix;
+                _overlays.SubmitOutline(mrc->meshBuffer, world, outlineColor);
             }
         }
     }

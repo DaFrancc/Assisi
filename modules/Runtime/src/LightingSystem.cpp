@@ -7,7 +7,7 @@
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
-#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 
@@ -128,9 +128,9 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
     {
         ASSISI_PROFILE_SCOPE("light-gather");
 
-        for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
+        for (auto [entity, world, light] : scene.Query<ECS::WorldMatrix, PointLight>())
         {
-            const glm::vec3 position = Math::TranslationOf(*ECS::WorldMatrix(scene, entity));
+            const glm::vec3 position = Math::TranslationOf(world.matrix);
             // Every light starts holding no tile. The shadow pass stamps the
             // winners between here and Upload, so a light it never reaches is
             // unshadowed by default rather than by last frame's answer.
@@ -153,11 +153,11 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
             }
         }
 
-        for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
+        for (auto [entity, worldMatrix, light] : scene.Query<ECS::WorldMatrix, SpotLight>())
         {
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
-            const glm::mat4 &world = *ECS::WorldMatrix(scene, entity);
+            const glm::mat4 &world = worldMatrix.matrix;
             const glm::vec3 position = Math::TranslationOf(world);
             const glm::vec3 direction = SpotWorldDirection(world);
             _spotLights.push_back({
