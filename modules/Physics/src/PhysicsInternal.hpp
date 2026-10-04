@@ -46,6 +46,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -302,7 +303,7 @@ public:
 // ---------------------------------------------------------------------------
 //
 // Solver tolerances, not game feel. Everything an author tunes is a field on
-// CharacterDescriptor; these are the numbers only someone debugging the sweep
+// Character; these are the numbers only someone debugging the sweep
 // itself would touch, so each says what it prevents.
 
 /// The world axis a character stands along. Characters do not model a rotating
@@ -342,7 +343,7 @@ constexpr float kMaxRisingSpeedWhileGrounded = 0.1f;
 constexpr float kStanceChangePenetrationSlopFactor = 1.5f;
 
 /// A step taller than this fraction of a character's standing height is a wall,
-/// whatever a descriptor says. Left unclamped, the stair sweep vaults the
+/// whatever a Character says. Left unclamped, the stair sweep vaults the
 /// character up surfaces shorter than itself — over railings, onto tables —
 /// which reads as the collision simply not working.
 constexpr float kMaxStepHeightFraction = 0.5f;
@@ -398,14 +399,34 @@ JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float ta
 /// its direction.
 JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 
-/// Builds the Jolt collision shape for a descriptor. Radii and half-heights are
+/// The world matrix @p entity's Transform is relative to, composed from the
+/// local poses up its Parent chain: the simulation pose, not the drawn one the
+/// propagated world matrices hold. Null for a root.
+std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity);
+
+/// Builds the Jolt collision shape for a primitive. Radii and half-heights are
 /// clamped to the convex radius, so a zeroed dimension field — reachable from an
 /// inspector drag — cannot create a degenerate, asserting shape.
 JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape);
 
-/// The same, at @p scale. A primitive that cannot take the scale as given — a
-/// sphere stretched along one axis — gets the nearest one it can.
+/// The scale a primitive is built at for a requested @p scale: as given for a
+/// box, one scale on every axis for a sphere or a capsule, and one across the
+/// round axes for a cylinder.
+glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale);
+
+/// How far a clamped scale may differ from the one asked for before the clamp
+/// is worth a warning: rounding in a composed parent scale is not a mistake.
+constexpr float kScaleClampTolerance = 1e-4f;
+
+/// The same primitive, at ClampedShapeScale(@p scale).
 JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm::vec3 scale);
+
+/// The primitive a Collider names.
+PhysicsWorld::ColliderShapeDesc ShapeOf(const Collider &collider);
+
+/// The whole shape a Collider builds at @p scale: its primitive at the
+/// clamped scale, moved and turned by its offset, the offset scaled with it.
+JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale);
 
 // ---------------------------------------------------------------------------
 // Impl
@@ -440,24 +461,13 @@ struct PhysicsWorld::Impl
 
     ECS::Scene &scene;
 
-    /// The last two stepped poses of a moving body, blended at render time so
-    /// motion stays smooth when the display refreshes faster than physics steps.
-    struct MotionSnapshot
-    {
-        glm::quat prevRotation{1.f, 0.f, 0.f, 0.f};
-        glm::quat curRotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3 prevPosition{};
-        glm::vec3 curPosition{};
-    };
-
     /// The Transform values this world last wrote to an entity, or found there
     /// when it last pushed them to the body, and the change tick they carried.
     ///
-    /// A Transform whose tick differs was written by something else since. Which
-    /// fields differ from these says what that write changed, which matters
-    /// because the Transform holds the *render* pose: a write that only turned
-    /// a body still holds the blended position, and pushing that too would pull
-    /// the body back along its path.
+    /// A Transform whose tick differs was written by something else since.
+    /// Which fields differ from these says what that write changed: a changed
+    /// scale rebuilds the shape, and a character is only placed when its
+    /// position changed, since the look systems turn it every frame.
     struct TransformStamp
     {
         glm::quat rotation{1.f, 0.f, 0.f, 0.f};
@@ -482,12 +492,17 @@ struct PhysicsWorld::Impl
     /// beside it says which life of the index the slot belongs to.
     struct BodySlot
     {
-        MotionSnapshot snapshot;
         TransformStamp stamp;
 
-        /// The descriptor values the body was built or last retuned from, so an
-        /// edit can be told apart from a write that changed nothing physical.
-        PhysicsWorld::ColliderShapeDesc shape;
+        /// The Collider and RigidBody values the body was built or last
+        /// retuned from, so an edit can be told apart from a write that changed
+        /// nothing physical. The RigidBody is default for a static body.
+        Collider collider;
+        RigidBody rigidBody;
+
+        /// The BodyState change tick this world last wrote or pushed. A
+        /// different one was written by something else since.
+        uint64_t stateTick = 0;
 
         /// The world-space scale the shape was built at.
         glm::vec3 worldScale{1.f};
@@ -499,15 +514,10 @@ struct PhysicsWorld::Impl
         uint32_t generation = 0;
         BodyMotion motion = BodyMotion::Static;
         SlotKind kind = SlotKind::Empty;
-        bool ccd = false;
 
         /// Followed by the writeback: woken in some step and not yet written at
         /// rest. See `awake`.
         bool followed = false;
-
-        /// Asleep, with its last two snapshots equal: the next writeback puts it
-        /// exactly at rest and stops following it.
-        bool settled = false;
     };
 
     std::vector<BodySlot> slots;
@@ -516,6 +526,12 @@ struct PhysicsWorld::Impl
     /// when Jolt reports it awake after a step and leaves once its Transform
     /// holds its resting pose, so a settled world costs the writeback nothing.
     std::vector<std::uint32_t> awake;
+
+    /// Entity indices of the kinematic bodies swept to a Transform write in the
+    /// step about to run, and in the one before. A sweep's velocity carries the
+    /// body to its target in one step; one not swept again is stopped there.
+    std::vector<std::uint32_t> sweptThisStep;
+    std::vector<std::uint32_t> sweptLastStep;
 
     /// Change tick the next reconcile reads the scene's logs from.
     uint64_t changeCursor = 0;
@@ -564,18 +580,41 @@ struct PhysicsWorld::Impl
     /// Pushes a Transform written by something else to @p entity's body.
     void PushTransform(ECS::Entity entity, float stepTime);
 
-    void CreateBody(ECS::Entity entity, const RigidBodyDescriptor &descriptor);
-    void EditBody(ECS::Entity entity, const RigidBodyDescriptor &descriptor);
-    void CreateCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor);
+    /// Pushes a BodyState velocity written by something else to @p entity's
+    /// body, waking it.
+    void PushBodyState(ECS::Entity entity);
 
-    /// Retunes @p entity's character from an edited descriptor, keeping its
+    /// Builds @p entity's body from its Collider and, unless it is static, its
+    /// @p rigidBody.
+    void CreateBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody);
+
+    /// Applies edits to @p entity's Collider and RigidBody to its live body.
+    /// Gaining or losing the RigidBody rebuilds it, since a static body has no
+    /// motion to change.
+    void EditBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody);
+
+    /// Sets a moving body's mass from @p rigidBody: overridden when it names
+    /// one, from the shape's volume otherwise.
+    void ApplyMass(const JPH::BodyID &body, const RigidBody &rigidBody);
+
+    /// Logs that @p entity's @p shape cannot take @p scale and is built at the
+    /// nearest scale it can. Called where a scale is applied, not every step.
+    void WarnOnClampedScale(ECS::Entity entity, ColliderShape shape, glm::vec3 scale) const;
+
+    void CreateCharacter(ECS::Entity entity, const Character &character);
+
+    /// Retunes @p entity's character from an edited Character, keeping its
     /// velocity, timers and stance. The capsule is rebuilt only when its size
     /// changed, since the solver bakes that in.
-    void EditCharacter(ECS::Entity entity, const CharacterDescriptor &descriptor);
+    void EditCharacter(ECS::Entity entity, const Character &character);
 
     /// Destroys whatever the slot at @p index holds, queuing the contact Exits
     /// its departure causes.
     void DestroySlot(std::uint32_t index);
+
+    /// Puts @p entity's BodyState back at rest, so a body built for it later
+    /// starts from a standstill rather than from the motion of the one destroyed.
+    void ForgetBodyState(ECS::Entity entity);
 
     /// Destroys every body and character without reporting Exits: what was
     /// touching no longer exists to hear it.
@@ -584,10 +623,6 @@ struct PhysicsWorld::Impl
     /// Records @p entity's current Transform as this world's own: what it last
     /// wrote, or what it has just pushed to the body.
     void StampTransform(ECS::Entity entity);
-
-    /// Collapses both snapshots onto @p pose, so the render blend arrives
-    /// rather than sliding across the gap.
-    static void CollapseSnapshot(BodySlot &slot, const Pose &pose);
 
     /// Starts following the slot at @p index in the writeback.
     void Follow(std::uint32_t index);
@@ -731,31 +766,25 @@ private:
 
     // --- Characters ----------------------------------------------------------
 
-    /// One character: the solver object, the two shapes it switches between, the
-    /// authored numbers its step consults, and the intent it was last given.
+    /// One character: the solver object, the two shapes it switches between,
+    /// and the authored numbers its step consults.
     ///
-    /// The descriptor's values are copied in rather than read back from the
-    /// scene each step, so the step reads no components; the reconcile copies
-    /// them again when the descriptor is edited.
+    /// The Character's values are copied in rather than read back from the
+    /// scene each step; the reconcile copies them again when it is edited.
     struct CharacterRecord
     {
         JPH::Ref<JPH::CharacterVirtual> character;
         JPH::RefConst<JPH::Shape> standingShape;
         JPH::RefConst<JPH::Shape> crouchingShape;
 
-        /// The direction it is trying to go and the speed it is asking for, as
-        /// set by MoveCharacter. Kept between steps so a caller that stops
-        /// asking keeps walking rather than stopping dead on a step nobody
-        /// addressed it.
-        glm::vec3 wishVelocity{0.f};
-
-        /// The way it is looking, as set by SetCharacterFacing. The capsule
-        /// itself is never turned; only BunnyHopPolicy::Boost reads this.
+        /// The way it is looking, from its Transform at the start of the step.
+        /// The capsule itself is never turned; only BunnyHopPolicy::Boost reads
+        /// this.
         glm::vec3 facing{0.f, 0.f, -1.f};
 
         ECS::Entity entity{ECS::NullEntity};
 
-        /// What the character's sweep may be stopped by. The descriptor's mask
+        /// What the character's sweep may be stopped by. The Character's mask
         /// minus Trigger: a sensor reports a character but must not block it, and
         /// a sweep that stopped at one would be an invisible wall. The inner body
         /// keeps the full mask, which is what lets the sensor see it.
@@ -763,6 +792,7 @@ private:
 
         float jumpSpeed = 0.f;
         float walkSpeed = 0.f;
+        float crouchSpeedScale = 0.f;
         float friction = 0.f;
         float stopSpeed = 0.f;
         float groundAcceleration = 0.f;
@@ -788,23 +818,12 @@ private:
         /// CharacterState::eyeHeight.
         float eyeHeight = 0.f;
 
-        /// @ref eyeHeight as the step before left it. The pair is blended at
-        /// render time like the two snapshot poses, so the eye moves every frame
-        /// instead of once per step.
-        float prevEyeHeight = 0.f;
-
         /// Seconds since last standing on walkable ground; what coyote time is
         /// measured against.
         float timeSinceGrounded = 0.f;
 
         /// Seconds a pending jump request has left before it is forgotten.
         float jumpBufferRemaining = 0.f;
-
-        /// A jump asked for since the last step. Separate from the buffer above,
-        /// which is only how long the request *outlives* this step: folding the
-        /// two together would make a character with no buffer unable to jump at
-        /// all, since the request would expire before it was ever tested.
-        bool jumpRequested = false;
 
         Stance stance = Stance::Standing;
 
@@ -818,9 +837,9 @@ private:
         bool canPushBodies = true;
         bool canBePushed = true;
 
-        /// Copies the tuning a step reads from @p descriptor, leaving the
+        /// Copies the tuning a step reads from @p character, leaving the
         /// character's motion, timers and stance as they are.
-        void Retune(const CharacterDescriptor &descriptor);
+        void Retune(const Character &character);
 
         /// The horizontal velocity, relative to the ground, that one step of
         /// intent turns @p velocity into. @p wish is the horizontal request;
@@ -850,22 +869,44 @@ private:
     CharacterRecord *FindCharacter(ECS::Entity entity);
     const CharacterRecord *FindCharacter(ECS::Entity entity) const;
 
-    /// Builds the CharacterVirtual for @p record from @p descriptor at a
+    /// Builds the CharacterVirtual for @p record from @p character at a
     /// world-space @p pose. False when the simulation is full.
-    bool BuildCharacterVirtual(CharacterRecord &record, const CharacterDescriptor &descriptor, const Pose &pose);
+    bool BuildCharacterVirtual(CharacterRecord &record, const Character &character, const Pose &pose);
 
-    /// Sweeps every character by one step, before the bodies are
-    /// solved. See PhysicsWorld::Update.
+    /// Reads every character's CharacterIntent and sweeps it by one step,
+    /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
 
-    /// Blends a snapshot's two poses, snapping instead when they are close
-    /// enough that blending would only add wobble.
-    static Pose BlendSnapshot(const MotionSnapshot &snapshot, float alpha);
+    /// Changes @p record's capsule to @p stance's. False when it does not fit,
+    /// which in practice means standing up under something too low; nothing
+    /// changes then. On the ground the feet stay put and the head moves; in the
+    /// air the head stays put and the feet move, and the Transform follows.
+    bool ApplyStance(CharacterRecord &record, Stance stance);
 
-    /// Writes a world-space render pose into @p entity's Transform, unless
-    /// something else wrote it since this world last did: that write has not
-    /// reached the body yet, and overwriting it first would lose it.
-    void WriteRenderPose(ECS::Entity entity, Pose pose, bool writeRotation);
+    /// Stops every kinematic body swept last step and not this one, so it rests
+    /// where its Transform put it rather than carrying on at the sweep's speed.
+    void StopFinishedSweeps();
+
+    /// Changes every character whose CharacterIntent asks for another stance,
+    /// where it fits. See ApplyStance.
+    void ApplyAskedStances();
+
+    /// What @p record's last step left behind.
+    CharacterState BuildCharacterState(const CharacterRecord &record) const;
+
+    /// Writes each moving body's and every character's pose from the step
+    /// that just ran into its Transform, and its velocities into its BodyState
+    /// or CharacterState. A body that fell asleep gets one last write, at rest,
+    /// and is then left alone.
+    void WriteBack();
+
+    /// Writes @p state into @p entity's BodyState, skipping a write that would
+    /// change nothing, and stamps it as this world's own.
+    void WriteBodyState(ECS::Entity entity, const BodyState &state);
+
+    /// Writes @p state into @p entity's CharacterState, skipping a write that
+    /// would change nothing.
+    void WriteCharacterState(ECS::Entity entity, const CharacterState &state);
 
     /// Writes a world-space pose into @p entity's Transform, converting out of a
     /// parent's space and skipping a write that would change nothing, then

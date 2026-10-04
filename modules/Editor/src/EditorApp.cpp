@@ -222,20 +222,20 @@ void EditorApp::EndCursorLoan()
     _cursorLoan = {};
 }
 
-void EditorApp::ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
+void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
 {
     // The one answer to "where is the viewport looking from". Everything that
     // projects or unprojects has to agree with what was drawn — a pick ray or a
     // gizmo built from a different camera lands where the cursor is not.
-    if (PlayViewCamera(pose, camera))
+    if (PlayViewCamera(world, camera))
     {
         return;
     }
-    pose = _cameraTransform;
+    world = _cameraWorld;
     camera = _camera;
 }
 
-bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const
+bool EditorApp::PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
 {
     // Only while a play session is live. Editing looks through the editor's own
     // camera whatever the scene says, or placing a camera would take the viewport
@@ -259,7 +259,7 @@ bool EditorApp::PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime
         return false;
     }
 
-    pose = view->pose;
+    world = view->world;
     camera = view->camera;
     return true;
 }
@@ -279,9 +279,8 @@ void EditorApp::AdoptLevelCamera()
         return;
     }
 
-    // The local pose, not the whole Transform: this drives the editor's own
-    // camera, whose world matrix RefreshCameraMatrix rebuilds from yaw and pitch
-    // below. Copying the level camera's matrix in would be overwritten anyway.
+    // The local pose: this drives the editor's own camera, whose world matrix
+    // RefreshCameraMatrix rebuilds from yaw and pitch below.
     _cameraTransform.position = view->pose.position;
     _cameraTransform.rotation = view->pose.rotation;
     _camera = view->camera;
@@ -935,21 +934,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         return;
     }
 
-    // Blend physics-driven Transforms between their last two fixed-step poses,
-    // before Render() propagates world matrices, so bodies move at the display's
-    // refresh rate rather than the physics rate. Only while simulating: paused or
-    // stopped, physics must not stomp the Transforms, because an inspector edit or
-    // the frozen pose is authoritative then. A game screen that pauses the world
-    // during play says the same thing from the other side.
-    if (IsSimulating() && (_world == nullptr || !_world->paused))
-    {
-        // Display rate over every physics-driven Transform, so it belongs in the
-        // render breakdown rather than being lumped in with physics.
-        ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _physics->InterpolateTransforms(GetInterpolationAlpha());
-        Assisi::App::PlaceCharacterEyes(*_scene, *_physics, GetInterpolationAlpha());
-    }
-    else
+    if (!IsSimulating() || (_world != nullptr && _world->paused))
     {
         // Nothing steps this world, and stepping is what reconciles it. Done here
         // instead, so a body added, moved, edited or deleted while editing is
@@ -1032,16 +1017,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
-    Assisi::Runtime::Transform playPose;
+    glm::mat4 playWorld{1.f};
     Assisi::Runtime::Camera playCamera;
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    if (PlayViewCamera(playPose, playCamera))
+    if (PlayViewCamera(playWorld, playCamera))
     {
-        _sceneRenderer.Render(frame, *_scene, playPose, playCamera, _world->propagationTick);
+        _sceneRenderer.Render(frame, *_scene, playWorld, playCamera, _world->propagationTick);
         return;
     }
 
-    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
+    _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
 }
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
@@ -1052,15 +1037,15 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     }
     // Through the same camera the scene was drawn with, or an overlay would be
     // projected from somewhere the viewport is not looking from.
-    Assisi::Runtime::Transform playPose;
+    glm::mat4 playWorld{1.f};
     Assisi::Runtime::Camera playCamera;
-    if (PlayViewCamera(playPose, playCamera))
+    if (PlayViewCamera(playWorld, playCamera))
     {
-        _overlays.Render(frame, *_scene, playPose, playCamera, _sceneRenderer);
+        _overlays.Render(frame, *_scene, playWorld, playCamera, _sceneRenderer);
         return;
     }
 
-    _overlays.Render(frame, *_scene, _cameraTransform, _camera, _sceneRenderer);
+    _overlays.Render(frame, *_scene, _cameraWorld, _camera, _sceneRenderer);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
@@ -1111,6 +1096,8 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
+                // Everything inside the scope is one fixed step to the render blend.
+                const Assisi::ECS::FixedStepScope step(world.scene);
                 world.systems.Run(Assisi::App::SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
 
                 {
@@ -1118,13 +1105,6 @@ void EditorApp::OnFixedUpdate(float dt)
                     // everything under `fixed-update` that is not a named ECS system.
                     ASSISI_PROFILE_SCOPE("physics-step");
                     world.physics.Update(dt);
-                }
-                {
-                    // Snapshot the new poses for OnRender to blend. Linear in the body
-                    // count and separable from the solve, so it gets its own slice: a
-                    // big scene then says which of the two grew.
-                    ASSISI_PROFILE_SCOPE("physics-capture");
-                    world.physics.CaptureState();
                 }
 
                 // The other half of the tick: what reacts to the step that just
@@ -1140,7 +1120,7 @@ void EditorApp::OnFixedUpdate(float dt)
     // Between the step and the snapshot, and it has to stay there. A mirrored body
     // woken by a contact the server never had (client poses differ by whatever the
     // last correction has not yet removed, and Jolt wakes by island) must be put
-    // back before anything reads it, including this frame's render writeback.
+    // back before anything reads it.
 #if defined(ASSISI_NETWORKING)
     if (_netSession)
         _netSession->AfterPhysicsStep();
@@ -1341,21 +1321,16 @@ void EditorApp::OnUpdate(float dt)
     }
 #endif
 
-    // Worlds that simulate but are not drawn get neither the pose write-back nor
-    // the transform propagation the render path performs for the world it draws.
-    // Give them both, in that order (see App::SyncUnrenderedWorld). Skipped while
-    // the session is frozen: nothing stepped, so there are no new poses.
-    if (IsSimulating())
-    {
-        _worlds.ForEach(
-            [this](Assisi::App::World &world)
-            {
-                if (world.simulate && world.state == Assisi::App::WorldState::Active && &world != _world)
-                {
-                    Assisi::App::SyncUnrenderedWorld(world);
-                }
-            });
-    }
+    // How far between its last two fixed steps each world is drawn. Editing,
+    // paused or frozen, a world is drawn exactly: the accumulator goes on
+    // cycling, and blending would shake what stopped.
+    _worlds.ForEach(
+        [this](Assisi::App::World &world)
+        {
+            const bool stepping = IsSimulating() && world.state == Assisi::App::WorldState::Active &&
+                                  world.simulate && !world.paused;
+            Assisi::App::BlendWorld(world, stepping, GetInterpolationAlpha());
+        });
 
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
@@ -1618,7 +1593,7 @@ std::string EditorApp::EditLabel(std::string_view action, Assisi::ECS::Entity en
 void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
 {
     // Dispatch by component identity to the same transient-rebuild paths the live
-    // edits use. Physics needs nothing here: a restored Transform or descriptor is
+    // edits use. Physics needs nothing here: a restored Transform or Collider is
     // a component write like any other, and the world follows it.
     using namespace Assisi;
     static const Core::Reflect::ComponentId kMeshRenderer = Core::Reflect::ComponentIdOf<Runtime::MeshRenderer>();

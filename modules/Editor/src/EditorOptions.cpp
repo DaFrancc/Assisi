@@ -439,6 +439,11 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     {
         ImGui::BeginDisabled();
     }
+    changed |= ImGui::Checkbox("Redraw Moving Lights Every Frame", &shadows.local.cache.redrawMovingLightsEveryFrame);
+    ImGui::SetItemTooltip("Off redraws a moving light's shadow once per game tick, from where the tick put it, "
+                          "so the shadow can trail the smoothly drawn light by one tick. On keeps it exactly on "
+                          "the light, at a redraw every frame.");
+
     int32_t budget = static_cast<int32_t>(shadows.local.cache.updateBudgetFaces);
     if (ImGui::SliderInt("Redraw Budget", &budget, static_cast<int32_t>(Assisi::Render::kMinShadowBakeBudget),
                          static_cast<int32_t>(Assisi::Render::kMaxShadowBakeBudget), "%d faces"))

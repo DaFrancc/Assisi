@@ -813,7 +813,7 @@ TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 // The invariant: when any component is rebound during a revive, its siblings from
 // the same snapshot are already present. Components restore in registry
 // (alphabetical) order, so one sorting before Transform (Camera here;
-// RigidBodyDescriptor in the app) would otherwise be rebound while Transform is
+// Collider in the app) would otherwise be rebound while Transform is
 // still absent — and the app's physics rebind, finding none, silently skips
 // creating the Jolt body.
 TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component is rebound")

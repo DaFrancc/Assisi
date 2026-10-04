@@ -101,14 +101,18 @@ struct OptionsConfig
     /// hand-edited into nonsense costs the settings, never the launch.
     [[nodiscard]] static OptionsConfig FromJsonText(std::string_view text);
 
-    /// @brief The settings that differ from the defaults, as an options document,
-    /// with floats rounded to four decimal places. Round-trips through
-    /// FromJsonText: every field read there that is not written here is at its
-    /// default, so a setting nobody changed follows the defaults as they change.
+    /// @brief Every setting, as an options document, with floats rounded to four
+    /// decimal places. Round-trips through FromJsonText. The window size, the
+    /// multi-tap interval, bus volumes and bindings appear only once set, since
+    /// until then they follow the game's own files.
     [[nodiscard]] std::string ToJsonText() const;
 
-    /// @brief Reads options.json from the user root.
-    /// Returns defaults if the file is missing or malformed.
+    /// @brief Reads options.json from the user root, and writes it back with
+    /// every setting in it when it is missing or lacks any.
+    ///
+    /// Returns defaults if the file is missing or malformed. A malformed file
+    /// is left as it is, so a hand edit gone wrong can be put right rather than
+    /// being replaced.
     static OptionsConfig LoadFromJson();
 
     /// @brief Writes the current settings to options.json under the user root.

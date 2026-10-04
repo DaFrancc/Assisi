@@ -25,6 +25,7 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -63,13 +64,13 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
                        {"components",
                         {{"Transform",
                             {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                            {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
+                            {"Collider", nlohmann::json::object()}}}},
                        {{"name", "lid"},
                            {"components",
                             {{"Transform",
                                 {{"position", {0.f, 1.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
                                 {"Parent", {{"parent", "box"}}},
-                                {"RigidBodyDescriptor", {{"isStatic", true}}}}}}})}});
+                                {"Collider", nlohmann::json::object()}}}}})}});
 
     Write(root / "levels" / "yard.alvl", {{"version", 2},
               {"entities", nlohmann::json::array()},
@@ -90,7 +91,7 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
     // not at the local (0,1,0) a physics layer that could not see Parent would
     // have used.
     int32_t bodies = 0;
-    for (auto [entity, descriptor, tag] : world.scene.Query<Physics::RigidBodyDescriptor, ECS::BlueprintMember>())
+    for (auto [entity, descriptor, tag] : world.scene.Query<Physics::Collider, ECS::BlueprintMember>())
     {
         (void)descriptor;
         REQUIRE(world.physics.HasBody(entity));
@@ -126,7 +127,7 @@ TEST_CASE("App: a child of a walking character follows it")
                        {"components",
                         {{"Transform",
                             {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                            {"CharacterDescriptor", {{"walkSpeed", 5.f}, {"groundAcceleration", 1000.f}}}}}},
+                            {"Character", {{"walkSpeed", 5.f}, {"groundAcceleration", 1000.f}}}}}},
                        {{"name", "eye"},
                            {"components",
                             {{"Transform",
@@ -144,7 +145,7 @@ TEST_CASE("App: a child of a walking character follows it")
                      {"components",
                       {{"Transform",
                           {{"position", {0.f, -0.5f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                          {"RigidBodyDescriptor", {{"isStatic", true}, {"halfExtents", {50.f, 0.5f, 50.f}}}}}}}})},
+                          {"Collider", {{"halfExtents", {50.f, 0.5f, 50.f}}}}}}}})},
             {"instances",
              nlohmann::json::array(
                  {{{"name", "walker_a"},
@@ -178,10 +179,8 @@ TEST_CASE("App: a child of a walking character follows it")
     uint64_t tick = 0;
     for (int32_t i = 0; i < 120; ++i)
     {
-        world.physics.MoveCharacter(body, {5.f, 0.f, 0.f}, /*jump=*/ false);
+        world.scene.GetMut<Physics::CharacterIntent>(body)->move = {1.f, 0.f, 0.f}; // walkSpeed is 5 m/s
         world.physics.Update(kStep);
-        world.physics.CaptureState();
-        world.physics.InterpolateTransforms(1.f);
         tick = ECS::PropagateTransforms(world.scene, tick);
     }
 
@@ -195,7 +194,7 @@ TEST_CASE("App: a child of a walking character follows it")
 
     // And the child came with it: its world matrix is the character's pose plus
     // its own local offset, not the pose the level was composed at.
-    const glm::vec3 eyeWorld(eyeTransform->worldMatrix[3]);
+    const glm::vec3 eyeWorld = Math::TranslationOf(world.scene.Get<ECS::WorldMatrix>(eye)->matrix);
     CHECK(eyeWorld.x == doctest::Approx(bodyTransform->position.x).epsilon(0.01));
     CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5f).epsilon(0.05));
 

@@ -421,9 +421,7 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
                                                 }
                                             }
                                             serverPhysics.Update(kFixedStep);
-                                            serverPhysics.CaptureState();
                                             clientPhysics.Update(kFixedStep);
-                                            clientPhysics.CaptureState();
                                             client.EnforceSleep();
                                             server.Tick(tick++);
                                         }
@@ -439,11 +437,11 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
                               transform.position = position;
                               (void)serverScene.Add<ECS::Transform>(entity, transform);
 
-                              Physics::RigidBodyDescriptor descriptor;
-                              descriptor.shape       = Physics::ColliderShape::Box;
-                              descriptor.halfExtents = glm::vec3{0.5f};
-                              descriptor.isStatic    = false;
-                              (void)serverScene.Add<Physics::RigidBodyDescriptor>(entity, descriptor);
+                              Physics::Collider collider;
+                              collider.shape       = Physics::ColliderShape::Box;
+                              collider.halfExtents = glm::vec3{0.5f};
+                              (void)serverScene.Add<Physics::Collider>(entity, collider);
+                              (void)serverScene.Add<Physics::RigidBody>(entity, Physics::RigidBody{});
                               (void)serverScene.Add<Replicated>(entity, Replicated{});
                               serverPhysics.Reconcile();
                               return entity;

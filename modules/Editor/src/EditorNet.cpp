@@ -436,8 +436,7 @@ void EditorApp::DrawHostAuthoringWarnings()
             if (replicated)
                 ++marked;
 
-            const auto *descriptor = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(entity);
-            if (!replicated && descriptor != nullptr && !descriptor->isStatic)
+            if (!replicated && _scene->Has<Assisi::Physics::RigidBody>(entity))
                 ++unmarkedDynamic;
         });
 
@@ -617,13 +616,13 @@ void EditorApp::DrawNetworkWindow()
         // by construction: there is no client→server state channel, and this is
         // the server acting on its own world.
         const bool canNudge = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
-                              _physics->HasBody(_selectedEntity) &&
+                              _scene->Has<Assisi::Physics::BodyState>(_selectedEntity) &&
                               _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
         ImGui::BeginDisabled(!canNudge);
         if (ImGui::Button("Nudge selected body") && canNudge)
         {
             constexpr glm::vec3 kNudge{2.f, 6.f, 0.f};
-            _physics->SetBodyLinearVelocity(_selectedEntity, kNudge);
+            _scene->GetMut<Assisi::Physics::BodyState>(_selectedEntity)->linearVelocity = kNudge;
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))

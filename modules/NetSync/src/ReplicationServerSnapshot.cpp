@@ -214,7 +214,7 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
 
         // A body state is only useful to a client that has something to apply it
         // to. Without this gate, an entity whose spawn block was cut for budget
-        // would ship body state to a client with no mirror and no descriptor to
+        // would ship body state to a client with no mirror and no components to
         // build a body from.
         //
         // `record.netIds` is this snapshot's entity set, ascending, and holds
@@ -554,7 +554,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
 
     // Motion, for everything the physics world owns. After the entity blocks, so
     // ordering against a spawn in the same packet is free: the entity and its
-    // descriptor exist by the time the body state lands, and the client's body
+    // components exist by the time the body state lands, and the client's body
     // starts at the authoritative state rather than re-settling from the level
     // file's pose.
     const std::size_t writtenFromComponents = record.written.size();

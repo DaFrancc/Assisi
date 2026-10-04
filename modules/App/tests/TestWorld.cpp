@@ -212,24 +212,25 @@ Assisi::ECS::Entity SpawnBox(World &world, glm::vec3 at, glm::vec3 halfExtents, 
     const Assisi::ECS::Entity entity = world.scene.Create();
     world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
 
-    Assisi::Physics::RigidBodyDescriptor descriptor{};
-    descriptor.halfExtents = halfExtents;
-    descriptor.isStatic    = isStatic;
-    (void)world.scene.Add(entity, descriptor);
+    Assisi::Physics::Collider collider{};
+    collider.halfExtents = halfExtents;
+    (void)world.scene.Add(entity, collider);
+    if (!isStatic)
+    {
+        (void)world.scene.Add(entity, Assisi::Physics::RigidBody{});
+    }
     return entity;
 }
 
-/// The half extents RigidBodyDescriptor defaults to.
-const glm::vec3 kUnitBox = Assisi::Physics::RigidBodyDescriptor{}.halfExtents;
+/// The half extents Collider defaults to.
+const glm::vec3 kUnitBox = Assisi::Physics::Collider{}.halfExtents;
 
 } // namespace
 
 TEST_CASE("An unrendered world's transforms follow its physics")
 {
-    // The S2 mechanism, and the reason it is two steps: Jolt poses reach Transform
-    // components only through the render path, which never runs for a world that
-    // simulates without being drawn. Propagating alone would give correct matrices
-    // of the spawn pose.
+    // Every step writes its poses into the Transforms, so a world that simulates
+    // without being drawn needs nothing more.
     WorldManager worlds;
     World &world = worlds.Create("Falling");
 
@@ -239,22 +240,9 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     for (int32_t i = 0; i < 30; ++i) // half a second of free fall
     {
         world.physics.Update(kStep);
-        world.physics.CaptureState();
     }
 
-    // Before the sync the Transform still holds the spawn pose, however far the
-    // body has actually fallen.
-    CHECK(world.scene.Get<Assisi::ECS::Transform>(entity)->position.y == doctest::Approx(10.f));
-
-    SyncUnrenderedWorld(world);
-
-    const auto *synced = world.scene.Get<Assisi::ECS::Transform>(entity);
-    REQUIRE(synced != nullptr);
-    CHECK(synced->position.y < 9.f); // gravity happened, and reached the component
-    // ...and the world matrix agrees, i.e. propagation ran AFTER the write-back
-    // rather than over the stale pose.
-    CHECK(synced->worldMatrix[3].y == doctest::Approx(synced->position.y));
-    CHECK(world.propagationTick > 0u);
+    CHECK(world.scene.Get<Assisi::ECS::Transform>(entity)->position.y < 9.f);
 }
 
 TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
@@ -271,7 +259,6 @@ TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
     for (int32_t i = 0; i < 30; ++i)
     {
         world.physics.Update(kStep);
-        world.physics.CaptureState();
     }
     REQUIRE(world.physics.GetBodyVelocity(entity).first.y < 0.f);
 
@@ -311,10 +298,8 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
             if (!world.simulate)
                 return;
             world.physics.Update(kStep);
-            world.physics.CaptureState();
         });
     }
-    worlds.ForEach([](World &world) { SyncUnrenderedWorld(world); });
 
     const float fell = falling.scene.Get<Assisi::ECS::Transform>(a)->position.y;
     const float landed = caught.scene.Get<Assisi::ECS::Transform>(b)->position.y;
@@ -330,9 +315,7 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     for (int32_t i = 0; i < 60; ++i)
     {
         falling.physics.Update(kStep);
-        falling.physics.CaptureState();
     }
-    SyncUnrenderedWorld(falling);
     CHECK(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y < fell);
 }
 
@@ -478,9 +461,7 @@ TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destina
     for (int32_t i = 0; i < 30; ++i)
     {
         dst.physics.Update(kStep);
-        dst.physics.CaptureState();
     }
-    SyncUnrenderedWorld(dst);
     CHECK(dst.scene.Get<Assisi::ECS::Transform>(movedRoot)->position.y < 2.f);
 }
 
@@ -554,7 +535,8 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
         {
             const Assisi::ECS::Entity e = scene.Create();
             (void)scene.Add<Assisi::ECS::Transform>(e);
-            (void)scene.Add<Assisi::Physics::RigidBodyDescriptor>(e, Assisi::Physics::RigidBodyDescriptor{});
+            (void)scene.Add<Assisi::Physics::Collider>(e, Assisi::Physics::Collider{});
+            (void)scene.Add<Assisi::Physics::RigidBody>(e, Assisi::Physics::RigidBody{});
         }
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "Big.alvl"));
     }
@@ -599,7 +581,6 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
     while (!worlds.PendingLoadReady() && std::chrono::steady_clock::now() < stop)
     {
         start.physics.Update(1.f / 60.f);
-        start.physics.CaptureState();
         worlds.PumpPendingLoad(); // drives phase-1 completion + phase-2 asset streaming
     }
 

@@ -475,7 +475,7 @@ private:
     };
 
     /// Forget that a mirror is body-corrected. The body itself goes with the
-    /// entity or its descriptor, on the physics world's next reconcile. Keyed by
+    /// entity or its Collider, on the physics world's next reconcile. Keyed by
     /// NetId because two of its three callers — a despawn and a locally-destroyed
     /// mirror — have already lost the entity by then.
     void DestroyMirrorBody(NetId netId);
@@ -486,10 +486,11 @@ private:
     NetSession *_session = nullptr;            ///< For handler contexts; null in direct-drive tests.
     Net::ConnectionId _connection;
 
-    /// Resolved once, because the removal path sees only ids, never types. A
-    /// descriptor *removal* is the one component removal with a side effect here:
+    /// Resolved once, because the removal path sees only ids, never types.
+    /// Removing either is the one component removal with a side effect here:
     /// the mirror stops being body-corrected.
-    Core::Reflect::ComponentId _descriptorComponentId = Core::Reflect::kInvalidComponentId;
+    Core::Reflect::ComponentId _colliderComponentId = Core::Reflect::kInvalidComponentId;
+    Core::Reflect::ComponentId _characterComponentId = Core::Reflect::kInvalidComponentId;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
 

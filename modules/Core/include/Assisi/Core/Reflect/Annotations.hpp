@@ -50,7 +50,7 @@
 ///
 /// **Polarity is deliberate in both directions.** G1 is opt-in because a type
 /// should not acquire a wire form by accident. G4 is opt-out because Transform,
-/// Name, MeshRenderer and RigidBodyDescriptor are wanted on essentially every
+/// Name, MeshRenderer and Collider are wanted on essentially every
 /// replicated entity, and making each level author restate that would manufacture
 /// boilerplate and silent under-replication.
 ///

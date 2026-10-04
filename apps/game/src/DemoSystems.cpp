@@ -24,7 +24,7 @@ void SpinDemoSystem(Assisi::App::SystemContext &ctx)
 
     Assisi::ECS::Scene &scene = ctx.world.scene;
     for (auto [entity, transform] :
-         scene.Query<Assisi::ECS::Transform>(Assisi::ECS::Without<Assisi::Physics::RigidBodyDescriptor>{}))
+         scene.Query<Assisi::ECS::Transform>(Assisi::ECS::Without<Assisi::Physics::Collider>{}))
     {
         (void)transform;
         // Transform is ACOMP(tracked), and the query hands out an unstamped

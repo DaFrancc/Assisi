@@ -51,7 +51,7 @@ void SpinSystem(Assisi::App::SystemContext &ctx)
     ECS::Scene &scene = ctx.world.scene;
     // Physics bodies are moved by physics; leave them alone.
     for (auto [entity, transform] :
-         scene.QueryMut<ECS::Transform>(ECS::Without<Physics::RigidBodyDescriptor>{}))
+         scene.QueryMut<ECS::Transform>(ECS::Without<Physics::RigidBody>{}))
     {
         transform->rotation = step * transform->rotation;
     }
@@ -167,6 +167,13 @@ The `SystemContext` your system receives holds everything it can reach:
 `FixedUpdate` can run zero, one or several times in a frame, depending on how
 fast the game is running. Use it for physics-related code so it behaves the same
 at any frame rate.
+
+A `Transform` you write in `FixedUpdate` or `PostFixedUpdate` is drawn smoothly
+anyway. The engine draws it between its pose before the step and its pose after
+it, by how far the frame is into the next step, so it doesn't stutter on a
+display faster than the step rate. The `Transform` itself always holds the pose
+you wrote. A `Transform` you write in `Update` is drawn exactly as written, at
+once.
 
 ## Options
 

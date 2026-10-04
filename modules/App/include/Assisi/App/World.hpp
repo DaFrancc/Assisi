@@ -507,7 +507,7 @@ public:
     /// refs pointing outside it null with a warning (Runtime::TransferEntities).
     ///
     /// Transients are rebuilt per destination world: the Jolt body is removed
-    /// from @p src's PhysicsWorld and recreated from its RigidBodyDescriptor in
+    /// from @p src's PhysicsWorld and recreated from its Collider in
     /// @p dst's, and MeshRenderer pointers re-resolve against the cache. Needs the
     /// render Services installed (for the mesh re-resolve); without them the
     /// component data still moves and physics rebuilds, but meshes stay
@@ -688,16 +688,10 @@ private:
 /// resolve them onto.
 void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
 
-/// @brief Brings a simulated-but-unrendered world's Transforms up to date, in the
-/// order that actually works: **poses first, matrices second**.
-///
-/// The render path does two things for the world it draws — writes physics poses
-/// into Transforms, then propagates those into world matrices. A resident world
-/// that simulates without being drawn gets neither. Propagating alone is the
-/// tempting half-fix and is worse than useless: it produces perfectly correct
-/// matrices of stale spawn poses. Call once per frame, after the fixed-step loop,
-/// for every simulated world that is not the one being rendered.
-void SyncUnrenderedWorld(World &world);
+/// @brief Sets how @p world is drawn between its last two fixed steps: at
+/// @p alpha while it is @p stepping, exactly where everything stands otherwise.
+/// Call once a frame, before propagating.
+void BlendWorld(World &world, bool stepping, float alpha);
 
 /// @brief Builds a freshly loaded or restored scene's physics anew, in the order
 /// that works: **propagate first, then rebuild**.

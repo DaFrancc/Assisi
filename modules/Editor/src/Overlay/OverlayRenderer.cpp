@@ -7,6 +7,8 @@
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -147,7 +149,7 @@ bool OverlayRenderer::IsIconSuppressed(ECS::Entity entity) const
     return std::find(_iconSuppressed.begin(), _iconSuppressed.end(), entity) != _iconSuppressed.end();
 }
 
-void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
                              const Camera &camera, const Runtime::SceneRenderer &sceneRenderer)
 {
     // Recomputed rather than carried over from the scene draw: both are two
@@ -155,12 +157,12 @@ void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene
     // more thing that can go stale between the two calls.
     const glm::mat4 projection = Runtime::ProjectionMatrix(
         camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
-    const glm::mat4 view = Runtime::ViewMatrix(cameraTransform);
+    const glm::mat4 view = Runtime::ViewMatrix(cameraWorld);
     const glm::mat4 viewProjection = projection * view;
 
     {
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "editor-icons");
-        DrawEditorIcons(frame, viewProjection, view, cameraTransform.position, scene);
+        DrawEditorIcons(frame, viewProjection, view, Math::TranslationOf(cameraWorld), scene);
     }
 
     // Submitted silhouette outlines (the selected object's collider + mesh). Each
@@ -219,13 +221,13 @@ void OverlayRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const gl
     // unless it is beyond the LOD distance from the camera.
     if (_editorIconsVisible)
     {
-        for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
+        for (auto [entity, world] : scene.Query<ECS::WorldMatrix>(ECS::Without<MeshRenderer>{}))
         {
             if (IsIconSuppressed(entity))
             {
                 continue;
             }
-            const glm::vec3 position(transform.worldMatrix[3]);
+            const glm::vec3 position = Math::TranslationOf(world.matrix);
             const glm::vec3 offset = position - cameraPosition;
             if (glm::dot(offset, offset) <= maxDistanceSq)
             {
@@ -297,11 +299,12 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
         return;
     }
 
-    const Transform *transform = scene.Get<Transform>(entity);
-    if (transform == nullptr)
+    const ECS::WorldMatrix *placement = scene.Get<ECS::WorldMatrix>(entity);
+    if (placement == nullptr)
     {
         return; // no placement — nothing to outline
     }
+    const glm::mat4 &world = placement->matrix;
     const MeshRenderer *renderer = scene.Get<MeshRenderer>(entity);
 
     // A placement-only entity shows a billboard only while icons are on. A
@@ -320,15 +323,15 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
         // border traced around a finer silhouette than the one on screen reads as
         // a halo.
         _outlinePass.Draw(frame, viewProjection,
-                          OutlinePass::OutlineItem{renderer->meshBuffer, transform->worldMatrix,
+                          OutlinePass::OutlineItem{renderer->meshBuffer, world,
                                                    sceneRenderer.DrawnLodLevel(entity, *renderer->meshBuffer,
-                                                                               transform->worldMatrix)},
+                                                                               world)},
                           color);
     }
     else if (placementIcon)
     {
         // Outline the billboard quad so its selection matches a mesh's.
-        const glm::vec3 center(transform->worldMatrix[3]);
+        const glm::vec3 center = Math::TranslationOf(world);
         const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
         _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,

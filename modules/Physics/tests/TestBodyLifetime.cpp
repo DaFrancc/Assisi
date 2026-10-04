@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestBodyLifetime.cpp
-/// @brief A body lives exactly as long as its entity's descriptor and Transform,
+/// @brief A body lives exactly as long as its entity's Collider or Character and Transform,
 ///        whoever adds or removes them and however the scene learns of it.
 ///
 /// Nothing in these cases asks the world to create or destroy anything. Each
@@ -46,7 +46,7 @@ constexpr int32_t kLogOverflow = 5000;
 
 } // namespace
 
-TEST_CASE("An entity with a descriptor and a Transform has a body after a reconcile")
+TEST_CASE("An entity with a Collider and a Transform has a body after a reconcile")
 {
     TestScene test;
     const glm::vec3 spot{3.f, 0.f, 0.f};
@@ -67,7 +67,6 @@ TEST_CASE("Asking about an entity with no body answers with nothing")
     CHECK(test.world.GetBodyPose(bare).position == glm::vec3(0.f));
     CHECK(test.world.GetBodyVelocity(bare).first == glm::vec3(0.f));
     CHECK_FALSE(test.world.IsBodyActive(bare));
-    test.world.SetBodyLinearVelocity(bare, {1.f, 0.f, 0.f});
     test.world.Teleport(bare, Physics::Pose{});
 }
 
@@ -104,19 +103,19 @@ TEST_CASE("Destroying an entity destroys its character")
     CHECK_FALSE(SomethingAt(test.world, feet + glm::vec3(0.f, 0.5f, 0.f)));
 }
 
-TEST_CASE("Removing the descriptor destroys the body, and adding it back builds a new one")
+TEST_CASE("Removing the Collider destroys the body, and adding it back builds a new one")
 {
     TestScene test;
     const glm::vec3 spot{0.f, 0.f, 2.f};
     const ECS::Entity box = AddBody(test.scene, spot, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
 
-    REQUIRE(test.scene.Remove<Physics::RigidBodyDescriptor>(box) == ECS::RemoveResult::Removed);
+    REQUIRE(test.scene.Remove<Physics::Collider>(box) == ECS::RemoveResult::Removed);
     test.world.Reconcile();
     CHECK_FALSE(test.world.HasBody(box));
     CHECK_FALSE(SomethingAt(test.world, spot));
 
-    REQUIRE(test.scene.Add(box, Box({0.5f, 0.5f, 0.5f}, true)) != nullptr);
+    REQUIRE(test.scene.Add(box, Box({0.5f, 0.5f, 0.5f}, true).collider) != nullptr);
     test.world.Reconcile();
     CHECK(test.world.HasBody(box));
     CHECK(SomethingAt(test.world, spot));
@@ -138,11 +137,11 @@ TEST_CASE("A body is destroyed even when the removal log no longer reaches back 
     REQUIRE(test.scene.Add(churn, ECS::Transform{}) != nullptr);
     for (int32_t i = 0; i < kLogOverflow; ++i)
     {
-        REQUIRE(test.scene.Add(churn, Box({0.5f, 0.5f, 0.5f}, true)) != nullptr);
-        REQUIRE(test.scene.Remove<Physics::RigidBodyDescriptor>(churn) == ECS::RemoveResult::Removed);
+        REQUIRE(test.scene.Add(churn, Box({0.5f, 0.5f, 0.5f}, true).collider) != nullptr);
+        REQUIRE(test.scene.Remove<Physics::Collider>(churn) == ECS::RemoveResult::Removed);
     }
     std::vector<ECS::Entity> removed;
-    REQUIRE_FALSE(test.scene.RemovedSince<Physics::RigidBodyDescriptor>(0, removed));
+    REQUIRE_FALSE(test.scene.RemovedSince<Physics::Collider>(0, removed));
 
     test.world.Reconcile();
     CHECK_FALSE(test.world.HasBody(box));
@@ -202,11 +201,11 @@ TEST_CASE("An entity destroyed and revived at its own handle starts over")
     const ECS::Entity walker = AddCharacter(test.scene, {5.f, 0.f, 0.f});
     for (int32_t i = 0; i < 30; ++i)
     {
-        test.world.MoveCharacter(walker, {3.f, 0.f, 0.f}, /*jump=*/ false);
+        PhysicsTests::Drive(test.scene, walker, {3.f, 0.f, 0.f}, /*jump=*/ false);
         Step(test.world);
     }
     REQUIRE(test.world.GetBodyVelocity(faller).first.y < 0.f);
-    REQUIRE(test.world.GetCharacterState(walker).velocity.x > 0.f);
+    REQUIRE(PhysicsTests::StateOf(test.scene, walker).velocity.x > 0.f);
 
     for (const ECS::Entity entity : {faller, walker})
     {
@@ -216,14 +215,15 @@ TEST_CASE("An entity destroyed and revived at its own handle starts over")
     test.scene.ReviveAt(faller);
     test.scene.ReviveAt(walker);
     REQUIRE(test.scene.Add(faller, ECS::Transform{.position = spawn}) != nullptr);
-    REQUIRE(test.scene.Add(faller, Ball(0.5f, false)) != nullptr);
+    REQUIRE(test.scene.Add(faller, Ball(0.5f, false).collider) != nullptr);
+    REQUIRE(test.scene.Add(faller, Physics::RigidBody{}) != nullptr);
     REQUIRE(test.scene.Add(walker, ECS::Transform{.position = {5.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(test.scene.Add(walker, Physics::CharacterDescriptor{}) != nullptr);
+    REQUIRE(test.scene.Add(walker, Physics::Character{}) != nullptr);
 
     test.world.Reconcile();
     CHECK(test.world.GetBodyVelocity(faller).first == glm::vec3(0.f));
     CHECK(test.world.GetBodyPose(faller).position == spawn);
-    CHECK(test.world.GetCharacterState(walker).velocity == glm::vec3(0.f));
+    CHECK(PhysicsTests::StateOf(test.scene, walker).velocity == glm::vec3(0.f));
 }
 
 TEST_CASE("Rebuild starts every body and character over from the scene")
@@ -235,10 +235,10 @@ TEST_CASE("Rebuild starts every body and character over from the scene")
     const ECS::Entity walker = AddCharacter(test.scene, {5.f, 0.f, 0.f});
     for (int32_t i = 0; i < 30; ++i)
     {
-        test.world.MoveCharacter(walker, {3.f, 0.f, 0.f}, /*jump=*/ false);
+        PhysicsTests::Drive(test.scene, walker, {3.f, 0.f, 0.f}, /*jump=*/ false);
         Step(test.world);
     }
-    REQUIRE(test.world.GetCharacterState(walker).velocity.x > 0.f);
+    REQUIRE(PhysicsTests::StateOf(test.scene, walker).velocity.x > 0.f);
 
     // Put back where it started, as a restore would, without the world being
     // told anything else.
@@ -249,7 +249,7 @@ TEST_CASE("Rebuild starts every body and character over from the scene")
     CHECK(test.world.HasBody(walker));
     CHECK(test.world.GetBodyVelocity(faller).first == glm::vec3(0.f));
     CHECK(test.world.GetBodyPose(faller).position == spawn);
-    CHECK(test.world.GetCharacterState(walker).velocity == glm::vec3(0.f));
+    CHECK(PhysicsTests::StateOf(test.scene, walker).velocity == glm::vec3(0.f));
 }
 
 TEST_CASE("A world holds more than a thousand bodies by default")

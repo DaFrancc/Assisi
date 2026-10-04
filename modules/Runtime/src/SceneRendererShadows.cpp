@@ -16,11 +16,43 @@
 #include <utility>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Camera.hpp>
+#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
 namespace Assisi::Runtime
 {
+
+namespace
+{
+
+/// Where @p light's shadow is drawn from: where it is drawn, or, with
+/// @p followSteps, where its Transform chain holds it. That pose changes only
+/// when a fixed step or a direct write moves the light, not as the light is
+/// drawn between steps, so a tile kept against it is redrawn at the tick rate.
+Render::LocalShadowLightPose ShadowPoseOf(const ECS::Scene &scene, const LightingSystem::LocalLight &light,
+                                          Render::LocalLightKind kind, bool followSteps)
+{
+    Render::LocalShadowLightPose pose{.position = light.position,
+                                      .direction = light.direction,
+                                      .range = light.range,
+                                      .outerAngleDegrees = light.outerAngleDegrees};
+    if (!followSteps)
+    {
+        return pose;
+    }
+    const ECS::Transform world = ECS::WorldTransformOf(scene, light.entity);
+    pose.position = world.position;
+    if (kind == Render::LocalLightKind::Spot)
+    {
+        pose.direction = SpotWorldDirection(glm::mat4_cast(world.rotation) * glm::scale(glm::mat4(1.f), world.scale));
+    }
+    return pose;
+}
+
+} // namespace
 
 void SceneRenderer::ForgetKeptShadows()
 {
@@ -255,7 +287,7 @@ float SceneRenderer::LocalLightScreenCoverage(const glm::vec3 &position, float r
 }
 
 void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                                       const Transform &cameraTransform, Render::MeshPass::ShadowFrameData &shadows)
+                                       const glm::mat4 &cameraWorld, Render::MeshPass::ShadowFrameData &shadows)
 {
     _lastLocalShadowStats = Render::LocalShadowPass::Stats{};
     _lastSelection.Clear();
@@ -300,7 +332,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         _shadowDepthRenderer.BeginFrame();
     }
 
-    const glm::vec3 cameraPosition = glm::vec3(cameraTransform.worldMatrix[3]);
+    const glm::vec3 cameraPosition = Math::TranslationOf(cameraWorld);
     const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
 
     _localCandidates.reserve(spots.size() + points.size());
@@ -356,19 +388,15 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         {
             continue;
         }
+        const Render::LocalShadowLightPose pose =
+            ShadowPoseOf(scene, *light, winner.kind, !_shadowSettings.local.cache.redrawMovingLightsEveryFrame);
         _localRequests.push_back(Render::LocalShadowRequest{
-                .kind = winner.kind,
-                .lightIndex = light->index,
-                .pose = Render::LocalShadowLightPose{.position = light->position,
-                                                     .direction = light->direction,
-                                                     .range = light->range,
-                                                     .outerAngleDegrees = light->outerAngleDegrees},
-                .sizeClass = winner.sizeClass});
+                .kind = winner.kind, .lightIndex = light->index, .pose = pose, .sizeClass = winner.sizeClass});
         // The light's whole reach, whatever shape it lights within it. A spot's
         // cone would be a tighter volume, but the cone test belongs per face
         // where the frustum already makes it — bounding the sphere here keeps
         // one gather serving both kinds.
-        _localLightVolumes.push_back(Geometry::BoundingSphere{light->position, light->range});
+        _localLightVolumes.push_back(Geometry::BoundingSphere{pose.position, light->range});
     }
 
     Render::LocalShadowPass::Frame shadowFrame{.requests = _localRequests,

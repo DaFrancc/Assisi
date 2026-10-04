@@ -5,11 +5,14 @@
 /// @brief A scene with a physics world bound to it, and the few ways the tests
 ///        put bodies in it.
 ///
-/// A body exists because an entity has a descriptor and a Transform, so every
-/// helper here builds an entity; none of them talks to the world directly. The
-/// world builds the body on its next reconcile, which Step runs.
+/// A body exists because an entity has a Collider or a Character and a
+/// Transform, so every helper here builds an entity or writes a component; none
+/// of them talks to the world directly. The world follows on its next
+/// reconcile, which Step runs.
 
+#include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include <doctest/doctest.h>
 
@@ -34,43 +37,113 @@ struct TestScene
     Physics::PhysicsWorld world;
 };
 
-/// A box descriptor of @p halfExtents.
-inline Physics::RigidBodyDescriptor Box(glm::vec3 halfExtents, bool isStatic)
+/// A collider, and the RigidBody that makes it move unless it is static.
+struct BodySpec
 {
-    Physics::RigidBodyDescriptor descriptor;
-    descriptor.shape = Physics::ColliderShape::Box;
-    descriptor.halfExtents = halfExtents;
-    descriptor.isStatic = isStatic;
-    return descriptor;
+    Physics::Collider collider;
+    std::optional<Physics::RigidBody> rigidBody;
+};
+
+/// A box of @p halfExtents, static or dynamic.
+inline BodySpec Box(glm::vec3 halfExtents, bool isStatic)
+{
+    BodySpec spec;
+    spec.collider.shape = Physics::ColliderShape::Box;
+    spec.collider.halfExtents = halfExtents;
+    if (!isStatic)
+    {
+        spec.rigidBody = Physics::RigidBody{};
+    }
+    return spec;
 }
 
-/// A sphere descriptor of @p radius.
-inline Physics::RigidBodyDescriptor Ball(float radius, bool isStatic)
+/// A sphere of @p radius, static or dynamic.
+inline BodySpec Ball(float radius, bool isStatic)
 {
-    Physics::RigidBodyDescriptor descriptor;
-    descriptor.shape = Physics::ColliderShape::Sphere;
-    descriptor.radius = radius;
-    descriptor.isStatic = isStatic;
-    return descriptor;
+    BodySpec spec;
+    spec.collider.shape = Physics::ColliderShape::Sphere;
+    spec.collider.radius = radius;
+    if (!isStatic)
+    {
+        spec.rigidBody = Physics::RigidBody{};
+    }
+    return spec;
 }
 
-/// An entity at @p position carrying @p descriptor.
-inline ECS::Entity AddBody(ECS::Scene &scene, glm::vec3 position, const Physics::RigidBodyDescriptor &descriptor)
+/// @p spec on @p filter. A moving body on the Trigger channel becomes a
+/// kinematic sensor that never sleeps, the kind that finds bodies already at
+/// rest inside it.
+inline BodySpec WithFilter(BodySpec spec, Physics::CollisionFilter filter)
+{
+    spec.collider.channel = filter.channel;
+    spec.collider.collidesWith = filter.collidesWith;
+    if (spec.rigidBody.has_value() && filter.channel == Physics::CollisionChannel::Trigger)
+    {
+        spec.rigidBody->motion = Physics::MotionType::Kinematic;
+        spec.rigidBody->allowSleep = false;
+    }
+    return spec;
+}
+
+/// An entity at @p position carrying @p spec.
+inline ECS::Entity AddBody(ECS::Scene &scene, glm::vec3 position, const BodySpec &spec)
 {
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, ECS::Transform{.position = position}) != nullptr);
-    REQUIRE(scene.Add(entity, descriptor) != nullptr);
+    REQUIRE(scene.Add(entity, spec.collider) != nullptr);
+    if (spec.rigidBody.has_value())
+    {
+        REQUIRE(scene.Add(entity, *spec.rigidBody) != nullptr);
+    }
     return entity;
 }
 
 /// A character standing with its feet at @p feet.
 inline ECS::Entity AddCharacter(ECS::Scene &scene, glm::vec3 feet,
-                                const Physics::CharacterDescriptor &descriptor = Physics::CharacterDescriptor{})
+                                const Physics::Character &character = Physics::Character{})
 {
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, ECS::Transform{.position = feet}) != nullptr);
-    REQUIRE(scene.Add(entity, descriptor) != nullptr);
+    REQUIRE(scene.Add(entity, character) != nullptr);
     return entity;
+}
+
+/// What @p character's last step left behind.
+inline Physics::CharacterState StateOf(const ECS::Scene &scene, ECS::Entity character)
+{
+    const Physics::CharacterState *state = scene.Get<Physics::CharacterState>(character);
+    REQUIRE(state != nullptr);
+    return *state;
+}
+
+/// Asks @p character to move at @p wishVelocity, in metres per second, and,
+/// with @p jump, to jump. The intent's `move` is scaled by the character's
+/// speed for the stance it is in, so it is divided by that here.
+inline void Drive(ECS::Scene &scene, ECS::Entity character, glm::vec3 wishVelocity, bool jump)
+{
+    const Physics::Character &tuning = *scene.Get<Physics::Character>(character);
+    const bool crouching = StateOf(scene, character).stance == Physics::Stance::Crouching;
+    const float speed = crouching ? tuning.walkSpeed * tuning.crouchSpeedScale : tuning.walkSpeed;
+    Physics::CharacterIntent &intent = *scene.GetMut<Physics::CharacterIntent>(character);
+    intent.move = speed > 0.f ? wishVelocity / speed : glm::vec3(0.f);
+    intent.jump = intent.jump || jump;
+}
+
+/// Asks @p character for @p stance and applies it now, through a reconcile.
+/// @return whether the character is in that stance afterwards.
+inline bool AskStance(ECS::Scene &scene, Physics::PhysicsWorld &world, ECS::Entity character, Physics::Stance stance)
+{
+    scene.GetMut<Physics::CharacterIntent>(character)->stance = stance;
+    world.Reconcile();
+    return StateOf(scene, character).stance == stance;
+}
+
+/// Turns @p character to look along @p forward, ignoring its vertical part.
+inline void Face(ECS::Scene &scene, ECS::Entity character, glm::vec3 forward)
+{
+    const glm::vec3 flat = glm::normalize(glm::vec3(forward.x, 0.f, forward.z));
+    const float yaw = std::atan2(-flat.x, -flat.z);
+    scene.GetMut<ECS::Transform>(character)->rotation = glm::angleAxis(yaw, glm::vec3(0.f, 1.f, 0.f));
 }
 
 /// A wide static floor whose top face is at height 0.
@@ -81,13 +154,12 @@ inline ECS::Entity AddFloor(ECS::Scene &scene)
     return AddBody(scene, {0.f, -kHalfThickness, 0.f}, Box({kHalfWidth, kHalfThickness, kHalfWidth}, true));
 }
 
-/// Runs @p steps fixed steps, snapshotting after each as a game loop does.
+/// Runs @p steps fixed steps.
 inline void Step(Physics::PhysicsWorld &world, int32_t steps = 1)
 {
     for (int32_t i = 0; i < steps; ++i)
     {
         world.Update(kStep);
-        world.CaptureState();
     }
 }
 

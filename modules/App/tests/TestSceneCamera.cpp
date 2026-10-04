@@ -6,6 +6,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/App/SceneCamera.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -26,8 +27,7 @@ Assisi::ECS::Entity AddCamera(Assisi::ECS::Scene &scene, bool active, const glm:
 
     Assisi::ECS::Transform *transform = scene.Add<Assisi::ECS::Transform>(entity);
     REQUIRE(transform != nullptr);
-    transform->position    = position;
-    transform->worldMatrix = glm::translate(glm::mat4(1.f), position);
+    transform->position = position;
 
     Assisi::Runtime::Camera *camera = scene.Add<Assisi::Runtime::Camera>(entity);
     REQUIRE(camera != nullptr);
@@ -45,12 +45,13 @@ TEST_CASE("ActiveSceneCamera returns the active camera with its world matrix int
     Assisi::ECS::Scene scene;
     AddCamera(scene, /*active=*/ false, glm::vec3{-9.f, -9.f, -9.f});
     AddCamera(scene, /*active=*/ true, kCameraPosition);
+    (void)Assisi::ECS::PropagateTransforms(scene, 0);
 
     const std::optional<SceneView> view = ActiveSceneCamera(scene);
 
     REQUIRE(view.has_value());
     CHECK(view->pose.position == kCameraPosition);
-    CHECK(view->pose.worldMatrix == glm::translate(glm::mat4(1.f), kCameraPosition));
+    CHECK(view->world == glm::translate(glm::mat4(1.f), kCameraPosition));
 }
 
 TEST_CASE("ActiveSceneCamera is empty when the scene nominates none")

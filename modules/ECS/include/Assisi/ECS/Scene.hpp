@@ -238,6 +238,27 @@ struct Scene
         return pool ? pool->Get(entity) : nullptr;
     }
 
+    /// @brief The lanes T's pool keeps beside its components (SparseSetLanes),
+    /// or nullptr when no T was ever added to this scene.
+    template <typename T> SparseSetLanes<T> *Lanes()
+    {
+        SparseSet<T> *pool = GetPool<T>();
+        return pool ? &pool->Lanes() : nullptr;
+    }
+    template <typename T> const SparseSetLanes<T> *Lanes() const
+    {
+        const SparseSet<T> *pool = GetPool<T>();
+        return pool ? &pool->Lanes() : nullptr;
+    }
+
+    /// @brief The entity's slot in T's lanes, or SparseSet<T>::Invalid when it
+    /// has no T.
+    template <typename T> uint32_t DenseIndexOf(Entity entity) const
+    {
+        const SparseSet<T> *pool = GetPool<T>();
+        return pool ? pool->DenseIndexOf(entity) : SparseSet<T>::Invalid;
+    }
+
     /// @brief Returns true if the entity has a component of type T.
     template <typename T> bool Has(Entity entity) const
     {

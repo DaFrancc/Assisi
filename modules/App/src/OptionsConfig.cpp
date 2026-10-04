@@ -230,6 +230,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                 {
                     const auto &cache = local.at("cache");
                     ReadField(cache, "enabled", shadows.local.cache.enabled);
+                    ReadField(cache, "redrawMovingLightsEveryFrame", shadows.local.cache.redrawMovingLightsEveryFrame);
                     ReadField(cache, "updateBudgetFaces", shadows.local.cache.updateBudgetFaces);
                     ReadField(cache, "promoteStillSeconds", shadows.local.cache.promoteStillSeconds);
                     ReadField(cache, "movingLightUpdateDivisor", shadows.local.cache.movingLightUpdateDivisor);
@@ -347,11 +348,19 @@ OptionsConfig OptionsConfig::LoadFromJson()
     // options.json is per-user writable state, so it lives under the user root
     // (see SaveToJson), not the read-only asset root.
     const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
-    if (!text)
+    if (text && !nlohmann::json::accept(*text))
     {
-        return OptionsConfig{};
+        return FromJsonText(*text);
     }
-    return FromJsonText(*text);
+    const OptionsConfig options = text ? FromJsonText(*text) : OptionsConfig{};
+
+    // Written back whenever it would read differently, so the file is there to
+    // edit, with every setting in it, from the first launch on.
+    if (!text || *text != options.ToJsonText())
+    {
+        options.SaveToJson();
+    }
+    return options;
 }
 
 namespace
@@ -381,42 +390,12 @@ nlohmann::json RoundFloats(nlohmann::json json)
     return json;
 }
 
-/// @brief The keys of @p value that differ from @p defaults, recursively, with
-/// objects left empty by that dropped.
-nlohmann::json ChangedFrom(const nlohmann::json &value, const nlohmann::json &defaults)
-{
-    nlohmann::json changed = nlohmann::json::object();
-    for (auto entry = value.begin(); entry != value.end(); ++entry)
-    {
-        const auto fallback = defaults.find(entry.key());
-        if (fallback == defaults.end())
-        {
-            changed[entry.key()] = entry.value();
-        }
-        else if (entry->is_object() && fallback->is_object())
-        {
-            nlohmann::json nested = ChangedFrom(*entry, *fallback);
-            if (!nested.empty())
-            {
-                changed[entry.key()] = std::move(nested);
-            }
-        }
-        // Both sides are already rounded (see RoundFloats), so a value a slider
-        // left within rounding of its default compares equal to it.
-        else if (*entry != *fallback)
-        {
-            changed[entry.key()] = entry.value();
-        }
-    }
-    return changed;
-}
 } // namespace
 
 std::string OptionsConfig::ToJsonText() const
 {
-    // Only what differs from the defaults. A value written out at its default
-    // would pin it: a later change to the default would never reach this user.
-    return ChangedFrom(RoundFloats(FullJson(*this)), RoundFloats(FullJson(OptionsConfig{}))).dump(4);
+    // Every setting, so the file shows each one there is to change.
+    return RoundFloats(FullJson(*this)).dump(4);
 }
 
 namespace
@@ -470,6 +449,7 @@ nlohmann::json FullJson(const OptionsConfig &options)
 
     nlohmann::json &cache = json["shadows"]["local"]["cache"];
     cache["enabled"] = shadows.local.cache.enabled;
+    cache["redrawMovingLightsEveryFrame"] = shadows.local.cache.redrawMovingLightsEveryFrame;
     cache["updateBudgetFaces"] = shadows.local.cache.updateBudgetFaces;
     cache["promoteStillSeconds"] = shadows.local.cache.promoteStillSeconds;
     cache["movingLightUpdateDivisor"] = shadows.local.cache.movingLightUpdateDivisor;
@@ -497,9 +477,8 @@ nlohmann::json FullJson(const OptionsConfig &options)
     json["frameSync"]["fpsLimit"] = fpsLimit;
 
     // Guarded because there is nothing to write when the player has chosen no
-    // size, not to keep the file clean — ChangedFrom already drops a value that
-    // matches the default document. Absence is the meaning here: no size stored
-    // is what lets the shipped default keep moving under the player.
+    // size. Absence is the meaning here: no size stored is what lets the game's
+    // own size keep moving under the player.
     if (options.width)
     {
         json["window"]["width"] = *options.width;
@@ -514,8 +493,8 @@ nlohmann::json FullJson(const OptionsConfig &options)
         json["controls"]["multiTapSeconds"] = *options.multiTapSeconds;
     }
 
-    // Written even when empty, so the defaults hold the same empty object and
-    // ChangedFrom drops it: only a volume the player set is ever saved.
+    // Only a volume the player set: every other bus follows the game's own
+    // volume for it.
     nlohmann::json &volumes = json["audio"]["volumes"];
     volumes = nlohmann::json::object();
     for (const std::pair<const std::string, float> &entry : options.busVolumes)

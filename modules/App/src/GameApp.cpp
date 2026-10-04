@@ -375,18 +375,13 @@ void GameApp::StepWorlds(float dt)
             // Apply forces this tick, then simulate them, then react to what the
             // step actually did. The phase decides which side of the step a
             // system lands on; ordering within a phase cannot substitute for it.
+            // Everything inside the scope is one fixed step to the render blend.
+            const ECS::FixedStepScope step(world.scene);
             world.systems.Run(SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
 
             {
                 ASSISI_PROFILE_SCOPE("physics-step");
                 world.physics.Update(dt);
-            }
-            {
-                // Snapshot the new poses for OnRender to blend between. Linear in
-                // the body count and separable from the solve, so a big scene can
-                // say which of the two grew.
-                ASSISI_PROFILE_SCOPE("physics-capture");
-                world.physics.CaptureState();
             }
 
             world.systems.Run(SystemPhase::PostFixedUpdate,
@@ -490,15 +485,14 @@ void GameApp::OnUpdate(float dt)
             });
     }
 
-    // Worlds that simulate but are not drawn get neither the pose write-back nor
-    // the transform propagation the render path performs for the world it draws.
+    // How far between its last two fixed steps each world is drawn. A world
+    // that is not stepping is drawn exactly: the accumulator goes on cycling
+    // behind a paused world, and blending would shake what stopped.
     _worlds.ForEach(
         [this](World &world)
         {
-            if (world.simulate && world.state == WorldState::Active && &world != _world)
-            {
-                SyncUnrenderedWorld(world);
-            }
+            const bool stepping = world.state == WorldState::Active && world.simulate && !world.paused;
+            BlendWorld(world, stepping, GetInterpolationAlpha());
         });
 
     // Game logic, out of each world's own registry. Systems that consume input
@@ -531,32 +525,18 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         return;
     }
 
-    // Not while the world is paused: the pose it stopped in is authoritative
-    // then, and the accumulator goes on filling and draining behind a paused
-    // world, so blending would sweep between the last two poses and shake a
-    // body that has stopped.
-    if (!_world->paused)
-    {
-        // Blend physics-driven Transforms between their last two fixed-step poses,
-        // so bodies move at the display's refresh rate rather than the physics
-        // rate.
-        ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _world->physics.InterpolateTransforms(GetInterpolationAlpha());
-        PlaceCharacterEyes(_world->scene, _world->physics, GetInterpolationAlpha());
-    }
-
     // Before the camera is chosen, not only inside Render(): a camera is placed
     // from its *world* matrix, and one parented to a character that just moved
     // would otherwise sit where the previous frame computed — permanently a frame
     // behind whatever it is attached to.
     _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
+    ASSISI_PROFILE_COUNTER("propagate-resolved", ECS::LastPropagationResolved(_world->scene));
 
     // A benchmark flies its route from the scene camera's lens: the route says
     // where the camera is, the level's Camera still says what it sees.
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const Runtime::Transform benchmarkPose =
-        _benchmark ? Runtime::CameraTransformFor(_benchmark->Aim()) : Runtime::Transform{};
-    const Runtime::Transform &pose = _benchmark ? benchmarkPose : view ? view->pose : _fallbackPose;
+    const glm::mat4 benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : glm::mat4(1.f);
+    const glm::mat4 &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
     const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
 
     // The game's own render systems, through the world's registry. After
@@ -566,13 +546,13 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     {
         const float aspectRatio =
             Runtime::AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
-        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(pose),
+        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(cameraWorld),
                                 Runtime::ProjectionMatrix(camera, aspectRatio)};
         _world->systems.RunRender(renderCtx);
     }
 
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    _sceneRenderer.Render(frame, _world->scene, pose, camera, _world->propagationTick);
+    _sceneRenderer.Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
 }
 
 void GameApp::OnResize(int32_t width, int32_t height)

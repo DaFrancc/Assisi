@@ -40,10 +40,13 @@ Assisi::ECS::Entity BuildDropScene(World &world, glm::vec3 dropFrom)
                            Assisi::ECS::Transform *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
                            transform->position                 = at;
 
-                           Assisi::Physics::RigidBodyDescriptor descriptor{};
-                           descriptor.halfExtents = halfExtents;
-                           descriptor.isStatic    = isStatic;
-                           (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
+                           Assisi::Physics::Collider collider{};
+                           collider.halfExtents = halfExtents;
+                           (void)world.scene.Add<Assisi::Physics::Collider>(entity, collider);
+                           if (!isStatic)
+                           {
+                               (void)world.scene.Add<Assisi::Physics::RigidBody>(entity);
+                           }
 
                            world.physics.Reconcile();
                            return entity;
@@ -60,7 +63,6 @@ std::vector<Assisi::Physics::ContactEvent> StepUntilEnter(World &world, int32_t 
     for (int32_t i = 0; i < maxSteps; ++i)
     {
         world.physics.Update(kStep);
-        world.physics.CaptureState();
 
         const std::span<const Assisi::Physics::ContactEvent> events = world.physics.ContactEvents();
         const bool entered = std::any_of(events.begin(), events.end(),
@@ -131,7 +133,6 @@ TEST_CASE("A pair enters once and then stays, however long it rests")
     for (int32_t i = 0; i < 600; ++i) // ten seconds of lying there
     {
         world.physics.Update(kStep);
-        world.physics.CaptureState();
         for (const Assisi::Physics::ContactEvent &event : world.physics.ContactEvents())
         {
             if (event.entity != ball)
@@ -172,7 +173,6 @@ TEST_CASE("A pair that really separates reports one Exit")
     for (int32_t i = 0; i < 300; ++i)
     {
         world.physics.Update(kStep);
-        world.physics.CaptureState();
     }
     REQUIRE_FALSE(world.physics.IsBodyActive(ball));
 
@@ -182,7 +182,6 @@ TEST_CASE("A pair that really separates reports one Exit")
     for (int32_t i = 0; i < 20; ++i)
     {
         world.physics.Update(kStep);
-        world.physics.CaptureState();
         for (const Assisi::Physics::ContactEvent &event : world.physics.ContactEvents())
         {
             if (event.entity == ball && event.phase == Assisi::Physics::ContactPhase::Exit)
@@ -268,11 +267,10 @@ BounceOutcome RunUntilBounce(WorldManager &worlds, World &world, Assisi::ECS::En
         if (outcome.impactSpeed > 0.f)
         {
             REQUIRE(world.physics.HasBody(ball));
-            outcome.launchSpeed = world.physics.GetBodyVelocity(ball).first.y;
+            outcome.launchSpeed = world.scene.Get<Assisi::Physics::BodyState>(ball)->linearVelocity.y;
         }
 
         world.physics.Update(kStep);
-        world.physics.CaptureState();
     }
     return outcome;
 }
@@ -332,12 +330,11 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
             if (entered)
             {
                 REQUIRE(world.physics.HasBody(ball));
-                afterContact = world.physics.GetBodyVelocity(ball).first.y;
+                afterContact = world.scene.Get<Assisi::Physics::BodyState>(ball)->linearVelocity.y;
                 bounced      = true;
             }
 
             world.physics.Update(kStep);
-            world.physics.CaptureState();
         }
 
         REQUIRE(bounced);
@@ -372,7 +369,6 @@ TEST_CASE("A body already at rest never launches itself, even at rebound > 1")
         SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
         BounceSystem(ctx);
         world.physics.Update(kStep);
-        world.physics.CaptureState();
 
         REQUIRE(world.physics.HasBody(ball));
         highest = std::max(highest, world.physics.GetBodyPose(ball).position.y);
@@ -422,7 +418,6 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
 
         BounceSystem(ctx);
         world.physics.Update(kStep);
-        world.physics.CaptureState();
 
         REQUIRE(world.physics.HasBody(ball));
         highest = std::max(highest, world.physics.GetBodyPose(ball).position.y);
@@ -487,7 +482,6 @@ TEST_CASE("A body with no Bounce component is left alone")
         BounceSystem(ctx);
 
         world.physics.Update(kStep);
-        world.physics.CaptureState();
 
         if (landed)
         {

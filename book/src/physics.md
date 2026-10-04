@@ -2,14 +2,26 @@
 
 Assisi simulates rigid bodies (boxes falling, balls bouncing, crates stacking)
 with the [Jolt Physics](https://github.com/jrouwe/JoltPhysics) library. You
-don't talk to Jolt directly. You describe bodies with a component and the engine
-takes care of the rest.
+don't talk to Jolt directly. You describe bodies with components and the
+engine takes care of the rest.
 
 ## Making something physical
 
-Give an entity a **`RigidBodyDescriptor`** (from
-`<Assisi/Physics/PhysicsComponents.hpp>`) along with its `Transform`. In the
-editor, that's **Add Component → RigidBodyDescriptor** on the selected object.
+The physics components are in `<Assisi/Physics/PhysicsComponents.hpp>`:
+
+| Component | What it is |
+|---|---|
+| `Collider` | A shape, and what touching it is like. On its own, it is static geometry: a floor, a wall, a trigger volume that never moves. |
+| `RigidBody` | Makes a `Collider` move. |
+| `BodyState` | What a moving body is doing. Added with `RigidBody`. |
+| `Character` | A player or an NPC. See [The character controller](#the-character-controller). |
+
+**Static geometry is a `Collider` with no `RigidBody`.** Most of a level is
+static, so most entities need only a `Collider`. In the editor, that's **Add
+Component → Collider** on the selected object, and **Add Component →
+RigidBody** to make it move.
+
+### `Collider`
 
 | Field | Meaning |
 |---|---|
@@ -17,27 +29,80 @@ editor, that's **Add Component → RigidBodyDescriptor** on the selected object.
 | `halfExtents` | Half the box's size on each axis (for `Box`). |
 | `radius` | For `Sphere`, `Capsule` and `Cylinder`. |
 | `halfHeight` | For `Capsule` and `Cylinder`. |
-| `isStatic` | `true` for things that never move, like floors and walls. |
-| `enableCCD` | Continuous collision detection: stops fast, small objects from passing through thin walls. Costs a little more. |
-| `channel`, `collidesWith` | Which collision group this body is in, and which groups it hits. Setting `channel` to `Trigger` makes a body that detects overlaps without blocking anything. |
+| `offsetPosition`, `offsetRotation` | Move and turn the shape away from the entity's origin. |
+| `friction` | How strongly a surface sliding across this one is held back. Default 0.2. |
+| `restitution` | How much speed an impact gives back: 0 stops dead, 1 loses nothing. |
+| `channel`, `collidesWith` | Which collision group this collider is in, and which groups it hits. |
+| `collisionAsset` | Reserved for cooked collision shapes. Not used yet. |
 
 The editor only shows the size fields that apply to the chosen shape.
+
+The entity's `Transform.scale`, combined with its parents' scales, scales the
+shape, and the offset scales with it. A sphere or a capsule has a single radius,
+so it takes one scale on every axis; a cylinder takes one across its round
+axes. Scaling one of those unevenly logs a warning, and the shape is built at
+the nearest scale it can take.
+
+### `RigidBody`
+
+| Field | Meaning |
+|---|---|
+| `motion` | `Dynamic`: moved by gravity, collisions and velocity. `Kinematic`: moved only by writing its `Transform`, and it pushes dynamic bodies out of its way. |
+| `mass` | Kilograms. 0 takes the mass from the shape's volume at the density of water. |
+| `linearDamping`, `angularDamping` | Fraction of speed and spin lost per second. |
+| `gravityScale` | Multiplies gravity for this body. 0 floats. |
+| `lockedAxes` | Axes the body may not move along or turn about. Lock all three rotations to keep a body upright. |
+| `ccd` | Continuous collision detection: stops fast, small objects from passing through thin walls. Costs a little more. |
+| `allowSleep` | Whether the body may fall asleep when it comes to rest. A sleeping body costs nothing. |
+
+A body that should stop moving for a while, like a held object, can be switched
+to `Kinematic` and back. It keeps its mass and settings.
+
+### Triggers
+
+Setting a `Collider`'s `channel` to `Trigger` makes a volume that detects what
+enters it and blocks nothing. A static trigger costs nothing while nothing awake
+is near it, and notices a resting body only when that body wakes. A trigger with
+a `Kinematic` `RigidBody` and `allowSleep` off notices bodies already at rest
+inside it, including when the volume is moved onto them, at the cost of staying
+awake.
+
+A `RigidBody` or a `Character` cannot have a `Parent`: the simulation decides
+where it is, so it cannot also be placed relative to another entity. The editor
+refuses the combination. Anything parented *to* a body, like a camera or a
+mesh, follows it as usual.
 
 ## How the scene and physics stay in step
 
 Each world's physics follows its scene by itself. At the start of every step it
 looks at what changed since the last one:
 
-- An entity that gained a descriptor gets a body. One that lost its descriptor,
-  or was destroyed, loses its body.
-- A changed descriptor changes the live body. A new size or shape takes effect
-  at once, and so does switching `isStatic`.
-- A changed `Transform` moves the body there. Scale counts too: a scaled
-  entity has a scaled collider. A sphere or capsule has a single radius, so it
-  is scaled by the same amount on every axis.
+- An entity that gained a `Collider` gets a body. One that lost it, or was
+  destroyed, loses its body.
+- A changed `Collider` or `RigidBody` changes the live body. Adding or removing
+  the `RigidBody` rebuilds it, as static or moving.
+- A changed `Transform` moves the body there, and a changed scale resizes it.
+- A velocity written to `BodyState` is given to the body.
 
-While a body moves, the engine copies its pose into the `Transform` every frame.
-A body at rest is left alone, so a level full of sleeping objects costs nothing.
+After every physics step, the engine writes each moving body's pose into its
+`Transform` and its velocities into its `BodyState`. A body at rest is left
+alone, so a level full of sleeping objects costs nothing.
+
+`Transform` is the simulation pose: what you read from it right after a step is
+exactly where the body is. The picture on screen is smoothed separately. Each
+frame, anything whose `Transform` was written during a fixed step is drawn
+between its pose before that step and its pose after it, by how far the frame
+is into the next step. Motion stays smooth on a display faster than the step
+rate, and gameplay never sees the in-between pose. See
+[Your first system](first-system.md#phases-when-a-system-runs).
+
+A spot or point light that moves in fixed steps is drawn smoothly too, but by
+default its shadow is redrawn only once per step, from where the step put the
+light. The shadow can trail the light by up to one step, and a moving light
+costs one shadow redraw per step rather than one per frame. To keep the shadow
+exactly on the light, set `shadows.local.cache.redrawMovingLightsEveryFrame` to
+`true` in `options.json`, or tick **Redraw Moving Lights Every Frame** in the
+editor's shadow options.
 
 ### What writing a `Transform` does
 
@@ -47,34 +112,37 @@ depends on the kind of body:
 | Body | What a `Transform` write does |
 |---|---|
 | Static | The collider is moved there, and anything resting on it wakes up. |
+| Kinematic | The body is swept there over the next step, pushing what it meets and carrying what stands on it. |
 | Dynamic | The body is placed there and keeps its velocity. |
 | Character | Only a change of position moves it; turning it is the controller's job. |
 
-To place a body and stop it as well, call `Teleport(entity, pose)`.
+To place a body and stop it as well, call `Teleport(entity, pose)`. A teleported
+body is drawn at its new place at once, not slid there.
 
 ## Moving bodies from code
 
-Each world has its own physics, at `ctx.world.physics`. Its calls take the
-entity the body belongs to.
+A moving body's `BodyState` holds its `linearVelocity` (m/s), its
+`angularVelocity` (rad/s), and whether it is `asleep`, as the last step left
+them. Write a velocity to set it: the body takes it before the next step, and
+wakes if it was asleep. A velocity written before the body exists, on the same
+frame it is spawned, is the one it starts with.
 
 ```cpp
-#include <Assisi/App/World.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Physics/PhysicsWorld.hpp>
 
 // Launch every body upward.
-for (auto [entity, descriptor] : scene.Query<Physics::RigidBodyDescriptor>())
+for (auto [entity, state] : scene.QueryMut<Physics::BodyState>())
 {
-    ctx.world.physics.SetBodyLinearVelocity(entity, glm::vec3(0.f, 10.f, 0.f));
+    state.GetMut().linearVelocity = glm::vec3(0.f, 10.f, 0.f);
 }
 ```
 
-The calls you'll use most:
+Each world also has its own physics, at `ctx.world.physics`. Its calls take the
+entity the body belongs to:
 
 | Call | What it does |
 |---|---|
-| `SetBodyLinearVelocity(entity, velocity)` | Sets how fast the body moves, in meters per second. |
-| `GetBodyVelocity(entity)` | Returns `{linear, angular}` velocity. |
+| `GetBodyVelocity(entity)` | Returns `{linear, angular}` velocity, straight from physics. |
 | `GetBodyPose(entity)` | Returns the body's world `position` and `rotation`, straight from physics. |
 | `Teleport(entity, pose)` | Places the body at a world pose and stops it. |
 | `HasBody(entity)` | Whether the entity has a body or a character yet. |
@@ -95,7 +163,7 @@ dropped, so the game slows down instead of freezing.
 step with physics and behaves the same at any frame rate.
 
 > **Not yet available:** there's no function for applying a force or an
-> impulse yet. To push a body, read its velocity, add to it, and set it back.
+> impulse yet. To push a body, add to its `BodyState` velocity.
 
 ## Reacting to collisions
 
@@ -135,42 +203,49 @@ asked for.
 
 ### Setting one up
 
-Give an entity a **`CharacterDescriptor`** and a `Transform`, and add the
-`CharacterMove` and `CharacterState` systems to the level. The entity's
-`Transform` is at the character's **feet**. The `blueprints/Player.abp`
-blueprint is a complete example with a camera and keyboard and mouse control.
+A character is three components:
 
-An entity has a `CharacterDescriptor` or a `RigidBodyDescriptor`, never both.
+| Component | What it is | Written by |
+|---|---|---|
+| `Character` | The controller's settings: its shape and how it moves. Saved with the level. | You, in the editor. |
+| `CharacterIntent` | What the character is asked to do. | Your systems: the keyboard, an AI, or a network command. |
+| `CharacterState` | What the last step did. | The engine, after every step. |
+
+Give an entity a **`Character`** and a `Transform`; the other two come with it.
+The entity's `Transform` is at the character's **feet**. The physics step reads
+the intent and writes the state itself, so nothing else has to run for a
+character to move. The `blueprints/Player.abp` blueprint is a complete example,
+with a camera and keyboard and mouse control through the `CharacterLook`,
+`CharacterInput` and `CharacterEye` systems.
+
+A `Character` cannot also have a `Collider` or a `RigidBody`: it already is a
+body.
 
 ### Telling it what to do
 
-A `CharacterDescriptor` brings a **`Character`** component with it. Three of
-its fields are the character's input, and anything can write them: the
-keyboard, an AI, or a network command.
-
-| Field | Meaning |
+| `CharacterIntent` field | Meaning |
 |---|---|
-| `move` | Where to go, in world space, with a length of at most 1. A shorter vector asks for less speed. |
-| `jump` | Set to `true` to ask for a jump. The controller clears it. |
+| `move` | Where to go, in world space. A unit vector asks for the walk speed; a shorter one asks for less. |
+| `jump` | Set to `true` to ask for a jump. The step clears it. |
 | `stance` | `Standing` or `Crouching`. Hold it for as long as it is wanted. |
 
 ```cpp
-for (auto [entity, character] : scene.QueryMut<Physics::Character>())
+for (auto [entity, intent] : scene.QueryMut<Physics::CharacterIntent>())
 {
-    character.GetMut().move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
+    intent.GetMut().move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
 }
 ```
 
-`Character::state` is the result of the last step: `velocity`, `ground`
+`CharacterState` is the result of the last step: `velocity`, `ground`
 (`OnGround`, `OnSteepGround`, `NotSupported` or `InAir`), `stance`, `canJump`,
 `eyeHeight` and what the character is standing on.
 
 ### What happens each step
 
-`CharacterMove` turns `move` into a **wish velocity**: the direction of `move`,
-with a length of `walkSpeed` (times `crouchSpeedScale` while crouched). The
-character is never set to that velocity. Each fixed step the controller does
-this, in order:
+The step turns `move` into a **wish velocity**: the direction of `move`, with a
+length of `walkSpeed` (times `crouchSpeedScale` while crouched). The character
+is never set to that velocity. Each fixed step the controller does this, in
+order:
 
 1. **Stance.** The character changes to the stance asked for, if it fits.
 2. **Jump.** A jump fires if one was asked for and the character may jump.
@@ -240,8 +315,8 @@ speeds up. To back hop: get over the limit, turn around, let go of the movement
 keys and jump each time you land. Every jump adds the excess again. Crouching
 lowers the limit, so it gains more.
 
-The facing comes from the character's `Transform`, which `CharacterMove` passes
-to the controller each step.
+The facing comes from the character's `Transform`, which the step reads each
+time.
 
 ### Crouching and the crouch jump
 
@@ -254,10 +329,11 @@ In the air it is the other way round: crouching keeps the head in place and
 a jump therefore clears a ledge that the jump alone does not. Standing up in the
 air lowers the feet again, and is refused while the ground is too close below.
 
-The engine keeps a camera parented to the character at the character's eye
-height, every rendered frame. The eye eases between `eyeHeight` and
-`crouchEyeHeight` at `eyeSpeed`. When the feet move in the air the eye height changes by the same
-amount at once, so the view stays where it was.
+The `CharacterEye` system keeps a camera parented to the character at the
+character's eye height, after every step, and the camera is smoothed between
+steps like everything else. The eye eases between `eyeHeight` and
+`crouchEyeHeight` at `eyeSpeed`. When the feet move in the air the eye height
+changes by the same amount at once, so the view stays where it was.
 
 ### The movement settings
 
@@ -315,10 +391,11 @@ parameters.
 <details>
 <summary>Moving an object without physics</summary>
 
-For something that moves on a fixed path, like a platform or a door, you don't
-need a physics body. Write its `Transform` from a system, as in
-[Your first system](first-system.md). The engine's built-in `Oscillator`
-component and `Oscillate` system move an object back and forth this way.
+For something that moves on a fixed path, like a platform or a door, write its
+`Transform` from a system, as in [Your first system](first-system.md). The
+engine's built-in `Oscillator` component and `Oscillate` system move an object
+back and forth this way. Give it a `Collider` and a `Kinematic` `RigidBody` and
+it also pushes what it meets and carries what stands on it.
 
 </details>
 

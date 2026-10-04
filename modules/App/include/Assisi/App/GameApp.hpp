@@ -185,7 +185,7 @@ class GameApp : public Application
     /// that has not composed one renders from the origin rather than not at all,
     /// which is the difference between a scene that looks wrong and a window
     /// that looks broken.
-    Runtime::Transform _fallbackPose;
+    glm::mat4 _fallbackWorld{1.f};
     Runtime::Camera _fallbackCamera;
 
     GameLaunch _launch;

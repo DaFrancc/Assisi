@@ -63,9 +63,7 @@ namespace Assisi::ECS
 ///
 /// Position and rotation only: @p local's scale is carried through untouched
 /// rather than composed, because the callers place rigid bodies, whose collider
-/// dimensions do not scale with the entity. The returned Transform's worldMatrix
-/// is not filled in — this answers a question, it does not stand in for
-/// propagation.
+/// dimensions do not scale with the entity.
 [[nodiscard]] inline Transform PoseUnderParent(const Transform &local, const glm::mat4 &parentWorld)
 {
     Transform out;

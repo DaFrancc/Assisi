@@ -8,6 +8,16 @@
         "Bounce": {
           "rebound": 0.800000011920929
         },
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "halfHeight": 0.5,
+          "radius": 0.5,
+          "shape": 0
+        },
         "MeshRenderer": {
           "materialOverrides": [
             {
@@ -25,17 +35,8 @@
           "priority": 1.0,
           "relevance": 0
         },
-        "RigidBodyDescriptor": {
-          "enableCCD": true,
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "halfHeight": 0.5,
-          "isStatic": false,
-          "radius": 0.5,
-          "shape": 0
+        "RigidBody": {
+          "ccd": true
         },
         "Transform": {
           "position": [
