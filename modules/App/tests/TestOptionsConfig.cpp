@@ -2,6 +2,8 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 
@@ -220,26 +222,21 @@ TEST_CASE("A settings file from before ambient occlusion existed loads it off, a
     CHECK(read.ambientOcclusion == SsaoSettings{});
 }
 
-TEST_CASE("Only settings that differ from the defaults are written, so the rest follow the defaults")
+TEST_CASE("Every setting is written, defaults included, so the file shows what there is to change")
 {
-    // Nothing changed writes nothing: a default written out would pin it, and a
-    // later change to that default would never reach this file.
-    CHECK(OptionsConfig{}.ToJsonText() == "{}");
-
-    OptionsConfig one;
-    one.shadows.local.filter = ShadowFilter::Point;
-    const std::string text = one.ToJsonText();
-    CHECK(text.find("\"filter\"") != std::string::npos);
-    CHECK(text.find("depthBiasTexels") == std::string::npos);
-    CHECK(text.find("\"sun\"") == std::string::npos);
-    CHECK(text.find("antiAliasing") == std::string::npos);
+    const std::string text = OptionsConfig{}.ToJsonText();
+    CHECK(text.find("antiAliasing") != std::string::npos);
+    CHECK(text.find("\"sun\"") != std::string::npos);
+    CHECK(text.find("depthBiasTexels") != std::string::npos);
+    CHECK(text.find("\"cadence\"") != std::string::npos);
+    CHECK(text.find("redrawMovingLightsEveryFrame") != std::string::npos);
 }
 
 TEST_CASE("A float is saved to four decimal places, so a slider dragged back to its default is the default")
 {
     OptionsConfig nearly;
     nearly.shadows.local.depthBiasTexels += 0.00001f;
-    CHECK(nearly.ToJsonText() == "{}");
+    CHECK(nearly.ToJsonText() == OptionsConfig{}.ToJsonText());
 
     OptionsConfig moved;
     moved.shadows.local.depthBiasTexels = 0.123456f;
@@ -265,12 +262,12 @@ TEST_CASE("A fresh install pins neither the window size nor the bindings")
     const std::string text = OptionsConfig{}.ToJsonText();
     CHECK(text.find("window") == std::string::npos);
     CHECK(text.find("input") == std::string::npos);
-    CHECK(text == "{}");
 }
 
 TEST_CASE("Bus volumes the player set survive a write and a read, and none are written until one is set")
 {
-    CHECK(OptionsConfig{}.ToJsonText().find("audio") == std::string::npos);
+    // The section is there to show where volumes go, and holds none.
+    CHECK(nlohmann::json::parse(OptionsConfig{}.ToJsonText())["audio"]["volumes"].empty());
 
     OptionsConfig written;
     written.busVolumes["Music"]     = 0.5f;

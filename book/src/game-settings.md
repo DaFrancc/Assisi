@@ -70,8 +70,10 @@ The player's settings are saved in `options.json`, next to the executable:
 - Rebound keys.
 - Audio bus volumes. See [Volumes the player sets](audio.md#volumes-the-player-sets).
 
-Only settings the player actually changed are stored. Everything else keeps
-following your defaults, even when you change them in a later version.
+Every graphics setting is written out, so the file lists each one there is to
+change. The window size, rebound keys and bus volumes are stored only once the
+player sets them; until then they follow your defaults, even when you change
+them in a later version.
 
 <details>
 <summary>Logs and crash reports</summary>
