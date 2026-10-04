@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/CameraPath.hpp>
 
@@ -143,22 +144,22 @@ TEST_CASE("A route hands over from one path to the next at the boundary")
     CHECK(Near(EvaluateCameraRoute(route, 100.f).eye, {0.f, 15.f, 0.f}));
 }
 
-TEST_CASE("The camera transform sits at the eye and faces the target")
+TEST_CASE("The camera world matrix sits at the eye and faces the target")
 {
     const CameraAim aim{.eye = {1.f, 2.f, 3.f}, .target = {1.f, 2.f, -7.f}};
-    const Transform transform = CameraTransformFor(aim);
+    const glm::mat4 world = CameraWorldFor(aim);
 
-    CHECK(Near(glm::vec3(transform.worldMatrix[3]), aim.eye));
-    CHECK(Near(ForwardDirection(transform), {0.f, 0.f, -1.f}));
+    CHECK(Near(Math::TranslationOf(world), aim.eye));
+    CHECK(Near(ForwardDirection(world), {0.f, 0.f, -1.f}));
 }
 
 TEST_CASE("Looking straight down still gives a usable camera")
 {
     const CameraAim aim{.eye = {0.f, 10.f, 0.f}, .target = {0.f, 0.f, 0.f}};
-    const Transform transform = CameraTransformFor(aim);
+    const glm::mat4 world = CameraWorldFor(aim);
 
-    CHECK(Near(ForwardDirection(transform), {0.f, -1.f, 0.f}));
-    const glm::mat4 view = ViewMatrix(transform);
+    CHECK(Near(ForwardDirection(world), {0.f, -1.f, 0.f}));
+    const glm::mat4 view = ViewMatrix(world);
     for (int32_t column = 0; column < 4; ++column)
     {
         for (int32_t row = 0; row < 4; ++row)

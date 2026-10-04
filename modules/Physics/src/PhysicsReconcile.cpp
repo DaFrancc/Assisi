@@ -20,8 +20,11 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 
+#include <Assisi/Math/Matrix.hpp>
+
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace Assisi::Physics
@@ -34,7 +37,7 @@ namespace
 /// and a parented Transform is an offset from its parent.
 Pose WorldPoseOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform)
 {
-    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
+    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
     {
         const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
         return Pose{world.rotation, world.position};
@@ -46,10 +49,13 @@ Pose WorldPoseOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transfo
 /// collider is built at.
 glm::vec3 WorldScaleOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform)
 {
-    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
+    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
     {
-        const glm::vec3 parentScale{glm::length(glm::vec3((*parent)[0])), glm::length(glm::vec3((*parent)[1])),
-                                    glm::length(glm::vec3((*parent)[2]))};
+        using Math::ColumnOf;
+        using Math::MatrixColumn;
+        const glm::vec3 parentScale{glm::length(ColumnOf(*parent, MatrixColumn::Right)),
+                                    glm::length(ColumnOf(*parent, MatrixColumn::Up)),
+                                    glm::length(ColumnOf(*parent, MatrixColumn::Back))};
         return transform.scale * parentScale;
     }
     return transform.scale;
@@ -274,7 +280,6 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const RigidBodyDescripto
     slot.motion = motion;
     slot.kind = SlotKind::Body;
     slot.ccd = descriptor.enableCCD;
-    CollapseSnapshot(slot, pose);
     StampTransform(entity);
 
     // A static sensor is told about bodies that touch it, and a sleeping body
@@ -369,7 +374,6 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
             CharacterRecord &record = *FindCharacter(entity);
             record.character->SetPosition(ToJolt(world.position));
             bodies.SetPosition(slot->body, ToJolt(world.position), JPH::EActivation::Activate);
-            CollapseSnapshot(*slot, world);
 
             const FilterLayerFilter layerFilter{record.queryFilter};
             record.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
@@ -389,15 +393,8 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
 
     if (moved || turned)
     {
-        // The Transform holds the render pose, which trails the body. A field
-        // the write left alone still holds that trailing value, and pushing it
-        // would pull the body back along its path, so only what changed is taken.
-        const JPH::RVec3 current = bodies.GetPosition(slot->body);
-        const JPH::Quat currentRotation = bodies.GetRotation(slot->body);
-        const JPH::RVec3 position = moved ? ToJolt(world.position) : current;
-        const JPH::Quat rotation = turned ? ToJolt(world.rotation) : currentRotation;
-        const Pose target{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-                          glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
+        const JPH::RVec3 position = ToJolt(world.position);
+        const JPH::Quat rotation = ToJolt(world.rotation);
 
         if (slot->motion == BodyMotion::Kinematic && stepTime > 0.f)
         {
@@ -416,13 +413,11 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
             bodies.SetPositionAndRotation(slot->body, position, rotation, JPH::EActivation::DontActivate);
             touched.Encapsulate(BoundsOf(slot->body));
             WakeInside(touched, slot->filter);
-            CollapseSnapshot(*slot, target);
         }
         else
         {
             // Placed with its velocity kept: a write says where, not how fast.
             bodies.SetPositionAndRotation(slot->body, position, rotation, JPH::EActivation::Activate);
-            CollapseSnapshot(*slot, target);
         }
 
         if (slot->motion != BodyMotion::Static)

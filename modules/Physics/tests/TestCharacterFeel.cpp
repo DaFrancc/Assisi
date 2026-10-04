@@ -51,7 +51,6 @@ void Step(Physics::PhysicsWorld &world, ECS::Entity character, glm::vec3 move, b
 {
     world.MoveCharacter(character, move, jump);
     world.Update(deltaTime);
-    world.CaptureState();
 }
 
 /// Speed across the floor, whichever way it is heading.
@@ -69,9 +68,8 @@ void Settle(Physics::PhysicsWorld &world, ECS::Entity character, int32_t steps =
     }
 }
 
-glm::vec3 CharacterPosition(ECS::Scene &scene, Physics::PhysicsWorld &world)
+glm::vec3 CharacterPosition(ECS::Scene &scene)
 {
-    world.InterpolateTransforms(1.f);
     glm::vec3 position{0.f};
     for (auto [entity, transform, character] : scene.Query<ECS::Transform, Physics::Character>())
     {
@@ -479,7 +477,7 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
         {
             Step(world, character, glm::vec3(0.f), /*jump=*/ false, deltaTime);
         }
-        return CharacterPosition(scene, world).x;
+        return CharacterPosition(scene).x;
     };
 
     const float at60  = distanceWalked(60);
@@ -551,7 +549,7 @@ TEST_CASE("gravityScale changes how fast a character falls")
 
         const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
         Settle(world, character, steps);
-        return CharacterPosition(scene, world).y;
+        return CharacterPosition(scene).y;
     };
 
     const float normal = fallAfter(1.f, 30);

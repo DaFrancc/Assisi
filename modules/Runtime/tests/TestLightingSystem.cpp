@@ -7,6 +7,7 @@
 
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -97,11 +98,11 @@ TEST_CASE("a parented spot aims with its parent")
 
     (void)Assisi::ECS::PropagateTransforms(scene, 0u);
 
-    const Transform *world = scene.Get<Transform>(light);
+    const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(light);
     REQUIRE(world != nullptr);
-    CHECK(Approx3(SpotWorldDirection(world->worldMatrix), glm::vec3(0.f, 0.f, -1.f)));
+    CHECK(Approx3(SpotWorldDirection(world->matrix), glm::vec3(0.f, 0.f, -1.f)));
     // Position follows the same matrix, and the two must agree about the turn.
-    CHECK(Approx3(glm::vec3(world->worldMatrix[3]), glm::vec3(0.f, 0.f, 2.f)));
+    CHECK(Approx3(Assisi::Math::TranslationOf(world->matrix), glm::vec3(0.f, 0.f, 2.f)));
 }
 
 namespace

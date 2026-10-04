@@ -19,6 +19,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -36,13 +37,14 @@ constexpr float kStep = 1.f / 60.f;
 void Tick(World &world, Assisi::Core::EventQueue &events)
 {
     SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, nullptr, events, true, nullptr};
+    const Assisi::ECS::FixedStepScope step(world.scene);
 
     CharacterMoveSystem(ctx);
 
     world.physics.Update(kStep);
-    world.physics.CaptureState();
 
     CharacterStateSystem(ctx);
+    CharacterEyeSystem(ctx);
 }
 
 Assisi::ECS::Entity SpawnFloor(World &world)
@@ -197,27 +199,28 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
         Tick(world, events);
     }
-    PlaceCharacterEyes(world.scene, world.physics, 1.f);
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.eyeHeight));
+    uint64_t tick = Assisi::ECS::PropagateTransforms(world.scene, 0);
 
     // One step into a crouch, a frame drawn half way between the two steps
     // sees the eye half way between them: it moves every frame, not every step.
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
     Tick(world, events);
-    const float afterOneStep =
-        world.physics.GetCharacterState(entity).eyeHeight;
+    const float afterOneStep = world.physics.GetCharacterState(entity).eyeHeight;
     REQUIRE(afterOneStep < descriptor.eyeHeight);
+    CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(afterOneStep));
 
-    PlaceCharacterEyes(world.scene, world.physics, 0.5f);
-    CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y ==
-          doctest::Approx(0.5f * (descriptor.eyeHeight + afterOneStep)));
+    Assisi::ECS::SetBlendAlpha(world.scene, 0.5f);
+    tick = Assisi::ECS::PropagateTransforms(world.scene, tick);
+    const float feet = world.scene.Get<Assisi::ECS::Transform>(entity)->position.y;
+    const float drawnEye = Assisi::Math::TranslationOf(world.scene.Get<Assisi::ECS::WorldMatrix>(eye)->matrix).y;
+    CHECK(drawnEye - feet == doctest::Approx(0.5f * (descriptor.eyeHeight + afterOneStep)));
 
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
         Tick(world, events);
     }
-    PlaceCharacterEyes(world.scene, world.physics, 1.f);
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.crouchEyeHeight));
 }
 

@@ -75,6 +75,19 @@ struct Transform
 };
 ```
 
+Adding a `Transform` also adds a `WorldMatrix`. You don't add, save or write a
+`WorldMatrix` yourself. Once a frame the engine fills it with where the entity
+is drawn: its pose combined with its parents', smoothed between fixed steps.
+Game code reads and writes the `Transform`. Only code that draws things reads
+the matrix, through an ordinary query:
+
+```cpp
+for (auto [entity, world, marker] : scene.Query<ECS::WorldMatrix, Marker>())
+{
+    DrawMarker(world.matrix, marker);
+}
+```
+
 ### The sky, the sun and the moon
 
 The sky, the sun and the moon are components too, and they all go on **one

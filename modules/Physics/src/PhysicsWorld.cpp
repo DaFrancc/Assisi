@@ -7,13 +7,14 @@
 /// The rest of PhysicsWorld lives beside this file rather than in it. Keeping
 /// bodies in step with the scene is in PhysicsReconcile.cpp, contacts in
 /// PhysicsContacts.cpp, scene queries in PhysicsQueries.cpp, characters in
-/// PhysicsCharacters.cpp, and the render/replication writeback in
+/// PhysicsCharacters.cpp, and the per-step writeback in
 /// PhysicsWriteback.cpp; what they share is PhysicsInternal.hpp.
 
 #include "PhysicsInternal.hpp"
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -195,15 +196,9 @@ JPH::BodyID PhysicsWorld::Impl::BodyFor(ECS::Entity entity) const
     return slot == nullptr ? JPH::BodyID{} : slot->body;
 }
 
-void PhysicsWorld::Impl::CollapseSnapshot(BodySlot &slot, const Pose &pose)
-{
-    slot.snapshot = MotionSnapshot{pose.rotation, pose.rotation, pose.position, pose.position};
-}
-
 void PhysicsWorld::Impl::Follow(std::uint32_t index)
 {
     BodySlot &slot = slots[index];
-    slot.settled = false;
     if (!slot.followed)
     {
         slot.followed = true;
@@ -267,6 +262,9 @@ void PhysicsWorld::Update(float deltaTime)
 
     _impl->stepping = false;
 
+    // Before the contact events, so a system reacting to them reads the
+    // Transforms this step left.
+    _impl->WriteBack();
     _impl->ResolveContactEvents();
 }
 
@@ -329,27 +327,14 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
             bodies.SetAngularVelocity(slot->body, JPH::Vec3::sZero());
         }
     }
-    Impl::CollapseSnapshot(*slot, pose);
 
     // The Transform is written now rather than left to the writeback, which
-    // follows only bodies that are awake: a static or sleeping one would be drawn
-    // where it was for good. Stamped as this world's own, so it is not pushed back,
-    // and written over any write still waiting to be pushed, which this replaces.
+    // follows only bodies that are awake: a static or sleeping one would stay
+    // where it was. Stamped as this world's own, so it is not pushed back, and
+    // written over any write still waiting to be pushed, which this replaces.
+    // Then snapped, so it is drawn there at once rather than slid to.
     _impl->WritePose(entity, pose, slot->kind != Impl::SlotKind::Character);
-}
-
-void PhysicsWorld::AdoptTransform(ECS::Entity entity)
-{
-    const Impl::BodySlot *slot = _impl->SlotFor(entity);
-    if (slot == nullptr)
-    {
-        return;
-    }
-    _impl->StampTransform(entity);
-    if (slot->kind == Impl::SlotKind::Body && slot->motion != BodyMotion::Static)
-    {
-        _impl->Follow(entity.index);
-    }
+    ECS::SnapTransform(_impl->scene, entity);
 }
 
 void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
@@ -437,11 +422,11 @@ void PhysicsWorld::ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec
             bodies.DeactivateBody(slot->body);
     }
 
-    Impl::CollapseSnapshot(*slot, pose);
-
-    // Followed until the writeback has put the Transform at the corrected pose,
-    // which for a body left asleep would otherwise never happen.
-    _impl->Follow(entity.index);
+    // Written and snapped now, as Teleport is: a body left asleep would never
+    // reach the writeback, and the replication view offset assumes the drawn
+    // pose jumps with the correction rather than sliding after it.
+    _impl->WritePose(entity, pose, /*writeRotation=*/ true);
+    ECS::SnapTransform(_impl->scene, entity);
 }
 
 Pose PhysicsWorld::GetBodyPose(ECS::Entity entity) const

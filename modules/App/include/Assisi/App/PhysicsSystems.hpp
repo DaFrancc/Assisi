@@ -15,16 +15,6 @@
 
 #include <string_view>
 
-namespace Assisi::ECS
-{
-class Scene;
-}
-
-namespace Assisi::Physics
-{
-class PhysicsWorld;
-}
-
 namespace Assisi::App
 {
 
@@ -146,16 +136,14 @@ ASYSTEM(FixedUpdate, name = "CharacterMove") void CharacterMoveSystem(SystemCont
 ASYSTEM(PostFixedUpdate, name = "CharacterState") void CharacterStateSystem(SystemContext &ctx);
 
 /// @brief Puts every Camera parented to a character at that character's eye
-/// height for the frame about to be drawn.
+/// height, from the step that just ran.
 ///
-/// Not a system: it belongs with the render-time pose blend, and no phase runs
-/// there. Call it once per rendered frame, straight after
-/// Physics::PhysicsWorld::InterpolateTransforms and with the same @p alpha,
-/// before transforms are propagated. The feet and the eye height are then
-/// blended across the same two steps, so a crouch is smooth at any refresh rate
-/// and a crouch in the air — feet up, eye height down by as much — never shows
-/// one without the other.
-void PlaceCharacterEyes(ECS::Scene &scene, const Physics::PhysicsWorld &physics, float alpha);
+/// PostFixedUpdate, after CharacterState, so the height is the one the step
+/// left. The camera's Transform is written inside the step like the
+/// character's own, so the render blend moves both across the same two steps:
+/// a crouch is smooth at any refresh rate, and a crouch in the air — feet up,
+/// eye height down by as much — never shows one without the other.
+ASYSTEM(PostFixedUpdate, name = "CharacterEye", after = "CharacterState") void CharacterEyeSystem(SystemContext &ctx);
 
 /// @brief Drives every Physics::Character in the active world from the keyboard.
 ///

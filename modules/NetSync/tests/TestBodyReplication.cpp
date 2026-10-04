@@ -19,6 +19,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -63,12 +64,6 @@ struct PhysicsHarness
 
     std::uint64_t tick = 0;
 
-    /// Set to emulate a *windowed* host: the render-side writeback stamps every
-    /// dynamic body's Transform every frame, sleeping ones included. Body state
-    /// is read from the physics world rather than that Transform, so what goes
-    /// on the wire must not depend on this.
-    bool runRenderWriteback = false;
-
     explicit PhysicsHarness(ReplicationConfig config = {})
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene, &serverPhysics, config),
         client(transport, clientScene, pair.second, &clientPhysics)
@@ -97,19 +92,11 @@ struct PhysicsHarness
         }
 
         serverPhysics.Update(kFixedStep);
-        serverPhysics.CaptureState();
-        if (runRenderWriteback)
-            serverPhysics.InterpolateTransforms(1.f);
-
         clientPhysics.Update(kFixedStep);
-        clientPhysics.CaptureState();
         // Immediately after the client's own step, before anything reads it.
         client.EnforceSleep();
 
-        // The client's render path, in the order a windowed one runs it: the
-        // physics writeback first, then the view-side smoothing *on top of* the
-        // pose it just wrote. Reversed, the offset would simply be overwritten.
-        clientPhysics.InterpolateTransforms(1.f);
+        // The client's view-side smoothing, as a windowed host runs it each frame.
         client.SmoothView(0.0, kFixedStep);
 
         server.Tick(tick++);
@@ -178,14 +165,20 @@ float PoseError(PhysicsHarness &harness, ECS::Entity entity)
                        harness.clientPhysics.GetBodyPose(mirror).position);
 }
 
+/// Where @p entity is drawn: its Transform, which is the simulation pose, plus
+/// the view offset smoothing lays over it. Unparented, so the two simply add.
+glm::vec3 RenderedPosition(ECS::Scene &scene, ECS::Entity entity)
+{
+    const glm::vec3 position = scene.Get<ECS::Transform>(entity)->position;
+    const ECS::RenderOffset *offset = scene.Get<ECS::RenderOffset>(entity);
+    return offset != nullptr ? position + offset->position : position;
+}
+
 } // namespace
 
 TEST_CASE("a pile settles on the server, and the client's own bodies settle to the same arrangement")
 {
     PhysicsHarness harness;
-    // A windowed host, so the render writeback stamps every Transform every
-    // frame — the condition a settled world has to stay quiet under.
-    harness.runRenderWriteback = true;
     harness.Step(4);
     SpawnSharedFloor(harness);
 
@@ -223,12 +216,9 @@ TEST_CASE("a pile settles on the server, and the client's own bodies settle to t
 
 TEST_CASE("a settled world stops costing bandwidth, with physics running")
 {
-    // Idle snapshots carry headers only. That holds because replication reads
-    // the physics world rather than the render-side Transform, which the
-    // writeback re-stamps every frame for every dynamic body, sleeping ones
-    // included — so the writeback runs here on purpose.
+    // Idle snapshots carry headers only: a sleeping body is no longer written
+    // back, so nothing about it changes.
     PhysicsHarness harness;
-    harness.runRenderWriteback = true;
     harness.Step(4);
     SpawnSharedFloor(harness);
 
@@ -598,7 +588,6 @@ TEST_CASE("a client joining a world that settled before it connected gets the re
     for (int32_t i = 0; i < 500; ++i)
     {
         harness.serverPhysics.Update(kFixedStep);
-        harness.serverPhysics.CaptureState();
         harness.server.Tick(harness.tick++);
     }
     for (const ECS::Entity entity : pile)
@@ -670,9 +659,7 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
         }
 
         serverPhysics.Update(kFixedStep);
-        serverPhysics.CaptureState();
         clientPhysics.Update(kFixedStep);
-        clientPhysics.CaptureState();
         client.EnforceSleep();
 
         server.Tick(tick++);
@@ -732,7 +719,6 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     const glm::vec3 displaced = restPosition + glm::vec3{0.f, 0.f, 1.f};
     harness.clientPhysics.ApplyBodyState(mirror, Physics::Pose{rest.rotation, displaced}, glm::vec3{0.f},
                                          glm::vec3{0.f}, /*activate=*/ false);
-    harness.clientPhysics.InterpolateTransforms(1.f);
     harness.client.SmoothView(0.0, kFixedStep);
     REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
 
@@ -752,7 +738,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     // moved one frame's share of the window", which for a 1 m error over 0.1 s
     // at 60 Hz is about 17 cm — versus the whole metre a correction without
     // smoothing would have jumped.
-    const glm::vec3 renderedAtCorrection = harness.clientScene.Get<ECS::Transform>(mirror)->position;
+    const glm::vec3 renderedAtCorrection = RenderedPosition(harness.clientScene, mirror);
     const float movedInOneFrame      = glm::length(renderedAtCorrection - displaced);
     const float onFrameShare         = 1.f * (kFixedStep / Smoothing().positionCorrectionTime);
     CAPTURE(movedInOneFrame);
@@ -761,7 +747,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
 
     // Over the following frames it closes the gap rather than jumping it.
     harness.Step(120);
-    CHECK(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - restPosition) < 0.02f);
+    CHECK(glm::length(RenderedPosition(harness.clientScene, mirror) - restPosition) < 0.02f);
 
     // And the divergence it found is the number the correction cadence has to be
     // justified by, so it is measured rather than assumed.
@@ -826,10 +812,9 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
                              harness.Step();
 
                              // The rendered pose against the client's own simulated one: their
-                             // difference *is* the visual offset, since the writeback wrote the
-                             // physics pose and the smoothing then added the offset on top of it.
+                             // difference *is* the visual offset.
                              const glm::vec3 simulated = harness.clientPhysics.GetBodyPose(mirror).position;
-                             const glm::vec3 rendered = harness.clientScene.Get<ECS::Transform>(mirror)->position;
+                             const glm::vec3 rendered = RenderedPosition(harness.clientScene, mirror);
                              const float lag      = glm::length(rendered - simulated);
                              result.worstLag          = std::max(result.worstLag, lag);
                              lagSum += static_cast<double>(lag);
@@ -946,7 +931,6 @@ void ExcludeDescriptor(ECS::Scene &scene, ECS::Entity entity)
 TEST_CASE("a descriptor-excluded entity becomes a visual-only mirror")
 {
     PhysicsHarness harness;
-    harness.runRenderWriteback = true; // a windowed host, so the Transform tracks the sim
     SpawnSharedFloor(harness);
 
     const ECS::Entity falling = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 6.f, 0.f},
@@ -989,11 +973,10 @@ TEST_CASE("a descriptor-excluded entity costs no body-state bytes")
 TEST_CASE("a resting visual-only mirror stops costing bandwidth")
 {
     // A visual-only mirror has no body channel and travels by Transform delta,
-    // so on a windowed host it is the writeback that decides whether a resting
-    // one keeps costing bandwidth: the writeback suppresses no-op writes, so a
-    // sleeping body stops dirtying its Transform.
+    // so it is the writeback that decides whether a resting one keeps costing
+    // bandwidth: the writeback suppresses no-op writes, so a sleeping body stops
+    // dirtying its Transform.
     PhysicsHarness harness;
-    harness.runRenderWriteback = true;
     SpawnSharedFloor(harness);
 
     const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 2.f, 0.f},

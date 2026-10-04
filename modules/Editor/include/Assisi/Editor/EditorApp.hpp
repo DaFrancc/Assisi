@@ -315,9 +315,9 @@ class EditorApp : public Assisi::App::Application
     /// parented to the character it is attached to.
     ///
     /// @return false while editing, or when no active camera is in the scene — in
-    ///         which case @p pose and @p camera are untouched and the editor's own
+    ///         which case @p world and @p camera are untouched and the editor's own
     ///         view is the fallback.
-    [[nodiscard]] bool PlayViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const;
+    [[nodiscard]] bool PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const;
 
     /// @brief Lends the cursor to the editor mid-session and gives it back: F8
     /// toggles, and clicking the game — but not a panel — ends the loan.
@@ -342,7 +342,7 @@ class EditorApp : public Assisi::App::Application
     /// this for anything that projects or unprojects — a pick ray, a gizmo — so it
     /// agrees with what was drawn. Reading `_cameraTransform` directly is correct
     /// only for moving the editor camera itself.
-    void ViewCamera(Assisi::Runtime::Transform &pose, Assisi::Runtime::Camera &camera) const;
+    void ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const;
 
     /// @brief Puts the editor camera at @p eye, looking at @p target.
     void AimCamera(const glm::vec3 &eye, const glm::vec3 &target);
@@ -350,7 +350,7 @@ class EditorApp : public Assisi::App::Application
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
     void UpdateCamera(float dt);
-    /// @brief Recomputes _cameraTransform.worldMatrix from its TRS. The camera is
+    /// @brief Recomputes _cameraWorld from _cameraTransform. The camera is
     /// parentless, so world == local; call before reading the view matrix.
     void RefreshCameraMatrix();
     /// @brief Reseeds _yaw/_pitch from the camera's current rotation so the fly
@@ -1593,6 +1593,7 @@ class EditorApp : public Assisi::App::Application
     // The fly camera is not level data, so it is plain state here rather than an
     // entity: as members the pose survives a level load for free.
     Assisi::Runtime::Transform _cameraTransform;
+    glm::mat4 _cameraWorld{1.f}; ///< _cameraTransform as a matrix; see RefreshCameraMatrix.
     Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.

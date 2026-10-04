@@ -19,7 +19,9 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
@@ -193,4 +195,40 @@ TEST_CASE("OscillateSystem: phase separates movers that share a period")
     // evidence the phase term reaches the evaluation at all.
     CHECK(a == doctest::Approx(-b));
     CHECK(std::abs(a) > 0.1f); // not both parked at zero, which would satisfy the above vacuously
+}
+
+TEST_CASE("OscillateSystem: a mover is drawn between its last two steps at a fractional alpha")
+{
+    // A FixedUpdate mover with no physics body: the render blend smooths it the
+    // same way it smooths a body, so it does not stutter above the step rate.
+    WorldManager worlds;
+    World &world = worlds.Create("Blend");
+    Assisi::Core::EventQueue events;
+    Assisi::Window::ActionMap actions;
+
+    const Assisi::Runtime::Oscillator spec{.origin = {0.f, 0.f, 0.f},
+                                           .axis = {1.f, 0.f, 0.f},
+                                           .amplitude = 2.f,
+                                           .periodSeconds = 1.f};
+    const Assisi::ECS::Entity entity = SpawnOscillator(world, spec);
+    constexpr std::uint64_t kFirstTick = 3;
+
+    uint64_t propagationTick = 0;
+    float before = 0.f;
+    for (std::uint64_t tick = kFirstTick; tick < kFirstTick + 2; ++tick)
+    {
+        before = world.scene.Get<Assisi::ECS::Transform>(entity)->position.x;
+        propagationTick = Assisi::ECS::PropagateTransforms(world.scene, propagationTick);
+        const Assisi::ECS::FixedStepScope step(world.scene);
+        SystemContext ctx{world, kStep, tick, nullptr, &actions, events, true, &worlds};
+        OscillateSystem(ctx);
+    }
+    const float after = world.scene.Get<Assisi::ECS::Transform>(entity)->position.x;
+    REQUIRE(after != before);
+
+    Assisi::ECS::SetBlendAlpha(world.scene, 0.25f);
+    propagationTick = Assisi::ECS::PropagateTransforms(world.scene, propagationTick);
+
+    const float drawn = Assisi::Math::TranslationOf(world.scene.Get<Assisi::ECS::WorldMatrix>(entity)->matrix).x;
+    CHECK(drawn == doctest::Approx(before + 0.25f * (after - before)));
 }

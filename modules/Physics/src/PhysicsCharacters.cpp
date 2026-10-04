@@ -30,6 +30,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <map>
 #include <utility>
 
@@ -220,7 +221,6 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         }
 
         const float eyeTarget = record.stance == Stance::Crouching ? record.crouchEyeHeight : record.standingEyeHeight;
-        record.prevEyeHeight = record.eyeHeight;
         record.eyeHeight = Approach(record.eyeHeight, eyeTarget, record.eyeSpeed * deltaTime);
 
         // Steering is done relative to the ground, so a character walking on a
@@ -399,7 +399,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDesc
     // A character is placed in world space, and a parented Transform is an
     // offset from its parent.
     Pose pose{transform.rotation, transform.position};
-    if (const glm::mat4 *parent = ECS::ParentWorldMatrix(scene, entity); parent != nullptr)
+    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
     {
         const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
         pose = Pose{world.rotation, world.position};
@@ -409,7 +409,6 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDesc
     record.entity = entity;
     record.Retune(descriptor);
     record.eyeHeight = descriptor.eyeHeight;
-    record.prevEyeHeight = descriptor.eyeHeight;
     if (!BuildCharacterVirtual(record, descriptor, pose))
     {
         Core::Log::Error("PhysicsWorld: entity {} (gen {}) gets no character - the world holds at most {} bodies.",
@@ -424,7 +423,6 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const CharacterDesc
     slot.generation = entity.generation;
     slot.motion = BodyMotion::Kinematic;
     slot.kind = SlotKind::Character;
-    CollapseSnapshot(slot, pose);
 
     CharacterRecord &placed = characters.insert_or_assign(entity.index, std::move(record)).first->second;
     StampTransform(entity);
@@ -565,15 +563,15 @@ bool PhysicsWorld::SetCharacterStance(ECS::Entity entity, Stance stance)
     record->stance = stance;
 
     // The feet moved and the eye did not, so the eye is that much nearer to or
-    // further from them. Both halves of each render blend move together: one
-    // blended across the shift and the other not would show the feet
-    // travelling under an eye height that had already changed, and the view
-    // would dip for a frame.
-    Impl::BodySlot &slot = *_impl->SlotFor(entity);
+    // further from them. The Transform follows now rather than at the next
+    // writeback, so nothing reading it in between sees the feet where they were.
     record->eyeHeight -= feetShift;
-    record->prevEyeHeight -= feetShift;
-    slot.snapshot.prevPosition.y += feetShift;
-    slot.snapshot.curPosition.y += feetShift;
+    if (feetShift != 0.f)
+    {
+        const JPH::RVec3 feet = record->character->GetPosition();
+        _impl->WritePose(entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                         /*writeRotation=*/ false);
+    }
     return true;
 }
 
@@ -623,16 +621,6 @@ CharacterState PhysicsWorld::GetCharacterState(ECS::Entity entity) const
     }
 
     return state;
-}
-
-float PhysicsWorld::GetCharacterEyeHeight(ECS::Entity entity, float alpha) const
-{
-    const Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
-    {
-        return 0.f;
-    }
-    return glm::mix(record->prevEyeHeight, record->eyeHeight, alpha);
 }
 
 } // namespace Assisi::Physics

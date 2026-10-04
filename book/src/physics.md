@@ -36,8 +36,25 @@ looks at what changed since the last one:
   entity has a scaled collider. A sphere or capsule has a single radius, so it
   is scaled by the same amount on every axis.
 
-While a body moves, the engine copies its pose into the `Transform` every frame.
-A body at rest is left alone, so a level full of sleeping objects costs nothing.
+After every physics step, the engine writes each moving body's pose into its
+`Transform`. A body at rest is left alone, so a level full of sleeping objects
+costs nothing.
+
+`Transform` is the simulation pose: what you read from it right after a step is
+exactly where the body is. The picture on screen is smoothed separately. Each
+frame, anything whose `Transform` was written during a fixed step is drawn
+between its pose before that step and its pose after it, by how far the frame
+is into the next step. Motion stays smooth on a display faster than the step
+rate, and gameplay never sees the in-between pose. See
+[Your first system](first-system.md#phases-when-a-system-runs).
+
+A spot or point light that moves in fixed steps is drawn smoothly too, but by
+default its shadow is redrawn only once per step, from where the step put the
+light. The shadow can trail the light by up to one step, and a moving light
+costs one shadow redraw per step rather than one per frame. To keep the shadow
+exactly on the light, set `shadows.local.cache.redrawMovingLightsEveryFrame` to
+`true` in `options.json`, or tick **Redraw Moving Lights Every Frame** in the
+editor's shadow options.
 
 ### What writing a `Transform` does
 
@@ -50,7 +67,8 @@ depends on the kind of body:
 | Dynamic | The body is placed there and keeps its velocity. |
 | Character | Only a change of position moves it; turning it is the controller's job. |
 
-To place a body and stop it as well, call `Teleport(entity, pose)`.
+To place a body and stop it as well, call `Teleport(entity, pose)`. A teleported
+body is drawn at its new place at once, not slid there.
 
 ## Moving bodies from code
 
@@ -136,7 +154,7 @@ asked for.
 ### Setting one up
 
 Give an entity a **`CharacterDescriptor`** and a `Transform`, and add the
-`CharacterMove` and `CharacterState` systems to the level. The entity's
+`CharacterMove`, `CharacterState` and `CharacterEye` systems to the level. The entity's
 `Transform` is at the character's **feet**. The `blueprints/Player.abp`
 blueprint is a complete example with a camera and keyboard and mouse control.
 
@@ -254,10 +272,11 @@ In the air it is the other way round: crouching keeps the head in place and
 a jump therefore clears a ledge that the jump alone does not. Standing up in the
 air lowers the feet again, and is refused while the ground is too close below.
 
-The engine keeps a camera parented to the character at the character's eye
-height, every rendered frame. The eye eases between `eyeHeight` and
-`crouchEyeHeight` at `eyeSpeed`. When the feet move in the air the eye height changes by the same
-amount at once, so the view stays where it was.
+The `CharacterEye` system keeps a camera parented to the character at the
+character's eye height, after every step, and the camera is smoothed between
+steps like everything else. The eye eases between `eyeHeight` and
+`crouchEyeHeight` at `eyeSpeed`. When the feet move in the air the eye height
+changes by the same amount at once, so the view stays where it was.
 
 ### The movement settings
 

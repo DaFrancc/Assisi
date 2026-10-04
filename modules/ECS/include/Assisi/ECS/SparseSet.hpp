@@ -26,6 +26,22 @@
 namespace Assisi::ECS
 {
 
+/// @brief Extra per-component arrays a pool keeps in step with its dense
+/// array. None by default; a component specializes this to add its own, and
+/// the pool calls the hooks on every structural change. Empty, so a pool
+/// without lanes pays nothing for them.
+template <typename T> struct SparseSetLanes
+{
+    void Push() {}
+    void Move(uint32_t /*to*/, uint32_t /*from*/) {}
+    void Pop() {}
+    void Clear() {}
+
+    /// Called on every Stamp of the component at dense slot @p slot, before the
+    /// caller writes it for GetMut and QueryMut, after for Add and MarkChanged.
+    void OnStamp(uint32_t /*slot*/, Entity /*entity*/, const T & /*component*/) {}
+};
+
 template <typename T> struct SparseSet
 {
 
@@ -68,6 +84,7 @@ template <typename T> struct SparseSet
         T *added = &_dense.emplace_back(std::move(component));
         if (_tracksChanges)
             _changeTicks.push_back(0); // parallel to _dense; Scene stamps it right after Add
+        _lanes.Push();
         BumpVersion();
         return added;
     }
@@ -95,6 +112,7 @@ template <typename T> struct SparseSet
             /* Keep the change-tick lane in lockstep with the dense array. */
             if (_tracksChanges)
                 _changeTicks[removedPos] = _changeTicks[lastPos];
+            _lanes.Move(removedPos, lastPos);
         }
 
         _sparse[entity.index] = Invalid;
@@ -102,6 +120,7 @@ template <typename T> struct SparseSet
         _entities.pop_back();
         if (_tracksChanges)
             _changeTicks.pop_back();
+        _lanes.Pop();
         LogRemoval(entity);
         BumpVersion();
     }
@@ -155,6 +174,7 @@ template <typename T> struct SparseSet
         _dense.clear();
         _entities.clear();
         _changeTicks.clear(); // no-op when untracked (already empty)
+        _lanes.Clear();
         // Every component went at once. Listing them all would be a log as long
         // as the pool was; saying "nothing before now is known" costs nothing
         // and sends every reader to check what it holds, which it has to anyway.
@@ -168,6 +188,14 @@ template <typename T> struct SparseSet
 
     /// @brief Direct access to the packed entity array (parallel to dense).
     const std::vector<Entity> &Entities() const { return _entities; }
+
+    /// @brief The entity's position in the dense array, or Invalid if it has no
+    /// component here. Indexes Entities() and every lane.
+    uint32_t DenseIndexOf(Entity entity) const { return Has(entity) ? _sparse[entity.index] : Invalid; }
+
+    /// @brief The per-component lanes, indexed like the dense array.
+    SparseSetLanes<T> &Lanes() { return _lanes; }
+    const SparseSetLanes<T> &Lanes() const { return _lanes; }
 
     // ── Change detection ──────────────────────────────────────────────────────
     // Opt-in per pool (ACOMP(tracked), wired by Scene at pool creation). When
@@ -196,7 +224,11 @@ template <typename T> struct SparseSet
     void Stamp(Entity entity, uint64_t tick)
     {
         if (_tracksChanges && Has(entity))
-            _changeTicks[_sparse[entity.index]] = tick;
+        {
+            const uint32_t slot = _sparse[entity.index];
+            _lanes.OnStamp(slot, entity, _dense[slot]);
+            _changeTicks[slot] = tick;
+        }
     }
 
     /// @brief The entity's component's last-written tick, or 0 (never written /
@@ -322,6 +354,7 @@ private:
     std::vector<Entity> _entities;      ///< Entity that owns each dense slot.
     std::vector<uint64_t> _changeTicks; ///< Parallel to _dense; per-component last-written tick. Empty when untracked.
     std::vector<Removal> _removals;     ///< Removal log, oldest first; see RemovedSince.
+    [[no_unique_address]] SparseSetLanes<T> _lanes; ///< Parallel to _dense; see SparseSetLanes.
     uint64_t *_removalClock = nullptr;  ///< The owning Scene's change tick; null logs nothing.
     uint64_t _removalFloor = 0;         ///< Removals at or before this tick may be missing from the log.
     bool _tracksChanges = false;        ///< Whether the _changeTicks lane is maintained (ACOMP(tracked)).

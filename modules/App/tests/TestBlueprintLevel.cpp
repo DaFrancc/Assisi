@@ -25,6 +25,7 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -180,8 +181,6 @@ TEST_CASE("App: a child of a walking character follows it")
     {
         world.physics.MoveCharacter(body, {5.f, 0.f, 0.f}, /*jump=*/ false);
         world.physics.Update(kStep);
-        world.physics.CaptureState();
-        world.physics.InterpolateTransforms(1.f);
         tick = ECS::PropagateTransforms(world.scene, tick);
     }
 
@@ -195,7 +194,7 @@ TEST_CASE("App: a child of a walking character follows it")
 
     // And the child came with it: its world matrix is the character's pose plus
     // its own local offset, not the pose the level was composed at.
-    const glm::vec3 eyeWorld(eyeTransform->worldMatrix[3]);
+    const glm::vec3 eyeWorld = Math::TranslationOf(world.scene.Get<ECS::WorldMatrix>(eye)->matrix);
     CHECK(eyeWorld.x == doctest::Approx(bodyTransform->position.x).epsilon(0.01));
     CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5f).epsilon(0.05));
 

@@ -25,10 +25,7 @@ Frustum CameraFrustum()
     camera.nearZ      = 0.1f;
     camera.farZ       = 200.f;
 
-    Transform camTransform;
-    camTransform.worldMatrix = glm::mat4(1.f); // origin, looking down -Z
-
-    const glm::mat4 view       = ViewMatrix(camTransform);
+    const glm::mat4 view       = ViewMatrix(glm::mat4(1.f)); // origin, looking down -Z
     const glm::mat4 projection = ProjectionMatrix(camera, 16.f / 9.f);
     return Frustum::FromViewProjection(projection * view);
 }

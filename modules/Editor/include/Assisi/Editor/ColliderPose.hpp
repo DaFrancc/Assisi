@@ -22,7 +22,7 @@ namespace Assisi::Editor
 /// Physics does, through ECS::ParentWorldMatrix; for an unparented one @p local
 /// already is the world pose.
 ///
-/// Reads the *parent's* propagated Transform::worldMatrix, so propagation must
+/// Reads the *parent's* propagated world matrix, so propagation must
 /// have run this frame. Not the entity's own world matrix, whose scale a
 /// non-uniformly scaled parent would shear into the rotation.
 [[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local);

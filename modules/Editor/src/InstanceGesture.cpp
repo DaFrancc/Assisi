@@ -21,10 +21,6 @@ namespace Rt = Assisi::Runtime;
 /// Exact, with no tolerance. `InstancesForSave` writes the row verbatim, so a
 /// placement a tolerance forgave would still reach disk — the same hole this
 /// comparison exists to close, one size smaller.
-///
-/// Field by field rather than `operator==`: Transform carries `worldMatrix`,
-/// which PropagateTransforms owns and no author edits, so a defaulted comparison
-/// would answer a question about derived state.
 bool PlacementChanged(const Rt::Transform &before, const Rt::Transform &after)
 {
     return before.position != after.position || before.rotation != after.rotation ||

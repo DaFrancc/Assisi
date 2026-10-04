@@ -15,8 +15,8 @@
 /// The pose is also deliberately scale-free at both ends: the collider's scale is
 /// the shape's, which the caller composes in from the physics world, so neither
 /// the parent's scale nor the body's own may reach the pose. That is what rules
-/// out the tempting one-liner of reading Transform::worldMatrix, which carries
-/// both.
+/// out the tempting one-liner of reading the entity's world matrix, which
+/// carries both.
 
 #include <doctest/doctest.h>
 
@@ -77,7 +77,7 @@ ECS::Transform ParentPose(float scale = 1.f)
 }
 
 /// Hangs @p local under a parent at @p parentPose and propagates, so the parent's
-/// worldMatrix is current — which is the state the editor draws from. Returns the
+/// world matrix is current — which is the state the editor draws from. Returns the
 /// body entity.
 ECS::Entity AddParentedBody(ECS::Scene &scene, const ECS::Transform &parentPose, const ECS::Transform &local)
 {

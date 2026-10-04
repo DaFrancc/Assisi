@@ -28,6 +28,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -310,12 +311,13 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
     (void)ECS::PropagateTransforms(scene, 0u);
 
     int32_t checked = 0;
-    for (auto [entity, transform, light] : scene.Query<Runtime::Transform, Runtime::SpotLight>())
+    for (auto [entity, worldMatrix, light] : scene.Query<ECS::WorldMatrix, Runtime::SpotLight>())
     {
         (void)entity;
         (void)light;
-        const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
-        const glm::vec3 aim = Runtime::SpotWorldDirection(transform.worldMatrix);
+        const glm::mat4 &world = worldMatrix.matrix;
+        const glm::vec3 position = Math::TranslationOf(world);
+        const glm::vec3 aim = Runtime::SpotWorldDirection(world);
 
         // Down, and by much more than it leans: the ring lights a floor.
         CHECK(aim.y < -0.9f);

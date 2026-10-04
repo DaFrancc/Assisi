@@ -414,6 +414,17 @@ struct LocalShadowCacheSettings
     /// which is the baseline every measurement here is quoted against.
     bool enabled = true;
 
+    /// Whether a moving light's tile follows the light as it is drawn, every
+    /// frame, rather than as its fixed steps move it.
+    ///
+    /// A light moved in fixed steps is drawn blended between its last two, so
+    /// where it is drawn changes every frame and a tile following that is
+    /// redrawn every frame. Off — the default — draws the tile from where the
+    /// last step put the light, so it is redrawn at the game's tick rate and
+    /// the shadow is at most one step away from the light. On keeps the shadow
+    /// exactly on the light, at a redraw every frame for each moving light.
+    bool redrawMovingLightsEveryFrame = false;
+
     /// Faces that may be re-rendered in one frame, most important first.
     ///
     /// Distinct from the tile cap: a tile *held* costs memory, a face *drawn*

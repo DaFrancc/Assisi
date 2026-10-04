@@ -28,6 +28,7 @@ add_executable(Assisi-ECS-Tests
   TestNestedFields.cpp
   TestEntityRef.cpp
   TestHierarchy.cpp
+  TestTransformBlend.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-ECS-Tests)

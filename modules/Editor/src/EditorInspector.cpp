@@ -1671,14 +1671,14 @@ void EditorApp::DrawLightShadowVerdict()
 void EditorApp::DrawLodVerdict()
 {
     const auto *renderer = _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity);
-    const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
-    if (renderer == nullptr || renderer->meshBuffer == nullptr || transform == nullptr)
+    const Assisi::ECS::WorldMatrix *world = _scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity);
+    if (renderer == nullptr || renderer->meshBuffer == nullptr || world == nullptr)
     {
         return; // still loading, or nowhere to stand — nothing was drawn to report on
     }
 
     const Assisi::Runtime::LodReport lod =
-        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, transform->worldMatrix);
+        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, world->matrix);
 
     if (lod.levelCount <= 1)
     {

@@ -117,8 +117,7 @@ void WriteBlock(Core::BitWriter &writer, const Core::BitWriter &block)
 
 void WriteTransform(Core::BitWriter &writer, const ECS::Transform &transform)
 {
-    // The three reflected fields, in declaration order. `worldMatrix` is derived
-    // by PropagateTransforms and is not one of them.
+    // The three reflected fields, in declaration order.
     writer.WriteFloat(transform.position.x);
     writer.WriteFloat(transform.position.y);
     writer.WriteFloat(transform.position.z);

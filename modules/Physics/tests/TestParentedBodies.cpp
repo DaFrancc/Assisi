@@ -64,7 +64,7 @@ glm::mat4 ParentUnder(ECS::Scene &scene, ECS::Entity child)
     REQUIRE(scene.Add(parent, kParentPose) != nullptr);
     REQUIRE(scene.Add(child, ECS::Parent{.parent = parent}) != nullptr);
     (void)ECS::PropagateTransforms(scene, 0);
-    return scene.Get<ECS::Transform>(parent)->worldMatrix;
+    return scene.Get<ECS::WorldMatrix>(parent)->matrix;
 }
 
 /// Gives @p entity a ball body, built by the next reconcile.
@@ -126,7 +126,7 @@ TEST_CASE("A parent with no Transform defines no space, so the local pose is wor
     CHECK(NearlyEqual(world.GetBodyPose(entity).position, local.position));
 }
 
-TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back to the local field")
+TEST_CASE("Writeback: a parented body's world pose decomposes back to the local field")
 {
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene};
@@ -139,16 +139,12 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
     const glm::mat4 parent = ParentUnder(scene, entity);
     AddBall(scene, world, entity);
 
-    // Two steps so both interpolation snapshots straddle a real displacement; the
-    // ball falls under gravity, so the world pose is now something the parent
-    // frame definitely does not equal.
+    // The ball falls under gravity, so the world pose is now something the
+    // parent frame definitely does not equal.
     for (int32_t i = 0; i < 2; ++i)
     {
         world.Update(kStep);
-        world.CaptureState();
     }
-
-    world.InterpolateTransforms(1.f);
 
     const ECS::Transform *written = scene.Get<ECS::Transform>(entity);
     REQUIRE(written != nullptr);
@@ -165,7 +161,7 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
     CHECK(written->position.y < local.position.y - 1e-3f);
 }
 
-TEST_CASE("InterpolateTransforms: an unparented body in a parented scene is untouched by the conversion")
+TEST_CASE("Writeback: an unparented body in a parented scene is untouched by the conversion")
 {
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene};
@@ -187,9 +183,7 @@ TEST_CASE("InterpolateTransforms: an unparented body in a parented scene is unto
     for (int32_t i = 0; i < 2; ++i)
     {
         world.Update(kStep);
-        world.CaptureState();
     }
-    world.InterpolateTransforms(1.f);
 
     const ECS::Transform *written = scene.Get<ECS::Transform>(entity);
     REQUIRE(written != nullptr);
