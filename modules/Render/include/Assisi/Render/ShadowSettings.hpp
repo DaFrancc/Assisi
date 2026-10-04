@@ -403,9 +403,9 @@ inline constexpr float kMaxLocalSourceRadius = 1.f;
 /// and a light with nothing moving under it costs nothing at all, because its
 /// tile already holds the right depth from whenever it was last drawn.
 ///
-/// Which casters are "still" is inferred rather than authored: Transform carries
-/// a change tick, so a caster that has not been written is one that has not
-/// moved. That is a fact the engine already has, and it cannot be set wrong the
+/// Which casters are "still" is inferred rather than authored: an entity's drawn
+/// matrix carries a change tick, so a caster whose matrix has not changed is one
+/// that has not moved. That is a fact the engine already has, and it cannot be set wrong the
 /// way a mobility flag on a prefab can.
 struct LocalShadowCacheSettings
 {
@@ -445,10 +445,9 @@ struct LocalShadowCacheSettings
     /// still costs none. Without the wait, a caster that pauses mid-motion
     /// re-bakes everything around it and then immediately undoes that.
     ///
-    /// Time rather than frames: a mover is only ever written on the game's
-    /// tick, so at a high frame rate a count of frames is a sliver of a second,
-    /// and something swinging through the still point of an oscillation would
-    /// settle and wake again every cycle. Staying a mover costs little; each
+    /// Time rather than frames: at a high frame rate a count of frames is a
+    /// sliver of a second, and something swinging through the still point of an
+    /// oscillation would settle and wake again every cycle. Staying a mover costs little; each
     /// change of side is a re-bake.
     float promoteStillSeconds = 1.f;
 

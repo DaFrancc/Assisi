@@ -324,10 +324,10 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
         }
     }
 
-    // Nothing to redraw. Movers are written on the game's tick, not every
-    // frame, so most frames find every mover exactly where the moving layer
-    // already has it — same faces, same casters, same poses — and redrawing
-    // would put back the depth that is already there.
+    // Nothing to redraw. A frame in which no mover moved finds every one
+    // exactly where the moving layer already has it — same faces, same casters,
+    // same poses — and redrawing would put back the depth that is already
+    // there.
     for (LocalShadowTilePlan &plan : out)
     {
         if (plan.redrawMovers && plan.retained && plan.moverFaces == plan.liveMoverFaces &&

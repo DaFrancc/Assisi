@@ -366,7 +366,7 @@ public:
     void OnSceneReplaced();
 
 private:
-    /// @brief Take this frame's moved casters off the Transform pool's change
+    /// @brief Take this frame's moved casters off the WorldMatrix pool's change
     /// ticks, and advance the shadow frame counter.
     ///
     /// Once per frame and before either shadow half, because both are

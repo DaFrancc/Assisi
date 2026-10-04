@@ -17,6 +17,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
@@ -64,7 +65,7 @@ void SceneRenderer::ForgetKeptShadows()
 
 void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
 {
-    // What moved since the last frame, taken from the Transform pool's change
+    // What moved since the last frame, taken from the WorldMatrix pool's change
     // ticks rather than by asking every caster. This is the whole invalidation
     // input for both halves of the shadow system, and on a still frame it is
     // empty — which is what makes a still frame free.
@@ -75,15 +76,20 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     ++_shadowFrameIndex;
     if (!_moverTickPrimed)
     {
-        // A scene's first frame finds every Transform written by its load.
+        // A scene's first frame finds every matrix written by its load.
         // Read as motion, that would draw every caster as a mover until they
         // all settled at once and the bake budget met every light together.
         // Nothing is kept from before, so every map draws them as still.
         _lastMoverTick = scene.CurrentChangeTick();
         _moverTickPrimed = true;
     }
+    // From the drawn matrices rather than the Transforms: a body blending
+    // between two fixed steps moves on screen every frame though its Transform
+    // is written only on step frames, and a shadow kept between them would be
+    // left behind the body it belongs to. A child of a moving body, and an
+    // entity a RenderOffset moves, are caught the same way.
     _movedEntities.clear();
-    scene.ChangedSince<Transform>(_lastMoverTick, _movedEntities);
+    scene.ChangedSince<ECS::WorldMatrix>(_lastMoverTick, _movedEntities);
 
     // The mobility table holds casters by handle across frames, so a caster
     // that has since been destroyed, or lost what made it one, must be let go

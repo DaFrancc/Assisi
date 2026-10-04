@@ -336,7 +336,7 @@ TEST_CASE("SunShadowCadence: movers are drawn again only when they change")
     cadence.Plan(FrameAt(2, here), fit, plan);
     REQUIRE(plan.movingRedrawCount == 1);
 
-    // Between the game's ticks: where the slice already has it.
+    // A frame in which nothing moved: where the slice already has it.
     cadence.Plan(FrameAt(3, here), fit, plan);
     CHECK(plan.movingRedrawCount == 0);
     CHECK(cadence.Stats().movingKept == 1);
