@@ -49,7 +49,7 @@ TEST_CASE("BodyState: a falling body reports its velocity after each step")
     const ECS::Entity ball = AddBody(test.scene, {0.f, 10.f, 0.f}, Ball(0.5f, false));
     Step(test.world, 30);
 
-    CHECK(StateOf(test, ball).linearVelocity == test.world.GetBodyVelocity(ball).first);
+    CHECK(StateOf(test, ball).linearVelocity == test.world.GetBodyState(ball).linearVelocity);
     CHECK(StateOf(test, ball).linearVelocity.y < -1.f);
     CHECK_FALSE(StateOf(test, ball).asleep);
 }
@@ -63,7 +63,7 @@ TEST_CASE("BodyState: a written velocity is the one the next step simulates")
     test.scene.GetMut<Physics::BodyState>(ball)->linearVelocity = {4.f, 0.f, 0.f};
     Step(test.world);
 
-    CHECK(test.world.GetBodyVelocity(ball).first.x == doctest::Approx(4.f).epsilon(0.02));
+    CHECK(test.world.GetBodyState(ball).linearVelocity.x == doctest::Approx(4.f).epsilon(0.02));
     CHECK(test.world.GetBodyPose(ball).position.x > 0.f);
 }
 

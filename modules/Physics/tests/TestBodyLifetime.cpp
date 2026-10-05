@@ -65,7 +65,7 @@ TEST_CASE("Asking about an entity with no body answers with nothing")
 
     CHECK_FALSE(test.world.HasBody(bare));
     CHECK(test.world.GetBodyPose(bare).position == glm::vec3(0.f));
-    CHECK(test.world.GetBodyVelocity(bare).first == glm::vec3(0.f));
+    CHECK(test.world.GetBodyState(bare).linearVelocity == glm::vec3(0.f));
     CHECK_FALSE(test.world.IsBodyActive(bare));
     test.world.Teleport(bare, Physics::Pose{});
 }
@@ -175,7 +175,7 @@ TEST_CASE("After a scene is cleared, a reused entity gets a new body rather than
     AddFloor(test.scene);
     const ECS::Entity faller = AddBody(test.scene, {0.f, 20.f, 0.f}, Ball(0.5f, false));
     Step(test.world, 10);
-    REQUIRE(test.world.GetBodyVelocity(faller).first.y < 0.f);
+    REQUIRE(test.world.GetBodyState(faller).linearVelocity.y < 0.f);
 
     // A level load: the scene starts over, and the first entity is {0, 0} again.
     test.scene.Clear();
@@ -185,7 +185,7 @@ TEST_CASE("After a scene is cleared, a reused entity gets a new body rather than
 
     test.world.Reconcile();
     CHECK(test.world.HasBody(reused));
-    CHECK(test.world.GetBodyVelocity(reused).first == glm::vec3(0.f));
+    CHECK(test.world.GetBodyState(reused).linearVelocity == glm::vec3(0.f));
     CHECK(SomethingAt(test.world, spot));
     CHECK_FALSE(SomethingAt(test.world, {0.f, 10.f, 0.f}));
 }
@@ -204,7 +204,7 @@ TEST_CASE("An entity destroyed and revived at its own handle starts over")
         PhysicsTests::Drive(test.scene, walker, {3.f, 0.f, 0.f}, /*jump=*/ false);
         Step(test.world);
     }
-    REQUIRE(test.world.GetBodyVelocity(faller).first.y < 0.f);
+    REQUIRE(test.world.GetBodyState(faller).linearVelocity.y < 0.f);
     REQUIRE(PhysicsTests::StateOf(test.scene, walker).velocity.x > 0.f);
 
     for (const ECS::Entity entity : {faller, walker})
@@ -221,7 +221,7 @@ TEST_CASE("An entity destroyed and revived at its own handle starts over")
     REQUIRE(test.scene.Add(walker, Physics::Character{}) != nullptr);
 
     test.world.Reconcile();
-    CHECK(test.world.GetBodyVelocity(faller).first == glm::vec3(0.f));
+    CHECK(test.world.GetBodyState(faller).linearVelocity == glm::vec3(0.f));
     CHECK(test.world.GetBodyPose(faller).position == spawn);
     CHECK(PhysicsTests::StateOf(test.scene, walker).velocity == glm::vec3(0.f));
 }
@@ -247,7 +247,7 @@ TEST_CASE("Rebuild starts every body and character over from the scene")
 
     CHECK(test.world.HasBody(faller));
     CHECK(test.world.HasBody(walker));
-    CHECK(test.world.GetBodyVelocity(faller).first == glm::vec3(0.f));
+    CHECK(test.world.GetBodyState(faller).linearVelocity == glm::vec3(0.f));
     CHECK(test.world.GetBodyPose(faller).position == spawn);
     CHECK(PhysicsTests::StateOf(test.scene, walker).velocity == glm::vec3(0.f));
 }

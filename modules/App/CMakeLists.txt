@@ -87,7 +87,7 @@ endif()
 
 # The engine's own systems and events. A declaration in a scanned header *is* the
 # registration — the generated OBJECT library is pulled fully into every final
-# link, so a level naming "Bounce" finds it without anyone calling a registrar.
+# link, so a level naming "Oscillate" finds it without anyone calling a registrar.
 #
 # SystemRegistry.hpp is here for its AEVENT alone: QuitRequested is what a Quit
 # button in a screen file names, and an event declared in a header nothing scans

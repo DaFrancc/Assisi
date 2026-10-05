@@ -20,7 +20,7 @@
 ///     names a system this build does not have is a level that will run without
 ///     it — the exact silent failure the whole design opens with.
 ///   - **The list is a union, not a concatenation.** Naming a system twice, or
-///     two nested blueprints both naming `Bounce`, installs it once.
+///     two nested blueprints both naming `Oscillate`, installs it once.
 ///   - **File order carries no meaning.** Run order comes from `after`/`before`
 ///     on the system itself, so a level cannot accidentally reorder anything.
 
@@ -108,7 +108,7 @@ class SystemCatalog
     /// @brief Installs @p names into @p world, skipping any already present.
     ///
     /// Idempotent per name, which is what makes the list a union: two nested
-    /// blueprints both naming `Bounce` install it once, and a spawn into a world
+    /// blueprints both naming `Oscillate` install it once, and a spawn into a world
     /// that already has it costs a lookup.
     ///
     /// @param context Named in the error message when a name is unknown — the

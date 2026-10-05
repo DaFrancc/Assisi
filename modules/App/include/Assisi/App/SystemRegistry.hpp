@@ -326,7 +326,7 @@ class SystemRegistry
     /// @brief Whether a system called @p name is registered, in any phase.
     ///
     /// What makes an authored system list a *union* rather than a concatenation:
-    /// two nested blueprints both naming `Bounce` install it once. It matters
+    /// two nested blueprints both naming `Oscillate` install it once. It matters
     /// beyond tidiness, because re-registering a name corrupts the ordering graph
     /// — After()/Before() bind to the first entry of a name.
     [[nodiscard]] bool Has(std::string_view name) const;

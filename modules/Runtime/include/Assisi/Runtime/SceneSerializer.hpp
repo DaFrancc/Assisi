@@ -12,7 +12,7 @@
 /// @code{.json}
 /// {
 ///   "version": 2,
-///   "systems": ["Bounce"],
+///   "systems": ["Oscillate"],
 ///   "entities": [
 ///     {
 ///       "name": "body",
@@ -96,7 +96,7 @@ struct LevelHeader
     /// than an include.
     ///
     /// The list is a **union, not a concatenation** — naming a system twice, or
-    /// two nested blueprints both naming `Bounce`, installs it once — and **file
+    /// two nested blueprints both naming `Oscillate`, installs it once — and **file
     /// order carries no meaning**, because run order comes from `after`/`before`
     /// on the system itself. This reader accepts any name; a name this build does
     /// not declare is refused by WorldManager::ApplySystems, because a level that

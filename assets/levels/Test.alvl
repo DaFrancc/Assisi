@@ -414,9 +414,6 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 0.800000011920929
-        },
         "Collider": {
           "channel": 0,
           "collidesWith": 31,
@@ -427,6 +424,7 @@
           ],
           "halfHeight": 0.5,
           "radius": 0.5,
+          "restitution": 0.800000011920929,
           "shape": 0
         },
         "MeshRenderer": {
@@ -514,7 +512,6 @@
     }
   ],
   "systems": [
-    "Bounce",
     "CaptureCursor",
     "CursorToggle",
     "InputDemo",

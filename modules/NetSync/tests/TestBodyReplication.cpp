@@ -719,8 +719,8 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     // sleep enforcement has nothing to notice and the delta path has nothing to
     // say. Exactly what the editor's "corrupt selected mirror" poke does.
     const glm::vec3 displaced = restPosition + glm::vec3{0.f, 0.f, 1.f};
-    harness.clientPhysics.ApplyBodyState(mirror, Physics::Pose{rest.rotation, displaced}, glm::vec3{0.f},
-                                         glm::vec3{0.f}, /*activate=*/ false);
+    harness.clientPhysics.ApplyCorrection(mirror, Physics::Pose{rest.rotation, displaced},
+                                          Physics::BodyState{.asleep = true});
     harness.client.SmoothView(0.0, kFixedStep);
     REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
 
@@ -864,11 +864,11 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
 
 TEST_CASE("a gameplay component whose absence would desync a mirror is replicated")
 {
-    // The marking, pinned so it cannot quietly regress. Bounce rewrites a body's
-    // velocity on contact: a client that does not have it runs a different
+    // The marking, pinned so it cannot quietly regress. A Collider decides how a
+    // body bounces and slides: a client that does not have it runs a different
     // simulation, which is the case above.
     const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(
-        Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Physics::Bounce)));
+        Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Physics::Collider)));
     REQUIRE(meta != nullptr);
     CHECK(meta->replicable);
 }
@@ -891,8 +891,9 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     const glm::vec3 restPosition = rest.position;
 
     // Well past the 2.5 m bound.
-    harness.clientPhysics.ApplyBodyState(mirror, Physics::Pose{rest.rotation, restPosition + glm::vec3{0.f, 0.f, 8.f}},
-                                         glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/ false);
+    harness.clientPhysics.ApplyCorrection(mirror,
+                                          Physics::Pose{rest.rotation, restPosition + glm::vec3{0.f, 0.f, 8.f}},
+                                          Physics::BodyState{.asleep = true});
 
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
     harness.client.RequestKeyframe();

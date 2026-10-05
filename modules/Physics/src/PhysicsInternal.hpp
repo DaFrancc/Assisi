@@ -33,9 +33,13 @@
 
 #include <Jolt/Core/JobSystem.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyID.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
@@ -48,6 +52,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Physics
@@ -404,10 +409,11 @@ JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 /// propagated world matrices hold. Null for a root.
 std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity);
 
-/// Builds the Jolt collision shape for a primitive. Radii and half-heights are
-/// clamped to the convex radius, so a zeroed dimension field — reachable from an
-/// inspector drag — cannot create a degenerate, asserting shape.
-JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape);
+/// Builds the Jolt collision shape for a Collider's primitive, unscaled and
+/// without its offset. Radii and half-heights are clamped to the convex radius,
+/// so a zeroed dimension field — reachable from an inspector drag — cannot
+/// create a degenerate, asserting shape.
+JPH::ShapeRefC MakeShape(const Collider &collider);
 
 /// The scale a primitive is built at for a requested @p scale: as given for a
 /// box, one scale on every axis for a sphere or a capsule, and one across the
@@ -419,10 +425,7 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale);
 constexpr float kScaleClampTolerance = 1e-4f;
 
 /// The same primitive, at ClampedShapeScale(@p scale).
-JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm::vec3 scale);
-
-/// The primitive a Collider names.
-PhysicsWorld::ColliderShapeDesc ShapeOf(const Collider &collider);
+JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale);
 
 /// The whole shape a Collider builds at @p scale: its primitive at the
 /// clamped scale, moved and turned by its offset, the offset scaled with it.
@@ -500,6 +503,10 @@ struct PhysicsWorld::Impl
         Collider collider;
         RigidBody rigidBody;
 
+        /// The pairs this body is in, as keys into `pairs`. Kept in step with
+        /// it by InsertPair and ErasePair alone.
+        std::vector<PairKey> pairKeys;
+
         /// The BodyState change tick this world last wrote or pushed. A
         /// different one was written by something else since.
         uint64_t stateTick = 0;
@@ -551,6 +558,52 @@ struct PhysicsWorld::Impl
     /// nothing.
     std::vector<ECS::Entity> scratchChanged;
     std::vector<ECS::Entity> scratchRemoved;
+
+    // --- Requests (PhysicsWorld.cpp) -------------------------------------------
+
+    struct CharacterRecord;
+
+    /// What a request asks of a body.
+    enum class RequestKind : std::uint8_t
+    {
+        Force,
+        ForceAt,
+        Impulse,
+        ImpulseAt,
+        Torque,
+        AngularImpulse,
+        Wake,
+        Sleep,
+        Count,
+    };
+
+    /// One gameplay request, waiting for the next step. `point` is read only
+    /// by the kinds applied at a point.
+    struct BodyRequest
+    {
+        glm::vec3 value{0.f};
+        glm::vec3 point{0.f};
+        ECS::Entity entity{ECS::NullEntity};
+        RequestKind kind = RequestKind::Force;
+    };
+
+    /// In the order they were made, which is the order they are applied in.
+    std::vector<BodyRequest> requests;
+
+    /// Queues @p request for the next step.
+    void Request(const BodyRequest &request);
+
+    /// Applies every queued request to the bodies the reconcile just brought in
+    /// line, and empties the queue. @p deltaTime is the step about to run, over
+    /// which a force on a character is turned into a change of velocity.
+    void ApplyRequests(float deltaTime);
+
+    /// Applies one request to a body.
+    void ApplyBodyRequest(const BodySlot &slot, const BodyRequest &request);
+
+    /// Applies one request to a character: a force or an impulse becomes a
+    /// change of velocity, and anything else is ignored.
+    void ApplyCharacterRequest(CharacterRecord &record, const BodyRequest &request, float deltaTime) const;
 
     /// The slot @p entity's index maps to, if it holds that entity.
     BodySlot *SlotFor(ECS::Entity entity);
@@ -637,6 +690,7 @@ struct PhysicsWorld::Impl
     struct TouchRecord
     {
         glm::vec3 normal{0.f};    ///< Away from body1's surface, as Jolt reports it.
+        glm::vec3 point{0.f};     ///< The middle of the contact, in world space.
         glm::vec3 velocity1{0.f}; ///< Pre-solve, so an impact's speed survives the solver.
         glm::vec3 velocity2{0.f};
         JPH::BodyID id1;
@@ -655,6 +709,7 @@ struct PhysicsWorld::Impl
     {
         std::uint64_t stamp = 0;
         glm::vec3 normal{0.f};
+        glm::vec3 point{0.f};
         glm::vec3 velocity1{0.f};
         glm::vec3 velocity2{0.f};
         ECS::Entity entity1{ECS::NullEntity};
@@ -671,9 +726,38 @@ struct PhysicsWorld::Impl
     std::mutex touchMutex;
     std::vector<TouchRecord> touchedThisStep;
 
+    /// Pairs Jolt stopped reporting during the step: they separated, or a body
+    /// fell asleep. Guarded by `touchMutex`, written the same way.
+    std::vector<PairKey> removedThisStep;
+
+    /// Bodies woken since the last step began, by the step or by anything
+    /// else. Guarded by `touchMutex`: Jolt wakes bodies from its jobs.
+    std::vector<JPH::BodyID> activated;
+
+    /// The bodies `activated` held when the current step began. Each was awake
+    /// for the whole step, so every contact it still has was reported in it.
+    std::vector<JPH::BodyID> activatedAtStart;
+
     /// Every pair currently touching, keyed by both bodies. Survives across steps
     /// — it is the memory that makes Enter, Stay and Exit distinguishable.
     std::unordered_map<PairKey, PairState, PairKeyHash> pairs;
+
+    /// See PhysicsWorld::SetStayEventsReported.
+    bool stayReported = false;
+
+    /// Adds a pair to `pairs` and to both its bodies' slots, or finds the one
+    /// already there. True when it was added.
+    std::pair<PairState *, bool> InsertPair(PairKey key, const TouchRecord &touch);
+
+    /// Removes a pair from `pairs` and from both its bodies' slots.
+    void ErasePair(PairKey key);
+
+    /// Emits an Exit for the pair at @p key and forgets it.
+    void EndPair(PairKey key);
+
+    /// Ends every pair of @p id's that this step did not see. @p id is a body
+    /// that was awake for the whole step.
+    void EndUnseenPairsOf(const JPH::BodyID &id);
 
     /// Exits for pairs whose body was destroyed before the next step could notice.
     std::vector<ContactEvent> pendingExits;
@@ -720,6 +804,25 @@ struct PhysicsWorld::Impl
     /// The filter a body was created with, read back out of its packed layer.
     CollisionFilter FilterOf(const JPH::BodyID &id) const;
 
+    // --- Queries (PhysicsQueries.cpp) ------------------------------------------
+
+    /// One ray hit, for a ray from @p origin along @p sweep.
+    QueryHit RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH::RayCastResult &result) const;
+
+    /// One shape-cast hit, for a cast along @p sweep.
+    QueryHit ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResult &result) const;
+
+    /// One overlap hit; its distance is the depth.
+    QueryHit OverlapHit(const JPH::CollideShapeResult &result) const;
+
+    /// Sweeps @p collider from @p start along @p sweep into @p hits.
+    void CollectShapeCast(const Collider &collider, const Pose &start, glm::vec3 sweep, ECS::Entity ignore,
+                          JPH::CastShapeCollector &hits) const;
+
+    /// What @p collider held at @p at overlaps, into @p hits.
+    void CollectOverlap(const Collider &collider, const Pose &at, ECS::Entity ignore,
+                        JPH::CollideShapeCollector &hits) const;
+
     /// Appends to @p out one event per side of a pair that has an entity.
     static void EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out);
 
@@ -752,17 +855,48 @@ public:
             _owner.RecordTouch(body1, body2, manifold);
         }
 
-        // OnContactRemoved is deliberately not overridden. Jolt calls it when a
-        // body falls asleep, which is not the pair ending, and forbids reading
-        // either body because one may already be destroyed. The post-step sweep
-        // decides what ended instead, and treats a pair whose bodies are both
-        // asleep as still touching.
+        // Only says which pair to look at after the step. Jolt calls this when a
+        // body falls asleep too, which is not the pair ending, and forbids
+        // reading either body because one may already be destroyed, so whether
+        // the pair ended is decided after the step, where both can be read.
+        void OnContactRemoved(const JPH::SubShapeIDPair &pair) override
+        {
+            const PairKey key = KeyFor(pair.GetBody1ID(), pair.GetBody2ID());
+            const std::lock_guard<std::mutex> lock(_owner.touchMutex);
+            _owner.removedThisStep.push_back(key);
+        }
 
 private:
         Impl &_owner;
     };
 
     ContactCollector collector{*this};
+
+    /// Records which bodies wake. A body woken has its contacts tested afresh
+    /// by the step after, which is what can tell that one it slept with ended.
+    class ActivationCollector final : public JPH::BodyActivationListener
+    {
+public:
+        explicit ActivationCollector(Impl &owner) : _owner(owner) {}
+
+        void OnBodyActivated(const JPH::BodyID &id, JPH::uint64 userData) override
+        {
+            (void)userData;
+            const std::lock_guard<std::mutex> lock(_owner.touchMutex);
+            _owner.activated.push_back(id);
+        }
+
+        void OnBodyDeactivated(const JPH::BodyID &id, JPH::uint64 userData) override
+        {
+            (void)id;
+            (void)userData;
+        }
+
+private:
+        Impl &_owner;
+    };
+
+    ActivationCollector activationCollector{*this};
 
     // --- Characters ----------------------------------------------------------
 
@@ -773,6 +907,10 @@ private:
     /// scene each step; the reconcile copies them again when it is edited.
     struct CharacterRecord
     {
+        /// The change of velocity the forces and impulses asked of it this step
+        /// add up to, taken by its next step and then cleared.
+        JPH::Vec3 push = JPH::Vec3::sZero();
+
         JPH::Ref<JPH::CharacterVirtual> character;
         JPH::RefConst<JPH::Shape> standingShape;
         JPH::RefConst<JPH::Shape> crouchingShape;
@@ -809,6 +947,7 @@ private:
         float radius = 0.f;
         float standingHalfHeight = 0.f;
         float crouchHalfHeight = 0.f;
+        float mass = 0.f;
 
         /// How much taller the standing capsule is than the crouching one (m),
         /// which is how far the feet move when the stance changes in the air.
@@ -921,8 +1060,8 @@ private:
     /// sweep. The body-vs-body listener cannot see these: a character's inner
     /// body is kinematic, and against static geometry that pair generates no
     /// contact at all.
-    void RecordCharacterTouch(const JPH::BodyID &innerBody, const JPH::BodyID &other, glm::vec3 normal,
-                              glm::vec3 characterVelocity);
+    void RecordCharacterTouch(const JPH::CharacterVirtual &character, const JPH::BodyID &other,
+                              JPH::RVec3Arg position, JPH::Vec3Arg normal);
 
     /// Answers the character sweep's questions about what it may push and be
     /// pushed by, and records what it touched.

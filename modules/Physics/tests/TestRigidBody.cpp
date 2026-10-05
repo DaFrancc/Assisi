@@ -62,9 +62,9 @@ void Launch(TestScene &test, ECS::Entity entity, glm::vec3 linear, glm::vec3 ang
 }
 
 /// A small sphere to ask what is at a point.
-Physics::PhysicsWorld::ColliderShapeDesc Probe()
+Physics::Collider Probe()
 {
-    Physics::PhysicsWorld::ColliderShapeDesc probe;
+    Physics::Collider probe;
     probe.shape = Physics::ColliderShape::Sphere;
     probe.radius = 0.1f;
     return probe;
@@ -117,8 +117,8 @@ TEST_CASE("RigidBody: linearDamping slows a moving body")
     Launch(test, free, {5.f, 0.f, 0.f});
     Step(test.world, kSecond);
 
-    CHECK(test.world.GetBodyVelocity(free).first.x == doctest::Approx(5.f));
-    CHECK(test.world.GetBodyVelocity(damped).first.x < 2.5f);
+    CHECK(test.world.GetBodyState(free).linearVelocity.x == doctest::Approx(5.f));
+    CHECK(test.world.GetBodyState(damped).linearVelocity.x < 2.5f);
 }
 
 TEST_CASE("RigidBody: angularDamping slows a spinning body")
@@ -132,8 +132,8 @@ TEST_CASE("RigidBody: angularDamping slows a spinning body")
     Launch(test, free, glm::vec3(0.f), {0.f, 5.f, 0.f});
     Step(test.world, kSecond);
 
-    CHECK(test.world.GetBodyVelocity(free).second.y == doctest::Approx(5.f));
-    CHECK(test.world.GetBodyVelocity(damped).second.y < 2.5f);
+    CHECK(test.world.GetBodyState(free).angularVelocity.y == doctest::Approx(5.f));
+    CHECK(test.world.GetBodyState(damped).angularVelocity.y < 2.5f);
 }
 
 TEST_CASE("RigidBody: a locked translation keeps the body from moving along it")
@@ -184,8 +184,8 @@ TEST_CASE("RigidBody: in a head-on collision the lighter body is the one turned 
     Launch(test, light, {-3.f, 0.f, 0.f});
     Step(test.world, kSecond);
 
-    CHECK(test.world.GetBodyVelocity(heavy).first.x > 0.f);
-    CHECK(test.world.GetBodyVelocity(light).first.x > 3.f);
+    CHECK(test.world.GetBodyState(heavy).linearVelocity.x > 0.f);
+    CHECK(test.world.GetBodyState(light).linearVelocity.x > 3.f);
 }
 
 TEST_CASE("RigidBody: ccd stops a fast small body at a thin floor it would otherwise pass")
@@ -241,8 +241,8 @@ TEST_CASE("Collider: friction holds back a body sliding across a floor")
     Launch(test, held, {3.f, 0.f, 0.f});
     Step(test.world, kSecond);
 
-    CHECK(test.world.GetBodyVelocity(sliding).first.x > 2.f);
-    CHECK(test.world.GetBodyVelocity(held).first.x == doctest::Approx(0.f).epsilon(0.05));
+    CHECK(test.world.GetBodyState(sliding).linearVelocity.x > 2.f);
+    CHECK(test.world.GetBodyState(held).linearVelocity.x == doctest::Approx(0.f).epsilon(0.05));
 }
 
 TEST_CASE("Collider: restitution decides whether a dropped ball comes back up")
@@ -274,6 +274,31 @@ TEST_CASE("Collider: restitution decides whether a dropped ball comes back up")
     CHECK(bouncingPeak > 2.f);
 }
 
+TEST_CASE("Collider: restitution above 1 gains height on every bounce, and leaves a resting body at rest")
+{
+    TestScene test;
+    AddFloor(test.scene);
+    BodySpec springy = Ball(0.5f, false);
+    springy.collider.restitution = 1.2f;
+    const ECS::Entity dropped = AddBody(test.scene, {0.f, 2.f, 0.f}, springy);
+    const ECS::Entity resting = AddBody(test.scene, {5.f, 0.5f, 0.f}, springy);
+
+    float peak = 0.f;
+    bool landed = false;
+    for (int32_t i = 0; i < 2 * kSecond; ++i)
+    {
+        Step(test.world);
+        landed = landed || Height(test, dropped) < 0.6f;
+        if (landed)
+        {
+            peak = std::max(peak, Height(test, dropped));
+        }
+    }
+    REQUIRE(landed);
+    CHECK(peak > 2.f);
+    CHECK(Height(test, resting) < 0.6f);
+}
+
 TEST_CASE("RigidBody: a kinematic body ignores gravity and is moved by its Transform")
 {
     TestScene test;
@@ -292,9 +317,9 @@ TEST_CASE("RigidBody: a kinematic body ignores gravity and is moved by its Trans
     // the step it was asked for, not every step after it.
     Step(test.world, 10);
     CHECK(test.world.GetBodyPose(platform).position.x == doctest::Approx(3.f));
-    const std::vector<ECS::Entity> found =
-        test.world.Overlap(Probe(), Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {3.f, 5.f, 0.f}},
-                           Physics::CollisionFilter{}, ECS::NullEntity);
+    std::vector<Physics::QueryHit> found;
+    test.world.OverlapAll(Probe(), Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {3.f, 5.f, 0.f}}, ECS::NullEntity,
+                          found);
     CHECK(found.size() == 1u);
 }
 
@@ -320,15 +345,15 @@ TEST_CASE("RigidBody: an edit reaches the live body and keeps its motion")
     TestScene test;
     const ECS::Entity ball = AddBall(test, {0.f, 100.f, 0.f}, Physics::RigidBody{});
     Step(test.world, 30);
-    const glm::vec3 before = test.world.GetBodyVelocity(ball).first;
+    const glm::vec3 before = test.world.GetBodyState(ball).linearVelocity;
     REQUIRE(before.y < -1.f);
 
     test.scene.GetMut<Physics::RigidBody>(ball)->gravityScale = 0.f;
     test.world.Reconcile();
-    CHECK(test.world.GetBodyVelocity(ball).first == before);
+    CHECK(test.world.GetBodyState(ball).linearVelocity == before);
 
     Step(test.world, 30);
-    CHECK(test.world.GetBodyVelocity(ball).first.y == doctest::Approx(before.y).epsilon(0.05));
+    CHECK(test.world.GetBodyState(ball).linearVelocity.y == doctest::Approx(before.y).epsilon(0.05));
 }
 
 TEST_CASE("RigidBody: a mass edit after a shape edit is kept")
@@ -351,7 +376,7 @@ TEST_CASE("RigidBody: a mass edit after a shape edit is kept")
     Launch(test, light, {-3.f, 0.f, 0.f});
     Step(test.world, kSecond);
 
-    CHECK(test.world.GetBodyVelocity(heavy).first.x > 0.f);
+    CHECK(test.world.GetBodyState(heavy).linearVelocity.x > 0.f);
 }
 
 TEST_CASE("RigidBody: switching to kinematic stops the fall, and back lets it fall again")

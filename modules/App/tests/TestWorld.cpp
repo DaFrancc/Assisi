@@ -260,12 +260,12 @@ TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
     {
         world.physics.Update(kStep);
     }
-    REQUIRE(world.physics.GetBodyVelocity(entity).first.y < 0.f);
+    REQUIRE(world.physics.GetBodyState(entity).linearVelocity.y < 0.f);
 
     world.scene.GetMut<Assisi::ECS::Transform>(entity)->position = spawn;
     (void)BuildSceneBodies(world.scene, world.physics);
 
-    CHECK(world.physics.GetBodyVelocity(entity).first == glm::vec3(0.f));
+    CHECK(world.physics.GetBodyState(entity).linearVelocity == glm::vec3(0.f));
     CHECK(world.physics.GetBodyPose(entity).position == spawn);
 }
 

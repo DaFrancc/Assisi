@@ -1,7 +1,6 @@
 {
   "systems": [
-    "BouncerSpawn",
-    "Bounce"
+    "BouncerSpawn"
   ],
   "entities": [
     {

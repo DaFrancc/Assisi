@@ -76,6 +76,21 @@ class MigrateTest(unittest.TestCase):
         text = level(systems=["CharacterMove", "CharacterLook", "CharacterState", "CharacterEye"])
         self.assertEqual(json.loads(migrate.migrate_text(text))["systems"], ["CharacterLook", "CharacterEye"])
 
+    def test_a_bounce_becomes_its_colliders_restitution(self):
+        text = level(entity("ball", Bounce={"rebound": 1.25}, Collider={"radius": 0.5, "shape": 1},
+                            RigidBody={}))
+        components = components_of(migrate.migrate_text(text), "ball")
+        self.assertNotIn("Bounce", components)
+        self.assertEqual(components["Collider"], {"radius": 0.5, "restitution": 1.25, "shape": 1})
+
+    def test_a_bounce_with_no_rebound_takes_its_default(self):
+        text = level(entity("ball", Bounce={}, Collider={}))
+        self.assertEqual(components_of(migrate.migrate_text(text), "ball")["Collider"], {"restitution": 1.0})
+
+    def test_the_bounce_system_is_dropped(self):
+        text = level(systems=["BouncerSpawn", "Bounce"])
+        self.assertEqual(json.loads(migrate.migrate_text(text))["systems"], ["BouncerSpawn"])
+
     def test_a_removed_descriptor_in_an_override_is_removed_from_both_components(self):
         text = json.dumps({"overrides": {"crate": {"RigidBodyDescriptor": None}}}, indent=2)
         self.assertEqual(json.loads(migrate.migrate_text(text))["overrides"]["crate"],

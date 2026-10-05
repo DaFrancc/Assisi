@@ -88,8 +88,10 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // Snapped hard, with no smoothing: extrapolation has to proceed from a valid
     // physics state, and a half-applied correction is not one. Hiding the jump
     // belongs to the view.
-    _physics->ApplyBodyState(entity, Physics::Pose{state.rotation, state.position}, state.linearVelocity,
-                             state.angularVelocity, /*activate=*/ !state.asleep);
+    _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, state.position},
+                              Physics::BodyState{.linearVelocity = state.linearVelocity,
+                                                 .angularVelocity = state.angularVelocity,
+                                                 .asleep = state.asleep});
 
     record.positionError = renderedPosition - state.position;
     record.rotationError = glm::normalize(renderedRotation * glm::inverse(state.rotation));
@@ -217,8 +219,8 @@ void ReplicationClient::EnforceSleep()
 
         // Woken by something the server never saw. Put it back and hold it there
         // — the server's own correction is the only thing allowed to wake it.
-        _physics->ApplyBodyState(it->second, Physics::Pose{record.restRotation, record.restPosition}, glm::vec3{0.f},
-                                 glm::vec3{0.f}, /*activate=*/ false);
+        _physics->ApplyCorrection(it->second, Physics::Pose{record.restRotation, record.restPosition},
+                                  Physics::BodyState{.asleep = true});
     }
 }
 

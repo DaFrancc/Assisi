@@ -17,6 +17,8 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -52,11 +54,11 @@ JPH::Vec3 ClampedBoxHalfExtents(glm::vec3 halfExtents)
 constexpr float kUnitScaleTolerance = 1e-6f;
 } // namespace
 
-JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
+JPH::ShapeRefC MakeShape(const Collider &collider)
 {
-    const float radius = glm::max(shape.radius, JPH::cDefaultConvexRadius);
-    const float halfHeight = glm::max(shape.halfHeight, JPH::cDefaultConvexRadius);
-    switch (shape.shape)
+    const float radius = glm::max(collider.radius, JPH::cDefaultConvexRadius);
+    const float halfHeight = glm::max(collider.halfHeight, JPH::cDefaultConvexRadius);
+    switch (collider.shape)
     {
     case ColliderShape::Sphere:
         return new JPH::SphereShape(radius);
@@ -67,7 +69,7 @@ JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
     case ColliderShape::Box:
         break;
     }
-    return new JPH::BoxShape(ClampedBoxHalfExtents(shape.halfExtents));
+    return new JPH::BoxShape(ClampedBoxHalfExtents(collider.halfExtents));
 }
 
 glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
@@ -91,28 +93,20 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
     return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
 }
 
-JPH::ShapeRefC MakeScaledShape(const PhysicsWorld::ColliderShapeDesc &shape, glm::vec3 scale)
+JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale)
 {
-    JPH::ShapeRefC base = MakeShape(shape);
+    JPH::ShapeRefC base = MakeShape(collider);
     if (glm::all(glm::lessThan(glm::abs(scale - glm::vec3(1.f)), glm::vec3(kUnitScaleTolerance))))
     {
         return base;
     }
-    const glm::vec3 valid = ClampedShapeScale(shape.shape, scale);
+    const glm::vec3 valid = ClampedShapeScale(collider.shape, scale);
     return new JPH::ScaledShape(base, JPH::Vec3(valid.x, valid.y, valid.z));
-}
-
-PhysicsWorld::ColliderShapeDesc ShapeOf(const Collider &collider)
-{
-    return PhysicsWorld::ColliderShapeDesc{.shape = collider.shape,
-                                           .halfExtents = collider.halfExtents,
-                                           .radius = collider.radius,
-                                           .halfHeight = collider.halfHeight};
 }
 
 JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale)
 {
-    JPH::ShapeRefC scaled = MakeScaledShape(ShapeOf(collider), scale);
+    JPH::ShapeRefC scaled = MakeScaledShape(collider, scale);
     const bool offset = collider.offsetPosition != glm::vec3(0.f) ||
                         collider.offsetRotation != glm::quat(1.f, 0.f, 0.f, 0.f);
     if (!offset)
@@ -175,6 +169,7 @@ PhysicsWorld::PhysicsWorld(ECS::Scene &scene, uint32_t maxBodies)
     // had to be flipped somewhere else to make one work is a switch that gets
     // forgotten, leaving a volume that silently does nothing.
     _impl->physicsSystem.SetContactListener(&_impl->collector);
+    _impl->physicsSystem.SetBodyActivationListener(&_impl->activationCollector);
 
     Assisi::Core::Log::Info("PhysicsWorld: initialized (Jolt).");
 }
@@ -293,6 +288,16 @@ void PhysicsWorld::Update(float deltaTime)
     _impl->events.swap(_impl->pendingExits);
     _impl->pendingExits.clear();
 
+    // After the reconcile, so every body a request names is built and placed.
+    _impl->ApplyRequests(deltaTime);
+
+    // Everything woken by now is awake for the whole step about to run. No Jolt
+    // job is running, so the mutex is not needed.
+    _impl->activatedAtStart.swap(_impl->activated);
+    std::sort(_impl->activatedAtStart.begin(), _impl->activatedAtStart.end());
+    _impl->activatedAtStart.erase(std::unique(_impl->activatedAtStart.begin(), _impl->activatedAtStart.end()),
+                                  _impl->activatedAtStart.end());
+
     ++_impl->step;
 
     _impl->stepping = true;
@@ -408,18 +413,181 @@ bool PhysicsWorld::IsBodyActive(ECS::Entity entity) const
     return !id.IsInvalid() && _impl->physicsSystem.GetBodyInterface().IsActive(id);
 }
 
-void PhysicsWorld::DeactivateBody(ECS::Entity entity)
+ECS::Entity PhysicsWorld::BodyOf(ECS::Entity piece) const
 {
-    const JPH::BodyID id = _impl->BodyFor(entity);
-    if (id.IsInvalid())
-        return;
-    _impl->physicsSystem.GetBodyInterface().DeactivateBody(id);
+    return _impl->SlotFor(piece) != nullptr ? piece : ECS::NullEntity;
 }
 
-void PhysicsWorld::ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec3 linearVelocity,
-                                  glm::vec3 angularVelocity, bool activate)
+float PhysicsWorld::Mass(ECS::Entity entity) const
 {
-    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ApplyBodyState called while the world is stepping");
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr)
+    {
+        return 0.f;
+    }
+    if (slot->kind == Impl::SlotKind::Character)
+    {
+        return _impl->FindCharacter(entity)->mass;
+    }
+    if (slot->motion != BodyMotion::Dynamic)
+    {
+        return 0.f;
+    }
+    JPH::BodyLockRead lock(_impl->physicsSystem.GetBodyLockInterface(), slot->body);
+    if (!lock.Succeeded())
+    {
+        return 0.f;
+    }
+    const float inverseMass = lock.GetBody().GetMotionProperties()->GetInverseMass();
+    return inverseMass > 0.f ? 1.f / inverseMass : 0.f;
+}
+
+// ---------------------------------------------------------------------------
+// Requests
+// ---------------------------------------------------------------------------
+
+void PhysicsWorld::Impl::Request(const BodyRequest &request)
+{
+    ASSISI_ASSERT(!stepping, "PhysicsWorld request made while the world is stepping");
+    requests.push_back(request);
+}
+
+void PhysicsWorld::Impl::ApplyRequests(float deltaTime)
+{
+    for (const BodyRequest &request : requests)
+    {
+        const BodySlot *slot = SlotFor(request.entity);
+        if (slot == nullptr)
+        {
+            continue;
+        }
+        if (slot->kind == SlotKind::Character)
+        {
+            ApplyCharacterRequest(*FindCharacter(request.entity), request, deltaTime);
+        }
+        else
+        {
+            ApplyBodyRequest(*slot, request);
+        }
+    }
+    requests.clear();
+}
+
+void PhysicsWorld::Impl::ApplyBodyRequest(const BodySlot &slot, const BodyRequest &request)
+{
+    // Only a dynamic body responds to a push, and Jolt asserts on one given to
+    // anything else. A static body has no sleep to change.
+    if (slot.motion == BodyMotion::Static ||
+        (slot.motion != BodyMotion::Dynamic && request.kind != RequestKind::Wake && request.kind != RequestKind::Sleep))
+    {
+        return;
+    }
+
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    const JPH::Vec3 value(request.value.x, request.value.y, request.value.z);
+    const JPH::RVec3 point(request.point.x, request.point.y, request.point.z);
+    switch (request.kind)
+    {
+    case RequestKind::Force:
+        bodies.AddForce(slot.body, value);
+        break;
+    case RequestKind::ForceAt:
+        bodies.AddForce(slot.body, value, point);
+        break;
+    case RequestKind::Impulse:
+        bodies.AddImpulse(slot.body, value);
+        break;
+    case RequestKind::ImpulseAt:
+        bodies.AddImpulse(slot.body, value, point);
+        break;
+    case RequestKind::Torque:
+        bodies.AddTorque(slot.body, value);
+        break;
+    case RequestKind::AngularImpulse:
+        bodies.AddAngularImpulse(slot.body, value);
+        break;
+    case RequestKind::Wake:
+        bodies.ActivateBody(slot.body);
+        break;
+    case RequestKind::Sleep:
+        bodies.DeactivateBody(slot.body);
+        break;
+    case RequestKind::Count:
+        return;
+    }
+
+    // Followed, so the writeback reports what the request did: the motion it
+    // started, or the rest it put the body at.
+    Follow(request.entity.index);
+}
+
+void PhysicsWorld::Impl::ApplyCharacterRequest(CharacterRecord &record, const BodyRequest &request,
+                                               float deltaTime) const
+{
+    if (record.mass <= 0.f)
+    {
+        return;
+    }
+    const JPH::Vec3 value(request.value.x, request.value.y, request.value.z);
+    if (request.kind == RequestKind::Impulse)
+    {
+        record.push += value / record.mass;
+    }
+    else if (request.kind == RequestKind::Force)
+    {
+        record.push += value * (deltaTime / record.mass);
+    }
+}
+
+void PhysicsWorld::AddForce(ECS::Entity entity, glm::vec3 force)
+{
+    _impl->Request(Impl::BodyRequest{.value = force, .entity = entity, .kind = Impl::RequestKind::Force});
+}
+
+void PhysicsWorld::AddForceAt(ECS::Entity entity, glm::vec3 force, glm::vec3 point)
+{
+    _impl->Request(
+        Impl::BodyRequest{.value = force, .point = point, .entity = entity, .kind = Impl::RequestKind::ForceAt});
+}
+
+void PhysicsWorld::AddImpulse(ECS::Entity entity, glm::vec3 impulse)
+{
+    _impl->Request(Impl::BodyRequest{.value = impulse, .entity = entity, .kind = Impl::RequestKind::Impulse});
+}
+
+void PhysicsWorld::AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, glm::vec3 point)
+{
+    _impl->Request(
+        Impl::BodyRequest{.value = impulse, .point = point, .entity = entity, .kind = Impl::RequestKind::ImpulseAt});
+}
+
+void PhysicsWorld::AddTorque(ECS::Entity entity, glm::vec3 torque)
+{
+    _impl->Request(Impl::BodyRequest{.value = torque, .entity = entity, .kind = Impl::RequestKind::Torque});
+}
+
+void PhysicsWorld::AddAngularImpulse(ECS::Entity entity, glm::vec3 angularImpulse)
+{
+    _impl->Request(
+        Impl::BodyRequest{.value = angularImpulse, .entity = entity, .kind = Impl::RequestKind::AngularImpulse});
+}
+
+void PhysicsWorld::Wake(ECS::Entity entity)
+{
+    _impl->Request(Impl::BodyRequest{.entity = entity, .kind = Impl::RequestKind::Wake});
+}
+
+void PhysicsWorld::Sleep(ECS::Entity entity)
+{
+    _impl->Request(Impl::BodyRequest{.entity = entity, .kind = Impl::RequestKind::Sleep});
+}
+
+void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const BodyState &state)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ApplyCorrection called while the world is stepping");
+    const glm::vec3 linearVelocity = state.linearVelocity;
+    const glm::vec3 angularVelocity = state.angularVelocity;
+    const bool activate = !state.asleep;
 
     Impl::BodySlot *slot = _impl->SlotFor(entity);
     if (slot == nullptr)
@@ -489,18 +657,28 @@ Pose PhysicsWorld::GetBodyPose(ECS::Entity entity) const
     return Pose{glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ()), glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ())};
 }
 
-std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetBodyVelocity(ECS::Entity entity) const
+BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
 {
     const Impl::BodySlot *slot = _impl->SlotFor(entity);
     if (slot == nullptr || slot->motion == BodyMotion::Static)
     {
-        return {glm::vec3(0.f), glm::vec3(0.f)};
+        return BodyState{};
+    }
+
+    if (slot->kind == Impl::SlotKind::Character)
+    {
+        const JPH::Vec3 velocity = _impl->FindCharacter(entity)->character->GetLinearVelocity();
+        return BodyState{.linearVelocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+                         .angularVelocity = glm::vec3(0.f),
+                         .asleep = false};
     }
 
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::Vec3 lin = bodies.GetLinearVelocity(slot->body);
     const JPH::Vec3 ang = bodies.GetAngularVelocity(slot->body);
-    return {glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()), glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ())};
+    return BodyState{.linearVelocity = glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()),
+                     .angularVelocity = glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ()),
+                     .asleep = !bodies.IsActive(slot->body)};
 }
 
 bool PhysicsWorld::IsBodyCCDEnabled(ECS::Entity entity) const

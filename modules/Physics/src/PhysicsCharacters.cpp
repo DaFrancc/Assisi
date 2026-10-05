@@ -196,7 +196,10 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         // character on a platform rides last step's velocity.
         character.UpdateGroundVelocity();
 
-        const JPH::Vec3 currentVelocity = character.GetLinearVelocity();
+        // Pushes first, so a kick upward is what lifts it off the ground below
+        // and everything after steers from the velocity it was left with.
+        const JPH::Vec3 currentVelocity = character.GetLinearVelocity() + record.push;
+        record.push = JPH::Vec3::sZero();
         const JPH::Vec3 groundVelocity = character.GetGroundVelocity();
         const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
         const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
@@ -335,6 +338,7 @@ void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)
     radius = tuning.radius;
     standingHalfHeight = tuning.halfHeight;
     crouchHalfHeight = clampedCrouch;
+    mass = tuning.mass;
     canPushBodies = tuning.canPushBodies;
     canBePushed = tuning.canBePushed;
 }

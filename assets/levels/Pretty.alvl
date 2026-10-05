@@ -45,9 +45,6 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "channel": 0,
           "collidesWith": 31,
@@ -58,6 +55,7 @@
           ],
           "halfHeight": 0.5,
           "radius": 1.0,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -99,9 +97,6 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 0.25
-        },
         "Collider": {
           "channel": 0,
           "collidesWith": 31,
@@ -112,6 +107,7 @@
           ],
           "halfHeight": 0.5,
           "radius": 0.5,
+          "restitution": 0.25,
           "shape": 0
         },
         "MeshRenderer": {
@@ -298,7 +294,6 @@
     }
   ],
   "systems": [
-    "Bounce",
     "CaptureCursor",
     "CursorToggle",
     "TimeOfDay"

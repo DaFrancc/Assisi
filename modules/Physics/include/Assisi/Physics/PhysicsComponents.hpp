@@ -119,9 +119,11 @@ struct Collider
     /// touching bodies use the geometric mean of theirs.
     AFIELD(min = 0.0) float friction = 0.2f;
 
-    /// How much speed an impact gives back: 0 stops dead, 1 loses nothing. Two
-    /// touching bodies use the larger of theirs.
-    AFIELD(min = 0.0, max = 1.0) float restitution = 0.f;
+    /// How much speed an impact gives back: 0 stops dead, 1 loses nothing, and
+    /// above 1 the body gains speed on every bounce. Two touching bodies use the
+    /// larger of theirs. An impact slower than 1 m/s does not bounce at all, so
+    /// a body at rest stays at rest whatever this is.
+    AFIELD(min = 0.0) float restitution = 0.f;
 
     /// The channels this collider collides with. Interaction needs both sides
     /// to agree, so clearing a bit here stops the pair whatever the other says.
@@ -196,36 +198,6 @@ struct BodyState
     AFIELD() glm::vec3 linearVelocity{0.f};  ///< m/s.
     AFIELD() glm::vec3 angularVelocity{0.f}; ///< rad/s.
     AFIELD() bool asleep = false;
-};
-
-/// @brief Makes a rigid body ricochet off whatever it touches.
-///
-/// Deliberately *not* Jolt restitution, which is a solver property applied while
-/// the contact is being resolved. This is the gameplay-layer version: the
-/// PhysicsWorld's contact log records the impact, and a system rewrites the
-/// body's linear velocity on the next fixed step — reflecting it about the
-/// contact normal and scaling it by @ref rebound. Only the linear velocity is
-/// touched; spin, mass, and the solver's own response are left alone.
-///
-/// Needs a body to act on. Acts only on the step a body arrives, never
-/// while it rests, and never on a sensor — nothing passed through resisted it.
-///
-/// Replicated, despite the bounce itself being a local guess at what the server's
-/// bounce did. Under local simulation the client runs its own physics, and a
-/// mirror missing this component does not bounce at all: it falls, rests, and is
-/// snapped back up by every correction — a simulation continuously wrong in a way
-/// the correction stream papers over, reading on screen as a body lagging its own
-/// authoritative position. The component is authored data that changes ~never;
-/// only its *effect* is local.
-ACOMP(replicable)
-struct Bounce
-{
-    /// Fraction of speed carried back out of an impact: 0 stops the body dead,
-    /// 0.5 halves it, 1 returns it at full speed, and above 1 it *gains* speed on
-    /// every bounce (which will run away — that is the author's choice, not a
-    /// bug). Negative is meaningless; the inspector floors it here and the system
-    /// clamps again on use, so a hand-edited level file can't invert a bounce.
-    AFIELD(min = 0.0) float rebound = 1.f;
 };
 
 /// @brief What is under a character, and therefore what it may do next.
