@@ -17,6 +17,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <cstdint>
 
 #include <Assisi/ECS/Hierarchy.hpp>
@@ -98,6 +99,11 @@ glm::vec3 CharacterPosition(ECS::Scene &scene)
     return position;
 }
 
+bool Finite(glm::vec3 value)
+{
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
 } // namespace
 
 TEST_CASE("A character dropped above a floor lands on it and reports OnGround")
@@ -140,6 +146,59 @@ TEST_CASE("A character walking into a wall stops at it")
     const glm::vec3 position = CharacterPosition(scene);
     CHECK(position.x < 2.f - descriptor.radius + 0.1f);
     CHECK(position.x > 1.f); // it did actually travel
+}
+
+TEST_CASE("A character walking into a body locked on several axes stays finite")
+{
+    // A body held in place and free to turn about one axis, at a rotation a
+    // hair off identity, as a gizmo leaves one. One friction axis of its contact
+    // with the character came out with an inverse effective mass of a denormal,
+    // which the solver divided by: infinity, then NaN in the body's spin, then
+    // in the character.
+    using Physics::LockedAxis;
+    const Core::Bitmask<LockedAxis> allLinear =
+        Core::Bitmask<LockedAxis>::Of(LockedAxis::LinearX).With(LockedAxis::LinearY).With(LockedAxis::LinearZ);
+    const Core::Bitmask<LockedAxis> locks[] = {
+        allLinear.With(LockedAxis::AngularX).With(LockedAxis::AngularY),
+        allLinear.With(LockedAxis::AngularX).With(LockedAxis::AngularZ),
+        allLinear.With(LockedAxis::AngularY).With(LockedAxis::AngularZ),
+    };
+
+    // The pose the level that found it saved.
+    const glm::quat nearlyIdentity = glm::normalize(glm::quat(1.f, 1.3363383e-12f, -1.2570522e-20f, 1.6798470e-32f));
+    const glm::vec3 nearlyUnit{1.0000386f, 1.0000659f, 1.0000386f};
+
+    // Walked into from the side, and from the front.
+    const glm::vec3 starts[] = {{0.f, 0.f, 2.3f}, {-2.f, 0.f, 0.f}};
+
+    for (const Core::Bitmask<LockedAxis> lock : locks)
+    {
+        for (const glm::vec3 start : starts)
+        {
+            CAPTURE(lock.bits);
+            CAPTURE(start.x);
+            ECS::Scene scene;
+            Physics::PhysicsWorld world{scene};
+            (void)SpawnFloor(scene, world);
+
+            // Raised so the character meets it at its own height, as in a level.
+            PhysicsTests::BodySpec crate = PhysicsTests::Box({0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+            crate.rigidBody->lockedAxes = lock;
+            crate.rigidBody->mass = 10.f;
+            crate.rigidBody->ccd = true;
+            const ECS::Entity box = PhysicsTests::AddBody(scene, {0.f, 1.4583f, 0.f}, crate);
+            ECS::Transform &pose = *scene.GetMut<ECS::Transform>(box);
+            pose.rotation = nearlyIdentity;
+            pose.scale = nearlyUnit;
+
+            const ECS::Entity character = SpawnCharacter(scene, world, start);
+            Walk(scene, world, character, -glm::normalize(start) * glm::length(kWalkForward), kSettleSteps);
+
+            CHECK(Finite(CharacterPosition(scene)));
+            CHECK(Finite(world.GetBodyPose(box).position));
+            CHECK(Finite(world.GetBodyState(box).angularVelocity));
+        }
+    }
 }
 
 TEST_CASE("A character whose mask excludes World walks through the wall")

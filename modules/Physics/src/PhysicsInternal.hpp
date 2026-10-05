@@ -45,6 +45,7 @@
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -394,6 +395,24 @@ JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float ta
 /// Scales a horizontal @p velocity down to @p maxSpeed if it is faster, keeping
 /// its direction.
 JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
+
+/// Whether every component is a number. Nothing that fails this is handed to
+/// Jolt or written to a component: one NaN in a body spreads to everything it
+/// touches within a step.
+inline bool IsFinite(glm::vec3 value)
+{
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+inline bool IsFinite(glm::quat value)
+{
+    return std::isfinite(value.w) && IsFinite(glm::vec3(value.x, value.y, value.z));
+}
+
+inline bool IsFinite(const Pose &pose)
+{
+    return IsFinite(pose.position) && IsFinite(pose.rotation);
+}
 
 /// The world matrix @p entity's Transform is relative to, composed from the
 /// local poses up its Parent chain: the simulation pose, not the drawn one the
@@ -1036,6 +1055,17 @@ private:
     /// or CharacterState. A body that fell asleep gets one last write, at rest,
     /// and is then left alone.
     void WriteBack();
+
+    /// Where @p entity's Transform puts it in world space.
+    Pose TransformPose(ECS::Entity entity) const;
+
+    /// Puts a body the step left non-finite back at its Transform, at rest.
+    /// The Transform still holds the last pose that was a number: nothing
+    /// non-finite is ever written to it.
+    void RestoreBody(ECS::Entity entity);
+
+    /// The same for a character, at its Transform's feet.
+    void RestoreCharacter(CharacterRecord &record);
 
     /// Writes @p state into @p entity's BodyState, skipping a write that would
     /// change nothing, and stamps it as this world's own.

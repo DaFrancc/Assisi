@@ -9,6 +9,7 @@
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <Jolt/Core/FPFlushDenormals.h>
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
@@ -61,6 +62,27 @@ namespace
    rather than hiding them behind a suppression, and costs only speed: Jolt's
    results do not depend on worker count, and everything around physics still runs
    threaded. */
+#if !defined(ASSISI_PHYSICS_TSAN)
+/// Names a physics worker for captures and debuggers, and flushes denormals to
+/// zero on it for as long as it lives.
+///
+/// The flush is what keeps the solver finite. A contact against a body that can
+/// barely move along some axis can come out with an inverse effective mass of a
+/// denormal; Jolt tests that for exactly zero, so it would divide by it, get
+/// infinity, and turn it into NaN. Flushed, the denormal is zero, and Jolt
+/// leaves that axis out. The stepping thread does the same for the length of
+/// the step, in PhysicsWorld::Update.
+void InitWorkerThread(int threadIndex)
+{
+    Assisi::Chiara::RegisterCurrentThread(("jolt-" + std::to_string(threadIndex)).c_str());
+
+    // thread_local, so the mode is set once here and put back when the worker
+    // exits rather than at the end of this function.
+    static thread_local const JPH::FPFlushDenormals flushDenormals;
+    (void)flushDenormals;
+}
+#endif
+
 struct JoltRuntime
 {
 #if defined(ASSISI_PHYSICS_TSAN)
@@ -77,9 +99,7 @@ struct JoltRuntime
 
     JoltRuntime()
     {
-        jobSystem.SetThreadInitFunction(
-            [](int threadIndex)
-            { Assisi::Chiara::RegisterCurrentThread(("jolt-" + std::to_string(threadIndex)).c_str()); });
+        jobSystem.SetThreadInitFunction(&InitWorkerThread);
         jobSystem.Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
                        static_cast<int>(std::thread::hardware_concurrency()) - 1);
     }

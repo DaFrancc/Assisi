@@ -11,6 +11,7 @@
 
 #include "PhysicsInternal.hpp"
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
@@ -65,17 +66,23 @@ void PhysicsWorld::Impl::WriteBack()
         const ECS::Entity entity{index, slot.generation};
         const JPH::RVec3 position = bodies.GetPosition(slot.body);
         const JPH::Quat rotation = bodies.GetRotation(slot.body);
-        WritePose(entity,
-                  Pose{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-                       glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
-                  /*writeRotation=*/ true);
-
-        const bool asleep = !bodies.IsActive(slot.body);
         const JPH::Vec3 linear = bodies.GetLinearVelocity(slot.body);
         const JPH::Vec3 angular = bodies.GetAngularVelocity(slot.body);
-        WriteBodyState(entity, BodyState{.linearVelocity = glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
-                                         .angularVelocity = glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
-                                         .asleep = asleep});
+        const Pose pose{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
+                        glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
+        const BodyState state{.linearVelocity = glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+                              .angularVelocity = glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+                              .asleep = !bodies.IsActive(slot.body)};
+        if (!IsFinite(pose) || !IsFinite(state.linearVelocity) || !IsFinite(state.angularVelocity))
+        {
+            RestoreBody(entity);
+            ++i;
+            continue;
+        }
+
+        WritePose(entity, pose, /*writeRotation=*/ true);
+        WriteBodyState(entity, state);
+        const bool asleep = state.asleep;
 
         // Asleep: those writes put it exactly at rest, and there is nothing
         // more to follow until something wakes it.
@@ -91,14 +98,61 @@ void PhysicsWorld::Impl::WriteBack()
 
     // Characters are swept rather than solved and are never asleep, so every
     // one is written every step.
-    for (const std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
+    for (std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
     {
-        const CharacterRecord &record = entry.second;
+        CharacterRecord &record = entry.second;
         const JPH::RVec3 position = record.character->GetPosition();
+        const JPH::Vec3 velocity = record.character->GetLinearVelocity();
+        if (!IsFinite(glm::vec3(position.GetX(), position.GetY(), position.GetZ())) ||
+            !IsFinite(glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ())))
+        {
+            RestoreCharacter(record);
+            continue;
+        }
         const Pose pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
         WritePose(record.entity, pose, /*writeRotation=*/ false);
         WriteCharacterState(record.entity, BuildCharacterState(record));
     }
+}
+
+Pose PhysicsWorld::Impl::TransformPose(ECS::Entity entity) const
+{
+    const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
+    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
+    {
+        const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
+        return Pose{world.rotation, world.position};
+    }
+    return Pose{transform.rotation, transform.position};
+}
+
+void PhysicsWorld::Impl::RestoreBody(ECS::Entity entity)
+{
+    Core::Log::Error("PhysicsWorld: entity {} (gen {}) came out of the step with a pose or velocity that is not a "
+                     "number; it is put back where it last was, at rest.",
+                     entity.index, entity.generation);
+    const BodySlot &slot = *SlotFor(entity);
+    const Pose pose = TransformPose(entity);
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterfaceNoLock();
+    bodies.SetPositionAndRotation(slot.body, JPH::RVec3(pose.position.x, pose.position.y, pose.position.z),
+                                  JPH::Quat(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w)
+                                  .Normalized(),
+                                  JPH::EActivation::DontActivate);
+    bodies.SetLinearAndAngularVelocity(slot.body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+    WriteBodyState(entity, BodyState{});
+}
+
+void PhysicsWorld::Impl::RestoreCharacter(CharacterRecord &record)
+{
+    Core::Log::Error("PhysicsWorld: character {} (gen {}) came out of the step with a position or velocity that is "
+                     "not a number; it is put back where it last was, at rest.",
+                     record.entity.index, record.entity.generation);
+    const glm::vec3 feet = TransformPose(record.entity).position;
+    const JPH::RVec3 position(feet.x, feet.y, feet.z);
+    record.character->SetPosition(position);
+    record.character->SetLinearVelocity(JPH::Vec3::sZero());
+    physicsSystem.GetBodyInterfaceNoLock().SetPosition(SlotFor(record.entity)->body, position,
+                                                       JPH::EActivation::DontActivate);
 }
 
 void PhysicsWorld::Impl::WriteBodyState(ECS::Entity entity, const BodyState &state)

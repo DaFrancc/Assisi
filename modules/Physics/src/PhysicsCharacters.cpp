@@ -181,6 +181,10 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         {
             scene.GetMut<CharacterIntent>(record.entity)->jump = false;
         }
+        if (!IsFinite(intent.move))
+        {
+            intent.move = glm::vec3(0.f);
+        }
         if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
         {
             record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
@@ -429,6 +433,13 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     {
         const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
         pose = Pose{world.rotation, world.position};
+    }
+
+    if (!IsFinite(pose))
+    {
+        Core::Log::Error("PhysicsWorld: entity {} (gen {}) gets no character - its Transform is not a number.",
+                         entity.index, entity.generation);
+        return;
     }
 
     CharacterRecord record;
