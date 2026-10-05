@@ -32,7 +32,7 @@ RigidBody** to make it move.
 | `offsetPosition`, `offsetRotation` | Move and turn the shape away from the entity's origin. |
 | `friction` | How strongly a surface sliding across this one is held back. Default 0.2. |
 | `restitution` | How much speed an impact gives back: 0 stops dead, 1 loses nothing, above 1 gains speed on every bounce. Of two touching colliders, the bouncier one counts. Impacts slower than 1 m/s don't bounce, so a resting object stays at rest. |
-| `channel`, `collidesWith` | Which collision group this collider is in, and which groups it hits. |
+| `channel`, `collidesWith` | Which collision channel this collider is on, and which channels it hits. See [Collision channels](#collision-channels). |
 | `collisionAsset` | Reserved for cooked collision shapes. Not used yet. |
 
 The editor only shows the size fields that apply to the chosen shape.
@@ -71,6 +71,65 @@ A `RigidBody` or a `Character` cannot have a `Parent`: the simulation decides
 where it is, so it cannot also be placed relative to another entity. The editor
 refuses the combination. Anything parented *to* a body, like a camera or a
 mesh, follows it as usual.
+
+### Collision channels
+
+Every collider is on one **channel** and has a mask, `collidesWith`, of the
+channels it collides with. Two colliders interact only when each one's mask
+includes the other's channel, so either side can refuse the pair on its own.
+Queries work the same way: a ray carries a channel and a mask too.
+
+There are 32 channels. The engine has six of its own:
+
+| Channel | For |
+|---|---|
+| `World` | Ordinary matter: floors, walls, props. |
+| `Character` | Player and NPC capsules. |
+| `Trigger` | Volumes that detect what enters them and block nothing. |
+| `Visibility` | Line-of-sight and picking queries. |
+| `Camera` | Camera collision queries. |
+| `Hitbox` | The parts of a character a shot can hit. A convention only: the engine treats it like any other channel. |
+
+The other 26 belong to your game. Take them with `GameChannel` and name them
+in a header under `apps/game/src/`:
+
+```cpp
+#include <Assisi/Physics/CollisionChannelNames.hpp>
+
+inline constexpr Assisi::Physics::CollisionChannel Bullet = Assisi::Physics::GameChannel(0);
+inline constexpr Assisi::Physics::CollisionChannel Pickup = Assisi::Physics::GameChannel(1);
+
+inline constexpr Assisi::Physics::ChannelName kChannelNames[] = {
+    {"Bullet", Bullet},
+    {"Pickup", Pickup},
+};
+ASSISI_COLLISION_CHANNEL_NAMES(kChannelNames);
+```
+
+Code uses the aliases, for example a ray that only hits pickups:
+
+```cpp
+using namespace Assisi;
+
+const Physics::CollisionFilter pickupsOnly{Core::Bitmask<Physics::CollisionChannel>::Of(Pickup), Bullet};
+std::optional<Physics::QueryHit> hit = world.CastRay(eye, forward * 3.f, pickupsOnly, player);
+```
+
+The editor shows your names in every channel dropdown and mask, and hides the
+slots you haven't named. A level file saves a mask by those names too, as
+`"collidesWith": ["World", "Bullet"]`, or `"collidesWith": "All"` for every
+channel. If a mask has some of those hidden slots set and
+others not, its heading says how many are set.
+
+These mistakes fail to build:
+- a `GameChannel` number past 25;
+- two names for one slot, or one name for two slots;
+- an empty name;
+- a name for one of the engine's own channels.
+
+A new collider collides with every channel, your game's included. So when you
+start using a channel, everything already collides with it until you untick it
+in the masks that shouldn't.
 
 ## How the scene and physics stay in step
 
@@ -452,7 +511,7 @@ values, converted at 1.905 cm to one of its units.
 | `maxStepHeight` | 0.4 | The tallest step climbed without jumping. |
 | `mass`, `pushStrength` | 70, 100 | How the character pushes bodies and is pushed. |
 | `canPushBodies`, `canBePushed` | `true` | Turn either direction of pushing off. |
-| `collidesWith` | all | Which collision groups the character hits. |
+| `collidesWith` | all | Which collision channels the character hits. |
 
 Changing a setting in the editor rebuilds the character in place.
 

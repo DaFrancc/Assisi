@@ -10,6 +10,11 @@ and drops the CharacterMove, CharacterState and Bounce systems, whose work the
 physics step now does itself, from every `systems` list: a level naming a
 system that does not exist fails to load.
 
+A mask written as an integer becomes the names of the bits it holds: a
+Collider's or Character's `collidesWith` and a RigidBody's `lockedAxes`. Every
+bit there was is "All", so a collider that collided with all five channels
+before the game's channels existed collides with every channel now.
+
 A moving trigger becomes a kinematic RigidBody that may not sleep, which is the
 sensor the descriptor built for it. Collider sizes are left as they are: they
 were already relative to the entity's scale.
@@ -42,6 +47,35 @@ TRIGGER_CHANNEL = 2
 KINEMATIC_MOTION = 1
 
 COLLIDER_FIELDS = ("shape", "halfExtents", "radius", "halfHeight", "collidesWith", "channel")
+
+# The bits each integer mask names, in bit order, by component and field.
+CHANNELS = ("World", "Character", "Trigger", "Visibility", "Camera")
+LOCKED_AXES = ("LinearX", "LinearY", "LinearZ", "AngularX", "AngularY", "AngularZ")
+MASK_FIELDS = {
+    "Collider": {"collidesWith": CHANNELS},
+    "Character": {"collidesWith": CHANNELS},
+    "RigidBody": {"lockedAxes": LOCKED_AXES},
+}
+
+
+def mask_names(value, names):
+    """An integer mask over @p names as the list of names it holds, or "All"
+    when it holds every one."""
+    bits = int(value)
+    if bits == (1 << len(names)) - 1:
+        return "All"
+    return [name for bit, name in enumerate(names) if bits & (1 << bit)]
+
+
+def migrate_masks(component, fields):
+    """Rewrites @p component's integer masks as names. True when any changed."""
+    changed = False
+    for field, names in fields.items():
+        value = component.get(field)
+        if isinstance(value, Number):
+            component[field] = mask_names(value, names)
+            changed = True
+    return changed
 
 
 class Number(str):
@@ -143,6 +177,8 @@ def migrate(value):
     changed = False
     if isinstance(value, dict):
         for key, item in list(value.items()):
+            if key in MASK_FIELDS and isinstance(item, dict):
+                changed = migrate_masks(item, MASK_FIELDS[key]) or changed
             if key == "systems" and isinstance(item, list):
                 kept = [name for name in item if name not in RETIRED_SYSTEMS]
                 if kept != item:

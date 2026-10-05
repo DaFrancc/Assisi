@@ -37,19 +37,58 @@ enum class ColliderShape : std::uint8_t
 /// like any other — a line-of-sight ray is something on @ref Visibility, and a
 /// surface opts out of being seen by dropping that channel from its own mask.
 ///
-/// Append only. An enumerator's value is its bit position in every mask stored
-/// in a level file, so inserting one silently re-aims every mask authored under
-/// the old numbering.
+/// The enumerators are the engine's own channels. The slots between the last of
+/// them and `Count` belong to the game, which takes them with GameChannel and
+/// names them in CollisionChannelNames.hpp.
+///
+/// An enumerator's value is its bit position in every mask stored in a level
+/// file, so each is spelled out: renumbering one silently re-aims every mask
+/// authored under the old numbering.
 AENUM()
 enum class CollisionChannel : std::uint8_t
 {
-    World,      ///< Ordinary physical matter: floors, walls, props, crates.
-    Character,  ///< Player and NPC bodies.
-    Trigger,    ///< A volume that detects what enters it and blocks nothing.
-    Visibility, ///< Queries only: line of sight, editor picking.
-    Camera,     ///< Queries only: camera collision.
-    Count,
+    World = 0,      ///< Ordinary physical matter: floors, walls, props, crates.
+    Character = 1,  ///< Player and NPC bodies.
+    Trigger = 2,    ///< A volume that detects what enters it and blocks nothing.
+    Visibility = 3, ///< Queries only: line of sight, editor picking.
+    Camera = 4,     ///< Queries only: camera collision.
+
+    /// The parts of a character a shot can hit. A convention, not a rule: the
+    /// engine treats it like any other channel.
+    Hitbox = 5,
+
+    /// One past the last slot: a mask has a bit for every channel, the game's
+    /// included.
+    Count = 32,
 };
+
+static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) == Core::kBitmaskBits,
+              "Every bit of a channel mask is a channel, and every channel has a bit.");
+
+/// The first slot after the engine's own channels.
+inline constexpr std::uint32_t kFirstGameChannel = static_cast<std::uint32_t>(CollisionChannel::Hitbox) + 1u;
+
+/// How many channels a game may take.
+inline constexpr std::uint32_t kGameChannelCount =
+    static_cast<std::uint32_t>(CollisionChannel::Count) - kFirstGameChannel;
+
+/// Deliberately not constexpr: GameChannel calls it only for an index out of
+/// range, and calling it while evaluating a consteval function is what turns that
+/// index into a build error naming this function.
+void GameChannelIndexIsOutOfRange();
+
+/// @brief The game's channel @p index, from 0 to kGameChannelCount - 1.
+///
+/// consteval, so an index out of range is a build error rather than a channel
+/// that aliases another.
+consteval CollisionChannel GameChannel(std::uint32_t index)
+{
+    if (index >= kGameChannelCount)
+    {
+        GameChannelIndexIsOutOfRange();
+    }
+    return static_cast<CollisionChannel>(kFirstGameChannel + index);
+}
 
 /// @brief Every channel — the mask a body carries unless it narrows it, so a
 /// body defaults to interacting with everything and an author subtracts rather

@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -181,6 +182,50 @@ PhysicsWorld::~PhysicsWorld()
     // destroyed in reverse declaration order, releasing the shared runtime last.
     _impl->DestroyAll();
     _impl.reset();
+}
+
+// ---------------------------------------------------------------------------
+// Layers
+// ---------------------------------------------------------------------------
+
+namespace
+{
+/// Where the channel and the motion sit in a LayerTable key, above the mask.
+constexpr std::uint32_t kLayerKeyChannelShift = 32;
+constexpr std::uint32_t kLayerKeyMotionShift = 40;
+} // namespace
+
+JPH::ObjectLayer LayerTable::LayerFor(CollisionFilter filter, BodyMotion motion)
+{
+    const std::uint64_t key = static_cast<std::uint64_t>(filter.collidesWith.bits) |
+                              (static_cast<std::uint64_t>(filter.channel) << kLayerKeyChannelShift) |
+                              (static_cast<std::uint64_t>(motion) << kLayerKeyMotionShift);
+    const std::unordered_map<std::uint64_t, JPH::ObjectLayer>::const_iterator found = _index.find(key);
+    if (found != _index.end())
+    {
+        return found->second;
+    }
+
+    const JPH::ObjectLayer layer = static_cast<JPH::ObjectLayer>(_entries.size());
+    _entries.push_back(LayerEntry{.mask = filter.collidesWith.bits,
+                                  .channelBit = Core::Bitmask<CollisionChannel>::Of(filter.channel).bits,
+                                  .channel = filter.channel,
+                                  .motion = motion,
+                                  .trigger = filter.channel == CollisionChannel::Trigger});
+    _index.emplace(key, layer);
+    return layer;
+}
+
+CollisionFilter LayerTable::FilterOf(JPH::ObjectLayer layer) const
+{
+    const LayerEntry &entry = EntryOf(layer);
+    return CollisionFilter{Core::Bitmask<CollisionChannel>{entry.mask}, entry.channel};
+}
+
+JPH::ObjectLayer PhysicsWorld::Impl::LayerFor(CollisionFilter filter, BodyMotion motion)
+{
+    ASSISI_ASSERT(!stepping, "PhysicsWorld made a layer while the world is stepping");
+    return layers.LayerFor(filter, motion);
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +411,7 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
         // What it was touching is about to be wrong. Re-finding it here rather
         // than waiting a step keeps the ground state honest for anything that
         // reads it between the teleport and the next Update.
-        const FilterLayerFilter layerFilter{record->queryFilter};
+        const FilterLayerFilter layerFilter{_impl->layers, record->queryFilter};
         record->character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
     }
     else
@@ -602,7 +647,7 @@ void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const B
         record.character->SetPosition(position);
         record.character->SetLinearVelocity(JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
         bodies.SetPosition(slot->body, position, JPH::EActivation::Activate);
-        const FilterLayerFilter layerFilter{record.queryFilter};
+        const FilterLayerFilter layerFilter{_impl->layers, record.queryFilter};
         record.character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
         _impl->WritePose(entity, pose, /*writeRotation=*/ false);
         ECS::SnapTransform(_impl->scene, entity);

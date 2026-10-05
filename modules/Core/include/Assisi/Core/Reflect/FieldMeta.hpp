@@ -218,6 +218,11 @@ struct FieldMeta
     // naming a value, so offering it would let an editor select it.
     std::vector<EnumConstant> enumConstants{};
 
+    // The fully qualified name of the enum enumConstants come from, so an
+    // editor can ask EnumLabels for names a program gave values the enum itself
+    // leaves unnamed. Set whenever enumConstants is.
+    std::string enumType{};
+
     // The enum's underlying storage, so an editor reads/writes the field at its
     // true width instead of assuming a 4-byte int (which would corrupt neighbours
     // for an 8/16-bit enum). enumSize is the byte width (1/2/4/8); 0 marks a

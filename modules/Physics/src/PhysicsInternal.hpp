@@ -83,78 +83,6 @@ inline ECS::Entity EntityOfUserData(JPH::uint64 userData)
 // Object / broad-phase layers
 // ---------------------------------------------------------------------------
 
-/* An ObjectLayer carries everything a filter decision needs, packed by hand
-   rather than through Jolt's ObjectLayerPairFilterMask. That class splits the
-   layer evenly into group and mask bits and derives the broad-phase layer from
-   the group alone, which leaves nowhere to record whether a body moves — so
-   static and dynamic bodies would share one broad-phase tree and every static
-   body would be re-tested against every other one.
-
-   Layout, low bits first: the channel's index, the mask of channels it collides
-   with, and the motion type. 22 bits of the 32 the build configures.
-
-   Jolt's ObjectLayer is uint16 unless JPH_OBJECT_LAYER_BITS says otherwise. The
-   root CMakeLists sets it to 32, and Jolt makes that a PUBLIC definition on its
-   own target so this file and Jolt agree; the assert is what catches the day
-   they stop agreeing, because a narrower layer would silently truncate the mask
-   and every body would collide with the wrong things. */
-static_assert(sizeof(JPH::ObjectLayer) == sizeof(std::uint32_t),
-              "Assisi packs 22 bits into a Jolt ObjectLayer; build Jolt with OBJECT_LAYER_BITS=32.");
-
-static constexpr std::uint32_t ChannelBits = 4;
-static constexpr std::uint32_t MaskBits = 16;
-static constexpr std::uint32_t MotionBits = 2;
-
-static constexpr std::uint32_t ChannelShift = 0;
-static constexpr std::uint32_t MaskShift = ChannelShift + ChannelBits;
-static constexpr std::uint32_t MotionShift = MaskShift + MaskBits;
-
-static constexpr std::uint32_t ChannelMask = (1u << ChannelBits) - 1u;
-static constexpr std::uint32_t MaskMask = (1u << MaskBits) - 1u;
-static constexpr std::uint32_t MotionMask = (1u << MotionBits) - 1u;
-
-static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) <= MaskBits,
-              "Every channel needs a bit in the collides-with mask.");
-static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) <= ChannelMask + 1u,
-              "Every channel needs to be nameable by the channel index.");
-static_assert(static_cast<std::uint32_t>(BodyMotion::Count) <= MotionMask + 1u,
-              "Every motion type needs to fit the motion field.");
-
-inline JPH::ObjectLayer PackLayer(CollisionFilter filter, BodyMotion motion)
-{
-    const std::uint32_t channel = static_cast<std::uint32_t>(filter.channel) & ChannelMask;
-    const std::uint32_t mask = filter.collidesWith.bits & MaskMask;
-    const std::uint32_t packed = (channel << ChannelShift) | (mask << MaskShift) |
-                                 ((static_cast<std::uint32_t>(motion) & MotionMask) << MotionShift);
-    return static_cast<JPH::ObjectLayer>(packed);
-}
-
-inline std::uint32_t ChannelOf(JPH::ObjectLayer layer)
-{
-    return (static_cast<std::uint32_t>(layer) >> ChannelShift) & ChannelMask;
-}
-
-/// The channel as a single set bit, ready to test against a collides-with mask.
-inline std::uint32_t ChannelBitOf(JPH::ObjectLayer layer)
-{
-    return 1u << ChannelOf(layer);
-}
-
-inline std::uint32_t MaskOf(JPH::ObjectLayer layer)
-{
-    return (static_cast<std::uint32_t>(layer) >> MaskShift) & MaskMask;
-}
-
-inline BodyMotion MotionOf(JPH::ObjectLayer layer)
-{
-    return static_cast<BodyMotion>((static_cast<std::uint32_t>(layer) >> MotionShift) & MotionMask);
-}
-
-inline bool IsTriggerLayer(JPH::ObjectLayer layer)
-{
-    return ChannelOf(layer) == static_cast<std::uint32_t>(CollisionChannel::Trigger);
-}
-
 /// The rule both bodies and queries are filtered by: each side's mask must admit
 /// the other's channel. One-sided agreement is not enough, so either participant
 /// can refuse the pair on its own.
@@ -163,6 +91,48 @@ inline bool ChannelsAgree(std::uint32_t maskA, std::uint32_t channelBitA, std::u
 {
     return (maskA & channelBitB) != 0u && (maskB & channelBitA) != 0u;
 }
+
+/// What one ObjectLayer stands for: everything a filter decision needs about a
+/// body, read once when the layer is made rather than on every decision.
+struct LayerEntry
+{
+    std::uint32_t mask = 0;       ///< The channels it collides with.
+    std::uint32_t channelBit = 0; ///< Its channel, as the one bit a mask tests.
+    CollisionChannel channel = CollisionChannel::World;
+    BodyMotion motion = BodyMotion::Static;
+    bool trigger = false; ///< On the Trigger channel, so a sensor.
+};
+
+/// @brief The ObjectLayers a world has handed out, one per distinct filter and
+/// motion its bodies use.
+///
+/// A body's layer is an index here rather than its filter packed into the
+/// layer's bits, because 32 bits cannot hold a 32-bit mask and anything else.
+/// Jolt's own ObjectLayerPairFilterTable is the same shape.
+///
+/// Entries are only ever appended, and only while no step runs: Jolt reads this
+/// from its worker jobs during a step, and an append could move the storage
+/// under them. They are never freed. A filter is a few checkboxes, so a world
+/// meets a few hundred combinations at most, and freeing one would mean finding
+/// and re-layering every body still on it.
+class LayerTable
+{
+public:
+    /// The layer for @p filter on a body that moves as @p motion, made if no
+    /// body has used it yet.
+    JPH::ObjectLayer LayerFor(CollisionFilter filter, BodyMotion motion);
+
+    [[nodiscard]] const LayerEntry &EntryOf(JPH::ObjectLayer layer) const { return _entries[layer]; }
+
+    /// The filter @p layer was made for.
+    [[nodiscard]] CollisionFilter FilterOf(JPH::ObjectLayer layer) const;
+
+private:
+    std::vector<LayerEntry> _entries;
+
+    /// Filter, channel and motion in one key, to the layer made for them.
+    std::unordered_map<std::uint64_t, JPH::ObjectLayer> _index;
+};
 
 /// @brief Identifies one pair of bodies, whichever order they are named in.
 ///
@@ -200,11 +170,13 @@ static constexpr unsigned int Count = 2;
 class BPLayerInterface final : public JPH::BroadPhaseLayerInterface
 {
 public:
+    explicit BPLayerInterface(const LayerTable &layers) : _layers(layers) {}
+
     unsigned int GetNumBroadPhaseLayers() const override { return BPLayers::Count; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
     {
-        return MotionOf(layer) == BodyMotion::Static ? BPLayers::Static : BPLayers::Moving;
+        return _layers.EntryOf(layer).motion == BodyMotion::Static ? BPLayers::Static : BPLayers::Moving;
     }
 
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
@@ -213,12 +185,17 @@ public:
         return layer == BPLayers::Static ? "Static" : "Moving";
     }
 #endif
+
+private:
+    const LayerTable &_layers;
 };
 
 // Decides whether an object layer should be tested against a broad-phase layer.
 class ObjVsBPFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 {
 public:
+    explicit ObjVsBPFilter(const LayerTable &layers) : _layers(layers) {}
+
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bpLayer) const override
     {
         if (bpLayer != BPLayers::Static)
@@ -226,33 +203,44 @@ public:
 
         // Two bodies that both never move can never begin to touch, so walking
         // the static tree for one of them only ever confirms that.
-        if (MotionOf(layer) == BodyMotion::Static)
+        const LayerEntry &entry = _layers.EntryOf(layer);
+        if (entry.motion == BodyMotion::Static)
             return false;
 
         // A sensor is kinematic, and Jolt generates no kinematic-vs-static
         // contact unless a body asks for one, which none here does. The walk
         // would find candidates and the narrow phase would discard every one.
-        return !IsTriggerLayer(layer);
+        return !entry.trigger;
     }
+
+private:
+    const LayerTable &_layers;
 };
 
 // Decides whether two object layers should collide at all.
 class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
 {
 public:
+    explicit ObjLayerFilter(const LayerTable &layers) : _layers(layers) {}
+
     bool ShouldCollide(JPH::ObjectLayer layerA, JPH::ObjectLayer layerB) const override
     {
-        if (MotionOf(layerA) == BodyMotion::Static && MotionOf(layerB) == BodyMotion::Static)
+        const LayerEntry &a = _layers.EntryOf(layerA);
+        const LayerEntry &b = _layers.EntryOf(layerB);
+        if (a.motion == BodyMotion::Static && b.motion == BodyMotion::Static)
             return false;
 
         // One sensor inside another says nothing about the world: neither is
         // solid, so neither entered anything. Reachable because the default
         // sensor is kinematic, and Jolt does pair a kinematic body with a sensor.
-        if (IsTriggerLayer(layerA) && IsTriggerLayer(layerB))
+        if (a.trigger && b.trigger)
             return false;
 
-        return ChannelsAgree(MaskOf(layerA), ChannelBitOf(layerA), MaskOf(layerB), ChannelBitOf(layerB));
+        return ChannelsAgree(a.mask, a.channelBit, b.mask, b.channelBit);
     }
+
+private:
+    const LayerTable &_layers;
 };
 
 /// Applies the two-way channel rule between one participant and each body a
@@ -265,17 +253,20 @@ public:
 class FilterLayerFilter final : public JPH::ObjectLayerFilter
 {
 public:
-    explicit FilterLayerFilter(CollisionFilter filter)
-        : _mask(filter.collidesWith.bits), _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
+    FilterLayerFilter(const LayerTable &layers, CollisionFilter filter)
+        : _layers(layers), _mask(filter.collidesWith.bits),
+        _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
     {
     }
 
     bool ShouldCollide(JPH::ObjectLayer layer) const override
     {
-        return ChannelsAgree(_mask, _channelBit, MaskOf(layer), ChannelBitOf(layer));
+        const LayerEntry &entry = _layers.EntryOf(layer);
+        return ChannelsAgree(_mask, _channelBit, entry.mask, entry.channelBit);
     }
 
 private:
+    const LayerTable &_layers;
     std::uint32_t _mask;
     std::uint32_t _channelBit;
 };
@@ -452,9 +443,16 @@ struct PhysicsWorld::Impl
     static constexpr int32_t kDefaultCollisionSteps = 1;
     static constexpr int32_t kMaxCollisionSteps = 16;
 
-    BPLayerInterface bpLayerInterface;
-    ObjVsBPFilter objVsBPFilter;
-    ObjLayerFilter objLayerFilter;
+    /// Before the three filters below, which read it from the step's jobs.
+    LayerTable layers;
+
+    BPLayerInterface bpLayerInterface{layers};
+    ObjVsBPFilter objVsBPFilter{layers};
+    ObjLayerFilter objLayerFilter{layers};
+
+    /// The layer a body on @p filter moving as @p motion is put on. Only
+    /// between steps: see LayerTable.
+    JPH::ObjectLayer LayerFor(CollisionFilter filter, BodyMotion motion);
 
     // Per-world scratch for this world's Update() (see JoltRuntime for why it is
     // not shared). Constructed after `jolt`, so the Jolt allocator is installed.

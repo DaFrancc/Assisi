@@ -7,12 +7,13 @@
 /// Not std::bitset: that is indexed by a bare size_t, so nothing ties a set to
 /// the enum it holds, and its size and word layout are left to the standard
 /// library. A Bitmask is exactly its uint32_t — reflection reads and writes it
-/// at the field's offset as a FieldType::UInt32, and the on-disk form is that
+/// at the field's offset as a FieldType::UInt32, and the wire carries that
 /// integer — while the enum parameter keeps one enum's set from being mixed with
-/// another's.
+/// another's. A file stores the names of the enumerators it holds instead; see
+/// Reflect/BitmaskJson.hpp.
 ///
-/// An enumerator's value is its bit position, so an enum used here is append
-/// only: renumbering one re-aims every mask already saved.
+/// An enumerator's value is its bit position, so renumbering one changes what
+/// every mask already in memory or on the wire means.
 
 #include <cstdint>
 #include <type_traits>

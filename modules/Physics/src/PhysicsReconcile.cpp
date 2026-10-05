@@ -306,7 +306,7 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider
     WarnOnClampedScale(entity, collider.shape, worldScale);
 
     JPH::BodyCreationSettings settings(MakeColliderShape(collider, worldScale), ToJolt(pose.position),
-                                       ToJolt(pose.rotation), JoltMotionOf(motion), PackLayer(filter, motion));
+                                       ToJolt(pose.rotation), JoltMotionOf(motion), LayerFor(filter, motion));
     settings.mIsSensor = sensor;
     settings.mUserData = UserDataOf(entity);
     settings.mFriction = collider.friction;
@@ -410,7 +410,7 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, 
     const CollisionFilter filter{collider.collidesWith, collider.channel};
     if (!SameFilter(filter, slot.filter) || motion != slot.motion)
     {
-        bodies.SetObjectLayer(slot.body, PackLayer(filter, motion));
+        bodies.SetObjectLayer(slot.body, LayerFor(filter, motion));
         {
             // Sensor-ness is a body flag rather than part of the layer, and Jolt
             // exposes no interface-level setter for it.
@@ -555,7 +555,7 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
             record.character->SetPosition(ToJolt(world.position));
             bodies.SetPosition(slot->body, ToJolt(world.position), JPH::EActivation::Activate);
 
-            const FilterLayerFilter layerFilter{record.queryFilter};
+            const FilterLayerFilter layerFilter{layers, record.queryFilter};
             record.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
         }
         StampTransform(entity);

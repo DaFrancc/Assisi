@@ -23,6 +23,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
+#include <Assisi/Core/Reflect/EnumLabels.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Core/StringPool.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
@@ -44,6 +45,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cfloat>
 #include <cmath>
@@ -76,6 +78,25 @@ namespace
 using Assisi::Core::Reflect::IsComponent;
 using Assisi::Editor::RadioVisibility;
 using Assisi::Editor::ScopedFieldChrome;
+
+/// What an enum or bitmask field's widget offers: the enum's own enumerators,
+/// then the values the program named for it in EnumLabels, in order of value.
+/// A value nobody named is not offered.
+std::vector<Assisi::Core::Reflect::EnumConstant> OfferedConstants(const Assisi::Core::Reflect::FieldMeta &field)
+{
+    std::vector<Assisi::Core::Reflect::EnumConstant> offered = field.enumConstants;
+    for (const Assisi::Core::Reflect::EnumConstant &label : Assisi::Core::Reflect::EnumLabelsOf(field.enumType))
+    {
+        const bool named = std::any_of(offered.begin(), offered.end(),
+                                       [&label](const Assisi::Core::Reflect::EnumConstant &constant)
+                                       { return constant.value == label.value; });
+        if (!named)
+        {
+            offered.push_back(label);
+        }
+    }
+    return offered;
+}
 
 const Assisi::Core::Reflect::FieldMeta *FindField(std::span<const Assisi::Core::Reflect::FieldMeta> fields,
                                                   const std::string &name)
@@ -344,9 +365,24 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         if (!field.enumConstants.empty() && field.enumSize == 0)
         {
             uint32_t &mask = *static_cast<uint32_t *>(fp);
-            if (ImGui::TreeNodeEx(field.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            const std::vector<Assisi::Core::Reflect::EnumConstant> offered = OfferedConstants(field);
+
+            // Bits with no checkbox are left as they are. Said so when some are
+            // set and some are not, which no checkbox could have done; all set is
+            // the default mask and all clear is nothing worth mentioning.
+            uint32_t hidden = ~0u;
+            for (const Assisi::Core::Reflect::EnumConstant &constant : offered)
             {
-                for (const auto &constant : field.enumConstants)
+                hidden &= ~(1u << static_cast<uint32_t>(constant.value));
+            }
+            const int32_t hiddenSet = std::popcount(mask & hidden);
+            const bool mixed = hiddenSet != 0 && hiddenSet != std::popcount(hidden);
+            const std::string label =
+                mixed ? field.name + " (+" + std::to_string(hiddenSet) + " unnamed)###" + field.name : field.name;
+
+            if (ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                for (const auto &constant : offered)
                 {
                     const uint32_t bit = 1u << static_cast<uint32_t>(constant.value);
                     bool set = (mask & bit) != 0u;
@@ -396,8 +432,9 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         // Stored as the underlying integer, whose width varies per AENUM —
         // hence the read/write at field.enumSize rather than a plain int.
         const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
+        const std::vector<Assisi::Core::Reflect::EnumConstant> offered = OfferedConstants(field);
         const char *preview = "(unknown)";
-        for (const auto &constant : field.enumConstants)
+        for (const auto &constant : offered)
         {
             if (constant.value == value)
             {
@@ -407,7 +444,7 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         }
         if (ImGui::BeginCombo(field.name.c_str(), preview))
         {
-            for (const auto &constant : field.enumConstants)
+            for (const auto &constant : offered)
             {
                 const bool selected = (constant.value == value);
                 if (ImGui::Selectable(constant.name.c_str(), selected))
