@@ -352,6 +352,29 @@ TEST_CASE("SunShadowCadence: movers are drawn again only when they change")
     CHECK(plan.movingRedrawCount == 0);
 }
 
+TEST_CASE("SunShadowCadence: a mover turning in place is drawn again")
+{
+    // A cube spinning about its centre keeps its sphere exactly; only its pose
+    // says the depth it casts has changed.
+    SunShadowCadence cadence;
+    SunShadowCadencePlan plan;
+    const CascadeFit fit = FitOf(1);
+    cadence.Plan(FrameAt(1), fit, plan);
+
+    ShadowMover turning = CasterAt(7, glm::vec3(1.f, 0.f, 0.f));
+    turning.poseHash = 1;
+    cadence.Plan(FrameAt(2, std::span(&turning, 1)), fit, plan);
+    REQUIRE(plan.movingRedrawCount == 1);
+
+    turning.poseHash = 2;
+    cadence.Plan(FrameAt(3, std::span(&turning, 1)), fit, plan);
+    CHECK(plan.movingRedrawCount == 1);
+
+    // Standing as it stood, it is kept.
+    cadence.Plan(FrameAt(4, std::span(&turning, 1)), fit, plan);
+    CHECK(plan.movingRedrawCount == 0);
+}
+
 TEST_CASE("SunShadowCadence: a refitted still layer has its movers drawn over it again")
 {
     SunShadowCadence cadence;

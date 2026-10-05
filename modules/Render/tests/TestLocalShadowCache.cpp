@@ -460,6 +460,42 @@ TEST_CASE("A moving layer is redrawn only when its movers have changed")
     CHECK_FALSE(plans[0].redrawMovers);
 }
 
+TEST_CASE("A moving layer is redrawn when a mover turns in place")
+{
+    // Same sphere, new pose: a cube spinning about its centre.
+    LocalShadowCache cache;
+    const LocalShadowCacheSettings settings;
+    const std::vector<LocalShadowRequest> requests{PointAt(0, glm::vec3(0.f), 20.f)};
+    ShadowMover turning = CasterAt(7, glm::vec3(10.f, 0.f, 0.f), 0.5f);
+    turning.poseHash = 1;
+
+    std::vector<LocalShadowTilePlan> plans;
+    RunFrame(cache, FrameAt(1, settings, requests, std::vector<ShadowMover>{turning}), plans);
+    REQUIRE(plans[0].redrawMovers);
+
+    turning.poseHash = 2;
+    RunFrame(cache, FrameAt(2, settings, requests, std::vector<ShadowMover>{turning}), plans);
+    CHECK(plans[0].redrawMovers);
+
+    RunFrame(cache, FrameAt(3, settings, requests, std::vector<ShadowMover>{turning}), plans);
+    CHECK_FALSE(plans[0].redrawMovers);
+}
+
+TEST_CASE("Mobility: a mover's pose reaches the movers it hands on")
+{
+    ShadowCasterMobility mobility;
+    ShadowMover turning = CasterAt(7, glm::vec3(0.f), 1.f);
+    turning.poseHash = 42;
+
+    std::vector<ShadowMover> dynamic;
+    std::vector<ShadowMover> invalidate;
+    mobility.Update(1, 30, std::vector<ShadowMover>{turning}, dynamic, invalidate);
+    REQUIRE(dynamic.size() == 1);
+    CHECK(dynamic[0].poseHash == 42);
+    REQUIRE(mobility.Dynamic().size() == 1);
+    CHECK(mobility.Dynamic()[0].poseHash == 42);
+}
+
 TEST_CASE("A mover marks only the point-light faces it can cast into as moving")
 {
     LocalShadowCache cache;

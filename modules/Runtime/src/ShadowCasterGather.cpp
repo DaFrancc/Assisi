@@ -263,8 +263,9 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
             continue; // it moved, but nothing it does reaches a shadow map
         }
         out.push_back(Assisi::Render::ShadowMover{
-                ShadowCasterId(entity), Assisi::Geometry::TransformedBoundingSphere(meshRenderer->meshBuffer->LocalBounds(),
-                                                                                    world->matrix)});
+                ShadowCasterId(entity),
+                Assisi::Geometry::TransformedBoundingSphere(meshRenderer->meshBuffer->LocalBounds(), world->matrix),
+                Assisi::Render::ShadowPoseHash(world->matrix)});
     }
 }
 
