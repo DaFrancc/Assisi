@@ -102,7 +102,8 @@ bool EntityBefore(ECS::Entity a, ECS::Entity b)
 /// Whether two colliders build the same shape.
 bool SameShape(const Collider &a, const Collider &b)
 {
-    return ShapeOf(a) == ShapeOf(b) && a.offsetPosition == b.offsetPosition && a.offsetRotation == b.offsetRotation;
+    return a.shape == b.shape && a.halfExtents == b.halfExtents && a.radius == b.radius &&
+           a.halfHeight == b.halfHeight && a.offsetPosition == b.offsetPosition && a.offsetRotation == b.offsetRotation;
 }
 
 JPH::EMotionType JoltMotionOf(BodyMotion motion)
@@ -749,8 +750,14 @@ void PhysicsWorld::Impl::DestroyAll()
     // being emptied is not a world where things left each other.
     pairs.clear();
     touchedThisStep.clear();
+    removedThisStep.clear();
+    activated.clear();
+    activatedAtStart.clear();
     pendingExits.clear();
     events.clear();
+
+    // Asked of bodies that are gone; a body built again starts at rest.
+    requests.clear();
 }
 
 } // namespace Assisi::Physics

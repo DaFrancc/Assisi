@@ -242,7 +242,7 @@ public:
         // now across machines rather than across a spawn.
         //
         // A union, and idempotent — Install skips what is already present — so a
-        // hundred cars arriving install one Bounce.
+        // hundred cars arriving install one Oscillate.
         if (const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(entry.source))
             QueueSystemInstall(_world, (*definition)->systems, entry.source);
 

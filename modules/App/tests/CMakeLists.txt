@@ -17,7 +17,6 @@ add_executable(Assisi-App-Tests
   main.cpp
   TestBlueprintLevel.cpp
   TestBlueprintVerbs.cpp
-  TestBounce.cpp
   TestCameraBenchmark.cpp
   TestCharacterMove.cpp
   TestOscillate.cpp
@@ -37,6 +36,7 @@ add_executable(Assisi-App-Tests
   TestSystemRegistry.cpp
   TestUiInputBridge.cpp
   TestWorld.cpp
+  TestWorldContacts.cpp
   TestWorldStart.cpp
 )
 

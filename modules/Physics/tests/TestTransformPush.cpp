@@ -77,7 +77,7 @@ TEST_CASE("Writing a kinematic body's Transform sweeps it there over the step")
     test.world.Update(kStep);
 
     // Placed, it would have no velocity and push nothing on the way.
-    CHECK(test.world.GetBodyVelocity(platform).first.x == doctest::Approx(delta.x / kStep));
+    CHECK(test.world.GetBodyState(platform).linearVelocity.x == doctest::Approx(delta.x / kStep));
     CHECK(test.world.GetBodyPose(platform).position.x == doctest::Approx(delta.x));
 }
 
@@ -86,7 +86,7 @@ TEST_CASE("Writing a dynamic body's Transform places it and keeps its velocity")
     TestScene test;
     const ECS::Entity ball = AddBody(test.scene, {0.f, 50.f, 0.f}, Ball(0.5f, false));
     Step(test.world, 20);
-    const float falling = test.world.GetBodyVelocity(ball).first.y;
+    const float falling = test.world.GetBodyState(ball).linearVelocity.y;
     REQUIRE(falling < 0.f);
 
     const glm::vec3 placed{3.f, 40.f, 3.f};
@@ -94,7 +94,7 @@ TEST_CASE("Writing a dynamic body's Transform places it and keeps its velocity")
     test.world.Reconcile();
 
     CHECK(test.world.GetBodyPose(ball).position == placed);
-    CHECK(test.world.GetBodyVelocity(ball).first.y == doctest::Approx(falling));
+    CHECK(test.world.GetBodyState(ball).linearVelocity.y == doctest::Approx(falling));
 }
 
 TEST_CASE("Teleport places a body and stops it")
@@ -102,13 +102,13 @@ TEST_CASE("Teleport places a body and stops it")
     TestScene test;
     const ECS::Entity ball = AddBody(test.scene, {0.f, 50.f, 0.f}, Ball(0.5f, false));
     Step(test.world, 20);
-    REQUIRE(test.world.GetBodyVelocity(ball).first.y < 0.f);
+    REQUIRE(test.world.GetBodyState(ball).linearVelocity.y < 0.f);
 
     const glm::vec3 target{3.f, 40.f, 3.f};
     test.world.Teleport(ball, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), target});
 
     CHECK(test.world.GetBodyPose(ball).position == target);
-    CHECK(test.world.GetBodyVelocity(ball).first == glm::vec3(0.f));
+    CHECK(test.world.GetBodyState(ball).linearVelocity == glm::vec3(0.f));
     CHECK(test.scene.Get<ECS::Transform>(ball)->position == target);
 }
 

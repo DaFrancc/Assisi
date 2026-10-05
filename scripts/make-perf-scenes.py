@@ -373,9 +373,9 @@ def bouncing_body(name, position, sphere):
     else:
         entity = mesh_entity(name, "prim://cube", position, (1.0, 1.0, 1.0))
         collider = {"halfExtents": [0.5, 0.5, 0.5]}
+    collider["restitution"] = 1.0
     entity["components"]["Collider"] = collider
     entity["components"]["RigidBody"] = {}
-    entity["components"]["Bounce"] = {"rebound": 1.0}
     return entity
 
 
@@ -477,7 +477,7 @@ def build_insane(half_extent=40.0, seed=0x5EED0005):
             oscillate(light, rng, (2.0, 5.0), (3.0, 8.0))
         entities.append(light)
 
-    systems = sorted(set(base.get("systems", [])) | {"Oscillate", "Bounce"})
+    systems = sorted(set(base.get("systems", [])) | {"Oscillate"})
     return entities, systems
 
 

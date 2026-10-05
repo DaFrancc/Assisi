@@ -4,10 +4,11 @@ components.
 
   RigidBodyDescriptor  ->  Collider, plus a RigidBody unless it was static
   CharacterDescriptor  ->  Character
+  Bounce               ->  the entity's Collider.restitution, set to its rebound
 
-and drops the CharacterMove and CharacterState systems, whose work the physics
-step now does itself, from every `systems` list: a level naming a system that
-does not exist fails to load.
+and drops the CharacterMove, CharacterState and Bounce systems, whose work the
+physics step now does itself, from every `systems` list: a level naming a
+system that does not exist fails to load.
 
 A moving trigger becomes a kinematic RigidBody that may not sleep, which is the
 sensor the descriptor built for it. Collider sizes are left as they are: they
@@ -30,7 +31,11 @@ import sys
 from pathlib import Path
 
 EXTENSIONS = {".alvl", ".abp"}
-RETIRED_SYSTEMS = {"CharacterMove", "CharacterState"}
+RETIRED_SYSTEMS = {"CharacterMove", "CharacterState", "Bounce"}
+RETIRED_COMPONENTS = ("RigidBodyDescriptor", "CharacterDescriptor", "Bounce")
+
+# Bounce's rebound when a file leaves it out.
+DEFAULT_REBOUND = "1.0"
 
 # Values as the files store them: an enum by its integer.
 TRIGGER_CHANNEL = 2
@@ -113,7 +118,23 @@ def migrate_components(components):
     if "CharacterDescriptor" in components:
         replace_keys(components, "CharacterDescriptor", {"Character": components["CharacterDescriptor"]})
         changed = True
+    if "Bounce" in components:
+        bounce = components.pop("Bounce")
+        collider = components.get("Collider")
+        if isinstance(bounce, dict) and isinstance(collider, dict):
+            set_key(collider, "restitution", bounce.get("rebound", Number(DEFAULT_REBOUND)))
+        changed = True
     return changed
+
+
+def set_key(owner, key, value):
+    """Sets @p key in @p owner, keeping the keys sorted if they were."""
+    was_sorted = list(owner.keys()) == sorted(owner.keys())
+    owner[key] = value
+    if was_sorted:
+        rebuilt = dict(sorted(owner.items()))
+        owner.clear()
+        owner.update(rebuilt)
 
 
 def migrate(value):
@@ -127,7 +148,7 @@ def migrate(value):
                 if kept != item:
                     value[key] = kept
                     changed = True
-            elif isinstance(item, dict) and ("RigidBodyDescriptor" in item or "CharacterDescriptor" in item):
+            elif isinstance(item, dict) and any(name in item for name in RETIRED_COMPONENTS):
                 changed = migrate_components(item) or changed
                 changed = migrate(item) or changed
             else:

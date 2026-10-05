@@ -31,7 +31,7 @@ RigidBody** to make it move.
 | `halfHeight` | For `Capsule` and `Cylinder`. |
 | `offsetPosition`, `offsetRotation` | Move and turn the shape away from the entity's origin. |
 | `friction` | How strongly a surface sliding across this one is held back. Default 0.2. |
-| `restitution` | How much speed an impact gives back: 0 stops dead, 1 loses nothing. |
+| `restitution` | How much speed an impact gives back: 0 stops dead, 1 loses nothing, above 1 gains speed on every bounce. Of two touching colliders, the bouncier one counts. Impacts slower than 1 m/s don't bounce, so a resting object stays at rest. |
 | `channel`, `collidesWith` | Which collision group this collider is in, and which groups it hits. |
 | `collisionAsset` | Reserved for cooked collision shapes. Not used yet. |
 
@@ -121,6 +121,69 @@ body is drawn at its new place at once, not slid there.
 
 ## Moving bodies from code
 
+There are four ways to move a dynamic body from code. Pick the one that says
+what you mean:
+
+| To | Do this |
+|---|---|
+| Push it: a thruster, wind, an explosion, a kick | Apply a force or an impulse. |
+| Set how fast it moves | Write its `BodyState` velocity. |
+| Put it somewhere and let it carry on | Write its `Transform`. It keeps its velocity. |
+| Put it somewhere and stop it | Call `Teleport(entity, pose)`. |
+
+Something that should follow a path you control every frame, like a lift or a
+door, isn't a dynamic body pushed along. Make it `Kinematic` and write its
+`Transform`: it then moves exactly where you put it and pushes whatever is in
+the way. See [What writing a `Transform` does](#what-writing-a-transform-does).
+
+**Put code that moves bodies in a `FixedUpdate` system**, so it runs in step
+with physics and behaves the same at any frame rate.
+
+### Forces and impulses
+
+Each world has its own physics, at `ctx.world.physics`. Its calls take the
+entity the body belongs to:
+
+```cpp
+Physics::PhysicsWorld &physics = ctx.world.physics;
+
+// Every fixed step the key is held: a steady push forward.
+physics.AddForce(ship, glm::vec3(0.f, 0.f, -2000.f));
+
+// Once: a kick upward.
+physics.AddImpulse(crate, glm::vec3(0.f, 500.f, 0.f));
+```
+
+A **force** (newtons) pushes for one physics step. For a steady push, call
+`AddForce` every `FixedUpdate`; stop calling it and the push stops. An
+**impulse** (newton-seconds) is a single instant kick. Both change the body's
+velocity by their amount divided by its mass, so a heavy body moves less than a
+light one under the same push. `Mass(entity)` tells you the mass the
+simulation uses.
+
+| Call | What it does |
+|---|---|
+| `AddForce(entity, force)` | Pushes through the body's centre for the next step. |
+| `AddForceAt(entity, force, point)` | Pushes at a world-space point, which spins the body too when the point is off-centre. |
+| `AddImpulse(entity, impulse)` | Kicks through the body's centre. |
+| `AddImpulseAt(entity, impulse, point)` | Kicks at a world-space point. |
+| `AddTorque(entity, torque)` | Twists the body for the next step. |
+| `AddAngularImpulse(entity, impulse)` | Spins the body at once. |
+| `Wake(entity)` | Wakes a sleeping body. |
+| `Sleep(entity)` | Stops the body where it is and puts it to sleep. It wakes when something touches or pushes it. |
+
+These calls are requests. They're applied at the start of the next physics
+step, in the order you made them. So they work on an entity spawned the same
+frame, before it has a body. A push also wakes a sleeping body. Static and
+kinematic bodies ignore pushes.
+
+A character takes forces and impulses too, as a change to its velocity: an
+impulse knocks it back, and a force pushes it along like wind. Its own movement
+rules carry on from there, so ground friction slows a sideways shove. Torque,
+`Wake`, `Sleep` and the "at a point" calls do nothing to a character.
+
+### Velocity
+
 A moving body's `BodyState` holds its `linearVelocity` (m/s), its
 `angularVelocity` (rad/s), and whether it is `asleep`, as the last step left
 them. Write a velocity to set it: the body takes it before the next step, and
@@ -137,14 +200,13 @@ for (auto [entity, state] : scene.QueryMut<Physics::BodyState>())
 }
 ```
 
-Each world also has its own physics, at `ctx.world.physics`. Its calls take the
-entity the body belongs to:
+### Other calls
 
 | Call | What it does |
 |---|---|
-| `GetBodyVelocity(entity)` | Returns `{linear, angular}` velocity, straight from physics. |
-| `GetBodyPose(entity)` | Returns the body's world `position` and `rotation`, straight from physics. |
-| `Teleport(entity, pose)` | Places the body at a world pose and stops it. |
+| `GetBodyState(entity)` | The velocities and sleep, straight from physics rather than from the last step's `BodyState`. |
+| `GetBodyPose(entity)` | The body's world `position` and `rotation`, straight from physics. |
+| `Mass(entity)` | The body's mass in kilograms. 0 for a body nothing can push. |
 | `HasBody(entity)` | Whether the entity has a body or a character yet. |
 | `SetGravity(gravity)` | Changes gravity for the whole world. The default points down. |
 
@@ -159,39 +221,60 @@ default is 65536. `AppConfig::maxFixedStepsPerFrame` (default 8) caps how many
 physics steps one slow frame may run to catch up; any time beyond that is
 dropped, so the game slows down instead of freezing.
 
-**Put code that changes velocities in a `FixedUpdate` system**, so it runs in
-step with physics and behaves the same at any frame rate.
-
-> **Not yet available:** there's no function for applying a force or an
-> impulse yet. To push a body, add to its `BodyState` velocity.
-
 ## Reacting to collisions
 
-Every physics step, the world records which bodies started touching, stayed in
-contact, or separated. Read them with `ContactEvents()`:
+Every physics step, the world records which bodies started touching and which
+separated. To react, write a system that reads them with `ContactEvents()`.
+Here a window breaks when a bullet hits it:
 
 ```cpp
-for (const Physics::ContactEvent &contact : ctx.world.physics.ContactEvents())
+ASYSTEM(PostFixedUpdate, name = "BreakOnHit") void BreakOnHitSystem(SystemContext &ctx)
 {
-    if (contact.phase == Physics::ContactPhase::Enter)
+    ECS::Scene &scene = ctx.world.scene;
+    for (const Physics::ContactEvent &hit : ctx.world.physics.ContactEvents())
     {
-        // contact.entity hit contact.other
+        if (hit.phase != Physics::ContactPhase::Enter)
+        {
+            continue;
+        }
+        if (scene.Has<Window>(hit.entity) && scene.Has<Bullet>(hit.other))
+        {
+            scene.Destroy(hit.entity);
+        }
     }
 }
 ```
 
-Each event has the two entities (`entity` and `other`), the contact `normal`,
-the `velocity` at impact, the `phase` (`Enter`, `Stay` or `Exit`), and whether it
-involved a trigger (`sensor`).
+Each touching pair produces two events, one from each side, so a system only
+has to look at the side it cares about. An event has:
+
+| Field | Meaning |
+|---|---|
+| `entity`, `other` | The entity this event speaks for, and what it touched. |
+| `phase` | `Enter` when they start touching, `Exit` when they stop. |
+| `point` | Where they touch, in world space. |
+| `normal` | Points away from `other`'s surface. |
+| `velocity` | `entity`'s velocity just before the impact, before the solver slowed it. |
+| `sensor` | Whether either side is a trigger. |
+| `piece`, `otherPiece` | The entities whose colliders touched. The same as `entity` and `other` for now. |
+
+Give each behaviour its own small system that checks for its own component,
+like `Window` above. Each one walks only that step's events, which are few.
 
 The list only covers the most recent physics step, so read it from a
 **`PostFixedUpdate`** system (right after the step) or a **`FixedUpdate`** system
 (just before the next one). Anything slower can miss events.
 
-The engine's own `Bounce` system is a complete example: it reflects a body's
-velocity when it hits something. Add the `Bounce` component to an object and the
-`Bounce` system to your level to try it. Its source is in
-`modules/App/src/PhysicsSystems.cpp`.
+### What is touching now
+
+`IsTouching(a, b)` says whether two entities' bodies are touching, and
+`Touching(entity, out)` lists everything one is touching. A trigger that opens
+a door while a player stands in it can ask this every step instead of keeping
+its own list from the events.
+
+A resting pile of objects produces no events and costs nothing to track. If
+you want an event every step for every pair that stays in contact, turn on
+`Stay` events for that world with `SetStayEventsReported(true)`.
 
 ## The character controller
 
@@ -380,8 +463,15 @@ Changing a setting in the editor rebuilds the character in place.
 
 - `CastRay(origin, sweep, filter, ...)` finds the first thing along a line, like
   a bullet or a line-of-sight check.
-- `Overlap(shape, pose, ...)` lists the entities inside a shape, like an
-  explosion radius.
+- `CastShape(collider, pose, sweep, ...)` moves a collider along a line and finds
+  the first thing it would hit.
+- `Overlap(collider, pose, ...)` finds what a collider held still would overlap,
+  like an explosion radius.
+
+A shape query takes a `Collider` and uses its shape, its offset and its
+collision groups, so it finds what that collider would touch there. Each query
+also has an `All` form (`CastRayAll`, `CastShapeAll`, `OverlapAll`) that fills a
+vector you pass in with every hit, nearest first.
 
 See `modules/Physics/include/Assisi/Physics/PhysicsWorld.hpp` for their full
 parameters.

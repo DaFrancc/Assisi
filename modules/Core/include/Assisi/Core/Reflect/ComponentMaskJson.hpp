@@ -12,7 +12,7 @@
 ///
 /// The wire form is names rather than bits, and so is the disk form:
 ///
-///     "excluded": ["Bounce", "Name"]
+///     "excluded": ["Collider", "Name"]
 ///
 /// Bits index a component's *replicable ordinal*, which is not stable across
 /// builds — it shifts when any component is added, renamed, or has its

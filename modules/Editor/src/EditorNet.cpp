@@ -796,9 +796,9 @@ void EditorApp::DrawNetworkWindow()
             // Client-side damage the host has no way to know about — the exact
             // failure class the keyframe sweep exists for.
             const Assisi::Physics::Pose pose = _physics->GetBodyPose(_selectedEntity);
-            _physics->ApplyBodyState(_selectedEntity,
-                                     Assisi::Physics::Pose{pose.rotation, pose.position + glm::vec3{0.f, 3.f, 1.5f}},
-                                     glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/ false);
+            _physics->ApplyCorrection(_selectedEntity,
+                                      Assisi::Physics::Pose{pose.rotation, pose.position + glm::vec3{0.f, 3.f, 1.5f}},
+                                      Assisi::Physics::BodyState{.asleep = true});
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))

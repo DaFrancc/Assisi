@@ -28,12 +28,39 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <initializer_list>
 #include <mutex>
 #include <span>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Physics
 {
+
+namespace
+{
+
+/// The middle of a manifold's contact points, halfway between the two
+/// surfaces: one point that stands for the whole patch.
+glm::vec3 ContactMiddle(const JPH::ContactManifold &manifold)
+{
+    const JPH::uint count = manifold.mRelativeContactPointsOn1.size();
+    if (count == 0)
+    {
+        const JPH::RVec3 base = manifold.mBaseOffset;
+        return glm::vec3(base.GetX(), base.GetY(), base.GetZ());
+    }
+    JPH::Vec3 sum = JPH::Vec3::sZero();
+    for (JPH::uint i = 0; i < count; ++i)
+    {
+        sum += manifold.mRelativeContactPointsOn1[i] + manifold.mRelativeContactPointsOn2[i];
+    }
+    const JPH::RVec3 middle = manifold.mBaseOffset + sum / (2.f * static_cast<float>(count));
+    return glm::vec3(middle.GetX(), middle.GetY(), middle.GetZ());
+}
+
+} // namespace
 
 void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &body2,
                                      const JPH::ContactManifold &manifold)
@@ -53,6 +80,7 @@ void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &bo
                                 };
 
     const TouchRecord record{glm::vec3{n.GetX(), n.GetY(), n.GetZ()},
+                             ContactMiddle(manifold),
                              linearVelocity(body1),
                              linearVelocity(body2),
                              body1.GetID(),
@@ -63,8 +91,8 @@ void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &bo
     touchedThisStep.push_back(record);
 }
 
-void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::BodyID &innerBody, const JPH::BodyID &other,
-                                              glm::vec3 normal, glm::vec3 characterVelocity)
+void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &character, const JPH::BodyID &other,
+                                              JPH::RVec3Arg position, JPH::Vec3Arg normal)
 {
     // The no-lock interface, deliberately: this runs inside the character's own
     // sweep, which may already hold the touched body's lock, and it runs on the
@@ -84,7 +112,14 @@ void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::BodyID &innerBody, cons
     // The character is body1, so the normal it is handed points away from it —
     // the same sense the body-vs-body path records, which is what lets both
     // arrive at a consumer looking identical.
-    const TouchRecord record{normal, characterVelocity, otherVelocity, innerBody, other, sensor};
+    const JPH::Vec3 velocity = character.GetLinearVelocity();
+    const TouchRecord record{glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ()),
+                             glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+                             glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+                             otherVelocity,
+                             character.GetInnerBodyID(),
+                             other,
+                             sensor};
 
     const std::lock_guard<std::mutex> lock(touchMutex);
     touchedThisStep.push_back(record);
@@ -133,38 +168,106 @@ void PhysicsWorld::Impl::EmitPair(const PairState &state, ContactPhase phase, st
     // Each side is given the normal pointing away from the *other*, which is what
     // a reflection wants and what spares a consumer working out the pair's order.
     if (e1 != ECS::NullEntity)
-        out.push_back(ContactEvent{-state.normal, state.velocity1, e1, e2, phase, state.sensor});
+    {
+        out.push_back(ContactEvent{-state.normal, state.point, state.velocity1, e1, e2, e1, e2, phase, state.sensor});
+    }
     if (e2 != ECS::NullEntity)
-        out.push_back(ContactEvent{state.normal, state.velocity2, e2, e1, phase, state.sensor});
+    {
+        out.push_back(ContactEvent{state.normal, state.point, state.velocity2, e2, e1, e2, e1, phase, state.sensor});
+    }
+}
+
+std::pair<PhysicsWorld::Impl::PairState *, bool> PhysicsWorld::Impl::InsertPair(PairKey key,
+                                                                                const TouchRecord &touch)
+{
+    const std::pair<std::unordered_map<PairKey, PairState, PairKeyHash>::iterator, bool> found =
+        pairs.try_emplace(key);
+    PairState &state = found.first->second;
+    if (found.second)
+    {
+        // Read while both bodies certainly exist, so the Exit a destroyed body
+        // causes later can still say who it was.
+        state.entity1 = EntityFor(touch.id1);
+        state.entity2 = EntityFor(touch.id2);
+        for (const ECS::Entity entity : {state.entity1, state.entity2})
+        {
+            if (BodySlot *slot = SlotFor(entity); slot != nullptr)
+            {
+                slot->pairKeys.push_back(key);
+            }
+        }
+    }
+    return {&state, found.second};
+}
+
+void PhysicsWorld::Impl::ErasePair(PairKey key)
+{
+    const std::unordered_map<PairKey, PairState, PairKeyHash>::iterator found = pairs.find(key);
+    if (found == pairs.end())
+    {
+        return;
+    }
+    for (const ECS::Entity entity : {found->second.entity1, found->second.entity2})
+    {
+        if (BodySlot *slot = SlotFor(entity); slot != nullptr)
+        {
+            std::erase(slot->pairKeys, key);
+        }
+    }
+    pairs.erase(found);
+}
+
+void PhysicsWorld::Impl::EndPair(PairKey key)
+{
+    const std::unordered_map<PairKey, PairState, PairKeyHash>::iterator found = pairs.find(key);
+    if (found == pairs.end())
+    {
+        return;
+    }
+    EmitPair(found->second, ContactPhase::Exit, events);
+    ErasePair(key);
 }
 
 void PhysicsWorld::Impl::EmitExitsFor(const JPH::BodyID &id, std::vector<ContactEvent> &out)
 {
-    const std::uint32_t goingKey = id.GetIndexAndSequenceNumber();
-    for (auto it = pairs.begin(); it != pairs.end();)
+    const BodySlot *slot = SlotFor(EntityFor(id));
+    if (slot == nullptr)
     {
-        const PairState &state = it->second;
-        if (state.id1.GetIndexAndSequenceNumber() == goingKey ||
-            state.id2.GetIndexAndSequenceNumber() == goingKey)
+        return;
+    }
+    // A copy: erasing each pair takes it out of this very list.
+    const std::vector<PairKey> keys = slot->pairKeys;
+    for (const PairKey key : keys)
+    {
+        EmitPair(pairs.at(key), ContactPhase::Exit, out);
+        ErasePair(key);
+    }
+}
+
+void PhysicsWorld::Impl::EndUnseenPairsOf(const JPH::BodyID &id)
+{
+    const BodySlot *slot = SlotFor(EntityFor(id));
+    if (slot == nullptr)
+    {
+        return;
+    }
+    const std::vector<PairKey> keys = slot->pairKeys;
+    for (const PairKey key : keys)
+    {
+        if (pairs.at(key).stamp != step)
         {
-            EmitPair(state, ContactPhase::Exit, out);
-            it = pairs.erase(it);
-        }
-        else
-        {
-            ++it;
+            EndPair(key);
         }
     }
 }
 
 void PhysicsWorld::Impl::ResolveContactEvents()
 {
-    // No Jolt worker is inside a callback here, so the buffer is ours alone.
+    // No Jolt worker is inside a callback here, so the buffers are ours alone.
     for (const TouchRecord &touch : touchedThisStep)
     {
-        const PairKey key = KeyFor(touch.id1, touch.id2);
-        const auto [it, inserted] = pairs.try_emplace(key);
-        PairState &state = it->second;
+        const std::pair<PairState *, bool> found = InsertPair(KeyFor(touch.id1, touch.id2), touch);
+        PairState &state = *found.first;
 
         // Several manifolds, and several collision substeps, report the same pair
         // within one step. The first sets the phase; the rest only refresh what is
@@ -173,52 +276,75 @@ void PhysicsWorld::Impl::ResolveContactEvents()
         // record twice — once by its own sweep, once by the body-vs-body listener.
         const bool firstThisStep = state.stamp != step;
 
-        // Read while both bodies certainly exist, so the Exit a destroyed body
-        // causes later can still say who it was.
-        if (inserted)
-        {
-            state.entity1 = EntityFor(touch.id1);
-            state.entity2 = EntityFor(touch.id2);
-        }
-
-        state.normal    = touch.normal;
+        state.normal = touch.normal;
+        state.point = touch.point;
         state.velocity1 = touch.velocity1;
         state.velocity2 = touch.velocity2;
-        state.id1       = touch.id1;
-        state.id2       = touch.id2;
-        state.sensor    = touch.sensor;
-        state.stamp     = step;
+        state.id1 = touch.id1;
+        state.id2 = touch.id2;
+        state.sensor = touch.sensor;
+        state.stamp = step;
 
-        if (firstThisStep)
-            EmitPair(state, inserted ? ContactPhase::Enter : ContactPhase::Stay, events);
+        if (found.second)
+        {
+            EmitPair(state, ContactPhase::Enter, events);
+        }
+        else if (firstThisStep && stayReported)
+        {
+            EmitPair(state, ContactPhase::Stay, events);
+        }
     }
     touchedThisStep.clear();
 
-    // Anything not seen this step either ended or went quiet. A body that fell
-    // asleep has not moved, and Jolt simply stopped testing it, so a pair whose
-    // bodies are all asleep is still touching and keeps saying so.
-    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
-    for (auto it = pairs.begin(); it != pairs.end();)
+    // A pair not seen this step ended, or went quiet because its bodies fell
+    // asleep: a sleeping body has not moved, Jolt merely stopped testing it.
+    // Only three kinds of pair can have ended, so only those are looked at, and
+    // a settled scene costs nothing here.
+    //
+    // A body that was awake for the whole step had every contact it still has
+    // reported in it, so any pair of its not seen is over.
+    for (const JPH::BodyID &id : activatedAtStart)
     {
-        PairState &state = it->second;
-        if (state.stamp == step)
+        EndUnseenPairsOf(id);
+    }
+    activatedAtStart.clear();
+
+    // A pair Jolt stopped reporting is over unless its bodies went to sleep
+    // together, in which case it is still touching.
+    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    for (const PairKey key : removedThisStep)
+    {
+        const std::unordered_map<PairKey, PairState, PairKeyHash>::iterator found = pairs.find(key);
+        if (found == pairs.end() || found->second.stamp == step)
         {
-            ++it;
             continue;
         }
-
+        const PairState &state = found->second;
         const bool eitherAwake = (bodies.IsAdded(state.id1) && bodies.IsActive(state.id1)) ||
                                  (bodies.IsAdded(state.id2) && bodies.IsActive(state.id2));
         if (eitherAwake)
         {
-            EmitPair(state, ContactPhase::Exit, events);
-            it = pairs.erase(it);
+            EndPair(key);
         }
-        else
+    }
+    removedThisStep.clear();
+
+    // A character's contacts come only from its own sweep, which reports every
+    // one of them every step, and a character never sleeps.
+    for (const std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
+    {
+        EndUnseenPairsOf(entry.second.character->GetInnerBodyID());
+    }
+
+    // What is left unseen is asleep and still touching.
+    if (stayReported)
+    {
+        for (const std::pair<const PairKey, PairState> &entry : pairs)
         {
-            EmitPair(state, ContactPhase::Stay, events);
-            state.stamp = step;
-            ++it;
+            if (entry.second.stamp != step)
+            {
+                EmitPair(entry.second, ContactPhase::Stay, events);
+            }
         }
     }
 
@@ -249,7 +375,6 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
                                                            JPH::CharacterContactSettings &settings)
 {
     (void)subShapeId;
-    (void)contactPosition;
 
     const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
     if (found == nullptr)
@@ -264,10 +389,7 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
     settings.mCanPushCharacter   = record.canBePushed;
     settings.mCanReceiveImpulses = record.canPushBodies;
 
-    const JPH::Vec3 velocity = character->GetLinearVelocity();
-    _owner.RecordCharacterTouch(character->GetInnerBodyID(), bodyId,
-                                glm::vec3(contactNormal.GetX(), contactNormal.GetY(), contactNormal.GetZ()),
-                                glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()));
+    _owner.RecordCharacterTouch(*character, bodyId, contactPosition, contactNormal);
 }
 
 void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
@@ -276,7 +398,6 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
     JPH::CharacterContactSettings &settings)
 {
     (void)subShapeId;
-    (void)contactPosition;
 
     const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
     if (found == nullptr)
@@ -291,15 +412,52 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
     // step and nothing else, so one shoving the other is gameplay's to express.
     settings.mCanReceiveImpulses = false;
 
-    const JPH::Vec3 velocity = character->GetLinearVelocity();
-    _owner.RecordCharacterTouch(character->GetInnerBodyID(), other->GetInnerBodyID(),
-                                glm::vec3(contactNormal.GetX(), contactNormal.GetY(), contactNormal.GetZ()),
-                                glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()));
+    _owner.RecordCharacterTouch(*character, other->GetInnerBodyID(), contactPosition, contactNormal);
 }
 
 std::span<const ContactEvent> PhysicsWorld::ContactEvents() const
 {
     return {_impl->events.data(), _impl->events.size()};
+}
+
+void PhysicsWorld::SetStayEventsReported(bool reported)
+{
+    _impl->stayReported = reported;
+}
+
+bool PhysicsWorld::StayEventsReported() const
+{
+    return _impl->stayReported;
+}
+
+bool PhysicsWorld::IsTouching(ECS::Entity a, ECS::Entity b) const
+{
+    const JPH::BodyID bodyA = _impl->BodyFor(a);
+    const JPH::BodyID bodyB = _impl->BodyFor(b);
+    if (bodyA.IsInvalid() || bodyB.IsInvalid())
+    {
+        return false;
+    }
+    return _impl->pairs.contains(Impl::KeyFor(bodyA, bodyB));
+}
+
+void PhysicsWorld::Touching(ECS::Entity entity, std::vector<ECS::Entity> &out) const
+{
+    out.clear();
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr)
+    {
+        return;
+    }
+    for (const PairKey key : slot->pairKeys)
+    {
+        const Impl::PairState &state = _impl->pairs.at(key);
+        const ECS::Entity other = state.entity1 == entity ? state.entity2 : state.entity1;
+        if (other != ECS::NullEntity)
+        {
+            out.push_back(other);
+        }
+    }
 }
 
 } // namespace Assisi::Physics

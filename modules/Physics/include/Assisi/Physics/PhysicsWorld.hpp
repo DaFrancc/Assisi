@@ -75,11 +75,11 @@ struct CollisionFilter
     }
 };
 
-/// @brief Where a cast met the first body in its path.
+/// @brief Where a query met a body.
 ///
-/// One shape for both kinds of cast: what a caller does with a hit — place a
+/// One shape for every kind of query: what a caller does with a hit — place a
 /// cursor, stand a character on it, decide a shot connected — reads the same
-/// four fields whether a ray or a swept volume found it.
+/// fields whether a ray, a swept volume or a held one found it.
 struct QueryHit
 {
     glm::vec3 position{0.f}; ///< World-space point on the struck surface.
@@ -87,15 +87,20 @@ struct QueryHit
     /// Unit surface normal at @ref position, pointing out of the surface and so
     /// back towards the caster. Reflecting a direction about it, or comparing it
     /// against up to decide whether a surface is walkable, both work without the
-    /// caller knowing which cast produced the hit.
+    /// caller knowing which query produced the hit.
     glm::vec3 normal{0.f};
 
     /// The entity whose body was struck. The handle is the one the body was
     /// built for, so check it is still alive before acting on it.
     ECS::Entity entity{ECS::NullEntity};
 
-    /// Distance from the cast's origin to @ref position along the cast. Zero when
-    /// the cast began already overlapping, which is a hit, not a miss.
+    /// The entity whose collider was struck. The same as @ref entity, since
+    /// every body is built from one entity's Collider.
+    ECS::Entity piece{ECS::NullEntity};
+
+    /// For a cast, the distance from its origin to @ref position along it: zero
+    /// when it began already overlapping, which is a hit, not a miss. For an
+    /// overlap, how deep the shapes overlap.
     float distance = 0.f;
 };
 
@@ -103,7 +108,7 @@ struct QueryHit
 enum class ContactPhase : std::uint8_t
 {
     Enter, ///< They were not touching last step and are now.
-    Stay,  ///< They were touching last step and still are.
+    Stay,  ///< They were touching last step and still are. Reported only when asked for.
     Exit,  ///< They were touching last step and are not now.
     Count,
 };
@@ -114,7 +119,7 @@ enum class ContactPhase : std::uint8_t
 /// two events, one from each point of view, so a consumer never has to work out
 /// which end of the pair it is looking at.
 ///
-/// Exactly one event per pair per participant per step, whatever the pair's
+/// At most one event per pair per participant per step, whatever the pair's
 /// contact geometry did: several manifolds and several collision substeps
 /// collapse into one.
 struct ContactEvent
@@ -122,6 +127,10 @@ struct ContactEvent
     /// Unit world-space normal pointing away from @ref other's surface — so a
     /// body arriving at a floor sees +Y here, whichever way the pair was ordered.
     glm::vec3 normal{0.f};
+
+    /// Where the two touch, in world space: the middle of the contact the step
+    /// last saw. On an Exit, where they last touched.
+    glm::vec3 point{0.f};
 
     /// @ref entity's linear velocity when the contact was observed, which is
     /// **before the solver ran**. This is the field that makes the record worth
@@ -134,6 +143,12 @@ struct ContactEvent
 
     ECS::Entity entity{ECS::NullEntity}; ///< The entity this record speaks for.
     ECS::Entity other{ECS::NullEntity};  ///< What it touched; NullEntity if that body has no entity.
+
+    /// The entities whose colliders touched, on @ref entity's side and on
+    /// @ref other's. The same as the bodies' own entities, since every body is
+    /// built from one entity's Collider.
+    ECS::Entity piece{ECS::NullEntity};
+    ECS::Entity otherPiece{ECS::NullEntity};
 
     ContactPhase phase = ContactPhase::Enter;
 
@@ -164,19 +179,6 @@ public:
 
     PhysicsWorld(const PhysicsWorld &) = delete;
     PhysicsWorld &operator=(const PhysicsWorld &) = delete;
-
-    /// @brief The collider primitive + its dimensions, gathered into one struct so
-    /// the shape queries don't take a growing pile of shape parameters. Only the
-    /// fields the chosen `shape` uses are read.
-    struct ColliderShapeDesc
-    {
-        ColliderShape shape = ColliderShape::Box;
-        glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box.
-        float radius = 0.5f;                     ///< Sphere/Capsule/Cylinder.
-        float halfHeight = 0.5f;                 ///< Capsule/Cylinder cylindrical half-height.
-
-        friend bool operator==(const ColliderShapeDesc &, const ColliderShapeDesc &) = default;
-    };
 
     /// @brief Brings the simulation into line with the scene.
     ///
@@ -219,6 +221,50 @@ public:
     /// zeroes it, and the render blend does not slide the body across the gap.
     void Teleport(ECS::Entity entity, const Pose &pose);
 
+    // --- Requests --------------------------------------------------------------
+    //
+    // Pushes and sleep changes, queued in the order they are made and applied
+    // at the start of the next Update(), after its reconcile: an entity spawned
+    // this frame has its body by then, and a Transform written before the
+    // request has already moved it. Reconcile() on its own applies none of them.
+    // An entity with no body by then is skipped.
+    //
+    // A force acts over the one step it is applied to, so a steady push is one
+    // AddForce every fixed step; an impulse is a single kick. Both change a
+    // dynamic body's velocity by their amount over its mass, and wake it. A
+    // character takes forces and impulses too, as a change to its velocity that
+    // its movement rules then carry on from — a knockback, a wind pushing it.
+    // Nothing else moves: a static body, a kinematic body, and everything a
+    // character cannot do — spin, sleep, be pushed off its centre — ignore them.
+
+    /// @brief Pushes @p entity through its centre of mass by @p force (N) for
+    /// the next step.
+    void AddForce(ECS::Entity entity, glm::vec3 force);
+
+    /// @brief Pushes @p entity by @p force (N) at a world-space @p point for the
+    /// next step, which spins it as well when the point is off its centre.
+    void AddForceAt(ECS::Entity entity, glm::vec3 force, glm::vec3 point);
+
+    /// @brief Kicks @p entity through its centre of mass by @p impulse (N·s).
+    void AddImpulse(ECS::Entity entity, glm::vec3 impulse);
+
+    /// @brief Kicks @p entity by @p impulse (N·s) at a world-space @p point.
+    void AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, glm::vec3 point);
+
+    /// @brief Twists @p entity by @p torque (N·m), about world axes, for the
+    /// next step.
+    void AddTorque(ECS::Entity entity, glm::vec3 torque);
+
+    /// @brief Spins @p entity by @p angularImpulse (N·m·s) about world axes.
+    void AddAngularImpulse(ECS::Entity entity, glm::vec3 angularImpulse);
+
+    /// @brief Wakes @p entity's body, so it is simulated from the next step.
+    void Wake(ECS::Entity entity);
+
+    /// @brief Puts @p entity's body to sleep where it is, at rest. It wakes
+    /// again as soon as something touches it or pushes it.
+    void Sleep(ECS::Entity entity);
+
     /// @brief Reconciles, advances the simulation by `deltaTime` seconds, and
     /// writes the result into the Transforms of the bodies that moved.
     ///
@@ -235,8 +281,10 @@ public:
 
     // --- Contact events ------------------------------------------------------
     //
-    // Always on. Trigger volumes are authored data, and a switch a level had to
-    // remember to flip would make one silently do nothing.
+    // Enter and Exit are always on. Trigger volumes are authored data, and a
+    // switch a level had to remember to flip would make one silently do nothing.
+    // Stay is off unless asked for: it repeats every step for every resting
+    // pair, and what it would say is a question IsTouching answers.
     //
     // Jolt's own contact callbacks cannot be the source of these. Its
     // "contact removed" callback fires when a body falls *asleep*, and forbids
@@ -257,9 +305,13 @@ public:
     /// consumer that accumulated in that order would produce a different answer
     /// from one run to the next.
     ///
-    /// A pair that stops being reported while *both* its bodies are asleep counts
-    /// as still touching, and keeps producing Stay. A sleeping body has not moved;
-    /// the simulation merely stopped testing it.
+    /// A pair whose bodies are *both* asleep counts as still touching: a
+    /// sleeping body has not moved, the simulation merely stopped testing it.
+    /// With Stay reported it keeps producing Stay. A static body moved out from
+    /// under a sleeping one wakes it, and the pair ends on the step after.
+    ///
+    /// A settled scene produces nothing here and costs nothing to resolve: a
+    /// pair is looked at only when something about it may have changed.
     ///
     /// Characters appear here too, including against static floors — which their
     /// inner bodies alone could never report, a kinematic body resting on a
@@ -271,12 +323,31 @@ public:
     /// being swept, so nothing is measuring what it touches.
     [[nodiscard]] std::span<const ContactEvent> ContactEvents() const;
 
+    /// @brief Whether ContactEvents() reports Stay: every touching pair, every
+    /// step, from both sides. Off by default; per world.
+    void SetStayEventsReported(bool reported);
+    [[nodiscard]] bool StayEventsReported() const;
+
+    /// @brief Whether the bodies of @p a and @p b are touching as of the most
+    /// recent Update(), with the same meaning ContactEvents() gives touching.
+    [[nodiscard]] bool IsTouching(ECS::Entity a, ECS::Entity b) const;
+
+    /// @brief Every entity @p entity's body is touching as of the most recent
+    /// Update(), into @p out, which is cleared first. In no particular order.
+    void Touching(ECS::Entity entity, std::vector<ECS::Entity> &out) const;
+
     // --- World queries -------------------------------------------------------
     //
-    // Each takes the filter of the thing doing the asking, so a query is
-    // filtered by the same two-way rule as a collision: it finds a body only if
-    // its own mask includes that body's channel and the body's mask includes
-    // its channel.
+    // Each is filtered by the same two-way rule as a collision: it finds a body
+    // only if its own mask includes that body's channel and the body's mask
+    // includes its channel. A ray takes the filter of the thing asking; a shape
+    // query takes a Collider and is that collider asking, so it finds what the
+    // collider would touch there — its channel, its mask, its offset.
+    //
+    // The single-hit form gives the nearest hit; the All form fills a caller's
+    // vector, cleared first, with one hit per piece struck, nearest first (an
+    // overlap's deepest first), so a
+    // query a frame allocates nothing once the vector has grown.
     //
     // A sweep is given as a displacement rather than a direction and a length,
     // which is the one spelling that cannot disagree with itself. Distances in
@@ -298,31 +369,45 @@ public:
     [[nodiscard]] std::optional<QueryHit> CastRay(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter,
                                                   ECS::Entity ignore) const;
 
-    /// @brief The first body a swept shape meets, or nothing if it meets none.
+    /// @brief Every body a ray meets. See CastRay and the All form above.
+    void CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
+                    std::vector<QueryHit> &out) const;
+
+    /// @brief The first body a swept collider meets, or nothing if it meets none.
     ///
     /// The character-controller query: "if this capsule moved by @p sweep, what
     /// would stop it?" A cast that begins already overlapping something reports
     /// it at distance 0 rather than missing.
     ///
-    /// @param shape   Collider primitive and its dimensions to sweep.
-    /// @param start   Where the shape begins, in world space.
-    /// @param sweep   Direction and length together; a zero sweep finds nothing.
-    /// @param filter  What is asking, and what it may find.
-    /// @param ignore  An entity to skip, or NullEntity to skip nothing.
-    [[nodiscard]] std::optional<QueryHit> CastShape(const ColliderShapeDesc &shape, const Pose &start, glm::vec3 sweep,
-                                                    CollisionFilter filter, ECS::Entity ignore) const;
+    /// @param collider  The shape to sweep, at its own offset and unscaled, and
+    ///                  the filter it asks with. A collision asset is not
+    ///                  supported here yet and sweeps the primitive.
+    /// @param start     Where the collider's entity would begin, in world space.
+    /// @param sweep     Direction and length together; a zero sweep finds nothing.
+    /// @param ignore    An entity to skip, or NullEntity to skip nothing.
+    [[nodiscard]] std::optional<QueryHit> CastShape(const Collider &collider, const Pose &start, glm::vec3 sweep,
+                                                    ECS::Entity ignore) const;
 
-    /// @brief Every entity whose body intersects a shape held still.
+    /// @brief Every body a swept collider meets. See CastShape and the All
+    /// form above.
+    void CastShapeAll(const Collider &collider, const Pose &start, glm::vec3 sweep, ECS::Entity ignore,
+                      std::vector<QueryHit> &out) const;
+
+    /// @brief The body a collider held still at @p at overlaps most deeply, or
+    /// nothing if it overlaps none.
     ///
     /// Answers the question a sensor cannot: what is inside this volume right
     /// now, static scenery included. A trigger reports bodies that move, because
     /// that is what a contact is; walls and floors never generate one, so asking
     /// once is the only way to hear about them.
     ///
-    /// Bodies with no entity are left out — a list of NullEntity says nothing.
-    /// Each entity appears once however many of its shapes overlap.
-    [[nodiscard]] std::vector<ECS::Entity> Overlap(const ColliderShapeDesc &shape, const Pose &at,
-                                                   CollisionFilter filter, ECS::Entity ignore) const;
+    /// A hit's `distance` is how deep it overlaps, and its `normal` points out of
+    /// the body struck.
+    [[nodiscard]] std::optional<QueryHit> Overlap(const Collider &collider, const Pose &at, ECS::Entity ignore) const;
+
+    /// @brief Every body a collider held still overlaps, deepest first. See
+    /// Overlap and the All form above.
+    void OverlapAll(const Collider &collider, const Pose &at, ECS::Entity ignore, std::vector<QueryHit> &out) const;
 
     /// @brief Number of collision substeps Jolt runs per Update() call.
     ///
@@ -336,7 +421,7 @@ public:
     /// @brief Current collision-substep count (see SetCollisionSteps).
     int32_t GetCollisionSteps() const;
 
-    // --- Authoritative body state (replication) -------------------------------
+    // --- Facts ------------------------------------------------------------------
 
     /// @brief Every entity whose body or character the simulation has awake.
     ///
@@ -347,18 +432,23 @@ public:
     /// @brief Whether the simulation currently considers @p entity's body awake.
     [[nodiscard]] bool IsBodyActive(ECS::Entity entity) const;
 
-    /// @brief Put @p entity's body to sleep without moving it.
-    ///
-    /// A kinematic sensor put to sleep stops detecting anything, since a sleeping
-    /// body generates no contacts.
-    void DeactivateBody(ECS::Entity entity);
+    /// @brief The entity whose body @p piece's collider is part of: @p piece
+    /// itself when it has a body, NullEntity when it has none.
+    [[nodiscard]] ECS::Entity BodyOf(ECS::Entity piece) const;
 
-    /// @brief Set pose, both velocities, and activation in one call — what a
-    /// replication correction is.
+    /// @brief The mass the simulation gives @p entity (kg): RigidBody::mass when
+    /// set, from the shape's volume otherwise, Character::mass for a character.
+    /// Zero for a static or kinematic body, which nothing can push, and for an
+    /// entity with no body.
+    [[nodiscard]] float Mass(ECS::Entity entity) const;
+
+    /// @brief Sets pose, velocities and sleep in one call — what a replication
+    /// correction is.
     ///
-    /// Deliberately not composed from a Transform write and a velocity setter:
-    /// a correction must be able to leave a body asleep, set its angular
-    /// velocity, and land in this step rather than the next reconcile.
+    /// Deliberately not composed from a Transform write and a BodyState write: a
+    /// correction must be able to leave a body asleep, and land in this step
+    /// rather than the next reconcile. @p state's `asleep` is obeyed here, unlike
+    /// a write to the component.
     ///
     /// For a character, only the position and the linear velocity are taken:
     /// it faces wherever gameplay turns it, and it never sleeps.
@@ -368,18 +458,19 @@ public:
     /// jump, and a blend sliding after it would show twice.
     ///
     /// No-op for an entity with no body. A static body is placed and nothing more.
-    void ApplyBodyState(ECS::Entity entity, const Pose &pose, glm::vec3 linearVelocity, glm::vec3 angularVelocity,
-                        bool activate);
+    void ApplyCorrection(ECS::Entity entity, const Pose &pose, const BodyState &state);
 
     /// @brief The current world-space pose of @p entity's body, or the identity
     /// pose when it has none.
     [[nodiscard]] Pose GetBodyPose(ECS::Entity entity) const;
 
-    /// @brief Returns a body's current linear (m/s) and angular (rad/s) velocity.
+    /// @brief @p entity's velocities and sleep as the simulation holds them now.
     ///
-    /// Both are zero for a static body or an entity with no body, so callers can
-    /// display the result unconditionally.
-    [[nodiscard]] std::pair<glm::vec3, glm::vec3> GetBodyVelocity(ECS::Entity entity) const;
+    /// Read from the body rather than from the BodyState component, which is
+    /// written only after a step. At rest for a static body or an entity with
+    /// no body, so callers can display the result unconditionally; a character
+    /// reports its velocity and is never asleep.
+    [[nodiscard]] BodyState GetBodyState(ECS::Entity entity) const;
 
     /// @brief Whether a body's motion quality is currently LinearCast (CCD on).
     /// False for Discrete bodies, static bodies, or an entity with no body.
@@ -409,7 +500,7 @@ public:
     // collision filtering all reach a character through it.
     //
     // A character is driven through its CharacterIntent and reports through its
-    // CharacterState; there is no character call here.
+    // CharacterState. Beyond those, only AddForce and AddImpulse reach it.
 
     /// @brief Sets the gravity vector (default: {0, −9.81, 0}).
     void SetGravity(glm::vec3 gravity);

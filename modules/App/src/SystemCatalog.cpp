@@ -87,7 +87,7 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
 {
     for (const SystemDefinition *definition : resolved)
     {
-        // A union, not a concatenation: two nested blueprints both naming Bounce
+        // A union, not a concatenation: two nested blueprints both naming Oscillate
         // install it once, and a spawn into a world that already has it costs a
         // lookup.
         if (world.systems.Has(definition->name))

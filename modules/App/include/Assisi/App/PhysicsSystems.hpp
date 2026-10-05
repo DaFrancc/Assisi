@@ -20,60 +20,6 @@ namespace Assisi::App
 
 struct SystemContext;
 
-/// @brief Minimum closing speed (m/s) an impact must carry for BounceSystem to
-/// respond to it at all. Anything gentler is left for the solver to absorb.
-///
-/// @warning At the current 1 mm/s this rejects only numerically-negligible
-/// contacts. It is **not** enough to stop a settling body pumping itself, and the
-/// numbers below are the reason — read them before tuning this either way.
-///
-/// A body settling onto a surface keeps exchanging fresh contacts at a few tenths
-/// of a metre per second, and down there the solver's own penetration push-out
-/// contributes more speed than the rebound multiplier removes. Measured on a box
-/// settling at `rebound = 0.8` — a *lossy* bounce, which should decay
-/// monotonically — successive impacts instead grew: 0.65, 0.78, 0.84, 0.96 m/s.
-/// Below `rebound = 1` that stays sub-perceptual and the body does eventually
-/// stop. At `rebound > 1` the same feedback compounds, and a box nudged at
-/// 0.98 m/s climbs to 18.8 m and is still accelerating (TestBounce.cpp exercises
-/// exactly this).
-///
-/// Raising this to **1.0** suppresses that entirely, and is the figure Jolt uses
-/// for its own restitution cutoff (`PhysicsSettings::mMinVelocityForRestitution`)
-/// for the same reason — the two would then give up at the same point instead of
-/// one reviving what the other let rest. The cost is that impacts from drops under
-/// roughly 5 cm stop bouncing at all. That trade is a game-feel decision, which is
-/// why the value is a named constant here rather than buried in the system.
-inline constexpr float kMinBounceSpeed = 0.001f;
-
-/// @brief Ricochets Physics::Bounce entities off whatever their rigid body hits.
-///
-/// Reflects the body's incoming linear velocity about the contact normal and
-/// scales it by the component's `rebound`. Nothing else is touched — no torque,
-/// no spin change, no positional correction — so it composes with whatever else
-/// is driving the body.
-///
-/// @par Requirements
-/// Register it in **FixedUpdate**, which puts it immediately before its world's
-/// physics step: it consumes the contacts the previous step found, and the
-/// velocity it writes is the one the next step simulates, with no frame of wasted
-/// motion in between. It turns contact reporting on for its own world, so a level
-/// that names it does not also have to ask for reporting — one branch per fixed
-/// step, and it survives a world that turns reporting back off. The cost is that
-/// the very first step of a world's life has no contacts yet, which is one step
-/// of a bounce nobody can see.
-///
-/// @par Behaviour worth knowing
-/// - Only *new* contacts bounce. A body already resting on a surface reports
-///   nothing, so it stays put instead of being relaunched every step.
-/// - Only *approaching* bodies bounce, so a speculative contact against something
-///   the body is already moving away from cannot drive it back into the surface.
-/// - Only impacts of at least @ref kMinBounceSpeed bounce, which is what lets a
-///   bouncy body settle at all — see that constant for why the threshold is not
-///   optional.
-/// - One bounce per entity per step: a body landing in a corner touches two
-///   surfaces, and reflecting twice would send it back where it came from.
-ASYSTEM(FixedUpdate, name = "Bounce") void BounceSystem(SystemContext &ctx);
-
 /// @brief Action names CharacterInputSystem polls.
 ///
 /// Constants rather than string literals at the call site, so a level's

@@ -89,8 +89,9 @@ engines: an enemy, a pickup, a door with its frame. Build it once, then place
 copies in levels or spawn them while the game runs.
 
 Blueprints live in `assets/blueprints/`, and use the same format as levels. A
-blueprint can also list systems it needs. The `Bouncer` blueprint lists the
-`Bounce` system, for example, so any level it's placed in runs `Bounce`.
+blueprint can also list systems it needs. A moving platform blueprint could
+list the `Oscillate` system, for example, so any level it's placed in runs
+`Oscillate`.
 
 ### Making and placing blueprints in the editor
 

@@ -12,7 +12,11 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <initializer_list>
+#include <vector>
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -82,6 +86,23 @@ TEST_CASE("A pair reports Enter exactly once, however many contact points it has
     CHECK(CountPhase(world, box, Physics::ContactPhase::Enter) == 1);
 }
 
+TEST_CASE("Stay is not reported unless asked for")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    REQUIRE_FALSE(world.StayEventsReported());
+    const ECS::Entity box = BuildDrop(scene, 3.f);
+
+    REQUIRE(StepUntilEnter(world, box) >= 0);
+    int32_t stays = 0;
+    for (int32_t i = 0; i < kSleepSteps; ++i)
+    {
+        world.Update(kStep);
+        stays += CountPhase(world, box, Physics::ContactPhase::Stay);
+    }
+    CHECK(stays == 0);
+}
+
 TEST_CASE("A resting pair keeps reporting Stay after the body falls asleep")
 {
     // The case Jolt's callbacks cannot express. Once the box sleeps, Jolt stops
@@ -90,6 +111,7 @@ TEST_CASE("A resting pair keeps reporting Stay after the body falls asleep")
     // is still sitting on.
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene};
+    world.SetStayEventsReported(true);
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
@@ -201,4 +223,204 @@ TEST_CASE("Clearing the scene drops every pair without inventing departures")
     scene.Clear();
     world.Update(kStep);
     CHECK(world.ContactEvents().empty());
+}
+
+namespace
+{
+
+/// Steps until every body in @p bodies is asleep, and a while after: Jolt
+/// reports a sleeping body's contacts as removed on the step after it sleeps,
+/// so a case meant to start from a quiet sleeping pair has to wait that out.
+/// False if they never settle.
+bool StepUntilAsleep(Physics::PhysicsWorld &world, std::initializer_list<ECS::Entity> bodies)
+{
+    constexpr int32_t kMaxSteps = 1200;
+    constexpr int32_t kQuietSteps = 10;
+    for (int32_t i = 0; i < kMaxSteps; ++i)
+    {
+        world.Update(kStep);
+        bool allAsleep = true;
+        for (const ECS::Entity body : bodies)
+        {
+            allAsleep = allAsleep && !world.IsBodyActive(body);
+        }
+        if (allAsleep)
+        {
+            for (int32_t quiet = 0; quiet < kQuietSteps; ++quiet)
+            {
+                world.Update(kStep);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+int32_t CountPair(const Physics::PhysicsWorld &world, ECS::Entity entity, ECS::Entity other,
+                  Physics::ContactPhase phase)
+{
+    int32_t seen = 0;
+    for (const Physics::ContactEvent &event : world.ContactEvents())
+    {
+        if (event.entity == entity && event.other == other && event.phase == phase)
+        {
+            ++seen;
+        }
+    }
+    return seen;
+}
+
+} // namespace
+
+TEST_CASE("A settled pile reports nothing")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
+    const ECS::Entity bottom = Spawn(scene, {0.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    const ECS::Entity middle = Spawn(scene, {0.f, 1.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    const ECS::Entity top = Spawn(scene, {0.f, 2.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+
+    REQUIRE(StepUntilAsleep(world, {bottom, middle, top}));
+
+    for (int32_t i = 0; i < 60; ++i)
+    {
+        world.Update(kStep);
+        CHECK(world.ContactEvents().empty());
+    }
+
+    // Still touching, as far as anyone asking is concerned.
+    CHECK(world.IsTouching(floor, bottom));
+    CHECK(world.IsTouching(bottom, middle));
+    CHECK(world.IsTouching(middle, top));
+    CHECK_FALSE(world.IsTouching(floor, top));
+}
+
+TEST_CASE("A sleeping body moved away reports its Exit on the next step")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
+    REQUIRE(StepUntilAsleep(world, {box}));
+
+    world.Teleport(box, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), {0.f, 10.f, 0.f}});
+    world.Update(kStep);
+
+    CHECK(CountPhase(world, box, Physics::ContactPhase::Exit) == 1);
+    std::vector<ECS::Entity> touching;
+    world.Touching(box, touching);
+    CHECK(touching.empty());
+}
+
+TEST_CASE("A body leaving what it rests on reports its Exit")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
+    REQUIRE(StepUntilEnter(world, box) >= 0);
+
+    scene.GetMut<Physics::BodyState>(box)->linearVelocity = {0.f, 8.f, 0.f};
+    int32_t exits = 0;
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        world.Update(kStep);
+        exits += CountPhase(world, box, Physics::ContactPhase::Exit);
+    }
+    CHECK(exits == 1);
+}
+
+TEST_CASE("A character walking off what it stands on reports its Exit")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity ledge = Spawn(scene, {0.f, -0.5f, 0.f}, {1.f, 0.5f, 1.f}, /*isStatic=*/ true);
+    const ECS::Entity character = PhysicsTests::AddCharacter(scene, {0.f, 0.f, 0.f});
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        world.Update(kStep);
+    }
+    REQUIRE(world.IsTouching(character, ledge));
+
+    int32_t exits = 0;
+    for (int32_t i = 0; i < 120; ++i)
+    {
+        PhysicsTests::Drive(scene, character, {4.f, 0.f, 0.f}, /*jump=*/ false);
+        world.Update(kStep);
+        exits += CountPair(world, character, ledge, Physics::ContactPhase::Exit);
+    }
+    CHECK(exits == 1);
+    CHECK_FALSE(world.IsTouching(character, ledge));
+}
+
+TEST_CASE("A body woken by a neighbour keeps touching what it rests on")
+{
+    // The bottom box wakes because the top one does, partway through a step, and
+    // the step that wakes it never tested its contact with the floor. That pair
+    // must not read as ended.
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
+    const ECS::Entity bottom = Spawn(scene, {0.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    const ECS::Entity top = Spawn(scene, {0.f, 1.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    REQUIRE(StepUntilAsleep(world, {bottom, top}));
+
+    scene.GetMut<Physics::BodyState>(top)->linearVelocity = {0.3f, 0.f, 0.f};
+    int32_t changes = 0;
+    bool woke = false;
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        world.Update(kStep);
+        woke = woke || world.IsBodyActive(bottom);
+        changes += CountPair(world, bottom, floor, Physics::ContactPhase::Exit);
+        changes += CountPair(world, bottom, floor, Physics::ContactPhase::Enter);
+    }
+    REQUIRE(woke);
+    CHECK(changes == 0);
+    CHECK(world.IsTouching(bottom, floor));
+}
+
+TEST_CASE("An Enter says where the bodies touch and which pieces did")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity box = BuildDrop(scene, 3.f);
+    REQUIRE(StepUntilEnter(world, box) >= 0);
+
+    bool found = false;
+    for (const Physics::ContactEvent &event : world.ContactEvents())
+    {
+        if (event.entity != box || event.phase != Physics::ContactPhase::Enter)
+        {
+            continue;
+        }
+        found = true;
+
+        // The floor's top face, under the box.
+        CHECK(event.point.y == doctest::Approx(0.f).epsilon(0.05));
+        CHECK(std::abs(event.point.x) <= 0.5f);
+        CHECK(std::abs(event.point.z) <= 0.5f);
+        CHECK(event.piece == box);
+        CHECK(event.otherPiece == event.other);
+    }
+    CHECK(found);
+}
+
+TEST_CASE("Touching lists everything resting on a body")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene};
+    const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
+    const ECS::Entity left = Spawn(scene, {-3.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    const ECS::Entity right = Spawn(scene, {3.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
+    for (int32_t i = 0; i < 10; ++i)
+    {
+        world.Update(kStep);
+    }
+
+    std::vector<ECS::Entity> touching;
+    world.Touching(floor, touching);
+    CHECK(touching.size() == 2u);
+    CHECK(std::find(touching.begin(), touching.end(), left) != touching.end());
+    CHECK(std::find(touching.begin(), touching.end(), right) != touching.end());
+    CHECK_FALSE(world.IsTouching(left, right));
 }

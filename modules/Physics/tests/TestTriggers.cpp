@@ -128,6 +128,7 @@ TEST_CASE("A trigger only reports the channels its mask admits")
 {
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene};
+    world.SetStayEventsReported(true);
 
     const Core::Bitmask<Physics::CollisionChannel> charactersOnly =
         Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Character);
@@ -197,6 +198,7 @@ TEST_CASE("Two overlapping triggers report nothing about each other")
     // kinematic body with a sensor.
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene};
+    world.SetStayEventsReported(true);
 
     const ECS::Entity first = Spawn(scene, {0.f, 0.f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false,
                                     On(Physics::CollisionChannel::Trigger));

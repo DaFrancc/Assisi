@@ -199,9 +199,9 @@
 
 /// ASYSTEM(phase, ...) — marks a declaration as a system a file may name.
 ///
-///   ASYSTEM(FixedUpdate, name = "Bounce")                void BounceSystem(SystemContext &ctx);
+///   ASYSTEM(FixedUpdate, name = "Oscillate")             void OscillateSystem(SystemContext &ctx);
 ///   ASYSTEM(Update, name = "InputDemo", activeWorldOnly) void InputDemoSystem(SystemContext &ctx);
-///   ASYSTEM(Update, name = "Spin", after = "Bounce")     void SpinDemoSystem(SystemContext &ctx);
+///   ASYSTEM(Update, name = "Spin", after = "Oscillate")  void SpinDemoSystem(SystemContext &ctx);
 ///
 /// A system is `(phase, name, function, ordering, scope)`, and data can supply
 /// only the name — so the rest lives on the function, three lines above the code

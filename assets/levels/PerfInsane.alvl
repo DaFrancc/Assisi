@@ -101268,15 +101268,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101314,11 +101312,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -101357,15 +101353,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101403,11 +101397,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -101446,15 +101438,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101492,15 +101482,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101538,11 +101526,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -101581,15 +101567,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101627,11 +101611,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -101670,15 +101652,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101716,15 +101696,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101762,11 +101740,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -101805,15 +101781,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101851,11 +101825,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -101894,15 +101866,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101940,15 +101910,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -101986,11 +101954,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102029,15 +101995,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102075,11 +102039,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102118,15 +102080,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102164,15 +102124,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102210,11 +102168,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102253,15 +102209,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102299,11 +102253,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102342,15 +102294,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102388,15 +102338,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102434,11 +102382,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102477,15 +102423,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102523,11 +102467,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102566,15 +102508,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102612,15 +102552,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102658,11 +102596,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102701,15 +102637,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102747,11 +102681,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102790,15 +102722,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102836,15 +102766,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102882,11 +102810,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -102925,15 +102851,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -102971,11 +102895,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103014,15 +102936,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103060,15 +102980,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103106,11 +103024,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103149,15 +103065,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103195,11 +103109,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103238,15 +103150,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103284,15 +103194,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103330,11 +103238,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103373,15 +103279,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103419,11 +103323,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103462,15 +103364,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103508,15 +103408,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103554,11 +103452,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103597,15 +103493,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103643,11 +103537,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103686,15 +103578,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103732,15 +103622,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103778,11 +103666,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103821,15 +103707,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -103867,11 +103751,9 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "radius": 0.5,
+          "restitution": 1.0,
           "shape": 1
         },
         "MeshRenderer": {
@@ -103910,15 +103792,13 @@
     },
     {
       "components": {
-        "Bounce": {
-          "rebound": 1.0
-        },
         "Collider": {
           "halfExtents": [
             0.5,
             0.5,
             0.5
-          ]
+          ],
+          "restitution": 1.0
         },
         "MeshRenderer": {
           "materialOverrides": [
@@ -111045,7 +110925,6 @@
     }
   ],
   "systems": [
-    "Bounce",
     "Oscillate"
   ],
   "version": 2

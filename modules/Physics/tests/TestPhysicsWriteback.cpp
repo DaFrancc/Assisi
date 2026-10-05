@@ -178,7 +178,7 @@ TEST_CASE("Writeback: the writeback's own writes are never pushed back to the bo
     }
 
     CHECK(touched.world.GetBodyPose(b).position.y == plain.world.GetBodyPose(a).position.y);
-    CHECK(touched.world.GetBodyVelocity(b).first == plain.world.GetBodyVelocity(a).first);
+    CHECK(touched.world.GetBodyState(b).linearVelocity == plain.world.GetBodyState(a).linearVelocity);
 }
 
 TEST_CASE("Writeback: a body that falls asleep is written once at rest, then left alone")
