@@ -57,10 +57,13 @@ Render::LocalShadowLightPose ShadowPoseOf(const ECS::Scene &scene, const Lightin
 
 void SceneRenderer::ForgetKeptShadows()
 {
-    // A kept cascade or atlas tile holds its casters at the levels chosen when
-    // it was drawn, and nothing about a still scene would ever redraw it.
+    // A kept cascade or atlas tile holds its casters where and at the levels
+    // they were when it was drawn, and nothing about a still scene would ever
+    // redraw it. The selector only remembers the tiles' sizes; the tiles
+    // themselves are the pass's.
     _sunCadence.Forget();
     _localShadowSelector.Forget();
+    _localShadowPass.ForgetKeptTiles();
 }
 
 void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
