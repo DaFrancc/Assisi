@@ -13,6 +13,7 @@ add_executable(Assisi-Physics-Tests
   TestContactEvents.cpp
   TestFollowers.cpp
   TestGameplayRequests.cpp
+  TestJoints.cpp
   TestNonFinite.cpp
   TestParentedBodies.cpp
   TestPhysicsWriteback.cpp

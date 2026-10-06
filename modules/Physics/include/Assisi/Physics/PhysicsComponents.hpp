@@ -291,6 +291,190 @@ struct BodyState
     AFIELD() bool asleep = false;
 };
 
+// ---------------------------------------------------------------------------
+// Joints
+// ---------------------------------------------------------------------------
+//
+// A joint attaches the body of the entity carrying it to another body, or to
+// the world, and comes in one component per kind. Whichever of the two bodies
+// carries it, it holds both ways. The two need not touch: each is held where
+// it was relative to the other when the joint was built, and bodies joined
+// directly do not collide with each other unless `collideConnected` says so.
+//
+// The entity must have a body of its own: a Collider and a Transform, with or
+// without a RigidBody, and no Parent. Anchors and axes are in its own axes,
+// scaled with it as a Collider's offset is. A joint is built once both bodies
+// exist, and is gone when either body or the component goes.
+//
+// `breakForce` and `breakTorque` break the joint when one step pulls or twists
+// it harder; 0 never breaks. A broken joint is reported by
+// PhysicsWorld::BrokenJoints and its component removed.
+
+/// @brief Holds two bodies in the pose they were built in, as if welded.
+ACOMP(replicable, requires = {Transform}, excludes = {Character})
+struct FixedJoint
+{
+    AFIELD() glm::vec3 anchor{0.f}; ///< Where the weld is drawn. It holds the two as they stand wherever it is.
+    AFIELD() ECS::Entity other{ECS::NullEntity}; ///< The other body, or nothing for the world.
+    AFIELD(min = 0.0) float breakForce = 0.f; ///< N.
+    AFIELD(min = 0.0) float breakTorque = 0.f; ///< N·m.
+    AFIELD() bool collideConnected = false;
+};
+
+/// @brief Lets two bodies turn freely about a shared point: a ball and socket,
+/// or a link of a chain.
+ACOMP(replicable, requires = {Transform}, excludes = {Character})
+struct PointJoint
+{
+    AFIELD() glm::vec3 anchor{0.f}; ///< The pivot.
+    AFIELD() ECS::Entity other{ECS::NullEntity}; ///< The other body, or nothing for the world.
+    AFIELD(min = 0.0) float breakForce = 0.f; ///< N.
+    AFIELD() bool collideConnected = false;
+};
+
+/// @brief Lets two bodies turn about one axis through a shared point: a door,
+/// a wheel, a lever.
+ACOMP(replicable, requires = {Transform}, excludes = {Character})
+struct HingeJoint
+{
+    AFIELD() glm::vec3 anchor{0.f}; ///< A point on the axle.
+    AFIELD() glm::vec3 axis{0.f, 1.f, 0.f}; ///< The axle's direction.
+    AFIELD() ECS::Entity other{ECS::NullEntity}; ///< The other body, or nothing for the world.
+
+    /// Degrees either way from the angle it was built at. -180 to 180 is free.
+    AFIELD(min = -180.0, max = 0.0) float minAngle = -180.f;
+    AFIELD(min = 0.0, max = 180.0) float maxAngle = 180.f;
+
+    /// Hz. 0 stops dead at a limit; above 0 a limit gives like a spring of
+    /// this frequency and pulls back. Higher is stiffer.
+    AFIELD(min = 0.0) float limitSpringFrequency = 0.f;
+
+    /// How quickly a soft limit stops bouncing: 0 never, 1 without overshooting.
+    AFIELD(min = 0.0) float limitSpringDamping = 1.f;
+
+    /// N·m resisting the turn while no HingeMotor drives it. A door with
+    /// friction stays where it is pushed.
+    AFIELD(min = 0.0) float friction = 0.f;
+
+    AFIELD(min = 0.0) float breakForce = 0.f; ///< N.
+    AFIELD(min = 0.0) float breakTorque = 0.f; ///< N·m.
+    AFIELD() bool collideConnected = false;
+};
+
+/// @brief Lets two bodies slide along one axis without turning: a drawer, a
+/// piston, a lift on a rail.
+ACOMP(replicable, requires = {Transform}, excludes = {Character})
+struct SliderJoint
+{
+    AFIELD() glm::vec3 anchor{0.f};
+    AFIELD() glm::vec3 axis{0.f, 1.f, 0.f}; ///< The rail's direction.
+    AFIELD() ECS::Entity other{ECS::NullEntity}; ///< The other body, or nothing for the world.
+
+    /// Metres along the axis from where it was built.
+    AFIELD() float minDistance = -1.f;
+    AFIELD() float maxDistance = 1.f;
+
+    /// Hz. 0 stops dead at a limit; above 0 a limit gives like a spring.
+    AFIELD(min = 0.0) float limitSpringFrequency = 0.f;
+
+    /// How quickly a soft limit stops bouncing: 0 never, 1 without overshooting.
+    AFIELD(min = 0.0) float limitSpringDamping = 1.f;
+
+    /// N resisting the slide while no SliderMotor drives it.
+    AFIELD(min = 0.0) float friction = 0.f;
+
+    AFIELD(min = 0.0) float breakForce = 0.f; ///< N.
+    AFIELD(min = 0.0) float breakTorque = 0.f; ///< N·m.
+    AFIELD() bool collideConnected = false;
+};
+
+/// @brief Keeps a point on each body within a range of each other: a rope
+/// when the range is wide, a rod when its ends are equal.
+ACOMP(replicable, requires = {Transform}, excludes = {Character})
+struct DistanceJoint
+{
+    AFIELD() glm::vec3 anchor{0.f}; ///< This body's end.
+
+    /// The other end, in this entity's space when the joint is built: a point
+    /// on the other body, or in the world when there is none.
+    AFIELD() glm::vec3 otherAnchor{0.f};
+
+    AFIELD() ECS::Entity other{ECS::NullEntity}; ///< The other body, or nothing for the world.
+
+    /// Metres between the two ends.
+    AFIELD(min = 0.0) float minDistance = 0.f;
+    AFIELD(min = 0.0) float maxDistance = 1.f;
+
+    /// Hz. 0 stops dead at a limit; above 0 a limit stretches like a spring.
+    AFIELD(min = 0.0) float limitSpringFrequency = 0.f;
+
+    /// How quickly a soft limit stops bouncing: 0 never, 1 without overshooting.
+    AFIELD(min = 0.0) float limitSpringDamping = 1.f;
+
+    AFIELD(min = 0.0) float breakForce = 0.f; ///< N.
+    AFIELD() bool collideConnected = false;
+};
+
+/// @brief Lets two bodies tilt their axis within a cone and twist about it: a
+/// shoulder, a hip, a neck.
+ACOMP(replicable, requires = {Transform}, excludes = {Character})
+struct SwingTwistJoint
+{
+    AFIELD() glm::vec3 anchor{0.f}; ///< The pivot.
+    AFIELD() glm::vec3 axis{0.f, 1.f, 0.f}; ///< The axis that tilts and twists, like an upper arm.
+    AFIELD() ECS::Entity other{ECS::NullEntity}; ///< The other body, or nothing for the world.
+
+    /// Degrees the axis may tilt from where it was built, any way.
+    AFIELD(min = 0.0, max = 180.0) float swingAngle = 45.f;
+
+    /// Degrees of twist about the axis either way from where it was built.
+    AFIELD(min = -180.0, max = 0.0) float minTwist = -45.f;
+    AFIELD(min = 0.0, max = 180.0) float maxTwist = 45.f;
+
+    /// N·m resisting any turn. What makes a ragdoll's limbs stiff rather
+    /// than floppy.
+    AFIELD(min = 0.0) float friction = 0.f;
+
+    AFIELD(min = 0.0) float breakForce = 0.f; ///< N.
+    AFIELD(min = 0.0) float breakTorque = 0.f; ///< N·m.
+    AFIELD() bool collideConnected = false;
+};
+
+/// @brief How a motor drives its joint.
+AENUM()
+enum class MotorMode : std::uint8_t
+{
+    Velocity, ///< At `target` per second, for as long as it has the strength.
+    Position, ///< To `target`, springing there and holding.
+    Count,
+};
+
+/// @brief Turns a HingeJoint by itself: a powered door, a drawbridge, a fan.
+ACOMP(replicable, requires = {HingeJoint})
+struct HingeMotor
+{
+    /// Degrees per second, or degrees from the angle the hinge was built at.
+    AFIELD() float target = 0.f;
+
+    /// The most torque it turns with (N·m). 0 is no limit.
+    AFIELD(min = 0.0) float maxTorque = 0.f;
+
+    AFIELD() MotorMode mode = MotorMode::Velocity;
+};
+
+/// @brief Slides a SliderJoint by itself: a lift, a piston, a sliding door.
+ACOMP(replicable, requires = {SliderJoint})
+struct SliderMotor
+{
+    /// Metres per second, or metres from where the slider was built.
+    AFIELD() float target = 0.f;
+
+    /// The most force it pushes with (N). 0 is no limit.
+    AFIELD(min = 0.0) float maxForce = 0.f;
+
+    AFIELD() MotorMode mode = MotorMode::Velocity;
+};
+
 /// @brief What is under a character, and therefore what it may do next.
 ///
 /// Mirrors the four cases the character solver distinguishes rather than

@@ -17,6 +17,7 @@ add_executable(Assisi-App-Tests
   main.cpp
   TestBlueprintLevel.cpp
   TestBlueprintVerbs.cpp
+  TestJointBlueprint.cpp
   TestCameraBenchmark.cpp
   TestCharacterMove.cpp
   TestOscillate.cpp

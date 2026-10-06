@@ -160,6 +160,31 @@ struct ContactEvent
     bool sensor = false;
 };
 
+/// @brief Which joint component a joint is.
+enum class JointKind : std::uint8_t
+{
+    Fixed,      ///< FixedJoint
+    Point,      ///< PointJoint
+    Hinge,      ///< HingeJoint
+    Slider,     ///< SliderJoint
+    Distance,   ///< DistanceJoint
+    SwingTwist, ///< SwingTwistJoint
+    Count,
+};
+
+/// @brief A joint that broke during the most recent Update().
+///
+/// By the time a system reads this the joint's component, and its motor's, are
+/// already gone from @ref owner, and the two bodies are free of each other.
+struct JointBroke
+{
+    ECS::Entity owner{ECS::NullEntity}; ///< The entity that carried the joint.
+    ECS::Entity other{ECS::NullEntity}; ///< The body it was attached to; NullEntity for the world.
+    float force = 0.f;                  ///< The pull it bore in the step it broke (N).
+    float torque = 0.f;                 ///< The twist it bore in the step it broke (N·m).
+    JointKind kind = JointKind::Fixed;
+};
+
 /// @brief The most bodies a PhysicsWorld holds unless told otherwise. Jolt
 /// reserves room for all of them up front, a pointer apiece.
 inline constexpr uint32_t kDefaultMaxBodies = 65536;
@@ -353,6 +378,24 @@ public:
     /// the exception covers every part of both. Kept until it is undone or
     /// either entity is destroyed, through any rebuild of their bodies.
     void IgnoreCollision(ECS::Entity a, ECS::Entity b, bool ignore = true);
+
+    // --- Joints ----------------------------------------------------------------
+
+    /// @brief Every joint the most recent Update() broke, in owner order.
+    ///
+    /// A joint breaks when the force or the torque holding it together in a
+    /// step exceeds its breakForce or breakTorque; its component is removed
+    /// from the owner in the same step. Cleared at the top of every Update(),
+    /// like ContactEvents(). With several collision steps a joint is measured
+    /// by the last of them.
+    [[nodiscard]] std::span<const JointBroke> BrokenJoints() const;
+
+    /// @brief Whether this world breaks joints itself. On by default.
+    ///
+    /// Off for a world that mirrors another's simulation, which loses a Joint
+    /// when the authority removes it rather than deciding for itself.
+    void SetBreaksJoints(bool breaks);
+    [[nodiscard]] bool BreaksJoints() const;
 
     // --- World queries -------------------------------------------------------
     //

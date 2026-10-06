@@ -152,7 +152,12 @@ bool PhysicsWorld::Impl::IgnoresPair(ECS::Entity a, ECS::Entity b) const
     {
         return true;
     }
-    return !ignoredPairs.empty() && ignoredPairs.contains(PairOf(ownerA, ownerB));
+    if (ignoredPairs.empty() && jointedPairs.empty())
+    {
+        return false;
+    }
+    const EntityPair pair = PairOf(ownerA, ownerB);
+    return ignoredPairs.contains(pair) || jointedPairs.contains(pair);
 }
 
 void PhysicsWorld::Impl::BodiesOf(ECS::Entity owner, std::vector<JPH::BodyID> &out) const
@@ -537,6 +542,7 @@ void PhysicsWorld::Impl::RePlacePiece(ECS::Entity piece)
     }
     physicsSystem.GetBodyInterface().NotifyShapeChanged(owner->body, previousCentre, /*inUpdateMassProperties=*/ false,
                                                         JPH::EActivation::Activate);
+    MarkJointsDirty();
     ApplyMass(owner->body, owner->rigidBody);
 }
 
@@ -688,13 +694,18 @@ void PhysicsWorld::IgnoreCollision(ECS::Entity a, ECS::Entity b, bool ignore)
         _impl->ignoredPairs.erase(pair);
     }
 
+    _impl->RefreshPair(ownerA, ownerB);
+}
+
+void PhysicsWorld::Impl::RefreshPair(ECS::Entity a, ECS::Entity b)
+{
     // A pair Jolt already knows keeps its cached contacts without asking again,
     // and a pair at rest is not tested at all; both are told to look afresh.
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
     std::vector<JPH::BodyID> answering;
-    for (const ECS::Entity owner : {ownerA, ownerB})
+    for (const ECS::Entity owner : {a, b})
     {
-        _impl->BodiesOf(owner, answering);
+        BodiesOf(owner, answering);
         for (const JPH::BodyID &id : answering)
         {
             bodies.InvalidateContactCache(id);

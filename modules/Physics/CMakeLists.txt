@@ -16,6 +16,7 @@ target_sources(Assisi-Physics
     "src/PhysicsWorld.cpp"
     "src/PhysicsCook.cpp"
     "src/PhysicsContacts.cpp"
+    "src/PhysicsJoints.cpp"
     "src/PhysicsParts.cpp"
     "src/PhysicsQueries.cpp"
     "src/PhysicsReconcile.cpp"

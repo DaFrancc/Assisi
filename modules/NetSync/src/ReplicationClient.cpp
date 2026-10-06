@@ -45,6 +45,13 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
     _colliderComponentId                           = registry.IdOf(typeid(Physics::Collider));
     _characterComponentId                           = registry.IdOf(typeid(Physics::Character));
+
+    // A mirror's joints break when the server says so, by removing them. One
+    // broken here as well would leave the two simulations disagreeing.
+    if (_physics != nullptr)
+    {
+        _physics->SetBreaksJoints(false);
+    }
 }
 
 void ReplicationClient::SendHello()

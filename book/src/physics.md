@@ -16,6 +16,7 @@ the rest:
 | [Collision channels](physics-channels.md) | Choosing which objects collide with which. |
 | [How the scene and physics stay in step](physics-scene-sync.md) | When the engine updates physics from your entities, and what moving an entity's `Transform` does. |
 | [Moving bodies from code](physics-moving-bodies.md) | Pushing, launching and placing objects from a system. |
+| [Joints](physics-joints.md) | Attaching objects to each other: doors, chains, ragdolls. |
 | [Contacts and queries](physics-contacts.md) | Finding out what hit what, and casting rays to find objects. |
 | [The character controller](physics-character.md) | Players and NPCs that walk, jump and crouch. |
 

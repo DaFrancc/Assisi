@@ -100,6 +100,85 @@ glm::vec3 WorldScaleOf(const glm::mat4 &world)
     return glm::vec3(glm::length(ColumnOf(world, MatrixColumn::Right)), glm::length(ColumnOf(world, MatrixColumn::Up)),
                      glm::length(ColumnOf(world, MatrixColumn::Back)));
 }
+
+/// Half the width of the cross drawn at a joint's anchor (m).
+constexpr float kJointMarkerHalf = 0.08f;
+
+/// How long a joint's axis is drawn (m).
+constexpr float kJointAxisLength = 0.4f;
+
+/// One joint as the overlay draws it, whichever kind it is.
+struct JointView
+{
+    glm::vec3 anchor{0.f};
+    glm::vec3 axis{0.f};        ///< Zero for a kind with no axis.
+    glm::vec3 otherAnchor{0.f}; ///< A DistanceJoint's far end.
+    Assisi::ECS::Entity owner{Assisi::ECS::NullEntity};
+    Assisi::ECS::Entity other{Assisi::ECS::NullEntity};
+    bool hasOtherAnchor = false;
+};
+
+/// Every @p T joint in @p scene, into @p out.
+template <typename T> void CollectJoints(const Assisi::ECS::Scene &scene, std::vector<JointView> &out)
+{
+    for (auto [entity, joint] : scene.Query<T>())
+    {
+        JointView view;
+        view.anchor = joint.anchor;
+        view.owner = entity;
+        view.other = joint.other;
+        if constexpr (requires { joint.axis; })
+        {
+            view.axis = joint.axis;
+        }
+        if constexpr (requires { joint.otherAnchor; })
+        {
+            view.otherAnchor = joint.otherAnchor;
+            view.hasOtherAnchor = true;
+        }
+        out.push_back(view);
+    }
+}
+
+/// A joint's lines: a cross at its anchor, its axis, and a line to where it
+/// holds the other body.
+void AppendJointLines(std::vector<LineVertex> &out, const Assisi::ECS::Scene &scene, const JointView &joint,
+                      const glm::vec4 &color)
+{
+    const Assisi::ECS::Transform *transform = scene.Get<Assisi::ECS::Transform>(joint.owner);
+    const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(joint.owner);
+    if (transform == nullptr || world == nullptr)
+    {
+        return;
+    }
+    // Anchors are scaled with the entity, as the physics world builds them.
+    const glm::mat4 body = glm::scale(ColliderBodyModel(scene, joint.owner, *transform), WorldScaleOf(world->matrix));
+    const glm::vec3 anchor = glm::vec3(body * glm::vec4(joint.anchor, 1.f));
+    const glm::mat4 identity{1.f};
+    for (const glm::vec3 &direction : {kAxisX, kAxisY, kAxisZ})
+    {
+        AddSegment(out, identity, color, anchor - direction * kJointMarkerHalf, anchor + direction * kJointMarkerHalf);
+    }
+    if (joint.axis != glm::vec3(0.f))
+    {
+        const glm::vec3 axis = glm::normalize(glm::vec3(body * glm::vec4(joint.axis, 0.f)));
+        AddSegment(out, identity, color, anchor, anchor + axis * kJointAxisLength);
+    }
+
+    if (joint.hasOtherAnchor)
+    {
+        AddSegment(out, identity, color, anchor, glm::vec3(body * glm::vec4(joint.otherAnchor, 1.f)));
+        return;
+    }
+    if (joint.other == Assisi::ECS::NullEntity || !scene.IsAlive(joint.other))
+    {
+        return;
+    }
+    if (const Assisi::ECS::WorldMatrix *other = scene.Get<Assisi::ECS::WorldMatrix>(joint.other); other != nullptr)
+    {
+        AddSegment(out, identity, color, anchor, glm::vec3(other->matrix[3]));
+    }
+}
 } // namespace
 
 void EditorApp::SubmitColliderWireframes()
@@ -201,6 +280,25 @@ void EditorApp::SubmitColliderWireframes()
         // pose to draw it at, and two capsules at once would read as two
         // characters.
         AddCapsuleWireframe(lineOut, bodyModel, lineColor, desc.radius, desc.halfHeight);
+    }
+
+    // Joints, in the same colours as the body that carries them. A scene with
+    // none allocates nothing here.
+    std::vector<JointView> joints;
+    CollectJoints<Assisi::Physics::FixedJoint>(*_scene, joints);
+    CollectJoints<Assisi::Physics::PointJoint>(*_scene, joints);
+    CollectJoints<Assisi::Physics::HingeJoint>(*_scene, joints);
+    CollectJoints<Assisi::Physics::SliderJoint>(*_scene, joints);
+    CollectJoints<Assisi::Physics::DistanceJoint>(*_scene, joints);
+    CollectJoints<Assisi::Physics::SwingTwistJoint>(*_scene, joints);
+    for (const JointView &joint : joints)
+    {
+        const bool selected = IsSelected(joint.owner);
+        const bool active = selected && joint.owner == _selectedEntity;
+        const glm::vec4 lineColor = active     ? kActiveSelectedColor
+                                    : selected ? kSelectedColor
+                                               : kUnselectedColor;
+        AppendJointLines(selected ? _colliderLinesOnTop : _colliderLinesDepthTested, *_scene, joint, lineColor);
     }
 
     _overlays.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);
