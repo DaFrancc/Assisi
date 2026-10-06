@@ -33,6 +33,7 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #endif
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Physics/ColliderRole.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
@@ -1705,6 +1706,48 @@ void EditorApp::DrawLightShadowVerdict()
     ImGui::SetItemTooltip("%s", Assisi::Render::DescribeLocalShadowState(report->state));
 }
 
+void EditorApp::DrawColliderRole()
+{
+    using Assisi::Physics::ColliderRole;
+    const Assisi::Physics::ColliderPlacement placement =
+        Assisi::Physics::ResolveColliderPlacement(*_scene, _selectedEntity);
+
+    // The owner by name where it has one, as the hierarchy panel shows it.
+    constexpr std::size_t kOwnerLabelSize = 64;
+    char owner[kOwnerLabelSize];
+    const Assisi::Runtime::Name *name = _scene->Get<Assisi::Runtime::Name>(placement.owner);
+    if (name != nullptr && !name->value.Empty())
+    {
+        name->value.ToCStr(owner, sizeof(owner));
+    }
+    else
+    {
+        std::snprintf(owner, sizeof(owner), "Entity [%u:%u]", placement.owner.index, placement.owner.generation);
+    }
+
+    switch (placement.role)
+    {
+    case ColliderRole::Piece:
+        ImGui::TextDisabled("Piece of %s", owner);
+        ImGui::SetItemTooltip("Part of that RigidBody's shape: it turns with the body and adds to its mass.");
+        break;
+    case ColliderRole::Follower:
+        ImGui::TextDisabled("Follows %s", owner);
+        ImGui::SetItemTooltip("A body of its own that rides along with that entity and adds no mass. It never "
+                              "touches its owner.");
+        break;
+    case ColliderRole::Static:
+        ImGui::TextDisabled("Static (no RigidBody)");
+        ImGui::SetItemTooltip("Nothing above it moves, so it is fixed geometry. Add a RigidBody here or above it to "
+                              "make it move.");
+        break;
+    case ColliderRole::Own:
+    case ColliderRole::Count:
+        // The body's own shape: the RigidBody beside it already says so.
+        break;
+    }
+}
+
 void EditorApp::DrawLodVerdict()
 {
     const auto *renderer = _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity);
@@ -2396,6 +2439,13 @@ void EditorApp::DrawInspector()
             if (meta->id == ComponentIdOf<Assisi::Runtime::MeshRenderer>())
             {
                 DrawLodVerdict();
+            }
+
+            // A Collider means something different by where it sits, and
+            // nothing in its own fields says which.
+            if (meta->id == ComponentIdOf<Assisi::Physics::Collider>())
+            {
+                DrawColliderRole();
             }
 
             // The clock's own controls, above the generic fields rather than

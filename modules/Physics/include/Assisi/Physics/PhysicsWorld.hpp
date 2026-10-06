@@ -90,12 +90,13 @@ struct QueryHit
     /// caller knowing which query produced the hit.
     glm::vec3 normal{0.f};
 
-    /// The entity whose body was struck. The handle is the one the body was
-    /// built for, so check it is still alive before acting on it.
+    /// The entity whose body was struck: the owner, for a piece or a follower.
+    /// The handle is the one the body was built for, so check it is still alive
+    /// before acting on it.
     ECS::Entity entity{ECS::NullEntity};
 
-    /// The entity whose collider was struck. The same as @ref entity, since
-    /// every body is built from one entity's Collider.
+    /// The entity whose Collider was struck: a piece or a follower of
+    /// @ref entity, or @ref entity itself.
     ECS::Entity piece{ECS::NullEntity};
 
     /// For a cast, the distance from its origin to @ref position along it: zero
@@ -144,9 +145,9 @@ struct ContactEvent
     ECS::Entity entity{ECS::NullEntity}; ///< The entity this record speaks for.
     ECS::Entity other{ECS::NullEntity};  ///< What it touched; NullEntity if that body has no entity.
 
-    /// The entities whose colliders touched, on @ref entity's side and on
-    /// @ref other's. The same as the bodies' own entities, since every body is
-    /// built from one entity's Collider.
+    /// The entities whose Colliders touched, on @ref entity's side and on
+    /// @ref other's: a piece or a follower of each, or the entity itself. Of
+    /// several touching parts, the most deeply overlapping.
     ECS::Entity piece{ECS::NullEntity};
     ECS::Entity otherPiece{ECS::NullEntity};
 
@@ -211,7 +212,12 @@ public:
     /// character with no momentum and its default stance.
     void Rebuild();
 
-    /// @brief Whether @p entity has a body or a character in this world.
+    /// @brief Whether @p entity has a body or a character of its own in this
+    /// world. False for a piece or a follower, whose body is its owner's.
+    ///
+    /// Every other call that takes an entity — the requests, the reads, the
+    /// contact queries, a query's `ignore` — answers for or acts on the owner
+    /// when given a piece or a follower.
     [[nodiscard]] bool HasBody(ECS::Entity entity) const;
 
     /// @brief Moves @p entity's body or character to a world-space @p pose and
@@ -336,6 +342,15 @@ public:
     /// Update(), into @p out, which is cleared first. In no particular order.
     void Touching(ECS::Entity entity, std::vector<ECS::Entity> &out) const;
 
+    /// @brief Stops the bodies of @p a and @p b colliding with or reporting
+    /// each other, or with @p ignore false, lets them again.
+    ///
+    /// The exception channels and masks cannot express: one projectile and the
+    /// one character that fired it. A piece or a follower names its owner, so
+    /// the exception covers every part of both. Kept until it is undone or
+    /// either entity is destroyed, through any rebuild of their bodies.
+    void IgnoreCollision(ECS::Entity a, ECS::Entity b, bool ignore = true);
+
     // --- World queries -------------------------------------------------------
     //
     // Each is filtered by the same two-way rule as a collision: it finds a body
@@ -423,7 +438,8 @@ public:
 
     // --- Facts ------------------------------------------------------------------
 
-    /// @brief Every entity whose body or character the simulation has awake.
+    /// @brief Every entity whose own body or character the simulation has
+    /// awake. A follower's body is not listed; its owner is.
     ///
     /// The order Jolt returns active bodies in is unspecified, which is fine:
     /// every consumer of this re-sorts by its own identity.
@@ -432,14 +448,15 @@ public:
     /// @brief Whether the simulation currently considers @p entity's body awake.
     [[nodiscard]] bool IsBodyActive(ECS::Entity entity) const;
 
-    /// @brief The entity whose body @p piece's collider is part of: @p piece
-    /// itself when it has a body, NullEntity when it has none.
+    /// @brief The entity whose body @p piece's collider answers for: @p piece
+    /// itself when it has a body, its owner when it is a piece or a follower,
+    /// NullEntity when there is none.
     [[nodiscard]] ECS::Entity BodyOf(ECS::Entity piece) const;
 
-    /// @brief The mass the simulation gives @p entity (kg): RigidBody::mass when
-    /// set, from the shape's volume otherwise, Character::mass for a character.
-    /// Zero for a static or kinematic body, which nothing can push, and for an
-    /// entity with no body.
+    /// @brief The mass the simulation gives @p entity's body (kg):
+    /// RigidBody::mass when set, every piece's volume at its density otherwise,
+    /// Character::mass for a character. Zero for a static or kinematic body,
+    /// which nothing can push, and for an entity with no body.
     [[nodiscard]] float Mass(ECS::Entity entity) const;
 
     /// @brief Sets pose, velocities and sleep in one call — what a replication

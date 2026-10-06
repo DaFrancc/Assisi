@@ -42,6 +42,9 @@
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
@@ -52,7 +55,9 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -79,6 +84,43 @@ inline ECS::Entity EntityOfUserData(JPH::uint64 userData)
     const JPH::uint64 packed = ~userData;
     return ECS::Entity{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull), static_cast<std::uint32_t>(packed >> 32)};
 }
+
+/// The entity whose Collider made the leaf shape @p subShape names on @p body,
+/// or the body's own entity when the leaf names none: a character's capsule,
+/// or a shape built for a query.
+///
+/// Every collider shape carries its entity in the leaf's user data, which Jolt
+/// reads through compounds, scales and offsets alike, so a part of a compound
+/// body answers for itself.
+inline ECS::Entity PieceOf(const JPH::Body &body, const JPH::SubShapeID &subShape)
+{
+    const ECS::Entity piece = EntityOfUserData(body.GetShape()->GetSubShapeUserData(subShape));
+    return piece != ECS::NullEntity ? piece : EntityOfUserData(body.GetUserData());
+}
+
+/// Two entities, in either order: one IgnoreCollision exception.
+struct EntityPair
+{
+    JPH::uint64 low = 0;
+    JPH::uint64 high = 0;
+
+    friend constexpr bool operator==(EntityPair, EntityPair) = default;
+};
+
+inline EntityPair PairOf(ECS::Entity a, ECS::Entity b)
+{
+    const JPH::uint64 first = UserDataOf(a);
+    const JPH::uint64 second = UserDataOf(b);
+    return first < second ? EntityPair{first, second} : EntityPair{second, first};
+}
+
+struct EntityPairHash
+{
+    std::size_t operator()(EntityPair pair) const noexcept
+    {
+        return std::hash<JPH::uint64>{}(pair.low) ^ (std::hash<JPH::uint64>{}(pair.high) << 1u);
+    }
+};
 
 // ---------------------------------------------------------------------------
 // Object / broad-phase layers
@@ -414,16 +456,39 @@ inline bool IsFinite(const Pose &pose)
     return IsFinite(pose.position) && IsFinite(pose.rotation);
 }
 
+inline JPH::RVec3 ToJolt(glm::vec3 position)
+{
+    return JPH::RVec3(position.x, position.y, position.z);
+}
+
+inline JPH::Vec3 ToJoltVector(glm::vec3 vector)
+{
+    return JPH::Vec3(vector.x, vector.y, vector.z);
+}
+
+/// Normalized: a hand-authored or imported rotation is often a hair off unit
+/// length, and Jolt asserts IsNormalized() when it rotates with one.
+inline JPH::Quat ToJolt(glm::quat rotation)
+{
+    return JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
+}
+
+/// Whether two colliders build the same shape, mass included.
+bool SameShape(const Collider &a, const Collider &b);
+
 /// The world matrix @p entity's Transform is relative to, composed from the
 /// local poses up its Parent chain: the simulation pose, not the drawn one the
 /// propagated world matrices hold. Null for a root.
 std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity);
 
 /// Builds the Jolt collision shape for a Collider's primitive, unscaled and
-/// without its offset. Radii and half-heights are clamped to the convex radius,
-/// so a zeroed dimension field — reachable from an inspector drag — cannot
-/// create a degenerate, asserting shape.
-JPH::ShapeRefC MakeShape(const Collider &collider);
+/// without its offset, at the collider's density and carrying @p entity in its
+/// user data — NullEntity for a shape built for a query. Radii and half-heights
+/// are clamped to the convex radius, so a zeroed dimension field — reachable
+/// from an inspector drag — cannot create a degenerate, asserting shape.
+///
+/// Never shared between colliders: the leaf names its own.
+JPH::ShapeRefC MakeShape(const Collider &collider, ECS::Entity entity);
 
 /// The scale a primitive is built at for a requested @p scale: as given for a
 /// box, one scale on every axis for a sphere or a capsule, and one across the
@@ -435,11 +500,15 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale);
 constexpr float kScaleClampTolerance = 1e-4f;
 
 /// The same primitive, at ClampedShapeScale(@p scale).
-JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale);
+JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity);
 
 /// The whole shape a Collider builds at @p scale: its primitive at the
 /// clamped scale, moved and turned by its offset, the offset scaled with it.
-JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale);
+JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity);
+
+/// The Collider @p entity carries if it takes part in the simulation: present
+/// and enabled.
+const Collider *EnabledCollider(const ECS::Scene &scene, ECS::Entity entity);
 
 // ---------------------------------------------------------------------------
 // Impl
@@ -500,8 +569,19 @@ struct PhysicsWorld::Impl
     enum class SlotKind : std::uint8_t
     {
         Empty,
+
+        /// A body of the entity's own: a static collider, or a RigidBody built
+        /// from its own Collider and its pieces.
         Body,
         Character,
+
+        /// A Collider that is part of its owner's body. It has no body of its
+        /// own; its shape is a child of the owner's compound.
+        Piece,
+
+        /// A Collider with a kinematic body of its own, put at its entity's
+        /// pose after every step. Answered for by its owner.
+        Follower,
         Count,
     };
 
@@ -516,7 +596,9 @@ struct PhysicsWorld::Impl
 
         /// The Collider and RigidBody values the body was built or last
         /// retuned from, so an edit can be told apart from a write that changed
-        /// nothing physical. The RigidBody is default for a static body.
+        /// nothing physical. The RigidBody is default for a static body. For an
+        /// owner with no Collider of its own, the collider its layer and
+        /// material were taken from: its first piece's.
         Collider collider;
         RigidBody rigidBody;
 
@@ -524,24 +606,48 @@ struct PhysicsWorld::Impl
         /// it by InsertPair and ErasePair alone.
         std::vector<PairKey> pairKeys;
 
+        /// An owner's pieces, in the order they sit in its compound after its
+        /// own collider.
+        std::vector<ECS::Entity> pieces;
+
+        /// The entity indices up the Parent chain of a Collider's entity, under
+        /// which it is listed in `partsBelow`.
+        std::vector<std::uint32_t> ancestors;
+
+        /// An owner's shape when it has pieces, kept to move one in place.
+        JPH::Ref<JPH::MutableCompoundShape> compound;
+
         /// The BodyState change tick this world last wrote or pushed. A
         /// different one was written by something else since.
         uint64_t stateTick = 0;
 
+        /// The RigidBody or Character a Piece or a Follower belongs to.
+        ECS::Entity owner{ECS::NullEntity};
+
+        /// Where a Follower's body was last put, in world space.
+        Pose placed;
+
         /// The world-space scale the shape was built at.
         glm::vec3 worldScale{1.f};
 
-        /// The body, or a character's inner body.
+        /// The body, or a character's inner body. None for a Piece.
         JPH::BodyID body;
 
         CollisionFilter filter;
         uint32_t generation = 0;
+
+        /// A Piece's index among its owner's compound children.
+        uint32_t subShape = 0;
         BodyMotion motion = BodyMotion::Static;
         SlotKind kind = SlotKind::Empty;
 
         /// Followed by the writeback: woken in some step and not yet written at
         /// rest. See `awake`.
         bool followed = false;
+
+        /// Whether a Body's own Collider is part of its shape. False for an
+        /// owner built from its pieces alone.
+        bool ownCollider = false;
     };
 
     std::vector<BodySlot> slots;
@@ -575,6 +681,140 @@ struct PhysicsWorld::Impl
     /// nothing.
     std::vector<ECS::Entity> scratchChanged;
     std::vector<ECS::Entity> scratchRemoved;
+
+    // --- Parts (PhysicsParts.cpp) -----------------------------------------------
+    //
+    // A Collider below a RigidBody or a Character is a part of it: a Piece of
+    // its shape or a Follower riding along. These tables are only changed
+    // between steps; Jolt's jobs read them during one to name the part a
+    // contact touched and to skip the pairs that must not collide.
+
+    /// Every Collider slot below an entity, by that entity's index: what an edit
+    /// to its Parent, its RigidBody, its Character or its Transform reaches.
+    /// No child index exists in the scene, and a walk over it per edit would
+    /// cost a scan of every Parent.
+    std::unordered_map<std::uint32_t, std::vector<ECS::Entity>> partsBelow;
+
+    /// Indices of every Follower slot, which PlaceFollowers visits.
+    std::vector<std::uint32_t> followers;
+
+    /// Owners whose body is built, retuned or destroyed at the end of this
+    /// reconcile, once every part of theirs has been brought in line; and those
+    /// among them whose shape changed and must be built again.
+    std::vector<ECS::Entity> ownersToSync;
+    std::vector<ECS::Entity> ownersToReshape;
+
+    /// The IgnoreCollision exceptions, by owner.
+    std::unordered_set<EntityPair, EntityPairHash> ignoredPairs;
+
+    /// The RigidBody or Character @p entity's slot belongs to, or @p entity
+    /// itself for anything else. Safe from Jolt's jobs.
+    ECS::Entity OwnerOf(ECS::Entity entity) const;
+
+    /// The slot of the body @p entity answers through: its own Body or
+    /// Character, or its owner's for a Piece or a Follower.
+    BodySlot *OwnerSlotFor(ECS::Entity entity);
+    const BodySlot *OwnerSlotFor(ECS::Entity entity) const;
+
+    /// The slot of @p entity's own Body or Character, or null.
+    BodySlot *OwnBodySlot(ECS::Entity entity);
+
+    /// Whether the bodies of @p a and @p b must not touch: the same owner's, or
+    /// an IgnoreCollision exception. Takes the bodies' own entities. Safe from
+    /// Jolt's jobs.
+    bool IgnoresPair(ECS::Entity a, ECS::Entity b) const;
+
+    /// The Collider a contact on @p piece is made of, or null for a character.
+    /// Safe from Jolt's jobs.
+    const Collider *MaterialOf(ECS::Entity piece) const;
+
+    /// Combines the two touching pieces' friction and restitution into
+    /// @p settings: friction by geometric mean, restitution by the larger.
+    void CombineMaterials(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
+                          JPH::ContactSettings &settings) const;
+
+    /// Builds, retunes or destroys @p owner's body from its own Collider and its
+    /// pieces. @p reshape builds its shape again even when its parts did not
+    /// change, for a part whose own shape did.
+    void SyncOwner(ECS::Entity owner, bool reshape);
+
+    /// The shape of @p owner's body at @p scale: its own Collider alone, or a
+    /// compound of it and every piece, which is kept in @p compound.
+    JPH::ShapeRefC MakeOwnerShape(ECS::Entity owner, const Collider *own, std::span<const ECS::Entity> pieces,
+                                  glm::vec3 scale, JPH::Ref<JPH::MutableCompoundShape> &compound);
+
+    /// The Piece slots below @p owner that belong to it, in entity order.
+    void PiecesOf(ECS::Entity owner, std::vector<ECS::Entity> &out) const;
+
+    /// Moves @p piece's child of its owner's compound to where its Transform
+    /// and the ones above it now put it, and recomputes the owner's mass.
+    void RePlacePiece(ECS::Entity piece);
+
+    /// RePlacePiece for every Piece below @p entity, unless @p entity is an
+    /// owner, whose pieces move with it.
+    void RePlacePiecesBelow(ECS::Entity entity);
+
+    void CreatePiece(ECS::Entity entity, const Collider &collider, ECS::Entity owner);
+    void EditPiece(ECS::Entity entity, const Collider &collider);
+
+    void CreateFollower(ECS::Entity entity, const Collider &collider, ECS::Entity owner);
+    void EditFollower(ECS::Entity entity, const Collider &collider);
+
+    /// Puts every Follower whose composed pose or scale changed there.
+    void PlaceFollowers();
+
+    /// Lists @p entity under every entity above it in `partsBelow`, replacing
+    /// what it was listed under before.
+    void RegisterAncestors(ECS::Entity entity);
+    void UnregisterAncestors(ECS::Entity entity, BodySlot &slot);
+
+    /// Adds every Collider slot listed below each of @p entities to the end of
+    /// @p entities.
+    void AppendPartsBelow(std::vector<ECS::Entity> &entities) const;
+
+    /// Drops every IgnoreCollision exception naming @p entity.
+    void ForgetIgnoredPairs(ECS::Entity entity);
+
+    /// Every body that answers for @p owner: its own, and its followers'.
+    void BodiesOf(ECS::Entity owner, std::vector<JPH::BodyID> &out) const;
+
+    /// Hides every body one owner answers through: its own, and its
+    /// followers'. What a query told to ignore an entity skips, and what a
+    /// character's own sweep skips, together with the bodies IgnoreCollision
+    /// excepted from it.
+    ///
+    /// Answers on the locked half of the filter, where the body's user data can
+    /// be read, so it costs nothing to set up and allocates nothing.
+    class OwnerBodiesFilter final : public JPH::BodyFilter
+    {
+public:
+        /// @p exceptions also hides the bodies IgnoreCollision excepted from
+        /// @p owner, which is a collision rule and so binds a sweep but not a
+        /// query.
+        OwnerBodiesFilter(const Impl &impl, ECS::Entity owner, bool exceptions)
+            : _impl(impl), _owner(owner), _exceptions(exceptions)
+        {
+        }
+
+        bool ShouldCollideLocked(const JPH::Body &body) const override
+        {
+            if (_owner == ECS::NullEntity)
+            {
+                return true;
+            }
+            const ECS::Entity entity = EntityOfUserData(body.GetUserData());
+            if (_impl.OwnerOf(entity) == _owner)
+            {
+                return false;
+            }
+            return !_exceptions || !_impl.IgnoresPair(_owner, entity);
+        }
+
+private:
+        const Impl &_impl;
+        ECS::Entity _owner;
+        bool _exceptions;
+    };
 
     // --- Requests (PhysicsWorld.cpp) -------------------------------------------
 
@@ -615,8 +855,8 @@ struct PhysicsWorld::Impl
     /// which a force on a character is turned into a change of velocity.
     void ApplyRequests(float deltaTime);
 
-    /// Applies one request to a body.
-    void ApplyBodyRequest(const BodySlot &slot, const BodyRequest &request);
+    /// Applies one request to @p owner's body, held in @p slot.
+    void ApplyBodyRequest(ECS::Entity owner, const BodySlot &slot, const BodyRequest &request);
 
     /// Applies one request to a character: a force or an impulse becomes a
     /// change of velocity, and anything else is ignored.
@@ -643,9 +883,21 @@ struct PhysicsWorld::Impl
     /// when none is, which places kinematic bodies rather than sweeping them.
     void ReconcileScene(float stepTime);
 
-    /// Builds, retunes or destroys @p entity's body or character to match its
-    /// components.
+    /// Builds, retunes or destroys @p entity's body, character or part to match
+    /// its components and what is above it.
     void SyncEntity(ECS::Entity entity);
+
+    /// What an entity's slot should hold, and for a Piece or a Follower, whose.
+    struct WantedSlot
+    {
+        ECS::Entity owner{ECS::NullEntity};
+        SlotKind kind = SlotKind::Empty;
+    };
+
+    WantedSlot WantedFor(ECS::Entity entity) const;
+
+    /// SyncOwner for every owner a part of this reconcile asked for, once each.
+    void SyncOwners();
 
     /// Pushes a Transform written by something else to @p entity's body.
     void PushTransform(ECS::Entity entity, float stepTime);
@@ -654,14 +906,22 @@ struct PhysicsWorld::Impl
     /// body, waking it.
     void PushBodyState(ECS::Entity entity);
 
-    /// Builds @p entity's body from its Collider and, unless it is static, its
-    /// @p rigidBody.
-    void CreateBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody);
+    /// Builds @p entity's body as @p shape, on @p face's channel and material,
+    /// moving by @p rigidBody unless that is null.
+    void CreateBody(ECS::Entity entity, const JPH::ShapeRefC &shape, const Collider &face, const RigidBody *rigidBody);
 
-    /// Applies edits to @p entity's Collider and RigidBody to its live body.
-    /// Gaining or losing the RigidBody rebuilds it, since a static body has no
-    /// motion to change.
-    void EditBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody);
+    /// Applies edits to @p entity's live body: @p shape when not null, @p face's
+    /// channel and material, and @p rigidBody. Gaining or losing the RigidBody
+    /// builds it again, since a static body has no motion to change, so @p shape
+    /// must not be null then.
+    void EditBody(ECS::Entity entity, const JPH::ShapeRefC &shape, const Collider &face, const RigidBody *rigidBody);
+
+    /// Builds or retunes a static collider's body.
+    void SyncStatic(ECS::Entity entity, const Collider &collider);
+
+    /// Puts the body in @p slot on @p filter moving as @p motion, and makes it a
+    /// sensor when the filter is on Trigger.
+    void SetBodyFilter(BodySlot &slot, CollisionFilter filter, BodyMotion motion);
 
     /// Sets a moving body's mass from @p rigidBody: overridden when it names
     /// one, from the shape's volume otherwise.
@@ -710,8 +970,16 @@ struct PhysicsWorld::Impl
         glm::vec3 point{0.f};     ///< The middle of the contact, in world space.
         glm::vec3 velocity1{0.f}; ///< Pre-solve, so an impact's speed survives the solver.
         glm::vec3 velocity2{0.f};
+
+        /// The entities whose colliders touched, on each body.
+        ECS::Entity piece1{ECS::NullEntity};
+        ECS::Entity piece2{ECS::NullEntity};
         JPH::BodyID id1;
         JPH::BodyID id2;
+
+        /// How far the two overlap. Of several touches between one pair in one
+        /// step, the deepest names the pieces and the point.
+        float depth = 0.f;
         bool sensor = false;
     };
 
@@ -729,10 +997,19 @@ struct PhysicsWorld::Impl
         glm::vec3 point{0.f};
         glm::vec3 velocity1{0.f};
         glm::vec3 velocity2{0.f};
+
+        /// The entities the two bodies were built for, whose slots list the pair.
         ECS::Entity entity1{ECS::NullEntity};
         ECS::Entity entity2{ECS::NullEntity};
+
+        /// Who each side answers for, and which of its parts touched.
+        ECS::Entity owner1{ECS::NullEntity};
+        ECS::Entity owner2{ECS::NullEntity};
+        ECS::Entity piece1{ECS::NullEntity};
+        ECS::Entity piece2{ECS::NullEntity};
         JPH::BodyID id1;
         JPH::BodyID id2;
+        float depth = 0.f;
         bool sensor = false;
     };
 
@@ -802,6 +1079,14 @@ struct PhysicsWorld::Impl
     /// Turns the step's touches into events, and ages out the pairs that ended.
     void ResolveContactEvents();
 
+    /// @p touch with its two sides in the order @p state keeps them in.
+    static TouchRecord OrientedAs(const TouchRecord &touch, const PairState &state);
+
+    /// Whether @p touch, oriented as @p state, should name the pair's pieces
+    /// and point over what @p state already holds from this step: it is
+    /// deeper, or as deep with pieces that come first.
+    static bool DeeperTouch(const TouchRecord &touch, const PairState &state);
+
     /// Wakes every body overlapping @p bounds that @p filter would interact with.
     ///
     /// A sleeping body reports no contacts, so a static sensor cannot discover one
@@ -832,6 +1117,9 @@ struct PhysicsWorld::Impl
     /// One overlap hit; its distance is the depth.
     QueryHit OverlapHit(const JPH::CollideShapeResult &result) const;
 
+    /// The piece @p subShape names on @p body, read under the body's lock.
+    ECS::Entity PieceStruck(const JPH::BodyID &body, const JPH::SubShapeID &subShape) const;
+
     /// Sweeps @p collider from @p start along @p sweep into @p hits.
     void CollectShapeCast(const Collider &collider, const Pose &start, glm::vec3 sweep, ECS::Entity ignore,
                           JPH::CastShapeCollector &hits) const;
@@ -854,10 +1142,23 @@ struct PhysicsWorld::Impl
 public:
         explicit ContactCollector(Impl &owner) : _owner(owner) {}
 
+        // The parts of one owner never touch each other, nor does a pair that
+        // IgnoreCollision excepted. Asked once per new pair; a cached pair is
+        // not asked again, which is why an exception invalidates the cache.
+        JPH::ValidateResult OnContactValidate(const JPH::Body &body1, const JPH::Body &body2, JPH::RVec3Arg baseOffset,
+                                              const JPH::CollideShapeResult &result) override
+        {
+            (void)baseOffset;
+            (void)result;
+            return _owner.IgnoresPair(EntityOfUserData(body1.GetUserData()), EntityOfUserData(body2.GetUserData()))
+                       ? JPH::ValidateResult::RejectAllContactsForThisBodyPair
+                       : JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+        }
+
         void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
                             JPH::ContactSettings &settings) override
         {
-            (void)settings; // we observe contacts, we don't retune them
+            _owner.CombineMaterials(body1, body2, manifold, settings);
             _owner.RecordTouch(body1, body2, manifold);
         }
 
@@ -868,7 +1169,7 @@ public:
         void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
                                 JPH::ContactSettings &settings) override
         {
-            (void)settings;
+            _owner.CombineMaterials(body1, body2, manifold, settings);
             _owner.RecordTouch(body1, body2, manifold);
         }
 
@@ -1088,7 +1389,7 @@ private:
     /// sweep. The body-vs-body listener cannot see these: a character's inner
     /// body is kinematic, and against static geometry that pair generates no
     /// contact at all.
-    void RecordCharacterTouch(const JPH::CharacterVirtual &character, const JPH::BodyID &other,
+    void RecordCharacterTouch(const JPH::CharacterVirtual &character, const JPH::BodyID &other, ECS::Entity otherPiece,
                               JPH::RVec3Arg position, JPH::Vec3Arg normal);
 
     /// Answers the character sweep's questions about what it may push and be

@@ -16,6 +16,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -95,6 +96,18 @@ inline ECS::Entity AddBody(ECS::Scene &scene, glm::vec3 position, const BodySpec
     {
         REQUIRE(scene.Add(entity, *spec.rigidBody) != nullptr);
     }
+    return entity;
+}
+
+/// An entity under @p parent, at @p localPosition in the parent's space,
+/// carrying @p collider.
+inline ECS::Entity AddChildCollider(ECS::Scene &scene, ECS::Entity parent, glm::vec3 localPosition,
+                                    const Physics::Collider &collider)
+{
+    const ECS::Entity entity = scene.Create();
+    REQUIRE(scene.Add(entity, ECS::Transform{.position = localPosition}) != nullptr);
+    REQUIRE(scene.Add(entity, ECS::Parent{.parent = parent}) != nullptr);
+    REQUIRE(scene.Add(entity, collider) != nullptr);
     return entity;
 }
 
