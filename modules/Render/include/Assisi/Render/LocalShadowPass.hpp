@@ -233,6 +233,16 @@ public:
     /// question does not arise: every tile is redrawn every frame.
     [[nodiscard]] std::span<const LocalShadowCache::Residency> CachedTiles() const { return _cache.Tiles(); }
 
+    /// @brief Drops every kept tile, so each light's still layer is drawn again
+    /// on the next Render().
+    ///
+    /// A tile is kept for as long as its light asks for the same size from the
+    /// same pose, and invalidated only by casters seen to move. A scene put back
+    /// wholesale moves its casters without any of them being seen to, and a
+    /// light that comes back where it stood would keep the depth of the scene it
+    /// replaced.
+    void ForgetKeptTiles() { _cache.Forget(); }
+
     /// @brief Which request each served tile came from and the edge it got, in
     /// the same order @ref Tiles reports them.
     ///

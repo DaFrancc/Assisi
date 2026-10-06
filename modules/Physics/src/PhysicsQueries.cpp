@@ -32,31 +32,6 @@ namespace Assisi::Physics
 namespace
 {
 
-/// Hides one body from a query.
-///
-/// What makes a self-cast usable: a character sweeping its own capsule forward
-/// starts inside itself, and every convex shape reports a hit at distance 0 for
-/// a cast that begins inside it.
-///
-/// Takes a BodyID rather than an entity, and overrides the *unlocked* half of
-/// the filter, because both cost less where this runs. Jolt asks this question
-/// once per body a query reaches, and asks the unlocked form first — answering
-/// there is an integer compare, and skips locking a body only to reject it.
-/// Resolving the caller's entity to a BodyID happens once, before the query.
-class IgnoreBodyFilter final : public JPH::BodyFilter
-{
-public:
-    explicit IgnoreBodyFilter(const JPH::BodyID &ignore) : _ignore(ignore) {}
-
-    bool ShouldCollide(const JPH::BodyID &bodyId) const override
-    {
-        return bodyId.GetIndexAndSequenceNumber() != _ignore.GetIndexAndSequenceNumber();
-    }
-
-private:
-    JPH::BodyID _ignore;
-};
-
 /// A sweep shorter than this is treated as no sweep at all.
 ///
 /// Jolt needs a direction, and normalizing a zero-length vector yields NaNs that
@@ -93,9 +68,7 @@ glm::vec3 ToGlm(JPH::Vec3Arg vector)
     return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
 }
 
-/// Keeps the first hit per entity of @p hits, in order. A hit's piece is its
-/// entity until a body can be built from several, so one per entity is one per
-/// piece.
+/// Keeps the first hit per piece of @p hits, in order.
 void KeepFirstPerPiece(std::vector<QueryHit> &hits)
 {
     std::vector<QueryHit>::iterator kept = hits.begin();
@@ -131,7 +104,7 @@ QueryHit PhysicsWorld::Impl::RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH
     QueryHit hit;
     hit.position = position;
     hit.distance = glm::length(sweep) * result.mFraction;
-    hit.entity = EntityFor(result.mBodyID);
+    hit.entity = OwnerOf(EntityFor(result.mBodyID));
     hit.piece = hit.entity;
 
     // The normal has to come off the body's surface — a ray result carries only
@@ -141,8 +114,19 @@ QueryHit PhysicsWorld::Impl::RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH
     {
         hit.normal = ToGlm(
             lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, JPH::RVec3(position.x, position.y, position.z)));
+        hit.piece = PieceOf(lock.GetBody(), result.mSubShapeID2);
     }
     return hit;
+}
+
+ECS::Entity PhysicsWorld::Impl::PieceStruck(const JPH::BodyID &body, const JPH::SubShapeID &subShape) const
+{
+    JPH::BodyLockRead lock(physicsSystem.GetBodyLockInterface(), body);
+    if (!lock.Succeeded())
+    {
+        return EntityFor(body);
+    }
+    return PieceOf(lock.GetBody(), subShape);
 }
 
 QueryHit PhysicsWorld::Impl::ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResult &result) const
@@ -155,8 +139,8 @@ QueryHit PhysicsWorld::Impl::ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResul
     // points out of the struck surface — the same sense a ray's normal has.
     hit.normal = -ToGlm(axis);
     hit.distance = glm::length(sweep) * result.mFraction;
-    hit.entity = EntityFor(result.mBodyID2);
-    hit.piece = hit.entity;
+    hit.entity = OwnerOf(EntityFor(result.mBodyID2));
+    hit.piece = PieceStruck(result.mBodyID2, result.mSubShapeID2);
     return hit;
 }
 
@@ -168,8 +152,8 @@ QueryHit PhysicsWorld::Impl::OverlapHit(const JPH::CollideShapeResult &result) c
     hit.position = ToGlm(result.mContactPointOn2);
     hit.normal = -ToGlm(axis);
     hit.distance = result.mPenetrationDepth;
-    hit.entity = EntityFor(result.mBodyID2);
-    hit.piece = hit.entity;
+    hit.entity = OwnerOf(EntityFor(result.mBodyID2));
+    hit.piece = PieceStruck(result.mBodyID2, result.mSubShapeID2);
     return hit;
 }
 
@@ -179,14 +163,14 @@ void PhysicsWorld::Impl::CollectShapeCast(const Collider &collider, const Pose &
     // Named, not a temporary in the call below: RShapeCast keeps a bare pointer to
     // the shape, so a ShapeRefC that died at the end of that expression would
     // leave the cast pointing at freed memory.
-    const JPH::ShapeRefC swept = MakeColliderShape(collider, glm::vec3(1.f));
+    const JPH::ShapeRefC swept = MakeColliderShape(collider, glm::vec3(1.f), ECS::NullEntity);
     const JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(swept, JPH::Vec3::sReplicate(1.f),
                                                                       WorldTransformOf(start),
                                                                       JPH::Vec3(sweep.x, sweep.y, sweep.z));
 
     const JPH::ShapeCastSettings settings;
     const FilterLayerFilter layerFilter{layers, FilterOfCollider(collider)};
-    const IgnoreBodyFilter bodyFilter{BodyFor(ignore)};
+    const OwnerBodiesFilter bodyFilter{*this, OwnerOf(ignore), /*exceptions=*/ false};
 
     // Zero base offset, so the contact points come back in world space. Jolt is
     // built here at single precision, where the offset buys no accuracy.
@@ -199,12 +183,12 @@ void PhysicsWorld::Impl::CollectOverlap(const Collider &collider, const Pose &at
 {
     const JPH::CollideShapeSettings settings;
     const FilterLayerFilter layerFilter{layers, FilterOfCollider(collider)};
-    const IgnoreBodyFilter bodyFilter{BodyFor(ignore)};
+    const OwnerBodiesFilter bodyFilter{*this, OwnerOf(ignore), /*exceptions=*/ false};
 
     // Jolt places the shape by its centre of mass, which an offset collider has
     // away from its entity's origin; placed by the origin, the offset would be
     // undone.
-    const JPH::ShapeRefC held = MakeColliderShape(collider, glm::vec3(1.f));
+    const JPH::ShapeRefC held = MakeColliderShape(collider, glm::vec3(1.f), ECS::NullEntity);
     const JPH::RMat44 centreOfMass = WorldTransformOf(at).PreTranslated(held->GetCenterOfMass());
     physicsSystem.GetNarrowPhaseQuery().CollideShape(held, JPH::Vec3::sReplicate(1.f), centreOfMass, settings,
                                                      JPH::RVec3::sZero(), hits, {}, layerFilter, bodyFilter);
@@ -221,7 +205,7 @@ std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep,
     const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(sweep.x, sweep.y, sweep.z)};
     JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
     const FilterLayerFilter layerFilter{_impl->layers, filter};
-    const IgnoreBodyFilter bodyFilter{_impl->BodyFor(ignore)};
+    const Impl::OwnerBodiesFilter bodyFilter{*_impl, _impl->OwnerOf(ignore), /*exceptions=*/ false};
 
     // The broad-phase filter accepts everything: a query carries no motion type,
     // so it has no business skipping the tree of things that do not move — which
@@ -246,7 +230,7 @@ void PhysicsWorld::CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter
     const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(sweep.x, sweep.y, sweep.z)};
     JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
     const FilterLayerFilter layerFilter{_impl->layers, filter};
-    const IgnoreBodyFilter bodyFilter{_impl->BodyFor(ignore)};
+    const Impl::OwnerBodiesFilter bodyFilter{*_impl, _impl->OwnerOf(ignore), /*exceptions=*/ false};
     _impl->physicsSystem.GetNarrowPhaseQuery().CastRay(ray, RaySettings(), collector, {}, layerFilter, bodyFilter);
 
     collector.Sort();

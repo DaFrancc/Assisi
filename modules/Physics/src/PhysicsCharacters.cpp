@@ -302,9 +302,12 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         // falls.
         settings.mStickToFloorStepDown = -kCharacterUp * record.maxStepHeight;
 
+        // Its own hitboxes ride inside it, and what IgnoreCollision excepted
+        // does not stop it.
         const FilterLayerFilter layerFilter{layers, record.queryFilter};
+        const OwnerBodiesFilter bodyFilter{*this, record.entity, /*exceptions=*/ true};
 
-        character.ExtendedUpdate(deltaTime, gravity, settings, {}, layerFilter, {}, {}, tempAlloc);
+        character.ExtendedUpdate(deltaTime, gravity, settings, {}, layerFilter, bodyFilter, {}, tempAlloc);
     }
 }
 
@@ -468,7 +471,8 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     // has to know whether the character is standing on something, or a crouch
     // at spawn is taken for one in the air and lifts the feet off the floor.
     const FilterLayerFilter layerFilter{layers, placed.queryFilter};
-    placed.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
+    const OwnerBodiesFilter bodyFilter{*this, entity, /*exceptions=*/ true};
+    placed.character->RefreshContacts({}, layerFilter, bodyFilter, {}, tempAlloc);
     WriteCharacterState(entity, BuildCharacterState(placed));
 }
 
@@ -511,9 +515,11 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
         if (stance == Stance::Crouching)
         {
             const FilterLayerFilter layerFilter{layers, record.queryFilter};
+            const OwnerBodiesFilter bodyFilter{*this, entity, /*exceptions=*/ true};
             const float maxPenetration =
                 kStanceChangePenetrationSlopFactor * physicsSystem.GetPhysicsSettings().mPenetrationSlop;
-            (void)record.character->SetShape(record.crouchingShape, maxPenetration, {}, layerFilter, {}, {}, tempAlloc);
+            (void)record.character->SetShape(record.crouchingShape, maxPenetration, {}, layerFilter, bodyFilter, {},
+                                             tempAlloc);
             record.character->SetInnerBodyShape(record.crouchingShape);
         }
         return;
@@ -540,6 +546,7 @@ bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)
         stance == Stance::Crouching ? record.crouchingShape.GetPtr() : record.standingShape.GetPtr();
 
     const FilterLayerFilter layerFilter{layers, record.queryFilter};
+    const OwnerBodiesFilter bodyFilter{*this, record.entity, /*exceptions=*/ true};
     const float maxPenetration =
         kStanceChangePenetrationSlopFactor * physicsSystem.GetPhysicsSettings().mPenetrationSlop;
 
@@ -555,7 +562,7 @@ bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)
 
     // Growing into something solid fails and changes nothing, which is what makes
     // "stand up" a question rather than a command. Shrinking always succeeds.
-    if (!record.character->SetShape(shape, maxPenetration, {}, layerFilter, {}, {}, tempAlloc))
+    if (!record.character->SetShape(shape, maxPenetration, {}, layerFilter, bodyFilter, {}, tempAlloc))
     {
         record.character->SetPosition(position);
         return false;
@@ -594,7 +601,7 @@ CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &re
     const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity();
     state.groundVelocity = glm::vec3(groundVelocity.GetX(), groundVelocity.GetY(), groundVelocity.GetZ());
 
-    state.groundEntity = EntityFor(virtualCharacter.GetGroundBodyID());
+    state.groundEntity = OwnerOf(EntityFor(virtualCharacter.GetGroundBodyID()));
     state.timeSinceGrounded = record.timeSinceGrounded;
     state.eyeHeight = record.eyeHeight;
     state.stance = record.stance;

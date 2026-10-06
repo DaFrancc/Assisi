@@ -54,9 +54,12 @@ JPH::Vec3 ClampedBoxHalfExtents(glm::vec3 halfExtents)
 /// Closer to 1 than this on every axis, a scale is no scale: wrapping the shape
 /// would cost a level of indirection on every collision test for nothing.
 constexpr float kUnitScaleTolerance = 1e-6f;
-} // namespace
 
-JPH::ShapeRefC MakeShape(const Collider &collider)
+/// The least density a shape is built at (kg/m³). A dynamic body of no mass
+/// cannot be simulated, and a density of zero is one inspector drag away.
+constexpr float kMinDensity = 1e-3f;
+
+JPH::Ref<JPH::ConvexShape> MakePrimitive(const Collider &collider)
 {
     const float radius = glm::max(collider.radius, JPH::cDefaultConvexRadius);
     const float halfHeight = glm::max(collider.halfHeight, JPH::cDefaultConvexRadius);
@@ -72,6 +75,22 @@ JPH::ShapeRefC MakeShape(const Collider &collider)
         break;
     }
     return new JPH::BoxShape(ClampedBoxHalfExtents(collider.halfExtents));
+}
+} // namespace
+
+JPH::ShapeRefC MakeShape(const Collider &collider, ECS::Entity entity)
+{
+    const JPH::Ref<JPH::ConvexShape> shape = MakePrimitive(collider);
+    shape->SetDensity(glm::max(collider.density, kMinDensity));
+    shape->SetUserData(UserDataOf(entity));
+    return JPH::ShapeRefC(shape.GetPtr());
+}
+
+bool SameShape(const Collider &a, const Collider &b)
+{
+    return a.shape == b.shape && a.halfExtents == b.halfExtents && a.radius == b.radius &&
+           a.halfHeight == b.halfHeight && a.offsetPosition == b.offsetPosition &&
+           a.offsetRotation == b.offsetRotation && a.density == b.density;
 }
 
 glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
@@ -95,9 +114,9 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
     return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
 }
 
-JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale)
+JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity)
 {
-    JPH::ShapeRefC base = MakeShape(collider);
+    JPH::ShapeRefC base = MakeShape(collider, entity);
     if (glm::all(glm::lessThan(glm::abs(scale - glm::vec3(1.f)), glm::vec3(kUnitScaleTolerance))))
     {
         return base;
@@ -106,9 +125,9 @@ JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale)
     return new JPH::ScaledShape(base, JPH::Vec3(valid.x, valid.y, valid.z));
 }
 
-JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale)
+JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity)
 {
-    JPH::ShapeRefC scaled = MakeScaledShape(collider, scale);
+    JPH::ShapeRefC scaled = MakeScaledShape(collider, scale, entity);
     const bool offset = collider.offsetPosition != glm::vec3(0.f) ||
                         collider.offsetRotation != glm::quat(1.f, 0.f, 0.f, 0.f);
     if (!offset)
@@ -281,7 +300,7 @@ ECS::Entity PhysicsWorld::Impl::EntityFor(const JPH::BodyID &id) const
 
 JPH::BodyID PhysicsWorld::Impl::BodyFor(ECS::Entity entity) const
 {
-    const BodySlot *slot = SlotFor(entity);
+    const BodySlot *slot = OwnerSlotFor(entity);
     return slot == nullptr ? JPH::BodyID{} : slot->body;
 }
 
@@ -367,8 +386,10 @@ void PhysicsWorld::Update(float deltaTime)
     _impl->stepping = false;
 
     // Before the contact events, so a system reacting to them reads the
-    // Transforms this step left.
+    // Transforms this step left. The followers after the writeback, since
+    // their pose is composed from their owners'.
     _impl->WriteBack();
+    _impl->PlaceFollowers();
     _impl->ResolveContactEvents();
 }
 
@@ -388,7 +409,8 @@ int32_t PhysicsWorld::GetCollisionSteps() const
 
 bool PhysicsWorld::HasBody(ECS::Entity entity) const
 {
-    return _impl->SlotFor(entity) != nullptr;
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    return slot != nullptr && (slot->kind == Impl::SlotKind::Body || slot->kind == Impl::SlotKind::Character);
 }
 
 void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
@@ -402,7 +424,7 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
         return;
     }
 
-    Impl::BodySlot *slot = _impl->SlotFor(entity);
+    Impl::BodySlot *slot = _impl->OwnBodySlot(entity);
     if (slot == nullptr)
     {
         return;
@@ -425,7 +447,8 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
         // than waiting a step keeps the ground state honest for anything that
         // reads it between the teleport and the next Update.
         const FilterLayerFilter layerFilter{_impl->layers, record->queryFilter};
-        record->character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
+        const Impl::OwnerBodiesFilter bodyFilter{*_impl, entity, /*exceptions=*/ true};
+        record->character->RefreshContacts({}, layerFilter, bodyFilter, {}, _impl->tempAlloc);
     }
     else
     {
@@ -457,8 +480,10 @@ void PhysicsWorld::ActiveBodies(std::vector<ECS::Entity> &out) const
     out.reserve(active.size());
     for (const JPH::BodyID &id : active)
     {
+        // A follower's body is its owner's business, and the owner's own body
+        // is what reports for it.
         const ECS::Entity entity = _impl->EntityFor(id);
-        if (entity != ECS::NullEntity)
+        if (entity != ECS::NullEntity && HasBody(entity))
         {
             out.push_back(entity);
         }
@@ -473,19 +498,19 @@ bool PhysicsWorld::IsBodyActive(ECS::Entity entity) const
 
 ECS::Entity PhysicsWorld::BodyOf(ECS::Entity piece) const
 {
-    return _impl->SlotFor(piece) != nullptr ? piece : ECS::NullEntity;
+    return _impl->OwnerSlotFor(piece) != nullptr ? _impl->OwnerOf(piece) : ECS::NullEntity;
 }
 
 float PhysicsWorld::Mass(ECS::Entity entity) const
 {
-    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    const Impl::BodySlot *slot = _impl->OwnerSlotFor(entity);
     if (slot == nullptr)
     {
         return 0.f;
     }
     if (slot->kind == Impl::SlotKind::Character)
     {
-        return _impl->FindCharacter(entity)->mass;
+        return _impl->FindCharacter(_impl->OwnerOf(entity))->mass;
     }
     if (slot->motion != BodyMotion::Dynamic)
     {
@@ -520,24 +545,26 @@ void PhysicsWorld::Impl::ApplyRequests(float deltaTime)
 {
     for (const BodyRequest &request : requests)
     {
-        const BodySlot *slot = SlotFor(request.entity);
+        // A push on a piece or a follower is a push on the body it belongs to.
+        const ECS::Entity owner = OwnerOf(request.entity);
+        const BodySlot *slot = OwnBodySlot(owner);
         if (slot == nullptr)
         {
             continue;
         }
         if (slot->kind == SlotKind::Character)
         {
-            ApplyCharacterRequest(*FindCharacter(request.entity), request, deltaTime);
+            ApplyCharacterRequest(*FindCharacter(owner), request, deltaTime);
         }
         else
         {
-            ApplyBodyRequest(*slot, request);
+            ApplyBodyRequest(owner, *slot, request);
         }
     }
     requests.clear();
 }
 
-void PhysicsWorld::Impl::ApplyBodyRequest(const BodySlot &slot, const BodyRequest &request)
+void PhysicsWorld::Impl::ApplyBodyRequest(ECS::Entity owner, const BodySlot &slot, const BodyRequest &request)
 {
     // Only a dynamic body responds to a push, and Jolt asserts on one given to
     // anything else. A static body has no sleep to change.
@@ -582,7 +609,7 @@ void PhysicsWorld::Impl::ApplyBodyRequest(const BodySlot &slot, const BodyReques
 
     // Followed, so the writeback reports what the request did: the motion it
     // started, or the rest it put the body at.
-    Follow(request.entity.index);
+    Follow(owner.index);
 }
 
 void PhysicsWorld::Impl::ApplyCharacterRequest(CharacterRecord &record, const BodyRequest &request,
@@ -659,7 +686,7 @@ void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const B
     const glm::vec3 angularVelocity = state.angularVelocity;
     const bool activate = !state.asleep;
 
-    Impl::BodySlot *slot = _impl->SlotFor(entity);
+    Impl::BodySlot *slot = _impl->OwnBodySlot(entity);
     if (slot == nullptr)
         return;
 
@@ -673,7 +700,8 @@ void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const B
         record.character->SetLinearVelocity(JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
         bodies.SetPosition(slot->body, position, JPH::EActivation::Activate);
         const FilterLayerFilter layerFilter{_impl->layers, record.queryFilter};
-        record.character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
+        const Impl::OwnerBodiesFilter bodyFilter{*_impl, entity, /*exceptions=*/ true};
+        record.character->RefreshContacts({}, layerFilter, bodyFilter, {}, _impl->tempAlloc);
         _impl->WritePose(entity, pose, /*writeRotation=*/ false);
         ECS::SnapTransform(_impl->scene, entity);
         return;
@@ -729,7 +757,7 @@ Pose PhysicsWorld::GetBodyPose(ECS::Entity entity) const
 
 BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
 {
-    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    const Impl::BodySlot *slot = _impl->OwnerSlotFor(entity);
     if (slot == nullptr || slot->motion == BodyMotion::Static)
     {
         return BodyState{};
@@ -737,7 +765,7 @@ BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
 
     if (slot->kind == Impl::SlotKind::Character)
     {
-        const JPH::Vec3 velocity = _impl->FindCharacter(entity)->character->GetLinearVelocity();
+        const JPH::Vec3 velocity = _impl->FindCharacter(_impl->OwnerOf(entity))->character->GetLinearVelocity();
         return BodyState{.linearVelocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
                          .angularVelocity = glm::vec3(0.f),
                          .asleep = false};
@@ -753,7 +781,7 @@ BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
 
 bool PhysicsWorld::IsBodyCCDEnabled(ECS::Entity entity) const
 {
-    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    const Impl::BodySlot *slot = _impl->OwnerSlotFor(entity);
     if (slot == nullptr || slot->motion == BodyMotion::Static)
     {
         return false;
@@ -763,8 +791,10 @@ bool PhysicsWorld::IsBodyCCDEnabled(ECS::Entity entity) const
 
 glm::vec3 PhysicsWorld::GetColliderScale(ECS::Entity entity) const
 {
+    // Answered per Collider: a piece or a follower is built at its own scale,
+    // not its owner's.
     const Impl::BodySlot *slot = _impl->SlotFor(entity);
-    if (slot == nullptr || slot->kind != Impl::SlotKind::Body)
+    if (slot == nullptr || _impl->MaterialOf(entity) == nullptr)
     {
         return glm::vec3(1.f);
     }
@@ -773,7 +803,9 @@ glm::vec3 PhysicsWorld::GetColliderScale(ECS::Entity entity) const
 
 CollisionFilter PhysicsWorld::GetBodyCollisionFilter(ECS::Entity entity) const
 {
-    const JPH::BodyID id = _impl->BodyFor(entity);
+    // A follower collides as itself, not as its owner.
+    const Impl::BodySlot *own = _impl->SlotFor(entity);
+    const JPH::BodyID id = own != nullptr && own->kind == Impl::SlotKind::Follower ? own->body : _impl->BodyFor(entity);
     if (id.IsInvalid())
         return CollisionFilter{};
     return _impl->FilterOf(id);

@@ -60,7 +60,45 @@ glm::vec3 ContactMiddle(const JPH::ContactManifold &manifold)
     return glm::vec3(middle.GetX(), middle.GetY(), middle.GetZ());
 }
 
+/// The piece pair's order, for a tie between two equally deep touches.
+bool PiecesBefore(ECS::Entity a1, ECS::Entity a2, ECS::Entity b1, ECS::Entity b2)
+{
+    if (a1.index != b1.index)
+    {
+        return a1.index < b1.index;
+    }
+    return a2.index < b2.index;
+}
+
 } // namespace
+
+PhysicsWorld::Impl::TouchRecord PhysicsWorld::Impl::OrientedAs(const TouchRecord &touch, const PairState &state)
+{
+    if (touch.id1 == state.id1)
+    {
+        return touch;
+    }
+    // Jolt names a pair's bodies in either order, and a character's sweep
+    // names the character first; the pair keeps the order it was first seen in.
+    TouchRecord swapped = touch;
+    swapped.normal = -touch.normal;
+    swapped.velocity1 = touch.velocity2;
+    swapped.velocity2 = touch.velocity1;
+    swapped.piece1 = touch.piece2;
+    swapped.piece2 = touch.piece1;
+    swapped.id1 = touch.id2;
+    swapped.id2 = touch.id1;
+    return swapped;
+}
+
+bool PhysicsWorld::Impl::DeeperTouch(const TouchRecord &touch, const PairState &state)
+{
+    if (touch.depth != state.depth)
+    {
+        return touch.depth > state.depth;
+    }
+    return PiecesBefore(touch.piece1, touch.piece2, state.piece1, state.piece2);
+}
 
 void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &body2,
                                      const JPH::ContactManifold &manifold)
@@ -79,20 +117,23 @@ void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &bo
                                     return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
                                 };
 
-    const TouchRecord record{glm::vec3{n.GetX(), n.GetY(), n.GetZ()},
-                             ContactMiddle(manifold),
-                             linearVelocity(body1),
-                             linearVelocity(body2),
-                             body1.GetID(),
-                             body2.GetID(),
-                             body1.IsSensor() || body2.IsSensor()};
+    const TouchRecord record{.normal = glm::vec3{n.GetX(), n.GetY(), n.GetZ()},
+                             .point = ContactMiddle(manifold),
+                             .velocity1 = linearVelocity(body1),
+                             .velocity2 = linearVelocity(body2),
+                             .piece1 = PieceOf(body1, manifold.mSubShapeID1),
+                             .piece2 = PieceOf(body2, manifold.mSubShapeID2),
+                             .id1 = body1.GetID(),
+                             .id2 = body2.GetID(),
+                             .depth = manifold.mPenetrationDepth,
+                             .sensor = body1.IsSensor() || body2.IsSensor()};
 
     const std::lock_guard<std::mutex> lock(touchMutex);
     touchedThisStep.push_back(record);
 }
 
 void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &character, const JPH::BodyID &other,
-                                              JPH::RVec3Arg position, JPH::Vec3Arg normal)
+                                              ECS::Entity otherPiece, JPH::RVec3Arg position, JPH::Vec3Arg normal)
 {
     // The no-lock interface, deliberately: this runs inside the character's own
     // sweep, which may already hold the touched body's lock, and it runs on the
@@ -113,13 +154,15 @@ void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &chara
     // the same sense the body-vs-body path records, which is what lets both
     // arrive at a consumer looking identical.
     const JPH::Vec3 velocity = character.GetLinearVelocity();
-    const TouchRecord record{glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ()),
-                             glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-                             glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
-                             otherVelocity,
-                             character.GetInnerBodyID(),
-                             other,
-                             sensor};
+    const TouchRecord record{.normal = glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ()),
+                             .point = glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+                             .velocity1 = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+                             .velocity2 = otherVelocity,
+                             .piece1 = EntityOfUserData(character.GetUserData()),
+                             .piece2 = otherPiece,
+                             .id1 = character.GetInnerBodyID(),
+                             .id2 = other,
+                             .sensor = sensor};
 
     const std::lock_guard<std::mutex> lock(touchMutex);
     touchedThisStep.push_back(record);
@@ -161,18 +204,20 @@ void PhysicsWorld::Impl::WakeInside(const JPH::BodyID &id)
 
 void PhysicsWorld::Impl::EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out)
 {
-    const ECS::Entity e1 = state.entity1;
-    const ECS::Entity e2 = state.entity2;
+    const ECS::Entity e1 = state.owner1;
+    const ECS::Entity e2 = state.owner2;
 
     // Each side is given the normal pointing away from the *other*, which is what
     // a reflection wants and what spares a consumer working out the pair's order.
     if (e1 != ECS::NullEntity)
     {
-        out.push_back(ContactEvent{-state.normal, state.point, state.velocity1, e1, e2, e1, e2, phase, state.sensor});
+        out.push_back(ContactEvent{-state.normal, state.point, state.velocity1, e1, e2, state.piece1, state.piece2,
+                                   phase, state.sensor});
     }
     if (e2 != ECS::NullEntity)
     {
-        out.push_back(ContactEvent{state.normal, state.point, state.velocity2, e2, e1, e2, e1, phase, state.sensor});
+        out.push_back(ContactEvent{state.normal, state.point, state.velocity2, e2, e1, state.piece2, state.piece1,
+                                   phase, state.sensor});
     }
 }
 
@@ -185,9 +230,14 @@ std::pair<PhysicsWorld::Impl::PairState *, bool> PhysicsWorld::Impl::InsertPair(
     if (found.second)
     {
         // Read while both bodies certainly exist, so the Exit a destroyed body
-        // causes later can still say who it was.
+        // causes later can still say who it was. The order the pair is first
+        // seen in is the order it keeps.
+        state.id1 = touch.id1;
+        state.id2 = touch.id2;
         state.entity1 = EntityFor(touch.id1);
         state.entity2 = EntityFor(touch.id2);
+        state.owner1 = OwnerOf(state.entity1);
+        state.owner2 = OwnerOf(state.entity2);
         for (const ECS::Entity entity : {state.entity1, state.entity2})
         {
             if (BodySlot *slot = SlotFor(entity); slot != nullptr)
@@ -275,13 +325,21 @@ void PhysicsWorld::Impl::ResolveContactEvents()
         // record twice — once by its own sweep, once by the body-vs-body listener.
         const bool firstThisStep = state.stamp != step;
 
-        state.normal = touch.normal;
-        state.point = touch.point;
-        state.velocity1 = touch.velocity1;
-        state.velocity2 = touch.velocity2;
-        state.id1 = touch.id1;
-        state.id2 = touch.id2;
-        state.sensor = touch.sensor;
+        // Of the touches between one pair in a step, the deepest says where they
+        // touch and with which pieces; the order Jolt's jobs report them in
+        // must not decide it.
+        const TouchRecord oriented = OrientedAs(touch, state);
+        if (firstThisStep || DeeperTouch(oriented, state))
+        {
+            state.normal = oriented.normal;
+            state.point = oriented.point;
+            state.piece1 = oriented.piece1;
+            state.piece2 = oriented.piece2;
+            state.depth = oriented.depth;
+        }
+        state.velocity1 = oriented.velocity1;
+        state.velocity2 = oriented.velocity2;
+        state.sensor = oriented.sensor;
         state.stamp = step;
 
         if (found.second)
@@ -373,8 +431,6 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
                                                            JPH::Vec3Arg contactNormal,
                                                            JPH::CharacterContactSettings &settings)
 {
-    (void)subShapeId;
-
     const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
     if (found == nullptr)
     {
@@ -388,7 +444,15 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
     settings.mCanPushCharacter   = record.canBePushed;
     settings.mCanReceiveImpulses = record.canPushBodies;
 
-    _owner.RecordCharacterTouch(*character, bodyId, contactPosition, contactNormal);
+    // The no-lock interface for the same reason RecordCharacterTouch gives:
+    // the sweep may hold this body's lock already.
+    const JPH::BodyInterface &bodies = _owner.physicsSystem.GetBodyInterfaceNoLock();
+    ECS::Entity piece = EntityOfUserData(bodies.GetShape(bodyId)->GetSubShapeUserData(subShapeId));
+    if (piece == ECS::NullEntity)
+    {
+        piece = _owner.EntityFor(bodyId);
+    }
+    _owner.RecordCharacterTouch(*character, bodyId, piece, contactPosition, contactNormal);
 }
 
 void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
@@ -411,7 +475,8 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
     // step and nothing else, so one shoving the other is gameplay's to express.
     settings.mCanReceiveImpulses = false;
 
-    _owner.RecordCharacterTouch(*character, other->GetInnerBodyID(), contactPosition, contactNormal);
+    _owner.RecordCharacterTouch(*character, other->GetInnerBodyID(), EntityOfUserData(other->GetUserData()),
+                                contactPosition, contactNormal);
 }
 
 std::span<const ContactEvent> PhysicsWorld::ContactEvents() const
@@ -431,30 +496,52 @@ bool PhysicsWorld::StayEventsReported() const
 
 bool PhysicsWorld::IsTouching(ECS::Entity a, ECS::Entity b) const
 {
-    const JPH::BodyID bodyA = _impl->BodyFor(a);
-    const JPH::BodyID bodyB = _impl->BodyFor(b);
-    if (bodyA.IsInvalid() || bodyB.IsInvalid())
+    // Owner against owner, through every body each answers with: a hitbox
+    // touching something is its character touching it.
+    const ECS::Entity ownerA = _impl->OwnerOf(a);
+    const ECS::Entity ownerB = _impl->OwnerOf(b);
+    std::vector<JPH::BodyID> bodies;
+    _impl->BodiesOf(ownerA, bodies);
+    for (const JPH::BodyID &id : bodies)
     {
-        return false;
+        const Impl::BodySlot *slot = _impl->SlotFor(_impl->EntityFor(id));
+        if (slot == nullptr)
+        {
+            continue;
+        }
+        for (const PairKey key : slot->pairKeys)
+        {
+            const Impl::PairState &state = _impl->pairs.at(key);
+            if ((state.owner1 == ownerA && state.owner2 == ownerB) || (state.owner1 == ownerB && state.owner2 == ownerA))
+            {
+                return true;
+            }
+        }
     }
-    return _impl->pairs.contains(Impl::KeyFor(bodyA, bodyB));
+    return false;
 }
 
 void PhysicsWorld::Touching(ECS::Entity entity, std::vector<ECS::Entity> &out) const
 {
     out.clear();
-    const Impl::BodySlot *slot = _impl->SlotFor(entity);
-    if (slot == nullptr)
+    const ECS::Entity owner = _impl->OwnerOf(entity);
+    std::vector<JPH::BodyID> bodies;
+    _impl->BodiesOf(owner, bodies);
+    for (const JPH::BodyID &id : bodies)
     {
-        return;
-    }
-    for (const PairKey key : slot->pairKeys)
-    {
-        const Impl::PairState &state = _impl->pairs.at(key);
-        const ECS::Entity other = state.entity1 == entity ? state.entity2 : state.entity1;
-        if (other != ECS::NullEntity)
+        const Impl::BodySlot *slot = _impl->SlotFor(_impl->EntityFor(id));
+        if (slot == nullptr)
         {
-            out.push_back(other);
+            continue;
+        }
+        for (const PairKey key : slot->pairKeys)
+        {
+            const Impl::PairState &state = _impl->pairs.at(key);
+            const ECS::Entity other = state.owner1 == owner ? state.owner2 : state.owner1;
+            if (other != ECS::NullEntity && std::find(out.begin(), out.end(), other) == out.end())
+            {
+                out.push_back(other);
+            }
         }
     }
 }

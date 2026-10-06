@@ -370,6 +370,11 @@ class EditorApp : public Assisi::App::Application
     /// and what took its shadow if not. Draws nothing when there is no verdict.
     void DrawLightShadowVerdict();
 
+    /// @brief One line under a Collider's fields saying what it is to the
+    /// simulation: a piece of a body, a follower of one, or static geometry.
+    /// Read from the scene, so it is right before anything has stepped.
+    void DrawColliderRole();
+
     /// @brief A line or two under a MeshRenderer's fields: the level this
     /// instance drew at, and the sizes on either side of it.
     ///

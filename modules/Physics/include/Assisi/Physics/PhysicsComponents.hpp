@@ -90,6 +90,23 @@ consteval CollisionChannel GameChannel(std::uint32_t index)
     return static_cast<CollisionChannel>(kFirstGameChannel + index);
 }
 
+/// The density of water, in kg/m³: what a collider weighs unless it says
+/// otherwise.
+inline constexpr float kWaterDensity = 1000.f;
+
+/// @brief What a Collider under a RigidBody becomes.
+AENUM()
+enum class ColliderAttach : std::uint8_t
+{
+    /// Part of the RigidBody's own shape: it turns with the body and adds to
+    /// its mass.
+    Piece,
+
+    /// A body of its own that rides along at its entity's pose, adding no mass.
+    Body,
+    Count,
+};
+
 /// @brief Every channel — the mask a body carries unless it narrows it, so a
 /// body defaults to interacting with everything and an author subtracts rather
 /// than having to enumerate.
@@ -122,7 +139,8 @@ enum class LockedAxis : std::uint8_t
 /// @brief A collision shape, and what touching it is like.
 ///
 /// On its own it is static geometry: a wall, a floor, a trigger volume that
-/// never moves. Add a RigidBody to make it move. The shape is built at the
+/// never moves. Add a RigidBody to make it move. What one on a child entity is
+/// depends on what is above it; see ColliderRole. The shape is built at the
 /// entity's world scale, composed through its parents; a sphere or a capsule
 /// takes one scale on every axis and a cylinder one across its round axes, so
 /// a non-uniform scale on those is clamped, with a warning.
@@ -164,6 +182,10 @@ struct Collider
     /// a body at rest stays at rest whatever this is.
     AFIELD(min = 0.0) float restitution = 0.f;
 
+    /// kg/m³. With its volume, how much this collider adds to its body's mass,
+    /// and where the body's centre of mass falls.
+    AFIELD(min = 0.0) float density = kWaterDensity;
+
     /// The channels this collider collides with. Interaction needs both sides
     /// to agree, so clearing a bit here stops the pair whatever the other says.
     AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
@@ -178,6 +200,15 @@ struct Collider
     AFIELD() CollisionChannel channel = CollisionChannel::World;
 
     AFIELD(radioBroadcast) ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
+
+    /// Under a RigidBody, whether this is part of the body or rides along as a
+    /// body of its own. A collider on the Trigger channel always rides along:
+    /// Jolt makes a whole body a sensor or none of it.
+    AFIELD() ColliderAttach attach = ColliderAttach::Piece;
+
+    /// False takes the collider out of the simulation without removing it: no
+    /// body, no piece, never hit. For a hitbox live only during an attack.
+    AFIELD() bool enabled = true;
 };
 
 /// @brief Makes a Collider move.
@@ -191,8 +222,8 @@ struct Collider
 ACOMP(replicable, requires = {Transform, BodyState}, excludes = {Parent, Character})
 struct RigidBody
 {
-    /// Kilograms. 0 takes the mass from the shape's volume at the density of
-    /// water.
+    /// Kilograms. 0 adds up every collider of the body, each by its volume and
+    /// density; anything else scales that total to this.
     AFIELD(min = 0.0) float mass = 0.f;
 
     /// Fraction of linear speed lost per second, as though through air.

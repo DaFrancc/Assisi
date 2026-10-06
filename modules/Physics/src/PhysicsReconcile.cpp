@@ -16,6 +16,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
+#include <Assisi/Physics/ColliderRole.hpp>
 
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -99,13 +100,6 @@ bool EntityBefore(ECS::Entity a, ECS::Entity b)
     return a.index < b.index || (a.index == b.index && a.generation < b.generation);
 }
 
-/// Whether two colliders build the same shape.
-bool SameShape(const Collider &a, const Collider &b)
-{
-    return a.shape == b.shape && a.halfExtents == b.halfExtents && a.radius == b.radius &&
-           a.halfHeight == b.halfHeight && a.offsetPosition == b.offsetPosition && a.offsetRotation == b.offsetRotation;
-}
-
 JPH::EMotionType JoltMotionOf(BodyMotion motion)
 {
     if (motion == BodyMotion::Static)
@@ -118,23 +112,6 @@ JPH::EMotionType JoltMotionOf(BodyMotion motion)
 bool SameFilter(CollisionFilter a, CollisionFilter b)
 {
     return a.channel == b.channel && a.collidesWith.bits == b.collidesWith.bits;
-}
-
-JPH::RVec3 ToJolt(glm::vec3 position)
-{
-    return JPH::RVec3(position.x, position.y, position.z);
-}
-
-JPH::Vec3 ToJoltVector(glm::vec3 vector)
-{
-    return JPH::Vec3(vector.x, vector.y, vector.z);
-}
-
-/// Normalized: a hand-authored or imported rotation is often a hair off unit
-/// length, and Jolt asserts IsNormalized() when it rotates with one.
-JPH::Quat ToJolt(glm::quat rotation)
-{
-    return JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
 }
 
 } // namespace
@@ -161,57 +138,56 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
     bool complete = scene.RemovedSince<Collider>(changeCursor, scratchRemoved);
     complete = scene.RemovedSince<Character>(changeCursor, scratchRemoved) && complete;
     complete = scene.RemovedSince<ECS::Transform>(changeCursor, scratchRemoved) && complete;
-    if (complete)
+    for (const ECS::Entity entity : scratchRemoved)
     {
-        // Gone, even when it is back already: an entity revived at its own handle
-        // or a Collider removed and added again is a new life, so it gets a new
-        // body rather than the old one's motion.
-        for (const ECS::Entity entity : scratchRemoved)
+        // Gone, even when it is back already: an entity revived at its own
+        // handle or a Collider removed and added again is a new life, so it gets
+        // a new body rather than the old one's motion.
+        if (SlotFor(entity) != nullptr)
         {
-            if (SlotFor(entity) != nullptr)
-            {
-                DestroySlot(entity.index);
-                SyncEntity(entity);
-            }
+            DestroySlot(entity.index);
         }
-    }
-    else
-    {
-        // The log no longer reaches back to the last reconcile, so which ones
-        // went is unknown: every body is checked against the scene instead.
-        for (std::uint32_t index = 0; index < slots.size(); ++index)
+        if (!scene.IsAlive(entity))
         {
-            if (slots[index].kind != SlotKind::Empty)
-            {
-                SyncEntity(ECS::Entity{index, slots[index].generation});
-            }
+            ForgetIgnoredPairs(entity);
         }
     }
 
-    // A RigidBody removed changes the body's kind rather than ending it, so it
-    // is synced like an edit.
+    // Everything whose own slot, or whose parts' roles, may have changed: its
+    // physics components, its Parent link, or anything just removed. A RigidBody
+    // or a Character gained or lost turns the colliders below it into parts or
+    // back, and a Parent changed moves them between owners, so each entity
+    // brings every collider listed below it.
     scratchChanged.clear();
+    scratchChanged.insert(scratchChanged.end(), scratchRemoved.begin(), scratchRemoved.end());
     scene.ChangedSince<Collider>(changeCursor, scratchChanged);
     scene.ChangedSince<RigidBody>(changeCursor, scratchChanged);
     scene.ChangedSince<Character>(changeCursor, scratchChanged);
-    if (!scene.RemovedSince<RigidBody>(changeCursor, scratchChanged))
+    scene.ChangedSince<ECS::Parent>(changeCursor, scratchChanged);
+    complete = scene.RemovedSince<RigidBody>(changeCursor, scratchChanged) && complete;
+    complete = scene.RemovedSince<ECS::Parent>(changeCursor, scratchChanged) && complete;
+    if (!complete)
     {
+        // The log no longer reaches back to the last reconcile, so what went is
+        // unknown: every slot is checked against the scene instead.
         for (std::uint32_t index = 0; index < slots.size(); ++index)
         {
-            if (slots[index].kind == SlotKind::Body)
+            if (slots[index].kind != SlotKind::Empty)
             {
                 scratchChanged.push_back(ECS::Entity{index, slots[index].generation});
             }
         }
     }
-    // An entity whose Collider and RigidBody both changed is listed twice, and
-    // is synced once.
+    AppendPartsBelow(scratchChanged);
+
+    // An entity listed for several reasons is synced once.
     std::sort(scratchChanged.begin(), scratchChanged.end(), EntityBefore);
     scratchChanged.erase(std::unique(scratchChanged.begin(), scratchChanged.end()), scratchChanged.end());
     for (const ECS::Entity entity : scratchChanged)
     {
         SyncEntity(entity);
     }
+    SyncOwners();
 
     scratchChanged.clear();
     scene.ChangedSince<BodyState>(changeCursor, scratchChanged);
@@ -225,12 +201,65 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
     for (const ECS::Entity entity : scratchChanged)
     {
         PushTransform(entity, stepTime);
+        RePlacePiecesBelow(entity);
     }
+    // An owner whose scale changed is built again.
+    SyncOwners();
+    PlaceFollowers();
 
     StopFinishedSweeps();
     ApplyAskedStances();
 
     changeCursor = now;
+}
+
+void PhysicsWorld::Impl::SyncOwners()
+{
+    // After every part is in line, so an owner is built once from all of them
+    // whichever order they were synced in.
+    std::sort(ownersToSync.begin(), ownersToSync.end(), EntityBefore);
+    ownersToSync.erase(std::unique(ownersToSync.begin(), ownersToSync.end()), ownersToSync.end());
+    for (const ECS::Entity owner : ownersToSync)
+    {
+        SyncOwner(owner, std::find(ownersToReshape.begin(), ownersToReshape.end(), owner) != ownersToReshape.end());
+    }
+    ownersToSync.clear();
+    ownersToReshape.clear();
+}
+
+PhysicsWorld::Impl::WantedSlot PhysicsWorld::Impl::WantedFor(ECS::Entity entity) const
+{
+    if (!scene.IsAlive(entity) || !scene.Has<ECS::Transform>(entity))
+    {
+        return WantedSlot{};
+    }
+    if (scene.Has<Character>(entity))
+    {
+        return WantedSlot{ECS::NullEntity, SlotKind::Character};
+    }
+    // Built from its own Collider and its pieces once they are known.
+    if (scene.Has<RigidBody>(entity))
+    {
+        return WantedSlot{ECS::NullEntity, SlotKind::Body};
+    }
+    if (EnabledCollider(scene, entity) == nullptr)
+    {
+        return WantedSlot{};
+    }
+
+    const ColliderPlacement placement = ResolveColliderPlacement(scene, entity);
+    switch (placement.role)
+    {
+    case ColliderRole::Piece:
+        return WantedSlot{placement.owner, SlotKind::Piece};
+    case ColliderRole::Follower:
+        return WantedSlot{placement.owner, SlotKind::Follower};
+    case ColliderRole::Own:
+    case ColliderRole::Static:
+    case ColliderRole::Count:
+        break;
+    }
+    return WantedSlot{ECS::NullEntity, SlotKind::Body};
 }
 
 void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
@@ -247,55 +276,94 @@ void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
         held = nullptr;
     }
 
-    SlotKind wanted = SlotKind::Empty;
-    const Character *character = nullptr;
-    const Collider *collider = nullptr;
-    if (scene.IsAlive(entity) && scene.Has<ECS::Transform>(entity))
-    {
-        character = scene.Get<Character>(entity);
-        collider = scene.Get<Collider>(entity);
-        if (character != nullptr)
-        {
-            wanted = SlotKind::Character;
-        }
-        else if (collider != nullptr)
-        {
-            wanted = SlotKind::Body;
-        }
-    }
-
-    if (held != nullptr && held->kind != wanted)
+    const WantedSlot wanted = WantedFor(entity);
+    if (held != nullptr && (held->kind != wanted.kind || held->owner != wanted.owner))
     {
         DestroySlot(entity.index);
         held = nullptr;
     }
 
-    if (wanted == SlotKind::Body)
+    switch (wanted.kind)
     {
-        const RigidBody *rigidBody = scene.Get<RigidBody>(entity);
-        if (held == nullptr)
+    case SlotKind::Body:
+        if (scene.Has<RigidBody>(entity))
         {
-            CreateBody(entity, *collider, rigidBody);
+            ownersToSync.push_back(entity);
         }
         else
         {
-            EditBody(entity, *collider, rigidBody);
+            SyncStatic(entity, *scene.Get<Collider>(entity));
         }
+        break;
+    case SlotKind::Piece:
+        if (held == nullptr)
+        {
+            CreatePiece(entity, *scene.Get<Collider>(entity), wanted.owner);
+        }
+        else
+        {
+            EditPiece(entity, *scene.Get<Collider>(entity));
+        }
+        break;
+    case SlotKind::Follower:
+        if (held == nullptr)
+        {
+            CreateFollower(entity, *scene.Get<Collider>(entity), wanted.owner);
+        }
+        else
+        {
+            EditFollower(entity, *scene.Get<Collider>(entity));
+        }
+        break;
+    case SlotKind::Character:
+        if (held == nullptr)
+        {
+            CreateCharacter(entity, *scene.Get<Character>(entity));
+        }
+        else
+        {
+            EditCharacter(entity, *scene.Get<Character>(entity));
+        }
+        break;
+    case SlotKind::Empty:
+    case SlotKind::Count:
+        break;
     }
-    else if (wanted == SlotKind::Character)
+
+    if (scene.Has<Collider>(entity))
     {
-        if (held == nullptr)
-        {
-            CreateCharacter(entity, *character);
-        }
-        else
-        {
-            EditCharacter(entity, *character);
-        }
+        RegisterAncestors(entity);
     }
 }
 
-void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody)
+void PhysicsWorld::Impl::SyncStatic(ECS::Entity entity, const Collider &collider)
+{
+    const BodySlot *held = SlotFor(entity);
+    const bool reshape = held == nullptr || held->motion != BodyMotion::Static || !SameShape(collider, held->collider);
+    JPH::ShapeRefC shape;
+    if (reshape)
+    {
+        const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
+        const glm::vec3 worldScale = WorldScaleOf(scene, entity, transform);
+        WarnOnClampedScale(entity, collider.shape, worldScale);
+        shape = MakeColliderShape(collider, worldScale, entity);
+    }
+    if (held == nullptr)
+    {
+        CreateBody(entity, shape, collider, nullptr);
+    }
+    else
+    {
+        EditBody(entity, shape, collider, nullptr);
+    }
+    if (BodySlot *built = SlotFor(entity); built != nullptr)
+    {
+        built->ownCollider = true;
+    }
+}
+
+void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const JPH::ShapeRefC &shape, const Collider &face,
+                                    const RigidBody *rigidBody)
 {
     const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
     const Pose pose = WorldPoseOf(scene, entity, transform);
@@ -306,17 +374,16 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider
                          entity.index, entity.generation);
         return;
     }
-    const CollisionFilter filter{collider.collidesWith, collider.channel};
+    const CollisionFilter filter{face.collidesWith, face.channel};
     const BodyMotion motion = MotionOf(rigidBody);
-    const bool sensor = collider.channel == CollisionChannel::Trigger;
-    WarnOnClampedScale(entity, collider.shape, worldScale);
+    const bool sensor = face.channel == CollisionChannel::Trigger;
 
-    JPH::BodyCreationSettings settings(MakeColliderShape(collider, worldScale), ToJolt(pose.position),
-                                       ToJolt(pose.rotation), JoltMotionOf(motion), LayerFor(filter, motion));
+    JPH::BodyCreationSettings settings(shape, ToJolt(pose.position), ToJolt(pose.rotation), JoltMotionOf(motion),
+                                       LayerFor(filter, motion));
     settings.mIsSensor = sensor;
     settings.mUserData = UserDataOf(entity);
-    settings.mFriction = collider.friction;
-    settings.mRestitution = collider.restitution;
+    settings.mFriction = face.friction;
+    settings.mRestitution = face.restitution;
 
     // A static body carries no motion block. Gaining a RigidBody builds a new
     // body rather than converting this one.
@@ -357,7 +424,7 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider
 
     BodySlot &slot = SlotAt(entity);
     slot = BodySlot{};
-    slot.collider = collider;
+    slot.collider = face;
     slot.rigidBody = rigidBody != nullptr ? *rigidBody : RigidBody{};
     slot.stateTick = scene.ChangeTick<BodyState>(entity);
     slot.worldScale = worldScale;
@@ -381,7 +448,8 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider
     }
 }
 
-void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, const RigidBody *rigidBody)
+void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const JPH::ShapeRefC &shape, const Collider &face,
+                                  const RigidBody *rigidBody)
 {
     BodySlot &slot = *SlotFor(entity);
 
@@ -391,7 +459,7 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, 
     if ((motion == BodyMotion::Static) != (slot.motion == BodyMotion::Static))
     {
         DestroySlot(entity.index);
-        CreateBody(entity, collider, rigidBody);
+        CreateBody(entity, shape, face, rigidBody);
         return;
     }
 
@@ -400,35 +468,19 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, 
     const JPH::EActivation wake = moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate;
     const RigidBody tuning = rigidBody != nullptr ? *rigidBody : RigidBody{};
 
-    if (!SameShape(collider, slot.collider))
+    if (shape != nullptr)
     {
-        bodies.SetShape(slot.body, MakeColliderShape(collider, slot.worldScale), /*inUpdateMassProperties=*/ true,
-                        wake);
+        bodies.SetShape(slot.body, shape, /*inUpdateMassProperties=*/ true, wake);
     }
-    if (collider.friction != slot.collider.friction)
+    if (face.friction != slot.collider.friction)
     {
-        bodies.SetFriction(slot.body, collider.friction);
+        bodies.SetFriction(slot.body, face.friction);
     }
-    if (collider.restitution != slot.collider.restitution)
+    if (face.restitution != slot.collider.restitution)
     {
-        bodies.SetRestitution(slot.body, collider.restitution);
+        bodies.SetRestitution(slot.body, face.restitution);
     }
-
-    const CollisionFilter filter{collider.collidesWith, collider.channel};
-    if (!SameFilter(filter, slot.filter) || motion != slot.motion)
-    {
-        bodies.SetObjectLayer(slot.body, LayerFor(filter, motion));
-        {
-            // Sensor-ness is a body flag rather than part of the layer, and Jolt
-            // exposes no interface-level setter for it.
-            JPH::BodyLockWrite lock(physicsSystem.GetBodyLockInterface(), slot.body);
-            if (lock.Succeeded())
-            {
-                lock.GetBody().SetIsSensor(filter.channel == CollisionChannel::Trigger);
-            }
-        }
-        slot.filter = filter;
-    }
+    SetBodyFilter(slot, CollisionFilter{face.collidesWith, face.channel}, motion);
 
     if (moving)
     {
@@ -468,9 +520,28 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, 
         Follow(entity.index);
     }
 
-    slot.collider = collider;
+    slot.collider = face;
     slot.rigidBody = tuning;
     slot.motion = motion;
+}
+
+void PhysicsWorld::Impl::SetBodyFilter(BodySlot &slot, CollisionFilter filter, BodyMotion motion)
+{
+    if (SameFilter(filter, slot.filter) && motion == slot.motion)
+    {
+        return;
+    }
+    physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, LayerFor(filter, motion));
+    {
+        // Sensor-ness is a body flag rather than part of the layer, and Jolt
+        // exposes no interface-level setter for it.
+        JPH::BodyLockWrite lock(physicsSystem.GetBodyLockInterface(), slot.body);
+        if (lock.Succeeded())
+        {
+            lock.GetBody().SetIsSensor(filter.channel == CollisionChannel::Trigger);
+        }
+    }
+    slot.filter = filter;
 }
 
 void PhysicsWorld::Impl::ApplyMass(const JPH::BodyID &body, const RigidBody &rigidBody)
@@ -582,6 +653,18 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
     const Pose world = WorldPoseOf(scene, entity, transform);
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
 
+    // A piece moves inside its owner's shape; a follower is put where its
+    // Transform now composes to at the end of the reconcile, with the rest.
+    if (slot->kind == SlotKind::Piece || slot->kind == SlotKind::Follower)
+    {
+        if (slot->kind == SlotKind::Piece)
+        {
+            RePlacePiece(entity);
+        }
+        StampTransform(entity);
+        return;
+    }
+
     if (slot->kind == SlotKind::Character)
     {
         // A character's rotation is the way it faces, which the sweep does not
@@ -593,7 +676,8 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
             bodies.SetPosition(slot->body, ToJolt(world.position), JPH::EActivation::Activate);
 
             const FilterLayerFilter layerFilter{layers, record.queryFilter};
-            record.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
+            const OwnerBodiesFilter bodyFilter{*this, entity, /*exceptions=*/ true};
+            record.character->RefreshContacts({}, layerFilter, bodyFilter, {}, tempAlloc);
         }
         StampTransform(entity);
         return;
@@ -601,16 +685,19 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
 
     const JPH::EActivation wake =
         slot->motion == BodyMotion::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate;
-    if (scaled)
+    if (scaled && slot->motion != BodyMotion::Static)
+    {
+        // Its own collider and every piece are scaled with it, so its whole
+        // shape is built again once the reconcile's Transforms are all in.
+        ownersToSync.push_back(entity);
+        ownersToReshape.push_back(entity);
+    }
+    else if (scaled)
     {
         slot->worldScale = WorldScaleOf(scene, entity, transform);
         WarnOnClampedScale(entity, slot->collider.shape, slot->worldScale);
-        bodies.SetShape(slot->body, MakeColliderShape(slot->collider, slot->worldScale),
+        bodies.SetShape(slot->body, MakeColliderShape(slot->collider, slot->worldScale, entity),
                         /*inUpdateMassProperties=*/ true, wake);
-        if (slot->motion != BodyMotion::Static)
-        {
-            ApplyMass(slot->body, slot->rigidBody);
-        }
     }
 
     if (moved || turned)
@@ -715,9 +802,15 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
     // Everything this body was touching has stopped touching it, and the next
     // step cannot say so — the body will be gone. Build those Exits now and let
     // the next Update() deliver them.
-    EmitExitsFor(slot.body, pendingExits);
+    const ECS::Entity entity{index, slot.generation};
+    if (slot.kind != SlotKind::Piece)
+    {
+        EmitExitsFor(slot.body, pendingExits);
+    }
 
-    if (slot.kind == SlotKind::Character)
+    switch (slot.kind)
+    {
+    case SlotKind::Character:
     {
         // The CharacterVirtual owns its inner body and destroys it with itself.
         const std::map<std::uint32_t, CharacterRecord>::iterator it = characters.find(index);
@@ -726,19 +819,38 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
             characterVsCharacter.Remove(it->second.character);
             characters.erase(it);
         }
+        break;
     }
-    else
+    case SlotKind::Piece:
+        // Its owner is built again without it.
+        ownersToSync.push_back(slot.owner);
+        break;
+    case SlotKind::Body:
+    case SlotKind::Follower:
     {
         JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
         bodies.RemoveBody(slot.body);
         bodies.DestroyBody(slot.body);
-        ForgetBodyState(ECS::Entity{index, slot.generation});
+        if (slot.kind == SlotKind::Body)
+        {
+            ForgetBodyState(entity);
+        }
+        else
+        {
+            std::erase(followers, index);
+        }
+        break;
+    }
+    case SlotKind::Empty:
+    case SlotKind::Count:
+        break;
     }
 
     if (slot.followed)
     {
         std::erase(awake, index);
     }
+    UnregisterAncestors(entity, slot);
     slot = BodySlot{};
 }
 
@@ -770,7 +882,7 @@ void PhysicsWorld::Impl::DestroyAll()
     for (std::uint32_t index = 0; index < slots.size(); ++index)
     {
         const BodySlot &slot = slots[index];
-        if (slot.kind == SlotKind::Body)
+        if (slot.kind == SlotKind::Body || slot.kind == SlotKind::Follower)
         {
             bodies.RemoveBody(slot.body);
             bodies.DestroyBody(slot.body);
@@ -781,6 +893,14 @@ void PhysicsWorld::Impl::DestroyAll()
     awake.clear();
     sweptThisStep.clear();
     sweptLastStep.clear();
+    partsBelow.clear();
+    followers.clear();
+    ownersToSync.clear();
+    ownersToReshape.clear();
+
+    // Exceptions name entities, and after a clear or a rebuild those handles
+    // name other things or nothing that was meant.
+    ignoredPairs.clear();
 
     // Every pair and event names bodies that no longer exist. No Exit is emitted
     // for what was touching: nothing survives that could act on one, and a world

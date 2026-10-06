@@ -530,11 +530,10 @@ bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, boo
 
 void SceneRenderer::OnSceneReplaced()
 {
-    // Both selectors, because both hold state keyed to entities that are gone: the
-    // sun's cascades hold depth of that geometry, and the atlas holds tiles for
-    // lights that no longer exist.
-    _sunCadence.Forget();
-    _localShadowSelector.Forget();
+    // Every kept shadow, because each holds depth of geometry that is gone: the
+    // sun's cascades, and the atlas's tiles, which a light coming back at the
+    // same index and pose would otherwise keep.
+    ForgetKeptShadows();
 
     // The remembered LOD levels go with them, for the same reason and one more:
     // entity indices are reused across a load, so a level held from the old

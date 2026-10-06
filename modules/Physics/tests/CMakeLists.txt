@@ -8,7 +8,9 @@ add_executable(Assisi-Physics-Tests
   TestCharacter.cpp
   TestCharacterFeel.cpp
   TestCollisionChannels.cpp
+  TestCompoundBodies.cpp
   TestContactEvents.cpp
+  TestFollowers.cpp
   TestGameplayRequests.cpp
   TestNonFinite.cpp
   TestParentedBodies.cpp

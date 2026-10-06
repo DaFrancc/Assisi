@@ -33,6 +33,9 @@ RigidBody** to make it move.
 | `friction` | How strongly a surface sliding across this one is held back. Default 0.2. |
 | `restitution` | How much speed an impact gives back: 0 stops dead, 1 loses nothing, above 1 gains speed on every bounce. Of two touching colliders, the bouncier one counts. Impacts slower than 1 m/s don't bounce, so a resting object stays at rest. |
 | `channel`, `collidesWith` | Which collision channel this collider is on, and which channels it hits. See [Collision channels](#collision-channels). |
+| `density` | Kilograms per cubic metre. With the shape's volume, how much this collider adds to its body's mass. Default 1000, the density of water. |
+| `attach` | Under a `RigidBody`: `Piece` (default) makes it part of the body, `Body` makes it ride along as a body of its own. See [Colliders on child entities](#colliders-on-child-entities). |
+| `enabled` | Unticked, the collider is taken out of the simulation without being removed: it has no body and nothing hits it. |
 | `collisionAsset` | Reserved for cooked collision shapes. Not used yet. |
 
 The editor only shows the size fields that apply to the chosen shape.
@@ -48,7 +51,7 @@ the nearest scale it can take.
 | Field | Meaning |
 |---|---|
 | `motion` | `Dynamic`: moved by gravity, collisions and velocity. `Kinematic`: moved only by writing its `Transform`, and it pushes dynamic bodies out of its way. |
-| `mass` | Kilograms. 0 takes the mass from the shape's volume at the density of water. |
+| `mass` | Kilograms. 0 adds up every collider of the body, each by its volume and `density`. Anything else scales that total to this. |
 | `linearDamping`, `angularDamping` | Fraction of speed and spin lost per second. |
 | `gravityScale` | Multiplies gravity for this body. 0 floats. |
 | `lockedAxes` | Axes the body may not move along or turn about. Lock all three rotations to keep a body upright. |
@@ -67,10 +70,106 @@ a `Kinematic` `RigidBody` and `allowSleep` off notices bodies already at rest
 inside it, including when the volume is moved onto them, at the cost of staying
 awake.
 
+A trigger under a `RigidBody` rides along with it as a body of its own, because
+a whole body is a sensor or none of it is. See
+[Colliders on child entities](#colliders-on-child-entities).
+
+### Colliders on child entities
+
 A `RigidBody` or a `Character` cannot have a `Parent`: the simulation decides
 where it is, so it cannot also be placed relative to another entity. The editor
 refuses the combination. Anything parented *to* a body, like a camera or a
 mesh, follows it as usual.
+
+A `Collider` on a child entity takes one of three roles, decided by the first
+`RigidBody` or `Character` above it in the hierarchy:
+
+| Role | When | What it is |
+|---|---|---|
+| **Piece** | Under a `RigidBody`. | Part of that body's shape. It turns with the body and adds its volume times its `density` to the body's mass. |
+| **Follower** | Under a `Character`; on the `Trigger` channel under a `RigidBody`; or `attach` set to `Body`. | A body of its own, put where its entity is after every step. It adds no mass and collides on its own channel and mask. |
+| **Static** | Nothing above it moves. | Static geometry of its own, like any `Collider` without a `RigidBody`. |
+
+The inspector says which one a collider is under its fields: "Piece of Crate",
+"Follows Player", or "Static (no RigidBody)".
+
+A part answers for its owner. A ray that hits one reports the owner as the
+hit's `entity` and the part as its `piece`, and so does a contact event. Calls
+given a part act on its owner: `Mass`, `BodyOf`, `GetBodyPose`,
+`GetBodyState`, the forces and impulses, `IsTouching`, `Touching`, and a
+query's `ignore`. `HasBody` is false for a part, since the body is its owner's.
+
+A follower never touches or reports its own owner, or that owner's other
+followers.
+
+#### A crate with a handle
+
+The crate is the body; the handle is a child with a `Collider` of its own:
+
+```
+Crate     Transform, RigidBody, Collider (Box 0.5)
+└ Handle  Transform (0, 0.6, 0), Collider (Box 0.3 × 0.05 × 0.05)
+```
+
+The two shapes are one body. The crate falls, tips and comes to rest on
+whichever part touches the floor. Moving the handle's `Transform` moves the
+handle within the body, and the centre of mass moves with it. A `RigidBody`
+with no `Collider` of its own and only child colliders is a body too, which is
+how a table made of a top and four legs is built.
+
+Giving the base a higher `density` makes the crate bottom-heavy, so it lands
+the right way up. `RigidBody.mass` still sets an exact total when one is
+wanted.
+
+#### A character with a head
+
+```
+Player    Transform, Character
+└ Head    Transform (0, 1.6, 0), Collider (Sphere 0.15, channel Hitbox)
+```
+
+The head is a follower: it goes wherever the player goes and does not get in
+the player's way, because a character's own movement ignores its own
+followers. Something falling onto the head is stopped by it, or not, by the
+head's `collidesWith`.
+
+#### A hitbox only shots find
+
+The capsule a character moves with is a coarse shape. A shot can look for the
+finer hitboxes instead by asking for the `Hitbox` channel only:
+
+```cpp
+const Physics::CollisionFilter shot{Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Hitbox),
+                                    Physics::CollisionChannel::Visibility};
+std::optional<Physics::QueryHit> hit = world.CastRay(muzzle, aim * range, shot, shooter);
+if (hit.has_value() && hit->piece == head)
+{
+    // A headshot on hit->entity.
+}
+```
+
+Passing the shooter as `ignore` skips the shooter's own hitboxes. A shot asking
+for `Character` only finds the capsules.
+
+#### A trigger on a ball
+
+```
+Ball      Transform, RigidBody, Collider (Sphere 0.5)
+└ Pickup  Transform, Collider (Sphere 1.5, channel Trigger)
+```
+
+The pickup radius follows the ball and reports what enters it as contact
+events for the ball, with the pickup as the event's `piece`. The ball stays
+solid: only the pickup's own body is a sensor. The pickup never reports the
+ball itself.
+
+#### Two bodies that should not collide
+
+Channels and masks decide which kinds of thing collide. For one pair that
+should not, like a projectile and the character that fired it, call
+`IgnoreCollision(a, b)`; `IgnoreCollision(a, b, false)` undoes it. Naming a
+part names its owner, so the exception covers every part of both. It lasts
+until it is undone or either entity is destroyed.
 
 ### Collision channels
 
@@ -266,7 +365,9 @@ for (auto [entity, state] : scene.QueryMut<Physics::BodyState>())
 | `GetBodyState(entity)` | The velocities and sleep, straight from physics rather than from the last step's `BodyState`. |
 | `GetBodyPose(entity)` | The body's world `position` and `rotation`, straight from physics. |
 | `Mass(entity)` | The body's mass in kilograms. 0 for a body nothing can push. |
-| `HasBody(entity)` | Whether the entity has a body or a character yet. |
+| `HasBody(entity)` | Whether the entity has a body or a character of its own yet. False for a piece or a follower. |
+| `BodyOf(entity)` | The entity whose body a collider answers for: itself, or the owner of a piece or a follower. |
+| `IgnoreCollision(a, b)` | Stops two bodies colliding with or reporting each other. See [Two bodies that should not collide](#two-bodies-that-should-not-collide). |
 | `SetGravity(gravity)` | Changes gravity for the whole world. The default points down. |
 
 An entity added this step gets its body at the start of the next one. Call
@@ -315,7 +416,7 @@ has to look at the side it cares about. An event has:
 | `normal` | Points away from `other`'s surface. |
 | `velocity` | `entity`'s velocity just before the impact, before the solver slowed it. |
 | `sensor` | Whether either side is a trigger. |
-| `piece`, `otherPiece` | The entities whose colliders touched. The same as `entity` and `other` for now. |
+| `piece`, `otherPiece` | The entities whose colliders touched: the part of `entity`, and of `other`, that did. The same as `entity` and `other` for a body made of one collider. |
 
 Give each behaviour its own small system that checks for its own component,
 like `Window` above. Each one walks only that step's events, which are few.
