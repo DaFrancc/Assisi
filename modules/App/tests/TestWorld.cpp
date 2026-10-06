@@ -46,7 +46,7 @@ using Assisi::App::Test::StartContext;
 
 TEST_CASE("WorldManager generates unique names from the label")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &a = worlds.Create("Main");
     World &b = worlds.Create("Main");
 
@@ -62,7 +62,7 @@ TEST_CASE("World addresses survive creating and destroying other worlds")
 {
     // EditHistory and the panels hold references into a world for the whole
     // session; reseating one would dangle them.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &kept = worlds.Create("Kept");
     kept.levelPath = "levels/A.alvl";
 
@@ -85,7 +85,7 @@ TEST_CASE("World addresses survive creating and destroying other worlds")
 
 TEST_CASE("ForEach visits worlds in creation order")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     const std::string first = worlds.Create("A").name;
     const std::string second = worlds.Create("B").name;
     const std::string third = worlds.Create("C").name;
@@ -97,7 +97,7 @@ TEST_CASE("ForEach visits worlds in creation order")
 
 TEST_CASE("A world holding a role cannot be destroyed")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &active = worlds.Create("Active");
     World &edited = worlds.Create("Edited");
     World &spare = worlds.Create("Spare");
@@ -121,7 +121,7 @@ TEST_CASE("Active and edited are independent roles")
 {
     // The point of the split: the game travels (active moves) while the editor
     // keeps saving/undoing into the level the author opened (edited stays).
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &authored = worlds.Create("Authored");
     World &travelled = worlds.Create("Travelled");
 
@@ -160,7 +160,7 @@ TEST_CASE("Resident worlds share one physics thread pool")
     // there the pool is deliberately Jolt's single-threaded job system.
     [[maybe_unused]] const std::size_t baseline = ThreadCount();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     worlds.Create("First"); // brings the shared Jolt runtime up
     const std::size_t afterFirst = ThreadCount();
 
@@ -189,7 +189,7 @@ TEST_CASE("Resident worlds share one physics thread pool")
 
 TEST_CASE("DestroyAllExcept keeps one world and gives it both roles")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &keep = worlds.Create("Keep");
     worlds.SetActive(keep);
     worlds.SetEdited(keep);
@@ -231,7 +231,7 @@ TEST_CASE("An unrendered world's transforms follow its physics")
 {
     // Every step writes its poses into the Transforms, so a world that simulates
     // without being drawn needs nothing more.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Falling");
 
     const Assisi::ECS::Entity entity = SpawnBox(world, {0.f, 10.f, 0.f}, kUnitBox, /*isStatic=*/ false);
@@ -250,7 +250,7 @@ TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
     // The editor's Stop puts every entity back at its own handle and calls this:
     // a body still falling when play stopped must not still be falling when
     // play starts again.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Restarted");
     const glm::vec3 spawn{0.f, 10.f, 0.f};
     const Assisi::ECS::Entity entity = SpawnBox(world, spawn, kUnitBox, /*isStatic=*/ false);
@@ -274,7 +274,7 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     // Two levels resident at once must be two physics spaces, not one shared one:
     // a floor in world B must not catch world A's falling body, and destroying
     // either must leave the other's simulation untouched.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &falling = worlds.Create("Falling");
     World &caught = worlds.Create("Caught");
     worlds.SetActive(falling);
@@ -342,7 +342,7 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
     writeLevel("A.alvl", 3);
     writeLevel("B.alvl", 7);
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &authored = worlds.Create("Main");
     worlds.SetActive(authored);
     worlds.SetEdited(authored);
@@ -394,7 +394,7 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
 
 TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destination")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &src = worlds.Create("Src");
     World &dst = worlds.Create("Dst");
     worlds.SetActive(src);
@@ -470,7 +470,7 @@ TEST_CASE("Migrating an entity out from under a ref nulls that ref")
     // A child whose parent stays behind: migrate the child alone, and its Parent
     // ref — now pointing outside the migrated set — must resolve to null in the
     // destination rather than to some unrelated destination entity.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &src = worlds.Create("Src");
     World &dst = worlds.Create("Dst");
 
@@ -499,7 +499,7 @@ TEST_CASE("A migrated entity does not land on a name the destination already use
     // copies the Name across with every other component. The arriving
     // entity is what steps aside; the resident is what that world already
     // addresses by name.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &src = worlds.Create("Src");
     World &dst = worlds.Create("Dst");
 
@@ -543,7 +543,7 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
 
     Assisi::Core::JobSystem jobs;
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
@@ -618,7 +618,7 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
     }
 
     Assisi::Core::JobSystem jobs;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
@@ -645,7 +645,7 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
 
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     const World &world = worlds.Create();
 
     CHECK(world.state == WorldState::Loading);
@@ -687,7 +687,7 @@ TEST_CASE("A level's system list decides which systems its world runs")
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &named = worlds.Create("Named");
     World &unnamed = worlds.Create("Unnamed");
 
@@ -710,7 +710,7 @@ TEST_CASE("Two worlds naming one system hold independent state")
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &first = worlds.Create("First");
     World &second = worlds.Create("Second");
 
@@ -731,7 +731,7 @@ TEST_CASE("A name this build does not declare fails the load instead of running 
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Typo");
 
     // Nothing is installed, not even the names that *were* valid: a half-installed
@@ -746,7 +746,7 @@ TEST_CASE("The list is a union: naming a system twice installs it once")
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Doubled");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter", "Counter"}, "(test)"));
@@ -762,7 +762,7 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Ordered");
 
     // Named the wrong way round on purpose. Follower declares `after = "Counter"`,
@@ -779,7 +779,7 @@ TEST_CASE("A render system's after/before survives the install")
 {
     Assisi::App::Test::RunOrder::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("RenderOrdered");
 
     // Named the wrong way round, as the Update pair above is: DrawLate declares
@@ -798,7 +798,7 @@ TEST_CASE("Re-applying a list replaces the previous systems rather than stacking
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Reused");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "(test)"));
@@ -820,7 +820,7 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
     // drains one line after the work that frees worlds.
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &doomed = worlds.Create("Doomed");
     World &survivor = worlds.Create("Survivor");
 
@@ -848,7 +848,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     Assisi::Core::EventQueue events;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Retargeted");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "levels/Old.alvl"));
@@ -873,7 +873,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     // blueprints of their behaviour.
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Refused");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "levels/Live.alvl"));
@@ -894,7 +894,7 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     // entry, so a repeat corrupts the ordering graph.
     Assisi::App::Test::RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Spawned");
     REQUIRE(worlds.ApplySystems(world, {}, "levels/Empty.alvl"));
 
@@ -956,7 +956,7 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
     // iterate the resident worlds, skip the ones that are not Active+simulate,
     // and mark the active one so ActiveWorldOnly systems can opt out of the rest.
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     Assisi::App::Test::RunCounts::Instance().Reset();
 
@@ -1003,7 +1003,7 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     // ticking logic while the editor reads Paused. The host's play state is a
     // second, independent gate (EditorApp::OnFixedUpdate/OnUpdate).
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     Assisi::App::Test::RunCounts::Instance().Reset();
 
@@ -1065,7 +1065,7 @@ TEST_CASE("Travelling from inside a system is refused, and deferred travel repla
     writeLevel("A.alvl");
     writeLevel("B.alvl");
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &start = worlds.Create("Main");
     worlds.SetActive(start);
     start.state = WorldState::Active;
@@ -1125,7 +1125,7 @@ TEST_CASE("A background load's systems are installed when it is promoted")
     }
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     World &start = worlds.Create("Main");
@@ -1169,7 +1169,7 @@ TEST_CASE("A refused preload names the level that asked for the missing system")
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "Bad.alvl", header));
     }
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &start = worlds.Create("Main");
     worlds.SetActive(start);
     start.state = WorldState::Active;

@@ -19,6 +19,7 @@
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Geometry/CollisionData.hpp>
 
 #include <Jolt/Jolt.h>
 
@@ -83,19 +84,6 @@ inline ECS::Entity EntityOfUserData(JPH::uint64 userData)
 {
     const JPH::uint64 packed = ~userData;
     return ECS::Entity{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull), static_cast<std::uint32_t>(packed >> 32)};
-}
-
-/// The entity whose Collider made the leaf shape @p subShape names on @p body,
-/// or the body's own entity when the leaf names none: a character's capsule,
-/// or a shape built for a query.
-///
-/// Every collider shape carries its entity in the leaf's user data, which Jolt
-/// reads through compounds, scales and offsets alike, so a part of a compound
-/// body answers for itself.
-inline ECS::Entity PieceOf(const JPH::Body &body, const JPH::SubShapeID &subShape)
-{
-    const ECS::Entity piece = EntityOfUserData(body.GetShape()->GetSubShapeUserData(subShape));
-    return piece != ECS::NullEntity ? piece : EntityOfUserData(body.GetUserData());
 }
 
 /// Two entities, in either order: one IgnoreCollision exception.
@@ -473,8 +461,33 @@ inline JPH::Quat ToJolt(glm::quat rotation)
     return JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
 }
 
+/// Every degree of freedom, as LockedAxis bits.
+constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count)) - 1u;
+
+/// The motion a body is built with: static without a RigidBody, and kinematic
+/// when every axis is locked, since Jolt cannot simulate a body with no freedom
+/// left and one that may not move is moved only by its Transform.
+inline BodyMotion MotionOf(const RigidBody *rigidBody)
+{
+    if (rigidBody == nullptr)
+    {
+        return BodyMotion::Static;
+    }
+    if (rigidBody->motion == MotionType::Kinematic || (rigidBody->lockedAxes.bits & kAllAxes) == kAllAxes)
+    {
+        return BodyMotion::Kinematic;
+    }
+    return BodyMotion::Dynamic;
+}
+
 /// Whether two colliders build the same shape, mass included.
 bool SameShape(const Collider &a, const Collider &b);
+
+/// Whether @p shape is built from a model rather than being a primitive.
+inline bool IsModelShape(ColliderShape shape)
+{
+    return shape == ColliderShape::Convex || shape == ColliderShape::Mesh;
+}
 
 /// The world matrix @p entity's Transform is relative to, composed from the
 /// local poses up its Parent chain: the simulation pose, not the drawn one the
@@ -499,16 +512,34 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale);
 /// is worth a warning: rounding in a composed parent scale is not a mistake.
 constexpr float kScaleClampTolerance = 1e-4f;
 
-/// The same primitive, at ClampedShapeScale(@p scale).
-JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity);
+/// Places @p base by @p collider's offset at @p scale, wrapping it only in what
+/// differs from no scale and no offset.
+JPH::ShapeRefC PlaceShape(const JPH::ShapeRefC &base, const Collider &collider, glm::vec3 scale, glm::vec3 valid);
 
-/// The whole shape a Collider builds at @p scale: its primitive at the
-/// clamped scale, moved and turned by its offset, the offset scaled with it.
-JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity);
+/// The mass a moving body built of @p shape is given: the shape's own, or for
+/// a shape with no volume of its own — a triangle mesh on a kinematic body — a
+/// solid box of its bounds at the density of water, since Jolt refuses a moving
+/// body of no mass.
+JPH::MassProperties MassOfShape(const JPH::Shape &shape);
 
-/// The Collider @p entity carries if it takes part in the simulation: present
-/// and enabled.
+/// The Collider @p entity carries if it is present and enabled.
 const Collider *EnabledCollider(const ECS::Scene &scene, ECS::Entity entity);
+
+/// What a world keeps about one shape it built from a model.
+struct CookedShapeKey
+{
+    Core::AssetId asset;
+    float density = 0.f;
+    std::int32_t piece = kAllCollisionPieces;
+    ColliderShape shape = ColliderShape::Convex;
+
+    friend bool operator==(const CookedShapeKey &, const CookedShapeKey &) = default;
+};
+
+struct CookedShapeKeyHash
+{
+    std::size_t operator()(const CookedShapeKey &key) const noexcept;
+};
 
 // ---------------------------------------------------------------------------
 // Impl
@@ -520,7 +551,7 @@ struct PhysicsWorld::Impl
        constructor allocates through Jolt, and releases it after they are gone. */
     JoltRuntimeRef jolt;
 
-    explicit Impl(ECS::Scene &owner) : scene(owner) {}
+    Impl(ECS::Scene &owner, const CollisionSource &source) : scene(owner), collision(source) {}
 
     static constexpr uint32_t kMaxBodyPairs = 65536;
     static constexpr uint32_t kMaxContactConstraints = 10240;
@@ -549,6 +580,68 @@ struct PhysicsWorld::Impl
     JPH::PhysicsSystem physicsSystem;
 
     ECS::Scene &scene;
+    const CollisionSource &collision;
+
+    // --- Shapes (PhysicsWorld.cpp, and from models PhysicsCook.cpp) ------------
+    //
+    // A shape built from a model is shared: by every collider naming the same
+    // model, piece, kind and density, at any scale, which a wrapper of each
+    // collider's own carries. Shared means it cannot name an entity in its
+    // leaves as a primitive does; a part built of one is named by its child of
+    // the owner's compound instead (see PieceOf).
+    //
+    // The caches are filled on first use and only read afterwards, between
+    // steps, so a const query may fill them.
+
+    /// Every model read so far, or nullopt for one that could not be.
+    mutable std::unordered_map<Core::AssetId, std::optional<Geometry::CollisionModel>> models;
+
+    /// Every shape built from a model so far, or null for one that could not be.
+    mutable std::unordered_map<CookedShapeKey, JPH::ShapeRefC, CookedShapeKeyHash> cooked;
+
+    /// The edges of each shape built from a model that has been drawn, as
+    /// CollisionAssetEdges gives them.
+    mutable std::unordered_map<CookedShapeKey, std::vector<glm::vec3>, CookedShapeKeyHash> outlines;
+
+    /// The key @p collider's model shape is cached under.
+    static CookedShapeKey CookedKeyOf(const Collider &collider);
+
+    /// The model @p asset names, read on first use, or null.
+    const Geometry::CollisionModel *ModelOf(Core::AssetId asset) const;
+
+    /// The shared shape @p collider builds from its model, unscaled and without
+    /// its offset, built on first use. Null when it cannot be built; the reason
+    /// is logged once.
+    JPH::ShapeRefC CookedShapeFor(const Collider &collider) const;
+
+    /// The whole shape @p collider builds at @p scale: its primitive or its
+    /// model's shape at the scale it can take, moved and turned by its offset,
+    /// the offset scaled with it. A primitive's leaf names @p entity. Null when
+    /// a model's shape cannot be built.
+    JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity) const;
+
+    /// The scale @p collider's shape is built at for a requested @p scale.
+    glm::vec3 ClampedScale(const Collider &collider, glm::vec3 scale) const;
+
+    /// @p collider as a body moving as @p motion builds it: a Mesh on a dynamic
+    /// body becomes Convex, with an error naming @p entity, since a triangle
+    /// mesh has no volume to move under forces with.
+    Collider AsBuilt(ECS::Entity entity, const Collider &collider, BodyMotion motion) const;
+
+    /// The Collider @p entity carries if it takes part in the simulation:
+    /// present, enabled, and, for a model's shape, buildable.
+    const Collider *UsableCollider(ECS::Entity entity) const;
+
+    /// The entity whose Collider made the part @p subShape names on @p body.
+    ///
+    /// A child of an owner's compound carries the index of its entity, plus
+    /// one, in its compound user data, since the 32 bits there cannot hold a
+    /// whole handle; the slot at that index gives the generation. Any other
+    /// leaf names its entity in its own user data, and a leaf that names none —
+    /// a character's capsule, a shared model's piece, a query's shape — is the
+    /// body's own. Safe from Jolt's jobs: the slots are not resized during a
+    /// step.
+    ECS::Entity PieceOf(const JPH::Body &body, const JPH::SubShapeID &subShape) const;
 
     /// The Transform values this world last wrote to an entity, or found there
     /// when it last pushed them to the body, and the change tick they carried.
@@ -743,6 +836,14 @@ struct PhysicsWorld::Impl
     JPH::ShapeRefC MakeOwnerShape(ECS::Entity owner, const Collider *own, std::span<const ECS::Entity> pieces,
                                   glm::vec3 scale, JPH::Ref<JPH::MutableCompoundShape> &compound);
 
+    /// Whether @p own or any of @p pieces is a Mesh, whose shape depends on
+    /// whether its body is dynamic.
+    bool HoldsMesh(const Collider *own, std::span<const ECS::Entity> pieces) const;
+
+    /// A Piece's `subShape` when its shape could not be built, so it has no
+    /// child of the compound to move.
+    static constexpr uint32_t kNoChild = ~0u;
+
     /// The Piece slots below @p owner that belong to it, in entity order.
     void PiecesOf(ECS::Entity owner, std::vector<ECS::Entity> &out) const;
 
@@ -927,9 +1028,9 @@ private:
     /// one, from the shape's volume otherwise.
     void ApplyMass(const JPH::BodyID &body, const RigidBody &rigidBody);
 
-    /// Logs that @p entity's @p shape cannot take @p scale and is built at the
-    /// nearest scale it can. Called where a scale is applied, not every step.
-    void WarnOnClampedScale(ECS::Entity entity, ColliderShape shape, glm::vec3 scale) const;
+    /// Logs that @p entity's @p collider cannot take @p scale and is built at
+    /// the nearest scale it can. Called where a scale is applied, not every step.
+    void WarnOnClampedScale(ECS::Entity entity, const Collider &collider, glm::vec3 scale) const;
 
     void CreateCharacter(ECS::Entity entity, const Character &character);
 
@@ -1121,6 +1222,10 @@ private:
     ECS::Entity PieceStruck(const JPH::BodyID &body, const JPH::SubShapeID &subShape) const;
 
     /// Sweeps @p collider from @p start along @p sweep into @p hits.
+    /// The shape a query with @p collider uses, unscaled, or null when its
+    /// model cannot be built. A Mesh is used as its Convex shape.
+    JPH::ShapeRefC QueryShapeOf(const Collider &collider) const;
+
     void CollectShapeCast(const Collider &collider, const Pose &start, glm::vec3 sweep, ECS::Entity ignore,
                           JPH::CastShapeCollector &hits) const;
 

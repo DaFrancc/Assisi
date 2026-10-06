@@ -94,8 +94,13 @@ enum class StartProgress : std::uint8_t
 /// keeps in step with, and ECS::Scene is pinned.
 struct World
 {
+    /// @param collision  Where the world's physics reads collision models from.
+    ///                   Must outlive the world.
     /// @param maxBodies  The most physics bodies the world holds.
-    explicit World(uint32_t maxBodies = Physics::kDefaultMaxBodies) : physics(scene, maxBodies) {}
+    explicit World(const Physics::CollisionSource &collision, uint32_t maxBodies = Physics::kDefaultMaxBodies)
+        : physics(scene, collision, maxBodies)
+    {
+    }
     ~World() = default;
 
     World(const World &) = delete;
@@ -290,7 +295,9 @@ void RemoveScreen(World &world, Mondrian::Screen &screen);
 class WorldManager
 {
 public:
-    WorldManager() = default;
+    /// @param collision  Where every world it creates reads collision models
+    ///                   from. Must outlive the manager.
+    explicit WorldManager(const Physics::CollisionSource &collision) : _collision(&collision) {}
 
     /// Waits out any in-flight background load before the worlds are destroyed —
     /// a worker must never be left writing into freed scene/physics.
@@ -616,6 +623,7 @@ private:
     World *_edited = nullptr;
     std::uint32_t _nextId = 1;
     Services _services;
+    const Physics::CollisionSource *_collision;
 
     /// See SetSimulateFrom. Begin by default, which is how every world behaved
     /// before the policy existed.

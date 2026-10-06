@@ -86,7 +86,7 @@ glm::vec3 CharacterPosition(ECS::Scene &scene)
 TEST_CASE("Jumping from the ground leaves it, and jumping again in the air does not")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -117,7 +117,7 @@ TEST_CASE("Coyote time lets a jump fire just after walking off a ledge")
     const auto jumpedAfterLeaving = [](float coyoteTime, int32_t stepsInAir)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
         // A ledge ending at x = 0, with nothing beyond it.
         (void)SpawnFloor(scene, world, {-2.f, -0.5f, 0.f}, {2.f, 0.5f, 5.f});
@@ -160,7 +160,7 @@ TEST_CASE("A jump asked for just before landing fires on the landing step")
     const auto landedJumping = [](float bufferTime)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         Physics::Character descriptor{};
@@ -200,7 +200,7 @@ TEST_CASE("airAcceleration decides whether a jump can be steered")
     const auto driftAfterJump = [](float airAcceleration)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         Physics::Character descriptor{};
@@ -240,7 +240,7 @@ TEST_CASE("groundAcceleration decides how quickly walking speed is reached")
     const auto speedAfterOneStep = [](float groundAcceleration)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         Physics::Character descriptor{};
@@ -265,7 +265,7 @@ TEST_CASE("groundAcceleration decides how quickly walking speed is reached")
 TEST_CASE("With the defaults a character reaches its walk speed in about an eighth of a second")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const Physics::Character descriptor{};
@@ -291,7 +291,7 @@ TEST_CASE("With the defaults a character reaches its walk speed in about an eigh
 TEST_CASE("Friction stops a character from walk speed in under half a second, and firmly")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const Physics::Character descriptor{};
@@ -323,7 +323,7 @@ TEST_CASE("Friction stops a character from walk speed in under half a second, an
 TEST_CASE("Holding one direction in the air never passes the air cap")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     // No floor and no gravity: airborne for as long as the case runs.
     Physics::Character descriptor{};
@@ -344,7 +344,7 @@ TEST_CASE("Holding one direction in the air never passes the air cap")
 TEST_CASE("Turning the requested direction in the air gains speed past the air cap")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     Physics::Character descriptor{};
     descriptor.gravityScale = 0.f;
@@ -371,7 +371,7 @@ TEST_CASE("The bunny-hop policy decides how much speed a jump leaves the ground 
     const auto takeOffSpeed = [](Physics::BunnyHopPolicy policy)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         Physics::Character descriptor{};
@@ -417,7 +417,7 @@ TEST_CASE("Under the Boost policy a jump slows a character facing its travel and
     const auto takeOffSpeed = [](glm::vec3 facing)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         Physics::Character descriptor{};
@@ -457,7 +457,7 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
     const auto distanceWalked = [](int32_t stepsPerSecond)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         const Physics::Character descriptor{};
@@ -494,7 +494,7 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
     const auto speedPartWayUp = [](int32_t stepsPerSecond)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         const Physics::Character descriptor{};
@@ -518,7 +518,7 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
 TEST_CASE("The eye eases down when crouching on the ground")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const Physics::Character descriptor{};
@@ -543,7 +543,7 @@ TEST_CASE("gravityScale changes how fast a character falls")
     const auto fallAfter = [](float gravityScale, int32_t steps)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
         Physics::Character descriptor{};
         descriptor.gravityScale = gravityScale;

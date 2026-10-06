@@ -11,7 +11,12 @@
 /// the cooked source instead.
 
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Physics/CollisionSource.hpp>
 #include <Assisi/Render/AssetSource.hpp>
+
+#include <functional>
+#include <optional>
+#include <string>
 
 namespace Assisi::Core
 {
@@ -51,6 +56,24 @@ private:
   [[nodiscard]] bool UsedAsOtherThan(const Core::AssetId &id, Core::AssetKindId kind) const;
 
   const Core::AssetDatabase *_database;
+};
+
+/// @brief Collision models imported from the source glTF on every read, so a
+///        model saved in a modelling tool is what the next read sees.
+class SourceCollisionSource final : public Physics::CollisionSource
+{
+public:
+    /// The virtual path of an asset id, or nullopt for one that is unknown.
+    using PathOf = std::function<std::optional<std::string>(Core::AssetId)>;
+
+    /// @param pathOf names each id's file. Called from whichever thread reads a
+    ///        model, so it must be safe to call from several at once.
+    explicit SourceCollisionSource(PathOf pathOf) noexcept : _pathOf(std::move(pathOf)) {}
+
+    [[nodiscard]] std::optional<Geometry::CollisionModel> Load(Core::AssetId id) const override;
+
+private:
+    PathOf _pathOf;
 };
 
 } // namespace Assisi::Editor

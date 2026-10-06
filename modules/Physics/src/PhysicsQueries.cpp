@@ -12,6 +12,8 @@
 
 #include "PhysicsInternal.hpp"
 
+#include <Assisi/Core/Logger.hpp>
+
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
@@ -157,13 +159,30 @@ QueryHit PhysicsWorld::Impl::OverlapHit(const JPH::CollideShapeResult &result) c
     return hit;
 }
 
+JPH::ShapeRefC PhysicsWorld::Impl::QueryShapeOf(const Collider &collider) const
+{
+    if (collider.shape != ColliderShape::Mesh)
+    {
+        return MakeColliderShape(collider, glm::vec3(1.f), ECS::NullEntity);
+    }
+    Core::Log::Warn("PhysicsWorld: a query was given a Mesh collider; a triangle mesh cannot be swept or tested "
+                    "for overlap, so its model's Convex shape is used.");
+    Collider convex = collider;
+    convex.shape = ColliderShape::Convex;
+    return MakeColliderShape(convex, glm::vec3(1.f), ECS::NullEntity);
+}
+
 void PhysicsWorld::Impl::CollectShapeCast(const Collider &collider, const Pose &start, glm::vec3 sweep,
                                           ECS::Entity ignore, JPH::CastShapeCollector &hits) const
 {
     // Named, not a temporary in the call below: RShapeCast keeps a bare pointer to
     // the shape, so a ShapeRefC that died at the end of that expression would
     // leave the cast pointing at freed memory.
-    const JPH::ShapeRefC swept = MakeColliderShape(collider, glm::vec3(1.f), ECS::NullEntity);
+    const JPH::ShapeRefC swept = QueryShapeOf(collider);
+    if (swept == nullptr)
+    {
+        return;
+    }
     const JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(swept, JPH::Vec3::sReplicate(1.f),
                                                                       WorldTransformOf(start),
                                                                       JPH::Vec3(sweep.x, sweep.y, sweep.z));
@@ -188,7 +207,11 @@ void PhysicsWorld::Impl::CollectOverlap(const Collider &collider, const Pose &at
     // Jolt places the shape by its centre of mass, which an offset collider has
     // away from its entity's origin; placed by the origin, the offset would be
     // undone.
-    const JPH::ShapeRefC held = MakeColliderShape(collider, glm::vec3(1.f), ECS::NullEntity);
+    const JPH::ShapeRefC held = QueryShapeOf(collider);
+    if (held == nullptr)
+    {
+        return;
+    }
     const JPH::RMat44 centreOfMass = WorldTransformOf(at).PreTranslated(held->GetCenterOfMass());
     physicsSystem.GetNarrowPhaseQuery().CollideShape(held, JPH::Vec3::sReplicate(1.f), centreOfMass, settings,
                                                      JPH::RVec3::sZero(), hits, {}, layerFilter, bodyFilter);

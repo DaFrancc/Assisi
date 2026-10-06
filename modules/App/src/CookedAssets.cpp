@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/AssetProvider.hpp>
 #include <Assisi/Core/CookedPayload.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Image/CookedTexture.hpp>
 
 namespace Assisi::App
@@ -107,6 +108,28 @@ std::expected<Core::AssetId, Render::AssetLoadError> CookedAssetSource::Resolve(
 std::string CookedAssetSource::Describe(const Core::AssetId &id) const
 {
     return id.ToString();
+}
+
+std::optional<Geometry::CollisionModel> CookedCollisionSource::Load(Core::AssetId id) const
+{
+    if (_provider == nullptr)
+    {
+        Core::Log::Warn("Physics: model {} cannot be read - no content package is mounted.", id.ToString());
+        return std::nullopt;
+    }
+    const std::expected<std::vector<std::byte>, Core::AssetError> bytes = _provider->Open(id);
+    if (!bytes)
+    {
+        Core::Log::Warn("Physics: model {} cannot be read ({}).", id.ToString(), Core::Describe(bytes.error()));
+        return std::nullopt;
+    }
+    const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> mesh = Geometry::ReadCookedMesh(*bytes);
+    if (!mesh)
+    {
+        Core::Log::Warn("Physics: asset {} is not a model ({}).", id.ToString(), Geometry::ToString(mesh.error()));
+        return std::nullopt;
+    }
+    return Geometry::CollisionModelOf(mesh->mesh);
 }
 
 } // namespace Assisi::App

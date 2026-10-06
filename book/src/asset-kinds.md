@@ -6,8 +6,11 @@ have several **formats**, the file types that encode it: a sound can be a
 `.wav`, a `.flac` or an `.ogg`.
 
 The engine has kinds of its own: meshes, textures, materials, levels, shaders,
-fonts and screens. A module can add more without changing the engine. This page
-shows how to add one, and how a file says which kind it is.
+fonts and screens. A mesh also carries the collision its file authors, so there
+is no separate collision kind; see
+[Collision from a model](physics-model-collision.md). A module can add
+more kinds without changing the engine. This page shows how to add one, and how
+a file says which kind it is.
 
 ## Which kind a file is
 

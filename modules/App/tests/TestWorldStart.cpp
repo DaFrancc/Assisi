@@ -82,7 +82,7 @@ TEST_CASE("A loaded level begins once, before it has stepped")
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -101,7 +101,7 @@ TEST_CASE("A starting world's systems reach the asset store the host installed")
 
     Assisi::Core::EventQueue events;
     Assisi::Core::AssetStore store;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     worlds.SetServices({.cache = nullptr, .renderer = nullptr, .jobs = nullptr, .events = &events, .assets = &store});
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -118,7 +118,7 @@ TEST_CASE("Begin does not fire a second time, however often the world is settled
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -138,7 +138,7 @@ TEST_CASE("A world settles once its assets stop pending, and not before")
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -166,7 +166,7 @@ TEST_CASE("The simulate-from policy decides when the clock starts, not which pha
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
     worlds.SetSimulateFrom(SimulateFrom::Loaded);
 
@@ -190,7 +190,7 @@ TEST_CASE("Under the Begin policy the world is simulating from the first tick")
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
     worlds.SetSimulateFrom(SimulateFrom::Begin);
 
@@ -209,7 +209,7 @@ TEST_CASE("Travel begins the destination without re-running the world it left")
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const inA = worlds.LoadLevel("levels/A.alvl");
@@ -236,7 +236,7 @@ TEST_CASE("A blueprint's systems begin at the drain that installs them")
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -265,7 +265,7 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -308,7 +308,7 @@ TEST_CASE("A world's screens are destroyed with it")
     Assisi::Core::EventQueue events;
     Assisi::Mondrian::Ui ui{events};
     {
-        WorldManager worlds;
+        WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
         World &world = worlds.Create("Doomed");
         AddScreen(world,
                   std::make_unique<Assisi::Mondrian::Screen>(ui, Assisi::Mondrian::ScreenTraits{},
@@ -336,7 +336,7 @@ TEST_CASE("A world's one-shot systems can build its screens again after its mark
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, events);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
@@ -375,7 +375,7 @@ TEST_CASE("A world that never begins runs no one-shot systems")
     // started. Level-start logic must not touch a scene somebody is composing.
     RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Authored");
     world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Started"}, "levels/Authored.alvl"));
@@ -397,7 +397,7 @@ TEST_CASE("Re-applying a world's systems lets it begin again")
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue events;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Replayed");
     world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Started"}, "levels/A.alvl"));
@@ -422,7 +422,7 @@ TEST_CASE("Clearing the run marks alone lets a world begin again")
     // keep their marks, and never begin again however often Play was pressed.
     RunCounts::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Remarked");
     world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Started"}, "levels/A.alvl"));
@@ -442,7 +442,7 @@ TEST_CASE("One-shot systems honour their ordering")
     RunCounts::Instance().Reset();
     RunOrder::Instance().Reset();
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Ordered");
     world.state = WorldState::Active;
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"StartedLate", "Started"}, "levels/Ordered.alvl"));

@@ -9,6 +9,7 @@ Assisi_apply_defaults(Assisi-Editor)
 
 target_sources(Assisi-Editor
   PUBLIC
+    "include/Assisi/Editor/ColliderBlueprint.hpp"
     "include/Assisi/Editor/ColliderPose.hpp"
     "include/Assisi/Editor/EditHistory.hpp"
     "include/Assisi/Editor/EditorApp.hpp"
@@ -25,6 +26,7 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/ThumbnailCache.hpp"
     "include/Assisi/Editor/WireShapes.hpp"
   PRIVATE
+    "src/ColliderBlueprint.cpp"
     "src/ColliderPose.cpp"
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
@@ -36,6 +38,7 @@ target_sources(Assisi-Editor
     "src/EditorCamera.cpp"
     "src/EditorCameraPaths.cpp"
     "src/EditorChiaraPanel.cpp"
+    "src/EditorColliderBlueprint.cpp"
     "src/EditorColliders.cpp"
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"

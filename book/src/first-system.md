@@ -6,7 +6,9 @@ A **system** is a plain C++ function that the engine calls for you, for example
 once per frame. You declare it with the `ASYSTEM` annotation, and a level turns
 it on by naming it.
 
-## Step 1: create the files
+## Try it: a system that spins objects
+
+### Step 1: create the files
 
 Make a new folder `apps/game/src/Tutorial/` with two files in it.
 
@@ -62,7 +64,7 @@ void SpinSystem(Assisi::App::SystemContext &ctx)
 write. The build finds both files because they're in `src/`, and finds the
 system because of the `ASYSTEM` annotation.
 
-## Step 2: build
+### Step 2: build
 
 Use the same build command as in [Installation](installation.md). For example,
 on Linux with GCC:
@@ -77,7 +79,7 @@ On Windows:
 make msvc-dev
 ```
 
-## Step 3: turn it on in a level
+### Step 3: turn it on in a level
 
 A system only runs in levels that list it. That way a menu level doesn't run
 your gameplay code, and you can switch behavior on and off per level.

@@ -79,7 +79,7 @@ TEST_CASE("A pair reports Enter exactly once, however many contact points it has
     // collision substeps per Update. All of that has to collapse into one event,
     // or a consumer counting entries counts corners.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
@@ -89,7 +89,7 @@ TEST_CASE("A pair reports Enter exactly once, however many contact points it has
 TEST_CASE("Stay is not reported unless asked for")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     REQUIRE_FALSE(world.StayEventsReported());
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
@@ -110,7 +110,7 @@ TEST_CASE("A resting pair keeps reporting Stay after the body falls asleep")
     // anything built on that callback would announce the box had left the floor it
     // is still sitting on.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     world.SetStayEventsReported(true);
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
@@ -136,7 +136,7 @@ TEST_CASE("A body woken while still touching does not report a second Enter")
     // The other half of dormancy. Jolt re-adds the contact when the body wakes,
     // which reads as brand new; the pair table remembers it never ended.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
@@ -165,7 +165,7 @@ TEST_CASE("Destroying an entity reports one Exit for what its body was touching"
     // step. A consumer holding "who is inside me" would otherwise keep a destroyed
     // entity in it forever.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
     const ECS::Entity box   = Spawn(scene, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
@@ -196,7 +196,7 @@ TEST_CASE("Destroying an entity reports one Exit for what its body was touching"
 TEST_CASE("Events describe one step and are dropped at the next")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
@@ -215,7 +215,7 @@ TEST_CASE("Clearing the scene drops every pair without inventing departures")
     // is nothing left that could act on the event anyway — the entities are about
     // to mean something else entirely.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
 
     REQUIRE(StepUntilEnter(world, box) >= 0);
@@ -275,7 +275,7 @@ int32_t CountPair(const Physics::PhysicsWorld &world, ECS::Entity entity, ECS::E
 TEST_CASE("A settled pile reports nothing")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
     const ECS::Entity bottom = Spawn(scene, {0.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
     const ECS::Entity middle = Spawn(scene, {0.f, 1.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
@@ -299,7 +299,7 @@ TEST_CASE("A settled pile reports nothing")
 TEST_CASE("A sleeping body moved away reports its Exit on the next step")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
     REQUIRE(StepUntilAsleep(world, {box}));
 
@@ -315,7 +315,7 @@ TEST_CASE("A sleeping body moved away reports its Exit on the next step")
 TEST_CASE("A body leaving what it rests on reports its Exit")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
     REQUIRE(StepUntilEnter(world, box) >= 0);
 
@@ -332,7 +332,7 @@ TEST_CASE("A body leaving what it rests on reports its Exit")
 TEST_CASE("A character walking off what it stands on reports its Exit")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity ledge = Spawn(scene, {0.f, -0.5f, 0.f}, {1.f, 0.5f, 1.f}, /*isStatic=*/ true);
     const ECS::Entity character = PhysicsTests::AddCharacter(scene, {0.f, 0.f, 0.f});
     for (int32_t i = 0; i < 30; ++i)
@@ -358,7 +358,7 @@ TEST_CASE("A body woken by a neighbour keeps touching what it rests on")
     // the step that wakes it never tested its contact with the floor. That pair
     // must not read as ended.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
     const ECS::Entity bottom = Spawn(scene, {0.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
     const ECS::Entity top = Spawn(scene, {0.f, 1.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
@@ -382,7 +382,7 @@ TEST_CASE("A body woken by a neighbour keeps touching what it rests on")
 TEST_CASE("An Enter says where the bodies touch and which pieces did")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity box = BuildDrop(scene, 3.f);
     REQUIRE(StepUntilEnter(world, box) >= 0);
 
@@ -408,7 +408,7 @@ TEST_CASE("An Enter says where the bodies touch and which pieces did")
 TEST_CASE("Touching lists everything resting on a body")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity floor = Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true);
     const ECS::Entity left = Spawn(scene, {-3.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);
     const ECS::Entity right = Spawn(scene, {3.f, 0.5f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false);

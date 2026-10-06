@@ -17,8 +17,10 @@
 #include "ServerApp.hpp"
 
 #include <Assisi/Editor/EditorApp.hpp>
+#include <Assisi/Editor/SourceAssets.hpp>
 
 #include <Assisi/App/PerfCapture.hpp>
+#include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
@@ -40,6 +42,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <expected>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -470,6 +473,17 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
     return std::move(*document);
 }
 
+/// The file the dedicated server reads a collision model from. Its asset index
+/// is built on the first read, since the asset root is only known once the
+/// server has initialised, and read-only, since the editor may share the tree.
+std::optional<std::string> ServerAssetPath(Assisi::Core::AssetId id)
+{
+    static Assisi::Core::AssetDatabase database;
+    static std::once_flag built;
+    std::call_once(built, [] { (void)database.Rebuild(Assisi::Core::RebuildMode::ReadOnly); });
+    return database.PathFor(id);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -535,7 +549,8 @@ int main(int argc, char **argv)
     if (args.server)
     {
         args.serverOptions.level = args.startupLevel;
-        Game::ServerApp serverApp(args.serverOptions);
+        const Assisi::Editor::SourceCollisionSource collision{ServerAssetPath};
+        Game::ServerApp serverApp(args.serverOptions, collision);
         if (!serverApp.Initialize())
         {
             return EXIT_FAILURE;

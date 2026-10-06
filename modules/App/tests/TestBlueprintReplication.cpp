@@ -98,8 +98,8 @@ struct Fixture
     // The worlds a test that does not care where its worlds come from gets:
     // standalone, so `manager` is null — a shape the engine has to keep working
     // (World.hpp) and the one every case below but the services case wants.
-    App::World ownHost;
-    App::World ownGuest;
+    App::World ownHost{Assisi::Physics::NoCollisionAssets()};
+    App::World ownGuest{Assisi::Physics::NoCollisionAssets()};
 
     App::World &host;
     App::World &guest;
@@ -503,7 +503,7 @@ TEST_CASE("Blueprint over the wire: a guest with no render services expands anyw
     // reach, holding a cache and a database that are not there.
     // The standalone world every other case here uses (`manager == nullptr`) is
     // the other half of the same guard.
-    App::WorldManager worlds;
+    App::WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     App::World &host = worlds.Create("Host");
     App::World &guest = worlds.Create("Guest");
 
@@ -660,7 +660,7 @@ TEST_CASE("Join: every target answers the host's level the same way")
 
 TEST_CASE("Join: stripping the host's copies takes their bodies out of the physics world")
 {
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
 
     // The level's own copy of something the host owns, with a body — which is
     // what a joined client has after loading the same file the host did.

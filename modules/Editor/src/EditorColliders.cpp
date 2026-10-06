@@ -49,9 +49,10 @@ constexpr glm::vec4 kUnselectedColor{0.40f, 0.95f, 0.45f, 1.0f}; // light green
 constexpr glm::vec4 kSelectedColor{Assisi::Editor::kSelectionOutline, 1.0f};
 constexpr glm::vec4 kActiveSelectedColor{Assisi::Editor::kActiveSelectionOutline, 1.0f};
 
-/// @brief Append the wireframe for one collider into @p out.
+/// @brief Append the wireframe for one collider into @p out. A model's shape
+/// is traced from @p modelEdges, pairs of points in the collider's own space.
 void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec4 &color,
-                             const Assisi::Physics::Collider &desc)
+                             const Assisi::Physics::Collider &desc, const std::vector<glm::vec3> &modelEdges)
 {
     using Assisi::Physics::ColliderShape;
     switch (desc.shape)
@@ -67,6 +68,15 @@ void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &mode
         break;
     case ColliderShape::Box:
         AddBoxWireframe(out, model, color, desc.halfExtents);
+        break;
+    case ColliderShape::Convex:
+    case ColliderShape::Mesh:
+        for (std::size_t i = 0; i + 1 < modelEdges.size(); i += 2)
+        {
+            AddSegment(out, model, color, modelEdges[i], modelEdges[i + 1]);
+        }
+        break;
+    case ColliderShape::Count:
         break;
     }
 }
@@ -139,7 +149,8 @@ void EditorApp::SubmitColliderWireframes()
         // The traced edges go out for EVERY collider.
         std::vector<LineVertex> &lineOut =
             selected ? _colliderLinesOnTop : _colliderLinesDepthTested;
-        AppendColliderWireframe(lineOut, bodyModel, lineColor, desc);
+        _physics->CollisionAssetEdges(desc, _colliderModelEdges);
+        AppendColliderWireframe(lineOut, bodyModel, lineColor, desc, _colliderModelEdges);
 
         // Silhouette outlines (collider volume + entity mesh) are a selection
         // highlight, so only the selection gets them: each one costs a full-screen
@@ -247,6 +258,12 @@ void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
         // Unit cube spans ±0.5, so scale by 2·halfExtents to reach ±halfExtents.
         items.push_back({&_colliderBoxMesh, glm::scale(bodyModel, desc.halfExtents * 2.0f)});
         break;
+    case ColliderShape::Convex:
+    case ColliderShape::Mesh:
+    case ColliderShape::Count:
+        // No unit mesh stands for a model's shape; its edges, drawn on top in
+        // the selection colour, are its highlight.
+        return;
     }
     _overlays.SubmitOutlineGroup(items, color);
 }

@@ -15,11 +15,12 @@
 namespace Assisi::Physics
 {
 
-/// @brief Which collision primitive a Collider builds.
+/// @brief Which shape a Collider builds: a primitive, or the collision a model
+/// carries.
 ///
 /// AENUM so it reflects as a dropdown and serializes by value. Each shape reads
-/// a different subset of Collider's dimension fields, which use AFIELD(radio)
-/// so the inspector only shows the dimensions the chosen shape actually uses.
+/// a different subset of Collider's fields, which use AFIELD(radio) so the
+/// inspector only shows the ones the chosen shape actually uses.
 AENUM()
 enum class ColliderShape : std::uint8_t
 {
@@ -27,6 +28,15 @@ enum class ColliderShape : std::uint8_t
     Sphere,   ///< Sphere from `radius`.
     Capsule,  ///< Capsule (cylinder + hemispherical caps) from `radius` + `halfHeight`.
     Cylinder, ///< Cylinder from `radius` + `halfHeight`.
+
+    /// The pieces `collisionAsset` authored, or the convex hull of the whole
+    /// model when it authored none. Works on any body.
+    Convex,
+
+    /// The model's exact triangles. Static and kinematic bodies only: on a
+    /// dynamic one it is an error, and the body takes Convex instead.
+    Mesh,
+    Count,
 };
 
 /// @brief What kind of thing a body is, for deciding what it interacts with.
@@ -94,6 +104,9 @@ consteval CollisionChannel GameChannel(std::uint32_t index)
 /// otherwise.
 inline constexpr float kWaterDensity = 1000.f;
 
+/// Collider::collisionPiece naming every piece of the model.
+inline constexpr std::int32_t kAllCollisionPieces = -1;
+
 /// @brief What a Collider under a RigidBody becomes.
 AENUM()
 enum class ColliderAttach : std::uint8_t
@@ -156,9 +169,10 @@ struct Collider
     /// Turns the shape about the entity's origin.
     AFIELD() glm::quat offsetRotation{1.f, 0.f, 0.f, 0.f};
 
-    /// A cooked collision shape. Not read by the physics world yet: the shape
-    /// is always the primitive below.
-    AFIELD() Core::AssetId collisionAsset;
+    /// The model whose collision a Convex or Mesh shape is. One cooked shape is
+    /// shared by every collider that names the same model.
+    AFIELD(radioListen = {source = shape, value = {Convex, Mesh}, behavior = vanish})
+    Core::AssetId collisionAsset;
 
     AFIELD(radioListen = {source = shape, value = Box, behavior = vanish})
     glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box half-extents, before scale.
@@ -185,6 +199,13 @@ struct Collider
     /// kg/m³. With its volume, how much this collider adds to its body's mass,
     /// and where the body's centre of mass falls.
     AFIELD(min = 0.0) float density = kWaterDensity;
+
+    /// One piece of a Convex model, by its place in the model's list of pieces,
+    /// or -1 for all of them. One piece is built at the collider's own origin
+    /// rather than where the model put it, so a child entity standing where the
+    /// piece was is that piece, its shape still shared.
+    AFIELD(min = -1, radioListen = {source = shape, value = Convex, behavior = vanish})
+    int32_t collisionPiece = kAllCollisionPieces;
 
     /// The channels this collider collides with. Interaction needs both sides
     /// to agree, so clearing a bit here stops the pair whatever the other says.

@@ -84,7 +84,7 @@ void AddBall(ECS::Scene &scene, Physics::PhysicsWorld &world, ECS::Entity entity
 TEST_CASE("A parented body is created at its composed world pose")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
@@ -103,7 +103,7 @@ TEST_CASE("A parented body is created at its composed world pose")
 TEST_CASE("An entity without a Parent takes its local pose as world")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
@@ -117,7 +117,7 @@ TEST_CASE("An entity without a Parent takes its local pose as world")
 TEST_CASE("A parent with no Transform defines no space, so the local pose is world")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
@@ -147,7 +147,7 @@ TEST_CASE("A parented entity cannot become a RigidBody or a Character")
 TEST_CASE("Writeback: an unparented body in a parented scene is untouched by the conversion")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     // One parented entity beside a loose one — the ordinary case in any scene
     // holding one instance and a hundred loose entities. The loose one must come

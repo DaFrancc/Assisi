@@ -81,7 +81,7 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
                                                            {"rotation", {1.f, 0.f, 0.f, 0.f}},
                                                            {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     REQUIRE(App::LoadLevelSim(world, "levels/yard.alvl"));
 
     CHECK(world.scene.AliveCount() == 2);
@@ -153,7 +153,7 @@ TEST_CASE("App: a child of a walking character follows it")
                      {"transform",
                       {{"position", {5.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     REQUIRE(App::LoadLevelSim(world, "levels/walk.alvl"));
 
     // The two members, told apart by which one physics drives.
@@ -240,7 +240,7 @@ TEST_CASE("App: a level runs the systems its blueprints require, not just its ow
                      {"transform",
                       {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
-    App::WorldManager worlds;
+    App::WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     App::World *const world = worlds.LoadLevel("levels/yard.alvl");
     REQUIRE(world != nullptr);
     REQUIRE(world->instances.Size() == 1);
@@ -290,7 +290,7 @@ TEST_CASE("App: a blueprint with no entities still brings its systems")
                      {"transform",
                       {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
-    App::WorldManager worlds;
+    App::WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     App::World *const world = worlds.LoadLevel("levels/yard.alvl");
     REQUIRE(world != nullptr);
 

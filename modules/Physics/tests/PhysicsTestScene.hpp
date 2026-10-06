@@ -10,9 +10,12 @@
 /// of them talks to the world directly. The world follows on its next
 /// reconcile, which Step runs.
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
+#include <utility>
 
 #include <doctest/doctest.h>
 
@@ -29,12 +32,39 @@ namespace Assisi::PhysicsTests
 /// The fixed step every test simulates at.
 inline constexpr float kStep = 1.f / 60.f;
 
+/// Collision models held in memory, for a test to name by id.
+class TestCollisionSource final : public Physics::CollisionSource
+{
+public:
+    void Add(Core::AssetId id, Geometry::CollisionModel model) { _models[id] = std::move(model); }
+
+    std::optional<Geometry::CollisionModel> Load(Core::AssetId id) const override
+    {
+        ++loads;
+        const std::unordered_map<Core::AssetId, Geometry::CollisionModel>::const_iterator found = _models.find(id);
+        if (found == _models.end())
+        {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+
+    /// How many times a world has read a model.
+    mutable std::atomic<uint32_t> loads = 0;
+
+private:
+    std::unordered_map<Core::AssetId, Geometry::CollisionModel> _models;
+};
+
 /// A scene and its world. Pinned, as both are: tests construct one in place.
 struct TestScene
 {
-    explicit TestScene(uint32_t maxBodies = Physics::kDefaultMaxBodies) : world(scene, maxBodies) {}
+    explicit TestScene(uint32_t maxBodies = Physics::kDefaultMaxBodies) : world(scene, collision, maxBodies) {}
 
     ECS::Scene scene;
+
+    /// Declared before the world, which reads models from it.
+    TestCollisionSource collision;
     Physics::PhysicsWorld world;
 };
 

@@ -384,8 +384,8 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    Physics::PhysicsWorld serverPhysics{serverScene};
-    Physics::PhysicsWorld clientPhysics{clientScene};
+    Physics::PhysicsWorld serverPhysics{serverScene, Assisi::Physics::NoCollisionAssets()};
+    Physics::PhysicsWorld clientPhysics{clientScene, Assisi::Physics::NoCollisionAssets()};
 
     const auto pair = transport.CreateLoopbackPair();
     ReplicationServer server(transport, serverScene, &serverPhysics);

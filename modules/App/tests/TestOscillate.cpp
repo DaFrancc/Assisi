@@ -47,7 +47,7 @@ glm::vec3 RunTo(World &world, Assisi::ECS::Entity entity, std::uint64_t ticks)
 {
     Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     for (std::uint64_t tick = 0; tick < ticks; ++tick)
     {
@@ -85,18 +85,18 @@ TEST_CASE("OscillateSystem: the pose at a tick does not depend on how it got the
     // Every tick from 0 up to the one under test, versus a single evaluation at
     // it. Both are checked against the closed form rather than only against each
     // other, so neither an integrator nor a pair of matching wrong answers pass.
-    WorldManager steppedWorlds;
+    WorldManager steppedWorlds{Assisi::Physics::NoCollisionAssets()};
     World &stepped                   = steppedWorlds.Create("Stepped");
     const Assisi::ECS::Entity a = SpawnOscillator(stepped, spec);
     const glm::vec3 walked           = RunTo(stepped, a, kTick + 1);
 
-    WorldManager jumpedWorlds;
+    WorldManager jumpedWorlds{Assisi::Physics::NoCollisionAssets()};
     World &jumped                    = jumpedWorlds.Create("Jumped");
     const Assisi::ECS::Entity b = SpawnOscillator(jumped, spec);
 
     Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     SystemContext ctx{jumped, kStep, kTick, nullptr, &actions, events, true, &worlds};
     OscillateSystem(ctx);
     const Assisi::ECS::Transform *transform = jumped.scene.Get<Assisi::ECS::Transform>(b);
@@ -113,7 +113,7 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
     const glm::vec3 origin{5.f, 1.f, -2.f};
     constexpr float kAmplitude = 3.f;
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world                = worlds.Create("Bounded");
     const Assisi::ECS::Entity entity = SpawnOscillator(world, {.origin        = origin,
                                                                .axis          = {1.f, 0.f, 0.f},
@@ -123,7 +123,7 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
 
     Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
-    WorldManager contextWorlds;
+    WorldManager contextWorlds{Assisi::Physics::NoCollisionAssets()};
 
     float lowest  = origin.x;
     float highest = origin.x;
@@ -152,7 +152,7 @@ TEST_CASE("OscillateSystem: a parked mover is left where it was authored")
 {
     const glm::vec3 origin{1.f, 2.f, 3.f};
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Parked");
 
     // Two ways to park one: no period, and no axis.
@@ -173,7 +173,7 @@ TEST_CASE("OscillateSystem: phase separates movers that share a period")
     const Assisi::Runtime::Oscillator base{
         .origin = {}, .axis = {1.f, 0.f, 0.f}, .amplitude = 2.f, .periodSeconds = 4.f, .phase = 0.f};
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Phased");
 
     Assisi::Runtime::Oscillator offset = base;
@@ -184,7 +184,7 @@ TEST_CASE("OscillateSystem: phase separates movers that share a period")
 
     Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
-    WorldManager contextWorlds;
+    WorldManager contextWorlds{Assisi::Physics::NoCollisionAssets()};
     SystemContext ctx{world, kStep, /*simTick=*/ 30, nullptr, &actions, events, true, &contextWorlds};
     OscillateSystem(ctx);
 
@@ -201,7 +201,7 @@ TEST_CASE("OscillateSystem: a mover is drawn between its last two steps at a fra
 {
     // A FixedUpdate mover with no physics body: the render blend smooths it the
     // same way it smooths a body, so it does not stutter above the step rate.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Blend");
     Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;

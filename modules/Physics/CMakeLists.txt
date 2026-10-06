@@ -5,6 +5,7 @@ target_sources(Assisi-Physics
   PUBLIC
     "include/Assisi/Physics/ColliderRole.hpp"
     "include/Assisi/Physics/CollisionChannelNames.hpp"
+    "include/Assisi/Physics/CollisionSource.hpp"
     "include/Assisi/Physics/PhysicsComponents.hpp"
     "include/Assisi/Physics/PhysicsWorld.hpp"
   PRIVATE
@@ -13,6 +14,7 @@ target_sources(Assisi-Physics
     "src/CollisionChannelNames.cpp"
     "src/JoltRuntime.cpp"
     "src/PhysicsWorld.cpp"
+    "src/PhysicsCook.cpp"
     "src/PhysicsContacts.cpp"
     "src/PhysicsParts.cpp"
     "src/PhysicsQueries.cpp"
@@ -30,6 +32,8 @@ target_link_libraries(Assisi-Physics
   PUBLIC
     Assisi::Core
     Assisi::ECS
+    # Geometry: the collision a model carries, which a CollisionSource hands over.
+    Assisi::Geometry
     Jolt::Jolt
 )
 

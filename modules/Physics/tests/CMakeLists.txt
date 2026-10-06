@@ -7,6 +7,7 @@ add_executable(Assisi-Physics-Tests
   TestBodyState.cpp
   TestCharacter.cpp
   TestCharacterFeel.cpp
+  TestCollisionAssets.cpp
   TestCollisionChannels.cpp
   TestCompoundBodies.cpp
   TestContactEvents.cpp
@@ -32,6 +33,12 @@ target_include_directories(Assisi-Physics-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-Physics-Tests
   PRIVATE
     Assisi::Physics
+)
+
+# LogCapture.hpp, for the tests whose subject is an error naming an entity.
+# Reached in the Runtime tests rather than copied, as the Geometry tests do.
+target_include_directories(Assisi-Physics-Tests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../Runtime/tests"
 )
 
 # Scene stores components by ComponentId, which the static initializers reflectgen

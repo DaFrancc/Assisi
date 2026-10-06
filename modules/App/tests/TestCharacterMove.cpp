@@ -83,7 +83,7 @@ void Ask(World &world, Assisi::ECS::Entity entity, glm::vec3 move, bool jump,
 
 TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk speed")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
     Assisi::Core::EventQueue events;
 
@@ -114,7 +114,7 @@ TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk sp
 
 TEST_CASE("Crouching applies the Character's speed scale")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
     Assisi::Core::EventQueue events;
 
@@ -146,7 +146,7 @@ TEST_CASE("A jump request is consumed once, not held")
 {
     // Otherwise a single press jumps again on every step that follows it, which
     // reads as the character sticking to the ceiling.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
     Assisi::Core::EventQueue events;
 
@@ -170,7 +170,7 @@ TEST_CASE("A jump request is consumed once, not held")
 
 TEST_CASE("A camera parented to a character is placed at its eye height, blended between steps")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
     Assisi::Core::EventQueue events;
 
@@ -221,7 +221,7 @@ TEST_CASE("The step takes a character's facing from its Transform")
     // Only the Boost policy reads the facing, so that is what shows it arrived:
     // a character over the limit and travelling backwards gains speed on a jump.
     // With the facing left at its default it would be slowed instead.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
     Assisi::Core::EventQueue events;
 
@@ -263,7 +263,7 @@ TEST_CASE("The step takes a character's facing from its Transform")
 
 TEST_CASE("The step publishes the CharacterState a later system reads")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
     Assisi::Core::EventQueue events;
 

@@ -105,7 +105,7 @@ Verdicts RunBothChecks(std::string_view virtualPath)
     REQUIRE(SceneSerializer::LoadFromFile(scene, virtualPath, {.header = &header}).has_value());
     verdicts.headerNames = header.systems;
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Precheck");
     verdicts.applied   = worlds.ApplySystems(world, header.systems, virtualPath);
 
@@ -213,7 +213,7 @@ TEST_CASE("A level the pre-check cleared installs exactly what it named")
     Assisi::ECS::Scene scene;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "levels/Runs.alvl", {.header = &header}).has_value());
 
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Runs");
     REQUIRE(worlds.ApplySystems(world, header.systems, "levels/Runs.alvl"));
 

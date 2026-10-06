@@ -54,8 +54,8 @@ struct PhysicsHarness
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    Physics::PhysicsWorld serverPhysics{serverScene};
-    Physics::PhysicsWorld clientPhysics{clientScene};
+    Physics::PhysicsWorld serverPhysics{serverScene, Assisi::Physics::NoCollisionAssets()};
+    Physics::PhysicsWorld clientPhysics{clientScene, Assisi::Physics::NoCollisionAssets()};
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -617,8 +617,8 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    Physics::PhysicsWorld serverPhysics{serverScene};
-    Physics::PhysicsWorld clientPhysics{clientScene};
+    Physics::PhysicsWorld serverPhysics{serverScene, Assisi::Physics::NoCollisionAssets()};
+    Physics::PhysicsWorld clientPhysics{clientScene, Assisi::Physics::NoCollisionAssets()};
 
     Net::SimulatedConditions conditions;
     conditions.sendLossPercent = 5.f;

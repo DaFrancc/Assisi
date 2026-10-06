@@ -84,7 +84,7 @@ TEST_CASE("Instance view: every generated field is the member of that name")
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     ECS::Transform at;
     at.position = {10.f, 0.f, 0.f};
 
@@ -115,7 +115,7 @@ TEST_CASE("Instance view: a top-level member and a nested one of the same name s
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const auto lot = App::SpawnBlueprint<Blueprints::ParkingLot>(world, {});
     REQUIRE(lot.has_value());
 
@@ -129,7 +129,7 @@ TEST_CASE("Instance view: two instances of one file are separate members")
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const auto lot = App::SpawnBlueprint<Blueprints::ParkingLot>(world, {});
     REQUIRE(lot.has_value());
 
@@ -147,7 +147,7 @@ TEST_CASE("Instance view: the placement composes exactly as the untyped path com
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     ECS::Transform at;
     at.position = {100.f, 0.f, 0.f};
 
@@ -165,7 +165,7 @@ TEST_CASE("Instance view: FindInstance<T> re-resolves the same members")
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const auto spawned = App::SpawnBlueprint<Blueprints::ParkingLot>(world, {});
     REQUIRE(spawned.has_value());
 
@@ -182,7 +182,7 @@ TEST_CASE("Instance view: a view is refused over an instance of another blueprin
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const auto lot = App::SpawnBlueprint<Blueprints::ParkingLot>(world, {});
     REQUIRE(lot.has_value());
 
@@ -197,7 +197,7 @@ TEST_CASE("Instance view: a typed spawn takes no string, and names its own file"
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const auto car = App::SpawnBlueprint<Blueprints::Car>(world, {});
     REQUIRE(car.has_value());
 
@@ -211,7 +211,7 @@ TEST_CASE("Instance view: a member that dies leaves the id answering and the fie
 {
     UseGeneratedAssets();
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const auto car = App::SpawnBlueprint<Blueprints::Car>(world, {});
     REQUIRE(car.has_value());
 

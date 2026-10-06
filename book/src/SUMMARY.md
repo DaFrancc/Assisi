@@ -9,6 +9,7 @@
 
 # Making a game
 
+- [The editor](editor.md)
 - [Entities and components](entities-and-components.md)
 - [Your first system](first-system.md)
 - [Your own components](your-own-components.md)
@@ -28,9 +29,15 @@
     - [Screens at run time](ui-run-time.md)
     - [What the cook checks](ui-cook-checks.md)
 - [Physics](physics.md)
+    - [Colliders on child entities](physics-child-colliders.md)
+    - [Collision from a model](physics-model-collision.md)
+    - [Collision channels](physics-channels.md)
+    - [How the scene and physics stay in step](physics-scene-sync.md)
+    - [Moving bodies from code](physics-moving-bodies.md)
+    - [Contacts and queries](physics-contacts.md)
+    - [The character controller](physics-character.md)
 - [Audio](audio.md)
 - [Levels and blueprints](levels-and-blueprints.md)
-- [The editor](editor.md)
 
 # Shipping
 
