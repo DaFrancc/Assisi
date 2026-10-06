@@ -399,8 +399,8 @@ TEST_CASE("PropagateTransforms: reparenting a child to a different parent follow
 // ── Propagation must not stamp its own output ────────────────────────────────
 // PropagateTransforms writes world matrices for a Transform, which is
 // ACOMP(tracked) — but the matrices live in a lane beside the component, so the
-// write stamps nothing, and the enumerating loop is deliberately a plain Query,
-// not QueryMut.
+// write stamps nothing, and the enumerating loop queries Transform as a plain
+// element, not Mut<Transform>.
 //
 // If either stamped, every entity the pass touched would carry a tick newer than
 // the one it returns, so the next pass would find the whole scene dirty forever

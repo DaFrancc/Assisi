@@ -38,7 +38,8 @@ template <typename T> struct SparseSetLanes
     void Clear() {}
 
     /// Called on every Stamp of the component at dense slot @p slot, before the
-    /// caller writes it for GetMut and QueryMut, after for Add and MarkChanged.
+    /// caller writes it for GetMut and a Mut query element, after for Add and
+    /// MarkChanged.
     void OnStamp(uint32_t /*slot*/, Entity /*entity*/, const T & /*component*/) {}
 };
 

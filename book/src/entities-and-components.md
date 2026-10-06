@@ -265,39 +265,55 @@ for (auto [entity, transform, camera] : scene.Query<ECS::Transform, Runtime::Cam
 ```
 
 Each loop gives you the entity and a reference to each component you asked for.
+These references are **read-only**: the compiler stops you writing through
+them. To change a component, see the next section.
 
 > **Every loop variable must be used**, or the build stops with an "unused"
 > error. Warnings count as errors in this engine. If you don't need one, write
 > `(void)entity;` in the loop.
 
-`Without<>` skips entities that have some other component:
+`Without<T>` skips entities that have a `T`. To skip more than one component,
+add a `Without` for each:
 
 ```cpp
 // Every Transform, except entities that are physics bodies.
 for (auto [entity, transform] :
-     scene.Query<ECS::Transform>(ECS::Without<Physics::RigidBody>{}))
+     scene.Query<ECS::Transform, Without<Physics::RigidBody>>())
 {
     Core::Log::Info("Entity {} has no physics body", entity.index);
 }
 ```
 
-### The one rule to remember: write with `GetMut`
+### Changing components: `Mut` and `GetMut`
 
 Some components, including `Transform`, are **tracked**: the engine notices when
-they change, and only updates what depends on them if they did. The engine only
-sees a change made through **`GetMut`** (or `QueryMut`). If you write through
-`Get` or a plain `Query`, the change is silently missed, and the object doesn't
-visibly move.
+they change, and only updates what depends on them if they did. To change a
+component, you say so, and the engine marks it as changed:
 
-**The compiler won't catch this yet.** `Get` and `Query` hand out writable
-references, so writing through them compiles. The rule is simple: read with
-`Get` and `Query`, write with `GetMut` and `QueryMut`. A future version of the
-engine plans to make the wrong way a compile error.
+- In a query, wrap the component in **`Mut<>`**. You get a writable reference.
+- For one entity, use **`GetMut`** instead of `Get`.
 
-There are two ways to change components you found with a query.
+```cpp
+// Everything rises. Mut<ECS::Transform> is writable; the plain one would not be.
+for (auto [entity, transform] : scene.Query<Mut<ECS::Transform>>())
+{
+    transform.position.y += 1.f * ctx.dt;
+}
+```
 
-**Read with `Query`, then write with `GetMut`** only for the entities you
-actually change:
+Mix the two in one query: components you only read stay plain, and only the
+`Mut` ones are marked.
+
+```cpp
+for (auto [entity, spinner, transform] : scene.Query<Spinner, Mut<ECS::Transform>>())
+{
+    // spinner is read-only, transform is writable.
+}
+```
+
+`Mut<>` marks the component changed for **every entity the loop visits**, even
+one you end up not changing. When you change only some of them, ask for the
+component plainly and call `GetMut` on just the ones you change:
 
 ```cpp
 // Anything that fell below the floor goes back up to it.
@@ -313,21 +329,14 @@ for (auto [entity, transform] : scene.Query<ECS::Transform>())
 }
 ```
 
-**Or use `QueryMut`**, which hands you each component ready to write:
+So the choice depends on **how many entities you expect to change**:
 
-```cpp
-// Everything rises.
-for (auto [entity, transform] : scene.QueryMut<ECS::Transform>())
-{
-    transform->position.y += 1.f * ctx.dt;
-}
-```
+- **Changing most or all of them?** Use `Mut<>`.
+- **Changing only some of them?** Query plainly, and call `GetMut` on the ones
+  you change. Only those get marked as changed.
 
-Which one to use depends on **how many entities you expect to change**:
-
-- **Changing only some of them?** Use `Query`, check each entity, and call
-  `GetMut` on the ones you change. Only those get marked as changed.
-- **Changing most or all of them?** Use `QueryMut`.
+`Get` is the one way left to miss a change: it hands out a writable pointer, and
+a write through it is not seen. Write with `GetMut`.
 
 It matters because the engine does work for every component marked as changed:
 it updates the object for rendering, and in multiplayer it sends the change over

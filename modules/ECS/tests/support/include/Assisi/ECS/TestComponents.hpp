@@ -48,6 +48,14 @@ struct Tracked
     AFIELD() int32_t value = 0;
 };
 
+/// @brief A second tracked component, so a test can read one tracked pool
+/// beside writing another and check that only the written one stamps.
+ACOMP(tracked)
+struct TrackedToo
+{
+    AFIELD() int32_t value = 0;
+};
+
 /// @brief ACOMP(transient): registered only for a stable ComponentId, with no
 /// serialization hooks at all. The control for tests that check a consumer
 /// gates on ComponentMeta::serializable rather than probing each hook.

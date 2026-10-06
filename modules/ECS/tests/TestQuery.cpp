@@ -25,7 +25,7 @@ TEST_CASE("Query: yields only entities that have every requested component")
     REQUIRE(scene.Add<Velocity>(velOnly, {4.0f}) != nullptr);
 
     std::vector<Entity> seen;
-    for (auto [e, pos, vel] : scene.Query<Position, Velocity>())
+    for (auto [e, pos, vel] : scene.Query<Mut<Position>, Velocity>())
     {
         seen.push_back(e);
         pos.x += vel.x; // mutation through the query must stick
@@ -107,7 +107,7 @@ TEST_CASE("Query: Without excludes entities that hold the unwanted component")
     REQUIRE(scene.Add<Velocity>(both, {9.0f}) != nullptr);
 
     std::vector<Entity> seen;
-    for (auto [e, pos] : scene.Query<Position>(Without<Velocity>{}))
+    for (auto [e, pos] : scene.Query<Position, Without<Velocity>>())
     {
         (void)pos;
         seen.push_back(e);
@@ -126,7 +126,7 @@ TEST_CASE("Query: Without a never-created pool excludes nobody")
     // The Velocity pool was never created; excluding it must reject no one.
 
     int32_t count = 0;
-    for (auto [e, pos] : scene.Query<Position>(Without<Velocity>{}))
+    for (auto [e, pos] : scene.Query<Position, Without<Velocity>>())
     {
         (void)e;
         (void)pos;
@@ -148,7 +148,7 @@ TEST_CASE("Query: multiple exclusions reject an entity holding any of them")
     REQUIRE(scene.Add<Tag>(hasTag, {}) != nullptr);
 
     std::vector<Entity> seen;
-    for (auto [e, pos] : scene.Query<Position>(Without<Velocity, Tag>{}))
+    for (auto [e, pos] : scene.Query<Position, Without<Velocity>, Without<Tag>>())
     {
         (void)pos;
         seen.push_back(e);
@@ -313,7 +313,7 @@ TEST_CASE("Query guard: mutating an excluded pool mid-iteration is allowed")
     // guard — a version check that summed excluded pools would abort here.
     CHECK_NOTHROW(([&]
     {
-        for (auto [e, pos] : scene.Query<Position>(Without<Tag>{}))
+        for (auto [e, pos] : scene.Query<Position, Without<Tag>>())
         {
             (void)pos;
             ++seen;

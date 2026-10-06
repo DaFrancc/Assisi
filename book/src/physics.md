@@ -131,9 +131,9 @@ frame it is spawned, is the one it starts with.
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 // Launch every body upward.
-for (auto [entity, state] : scene.QueryMut<Physics::BodyState>())
+for (auto [entity, state] : scene.Query<Mut<Physics::BodyState>>())
 {
-    state.GetMut().linearVelocity = glm::vec3(0.f, 10.f, 0.f);
+    state.linearVelocity = glm::vec3(0.f, 10.f, 0.f);
 }
 ```
 
@@ -230,9 +230,9 @@ body.
 | `stance` | `Standing` or `Crouching`. Hold it for as long as it is wanted. |
 
 ```cpp
-for (auto [entity, intent] : scene.QueryMut<Physics::CharacterIntent>())
+for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
 {
-    intent.GetMut().move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
+    intent.move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
 }
 ```
 

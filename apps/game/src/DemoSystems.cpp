@@ -24,14 +24,10 @@ void SpinDemoSystem(Assisi::App::SystemContext &ctx)
 
     Assisi::ECS::Scene &scene = ctx.world.scene;
     for (auto [entity, transform] :
-         scene.Query<Assisi::ECS::Transform>(Assisi::ECS::Without<Assisi::Physics::Collider>{}))
+         scene.Query<Mut<Assisi::ECS::Transform>, Without<Assisi::Physics::Collider>>())
     {
-        (void)transform;
-        // Transform is ACOMP(tracked), and the query hands out an unstamped
-        // reference: write through GetMut so PropagateTransforms actually sees
-        // the change, or the world matrix keeps the old pose.
-        if (Assisi::ECS::Transform *mutable_ = scene.GetMut<Assisi::ECS::Transform>(entity))
-            mutable_->rotation = step * mutable_->rotation;
+        (void)entity;
+        transform.rotation = step * transform.rotation;
     }
 }
 

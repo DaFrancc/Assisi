@@ -49,17 +49,17 @@ void SpinSystem(Assisi::App::SystemContext &ctx)
     using namespace Assisi;
 
     ECS::Scene &scene = ctx.world.scene;
-    for (auto [entity, spinner, transform] : scene.QueryMut<Spinner, ECS::Transform>())
+    for (auto [entity, spinner, transform] : scene.Query<Spinner, Mut<ECS::Transform>>())
     {
-        const float direction = spinner.Get().clockwise ? -1.f : 1.f;
-        const float angle     = direction * spinner.Get().radiansPerSecond * ctx.dt;
-        transform->rotation   = glm::angleAxis(angle, glm::vec3(0.f, 1.f, 0.f)) * transform->rotation;
+        const float direction = spinner.clockwise ? -1.f : 1.f;
+        const float angle     = direction * spinner.radiansPerSecond * ctx.dt;
+        transform.rotation    = glm::angleAxis(angle, glm::vec3(0.f, 1.f, 0.f)) * transform.rotation;
     }
 }
 ```
 
-`spinner.Get()` reads the component without marking it changed, since this
-system only reads it. `transform->` writes, which marks the `Transform` changed so
+`Spinner` is only read, so it's asked for plainly and comes back read-only.
+`Mut<ECS::Transform>` comes back writable and marks each `Transform` changed so
 the engine moves the object.
 
 **"Changed" applies to the whole component, not to individual fields.** The
