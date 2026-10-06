@@ -537,6 +537,63 @@ struct PrimitiveRecord
 
 constexpr size_t kNoMaterial = static_cast<size_t>(-1);
 
+/* The collision a node's name asks for, and the name that asked: the node's
+   own first, then its mesh's, as LodLevelFor reads them. */
+std::optional<CollisionNode> CollisionNodeFor(const fastgltf::Node &node, const fastgltf::Asset &asset,
+                                              size_t meshIndex)
+{
+    for (const std::string_view name : {std::string_view{node.name}, std::string_view{asset.meshes[meshIndex].name}})
+    {
+        if (const std::optional<CollisionPieceKind> kind = CollisionPrefixKind(name))
+        {
+            CollisionNode collision;
+            collision.name = std::string{name};
+            collision.kind = *kind;
+            return collision;
+        }
+    }
+    return std::nullopt;
+}
+
+/* Appends @p primitive's triangles to @p node, in the node's own space: the
+   node's matrix places its pieces rather than being baked into their points. */
+void AppendCollisionPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &primitive, CollisionNode &node)
+{
+    const fastgltf::Attribute *positionAttr = primitive.findAttribute("POSITION");
+    if (positionAttr == primitive.attributes.end() || !primitive.indicesAccessor.has_value())
+    {
+        return;
+    }
+    const uint32_t baseVertex = static_cast<uint32_t>(node.positions.size());
+    fastgltf::iterateAccessor<fastgltf::math::fvec3>(
+        asset, asset.accessors[positionAttr->accessorIndex], [&](fastgltf::math::fvec3 position)
+            { node.positions.emplace_back(position[0], position[1], position[2]); });
+    fastgltf::iterateAccessor<std::uint32_t>(asset, asset.accessors[*primitive.indicesAccessor],
+                                             [&](std::uint32_t index) { node.indices.push_back(baseVertex + index); });
+}
+
+/* Builds every collision node into @p out, logging the first that cannot be
+   built with the file and the piece it is about. */
+bool BuildCollision(std::span<const CollisionNode> nodes, std::string_view virtualPath, CollisionData &out)
+{
+    for (const CollisionNode &node : nodes)
+    {
+        if (const std::expected<void, CollisionBuildFailure> built = AppendCollisionPieces(node, out); !built)
+        {
+            Core::Log::Error("MeshImporter: '{}': collision '{}': {}.", virtualPath, built.error().piece,
+                             ToString(built.error().error));
+            return false;
+        }
+    }
+    if (out.pieces.size() > kManyCollisionPieces)
+    {
+        Core::Log::Warn("MeshImporter: '{}' has {} collision pieces; each is tested against everything near the "
+                        "body, so a few large ones collide far cheaper than many small ones.",
+                        virtualPath, out.pieces.size());
+    }
+    return true;
+}
+
 } // namespace
 
 std::string_view ToString(MeshImportError error) noexcept
@@ -555,6 +612,8 @@ std::string_view ToString(MeshImportError error) noexcept
         return "no geometry";
     case MeshImportError::Cancelled:
         return "cancelled (superseded)";
+    case MeshImportError::InvalidCollision:
+        return "a collision node cannot be built";
     }
     return "unknown error";
 }
@@ -610,6 +669,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     std::vector<PrimitiveRecord> records;
     std::vector<uint32_t>        rawLodLevels; // parallel to records until densified
     std::vector<size_t>          slotKeys;     // slot -> glTF material index (or kNoMaterial)
+    std::vector<CollisionNode>   collisionNodes;
 
     fastgltf::iterateSceneNodes(
         asset, sceneIndex, fastgltf::math::fmat4x4(),
@@ -620,6 +680,16 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
                 return;
             }
             const glm::mat4 model = ToGlm(worldMatrix);
+            if (std::optional<CollisionNode> collision = CollisionNodeFor(node, asset, *node.meshIndex))
+            {
+                collision->world = model;
+                for (const fastgltf::Primitive &primitive : asset.meshes[*node.meshIndex].primitives)
+                {
+                    AppendCollisionPrimitive(asset, primitive, *collision);
+                }
+                collisionNodes.push_back(std::move(*collision));
+                return;
+            }
             const uint32_t lodLevel = LodLevelFor(node, asset, *node.meshIndex);
             for (const fastgltf::Primitive &primitive : asset.meshes[*node.meshIndex].primitives)
             {
@@ -735,6 +805,11 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     if (merged.Vertices.empty() || merged.Indices.empty())
     {
         return std::unexpected(MeshImportError::NoGeometry);
+    }
+
+    if (!BuildCollision(collisionNodes, virtualPath, merged.Collision))
+    {
+        return std::unexpected(MeshImportError::InvalidCollision);
     }
 
     // Material slot table: extract each used glTF material; a primitive with no

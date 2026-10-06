@@ -19,6 +19,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Physics/CollisionSource.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 #include <cstdint>
@@ -172,10 +173,12 @@ class PhysicsWorld
 public:
     /// @param scene      The scene whose bodies this world simulates. Must
     ///                   outlive the world.
+    /// @param collision  Where a Convex or Mesh collider's model is read from.
+    ///                   Must outlive the world.
     /// @param maxBodies  The most bodies this world can hold, characters'
     ///                   included. A body past it is not built, and the entity
     ///                   is named in the log.
-    explicit PhysicsWorld(ECS::Scene &scene, uint32_t maxBodies = kDefaultMaxBodies);
+    PhysicsWorld(ECS::Scene &scene, const CollisionSource &collision, uint32_t maxBodies = kDefaultMaxBodies);
     ~PhysicsWorld();
 
     PhysicsWorld(const PhysicsWorld &) = delete;
@@ -503,6 +506,26 @@ public:
 
     /// @brief What @p entity's body is, and what it interacts with.
     [[nodiscard]] CollisionFilter GetBodyCollisionFilter(ECS::Entity entity) const;
+
+    // --- Collision models -----------------------------------------------------
+    //
+    // A Convex or Mesh collider's shape is built from its model the first time
+    // any collider asks for it, and shared by every collider that asks for the
+    // same one afterwards, whatever its scale. A model is read once per world.
+
+    /// @brief The edges of the shape @p collider builds, as pairs of points in
+    /// the collider's own space, before its scale and offset. Empty for a
+    /// primitive, or a model that could not be built. For drawing it.
+    void CollisionAssetEdges(const Collider &collider, std::vector<glm::vec3> &out) const;
+
+    /// @brief How many shapes this world has built from models.
+    [[nodiscard]] uint32_t CookedShapeCount() const;
+
+    /// @brief Forgets every model and shape built from one, and builds every
+    /// body again from the scene, reading the models afresh. For the editor,
+    /// after a model's file changed; not for use while simulating, since it is
+    /// a Rebuild().
+    void InvalidateCollisionAssets();
 
     // --- Characters -----------------------------------------------------------
     //

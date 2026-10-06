@@ -109,6 +109,7 @@ bool GameApp::MountContent()
 
     _pak.emplace(std::move(*mounted));
     _assetSource.emplace(*_pak);
+    _collisionSource.Read(*_pak);
 
     const Core::PakProvider &provider = *_pak;
     (void)Render::SetAssetSource(&*_assetSource);

@@ -5,6 +5,7 @@
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Image/Compress.hpp>
@@ -142,6 +143,24 @@ std::expected<Core::AssetId, Render::AssetLoadError> SourceAssetSource::Resolve(
 std::string SourceAssetSource::Describe(const Core::AssetId &id) const
 {
     return _database->PathFor(id).value_or(id.ToString());
+}
+
+std::optional<Geometry::CollisionModel> SourceCollisionSource::Load(Core::AssetId id) const
+{
+    const std::optional<std::string> path = _pathOf(id);
+    if (!path)
+    {
+        Core::Log::Warn("Physics: model {} cannot be read - no file has that id.", id.ToString());
+        return std::nullopt;
+    }
+    std::expected<Geometry::MeshData, Geometry::MeshImportError> imported = Geometry::ImportMesh(*path);
+    if (!imported)
+    {
+        Core::Log::Warn("Physics: '{}' cannot be read as a model ({}).", *path, Geometry::ToString(imported.error()));
+        return std::nullopt;
+    }
+    Geometry::EnsureSubMeshTables(*imported);
+    return Geometry::CollisionModelOf(*imported);
 }
 
 } // namespace Assisi::Editor

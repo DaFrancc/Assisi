@@ -76,7 +76,7 @@ std::vector<Assisi::Physics::ContactEvent> StepUntilEnter(World &world, int32_t 
 
 TEST_CASE("A landing body reports a contact from both sides, before the solver runs")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Drop");
 
     const Assisi::ECS::Entity faller = BuildDropScene(world, {0.f, 3.f, 0.f});
@@ -117,7 +117,7 @@ TEST_CASE("A pair enters once and then stays, however long it rests")
     // With Stay asked for, Enter must fire exactly once and Stay must keep
     // coming — including after Jolt puts the body to sleep, at which point it
     // stops reporting the contact at all and the pair table has to carry it.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Rests");
     world.physics.SetStayEventsReported(true);
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
@@ -158,7 +158,7 @@ TEST_CASE("A pair that really separates reports one Exit")
     // The other half: dormancy must not swallow a genuine departure. Teleporting
     // the body away wakes it, so the pair is missing with a body awake — an Exit,
     // not a Stay.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Leaves");
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
 
@@ -194,7 +194,7 @@ TEST_CASE("ApplySystems refuses a name this build does not declare")
     // A level naming a system that is not here is a level that will run without
     // it — the silent failure the whole design opens with. So the load fails
     // rather than the world quietly running short.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Typo");
     const std::vector<std::string> names{"NoSuchSystemAnywhere"};
 
@@ -210,7 +210,7 @@ TEST_CASE("ApplySystems leaves the running systems alone when it refuses")
     // A refused call is a no-op on what is actually running: one bad name must
     // not leave the world running *nothing*, which is worse than the state it
     // was asked to replace.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("KeepsWhatItHas");
 
     const std::vector<std::string> good{"Counter"};

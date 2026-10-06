@@ -62,25 +62,6 @@ glm::vec3 WorldScaleOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::T
     return transform.scale;
 }
 
-/// Every degree of freedom, as LockedAxis bits.
-constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count)) - 1u;
-
-/// The motion a body is built with: static without a RigidBody, and kinematic
-/// when every axis is locked, since Jolt cannot simulate a body with no freedom
-/// left and one that may not move is moved only by its Transform.
-BodyMotion MotionOf(const RigidBody *rigidBody)
-{
-    if (rigidBody == nullptr)
-    {
-        return BodyMotion::Static;
-    }
-    if (rigidBody->motion == MotionType::Kinematic || (rigidBody->lockedAxes.bits & kAllAxes) == kAllAxes)
-    {
-        return BodyMotion::Kinematic;
-    }
-    return BodyMotion::Dynamic;
-}
-
 /// The degrees of freedom @p rigidBody leaves free. LockedAxis numbers them in
 /// the order Jolt's flags do.
 JPH::EAllowedDOFs AllowedDOFsOf(const RigidBody &rigidBody)
@@ -242,7 +223,7 @@ PhysicsWorld::Impl::WantedSlot PhysicsWorld::Impl::WantedFor(ECS::Entity entity)
     {
         return WantedSlot{ECS::NullEntity, SlotKind::Body};
     }
-    if (EnabledCollider(scene, entity) == nullptr)
+    if (UsableCollider(entity) == nullptr)
     {
         return WantedSlot{};
     }
@@ -345,8 +326,12 @@ void PhysicsWorld::Impl::SyncStatic(ECS::Entity entity, const Collider &collider
     {
         const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
         const glm::vec3 worldScale = WorldScaleOf(scene, entity, transform);
-        WarnOnClampedScale(entity, collider.shape, worldScale);
+        WarnOnClampedScale(entity, collider, worldScale);
         shape = MakeColliderShape(collider, worldScale, entity);
+        if (shape == nullptr)
+        {
+            return;
+        }
     }
     if (held == nullptr)
     {
@@ -396,7 +381,12 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const JPH::ShapeRefC &sh
         settings.mGravityFactor = rigidBody->gravityScale;
         settings.mAllowSleeping = rigidBody->allowSleep;
         settings.mAllowedDOFs = AllowedDOFsOf(*rigidBody);
-        if (rigidBody->mass > 0.f)
+        if (motion == BodyMotion::Kinematic)
+        {
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+            settings.mMassPropertiesOverride = MassOfShape(*shape);
+        }
+        else if (rigidBody->mass > 0.f)
         {
             settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
             settings.mMassPropertiesOverride.mMass = rigidBody->mass;
@@ -468,9 +458,10 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const JPH::ShapeRefC &shap
     const JPH::EActivation wake = moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate;
     const RigidBody tuning = rigidBody != nullptr ? *rigidBody : RigidBody{};
 
+    // The mass is set below: a kinematic body's shape may have none of its own.
     if (shape != nullptr)
     {
-        bodies.SetShape(slot.body, shape, /*inUpdateMassProperties=*/ true, wake);
+        bodies.SetShape(slot.body, shape, /*inUpdateMassProperties=*/ false, wake);
     }
     if (face.friction != slot.collider.friction)
     {
@@ -514,7 +505,8 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const JPH::ShapeRefC &shap
             }
         }
 
-        // After SetShape, which resets the mass to the shape's own.
+        // After SetShape and SetMotionType, so it weighs the shape and motion
+        // the body now has.
         ApplyMass(slot.body, tuning);
         bodies.ActivateBody(slot.body);
         Follow(entity.index);
@@ -547,12 +539,12 @@ void PhysicsWorld::Impl::SetBodyFilter(BodySlot &slot, CollisionFilter filter, B
 void PhysicsWorld::Impl::ApplyMass(const JPH::BodyID &body, const RigidBody &rigidBody)
 {
     JPH::BodyLockWrite lock(physicsSystem.GetBodyLockInterface(), body);
-    if (!lock.Succeeded() || !lock.GetBody().IsDynamic())
+    if (!lock.Succeeded() || lock.GetBody().IsStatic())
     {
         return;
     }
-    JPH::MassProperties mass = lock.GetBody().GetShape()->GetMassProperties();
-    if (rigidBody.mass > 0.f)
+    JPH::MassProperties mass = MassOfShape(*lock.GetBody().GetShape());
+    if (lock.GetBody().IsDynamic() && rigidBody.mass > 0.f)
     {
         mass.ScaleToMass(rigidBody.mass);
     }
@@ -605,14 +597,14 @@ void PhysicsWorld::Impl::PushBodyState(ECS::Entity entity)
     Follow(entity.index);
 }
 
-void PhysicsWorld::Impl::WarnOnClampedScale(ECS::Entity entity, ColliderShape shape, glm::vec3 scale) const
+void PhysicsWorld::Impl::WarnOnClampedScale(ECS::Entity entity, const Collider &collider, glm::vec3 scale) const
 {
-    if (glm::all(glm::lessThan(glm::abs(ClampedShapeScale(shape, scale) - scale), glm::vec3(kScaleClampTolerance))))
+    if (glm::all(glm::lessThan(glm::abs(ClampedScale(collider, scale) - scale), glm::vec3(kScaleClampTolerance))))
     {
         return;
     }
-    Core::Log::Warn("PhysicsWorld: entity {} (gen {}) has a round collider at a scale it cannot take ({}, {}, {}); "
-                    "it is built at the nearest one it can.",
+    Core::Log::Warn("PhysicsWorld: entity {} (gen {}) has a round collider, or a model with a round piece, at a "
+                    "scale it cannot take ({}, {}, {}); it is built at the nearest one it can.",
                     entity.index, entity.generation, scale.x, scale.y, scale.z);
 }
 
@@ -695,9 +687,13 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
     else if (scaled)
     {
         slot->worldScale = WorldScaleOf(scene, entity, transform);
-        WarnOnClampedScale(entity, slot->collider.shape, slot->worldScale);
-        bodies.SetShape(slot->body, MakeColliderShape(slot->collider, slot->worldScale, entity),
-                        /*inUpdateMassProperties=*/ true, wake);
+        WarnOnClampedScale(entity, slot->collider, slot->worldScale);
+        if (const JPH::ShapeRefC shape = MakeColliderShape(slot->collider, slot->worldScale, entity);
+            shape != nullptr)
+        {
+            // A static body has no mass to update.
+            bodies.SetShape(slot->body, shape, /*inUpdateMassProperties=*/ false, wake);
+        }
     }
 
     if (moved || turned)

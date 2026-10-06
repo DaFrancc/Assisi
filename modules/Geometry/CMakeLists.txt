@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Geometry)
 
 target_sources(Assisi-Geometry
   PUBLIC
+    "include/Assisi/Geometry/CollisionData.hpp"
     "include/Assisi/Geometry/CookedMesh.hpp"
     "include/Assisi/Geometry/MeshData.hpp"
     "include/Assisi/Geometry/Bounds.hpp"
@@ -12,6 +13,7 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/MeshValidate.hpp"
     "include/Assisi/Geometry/MaterialFile.hpp"
   PRIVATE
+    "src/CollisionData.cpp"
     "src/CookedMesh.cpp"
     "src/MeshValidate.cpp"
     "src/MaterialFile.cpp"

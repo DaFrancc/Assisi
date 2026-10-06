@@ -91,7 +91,7 @@ float HeightOf(const Physics::PhysicsWorld &world, ECS::Entity entity)
 TEST_CASE("A body passes through a trigger and is reported doing it")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     // Floor top at y = 0, and a trigger volume hanging above it.
     (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::World));
@@ -127,7 +127,7 @@ TEST_CASE("A body passes through a trigger and is reported doing it")
 TEST_CASE("A trigger only reports the channels its mask admits")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     world.SetStayEventsReported(true);
 
     const Core::Bitmask<Physics::CollisionChannel> charactersOnly =
@@ -150,7 +150,7 @@ TEST_CASE("A kinematic trigger finds a body that was already asleep")
     // testing it; the volume is then created around it. A sensor that had gone to
     // sleep itself would never meet it.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::World));
     const ECS::Entity box = Spawn(scene, {0.f, 2.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
@@ -174,7 +174,7 @@ TEST_CASE("A static trigger finds a sleeping body because placing it wakes what 
     // sleeping body, so creating it wakes whatever it now contains and the next
     // step tests the pair normally.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     (void)Spawn(scene, {0.f, -1.f, 0.f}, {20.f, 1.f, 20.f}, /*isStatic=*/ true, On(Physics::CollisionChannel::World));
     const ECS::Entity box = Spawn(scene, {0.f, 2.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
@@ -197,7 +197,7 @@ TEST_CASE("Two overlapping triggers report nothing about each other")
     // theoretical: the default trigger is kinematic, and Jolt does pair a
     // kinematic body with a sensor.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     world.SetStayEventsReported(true);
 
     const ECS::Entity first = Spawn(scene, {0.f, 0.f, 0.f}, {2.f, 2.f, 2.f}, /*isStatic=*/ false,
@@ -215,7 +215,7 @@ TEST_CASE("A kinematic trigger stays awake indefinitely")
     // which is the price of noticing bodies that are not moving. A trigger that
     // was allowed to sleep would go silent after a few seconds of quiet.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     const ECS::Entity volume = Spawn(scene, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ false,
                                      On(Physics::CollisionChannel::Trigger));

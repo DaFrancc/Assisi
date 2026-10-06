@@ -51,7 +51,8 @@ constexpr double kReportIntervalSeconds = 5.0;
 
 } // namespace
 
-ServerApp::ServerApp(ServerOptions options) : _options(std::move(options))
+ServerApp::ServerApp(ServerOptions options, const Assisi::Physics::CollisionSource &collision)
+    : _options(std::move(options)), _world(collision)
 {
     // Set before Initialize(), which is what the headless split requires: by the
     // time Initialize() returns, the decision to skip window/renderer bring-up

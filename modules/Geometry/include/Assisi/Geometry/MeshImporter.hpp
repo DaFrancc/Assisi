@@ -14,7 +14,9 @@
 /// protection is never bypassed. The importer produces one MeshData with node
 /// world transforms baked in, bucketed into SubMeshes by (LOD, material):
 /// same-material primitives within a LOD merge into one submesh; the authored
-/// LOD convention is a `*_LOD<n>` node- or mesh-name suffix. Materials are
+/// LOD convention is a `*_LOD<n>` node- or mesh-name suffix. A node whose node
+/// or mesh name starts with a collision prefix (see CollisionData.hpp) is not
+/// drawn: it becomes MeshData::Collision. Materials are
 /// extracted into MeshData::Materials (factors + texture paths resolved
 /// relative to the file); embedded images are NOT decoded — unpack .glb to
 /// separate files.
@@ -46,6 +48,7 @@ enum class MeshImportError : std::uint8_t
     ExternalDataFailed, ///< A referenced external buffer could not be read.
     NoGeometry,         ///< Parsed successfully but produced no triangles.
     Cancelled,          ///< Superseded before the import ran (a newer load epoch); no work done.
+    InvalidCollision,   ///< A collision node cannot be built; the log names it and why.
 };
 
 /// @brief A short human-readable name for a MeshImportError (for logs).

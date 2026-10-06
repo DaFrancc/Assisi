@@ -138,7 +138,7 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
 {
     // No window, so no InputContext — a dedicated server and these tests share
     // that shape. Systems reach entities through ctx.world.scene.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
     SystemRegistry systems;
@@ -168,7 +168,7 @@ TEST_CASE("SystemRegistry: every phase is a separate list, and PostFixedUpdate i
     // `after`/`before` arrange systems within one phase, and the step runs
     // between FixedUpdate and this one. A registry that folded the two together
     // would run a post-step system before the step and nothing would say so.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
     SystemRegistry systems;
@@ -196,7 +196,7 @@ TEST_CASE("SystemRegistry: ActiveWorldOnly systems run only in the active world"
 {
     // One InputContext, N resident worlds: a controller system must not apply the
     // same keypresses in every world.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
     SystemRegistry systems;
@@ -221,7 +221,7 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
 {
     // The gate is a dispatch-time skip, not a re-sort: the surviving systems must
     // keep the order their After()/Before() constraints define.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
     SystemRegistry systems;
@@ -250,7 +250,7 @@ TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist"
     // What lets a level name systems a world may never need: an open-world level
     // names everything, and residency decides what runs. The gate has to open and
     // close with the data, not just once at startup.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
     SystemRegistry systems;
@@ -282,7 +282,7 @@ TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist"
 
 TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is present")
 {
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
     SystemRegistry systems;
@@ -305,7 +305,7 @@ TEST_CASE("SystemRegistry: the activation gate is per world, not per registry")
 {
     // Two worlds built from one system list share the system *set*; whether each
     // one runs it is decided by that world's own contents.
-    WorldManager worlds;
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &withData = worlds.Create("WithData");
     World &empty    = worlds.Create("Empty");
     Assisi::Core::EventQueue events;

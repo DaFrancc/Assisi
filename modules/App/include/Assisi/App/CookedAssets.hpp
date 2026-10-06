@@ -8,6 +8,7 @@
 /// mips, a material's reflected fields, SPIR-V — so a load is a read and a parse,
 /// with no importer, image decoder or encoder behind it.
 
+#include <Assisi/Physics/CollisionSource.hpp>
 #include <Assisi/Render/AssetSource.hpp>
 
 namespace Assisi::Core
@@ -46,6 +47,22 @@ public:
 
 private:
     const Core::AssetProvider *_provider;
+};
+
+/// @brief Collision models read from cooked meshes, which carry them.
+///
+/// Has nothing to read until Read() names the package: the worlds that read
+/// through it are made before the package is mounted.
+class CookedCollisionSource final : public Physics::CollisionSource
+{
+public:
+    /// @param provider serves the cooked meshes by id. Must outlive this source.
+    void Read(const Core::AssetProvider &provider) noexcept { _provider = &provider; }
+
+    [[nodiscard]] std::optional<Geometry::CollisionModel> Load(Core::AssetId id) const override;
+
+private:
+    const Core::AssetProvider *_provider = nullptr;
 };
 
 } // namespace Assisi::App

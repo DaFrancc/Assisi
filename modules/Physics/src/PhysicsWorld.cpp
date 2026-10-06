@@ -22,6 +22,7 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaleHelpers.h>
@@ -59,6 +60,11 @@ constexpr float kUnitScaleTolerance = 1e-6f;
 /// cannot be simulated, and a density of zero is one inspector drag away.
 constexpr float kMinDensity = 1e-3f;
 
+/// The least size, on each axis, of the box a shape with no volume of its own
+/// is weighed as (m): a flat triangle mesh has a zero-thickness bounds, and a
+/// box of no volume would weigh nothing again.
+constexpr float kMinMassBoxSize = 0.1f;
+
 JPH::Ref<JPH::ConvexShape> MakePrimitive(const Collider &collider)
 {
     const float radius = glm::max(collider.radius, JPH::cDefaultConvexRadius);
@@ -72,6 +78,9 @@ JPH::Ref<JPH::ConvexShape> MakePrimitive(const Collider &collider)
     case ColliderShape::Cylinder:
         return new JPH::CylinderShape(halfHeight, radius);
     case ColliderShape::Box:
+    case ColliderShape::Convex:
+    case ColliderShape::Mesh:
+    case ColliderShape::Count:
         break;
     }
     return new JPH::BoxShape(ClampedBoxHalfExtents(collider.halfExtents));
@@ -90,7 +99,8 @@ bool SameShape(const Collider &a, const Collider &b)
 {
     return a.shape == b.shape && a.halfExtents == b.halfExtents && a.radius == b.radius &&
            a.halfHeight == b.halfHeight && a.offsetPosition == b.offsetPosition &&
-           a.offsetRotation == b.offsetRotation && a.density == b.density;
+           a.offsetRotation == b.offsetRotation && a.density == b.density && a.collisionAsset == b.collisionAsset &&
+           a.collisionPiece == b.collisionPiece;
 }
 
 glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
@@ -109,25 +119,21 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
         valid = nonZero.GetSign() * JPH::ScaleHelpers::MakeUniformScaleXZ(nonZero.Abs());
         break;
     case ColliderShape::Box:
+    case ColliderShape::Convex:
+    case ColliderShape::Mesh:
+    case ColliderShape::Count:
         break;
     }
     return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
 }
 
-JPH::ShapeRefC MakeScaledShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity)
+JPH::ShapeRefC PlaceShape(const JPH::ShapeRefC &base, const Collider &collider, glm::vec3 scale, glm::vec3 valid)
 {
-    JPH::ShapeRefC base = MakeShape(collider, entity);
-    if (glm::all(glm::lessThan(glm::abs(scale - glm::vec3(1.f)), glm::vec3(kUnitScaleTolerance))))
+    JPH::ShapeRefC scaled = base;
+    if (!glm::all(glm::lessThan(glm::abs(valid - glm::vec3(1.f)), glm::vec3(kUnitScaleTolerance))))
     {
-        return base;
+        scaled = new JPH::ScaledShape(base, JPH::Vec3(valid.x, valid.y, valid.z));
     }
-    const glm::vec3 valid = ClampedShapeScale(collider.shape, scale);
-    return new JPH::ScaledShape(base, JPH::Vec3(valid.x, valid.y, valid.z));
-}
-
-JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale, ECS::Entity entity)
-{
-    JPH::ShapeRefC scaled = MakeScaledShape(collider, scale, entity);
     const bool offset = collider.offsetPosition != glm::vec3(0.f) ||
                         collider.offsetRotation != glm::quat(1.f, 0.f, 0.f, 0.f);
     if (!offset)
@@ -140,6 +146,101 @@ JPH::ShapeRefC MakeColliderShape(const Collider &collider, glm::vec3 scale, ECS:
                                                JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w), scaled)
            .Create()
            .Get();
+}
+
+JPH::MassProperties MassOfShape(const JPH::Shape &shape)
+{
+    JPH::MassProperties mass = shape.GetMassProperties();
+    if (mass.mMass > 0.f)
+    {
+        return mass;
+    }
+    const JPH::Vec3 size = JPH::Vec3::sMax(shape.GetLocalBounds().GetSize(), JPH::Vec3::sReplicate(kMinMassBoxSize));
+    mass.SetMassAndInertiaOfSolidBox(size, kWaterDensity);
+    return mass;
+}
+
+std::size_t CookedShapeKeyHash::operator()(const CookedShapeKey &key) const noexcept
+{
+    std::size_t hash = std::hash<Core::AssetId>{}(key.asset);
+    // Boost's combine: the golden-ratio constant spreads each field across the bits.
+    constexpr std::size_t kCombine = 0x9E3779B9u;
+    for (const std::size_t field : {std::hash<float>{}(key.density), std::hash<std::int32_t>{}(key.piece),
+                                    static_cast<std::size_t>(key.shape)})
+    {
+        hash ^= field + kCombine + (hash << 6u) + (hash >> 2u);
+    }
+    return hash;
+}
+
+JPH::ShapeRefC PhysicsWorld::Impl::MakeColliderShape(const Collider &collider, glm::vec3 scale,
+                                                     ECS::Entity entity) const
+{
+    const JPH::ShapeRefC base = IsModelShape(collider.shape) ? CookedShapeFor(collider) : MakeShape(collider, entity);
+    if (base == nullptr)
+    {
+        return nullptr;
+    }
+    return PlaceShape(base, collider, scale, ClampedScale(collider, scale));
+}
+
+glm::vec3 PhysicsWorld::Impl::ClampedScale(const Collider &collider, glm::vec3 scale) const
+{
+    if (!IsModelShape(collider.shape))
+    {
+        return ClampedShapeScale(collider.shape, scale);
+    }
+    const JPH::ShapeRefC shape = CookedShapeFor(collider);
+    if (shape == nullptr)
+    {
+        return scale;
+    }
+    // A model's pieces may be round, which take only some scales; the shape
+    // knows which.
+    const JPH::Vec3 valid = shape->MakeScaleValid(JPH::Vec3(scale.x, scale.y, scale.z));
+    return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
+}
+
+Collider PhysicsWorld::Impl::AsBuilt(ECS::Entity entity, const Collider &collider, BodyMotion motion) const
+{
+    if (collider.shape != ColliderShape::Mesh || motion != BodyMotion::Dynamic)
+    {
+        return collider;
+    }
+    Core::Log::Error("PhysicsWorld: entity {} (gen {}) has a Mesh collider on a dynamic body; a triangle mesh "
+                     "cannot move under forces, so it is built as Convex. Use Convex, or make the body Kinematic.",
+                     entity.index, entity.generation);
+    Collider built = collider;
+    built.shape = ColliderShape::Convex;
+    return built;
+}
+
+const Collider *PhysicsWorld::Impl::UsableCollider(ECS::Entity entity) const
+{
+    const Collider *collider = EnabledCollider(scene, entity);
+    if (collider == nullptr || (IsModelShape(collider->shape) && CookedShapeFor(*collider) == nullptr))
+    {
+        return nullptr;
+    }
+    return collider;
+}
+
+ECS::Entity PhysicsWorld::Impl::PieceOf(const JPH::Body &body, const JPH::SubShapeID &subShape) const
+{
+    const JPH::Shape *root = body.GetShape();
+    if (root->GetType() == JPH::EShapeType::Compound)
+    {
+        JPH::SubShapeID remainder;
+        const JPH::CompoundShape *compound = static_cast<const JPH::CompoundShape *>(root);
+        const std::uint32_t child = compound->GetSubShapeIndexFromID(subShape, remainder);
+        const std::uint32_t named = child < compound->GetNumSubShapes() ? compound->GetCompoundUserData(child) : 0u;
+        if (named != 0u && named - 1u < slots.size())
+        {
+            return ECS::Entity{named - 1u, slots[named - 1u].generation};
+        }
+    }
+    const ECS::Entity piece = EntityOfUserData(root->GetSubShapeUserData(subShape));
+    return piece != ECS::NullEntity ? piece : EntityOfUserData(body.GetUserData());
 }
 
 // Contact-solver tuning (see the constructor). Rather than brute-forcing high
@@ -160,11 +261,11 @@ constexpr float kSpeculativeContactDist =
 // box (inner radius 0.5) this triggers at ~9 m/s / a ~4 m drop.
 constexpr float kLinearCastThreshold = 0.3f;
 
-PhysicsWorld::PhysicsWorld(ECS::Scene &scene, uint32_t maxBodies)
+PhysicsWorld::PhysicsWorld(ECS::Scene &scene, const CollisionSource &collision, uint32_t maxBodies)
 {
     /* Impl's first member acquires the shared Jolt runtime, so the library is up
        (allocator/Factory/types) before any of its other members construct. */
-    _impl = std::make_unique<Impl>(scene);
+    _impl = std::make_unique<Impl>(scene, collision);
     _impl->maxBodies = maxBodies;
     _impl->clearEpoch = scene.ClearEpoch();
 
@@ -798,7 +899,7 @@ glm::vec3 PhysicsWorld::GetColliderScale(ECS::Entity entity) const
     {
         return glm::vec3(1.f);
     }
-    return ClampedShapeScale(slot->collider.shape, slot->worldScale);
+    return _impl->ClampedScale(slot->collider, slot->worldScale);
 }
 
 CollisionFilter PhysicsWorld::GetBodyCollisionFilter(ECS::Entity entity) const

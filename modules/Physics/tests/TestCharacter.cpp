@@ -109,7 +109,7 @@ bool Finite(glm::vec3 value)
 TEST_CASE("A character dropped above a floor lands on it and reports OnGround")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 2.f, 0.f});
@@ -130,7 +130,7 @@ TEST_CASE("A character dropped above a floor lands on it and reports OnGround")
 TEST_CASE("A character walking into a wall stops at it")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     // A wall whose near face is at x = 2.
@@ -178,7 +178,7 @@ TEST_CASE("A character walking into a body locked on several axes stays finite")
             CAPTURE(lock.bits);
             CAPTURE(start.x);
             ECS::Scene scene;
-            Physics::PhysicsWorld world{scene};
+            Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
             (void)SpawnFloor(scene, world);
 
             // Raised so the character meets it at its own height, as in a level.
@@ -206,7 +206,7 @@ TEST_CASE("A character whose mask excludes World walks through the wall")
     // The other half of the rule, and the one a filter bug hides behind: a sweep
     // that ignored the descriptor's mask would pass the case above and fail this.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
     (void)SpawnBox(scene, world, {3.f, 1.f, 0.f}, {1.f, 1.f, 5.f});
 
@@ -231,7 +231,7 @@ TEST_CASE("A ray finds a character and names its entity, and misses once it is r
     // phase at all: every cast, every trigger and every other character would pass
     // through it, and CollisionChannel::Character would name nothing that exists.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
@@ -265,7 +265,7 @@ TEST_CASE("A character crosses a trigger without being stopped, and the trigger 
     // a sweep that collided with sensors would stop (and still report), and an
     // inner body missing the Trigger channel would pass through silently.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const ECS::Entity trigger =
@@ -301,7 +301,7 @@ TEST_CASE("A character standing on a static floor still reports a contact with i
     // The character's own sweep is what sees this, so a build that reported
     // contacts only through the inner body fails here and nowhere else.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity floor = SpawnFloor(scene, world);
 
     const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.5f, 0.f});
@@ -332,7 +332,7 @@ TEST_CASE("A step within maxStepHeight is climbed, and a taller one is not")
     const auto climbTo = [&descriptor](float stepHeight)
     {
         ECS::Scene scene;
-        Physics::PhysicsWorld world{scene};
+        Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
         // A block whose top is at stepHeight, starting at x = 1 and running well
@@ -359,7 +359,7 @@ TEST_CASE("A slope steeper than maxSlopeDegrees is not walkable")
     // which is what the movement code branches on: a character there slides
     // instead of walking, and must not be allowed to jump off it.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -389,7 +389,7 @@ TEST_CASE("A character crouches under a low ceiling and cannot stand until it is
 {
     // The whole reason a stance is asked for rather than commanded.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -421,7 +421,7 @@ TEST_CASE("A crouched character is not hit at standing head height")
     // The inner body has to be reshaped alongside the sweep shape, or a crouched
     // character is still shot in the head.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -447,7 +447,7 @@ TEST_CASE("A crouched character is not hit at standing head height")
 TEST_CASE("Crouching in the air lifts the feet and leaves the eye where it was")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -487,7 +487,7 @@ TEST_CASE("Crouching in the air lifts the feet and leaves the eye where it was")
 TEST_CASE("Crouching on the ground leaves the feet where they are")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
@@ -501,7 +501,7 @@ TEST_CASE("Crouching on the ground leaves the feet where they are")
 TEST_CASE("A character crouched in the air cannot stand while the floor is too close below")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -532,7 +532,7 @@ TEST_CASE("A teleported character is somewhere else immediately, not next step")
     // destination: the inner body is a separate object and does not follow on its
     // own.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
@@ -569,7 +569,7 @@ TEST_CASE("Two characters walking at each other stop rather than overlapping")
     // A character is not in the broad phase, so this only works because each one's
     // sweep meets the other's inner body.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character descriptor{};
@@ -606,7 +606,7 @@ TEST_CASE("A character descriptor brings the Transform and the Character it need
     // so there is no step on which a character lacks the component its intent is
     // read from or the pose it is placed at.
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add<Physics::Character>(entity, Physics::Character{}) != nullptr);
@@ -633,7 +633,7 @@ TEST_CASE("A character cannot also carry a Collider or a RigidBody")
 TEST_CASE("CharacterIntent drives a character: move at its walk speed, and a jump taken once")
 {
     ECS::Scene scene;
-    Physics::PhysicsWorld world{scene};
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
     Physics::Character tuning;

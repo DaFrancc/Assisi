@@ -179,7 +179,11 @@ class GameApp : public Application
 
     Runtime::SceneRenderer _sceneRenderer;
 
-    WorldManager _worlds;
+    /// What every world's physics reads collision models through, over the
+    /// package above. Declared before the worlds, which hold it.
+    CookedCollisionSource _collisionSource;
+
+    WorldManager _worlds{_collisionSource};
 
     /// Where the game looks from when the scene nominates no camera. A level
     /// that has not composed one renders from the origin rather than not at all,

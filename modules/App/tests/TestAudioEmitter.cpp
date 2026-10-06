@@ -183,7 +183,7 @@ struct Stage
     Core::AssetStore store;
     Core::EventQueue events;
     RecordingOutput output;
-    App::WorldManager worlds;
+    App::WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     App::World &world = worlds.Create("Audio");
     const Core::AssetId clip = Core::DerivedAssetId("sounds/tone.ogg");
 

@@ -64,7 +64,9 @@ struct ServerOptions
 class ServerApp final : public Assisi::App::Application
 {
 public:
-    explicit ServerApp(ServerOptions options);
+    /// @param collision  Where the world's physics reads collision models from.
+    ///                   Must outlive the server.
+    ServerApp(ServerOptions options, const Assisi::Physics::CollisionSource &collision);
     ~ServerApp() override;
 
 protected:

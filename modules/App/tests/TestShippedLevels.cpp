@@ -114,7 +114,7 @@ TEST_CASE("Every shipped level loads, builds its bodies and simulates")
         CAPTURE(virtualPath);
         ++levels;
 
-        App::World world;
+        App::World world{Assisi::Physics::NoCollisionAssets()};
         REQUIRE(App::LoadLevelSim(world, virtualPath));
 
         for (auto [entity, collider] : world.scene.Query<Physics::Collider>())

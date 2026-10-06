@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <Assisi/Geometry/Bounds.hpp>
+#include <Assisi/Geometry/CollisionData.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Math/GLM.hpp>
 
@@ -109,6 +110,10 @@ struct MeshData
     std::vector<SubMesh>      SubMeshes; ///< May be empty — see degenerate rule above.
     std::vector<LodRange>     Lods;      ///< [0] = LOD0. May be empty alongside SubMeshes.
     std::vector<MaterialData> Materials; ///< Material slot table (import defaults).
+
+    /// The collision the model authored as prefixed nodes, which are not part
+    /// of the geometry above.
+    CollisionData Collision;
 
     // Whole-mesh bounds, fit over every vertex by EnsureMeshBounds on the import
     // worker, so the main-thread publish reads them instead of re-walking the

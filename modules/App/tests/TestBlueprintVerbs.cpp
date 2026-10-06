@@ -107,7 +107,7 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
     const std::filesystem::path root = FreshRoot("spawn");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     ECS::Transform at;
     at.position = {12.f, 0.f, 0.f};
 
@@ -139,7 +139,7 @@ TEST_CASE("Verbs: spawning a blueprint holding a character builds the controller
     const std::filesystem::path root = FreshRoot("character");
     Write(root, "walker.abp", WalkerFile());
 
-    App::WorldManager worlds;
+    App::WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     App::World &world = worlds.Create("Test");
 
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "walker.abp", {});
@@ -173,7 +173,7 @@ TEST_CASE("Verbs: destroying a blueprint holding a character takes the controlle
     const std::filesystem::path root = FreshRoot("character_destroy");
     Write(root, "walker.abp", WalkerFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "walker.abp", {});
     REQUIRE(id.has_value());
     world.physics.Reconcile();
@@ -191,7 +191,7 @@ TEST_CASE("Verbs: destroying a blueprint holding a character takes the controlle
 TEST_CASE("Verbs: a failed spawn leaves nothing")
 {
     const std::filesystem::path root = FreshRoot("failed");
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const ECS::Entity loose = world.scene.Create();
     (void)world.scene.Add(loose, ECS::Transform{});
 
@@ -205,7 +205,7 @@ TEST_CASE("Verbs: destroy reaches only tagged members and spares the loose neigh
     const std::filesystem::path root = FreshRoot("destroy");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     // Dropping a loose entity beside an instance is legal and common — levels hold
     // ordinary entities alongside instances — but it is not a member.
     const ECS::Entity loose = world.scene.Create();
@@ -234,7 +234,7 @@ TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components
     const std::filesystem::path root = FreshRoot("destroy_bodies");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
 
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
@@ -275,7 +275,7 @@ TEST_CASE("Verbs: a pruned member lives on, and destroy no longer reaches it")
     const std::filesystem::path root = FreshRoot("prune");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
@@ -302,7 +302,7 @@ TEST_CASE("Verbs: explode ends the instance and destroys nothing")
     const std::filesystem::path root = FreshRoot("explode");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
@@ -319,7 +319,7 @@ TEST_CASE("Verbs: the id outlives a member's death; the handle does not")
     const std::filesystem::path root = FreshRoot("receipts");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
@@ -345,7 +345,7 @@ TEST_CASE("Verbs: two spawns of one file are separate instances")
     const std::filesystem::path root = FreshRoot("two");
     Write(root, "car.abp", CarFile());
 
-    App::World world;
+    App::World world{Assisi::Physics::NoCollisionAssets()};
     const std::optional<ECS::InstanceId> first  = App::SpawnBlueprint(world, "car.abp", {});
     const std::optional<ECS::InstanceId> second = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(first.has_value());

@@ -340,7 +340,7 @@ void PhysicsWorld::Impl::SyncOwner(ECS::Entity owner, bool reshape)
         return;
     }
 
-    const Collider *own = EnabledCollider(scene, owner);
+    const Collider *own = UsableCollider(owner);
     std::vector<ECS::Entity> pieces;
     PiecesOf(owner, pieces);
     if (own == nullptr && pieces.empty())
@@ -356,9 +356,13 @@ void PhysicsWorld::Impl::SyncOwner(ECS::Entity owner, bool reshape)
     // a shape's: the owner's own Collider's, or else its first piece's.
     const Collider face = own != nullptr ? *own : slots[pieces.front().index].collider;
     const glm::vec3 scale = scene.Get<ECS::Transform>(owner)->scale;
+    // A Mesh is built as Convex while its body is dynamic, so a change of
+    // motion changes the shape of a body holding one.
+    const bool motionChanged = held != nullptr && held->motion != MotionOf(rigidBody);
     const bool stale = held == nullptr || reshape || held->motion == BodyMotion::Static || held->pieces != pieces ||
                        held->ownCollider != (own != nullptr) ||
-                       (own != nullptr && !SameShape(*own, held->collider)) || held->worldScale != scale;
+                       (own != nullptr && !SameShape(*own, held->collider)) || held->worldScale != scale ||
+                       (motionChanged && HoldsMesh(own, pieces));
 
     JPH::Ref<JPH::MutableCompoundShape> compound = held != nullptr ? held->compound : nullptr;
     JPH::ShapeRefC shape;
@@ -366,9 +370,18 @@ void PhysicsWorld::Impl::SyncOwner(ECS::Entity owner, bool reshape)
     {
         if (own != nullptr)
         {
-            WarnOnClampedScale(owner, own->shape, scale);
+            WarnOnClampedScale(owner, *own, scale);
         }
         shape = MakeOwnerShape(owner, own, pieces, scale, compound);
+        if (shape == nullptr)
+        {
+            // Every part's model failed to build, which has been logged.
+            if (held != nullptr)
+            {
+                DestroySlot(owner.index);
+            }
+            return;
+        }
     }
 
     if (held == nullptr)
@@ -395,21 +408,28 @@ JPH::ShapeRefC PhysicsWorld::Impl::MakeOwnerShape(ECS::Entity owner, const Colli
                                                   std::span<const ECS::Entity> pieces, glm::vec3 scale,
                                                   JPH::Ref<JPH::MutableCompoundShape> &compound)
 {
+    const BodyMotion motion = MotionOf(scene.Get<RigidBody>(owner));
     if (pieces.empty())
     {
         compound = nullptr;
-        return MakeColliderShape(*own, scale, owner);
+        return MakeColliderShape(AsBuilt(owner, *own, motion), scale, owner);
     }
 
     // The owner's own Collider first, at the body's origin, then each piece
     // where it sits relative to the owner: the indices the pieces record are
-    // these, and RePlacePiece moves a child by its index.
+    // these, and RePlacePiece moves a child by its index. Each child names its
+    // entity's index, plus one, so a part built of a shared model is still told
+    // apart from its owner.
     JPH::MutableCompoundShapeSettings settings;
     uint32_t next = 0;
     if (own != nullptr)
     {
-        settings.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), MakeColliderShape(*own, scale, owner));
-        ++next;
+        const JPH::ShapeRefC shape = MakeColliderShape(AsBuilt(owner, *own, motion), scale, owner);
+        if (shape != nullptr)
+        {
+            settings.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), shape, owner.index + 1u);
+            ++next;
+        }
     }
     for (const ECS::Entity piece : pieces)
     {
@@ -422,16 +442,42 @@ JPH::ShapeRefC PhysicsWorld::Impl::MakeOwnerShape(ECS::Entity owner, const Colli
                             piece.index, piece.generation);
             placement = PiecePlacement{};
         }
-        WarnOnClampedScale(piece, slot.collider.shape, placement.scale);
+        WarnOnClampedScale(piece, slot.collider, placement.scale);
         slot.worldScale = placement.scale;
+        const JPH::ShapeRefC shape = MakeColliderShape(AsBuilt(piece, slot.collider, motion), placement.scale, piece);
+        if (shape == nullptr)
+        {
+            slot.subShape = kNoChild;
+            continue;
+        }
         slot.subShape = next++;
-        settings.AddShape(ToJoltVector(placement.position), ToJolt(placement.rotation),
-                          MakeColliderShape(slot.collider, placement.scale, piece));
+        settings.AddShape(ToJoltVector(placement.position), ToJolt(placement.rotation), shape, piece.index + 1u);
+    }
+    if (next == 0)
+    {
+        compound = nullptr;
+        return nullptr;
     }
 
     JPH::ShapeSettings::ShapeResult result;
     compound = new JPH::MutableCompoundShape(settings, result);
     return JPH::ShapeRefC(compound.GetPtr());
+}
+
+bool PhysicsWorld::Impl::HoldsMesh(const Collider *own, std::span<const ECS::Entity> pieces) const
+{
+    if (own != nullptr && own->shape == ColliderShape::Mesh)
+    {
+        return true;
+    }
+    for (const ECS::Entity piece : pieces)
+    {
+        if (slots[piece.index].collider.shape == ColliderShape::Mesh)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void PhysicsWorld::Impl::RePlacePiece(ECS::Entity piece)
@@ -444,7 +490,8 @@ void PhysicsWorld::Impl::RePlacePiece(ECS::Entity piece)
     // A piece its owner has not been built with has no child to move; the
     // owner's next build places it.
     BodySlot *owner = OwnBodySlot(slot->owner);
-    if (owner == nullptr || owner->compound == nullptr || !Contains(owner->pieces, piece))
+    if (owner == nullptr || owner->compound == nullptr || !Contains(owner->pieces, piece) ||
+        slot->subShape == kNoChild)
     {
         return;
     }
@@ -457,8 +504,12 @@ void PhysicsWorld::Impl::RePlacePiece(ECS::Entity piece)
     JPH::ShapeRefC rescaled;
     if (placement.scale != slot->worldScale)
     {
-        WarnOnClampedScale(piece, slot->collider.shape, placement.scale);
-        rescaled = MakeColliderShape(slot->collider, placement.scale, piece);
+        WarnOnClampedScale(piece, slot->collider, placement.scale);
+        rescaled = MakeColliderShape(AsBuilt(piece, slot->collider, owner->motion), placement.scale, piece);
+        if (rescaled == nullptr)
+        {
+            return;
+        }
         slot->worldScale = placement.scale;
     }
 
@@ -484,7 +535,7 @@ void PhysicsWorld::Impl::RePlacePiece(ECS::Entity piece)
         }
         owner->compound->AdjustCenterOfMass();
     }
-    physicsSystem.GetBodyInterface().NotifyShapeChanged(owner->body, previousCentre, /*inUpdateMassProperties=*/ true,
+    physicsSystem.GetBodyInterface().NotifyShapeChanged(owner->body, previousCentre, /*inUpdateMassProperties=*/ false,
                                                         JPH::EActivation::Activate);
     ApplyMass(owner->body, owner->rigidBody);
 }
@@ -521,11 +572,17 @@ void PhysicsWorld::Impl::CreateFollower(ECS::Entity entity, const Collider &coll
         return;
     }
     const CollisionFilter filter{collider.collidesWith, collider.channel};
-    WarnOnClampedScale(entity, collider.shape, world.scale);
+    WarnOnClampedScale(entity, collider, world.scale);
+    const JPH::ShapeRefC shape = MakeColliderShape(collider, world.scale, entity);
+    if (shape == nullptr)
+    {
+        return;
+    }
 
-    JPH::BodyCreationSettings settings(MakeColliderShape(collider, world.scale, entity), ToJolt(world.position),
-                                       ToJolt(world.rotation), JPH::EMotionType::Kinematic,
-                                       LayerFor(filter, BodyMotion::Kinematic));
+    JPH::BodyCreationSettings settings(shape, ToJolt(world.position), ToJolt(world.rotation),
+                                       JPH::EMotionType::Kinematic, LayerFor(filter, BodyMotion::Kinematic));
+    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+    settings.mMassPropertiesOverride = MassOfShape(*shape);
     settings.mIsSensor = collider.channel == CollisionChannel::Trigger;
     settings.mUserData = UserDataOf(entity);
     settings.mFriction = collider.friction;
@@ -559,8 +616,10 @@ void PhysicsWorld::Impl::EditFollower(ECS::Entity entity, const Collider &collid
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
     if (!SameShape(collider, slot.collider))
     {
-        bodies.SetShape(slot.body, MakeColliderShape(collider, slot.worldScale, entity),
-                        /*inUpdateMassProperties=*/ false, JPH::EActivation::Activate);
+        if (const JPH::ShapeRefC shape = MakeColliderShape(collider, slot.worldScale, entity); shape != nullptr)
+        {
+            bodies.SetShape(slot.body, shape, /*inUpdateMassProperties=*/ false, JPH::EActivation::Activate);
+        }
     }
     if (collider.friction != slot.collider.friction)
     {
@@ -588,9 +647,11 @@ void PhysicsWorld::Impl::PlaceFollowers()
         }
         if (world.scale != slot.worldScale)
         {
-            WarnOnClampedScale(entity, slot.collider.shape, world.scale);
-            bodies.SetShape(slot.body, MakeColliderShape(slot.collider, world.scale, entity),
-                            /*inUpdateMassProperties=*/ false, JPH::EActivation::Activate);
+            WarnOnClampedScale(entity, slot.collider, world.scale);
+            if (const JPH::ShapeRefC shape = MakeColliderShape(slot.collider, world.scale, entity); shape != nullptr)
+            {
+                bodies.SetShape(slot.body, shape, /*inUpdateMassProperties=*/ false, JPH::EActivation::Activate);
+            }
             slot.worldScale = world.scale;
         }
         // Put there rather than swept: a follower only rides along, and a

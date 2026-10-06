@@ -25,6 +25,13 @@ constexpr std::size_t kMinSubMeshBytes     = kSubMeshVarInts * kMinVarIntBytes +
 constexpr std::size_t kLodVarInts          = 2;  ///< First submesh, submesh count.
 constexpr std::size_t kMinLodBytes         = kLodVarInts * kMinVarIntBytes + kFloatBytes;
 constexpr std::size_t kAssetIdBytes        = sizeof(Core::AssetId::bytes);
+constexpr std::size_t kPointBytes          = 3 * kFloatBytes;
+constexpr std::size_t kPieceFloats         = 12; ///< Rotation 4, position 3, half extents 3, radius, half height.
+constexpr std::size_t kPieceSmallFields    = 4;  ///< Name length, first point, point count, kind: a byte or more each.
+constexpr std::size_t kMinPieceBytes       = kPieceFloats * kFloatBytes + kPieceSmallFields * kMinVarIntBytes;
+
+/// The longest piece name a cooked mesh carries: a node name and a part number.
+constexpr std::size_t kMaxPieceNameBytes   = 256;
 
 void WriteVec3(Core::BitWriter &writer, const glm::vec3 &value)
 {
@@ -68,6 +75,75 @@ bool ReadCount(Core::BitReader &reader, std::size_t recordBytes, std::uint32_t &
     }
     const std::size_t bytesLeft = reader.BitsRemaining() / kBitsPerByte;
     return static_cast<std::size_t>(count) <= bytesLeft / recordBytes;
+}
+
+void WriteCollision(Core::BitWriter &writer, const CollisionData &collision)
+{
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(collision.points.size()));
+    for (const glm::vec3 &point : collision.points)
+    {
+        WriteVec3(writer, point);
+    }
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(collision.pieces.size()));
+    for (const CollisionPiece &piece : collision.pieces)
+    {
+        writer.WriteString(piece.name);
+        writer.WriteFloat(piece.rotation.w);
+        writer.WriteFloat(piece.rotation.x);
+        writer.WriteFloat(piece.rotation.y);
+        writer.WriteFloat(piece.rotation.z);
+        WriteVec3(writer, piece.position);
+        WriteVec3(writer, piece.halfExtents);
+        writer.WriteFloat(piece.radius);
+        writer.WriteFloat(piece.halfHeight);
+        writer.WriteVarUInt32(piece.firstPoint);
+        writer.WriteVarUInt32(piece.pointCount);
+        writer.WriteUInt8(static_cast<std::uint8_t>(piece.kind));
+    }
+}
+
+/// Reads what WriteCollision wrote, refusing a piece whose points run past the
+/// point array or whose kind this build does not know.
+bool ReadCollision(Core::BitReader &reader, CollisionData &collision)
+{
+    std::uint32_t count = 0;
+    if (!ReadCount(reader, kPointBytes, count))
+    {
+        return false;
+    }
+    collision.points.resize(count);
+    for (glm::vec3 &point : collision.points)
+    {
+        point = ReadVec3(reader);
+    }
+    if (reader.Failed() || !ReadCount(reader, kMinPieceBytes, count))
+    {
+        return false;
+    }
+    collision.pieces.resize(count);
+    for (CollisionPiece &piece : collision.pieces)
+    {
+        piece.name = reader.ReadString(kMaxPieceNameBytes);
+        piece.rotation.w = reader.ReadFloat();
+        piece.rotation.x = reader.ReadFloat();
+        piece.rotation.y = reader.ReadFloat();
+        piece.rotation.z = reader.ReadFloat();
+        piece.position = ReadVec3(reader);
+        piece.halfExtents = ReadVec3(reader);
+        piece.radius = reader.ReadFloat();
+        piece.halfHeight = reader.ReadFloat();
+        piece.firstPoint = reader.ReadVarUInt32();
+        piece.pointCount = reader.ReadVarUInt32();
+        const std::uint8_t kind = reader.ReadUInt8();
+        if (reader.Failed() || kind >= static_cast<std::uint8_t>(CollisionPieceKind::Count) ||
+            piece.firstPoint > collision.points.size() ||
+            piece.pointCount > collision.points.size() - piece.firstPoint)
+        {
+            return false;
+        }
+        piece.kind = static_cast<CollisionPieceKind>(kind);
+    }
+    return !reader.Failed();
 }
 
 } // namespace
@@ -136,6 +212,8 @@ void WriteCookedMesh(Core::BitWriter &writer, const MeshData &mesh, std::span<co
     {
         Core::WriteAssetId(writer, id);
     }
+
+    WriteCollision(writer, mesh.Collision);
 }
 
 std::expected<CookedMesh, CookedMeshError> ReadCookedMesh(std::span<const std::byte> bytes)
@@ -235,6 +313,11 @@ std::expected<CookedMesh, CookedMeshError> ReadCookedMesh(std::span<const std::b
         return std::unexpected(CookedMeshError::Truncated);
     }
     mesh.Materials.resize(count);
+
+    if (!ReadCollision(reader, mesh.Collision))
+    {
+        return std::unexpected(reader.Failed() ? CookedMeshError::Truncated : CookedMeshError::Invalid);
+    }
 
     if (!ValidateMesh(mesh))
     {

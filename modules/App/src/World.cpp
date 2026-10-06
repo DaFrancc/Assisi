@@ -116,7 +116,7 @@ World &WorldManager::Create(std::string_view label)
     // Not refusable: Create returns a reference, so there is no failure value.
     // The mutators above are the ones a system could plausibly reach for, and
     // LoadLevel (which calls this) is already guarded at its own entry.
-    std::unique_ptr<World> world = std::make_unique<World>(_maxPhysicsBodies);
+    std::unique_ptr<World> world = std::make_unique<World>(*_collision, _maxPhysicsBodies);
     world->name.assign(label).append("#").append(std::to_string(_nextId++));
     world->manager = this;
 

@@ -1453,7 +1453,12 @@ class EditorApp : public Assisi::App::Application
     // travelled elsewhere, or while a blueprint holds the edited role.
     // `_scene`/`_physics` are the active world's, cached so panels can reach them
     // directly.
-    Assisi::App::WorldManager _worlds;
+    //
+    // Their physics reads collision models from the source files, through the
+    // asset database declared further down; nothing reads one before it is built.
+    Assisi::Editor::SourceCollisionSource _collisionSource{[this](Assisi::Core::AssetId id)
+                                                           { return _assetDatabase.PathFor(id); }};
+    Assisi::App::WorldManager _worlds{_collisionSource};
     Assisi::App::World *_world = nullptr;              ///< The active world.
     Assisi::ECS::Scene *_scene = nullptr;              ///< == &_world->scene.
     Assisi::Physics::PhysicsWorld *_physics = nullptr; ///< == &_world->physics.
@@ -1685,6 +1690,10 @@ class EditorApp : public Assisi::App::Application
     // every frame.
     std::vector<LineVertex> _colliderLinesDepthTested;
     std::vector<LineVertex> _colliderLinesOnTop;
+
+    /// The edges of the model shape the collider being drawn builds, reused
+    /// across colliders and frames so drawing them allocates nothing.
+    std::vector<glm::vec3> _colliderModelEdges;
 
     // The same split for the light gizmos, and separate batches rather than
     // shared ones because a light's reach and a body's collider are unrelated
