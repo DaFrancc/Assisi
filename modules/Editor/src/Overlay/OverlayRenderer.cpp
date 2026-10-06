@@ -221,7 +221,7 @@ void OverlayRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const gl
     // unless it is beyond the LOD distance from the camera.
     if (_editorIconsVisible)
     {
-        for (auto [entity, world] : scene.Query<ECS::WorldMatrix>(ECS::Without<MeshRenderer>{}))
+        for (auto [entity, world] : scene.Query<ECS::WorldMatrix, Without<MeshRenderer>>())
         {
             if (IsIconSuppressed(entity))
             {

@@ -19,7 +19,7 @@ add_executable(Assisi-ECS-Tests
   TestSparseSet.cpp
   TestRegistry.cpp
   TestQuery.cpp
-  TestQueryMut.cpp
+  TestQueryWrites.cpp
   TestScene.cpp
   TestComponentRules.cpp
   TestChangeDetection.cpp

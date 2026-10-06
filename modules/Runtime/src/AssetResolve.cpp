@@ -34,13 +34,13 @@ void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &c
 
 void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
 {
-    for (auto [entity, meshRenderer] : scene.Query<MeshRenderer>())
+    for (auto [entity, meshRenderer] : scene.Query<Mut<MeshRenderer>>())
         ResolveMeshRendererAssets(meshRenderer, cache);
 }
 
 void ClearSceneAssetBindings(ECS::Scene &scene)
 {
-    for (auto [entity, meshRenderer] : scene.Query<MeshRenderer>())
+    for (auto [entity, meshRenderer] : scene.Query<Mut<MeshRenderer>>())
     {
         meshRenderer.meshBuffer = nullptr;
         meshRenderer.materials.clear();

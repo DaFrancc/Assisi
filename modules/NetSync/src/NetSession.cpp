@@ -364,7 +364,7 @@ SessionStats NetSession::Stats() const
             }
         }
 
-        for (auto [entity, replicated] : const_cast<ECS::Scene &>(_scene).Query<Replicated>())
+        for (auto [entity, replicated] : _scene.Query<Replicated>())
         {
             (void)entity;
             (void)replicated;

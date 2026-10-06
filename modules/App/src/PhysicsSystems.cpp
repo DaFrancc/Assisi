@@ -231,7 +231,7 @@ void CharacterInputSystem(SystemContext &ctx)
     const Physics::Stance stance =
         actions.IsActionDown(kActionCrouch, input) ? Physics::Stance::Crouching : Physics::Stance::Standing;
 
-    for (auto [entity, intentRef] : ctx.world.scene.QueryMut<Physics::CharacterIntent>())
+    for (auto [entity, intent] : ctx.world.scene.Query<Mut<Physics::CharacterIntent>>())
     {
         // Into the world, through the character's own facing. The vertical part is
         // dropped: looking down must not walk a character into the floor, and the
@@ -247,7 +247,6 @@ void CharacterInputSystem(SystemContext &ctx)
             }
         }
 
-        Physics::CharacterIntent &intent = intentRef.GetMut();
         intent.move = worldMove;
         intent.stance = stance;
 

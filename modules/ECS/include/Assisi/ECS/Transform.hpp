@@ -62,7 +62,7 @@ struct Propagation;
 /// such as mouse look shows at once while motion from fixed steps is smoothed.
 ///
 /// Fed from the pool's stamp, which runs before the caller writes for GetMut and
-/// QueryMut, so it sees the old value. Add and MarkChanged stamp after the value
+/// a Mut query element, so it sees the old value. Add and MarkChanged stamp after the value
 /// is in place, so a spawn or a by-offset write records its new pose and is
 /// drawn there with no slide.
 template <> struct SparseSetLanes<Transform>

@@ -12,7 +12,7 @@ Make a new folder `apps/game/src/Tutorial/` with two files in it.
 
 > **Don't worry about what this code means yet.** Copy it as it is for now.
 > Once you've seen it run, the rest of this chapter explains the `ASYSTEM` line
-> and `ctx`. The loop is the `QueryMut` from
+> and `ctx`. The loop is the `Query` with `Mut` from
 > [Entities and components](entities-and-components.md).
 
 `apps/game/src/Tutorial/TutorialSystems.hpp`:
@@ -51,9 +51,9 @@ void SpinSystem(Assisi::App::SystemContext &ctx)
     ECS::Scene &scene = ctx.world.scene;
     // Physics bodies are moved by physics; leave them alone.
     for (auto [entity, transform] :
-         scene.QueryMut<ECS::Transform>(ECS::Without<Physics::RigidBody>{}))
+         scene.Query<Mut<ECS::Transform>, Without<Physics::RigidBody>>())
     {
-        transform->rotation = step * transform->rotation;
+        transform.rotation = step * transform.rotation;
     }
 }
 ```

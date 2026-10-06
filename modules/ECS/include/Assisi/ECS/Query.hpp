@@ -4,30 +4,30 @@
 /// @file Query.hpp
 /// @brief Multi-component query view for iterating entities that match a component signature.
 ///
-/// Returned by Scene::Query<Ts...>() and Scene::QueryMut<Ts...>(). Iterates the
-/// smallest matching pool and skips entities absent from the others (or present
-/// in an excluded pool), yielding (Entity, Ts&...) — or (Entity, Mut<Ts>...) for
-/// the stamping variant — as a structured binding.
+/// Returned by Scene::Query<Args...>(). Iterates the smallest matching pool and
+/// skips entities absent from the others (or present in an excluded pool),
+/// yielding (Entity, components...) as a structured binding.
 ///
-/// Example:
+/// Each argument names one component: plain, `Mut<T>`, or `Without<T>`. A
+/// plain component yields `const T&`. A `Mut<T>` yields `T&` and marks the
+/// component changed for every entity the loop reaches, so an ACOMP(tracked)
+/// write is never missed and a write through a plain element does not compile.
+/// A `Without<T>` yields nothing and skips entities holding a T.
+///
 /// @code
-///   for (auto [e, pos, vel] : scene.Query<Position, Velocity>())
+///   for (auto [e, vel, pos] : scene.Query<Velocity, Mut<Position>>())
 ///       pos.x += vel.x;
 ///   // entities with Position but not Frozen:
-///   for (auto [e, pos] : scene.Query<Position>(Without<Frozen>{}))
+///   for (auto [e, pos] : scene.Query<Mut<Position>, Without<Frozen>>())
 ///       pos.x += 1.0f;
 /// @endcode
 ///
-/// @warning Plain `Query` yields raw `Ts&`, which is the ergonomic path for
-/// reads and for writing *untracked* components — but writing an ACOMP(tracked)
-/// component through it is a **silently missed change**: nothing stamps the
-/// pool's change tick, so `Scene::Changed<T>(e, since)` keeps reporting false
-/// and every consumer that filters on it (transform propagation, network
-/// replication) skips the entity. Use `Scene::QueryMut<Ts...>()` for the types
-/// you write; it yields `Mut<T>` proxies that stamp exactly like
-/// `Scene::GetMut`. Wrap only the types you actually write — a `Mut`-wrapped
-/// read stamps too (safe over-reporting, but pointless traffic), so read the
-/// rest through a plain `Query` alongside.
+/// Mut and Without are also declared at global scope, so code in any
+/// namespace writes them unqualified.
+///
+/// A loop that changes only some of the entities it visits reads through a
+/// plain element and writes those few through Scene::GetMut, so only they are
+/// marked.
 
 #include <cstddef>
 #include <cstdint>
@@ -43,170 +43,116 @@ namespace Assisi::ECS
 
 struct Scene; // sole constructor of QueryView — see friend declaration below
 
-/// @brief Exclusion tag passed to Scene::Query to reject entities holding any Es.
+/// @brief Query argument rejecting entities holding a T.
 ///
-/// `scene.Query<A>(Without<B>{})` yields entities with A but not B. An excluded
-/// component whose pool has never been created excludes nobody — there are no
-/// holders to reject — so a missing excluded pool is simply a no-op filter.
-template <typename... Es> struct Without
+/// `scene.Query<A, Without<B>>()` yields entities with A but not B; each
+/// excluded component is its own Without. An excluded component whose pool has
+/// never been created excludes nobody — there are no holders to reject — so a
+/// missing excluded pool is simply a no-op filter.
+template <typename T> struct Without
 {
 };
 
-// ── Query access policies ─────────────────────────────────────────────────────
-// Tag types selecting what a QueryView's iterator yields per required component.
-// They exist so both query flavours share one piece of iteration machinery (pool
-// intersection, smallest-pool driving, the debug invalidation guard) and differ
-// only in operator*'s return — a copy-pasted second view would drift.
-
-/// @brief Yield raw `T&` (Scene::Query). No change-tick stamping.
-struct RefAccess
+/// @brief Query element asking for T writable: the query yields `T&` and marks
+/// T changed for each entity it reaches. Only ever named in a query's element
+/// list; nothing constructs one.
+template <typename T> struct Mut
 {
 };
 
-/// @brief Yield `Mut<T>` write proxies (Scene::QueryMut). Stamps on mutable access.
-struct MutAccess
+/// @brief What a query element names and yields: a plain T is read-only,
+/// Mut<T> writes.
+template <typename E> struct QueryElement
 {
+    using Component = E;
+    using Yield = const E &;
+    static constexpr bool Writes = false;
 };
 
-/// @brief Placeholder for the scene change-tick back-pointer in a RefAccess view.
+template <typename T> struct QueryElement<Mut<T>>
+{
+    using Component = T;
+    using Yield = T &;
+    static constexpr bool Writes = true;
+};
+
+template <typename E> using ComponentOf = typename QueryElement<E>::Component;
+
+/// @brief True when any of Es is a Mut element. A Without is not one.
+template <typename... Es> inline constexpr bool AnyWrites = (false || ... || QueryElement<Es>::Writes);
+
+/// @brief How many of Ts are T.
+template <typename T, typename... Ts>
+inline constexpr std::size_t CountOf = (std::size_t{0} + ... + (std::is_same_v<T, Ts> ? std::size_t{1} : std::size_t{0}));
+
+/// @brief What one Query argument adds to the yielded elements and to the
+/// excluded components: a component adds itself as an element, a Without adds
+/// its component as an exclusion.
+template <typename A> struct QueryArgument
+{
+    using Elements = std::tuple<A>;
+    using Excluded = std::tuple<>;
+};
+
+template <typename T> struct QueryArgument<Without<T>>
+{
+    using Elements = std::tuple<>;
+    using Excluded = std::tuple<T>;
+};
+
+/// @brief The yielded elements of Query<Args...>, in argument order.
+template <typename... Args>
+using ElementsOf = decltype(std::tuple_cat(std::declval<typename QueryArgument<Args>::Elements>()...));
+
+/// @brief The excluded components of Query<Args...>.
+template <typename... Args>
+using ExcludedOf = decltype(std::tuple_cat(std::declval<typename QueryArgument<Args>::Excluded>()...));
+
+/// @brief Whether a split signature is one a query can run: each component
+/// yielded once however it is wrapped, and no Mut among the exclusions, which
+/// are never yielded and so never written. Naming a component twice would
+/// give the iterator two pools of one type to tell apart by type.
+template <typename Elements, typename Excluded> inline constexpr bool ValidQuerySignature = false;
+
+template <typename... Es, typename... Xs>
+inline constexpr bool ValidQuerySignature<std::tuple<Es...>, std::tuple<Xs...>> =
+    ((CountOf<ComponentOf<Es>, ComponentOf<Es>...> == 1) && ...) && !AnyWrites<Xs...>;
+
+/// @brief Arguments a Query accepts.
+template <typename... Args>
+concept QueryArguments = ValidQuerySignature<ElementsOf<Args...>, ExcludedOf<Args...>>;
+
+/// @brief Arguments a Query on a const Scene accepts: no Mut among them.
+template <typename... Args>
+concept ReadOnlyQueryArguments = QueryArguments<Args...> && !AnyWrites<Args...>;
+
+/// @brief Placeholder for the scene change-tick back-pointer in a view that
+/// writes nothing.
 ///
-/// A plain Query has nothing to stamp, so it must not carry the pointer. Stored
-/// via [[no_unique_address]], this empty type costs the iterator zero bytes, so
-/// the non-stamping hot path is no wider for QueryMut's sake.
+/// Stored via [[no_unique_address]], this empty type costs the iterator zero
+/// bytes, so a read-only query is no wider for the sake of ones that write.
 struct NoChangeTick
 {
 };
 
-/// @brief The change-tick back-pointer a view of this access policy needs.
-template <typename Access>
-using ChangeTickPtr = std::conditional_t<std::is_same_v<Access, MutAccess>, uint64_t *, NoChangeTick>;
-
-/// @brief Write proxy over one entity's component that stamps change detection.
-///
-/// Yielded by `Scene::QueryMut<Ts...>()` in place of a bare `T&`. It holds the
-/// component, its pool, the owning entity, and a pointer to the Scene's change
-/// tick counter — everything `Scene::GetMut` needs — so a mutable access through
-/// the proxy is indistinguishable from a `GetMut` call: allocate the next tick
-/// (`++tick`) and stamp it onto the pool's per-entity lane.
-///
-/// Which spellings stamp:
-/// @code
-///   for (auto [e, pos] : scene.QueryMut<Position>())
-///   {
-///       pos->x += 1.f;         // stamps (non-const operator->)
-///       (*pos).x  = 2.f;       // stamps (non-const operator*)
-///       Position &p = pos;     // stamps (implicit operator T&)
-///       Move(pos);             // stamps if Move takes Position& — otherwise not
-///
-///       float x = pos.Get().x; // does NOT stamp (const accessor)
-///       pos.MarkChanged();     // stamps without touching the value
-///   }
-/// @endcode
-/// The rule is the ordinary const rule: every non-const accessor stamps, every
-/// const accessor does not. Conversion to `const T&` from a non-const proxy
-/// still picks the non-const `operator T&` (better implicit-object match) and so
-/// stamps — deliberately conservative, matching `Scene::GetMut`, which stamps on
-/// access rather than on an actual value change. Over-reporting is safe by the
-/// engine's change-detection stance; a missed change is not.
-///
-/// Stamping is gated on `SparseSet::TracksChanges()`, so an untracked component
-/// pays one already-hot bool load and never burns a tick — same gate, same cost
-/// as `Scene::GetMut`.
-///
-/// @warning The proxy is a borrowed view, valid only for the loop iteration that
-/// produced it: it caches the component pointer, which any structural change to
-/// the pool (Add/Remove) can dangle. Do not store one past the loop body.
-template <typename T> struct Mut
-{
-    // ── Mutable access: stamps ────────────────────────────────────────────────
-    T &operator*() { Stamp(); return *_component; }
-    T *operator->() { Stamp(); return _component; }
-
-    /// @brief Implicit conversion to `T&`, so a `Mut<T>` passes to anything
-    /// taking the component by mutable reference and reads as one in
-    /// expressions. Stamps, like every other mutable accessor.
-    operator T &() { Stamp(); return *_component; } // NOLINT(google-explicit-constructor)
-
-    /// @brief Explicit mutable access — the spelling to reach for when the
-    /// conversion is ambiguous or unclear at the call site. Stamps.
-    T &GetMut() { Stamp(); return *_component; }
-
-    /// @brief Stamps without touching the value. For a write the proxy cannot
-    /// see (e.g. one made through a pointer captured earlier), or to force
-    /// re-processing of an otherwise untouched component.
-    void MarkChanged() { Stamp(); }
-
-    // ── Const access: never stamps ────────────────────────────────────────────
-    const T &operator*() const { return *_component; }
-    const T *operator->() const { return _component; }
-    operator const T &() const { return *_component; } // NOLINT(google-explicit-constructor)
-
-    /// @brief Read-only access, the spelling that documents intent: `pos.Get().x`
-    /// never stamps. Const-qualified, so it is also what a `const Mut<T>` sees.
-    const T &Get() const { return *_component; }
-
-    /// @brief The entity this proxy's component belongs to.
-    Entity Owner() const { return _entity; }
-
-private:
-    // Only a query view builds proxies: doing so requires a mutable pool pointer,
-    // which the views keep private precisely so nothing outside Scene can perform
-    // structural changes behind its liveness gate.
-    template <typename Required, typename Excluded, typename Access> friend struct QueryView;
-
-    Mut(T *component, SparseSet<T> *pool, Entity entity, uint64_t *changeTick)
-        : _component(component), _pool(pool), _entity(entity), _changeTick(changeTick)
-    {
-    }
-
-    /// Mirrors Scene::GetMut, including the order of operations: check the
-    /// pool's opt-in first, and only then burn a tick. Bumping unconditionally
-    /// would advance the scene's tick for untracked writes, inflating every
-    /// consumer's bookmark against changes that were never recorded.
-    ///
-    /// Once per proxy: a loop body writing several fields is one change, and a
-    /// stamp per field would burn a tick and run the pool's stamp hooks for each.
-    void Stamp()
-    {
-        if (!_stamped && _pool->TracksChanges())
-        {
-            _pool->Stamp(_entity, ++*_changeTick);
-            _stamped = true;
-        }
-    }
-
-    T *_component;
-    SparseSet<T> *_pool;
-    Entity _entity;
-    uint64_t *_changeTick; ///< &Scene::_changeTick — the sole allocator of ticks.
-    bool _stamped = false;
-};
+/// @brief The change-tick back-pointer a view needs: one only if it writes.
+template <bool Writes> using ChangeTickPtr = std::conditional_t<Writes, uint64_t *, NoChangeTick>;
 
 /// @brief Lazy view over entities matching a component signature.
 ///
-/// Parameterised on a tuple of required component types, a tuple of excluded
-/// ones, and an access policy deciding what iteration yields per required type:
-/// `RefAccess` (Scene::Query) yields `Ts&`, `MutAccess` (Scene::QueryMut) yields
-/// `Mut<Ts>` proxies that stamp change detection. Everything else — pool
-/// intersection, driving from the smallest pool, the debug invalidation guard —
-/// is shared; only `operator*` differs. Excluded types only gate membership and
-/// are never yielded.
+/// Parameterised on a tuple of query elements (plain T or Mut<T>) and a tuple
+/// of excluded component types. Excluded types only gate membership and are
+/// never yielded.
 ///
 /// The view keeps its pool pointers private: they are the structural handles that
 /// could add or remove components behind Scene's liveness gate. Only Scene
-/// constructs a view (via `Scene::Query`/`Scene::QueryMut`), so there is no
-/// public path to a mutable pool pointer.
-///
-/// @warning `RefAccess` yields *mutable* `Ts&`, but writing an ACOMP(tracked)
-/// component through them does not stamp — see the file-header warning and use
-/// `Scene::QueryMut` for tracked writes.
-template <typename Required, typename Excluded, typename Access = RefAccess> struct QueryView;
+/// constructs a view (via `Scene::Query`), so there is no public path to a
+/// mutable pool pointer.
+template <typename Elements, typename Excluded> struct QueryView;
 
-template <typename... Ts, typename... Es, typename Access>
-struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
+template <typename... Es, typename... Xs> struct QueryView<std::tuple<Es...>, std::tuple<Xs...>>
 {
-    /// What one required component yields per the access policy.
-    template <typename T> using Yielded = std::conditional_t<std::is_same_v<Access, MutAccess>, Mut<T>, T &>;
+    static constexpr bool Writes = AnyWrites<Es...>;
 
     struct Sentinel
     {
@@ -214,24 +160,13 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
 
     struct Iterator
     {
-        std::tuple<Entity, Yielded<Ts>...> operator*() const
+        std::tuple<Entity, typename QueryElement<Es>::Yield...> operator*() const
         {
             CheckNotInvalidated();
             const Entity entity = (*_entities)[_pos];
-            if constexpr (std::is_same_v<Access, MutAccess>)
-            {
-                // Proxies are built per dereference from the pointers HasAll
-                // already cached, so a stamping query costs the same lookups as a
-                // plain one — the proxy is three extra pointer copies, and the
-                // tick bump only happens if the loop body actually writes.
-                return std::tuple<Entity, Mut<Ts>...>{
-                    entity, Mut<Ts>{std::get<Ts *>(_components), std::get<SparseSet<Ts> *>(_required), entity,
-                                    _changeTick} ...};
-            }
-            else
-            {
-                return std::tuple<Entity, Ts &...>{entity, *std::get<Ts *>(_components)...};
-            }
+            // Braced initialisation evaluates left to right, so the stamps
+            // land in element order.
+            return std::tuple<Entity, typename QueryElement<Es>::Yield...>{entity, Fetch<Es>(entity)...};
         }
 
         Iterator &operator++()
@@ -253,12 +188,34 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
 private:
         friend QueryView; // only its enclosing view constructs iterators
 
-        Iterator(const std::vector<Entity> *entities, std::size_t pos, std::tuple<SparseSet<Ts> *...> required,
-                 std::tuple<const SparseSet<Es> *...> excluded, ChangeTickPtr<Access> changeTick)
+        Iterator(const std::vector<Entity> *entities, std::size_t pos,
+                 std::tuple<SparseSet<ComponentOf<Es>> *...> required, std::tuple<const SparseSet<Xs> *...> excluded,
+                 ChangeTickPtr<Writes> changeTick)
             : _entities(entities), _pos(pos), _required(required), _excluded(excluded), _changeTick(changeTick)
         {
             _versionSnapshot = CurrentStructureVersion();
             SkipInvalid();
+        }
+
+        /// The component element E names on @p entity, stamped first when E
+        /// is Mut — before the caller writes, as Scene::GetMut does, so a
+        /// stamp hook sees the value from before the write.
+        ///
+        /// Stamping is gated on SparseSet::TracksChanges() before a tick is
+        /// allocated: an untracked component costs one bool load and burns no
+        /// tick, which would otherwise inflate every consumer's bookmark.
+        template <typename E> typename QueryElement<E>::Yield Fetch(Entity entity) const
+        {
+            using T = ComponentOf<E>;
+            if constexpr (QueryElement<E>::Writes)
+            {
+                SparseSet<T> *pool = std::get<SparseSet<T> *>(_required);
+                if (pool->TracksChanges())
+                {
+                    pool->Stamp(entity, ++*_changeTick);
+                }
+            }
+            return *std::get<T *>(_components);
         }
 
         /// Membership test and component fetch fused into one pass: Get() is
@@ -269,7 +226,8 @@ private:
         /// (the documented Scene::Query contract).
         bool HasAll(Entity e)
         {
-            return (... && ((std::get<Ts *>(_components) = std::get<SparseSet<Ts> *>(_required)->Get(e)) != nullptr));
+            return (... && ((std::get<ComponentOf<Es> *>(_components) =
+                                 std::get<SparseSet<ComponentOf<Es>> *>(_required)->Get(e)) != nullptr));
         }
 
         /// A null excluded pool has no holders, so it rejects nobody.
@@ -327,12 +285,13 @@ private:
 
         const std::vector<Entity> *_entities;
         std::size_t _pos;
-        std::tuple<SparseSet<Ts> *...> _required;
-        std::tuple<const SparseSet<Es> *...> _excluded;
-        std::tuple<Ts *...> _components{}; ///< Cached by HasAll; valid only while the iterator is dereferenceable.
-        /// Scene's change-tick counter, for the proxies operator* mints. Empty
-        /// (and free) under RefAccess — see NoChangeTick.
-        [[no_unique_address]] ChangeTickPtr<Access> _changeTick;
+        std::tuple<SparseSet<ComponentOf<Es>> *...> _required;
+        std::tuple<const SparseSet<Xs> *...> _excluded;
+        /// Cached by HasAll; valid only while the iterator is dereferenceable.
+        std::tuple<ComponentOf<Es> *...> _components{};
+        /// Scene's change-tick counter, for stamping Mut elements. Empty (and
+        /// free) in a view that writes nothing — see NoChangeTick.
+        [[no_unique_address]] ChangeTickPtr<Writes> _changeTick;
         /// Required-pool version sum at construction; read only by the debug check.
         uint32_t _versionSnapshot = 0;
     };
@@ -346,21 +305,26 @@ private:
     Sentinel end() const { return {}; }
 
 private:
-    friend struct Scene; // QueryView exists only to be returned by Scene::Query/QueryMut
+    friend struct Scene; // QueryView exists only to be returned by Scene::Query
 
-    QueryView(std::tuple<SparseSet<Ts> *...> required, const std::vector<Entity> *primary,
-              std::tuple<const SparseSet<Es> *...> excluded, ChangeTickPtr<Access> changeTick)
+    QueryView(std::tuple<SparseSet<ComponentOf<Es>> *...> required, const std::vector<Entity> *primary,
+              std::tuple<const SparseSet<Xs> *...> excluded, ChangeTickPtr<Writes> changeTick)
         : _required(required), _primary(primary), _excluded(excluded), _changeTick(changeTick)
     {
     }
 
-    std::tuple<SparseSet<Ts> *...> _required;
+    std::tuple<SparseSet<ComponentOf<Es>> *...> _required;
     const std::vector<Entity> *_primary; ///< Entity list of the smallest required pool; nullptr = no results.
-    std::tuple<const SparseSet<Es> *...> _excluded;
-    [[no_unique_address]] ChangeTickPtr<Access> _changeTick; ///< Passed to each Iterator; empty under RefAccess.
+    std::tuple<const SparseSet<Xs> *...> _excluded;
+    [[no_unique_address]] ChangeTickPtr<Writes> _changeTick; ///< Passed to each Iterator; empty when nothing writes.
 };
 
-/// @brief Shorthand for the view type `Scene::QueryMut` returns.
-template <typename Required, typename Excluded> using QueryMutView = QueryView<Required, Excluded, MutAccess>;
+/// @brief The view Scene::Query<Args...>() returns.
+template <typename... Args> using QueryViewOf = QueryView<ElementsOf<Args...>, ExcludedOf<Args...>>;
 
 } // namespace Assisi::ECS
+
+// Written in nearly every system, game code included, so they are visible
+// unqualified from every namespace.
+using Assisi::ECS::Mut;
+using Assisi::ECS::Without;

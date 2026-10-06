@@ -271,7 +271,7 @@ TEST_CASE("policy is read live, so an untracked write still takes effect")
     REQUIRE(mirror != ECS::NullEntity);
     REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
 
-    for (auto [entity, marker] : harness.serverScene.Query<Replicated>())
+    for (auto [entity, marker] : harness.serverScene.Query<Mut<Replicated>>())
     {
         (void)entity;
         marker.excluded.Set(OrdinalOf(typeid(Test::Health)));

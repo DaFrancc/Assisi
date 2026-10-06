@@ -40,9 +40,6 @@ void OscillateSystem(SystemContext &ctx)
         const float offset =
             oscillator.amplitude * std::sin(kTau * (elapsed / oscillator.periodSeconds + oscillator.phase));
 
-        // Transform is ACOMP(tracked) and the query hands out an unstamped
-        // reference, so the write goes through GetMut or PropagateTransforms
-        // never learns the pose moved.
         if (ECS::Transform *transform = scene.GetMut<ECS::Transform>(entity))
         {
             transform->position = oscillator.origin + (oscillator.axis / axisLength) * offset;
@@ -56,10 +53,6 @@ void TimeOfDaySystem(SystemContext &ctx)
     for (auto [entity, clock] : scene.Query<Runtime::TimeOfDay>())
     {
         (void)clock;
-        // Written through GetMut for the same reason a Transform is: the query
-        // hands out an unstamped reference, and a write that skips the stamp
-        // leaves anything watching the component believing the hour has not
-        // moved.
         if (Runtime::TimeOfDay *mutable_ = scene.GetMut<Runtime::TimeOfDay>(entity))
         {
             Runtime::AdvanceTimeOfDay(*mutable_, ctx.dt);

@@ -232,7 +232,7 @@ void AudioEmitterSystem(SystemContext &ctx)
     ECS::Scene &scene = ctx.world.scene;
 
     // The world's pause first, so a sound started below starts paused if it should.
-    for (auto [entity, emitter] : scene.Query<Runtime::AudioEmitter>())
+    for (auto [entity, emitter] : scene.Query<Mut<Runtime::AudioEmitter>>())
     {
         const bool ignores = emitter.ignoresWorldPause || scene.Has<Runtime::DefaultEmitter>(entity);
         const bool pausedByWorld = ctx.world.paused && !ignores;
@@ -276,7 +276,7 @@ void AudioEmitterSystem(SystemContext &ctx)
 
     // Every emitter, every frame: asking for the clip starts its load as soon as
     // the emitter is placed, and holding its sounds keeps them playing.
-    for (auto [entity, emitter] : scene.Query<Runtime::AudioEmitter>())
+    for (auto [entity, emitter] : scene.Query<Mut<Runtime::AudioEmitter>>())
     {
         (void)entity;
         AdvanceEmitter(emitter, ClipOf(emitter, ctx.assets), output);
