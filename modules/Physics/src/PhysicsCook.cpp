@@ -218,8 +218,11 @@ JPH::ShapeSettings::ShapeResult BuildModelShape(const Geometry::CollisionModel &
             refused.SetError("the model has no piece with that number");
             return refused;
         }
+        // At the collider's own origin: the entity holding one piece is where
+        // that piece is, which is how a model broken into child entities keeps
+        // each piece in place.
         failedPiece = pieces[static_cast<std::size_t>(key.piece)].name;
-        return MakePlacedPiece(model, pieces[static_cast<std::size_t>(key.piece)], key.density);
+        return MakePiece(model, pieces[static_cast<std::size_t>(key.piece)], key.density);
     }
     if (!pieces.empty())
     {

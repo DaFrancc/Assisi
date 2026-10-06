@@ -5,6 +5,7 @@
 # windowing/physics baggage.
 add_executable(Assisi-Editor-Tests
   main.cpp
+  TestColliderBlueprint.cpp
   TestColliderPose.cpp
   TestEditHistory.cpp
   TestEntityPicking.cpp
@@ -15,6 +16,7 @@ add_executable(Assisi-Editor-Tests
   TestOutlinePicking.cpp
   TestPrePlayState.cpp
   TestSystemSearch.cpp
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
@@ -48,6 +50,9 @@ target_include_directories(Assisi-Editor-Tests SYSTEM PRIVATE
 
 target_include_directories(Assisi-Editor-Tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+  # Physics's headers alone, for the Collider a collider blueprint writes: the
+  # struct needs no Jolt, and linking the module would bring it in.
+  "${CMAKE_SOURCE_DIR}/modules/Physics/include"
 )
 
 target_link_libraries(Assisi-Editor-Tests

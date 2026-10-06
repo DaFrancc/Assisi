@@ -54,6 +54,7 @@
 #include <Assisi/Render/Texture.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
+#include <Assisi/Editor/ColliderBlueprint.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
@@ -658,6 +659,27 @@ class EditorApp : public Assisi::App::Application
     /// @brief Rewrite @p vpath's sidecar to say it is a @p kindName, keeping the
     /// rest of it, then reindex and forget what the store loaded.
     void UseFileAs(const std::string &vpath, const std::string &kindName);
+
+    // --- Collision models (EditorColliderBlueprint.cpp) ---
+    /// @brief The right-click menu on the last model tile drawn: "Make collider
+    /// blueprint". Nothing in a restricted viewer.
+    void DrawModelActionsMenu(const std::string &vpath);
+    /// @brief What collision the model at @p vpath carries and whether it can be
+    /// broken into a blueprint, read on first ask and kept until the browser
+    /// rescans.
+    const ModelCollisionInfo &CollisionInfoOf(const std::string &vpath);
+    /// @brief Writes the model's collider blueprint beside it, or asks first
+    /// when one is already there.
+    void RequestColliderBlueprint(const std::string &modelPath);
+    /// @brief Writes the collider blueprint for the model at @p modelPath,
+    /// replacing any there.
+    void WriteColliderBlueprint(const std::string &modelPath);
+    /// @brief The "replace it?" prompt RequestColliderBlueprint opens. Drawn
+    /// every frame, so a request from the inspector or the browser is answered.
+    void DrawColliderBlueprintPrompt();
+    /// @brief The inspector's "Make collider blueprint" button for @p model,
+    /// under a Collider that names it. Nothing when it names no model file.
+    void DrawColliderBlueprintButton(Assisi::Core::AssetId model);
 
     // --- Material authoring ---
     /// @brief Load @p vpath into the material editor and open it. A material
@@ -1987,6 +2009,13 @@ class EditorApp : public Assisi::App::Application
     /// Files of kinds a module registered, each paired with its kind's name, which
     /// the tile shows under the file's.
     std::vector<std::pair<std::string, std::string>> _assetBrowserKindFiles;
+    /// Each model's collision summary, by virtual path, for the models hovered
+    /// since the last rescan.
+    std::unordered_map<std::string, ModelCollisionInfo> _assetBrowserCollision;
+    /// The model whose collider blueprint would replace one already there, while
+    /// the prompt asks; empty otherwise.
+    std::string _colliderBlueprintPrompt;
+    bool _colliderBlueprintPromptOpen = false;
     bool _assetBrowserDirty = true;
     bool _assetBrowserReadError = false;
     float _assetBrowserThumbSize = 256.f; ///< Tile size in px; adjustable via the zoom buttons.

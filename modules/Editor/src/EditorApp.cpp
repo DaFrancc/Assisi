@@ -507,6 +507,15 @@ void EditorApp::ReimportAssets()
         }
     }
 
+    // A model's collision is read once per world and kept, so a model saved
+    // since is read afresh. Only while editing: it rebuilds every body, which
+    // would undo a simulation in progress.
+    if (_physics != nullptr && _playState == PlayState::Editing)
+    {
+        _physics->InvalidateCollisionAssets();
+    }
+    _assetBrowserCollision.clear();
+
     // Queue a resolution prompt for every stale mesh the open scene actually draws:
     // those cannot wait for the author to click their badge. Stale meshes nothing
     // draws just keep the badge, resolved on click or on the next load. At startup
@@ -1884,6 +1893,7 @@ void EditorApp::DrawPanels()
     {
         ASSISI_PROFILE_SCOPE("panel/asset-browser");
         DrawAssetBrowser();
+        DrawColliderBlueprintPrompt();
     }
     {
         ASSISI_PROFILE_SCOPE("panel/material");

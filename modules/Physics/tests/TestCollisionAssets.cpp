@@ -273,17 +273,20 @@ TEST_CASE("Collision models: a set is its pieces where the model put them, weigh
     CHECK(test.world.Mass(set) == doctest::Approx(2.f * Physics::kWaterDensity).epsilon(0.01));
 }
 
-TEST_CASE("Collision models: collisionPiece builds that one piece alone")
+TEST_CASE("Collision models: collisionPiece builds that one piece alone, at the collider's origin")
 {
     TestScene test;
     AddModels(test.collision);
     Physics::Collider collider = ModelCollider(kTwoParts, Physics::ColliderShape::Convex);
     collider.collisionPiece = 1;
-    (void)AddModelBody(test.scene, glm::vec3(0.f), collider, std::nullopt);
+    (void)AddModelBody(test.scene, glm::vec3(5.f, 0.f, 0.f), collider, std::nullopt);
     test.world.Reconcile();
 
-    CHECK_FALSE(DropRay(test.world, -1.f, 0.f).has_value());
-    CHECK(DropRay(test.world, 1.f, 0.f).has_value());
+    // The box the model put at x = 1 stands at the entity's own x = 5, and the
+    // hull beside it is not built.
+    CHECK(DropRay(test.world, 5.f, 0.f).has_value());
+    CHECK_FALSE(DropRay(test.world, 6.f, 0.f).has_value());
+    CHECK_FALSE(DropRay(test.world, 4.f, 0.f).has_value());
 }
 
 TEST_CASE("Collision models: a model that cannot be read leaves its collider out, and is asked for once")

@@ -201,7 +201,9 @@ struct Collider
     AFIELD(min = 0.0) float density = kWaterDensity;
 
     /// One piece of a Convex model, by its place in the model's list of pieces,
-    /// or -1 for all of them. Lets a child entity be one piece of a shared model.
+    /// or -1 for all of them. One piece is built at the collider's own origin
+    /// rather than where the model put it, so a child entity standing where the
+    /// piece was is that piece, its shape still shared.
     AFIELD(min = -1, radioListen = {source = shape, value = Convex, behavior = vanish})
     int32_t collisionPiece = kAllCollisionPieces;
 

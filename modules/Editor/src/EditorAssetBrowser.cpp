@@ -455,6 +455,7 @@ void EditorApp::RescanAssetBrowser()
     _assetBrowserMeshes.clear();
     _assetBrowserMaterials.clear();
     _assetBrowserKindFiles.clear();
+    _assetBrowserCollision.clear();
     _assetBrowserReadError = false;
 
     const std::filesystem::path root   = Assisi::Core::AssetSystem::GetRoot();
@@ -782,11 +783,16 @@ void EditorApp::DrawAssetBrowser()
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
             DrawUseAsMenu(vpath);
+            DrawModelActionsMenu(vpath);
             ImGui::PopID();
 
             if (stale && hovered)
                 ImGui::SetTooltip("Source changed since import — click to resolve.\nMaterials were left untouched "
                                   "(no auto-resolve).");
+            else if (hovered)
+            {
+                ImGui::SetTooltip("%s", CollisionInfoOf(vpath).summary.c_str());
+            }
 
             if (clicked)
             {

@@ -2446,6 +2446,16 @@ void EditorApp::DrawInspector()
             if (meta->id == ComponentIdOf<Assisi::Physics::Collider>())
             {
                 DrawColliderRole();
+                // Only for a collider of a whole model: one already holding a
+                // single piece is what a collider blueprint is made of.
+                if (const Assisi::Physics::Collider *collider = _scene->Get<Assisi::Physics::Collider>(_selectedEntity);
+                    collider != nullptr &&
+                    (collider->shape == Assisi::Physics::ColliderShape::Convex ||
+                     collider->shape == Assisi::Physics::ColliderShape::Mesh) &&
+                    collider->collisionPiece == Assisi::Physics::kAllCollisionPieces)
+                {
+                    DrawColliderBlueprintButton(collider->collisionAsset);
+                }
             }
 
             // The clock's own controls, above the generic fields rather than
