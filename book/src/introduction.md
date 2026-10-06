@@ -35,12 +35,25 @@ By the end of the book you will be able to:
 ## How the book is organized
 
 - **Getting started** gets the engine built and shows you around the repository.
-- **Making a game** covers the day-to-day work: entities, components, systems,
-  input, physics, levels and the editor.
+- **Making a game** covers the day-to-day work, starting with the editor you'll
+  use from the first day: then entities, components, systems, input, physics
+  and levels.
 - **Shipping** covers settings, build types and packaging a game for players.
 - **Going further** covers multiplayer and common problems.
 
 You can read it front to back, or jump straight to the chapter you need.
+
+## Sections you follow along with
+
+Headings tell you when a section is meant to be done, not just read:
+
+| Heading starts with | What it is |
+|---|---|
+| **Tutorial:** | A whole page you work through from start to finish, building one thing. |
+| **Try it:** | A section of a page with steps for you to follow in the editor or in code, ending with something you can see working. |
+| **Example:** | Something to read and copy from. There is nothing to do. |
+
+Every other section explains or describes; read it when you need it.
 
 ## Getting help
 

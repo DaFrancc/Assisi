@@ -10,6 +10,13 @@ build levels in it, and play them without leaving it.
 Everything is in panels that you can drag, dock and resize. Your layout is saved
 between sessions.
 
+Two words come up throughout this page. A level is made of **entities**: the
+objects in it, such as a crate, a light or the player. What an entity is and
+does comes from its **components**: a `Transform` gives it a position, a
+`MeshRenderer` draws a model, a `Collider` makes it solid, and so on. The next
+chapter, [Entities and components](entities-and-components.md), explains both
+properly.
+
 ## Moving the camera
 
 | Action | Control |

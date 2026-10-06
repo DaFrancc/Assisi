@@ -57,7 +57,7 @@ You're writing through `Get` or a plain `Query`. Use `GetMut` or `QueryMut`. See
 [Entities and components](entities-and-components.md). A write through `GetMut`
 moves a physics object too, but a dynamic body keeps its velocity and carries on
 falling from where you put it; use `Teleport` to stop it as well. See
-[Physics](physics.md).
+[What writing a `Transform` does](physics-scene-sync.md#what-writing-a-transform-does).
 
 **My input code crashes on the server, or in tests.**
 `ctx.input` is `nullptr` when there's no window. Check it before using it. See

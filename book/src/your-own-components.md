@@ -4,7 +4,9 @@ The `Spin` system from the last chapter spins *everything*, all at the same
 speed. Real games need per-object data: this crate spins fast, that one slowly,
 the floor not at all. That data goes in a **component** you define yourself.
 
-## Step 1: declare the component
+## Try it: a spin speed for each object
+
+### Step 1: declare the component
 
 Add a header, `apps/game/src/Tutorial/TutorialComponents.hpp`.
 
@@ -34,7 +36,7 @@ struct Spinner
 
 Just like systems, the build finds this header on its own.
 
-## Step 2: use it in a system
+### Step 2: use it in a system
 
 Change the system to spin only entities that have a `Spinner`, each at its own
 speed. In `TutorialSystems.cpp`:
@@ -73,7 +75,7 @@ Notice how the loop above only uses `Get()` with `spinner` and only uses `->`
 with `transform`. The `Spinner` component is never marked changed, but the
 `Transform` component is.
 
-## Step 3: add it in the editor
+### Step 3: add it in the editor
 
 Build, open the editor, and select an object. In the inspector, click **Add
 Component** and pick **Spinner**. Its two fields appear, ready to edit: a
