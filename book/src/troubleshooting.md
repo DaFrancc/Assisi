@@ -53,7 +53,7 @@ Same checks as above, with `ACOMP()` instead of `ASYSTEM`.
 It's missing `AFIELD()`, or it's marked `AFIELD(transient)`.
 
 **I change an object's position in code, but it doesn't move.**
-You're writing through `Get` or a plain `Query`. Use `GetMut` or `QueryMut`. See
+You're writing through `Get`. Use `GetMut`, or ask the query for `Mut<T>`. See
 [Entities and components](entities-and-components.md). A write through `GetMut`
 moves a physics object too, but a dynamic body keeps its velocity and carries on
 falling from where you put it; use `Teleport` to stop it as well. See

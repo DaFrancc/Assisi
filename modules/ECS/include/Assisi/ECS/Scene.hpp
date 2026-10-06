@@ -219,7 +219,7 @@ struct Scene
     /// types) so change-detection consumers see the write. Prefer this over Get<T>
     /// whenever you intend to modify a tracked component. Conservative: it stamps
     /// on access, whether or not you actually alter the value. The query-shaped
-    /// equivalent is QueryMut<Ts...>, whose Mut proxies stamp the same way.
+    /// equivalent is a Mut<T> element in Query, which stamps the same way.
     template <typename T> T *GetMut(Entity entity)
     {
         SparseSet<T> *pool = GetPool<T>();
@@ -281,12 +281,12 @@ struct Scene
 
     // ── Change detection ──────────────────────────────────────────────────────
     // A monotonic per-write tick, stamped onto a component whenever it is accessed
-    // mutably (Add / GetMut / MarkChanged / a Mut proxy from QueryMut) for an
+    // mutably (Add / GetMut / MarkChanged / a Mut element in Query) for an
     // ACOMP(tracked) type. A consumer remembers the tick it last ran at; a
     // component whose tick exceeds that has changed since. Conservative (mutable
     // access stamps even if the value is unchanged) — safe over-reporting, never a
-    // missed change. The one way to lose a change is to write through an access
-    // path that cannot stamp: Get<T> or a plain Query — see QueryMut.
+    // missed change. The one way to lose a change is to write through the
+    // pointer the non-const Get<T> returns.
 
     /// @brief The scene's current change tick — the value the most recent mutable
     /// access stamped. Record it after a system runs; anything with a higher
@@ -417,70 +417,55 @@ struct Scene
     /// requires it; each such member is logged.
     bool RemoveManyById(Entity entity, std::span<const Core::Reflect::ComponentId> ids);
 
-    /// @brief Returns a lazy view over all entities that have every component in Ts.
+    /// @brief Returns a lazy view over the entities that have every component
+    /// Args names and none that a Without among them excludes.
     ///
     /// Iterates the smallest matching pool and skips entities absent from the others.
-    /// Supports structured bindings: `for (auto [e, pos, vel] : scene.Query<Position, Velocity>())`
+    /// Supports structured bindings: `for (auto [e, vel, pos] : scene.Query<Velocity, Mut<Position>>())`
+    ///
+    /// A plain component yields `const T&`. A `Mut<T>` yields `T&` and marks T
+    /// changed, as GetMut does, for every entity the loop reaches — whether or
+    /// not the body writes it. A loop that changes only some of what it visits
+    /// reads through a plain component and calls GetMut on those.
+    ///
+    /// `Without<T>` is a single-pass filter folded into the same iteration
+    /// as the positive match — it never runs a second loop.
     ///
     /// @warning The view holds a pointer into the driving pool's internal entity
     /// array. A structural change to a *queried* component pool during iteration
-    /// — Add<T> or Remove<T> on one of the Ts — may reallocate or swap-remove
-    /// that array and invalidate the iterator. Debug builds turn this into a loud
-    /// assert via a per-pool version counter (see SparseSet::StructureVersion);
-    /// release builds do not, so it is silent UB — don't do it. Destroy() is safe
-    /// here: it is deferred to FlushDestroyed() and touches no pool mid-loop. To
-    /// Add/Remove a queried component for entities found while iterating, collect
-    /// them into a local vector and apply the change after the loop.
-    ///
-    /// @warning The yielded `Ts&` are mutable, but writing an ACOMP(tracked)
-    /// component through them does **not** stamp change detection — exactly as
-    /// Get<T> does not, and for the same reason: this view cannot tell a read
-    /// from a write. `Changed<T>` would keep reporting false and every consumer
-    /// filtering on it would skip the entity. Use QueryMut<Ts...> for the types
-    /// you write.
-    template <typename... Ts> QueryView<std::tuple<Ts...>, std::tuple<>> Query() { return Query<Ts...>(Without<>{}); }
-
-    /// @brief Returns a lazy view over entities that have every Ts but none of the Es.
-    ///
-    /// `scene.Query<A>(Without<B>{})` yields entities with A and not B. Exclusion
-    /// is a single-pass filter folded into the same iteration as the positive
-    /// match — it never runs a second loop. The plain overload's mid-loop mutation
-    /// warning applies to the *required* pools (the Ts). Mutating an *excluded*
-    /// pool (an Es) mid-loop is safe: it is re-probed each step through its stable
-    /// pool address, nothing cached points into it, so a change there cannot
-    /// dangle the iterator (and the debug check does not count excluded pools).
-    template <typename... Ts, typename... Es>
-    QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...> without)
+    /// — Add<T> or Remove<T> on one of the yielded components — may reallocate or
+    /// swap-remove that array and invalidate the iterator. Debug builds turn this
+    /// into a loud assert via a per-pool version counter (see
+    /// SparseSet::StructureVersion); release builds do not, so it is silent UB —
+    /// don't do it. Destroy() is safe here: it is deferred to FlushDestroyed() and
+    /// touches no pool mid-loop. To Add/Remove a queried component for entities
+    /// found while iterating, collect them into a local vector and apply the
+    /// change after the loop. Mutating an *excluded* pool mid-loop is safe: it is
+    /// re-probed each step through its stable pool address and nothing cached
+    /// points into it.
+    template <typename... Args>
+    requires QueryArguments<Args...>
+    QueryViewOf<Args...> Query()
     {
-        return MakeView<RefAccess, Ts...>(without, NoChangeTick{});
+        if constexpr (AnyWrites<Args...>)
+        {
+            return MakeView(std::type_identity<ElementsOf<Args...>>{}, std::type_identity<ExcludedOf<Args...>>{},
+                            &_changeTick);
+        }
+        else
+        {
+            return MakeView(std::type_identity<ElementsOf<Args...>>{}, std::type_identity<ExcludedOf<Args...>>{},
+                            NoChangeTick{});
+        }
     }
 
-    /// @brief Like Query<Ts...>, but yields Mut<T> write proxies that stamp
-    /// change detection — the query-shaped counterpart of GetMut.
-    ///
-    /// `for (auto [e, pos] : scene.QueryMut<Position>()) pos->x += 1.f;` records
-    /// the write on an ACOMP(tracked) Position, so `Changed<Position>(e, since)`
-    /// reports it. Const access through the proxy (`pos.Get().x`) does not stamp;
-    /// see Mut in Query.hpp for the exact list of spellings that do.
-    ///
-    /// Wrap only the components you write. A Mut-wrapped read stamps too (the
-    /// proxy cannot tell), which is safe but pointless replication traffic — read
-    /// the rest through a plain Query alongside. Untracked components cost
-    /// nothing here beyond the same TracksChanges() bool GetMut already checks.
-    ///
-    /// Every warning on Query applies unchanged: same iteration machinery, same
-    /// mid-loop structural-mutation hazard, same debug invalidation guard.
-    template <typename... Ts> QueryMutView<std::tuple<Ts...>, std::tuple<>> QueryMut()
+    /// @brief Query on a const Scene: no Mut, since nothing here may be written.
+    template <typename... Args>
+    requires ReadOnlyQueryArguments<Args...>
+    QueryViewOf<Args...> Query() const
     {
-        return QueryMut<Ts...>(Without<>{});
-    }
-
-    /// @brief QueryMut with exclusions — `scene.QueryMut<A>(Without<B>{})`.
-    /// Yields exactly the entity set Query<A>(Without<B>{}) does, as Mut proxies.
-    template <typename... Ts, typename... Es>
-    QueryMutView<std::tuple<Ts...>, std::tuple<Es...>> QueryMut(Without<Es...> without)
-    {
-        return MakeView<MutAccess, Ts...>(without, &_changeTick);
+        return MakeView(std::type_identity<ElementsOf<Args...>>{}, std::type_identity<ExcludedOf<Args...>>{},
+                        NoChangeTick{});
     }
 
 private:
@@ -498,20 +483,17 @@ private:
     /// @brief Logs a refused add of @p id and asserts.
     void ReportConflict(Entity entity, Core::Reflect::ComponentId id, ComponentConflict conflict) const;
 
-    /// @brief Shared body of Query/QueryMut: resolve the pools, reject the
+    /// @brief Shared body of every Query overload: resolve the pools, reject the
     /// no-match case, and pick the pool that drives iteration.
-    ///
-    /// The two query flavours differ only in what their iterator yields (the
-    /// Access policy) and in whether they carry the change-tick back-pointer, so
-    /// pool intersection lives here once — a second copy would be free to drift
-    /// away from this one's smallest-pool and null-pool handling.
-    template <typename Access, typename... Ts, typename... Es>
-    QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access> MakeView(Without<Es...>, ChangeTickPtr<Access> changeTick)
+    template <typename... Es, typename... Xs>
+    QueryView<std::tuple<Es...>, std::tuple<Xs...>> MakeView(std::type_identity<std::tuple<Es...>>,
+                                                             std::type_identity<std::tuple<Xs...>>,
+                                                             ChangeTickPtr<AnyWrites<Es...>> changeTick) const
     {
-        using View = QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>;
+        using View = QueryView<std::tuple<Es...>, std::tuple<Xs...>>;
 
-        std::tuple<SparseSet<Ts> *...> pools = {GetPool<Ts>()...};
-        std::tuple<const SparseSet<Es> *...> excluded = {GetPool<Es>()...};
+        std::tuple<SparseSet<ComponentOf<Es>> *...> pools = {GetPool<ComponentOf<Es>>()...};
+        std::tuple<const SparseSet<Xs> *...> excluded = {GetPool<Xs>()...};
 
         /* If any required pool is missing, there are no matching entities. A
            missing excluded pool is fine — it simply excludes nobody. */

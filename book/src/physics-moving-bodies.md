@@ -74,9 +74,9 @@ frame it is spawned, is the one it starts with.
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 // Launch every body upward.
-for (auto [entity, state] : scene.QueryMut<Physics::BodyState>())
+for (auto [entity, state] : scene.Query<Mut<Physics::BodyState>>())
 {
-    state.GetMut().linearVelocity = glm::vec3(0.f, 10.f, 0.f);
+    state.linearVelocity = glm::vec3(0.f, 10.f, 0.f);
 }
 ```
 

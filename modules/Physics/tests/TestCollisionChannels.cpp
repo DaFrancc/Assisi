@@ -42,7 +42,7 @@ namespace
 /// Enough steps for a body dropped a couple of metres to land and settle.
 constexpr int32_t kSettleSteps = 240;
 
-Core::Bitmask<Physics::CollisionChannel> Without(Physics::CollisionChannel channel)
+Core::Bitmask<Physics::CollisionChannel> AllChannelsBut(Physics::CollisionChannel channel)
 {
     return Physics::AllChannels.Without(channel);
 }
@@ -95,7 +95,7 @@ TEST_CASE("A body whose mask excludes the floor's channel falls through it")
     (void)SpawnFloor(test.scene);
     const ECS::Entity box =
         SpawnBox(test.scene, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
-                 Physics::CollisionFilter{Without(Physics::CollisionChannel::World), Physics::CollisionChannel::Character});
+                 Physics::CollisionFilter{AllChannelsBut(Physics::CollisionChannel::World), Physics::CollisionChannel::Character});
 
     Step(test.world);
     CHECK(HeightOf(test.world, box) < -5.f);
@@ -109,7 +109,7 @@ TEST_CASE("A floor whose mask excludes the body's channel is fallen through too"
     TestScene test;
 
     (void)SpawnFloor(test.scene,
-                     Physics::CollisionFilter{Without(Physics::CollisionChannel::Character),
+                     Physics::CollisionFilter{AllChannelsBut(Physics::CollisionChannel::Character),
                                               Physics::CollisionChannel::World});
     const ECS::Entity box =
         SpawnBox(test.scene, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
@@ -139,7 +139,7 @@ TEST_CASE("Bodies on the last game channel collide when both masks admit it, and
     SUBCASE("the floor refuses")
     {
         TestScene test;
-        (void)SpawnFloor(test.scene, Physics::CollisionFilter{Without(kGame), kGame});
+        (void)SpawnFloor(test.scene, Physics::CollisionFilter{AllChannelsBut(kGame), kGame});
         const ECS::Entity box = SpawnBox(test.scene, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
                                          Physics::CollisionFilter{onlyGame, kGame});
         Step(test.world);
@@ -151,7 +151,7 @@ TEST_CASE("Bodies on the last game channel collide when both masks admit it, and
         TestScene test;
         (void)SpawnFloor(test.scene, Physics::CollisionFilter{onlyGame, kGame});
         const ECS::Entity box = SpawnBox(test.scene, {0.f, 3.f, 0.f}, {0.5f, 0.5f, 0.5f}, /*isStatic=*/ false,
-                                         Physics::CollisionFilter{Without(kGame), kGame});
+                                         Physics::CollisionFilter{AllChannelsBut(kGame), kGame});
         Step(test.world);
         CHECK(HeightOf(test.world, box) < -5.f);
     }
@@ -226,14 +226,14 @@ TEST_CASE("Editing a body's filter takes effect on the next step, not the next r
     test.world.Reconcile();
 
     Physics::Collider &descriptor = *test.scene.GetMut<Physics::Collider>(box);
-    descriptor.collidesWith = Without(Physics::CollisionChannel::World);
+    descriptor.collidesWith = AllChannelsBut(Physics::CollisionChannel::World);
     descriptor.channel = Physics::CollisionChannel::Character;
     test.world.Reconcile();
 
     // Reads back as set, and — the part that matters — the simulation agrees.
     const Physics::CollisionFilter now = test.world.GetBodyCollisionFilter(box);
     CHECK(now.channel == Physics::CollisionChannel::Character);
-    CHECK(now.collidesWith == Without(Physics::CollisionChannel::World));
+    CHECK(now.collidesWith == AllChannelsBut(Physics::CollisionChannel::World));
 
     Step(test.world);
     CHECK(HeightOf(test.world, box) < -5.f);
