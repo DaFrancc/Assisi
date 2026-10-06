@@ -263,8 +263,9 @@ private:
         /// Where the still layers have this caster, if they have it.
         Geometry::BoundingSphere bakedSphere;
 
-        /// Where it stands now.
+        /// Where it stands now, and the pose it stands in.
         Geometry::BoundingSphere sphere;
+        std::uint64_t poseHash = 0;
         bool baked = false;
         bool dynamic = false;
     };

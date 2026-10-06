@@ -37,9 +37,17 @@ std::uint64_t ShadowMoverSignature(const ShadowMover &mover)
 {
     const std::array<float, 4> sphere{mover.worldSphere.center.x, mover.worldSphere.center.y,
                                       mover.worldSphere.center.z, mover.worldSphere.radius};
-    std::array<std::byte, sizeof(mover.casterId) + sizeof(sphere)> bytes{};
+    std::array<std::byte, sizeof(mover.casterId) + sizeof(sphere) + sizeof(mover.poseHash)> bytes{};
     std::memcpy(bytes.data(), &mover.casterId, sizeof(mover.casterId));
     std::memcpy(bytes.data() + sizeof(mover.casterId), sphere.data(), sizeof(sphere));
+    std::memcpy(bytes.data() + sizeof(mover.casterId) + sizeof(sphere), &mover.poseHash, sizeof(mover.poseHash));
+    return Core::ContentHash64(bytes);
+}
+
+std::uint64_t ShadowPoseHash(const glm::mat4 &world)
+{
+    std::array<std::byte, sizeof(glm::mat4)> bytes{};
+    std::memcpy(bytes.data(), &world, sizeof(world));
     return Core::ContentHash64(bytes);
 }
 

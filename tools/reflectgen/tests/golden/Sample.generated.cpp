@@ -165,7 +165,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             { .name = "i64", .type = Assisi::Core::Reflect::FieldType::Int64, .offset = offsetof(T, i64) },
             { .name = "u64", .type = Assisi::Core::Reflect::FieldType::UInt64, .offset = offsetof(T, u64) },
             { .name = "flag", .type = Assisi::Core::Reflect::FieldType::Bool, .offset = offsetof(T, flag) },
-            { .name = "shape", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, shape), .enumConstants = { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, .enumSize = 4 },
+            { .name = "shape", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, shape), .enumConstants = { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, .enumType = "Assisi::Runtime::SampleShape", .enumSize = 4 },
             { .name = "v2", .type = Assisi::Core::Reflect::FieldType::Vec2, .offset = offsetof(T, v2) },
             { .name = "v3", .type = Assisi::Core::Reflect::FieldType::Vec3, .offset = offsetof(T, v3) },
             { .name = "v4", .type = Assisi::Core::Reflect::FieldType::Vec4, .offset = offsetof(T, v4) },
@@ -497,9 +497,9 @@ static const bool _reflectgen_SampleRadio = []() -> bool
             (void)scene.Add<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
         .fields = {
-            { .name = "mode", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, mode), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 },
+            { .name = "mode", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, mode), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumType = "Assisi::Runtime::SampleMode", .enumSize = 1 },
             { .name = "intensity", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, intensity), .radioSource = "mode", .radioValues = { 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { .name = "sub", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, .enumSize = 4, .enumSigned = true, .radioSource = "mode", .radioValues = { 1, 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { .name = "sub", .type = Assisi::Core::Reflect::FieldType::Enum, .offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, .enumType = "Assisi::Runtime::SampleSub", .enumSize = 4, .enumSigned = true, .radioSource = "mode", .radioValues = { 1, 2 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish },
             { .name = "level", .type = Assisi::Core::Reflect::FieldType::Int32, .offset = offsetof(T, level), .hasMin = true, .minValue = 0.0f, .radioSource = "sub", .radioValues = { 1 }, .radioBehavior = Assisi::Core::Reflect::RadioBehavior::Grey }
         },
         .typeIndex = typeid(T)
@@ -662,11 +662,11 @@ static const bool _reflectgen_SampleContainers = []() -> bool
         },
         .fields = {
             { .name = "numbers", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, numbers), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::numbers)>() },
-            { .name = "modes", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, modes), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::modes)>(), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 },
+            { .name = "modes", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, modes), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::modes)>(), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumType = "Assisi::Runtime::SampleMode", .enumSize = 1 },
             { .name = "labels", .type = Assisi::Core::Reflect::FieldType::Vector, .offset = offsetof(T, labels), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::labels)>() },
             { .name = "weights", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, weights), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::weights)>() },
             { .name = "counts", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, counts), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::counts)>() },
-            { .name = "bindings", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, bindings), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::bindings)>(), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumSize = 1 }
+            { .name = "bindings", .type = Assisi::Core::Reflect::FieldType::Map, .offset = offsetof(T, bindings), .container = Assisi::Core::Reflect::ContainerSpecFor<decltype(T::bindings)>(), .enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumType = "Assisi::Runtime::SampleMode", .enumSize = 1 }
         },
         .typeIndex = typeid(T)
     });

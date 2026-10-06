@@ -10,6 +10,7 @@ add_executable(Assisi-Physics-Tests
   TestCollisionChannels.cpp
   TestContactEvents.cpp
   TestGameplayRequests.cpp
+  TestNonFinite.cpp
   TestParentedBodies.cpp
   TestPhysicsWriteback.cpp
   TestRigidBody.cpp

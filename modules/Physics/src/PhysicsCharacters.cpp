@@ -181,6 +181,10 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         {
             scene.GetMut<CharacterIntent>(record.entity)->jump = false;
         }
+        if (!IsFinite(intent.move))
+        {
+            intent.move = glm::vec3(0.f);
+        }
         if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
         {
             record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
@@ -298,7 +302,7 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         // falls.
         settings.mStickToFloorStepDown = -kCharacterUp * record.maxStepHeight;
 
-        const FilterLayerFilter layerFilter{record.queryFilter};
+        const FilterLayerFilter layerFilter{layers, record.queryFilter};
 
         character.ExtendedUpdate(deltaTime, gravity, settings, {}, layerFilter, {}, {}, tempAlloc);
     }
@@ -393,7 +397,7 @@ bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Ch
     // which is what lets a trigger volume find it.
     settings.mInnerBodyShape = record.standingShape;
     settings.mInnerBodyLayer =
-        PackLayer(CollisionFilter{tuning.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
+        LayerFor(CollisionFilter{tuning.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
 
     // The entity rides in the character's user data, which Jolt copies onto the
     // inner body, so a contact or a cast that finds a character names it exactly
@@ -431,6 +435,13 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
         pose = Pose{world.rotation, world.position};
     }
 
+    if (!IsFinite(pose))
+    {
+        Core::Log::Error("PhysicsWorld: entity {} (gen {}) gets no character - its Transform is not a number.",
+                         entity.index, entity.generation);
+        return;
+    }
+
     CharacterRecord record;
     record.entity = entity;
     record.Retune(tuning);
@@ -456,7 +467,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     // Found now rather than on the first step: a stance asked for before then
     // has to know whether the character is standing on something, or a crouch
     // at spawn is taken for one in the air and lifts the feet off the floor.
-    const FilterLayerFilter layerFilter{placed.queryFilter};
+    const FilterLayerFilter layerFilter{layers, placed.queryFilter};
     placed.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
     WriteCharacterState(entity, BuildCharacterState(placed));
 }
@@ -499,7 +510,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
         // which is a shrink and always fits.
         if (stance == Stance::Crouching)
         {
-            const FilterLayerFilter layerFilter{record.queryFilter};
+            const FilterLayerFilter layerFilter{layers, record.queryFilter};
             const float maxPenetration =
                 kStanceChangePenetrationSlopFactor * physicsSystem.GetPhysicsSettings().mPenetrationSlop;
             (void)record.character->SetShape(record.crouchingShape, maxPenetration, {}, layerFilter, {}, {}, tempAlloc);
@@ -514,7 +525,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
     character.SetMaxStrength(tuning.canPushBodies ? tuning.pushStrength : 0.f);
 
     const CollisionFilter filter{tuning.collidesWith, CollisionChannel::Character};
-    physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, PackLayer(filter, BodyMotion::Kinematic));
+    physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, LayerFor(filter, BodyMotion::Kinematic));
     slot.filter = filter;
 }
 
@@ -528,7 +539,7 @@ bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)
     const JPH::Shape *shape =
         stance == Stance::Crouching ? record.crouchingShape.GetPtr() : record.standingShape.GetPtr();
 
-    const FilterLayerFilter layerFilter{record.queryFilter};
+    const FilterLayerFilter layerFilter{layers, record.queryFilter};
     const float maxPenetration =
         kStanceChangePenetrationSlopFactor * physicsSystem.GetPhysicsSettings().mPenetrationSlop;
 

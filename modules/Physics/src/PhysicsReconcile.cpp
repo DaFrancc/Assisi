@@ -300,13 +300,19 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider
     const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
     const Pose pose = WorldPoseOf(scene, entity, transform);
     const glm::vec3 worldScale = WorldScaleOf(scene, entity, transform);
+    if (!IsFinite(pose) || !IsFinite(worldScale))
+    {
+        Core::Log::Error("PhysicsWorld: entity {} (gen {}) gets no body - its Transform is not a number.",
+                         entity.index, entity.generation);
+        return;
+    }
     const CollisionFilter filter{collider.collidesWith, collider.channel};
     const BodyMotion motion = MotionOf(rigidBody);
     const bool sensor = collider.channel == CollisionChannel::Trigger;
     WarnOnClampedScale(entity, collider.shape, worldScale);
 
     JPH::BodyCreationSettings settings(MakeColliderShape(collider, worldScale), ToJolt(pose.position),
-                                       ToJolt(pose.rotation), JoltMotionOf(motion), PackLayer(filter, motion));
+                                       ToJolt(pose.rotation), JoltMotionOf(motion), LayerFor(filter, motion));
     settings.mIsSensor = sensor;
     settings.mUserData = UserDataOf(entity);
     settings.mFriction = collider.friction;
@@ -331,7 +337,8 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const Collider &collider
 
         // A velocity written before the body existed — a projectile spawned
         // moving — is where it starts.
-        if (const BodyState *state = scene.Get<BodyState>(entity); state != nullptr)
+        if (const BodyState *state = scene.Get<BodyState>(entity);
+            state != nullptr && IsFinite(state->linearVelocity) && IsFinite(state->angularVelocity))
         {
             settings.mLinearVelocity = ToJoltVector(state->linearVelocity);
             settings.mAngularVelocity = ToJoltVector(state->angularVelocity);
@@ -410,7 +417,7 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const Collider &collider, 
     const CollisionFilter filter{collider.collidesWith, collider.channel};
     if (!SameFilter(filter, slot.filter) || motion != slot.motion)
     {
-        bodies.SetObjectLayer(slot.body, PackLayer(filter, motion));
+        bodies.SetObjectLayer(slot.body, LayerFor(filter, motion));
         {
             // Sensor-ness is a body flag rather than part of the layer, and Jolt
             // exposes no interface-level setter for it.
@@ -503,9 +510,24 @@ void PhysicsWorld::Impl::PushBodyState(ECS::Entity entity)
         return;
     }
 
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    if (!IsFinite(state->linearVelocity) || !IsFinite(state->angularVelocity))
+    {
+        // Overwritten with what the body is doing, so the refusal is not met
+        // again on the next reconcile.
+        Core::Log::Warn("PhysicsWorld: entity {} (gen {}) was given a velocity that is not a number; it keeps the "
+                        "one it had.",
+                        entity.index, entity.generation);
+        const JPH::Vec3 linear = bodies.GetLinearVelocity(slot->body);
+        const JPH::Vec3 angular = bodies.GetAngularVelocity(slot->body);
+        WriteBodyState(entity, BodyState{.linearVelocity = glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+                                         .angularVelocity = glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+                                         .asleep = !bodies.IsActive(slot->body)});
+        return;
+    }
+
     // Activated first: a body asleep on a surface ignores velocity written
     // while it sleeps.
-    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
     bodies.ActivateBody(slot->body);
     bodies.SetLinearAndAngularVelocity(slot->body, ToJoltVector(state->linearVelocity),
                                        ToJoltVector(state->angularVelocity));
@@ -539,6 +561,21 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
     }
 
     const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
+    if (!IsFinite(transform.position) || !IsFinite(transform.rotation) || !IsFinite(transform.scale))
+    {
+        // Put back as this world last had it, so the next reconcile has
+        // nothing to refuse again and nothing draws the entity at NaN.
+        Core::Log::Warn("PhysicsWorld: entity {} (gen {}) was given a Transform that is not a number; it is put back "
+                        "where it was.",
+                        entity.index, entity.generation);
+        ECS::Transform &restored = *scene.GetMut<ECS::Transform>(entity);
+        restored.position = slot->stamp.position;
+        restored.rotation = slot->stamp.rotation;
+        restored.scale = slot->stamp.scale;
+        StampTransform(entity);
+        return;
+    }
+
     const bool moved = transform.position != slot->stamp.position;
     const bool turned = transform.rotation != slot->stamp.rotation;
     const bool scaled = transform.scale != slot->stamp.scale;
@@ -555,7 +592,7 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
             record.character->SetPosition(ToJolt(world.position));
             bodies.SetPosition(slot->body, ToJolt(world.position), JPH::EActivation::Activate);
 
-            const FilterLayerFilter layerFilter{record.queryFilter};
+            const FilterLayerFilter layerFilter{layers, record.queryFilter};
             record.character->RefreshContacts({}, layerFilter, {}, {}, tempAlloc);
         }
         StampTransform(entity);

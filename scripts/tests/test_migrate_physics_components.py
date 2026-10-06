@@ -91,6 +91,31 @@ class MigrateTest(unittest.TestCase):
         text = level(systems=["BouncerSpawn", "Bounce"])
         self.assertEqual(json.loads(migrate.migrate_text(text))["systems"], ["BouncerSpawn"])
 
+    def test_a_mask_of_every_old_channel_becomes_all(self):
+        text = level(entity("wall", Collider={"collidesWith": 31}),
+                     entity("player", Character={"collidesWith": 31}))
+        migrated = migrate.migrate_text(text)
+        self.assertEqual(components_of(migrated, "wall"), {"Collider": {"collidesWith": "All"}})
+        self.assertEqual(components_of(migrated, "player"), {"Character": {"collidesWith": "All"}})
+
+    def test_a_mask_of_some_channels_becomes_their_names(self):
+        text = level(entity("ghost", Collider={"collidesWith": 5}))
+        self.assertEqual(components_of(migrate.migrate_text(text), "ghost"),
+                         {"Collider": {"collidesWith": ["World", "Trigger"]}})
+
+    def test_locked_axes_become_their_names(self):
+        text = level(entity("upright", RigidBody={"lockedAxes": 56}),
+                     entity("pinned", RigidBody={"lockedAxes": 63}))
+        migrated = migrate.migrate_text(text)
+        self.assertEqual(components_of(migrated, "upright"),
+                         {"RigidBody": {"lockedAxes": ["AngularX", "AngularY", "AngularZ"]}})
+        self.assertEqual(components_of(migrated, "pinned"), {"RigidBody": {"lockedAxes": "All"}})
+
+    def test_a_mask_already_written_as_names_is_left_alone(self):
+        text = level(entity("wall", Collider={"collidesWith": ["World"]}),
+                     entity("crate", Collider={"collidesWith": "All"}))
+        self.assertIsNone(migrate.migrate_text(text))
+
     def test_a_removed_descriptor_in_an_override_is_removed_from_both_components(self):
         text = json.dumps({"overrides": {"crate": {"RigidBodyDescriptor": None}}}, indent=2)
         self.assertEqual(json.loads(migrate.migrate_text(text))["overrides"]["crate"],

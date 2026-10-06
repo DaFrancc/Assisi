@@ -107,7 +107,7 @@ void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &chara
         otherVelocity     = glm::vec3(v.GetX(), v.GetY(), v.GetZ());
     }
 
-    const bool sensor = bodies.IsAdded(other) && IsTriggerLayer(bodies.GetObjectLayer(other));
+    const bool sensor = bodies.IsAdded(other) && layers.EntryOf(bodies.GetObjectLayer(other)).trigger;
 
     // The character is body1, so the normal it is handed points away from it —
     // the same sense the body-vs-body path records, which is what lets both
@@ -127,13 +127,12 @@ void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &chara
 
 CollisionFilter PhysicsWorld::Impl::FilterOf(const JPH::BodyID &id) const
 {
-    const JPH::ObjectLayer layer = physicsSystem.GetBodyInterface().GetObjectLayer(id);
-    return CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))};
+    return layers.FilterOf(physicsSystem.GetBodyInterface().GetObjectLayer(id));
 }
 
 void PhysicsWorld::Impl::WakeInside(const JPH::AABox &bounds, CollisionFilter filter)
 {
-    const FilterLayerFilter layerFilter{filter};
+    const FilterLayerFilter layerFilter{layers, filter};
     physicsSystem.GetBodyInterface().ActivateBodiesInAABox(bounds, {}, layerFilter);
 }
 
@@ -157,7 +156,7 @@ void PhysicsWorld::Impl::WakeInside(const JPH::BodyID &id)
     // The lock is released first: ActivateBodiesInAABox takes its own locks, and
     // holding one while it does would be a deadlock waiting for the right pair of
     // bodies.
-    WakeInside(bounds, CollisionFilter{MaskOf(layer), static_cast<CollisionChannel>(ChannelOf(layer))});
+    WakeInside(bounds, layers.FilterOf(layer));
 }
 
 void PhysicsWorld::Impl::EmitPair(const PairState &state, ContactPhase phase, std::vector<ContactEvent> &out)

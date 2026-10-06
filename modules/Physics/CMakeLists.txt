@@ -3,10 +3,12 @@ Assisi_apply_defaults(Assisi-Physics)
 
 target_sources(Assisi-Physics
   PUBLIC
+    "include/Assisi/Physics/CollisionChannelNames.hpp"
     "include/Assisi/Physics/PhysicsComponents.hpp"
     "include/Assisi/Physics/PhysicsWorld.hpp"
   PRIVATE
     "src/PhysicsInternal.hpp"
+    "src/CollisionChannelNames.cpp"
     "src/JoltRuntime.cpp"
     "src/PhysicsWorld.cpp"
     "src/PhysicsContacts.cpp"

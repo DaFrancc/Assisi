@@ -185,7 +185,7 @@ void PhysicsWorld::Impl::CollectShapeCast(const Collider &collider, const Pose &
                                                                       JPH::Vec3(sweep.x, sweep.y, sweep.z));
 
     const JPH::ShapeCastSettings settings;
-    const FilterLayerFilter layerFilter{FilterOfCollider(collider)};
+    const FilterLayerFilter layerFilter{layers, FilterOfCollider(collider)};
     const IgnoreBodyFilter bodyFilter{BodyFor(ignore)};
 
     // Zero base offset, so the contact points come back in world space. Jolt is
@@ -198,7 +198,7 @@ void PhysicsWorld::Impl::CollectOverlap(const Collider &collider, const Pose &at
                                         JPH::CollideShapeCollector &hits) const
 {
     const JPH::CollideShapeSettings settings;
-    const FilterLayerFilter layerFilter{FilterOfCollider(collider)};
+    const FilterLayerFilter layerFilter{layers, FilterOfCollider(collider)};
     const IgnoreBodyFilter bodyFilter{BodyFor(ignore)};
 
     // Jolt places the shape by its centre of mass, which an offset collider has
@@ -220,7 +220,7 @@ std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep,
 
     const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(sweep.x, sweep.y, sweep.z)};
     JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
-    const FilterLayerFilter layerFilter{filter};
+    const FilterLayerFilter layerFilter{_impl->layers, filter};
     const IgnoreBodyFilter bodyFilter{_impl->BodyFor(ignore)};
 
     // The broad-phase filter accepts everything: a query carries no motion type,
@@ -245,7 +245,7 @@ void PhysicsWorld::CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter
 
     const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(sweep.x, sweep.y, sweep.z)};
     JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
-    const FilterLayerFilter layerFilter{filter};
+    const FilterLayerFilter layerFilter{_impl->layers, filter};
     const IgnoreBodyFilter bodyFilter{_impl->BodyFor(ignore)};
     _impl->physicsSystem.GetNarrowPhaseQuery().CastRay(ray, RaySettings(), collector, {}, layerFilter, bodyFilter);
 

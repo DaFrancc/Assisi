@@ -17,6 +17,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 
+#include <Jolt/Core/FPFlushDenormals.h>
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -31,6 +32,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -184,6 +186,50 @@ PhysicsWorld::~PhysicsWorld()
 }
 
 // ---------------------------------------------------------------------------
+// Layers
+// ---------------------------------------------------------------------------
+
+namespace
+{
+/// Where the channel and the motion sit in a LayerTable key, above the mask.
+constexpr std::uint32_t kLayerKeyChannelShift = 32;
+constexpr std::uint32_t kLayerKeyMotionShift = 40;
+} // namespace
+
+JPH::ObjectLayer LayerTable::LayerFor(CollisionFilter filter, BodyMotion motion)
+{
+    const std::uint64_t key = static_cast<std::uint64_t>(filter.collidesWith.bits) |
+                              (static_cast<std::uint64_t>(filter.channel) << kLayerKeyChannelShift) |
+                              (static_cast<std::uint64_t>(motion) << kLayerKeyMotionShift);
+    const std::unordered_map<std::uint64_t, JPH::ObjectLayer>::const_iterator found = _index.find(key);
+    if (found != _index.end())
+    {
+        return found->second;
+    }
+
+    const JPH::ObjectLayer layer = static_cast<JPH::ObjectLayer>(_entries.size());
+    _entries.push_back(LayerEntry{.mask = filter.collidesWith.bits,
+                                  .channelBit = Core::Bitmask<CollisionChannel>::Of(filter.channel).bits,
+                                  .channel = filter.channel,
+                                  .motion = motion,
+                                  .trigger = filter.channel == CollisionChannel::Trigger});
+    _index.emplace(key, layer);
+    return layer;
+}
+
+CollisionFilter LayerTable::FilterOf(JPH::ObjectLayer layer) const
+{
+    const LayerEntry &entry = EntryOf(layer);
+    return CollisionFilter{Core::Bitmask<CollisionChannel>{entry.mask}, entry.channel};
+}
+
+JPH::ObjectLayer PhysicsWorld::Impl::LayerFor(CollisionFilter filter, BodyMotion motion)
+{
+    ASSISI_ASSERT(!stepping, "PhysicsWorld made a layer while the world is stepping");
+    return layers.LayerFor(filter, motion);
+}
+
+// ---------------------------------------------------------------------------
 // Slots
 // ---------------------------------------------------------------------------
 
@@ -301,18 +347,23 @@ void PhysicsWorld::Update(float deltaTime)
     ++_impl->step;
 
     _impl->stepping = true;
+    {
+        // Denormals flushed to zero on this thread for the step, as the workers
+        // have them for their whole lives: the solver divides by values that can
+        // otherwise come out denormal rather than zero. See InitWorkerThread.
+        const JPH::FPFlushDenormals flushDenormals;
 
-    // Characters first. They are swept rather than solved, so they react to the
-    // world as the step found it; whatever they push then has the rest of this
-    // step to respond, instead of waiting for the next one.
-    _impl->StepCharacters(deltaTime);
+        // Characters first. They are swept rather than solved, so they react to
+        // the world as the step found it; whatever they push then has the rest
+        // of this step to respond, instead of waiting for the next one.
+        _impl->StepCharacters(deltaTime);
 
-    /* This world's own scratch allocator, and the shared thread pool. Both are
-       Update() arguments; the pool is shared (one set of workers), the allocator
-       is per-world so two worlds' steps never touch the same scratch stack (see
-       JoltRuntime). */
-    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jolt.JobSystem());
-
+        /* This world's own scratch allocator, and the shared thread pool. Both
+           are Update() arguments; the pool is shared (one set of workers), the
+           allocator is per-world so two worlds' steps never touch the same
+           scratch stack (see JoltRuntime). */
+        _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jolt.JobSystem());
+    }
     _impl->stepping = false;
 
     // Before the contact events, so a system reacting to them reads the
@@ -343,6 +394,13 @@ bool PhysicsWorld::HasBody(ECS::Entity entity) const
 void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
 {
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::Teleport called while the world is stepping");
+    if (!IsFinite(pose))
+    {
+        Core::Log::Warn("PhysicsWorld: entity {} (gen {}) was teleported to a pose that is not a number; it stays "
+                        "where it is.",
+                        entity.index, entity.generation);
+        return;
+    }
 
     Impl::BodySlot *slot = _impl->SlotFor(entity);
     if (slot == nullptr)
@@ -366,7 +424,7 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
         // What it was touching is about to be wrong. Re-finding it here rather
         // than waiting a step keeps the ground state honest for anything that
         // reads it between the teleport and the next Update.
-        const FilterLayerFilter layerFilter{record->queryFilter};
+        const FilterLayerFilter layerFilter{_impl->layers, record->queryFilter};
         record->character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
     }
     else
@@ -449,6 +507,12 @@ float PhysicsWorld::Mass(ECS::Entity entity) const
 void PhysicsWorld::Impl::Request(const BodyRequest &request)
 {
     ASSISI_ASSERT(!stepping, "PhysicsWorld request made while the world is stepping");
+    if (!IsFinite(request.value) || !IsFinite(request.point))
+    {
+        Core::Log::Warn("PhysicsWorld: a push on entity {} (gen {}) is not a number and is ignored.",
+                        request.entity.index, request.entity.generation);
+        return;
+    }
     requests.push_back(request);
 }
 
@@ -585,6 +649,12 @@ void PhysicsWorld::Sleep(ECS::Entity entity)
 void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const BodyState &state)
 {
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ApplyCorrection called while the world is stepping");
+    if (!IsFinite(pose) || !IsFinite(state.linearVelocity) || !IsFinite(state.angularVelocity))
+    {
+        Core::Log::Warn("PhysicsWorld: a correction for entity {} (gen {}) is not a number and is ignored.",
+                        entity.index, entity.generation);
+        return;
+    }
     const glm::vec3 linearVelocity = state.linearVelocity;
     const glm::vec3 angularVelocity = state.angularVelocity;
     const bool activate = !state.asleep;
@@ -602,7 +672,7 @@ void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const B
         record.character->SetPosition(position);
         record.character->SetLinearVelocity(JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
         bodies.SetPosition(slot->body, position, JPH::EActivation::Activate);
-        const FilterLayerFilter layerFilter{record.queryFilter};
+        const FilterLayerFilter layerFilter{_impl->layers, record.queryFilter};
         record.character->RefreshContacts({}, layerFilter, {}, {}, _impl->tempAlloc);
         _impl->WritePose(entity, pose, /*writeRotation=*/ false);
         ECS::SnapTransform(_impl->scene, entity);

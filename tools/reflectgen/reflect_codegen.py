@@ -155,11 +155,16 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
             'if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "{f}", _names, _n)) return false; '
             '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
     if f.bitmask_info is not None:
-        # A Core::Bitmask is its uint32_t, in memory and on disk alike.
+        # A Core::Bitmask is its uint32_t in memory, and the names of the
+        # enumerators it holds on disk — see BitmaskJson.hpp.
+        names = ', '.join(f'{{{{ "{n}", {v} }}}}' for n, v in f.bitmask_info.constants)
+        table = ('static constexpr Assisi::Core::Reflect::EnumName _names[] = {{' + names + '}}; '
+                 'const Assisi::Core::Reflect::BitmaskNames _mask{{_names, "' + f.bitmask_info.fqn + '", '
+                 'std::remove_cvref_t<decltype({a})>::All().bits}}; ')
         return TypeCodegen(
             'UInt32',
-            '{a}.bits',
-            'if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", {a}.bits)) return false;')
+            '[&]{{ ' + table + 'return Assisi::Core::Reflect::BitmaskToJson({a}.bits, _mask); }}()',
+            '{{ ' + table + 'if (!Assisi::Core::Reflect::ReadBitmask(j, _comp, "{f}", _mask, {a}.bits)) return false; }}')
     if f.container is not None:
         # One expression either way, whatever the element type or the depth: the
         # templates in ContainerJson.hpp resolve it from the member's own type, so
@@ -250,6 +255,7 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
     if enum_source is not None:
         consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in enum_source.constants)
         parts.append(f'.enumConstants = {{ {consts} }}')
+        parts.append(f'.enumType = "{enum_source.fqn}"')
         # The width marks the field as an enum at all — zero means "not one" — so
         # it is written even for the enum whose size matches the default int.
         parts.append(f'.enumSize = {enum_source.size}')
@@ -262,6 +268,7 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
         # value; a field with constants and a width holds exactly one.
         consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.bitmask_info.constants)
         parts.append(f'.enumConstants = {{ {consts} }}')
+        parts.append(f'.enumType = "{f.bitmask_info.fqn}"')
 
     if f.radio is not None and f.radio.source != '':
         values = ', '.join(str(v) for v in f.radio.values)
@@ -987,6 +994,16 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         if not f.args.has('transient')
     )
 
+    # Bitmask fields are written as the names of their bits, through the
+    # BitmaskJson helpers.
+    has_bitmasks = any(
+        f.bitmask_info is not None
+        for comp in [*components, *messages]
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
     # Container fields need the descriptor their FieldMeta points at and the
     # templates their JSON goes through.
     has_containers = any(
@@ -1017,6 +1034,10 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     # Unconditional: every deserialize body reads its fields through these, and
     # every kind of registration (component, asset, message) emits one.
     includes.append('#include <Assisi/Core/Reflect/JsonRead.hpp>')
+    if has_bitmasks:
+        includes.append('#include <Assisi/Core/Reflect/BitmaskJson.hpp>')
+        # The full set a mask's "All" stands for is read off its type.
+        includes.append('#include <type_traits>')
     if component_infos:
         includes.append('#include <Assisi/Core/Reflect/ComponentRegistry.hpp>')
         includes.append('#include <Assisi/ECS/Scene.hpp>')

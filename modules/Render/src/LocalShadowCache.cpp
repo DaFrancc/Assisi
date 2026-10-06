@@ -166,6 +166,7 @@ void ShadowCasterMobility::Update(double nowSeconds, float promoteStillSeconds, 
             invalidateOut.push_back(ShadowMover{mover.casterId, Merged(leaving, mover.worldSphere)});
         }
         record.sphere = mover.worldSphere;
+        record.poseHash = mover.poseHash;
         record.lastMovedSeconds = nowSeconds;
     }
 
@@ -179,7 +180,7 @@ void ShadowCasterMobility::Update(double nowSeconds, float promoteStillSeconds, 
         }
         if (nowSeconds - record.lastMovedSeconds < static_cast<double>(promoteStillSeconds))
         {
-            _dynamic.push_back(ShadowMover{entry->first, record.sphere});
+            _dynamic.push_back(ShadowMover{entry->first, record.sphere, record.poseHash});
             ++entry;
             continue;
         }

@@ -1086,7 +1086,7 @@ class BitmaskTest(unittest.TestCase):
             "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n"), "N/C.hpp")
         # The width is the member that marks a field as an enum at all, so it is
         # written even here; `enumSigned` is absent because this one is unsigned.
-        self.assertIn('.enumConstants = { { "A", 0 }, { "B", 1 } }, .enumSize = 1 }', cpp)
+        self.assertIn('.enumConstants = { { "A", 0 }, { "B", 1 } }, .enumType = "N::E", .enumSize = 1 }', cpp)
 
     def test_platform_dependent_long_underlying_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -1166,7 +1166,7 @@ class RadioTest(unittest.TestCase):
         # and carries its width (default int -> 4, signed).
         self.assertIn(
             '.offset = offsetof(T, mode), '
-            '.enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, '
+            '.enumConstants = { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, .enumType = "N::Mode", '
             '.enumSize = 4, .enumSigned = true }',
             cpp,
         )
@@ -1178,7 +1178,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;"
         )), "N/C.hpp")
         self.assertIn(
-            '.offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, '
+            '.offset = offsetof(T, sub), .enumConstants = { { "A", 0 }, { "B", 1 } }, .enumType = "N::Sub", '
             '.enumSize = 4, .enumSigned = true, .radioSource = "mode", .radioValues = { 2 }, '
             '.radioBehavior = Assisi::Core::Reflect::RadioBehavior::Vanish',
             cpp,
