@@ -702,3 +702,56 @@ TEST_CASE("A carrier joined by touch and held by its volume takes no rider falli
 
     CHECK(BasedThroughHop(test, deck, rider, elapsed));
 }
+
+namespace
+{
+
+/// Whether a rider standing on carrier A ends up on carrier B, of @p priority,
+/// after B flies in overhead with a volume that reaches down around it.
+bool TakenByOverflight(uint8_t priority)
+{
+    /// B's body flies this high, clear of everything; its volume hangs below
+    /// it to around the rider (m).
+    constexpr float kFlightHeight = 20.f;
+    const glm::vec3 kVolumeOffset{0.f, -18.f, 0.f};
+    const glm::vec3 kVolumeHalfExtents{3.f, 3.f, 3.f};
+    const glm::vec3 kBodyHalfExtents{1.f, 0.5f, 1.f};
+
+    /// B flies in from this far along X at this speed, and stops overhead.
+    constexpr float kStartX = -20.f;
+    constexpr float kFlightSpeed = 10.f;
+    constexpr int32_t kFlightSteps = 3 * kStepsPerSecond;
+
+    TestScene test;
+    const Deck a = AddDeck(test, glm::vec3(0.f), 0.f, Physics::Carrier{});
+    const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
+    REQUIRE(StateOf(test.scene, rider).baseEntity == a.entity);
+
+    BodySpec spec = Box(kBodyHalfExtents, false);
+    spec.rigidBody->motion = Physics::MotionType::Kinematic;
+    Deck b;
+    b.start = glm::vec3(kStartX, kFlightHeight, 0.f);
+    b.entity = AddBody(test.scene, b.start, spec);
+    Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Volume, Physics::CarrierContact::Volume);
+    carrier.priority = priority;
+    REQUIRE(test.scene.Add(b.entity, carrier) != nullptr);
+    AddVolume(test, b, kVolumeOffset, kVolumeHalfExtents);
+
+    for (int32_t i = 1; i <= kFlightSteps; ++i)
+    {
+        const float x = glm::min(kStartX + kFlightSpeed * kStep * static_cast<float>(i), 0.f);
+        test.scene.GetMut<ECS::Transform>(b.entity)->position = glm::vec3(x, kFlightHeight, 0.f);
+        Step(test.world);
+    }
+    const ECS::Entity base = StateOf(test.scene, rider).baseEntity;
+    REQUIRE(base != ECS::NullEntity);
+    return base == b.entity;
+}
+
+} // namespace
+
+TEST_CASE("A carrier of higher priority takes a rider from the one it rides; one of equal priority does not")
+{
+    CHECK(TakenByOverflight(1));
+    CHECK_FALSE(TakenByOverflight(0));
+}

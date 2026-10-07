@@ -1639,11 +1639,21 @@ private:
     /// as the last solve left the overlaps.
     bool InsideVolumeOf(const CharacterRecord &record, ECS::Entity carrier) const;
 
-    /// A carrier joined by its volume that @p record is inside and that would
-    /// keep it, or NullEntity. One joined by volume and held by touch would let
-    /// go at once of a rider @p standing on other ground, so it does not take
-    /// one.
-    ECS::Entity VolumeCarrierFor(const CharacterRecord &record, bool standing) const;
+    /// The carrier with the highest priority that would take @p record now,
+    /// the lower entity breaking a tie, or NullEntity: the one it stands on if
+    /// @p standing, and any it is inside the volume of that joins by volume.
+    /// One joined by volume and held by touch would let go at once of a rider
+    /// standing on other ground, so it does not take one.
+    ECS::Entity BestCarrierFor(const CharacterRecord &record, bool standing) const;
+
+    /// The priority of @p carrier's Carrier; 0 when it has none.
+    uint8_t PriorityOf(ECS::Entity carrier) const;
+
+    /// Boards @p record onto the best carrier that would take it, when it
+    /// rides none or that carrier outranks the one it rides. @p velocity and
+    /// @p groundVelocity, as the step read them, are made relative to the
+    /// carrier boarded.
+    void BoardBestCarrier(CharacterRecord &record, bool standing, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
 
     /// Whether @p record's base still carries it: alive, still the body it
     /// rode, still a carrier, and the character still rides bases.

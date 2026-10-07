@@ -221,26 +221,9 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         const float risingSpeed = (currentVelocity - groundVelocity).Dot(kCharacterUp);
         const bool standing = onGround && risingSpeed < kMaxRisingSpeedWhileGrounded;
 
-        // Standing on a carrier, or inside the volume of one that boards by it:
-        // from this step on the velocity is relative to it, and the sweep below
-        // already sees it as still.
-        if (record.base == ECS::NullEntity && record.options.Has(CharacterOption::RidesBases))
-        {
-            ECS::Entity carrier = standing ? CarrierUnder(record) : ECS::NullEntity;
-            if (carrier == ECS::NullEntity)
-            {
-                carrier = VolumeCarrierFor(record, standing);
-            }
-            if (carrier != ECS::NullEntity)
-            {
-                // Standing on the carrier itself, its ground velocity is the
-                // carrier's; on other ground inside a volume it keeps its own.
-                const bool onCarrier = standing && OwnerOf(EntityFor(character.GetGroundBodyID())) == carrier;
-                const JPH::Vec3 worldGround = groundVelocity;
-                AttachRider(record, carrier, currentVelocity);
-                groundVelocity = onCarrier ? JPH::Vec3::sZero() : worldGround - BaseVelocityAt(record);
-            }
-        }
+        // From this step on the velocity is relative to the carrier boarded, and
+        // the sweep below already sees it as still.
+        BoardBestCarrier(record, standing, currentVelocity, groundVelocity);
 
         // After boarding, so the step that walks from a dock onto a deck still
         // remembers the dock.
@@ -387,13 +370,21 @@ bool PhysicsWorld::Impl::InsideVolumeOf(const CharacterRecord &record, ECS::Enti
     return false;
 }
 
-ECS::Entity PhysicsWorld::Impl::VolumeCarrierFor(const CharacterRecord &record, bool standing) const
+uint8_t PhysicsWorld::Impl::PriorityOf(ECS::Entity carrier) const
+{
+    const Carrier *settings = scene.Get<Carrier>(carrier);
+    return settings == nullptr ? uint8_t{0} : settings->priority;
+}
+
+ECS::Entity PhysicsWorld::Impl::BestCarrierFor(const CharacterRecord &record, bool standing) const
 {
     const BodySlot *slot = SlotFor(record.entity);
-    if (slot == nullptr)
+    if (!record.options.Has(CharacterOption::RidesBases) || slot == nullptr)
     {
         return ECS::NullEntity;
     }
+
+    ECS::Entity best = standing ? CarrierUnder(record) : ECS::NullEntity;
     for (const PairKey key : slot->pairKeys)
     {
         const PairState &pair = pairs.at(key);
@@ -414,9 +405,45 @@ ECS::Entity PhysicsWorld::Impl::VolumeCarrierFor(const CharacterRecord &record, 
         {
             continue;
         }
-        return owner;
+        const bool outranks = best == ECS::NullEntity || carrier->priority > PriorityOf(best) ||
+                              (carrier->priority == PriorityOf(best) && owner.index < best.index);
+        if (outranks)
+        {
+            best = owner;
+        }
     }
-    return ECS::NullEntity;
+    return best;
+}
+
+void PhysicsWorld::Impl::BoardBestCarrier(CharacterRecord &record, bool standing, JPH::Vec3 &velocity,
+                                          JPH::Vec3 &groundVelocity)
+{
+    const ECS::Entity carrier = BestCarrierFor(record, standing);
+    if (carrier == ECS::NullEntity || carrier == record.base)
+    {
+        return;
+    }
+
+    // A rider keeps the carrier it rides against an equal one: first come,
+    // first served. Taken by a higher one, it goes back to the world first.
+    if (record.base != ECS::NullEntity)
+    {
+        if (PriorityOf(carrier) <= PriorityOf(record.base))
+        {
+            return;
+        }
+        const JPH::Vec3 oldBase = BaseVelocityAt(record);
+        velocity += oldBase;
+        groundVelocity += oldBase;
+        ReleaseRider(record);
+    }
+
+    // Standing on the carrier itself, its ground velocity is the carrier's;
+    // on other ground inside a volume it keeps its own.
+    const bool onCarrier = standing && OwnerOf(EntityFor(record.character->GetGroundBodyID())) == carrier;
+    const JPH::Vec3 worldGround = groundVelocity;
+    AttachRider(record, carrier, velocity);
+    groundVelocity = onCarrier ? JPH::Vec3::sZero() : worldGround - BaseVelocityAt(record);
 }
 
 bool PhysicsWorld::Impl::StillCarried(const CharacterRecord &record) const

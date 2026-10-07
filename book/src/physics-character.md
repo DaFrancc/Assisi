@@ -108,6 +108,7 @@ The `Carrier` decides when a ride starts and ends:
 | `hold` | `Touch` | What keeps a ride going. A jump leaves the deck, so with `Touch` it ends the ride unless the grace time covers it. |
 | `graceTime` | 0 | Seconds a rider is kept after `hold` stops holding it. Standing on anything else ends the ride at once. |
 | `grip` | 1 | How much of the carrier's speed a boarding rider takes up. See below. |
+| `priority` | 0 | When two carriers would take the same rider, the higher one does, even from a carrier the rider is already on. On a tie the rider keeps the one it is on. A ship landing in a hangar that is itself a carrier can take its crew from the hangar this way. |
 
 `join` and `hold` each take one of two values, and the second includes the
 first:
