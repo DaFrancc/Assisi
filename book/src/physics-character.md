@@ -47,7 +47,8 @@ for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
 
 `CharacterState` is the result of the last step: `velocity`, `ground`
 (`OnGround`, `OnSteepGround`, `NotSupported` or `InAir`), `stance`, `canJump`,
-`eyeHeight` and what the character is standing on.
+`eyeHeight`, what the character is standing on (`groundEntity`) and the carrier
+it is riding (`baseEntity`).
 
 ## The order of a movement step
 
@@ -74,6 +75,50 @@ velocity.
 
 On a moving platform, friction and acceleration work relative to the platform,
 so a character standing still rides along with it.
+
+## Riding a moving body
+
+Taking the platform's velocity is enough for a lift or a slow, flat platform.
+It is not enough for a boat that rocks or a train that turns: the velocity a
+character takes is a step old, so it slides across the deck, and on a sharp turn
+it is thrown off.
+
+For those, make the body a **carrier**: set `carriesRiders` on its
+`RigidBody`. A character standing on a carrier **rides** it, and the carrier is
+its **base**:
+
+- Each step, the character is first moved with its base, by exactly the
+  distance and the turn the base made. Then it moves by its own intent, which
+  is worked out relative to the base. A character standing still on a
+  spinning deck stays on the same spot of the deck.
+- The character's facing turns with the base's yaw, so a player looking at the
+  bow keeps looking at the bow. Only the yaw: on a rocking deck the character
+  stays upright and the view does not roll.
+- `CharacterState.baseEntity` names the base. `velocity` and `groundVelocity`
+  stay world velocities, with the base's motion included.
+- The character stops riding when it jumps, leaves the ground, walks onto
+  something else, or is placed somewhere by writing its `Transform`. It keeps
+  its world velocity, so a jump off a moving boat carries the boat's speed.
+
+Riding needs no `Parent`, and the character keeps none. Only characters ride;
+a crate on a deck stays on it by friction.
+
+The base moves the character without sweeping it through the level. Walls
+that are part of the carrier move with it and are never a problem. A wall that
+is not part of the carrier is something the character's own sweep runs into
+and stops at, as it would if it were walking.
+
+Two `options` on the character decide whether it rides at all:
+
+| Option | Cleared |
+|---|---|
+| `RidesBases` | The character never rides. On a carrier it takes the carrier's velocity like on any other platform. |
+| `TurnsWithBase` | The character rides, but its facing stays where gameplay left it. |
+
+```cpp
+// A turret gunner who rides the boat but aims by itself.
+character.options = Physics::AllCharacterOptions.Without(Physics::CharacterOption::TurnsWithBase);
+```
 
 ## Air movement and air strafing
 
@@ -177,7 +222,7 @@ values, converted at 1.905 cm to one of its units.
 | `maxSlopeDegrees` | 50 | Steeper ground cannot be stood on; the character slides. |
 | `maxStepHeight` | 0.4 | The tallest step climbed without jumping. |
 | `mass`, `pushStrength` | 70, 100 | How the character pushes bodies and is pushed. |
-| `canPushBodies`, `canBePushed` | `true` | Turn either direction of pushing off. |
+| `options` | all | What the character does: `PushesBodies` and `Pushable` turn either direction of pushing off; `RidesBases` and `TurnsWithBase` are described under riding a moving body. |
 | `collidesWith` | all | Which collision channels the character hits. |
 
 Changing a setting in the editor rebuilds the character in place.

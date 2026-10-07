@@ -491,6 +491,10 @@ void PhysicsWorld::Update(float deltaTime)
     // step left them and its component is gone by the time anything reads.
     _impl->BreakJoints(deltaTime / static_cast<float>(_impl->collisionSteps));
 
+    // After the solve has moved each base, and before the writeback, so a rider
+    // is written where its base now is rather than a step behind it.
+    _impl->CarryRiders();
+
     // Before the contact events, so a system reacting to them reads the
     // Transforms this step left. The followers after the writeback, since
     // their pose is composed from their owners'.

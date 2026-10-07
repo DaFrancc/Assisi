@@ -184,6 +184,7 @@ void PhysicsWorld::Impl::WriteCharacterState(ECS::Entity entity, const Character
     // A standing crowd would otherwise rewrite every field every step.
     if (current->velocity == state.velocity && current->groundNormal == state.groundNormal &&
         current->groundVelocity == state.groundVelocity && current->groundEntity == state.groundEntity &&
+        current->baseEntity == state.baseEntity &&
         current->timeSinceGrounded == state.timeSinceGrounded && current->eyeHeight == state.eyeHeight &&
         current->ground == state.ground && current->stance == state.stance && current->canJump == state.canJump)
     {

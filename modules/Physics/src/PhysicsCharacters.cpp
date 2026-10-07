@@ -196,23 +196,45 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             record.stance == Stance::Crouching ? record.walkSpeed * record.crouchSpeedScale : record.walkSpeed;
         const glm::vec3 wishVelocity = intent.move * speed;
 
+        // Before anything reads the velocity, which is relative to the base
+        // only while the base still carries it.
+        if (record.base != ECS::NullEntity && !StillCarried(record))
+        {
+            ReleaseRider(record);
+        }
+
         // Fold in the motion of whatever is underfoot before reading it, or a
-        // character on a platform rides last step's velocity.
+        // character on a platform rides last step's velocity. A base reads as
+        // still: its motion is the carry's.
         character.UpdateGroundVelocity();
 
         // Pushes first, so a kick upward is what lifts it off the ground below
         // and everything after steers from the velocity it was left with.
-        const JPH::Vec3 currentVelocity = character.GetLinearVelocity() + record.push;
+        JPH::Vec3 currentVelocity = character.GetLinearVelocity() + record.push;
         record.push = JPH::Vec3::sZero();
-        const JPH::Vec3 groundVelocity = character.GetGroundVelocity();
-        const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
-        const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
+        JPH::Vec3 groundVelocity = character.GetGroundVelocity();
 
         // "Standing" for movement purposes is narrower than Jolt's OnGround: a
         // character that has just jumped is still touching the floor for a step,
         // and taking the ground's velocity there would swallow the jump whole.
         const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
-        const bool standing = onGround && (currentUpSpeed - groundUpSpeed) < kMaxRisingSpeedWhileGrounded;
+        const float risingSpeed = (currentVelocity - groundVelocity).Dot(kCharacterUp);
+        const bool standing = onGround && risingSpeed < kMaxRisingSpeedWhileGrounded;
+
+        // Standing on a carrier: from this step on the velocity is relative to
+        // it, and the sweep below already sees it as still.
+        if (standing && record.base == ECS::NullEntity)
+        {
+            const ECS::Entity carrier = CarrierUnder(record);
+            if (carrier != ECS::NullEntity)
+            {
+                AttachRider(record, carrier);
+                currentVelocity -= groundVelocity;
+                groundVelocity = JPH::Vec3::sZero();
+            }
+        }
+        const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
+        const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
 
         if (standing)
         {
@@ -308,6 +330,127 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         const OwnerBodiesFilter bodyFilter{*this, record.entity, /*exceptions=*/ true};
 
         character.ExtendedUpdate(deltaTime, gravity, settings, {}, layerFilter, bodyFilter, {}, tempAlloc);
+
+        if (record.base != ECS::NullEntity)
+        {
+            RecordRiderPose(record, jumping);
+        }
+    }
+}
+
+ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const
+{
+    if (!record.options.Has(CharacterOption::RidesBases))
+    {
+        return ECS::NullEntity;
+    }
+    const ECS::Entity owner = OwnerOf(EntityFor(record.character->GetGroundBodyID()));
+    const BodySlot *slot = SlotFor(owner);
+    if (slot == nullptr || slot->kind != SlotKind::Body || !slot->rigidBody.carriesRiders)
+    {
+        return ECS::NullEntity;
+    }
+    return owner;
+}
+
+bool PhysicsWorld::Impl::StillCarried(const CharacterRecord &record) const
+{
+    const BodySlot *slot = SlotFor(record.base);
+    return record.options.Has(CharacterOption::RidesBases) && slot != nullptr && slot->kind == SlotKind::Body &&
+           slot->body == record.baseBody && slot->rigidBody.carriesRiders;
+}
+
+void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrier)
+{
+    record.base = carrier;
+    record.baseBody = SlotFor(carrier)->body;
+    record.leavingBase = false;
+}
+
+JPH::Vec3 PhysicsWorld::Impl::BaseVelocityAt(const CharacterRecord &record) const
+{
+    const BodySlot *slot = SlotFor(record.base);
+    if (record.base == ECS::NullEntity || slot == nullptr || slot->body != record.baseBody)
+    {
+        return JPH::Vec3::sZero();
+    }
+    return physicsSystem.GetBodyInterface().GetPointVelocity(record.baseBody, record.character->GetPosition());
+}
+
+void PhysicsWorld::Impl::ReleaseRider(CharacterRecord &record)
+{
+    record.character->SetLinearVelocity(record.character->GetLinearVelocity() + BaseVelocityAt(record));
+    record.base = ECS::NullEntity;
+    record.baseBody = JPH::BodyID{};
+    record.leavingBase = false;
+}
+
+void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping)
+{
+    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    const JPH::RVec3 basePosition = bodies.GetPosition(record.baseBody);
+    record.baseRotation = bodies.GetRotation(record.baseBody);
+    record.localFeet =
+        record.baseRotation.Conjugated() * JPH::Vec3(record.character->GetPosition() - basePosition);
+
+    // A jump leaves on the step it fires: the sweep may still find the deck
+    // under its feet, and riding on would swallow the jump.
+    const JPH::CharacterVirtual &character = *record.character;
+    const bool onBase = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround &&
+                        OwnerOf(EntityFor(character.GetGroundBodyID())) == record.base;
+    record.leavingBase = jumping || !onBase;
+}
+
+namespace
+{
+
+/// The part of @p rotation about @p up, as a rotation of the same handedness;
+/// identity when @p rotation has no part about it.
+glm::quat YawOf(JPH::QuatArg rotation, JPH::Vec3Arg up)
+{
+    const JPH::Quat twist = rotation.GetTwist(up);
+    return glm::quat(twist.GetW(), twist.GetX(), twist.GetY(), twist.GetZ());
+}
+
+} // namespace
+
+void PhysicsWorld::Impl::CarryRiders()
+{
+    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    for (std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
+    {
+        CharacterRecord &record = entry.second;
+        if (record.base == ECS::NullEntity)
+        {
+            continue;
+        }
+
+        const JPH::RVec3 basePosition = bodies.GetPosition(record.baseBody);
+        const JPH::Quat baseRotation = bodies.GetRotation(record.baseBody);
+        const JPH::Quat turned = baseRotation * record.baseRotation.Conjugated();
+        const JPH::RVec3 feet = basePosition + baseRotation * record.localFeet;
+        record.character->SetPosition(feet);
+
+        // The velocity is the deck's, held in world axes, so it turns with the
+        // deck; left alone, a walk across a turning deck would curve.
+        record.character->SetLinearVelocity(turned * record.character->GetLinearVelocity());
+
+        // Only the yaw: the capsule stays upright on a rocking deck, and so
+        // does the view.
+        const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity);
+        if (record.options.Has(CharacterOption::TurnsWithBase) && transform != nullptr)
+        {
+            const glm::quat yaw = YawOf(turned, kCharacterUp);
+            WritePose(record.entity,
+                      Pose{glm::normalize(yaw * transform->rotation),
+                           glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                      /*writeRotation=*/ true);
+        }
+
+        if (record.leavingBase)
+        {
+            ReleaseRider(record);
+        }
     }
 }
 
@@ -346,8 +489,7 @@ void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)
     standingHalfHeight = tuning.halfHeight;
     crouchHalfHeight = clampedCrouch;
     mass = tuning.mass;
-    canPushBodies = tuning.canPushBodies;
-    canBePushed = tuning.canBePushed;
+    options = tuning.options;
 }
 
 PhysicsWorld::Impl::CharacterRecord *PhysicsWorld::Impl::FindCharacter(ECS::Entity entity)
@@ -382,7 +524,7 @@ bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Ch
     settings.mUp = kCharacterUp;
     settings.mMaxSlopeAngle = glm::radians(tuning.maxSlopeDegrees);
     settings.mMass = tuning.mass;
-    settings.mMaxStrength = tuning.canPushBodies ? tuning.pushStrength : 0.f;
+    settings.mMaxStrength = tuning.options.Has(CharacterOption::PushesBodies) ? tuning.pushStrength : 0.f;
 
     // Only contacts behind this plane hold the character up. At the bottom of
     // the capsule, so a hand brushing a wall at head height is something it
@@ -528,7 +670,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
     // Everything else the solver holds can be changed on the one it has.
     character.SetMaxSlopeAngle(glm::radians(tuning.maxSlopeDegrees));
     character.SetMass(tuning.mass);
-    character.SetMaxStrength(tuning.canPushBodies ? tuning.pushStrength : 0.f);
+    character.SetMaxStrength(tuning.options.Has(CharacterOption::PushesBodies) ? tuning.pushStrength : 0.f);
 
     const CollisionFilter filter{tuning.collidesWith, CollisionChannel::Character};
     physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, LayerFor(filter, BodyMotion::Kinematic));
@@ -592,16 +734,21 @@ CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &re
 
     CharacterState state;
 
-    const JPH::Vec3 velocity = virtualCharacter.GetLinearVelocity();
+    // A rider's own velocity is relative to its base and the base reads as
+    // still to it; the state reports both in the world.
+    const JPH::Vec3 baseVelocity = BaseVelocityAt(record);
+
+    const JPH::Vec3 velocity = virtualCharacter.GetLinearVelocity() + baseVelocity;
     state.velocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ());
 
     const JPH::Vec3 normal = virtualCharacter.GetGroundNormal();
     state.groundNormal = glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ());
 
-    const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity();
+    const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity() + baseVelocity;
     state.groundVelocity = glm::vec3(groundVelocity.GetX(), groundVelocity.GetY(), groundVelocity.GetZ());
 
     state.groundEntity = OwnerOf(EntityFor(virtualCharacter.GetGroundBodyID()));
+    state.baseEntity = record.base;
     state.timeSinceGrounded = record.timeSinceGrounded;
     state.eyeHeight = record.eyeHeight;
     state.stance = record.stance;

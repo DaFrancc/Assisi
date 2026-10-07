@@ -674,7 +674,13 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
         // use, and the look systems write it every frame. Only a move places it.
         if (moved)
         {
+            // A character put somewhere else is no longer riding where it was,
+            // and keeps the speed it had in the world.
             CharacterRecord &record = *FindCharacter(entity);
+            if (record.base != ECS::NullEntity)
+            {
+                ReleaseRider(record);
+            }
             record.character->SetPosition(ToJolt(world.position));
             bodies.SetPosition(slot->body, ToJolt(world.position), JPH::EActivation::Activate);
 

@@ -123,7 +123,8 @@ enum class ColliderAttach : std::uint8_t
 /// @brief Every channel — the mask a body carries unless it narrows it, so a
 /// body defaults to interacting with everything and an author subtracts rather
 /// than having to enumerate.
-inline constexpr Core::Bitmask<CollisionChannel, std::uint32_t> AllChannels = Core::Bitmask<CollisionChannel, std::uint32_t>::All();
+inline constexpr Core::Bitmask<CollisionChannel, std::uint32_t> AllChannels =
+    Core::Bitmask<CollisionChannel, std::uint32_t>::All();
 
 /// @brief Which way a RigidBody moves.
 ///
@@ -274,6 +275,15 @@ struct RigidBody
     /// including when the volume is moved onto them; one that may sleep learns
     /// about a resting body only when that body is woken.
     AFIELD() bool allowSleep = true;
+
+    /// @brief Whether a character standing on this body moves in its frame.
+    ///
+    /// A character on a carrier is moved with it every step, turning with it,
+    /// so it neither slides on a rocking deck nor lags on a fast one. A body
+    /// that does not carry still lends a character its velocity, which is
+    /// enough for a slow, flat platform. Characters opt out with
+    /// CharacterOption::RidesBases.
+    AFIELD() bool carriesRiders = false;
 };
 
 /// @brief What a RigidBody is doing, after the last step.
@@ -514,8 +524,8 @@ ACOMP(transient)
 struct CharacterState
 {
     /// Velocity after the step, so an animation graph reads what the character
-    /// actually did rather than what it asked for. Includes the ground's own
-    /// motion when riding a platform.
+    /// actually did rather than what it asked for. World space, including the
+    /// ground's own motion when riding a platform or a base.
     AFIELD() glm::vec3 velocity{0.f};
 
     /// Unit normal of the surface below, pointing up out of it. Zero when
@@ -532,6 +542,10 @@ struct CharacterState
     /// no entity. Check it is still alive before acting on it — the body may
     /// have been destroyed since the step that recorded it.
     AFIELD() ECS::Entity groundEntity{ECS::NullEntity};
+
+    /// The carrier the character is riding, moving in its frame, or NullEntity
+    /// when it rides nothing. See RigidBody::carriesRiders.
+    AFIELD() ECS::Entity baseEntity{ECS::NullEntity};
 
     /// Seconds since the character was last @ref GroundState::OnGround, zero
     /// while it still is. What an animation graph filters a one-frame stair
@@ -581,6 +595,21 @@ enum class BunnyHopPolicy : std::uint8_t
     Boost,
     Count_,
 };
+
+/// @brief Something a character does unless the game turns it off.
+AENUM()
+enum class CharacterOption : std::uint8_t
+{
+    PushesBodies,  ///< Shoves the bodies it walks into.
+    Pushable,      ///< Is shoved by bodies that walk or fall into it.
+    RidesBases,    ///< Moves in the frame of a carrier it stands on; see RigidBody::carriesRiders.
+    TurnsWithBase, ///< While riding, its facing turns with the carrier's yaw.
+    Count_,
+};
+
+/// Every CharacterOption: what a character does by default.
+inline constexpr Core::Bitmask<CharacterOption, std::uint8_t> AllCharacterOptions =
+    Core::Bitmask<CharacterOption, std::uint8_t>::All();
 
 /// @brief A character: the capsule a player or an NPC is, and how it moves.
 ///
@@ -719,14 +748,11 @@ struct Character
     /// What a jump on the landing step does with speed gained in the air.
     AFIELD() BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
 
-    /// Whether this character can shove other bodies at all. Distinct from
-    /// @ref pushStrength being zero only in intent; both are honoured.
-    AFIELD() bool canPushBodies = true;
-
-    /// Whether other bodies can shove this character. False makes it immovable
-    /// by anything but its own movement — what an NPC that must hold its mark
-    /// wants.
-    AFIELD() bool canBePushed = true;
+    /// What the character does; see CharacterOption. Clearing Pushable makes
+    /// it immovable by anything but its own movement, which an NPC that must
+    /// hold its mark wants. Clearing PushesBodies differs from a zero
+    /// @ref pushStrength only in intent; both are honoured.
+    AFIELD() Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
 };
 
 /// @brief What a character is being asked to do.
