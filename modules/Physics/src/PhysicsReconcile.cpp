@@ -66,7 +66,7 @@ glm::vec3 WorldScaleOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::T
 /// the order Jolt's flags do.
 JPH::EAllowedDOFs AllowedDOFsOf(const RigidBody &rigidBody)
 {
-    const uint32_t free = kAllAxes & ~rigidBody.lockedAxes.bits;
+    const uint32_t free = kAllAxes & ~static_cast<uint32_t>(rigidBody.lockedAxes.bits);
     return free == 0u ? JPH::EAllowedDOFs::All : static_cast<JPH::EAllowedDOFs>(free);
 }
 
@@ -241,7 +241,7 @@ PhysicsWorld::Impl::WantedSlot PhysicsWorld::Impl::WantedFor(ECS::Entity entity)
         return WantedSlot{placement.owner, SlotKind::Follower};
     case ColliderRole::Own:
     case ColliderRole::Static:
-    case ColliderRole::Count:
+    case ColliderRole::Count_:
         break;
     }
     return WantedSlot{ECS::NullEntity, SlotKind::Body};
@@ -311,7 +311,7 @@ void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
         }
         break;
     case SlotKind::Empty:
-    case SlotKind::Count:
+    case SlotKind::Count_:
         break;
     }
 
@@ -674,7 +674,13 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
         // use, and the look systems write it every frame. Only a move places it.
         if (moved)
         {
+            // A character put somewhere else is no longer riding where it was,
+            // and keeps the speed it had in the world.
             CharacterRecord &record = *FindCharacter(entity);
+            if (record.base != ECS::NullEntity)
+            {
+                ReleaseRider(record);
+            }
             record.character->SetPosition(ToJolt(world.position));
             bodies.SetPosition(slot->body, ToJolt(world.position), JPH::EActivation::Activate);
 
@@ -854,7 +860,7 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
         break;
     }
     case SlotKind::Empty:
-    case SlotKind::Count:
+    case SlotKind::Count_:
         break;
     }
 

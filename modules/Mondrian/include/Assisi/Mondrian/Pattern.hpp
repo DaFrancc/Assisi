@@ -39,7 +39,7 @@ enum class PatternMatch : uint8_t
     No,      ///< it does not match, and no addition to it would
     Partial, ///< it does not match yet, but something added to it could
     Yes,
-    Count
+    Count_
 };
 
 /// @brief Compiles @p pattern, or says why it could not, pointing at the byte

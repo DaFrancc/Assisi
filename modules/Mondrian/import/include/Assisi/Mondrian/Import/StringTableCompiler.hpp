@@ -28,7 +28,7 @@ enum class EmptyText : uint8_t
 {
     Refuse, ///< a string nobody has written yet, which fails the cook
     Allow,  ///< a string that is meant to be empty
-    Count
+    Count_
 };
 
 /// @brief The table @p csv describes.

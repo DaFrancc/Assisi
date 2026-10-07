@@ -87,7 +87,7 @@ TEST_CASE("Corrupt compressed bytes are refused, not decoded into garbage")
 TEST_CASE("A codec this build does not have is refused")
 {
     const std::vector<std::byte> source = Compressible();
-    const auto unknown = static_cast<PakCodec>(PakCodec::Count);
+    const auto unknown = static_cast<PakCodec>(PakCodec::Count_);
 
     const std::expected<std::vector<std::byte>, PakCodecError> unpacked =
         DecompressSlice(unknown, source, source.size());

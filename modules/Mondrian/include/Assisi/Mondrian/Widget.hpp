@@ -47,10 +47,10 @@ enum class UiAction : uint8_t
     Back,
     Next,     ///< Tab order forward
     Previous, ///< Tab order backward
-    Count
+    Count_
 };
 
-inline constexpr std::size_t kUiActionCount = static_cast<std::size_t>(UiAction::Count);
+inline constexpr std::size_t kUiActionCount = static_cast<std::size_t>(UiAction::Count_);
 
 /// @brief The editing keys a field answers to.
 ///
@@ -68,17 +68,17 @@ enum class EditKey : uint8_t
     Copy,
     Cut,
     Paste,
-    Count
+    Count_
 };
 
-inline constexpr std::size_t kEditKeyCount = static_cast<std::size_t>(EditKey::Count);
+inline constexpr std::size_t kEditKeyCount = static_cast<std::size_t>(EditKey::Count_);
 
 /// @brief Whether a movement brings the selection along.
 enum class TextReach : uint8_t
 {
     Moves,   ///< the caret goes alone, and any selection is dropped
     Extends, ///< the selection grows or shrinks to where the caret lands
-    Count
+    Count_
 };
 
 /// @brief How far a movement or a deletion reaches at once.
@@ -86,7 +86,7 @@ enum class TextStep : uint8_t
 {
     Character,
     Word,
-    Count
+    Count_
 };
 
 /// @brief What happened to a control, once the UI has made sense of the input.
@@ -100,7 +100,7 @@ enum class WidgetGesture : uint8_t
     Wheel,    ///< the wheel turned over it or over something inside it
     Type,     ///< characters were typed while it had focus
     Edit,     ///< an editing key was pressed while it had focus
-    Count
+    Count_
 };
 
 /// @brief One gesture's details. Only the fields its gesture names are set.
@@ -112,8 +112,8 @@ struct WidgetEvent
     std::string_view typed; ///< what was typed, UTF-8, Type only; lives only for the call
     uint32_t clicks = 1;    ///< presses in quick succession on this node, Press only
     WidgetGesture gesture = WidgetGesture::Press;
-    UiAction action = UiAction::Count;   ///< Action only
-    EditKey key = EditKey::Count;        ///< Edit only
+    UiAction action = UiAction::Count_;   ///< Action only
+    EditKey key = EditKey::Count_;        ///< Edit only
     TextReach reach = TextReach::Moves;  ///< Action and Edit
     TextStep step = TextStep::Character; ///< Action and Edit
 };
@@ -124,7 +124,7 @@ enum class ScrollGrab : uint8_t
     None,
     Horizontal,
     Vertical,
-    Count
+    Count_
 };
 
 /// @brief What a control sees of the node it is on.
@@ -153,7 +153,7 @@ enum class WidgetResponse : uint8_t
     Handled,   ///< the control took it, and nothing changed
     Changed,   ///< the control took it and its value moved, so it announces
     Submitted, ///< the control took it, and what it holds is finished
-    Count
+    Count_
 };
 
 /// @brief One kind of control. Every callback may be null.
@@ -208,7 +208,7 @@ enum class BuiltinWidget : uint32_t
     SteppedSlider,
     Scroll,
     TextField,
-    Count
+    Count_
 };
 
 /// @brief Registers the built-in controls into @p registry, which must be empty.
@@ -247,7 +247,7 @@ enum class SliderButtons : uint8_t
 {
     Hidden,
     Shown,
-    Count
+    Count_
 };
 
 /// @brief A slider that rests anywhere along its length, and so carries how far

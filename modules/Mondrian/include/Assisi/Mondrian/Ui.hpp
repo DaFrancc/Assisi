@@ -181,7 +181,7 @@ class Ui
     {
         AwaitingInput,
         AwaitingSync,
-        Count
+        Count_
     };
 
     /// Everything the UI remembers about the screen it is working.

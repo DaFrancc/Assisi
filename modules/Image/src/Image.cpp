@@ -11,7 +11,7 @@ bool ValidateMipChain(const DecodedImage &image)
     {
         return false;
     }
-    if (image.format == PixelFormat::Count)
+    if (image.format == PixelFormat::Count_)
     {
         return false;
     }

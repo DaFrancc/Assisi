@@ -35,7 +35,7 @@ enum class MaterialChannel : std::uint8_t
     MetallicRoughness,
     Occlusion,
     Emissive,
-    Count,
+    Count_,
 };
 
 /// @brief What a channel's texture is on the GPU.
@@ -122,7 +122,7 @@ struct MaterialChannelFormat
 }
 
 /// @brief Every channel, for a caller that walks all of them.
-inline constexpr std::array<MaterialChannel, static_cast<std::size_t>(MaterialChannel::Count)> kMaterialChannels{
+inline constexpr std::array<MaterialChannel, static_cast<std::size_t>(MaterialChannel::Count_)> kMaterialChannels{
     MaterialChannel::BaseColor, MaterialChannel::Normal, MaterialChannel::MetallicRoughness,
     MaterialChannel::Occlusion, MaterialChannel::Emissive};
 

@@ -21,7 +21,7 @@ enum class Fruit : std::uint8_t
     Apple,
     Pear,
     Plum,
-    Count,
+    Count_,
 };
 
 /// Fills every bit, the width at which All() cannot use a shift.
@@ -29,13 +29,13 @@ enum class Wide : std::uint8_t
 {
     First,
     Last = 31,
-    Count,
+    Count_,
 };
 
 enum Unscoped
 {
     UnscopedA,
-    Count,
+    Count_,
 };
 
 enum class NoCount
@@ -47,52 +47,93 @@ enum class TooWide : std::uint8_t
 {
     First,
     Last = 32,
-    Count,
+    Count_,
 };
+
+/// Fills a byte: the width at which an 8-bit All() cannot use a shift.
+enum class Byte : std::uint8_t
+{
+    First,
+    Last = 7,
+    Count_,
+};
+
+/// Fills 64 bits.
+enum class Widest : std::uint8_t
+{
+    First,
+    Last = 63,
+    Count_,
+};
+
+using FruitMask = Bitmask<Fruit, std::uint32_t>;
+using SmallFruitMask = Bitmask<Fruit, std::uint8_t>;
 
 } // namespace
 
-// Reflection reads a Bitmask field as FieldType::UInt32 at the field's offset,
-// so it has to be exactly its uint32_t.
-static_assert(sizeof(Bitmask<Fruit>) == sizeof(std::uint32_t));
-static_assert(std::is_standard_layout_v<Bitmask<Fruit>>);
-static_assert(std::is_trivially_copyable_v<Bitmask<Fruit>>);
-static_assert(offsetof(Bitmask<Fruit>, bits) == 0);
+// Reflection reads a Bitmask field as the FieldType of its storage at the
+// field's offset, so it has to be exactly that integer.
+static_assert(sizeof(FruitMask) == sizeof(std::uint32_t));
+static_assert(sizeof(SmallFruitMask) == sizeof(std::uint8_t));
+static_assert(sizeof(Bitmask<Fruit, std::uint16_t>) == sizeof(std::uint16_t));
+static_assert(sizeof(Bitmask<Fruit, std::uint64_t>) == sizeof(std::uint64_t));
+static_assert(std::is_standard_layout_v<SmallFruitMask>);
+static_assert(std::is_trivially_copyable_v<SmallFruitMask>);
+static_assert(offsetof(SmallFruitMask, bits) == 0);
 
-static_assert(Assisi::Core::BitmaskEnum<Fruit>);
-static_assert(Assisi::Core::BitmaskEnum<Wide>);
-static_assert(!Assisi::Core::BitmaskEnum<NoCount>);
-static_assert(!Assisi::Core::BitmaskEnum<TooWide>);
-static_assert(!Assisi::Core::BitmaskEnum<std::uint32_t>);
-static_assert(!Assisi::Core::BitmaskEnum<Unscoped>);
+static_assert(Assisi::Core::BitmaskEnum<Fruit, std::uint8_t>);
+static_assert(Assisi::Core::BitmaskEnum<Wide, std::uint32_t>);
+static_assert(!Assisi::Core::BitmaskEnum<Wide, std::uint16_t>);
+static_assert(Assisi::Core::BitmaskEnum<TooWide, std::uint64_t>);
+static_assert(!Assisi::Core::BitmaskEnum<TooWide, std::uint32_t>);
+static_assert(!Assisi::Core::BitmaskEnum<NoCount, std::uint32_t>);
+static_assert(!Assisi::Core::BitmaskEnum<std::uint32_t, std::uint32_t>);
+static_assert(!Assisi::Core::BitmaskEnum<Unscoped, std::uint32_t>);
 
-TEST_CASE("Bitmask: All is exactly the enumerators before Count")
+// Only the four fixed-width unsigned integers have a FieldType to be read as.
+static_assert(!Assisi::Core::BitmaskEnum<Fruit, bool>);
+static_assert(!Assisi::Core::BitmaskEnum<Fruit, std::int32_t>);
+static_assert(!Assisi::Core::BitmaskEnum<Fruit, char32_t>);
+
+TEST_CASE("Bitmask: All is exactly the enumerators before Count_")
 {
-    CHECK(Bitmask<Fruit>::All().bits == 0b111u);
-    CHECK(Bitmask<Wide>::All().bits == 0xFFFF'FFFFu);
+    CHECK(FruitMask::All().bits == 0b111u);
+    CHECK(SmallFruitMask::All().bits == 0b111u);
+    CHECK(Bitmask<Wide, std::uint32_t>::All().bits == 0xFFFF'FFFFu);
+    CHECK(Bitmask<Byte, std::uint8_t>::All().bits == 0xFFu);
+    CHECK(Bitmask<Widest, std::uint64_t>::All().bits == 0xFFFF'FFFF'FFFF'FFFFu);
 }
 
 TEST_CASE("Bitmask: an enumerator's bit is its value")
 {
-    CHECK(Bitmask<Fruit>::Of(Fruit::Apple).bits == 0b001u);
-    CHECK(Bitmask<Fruit>::Of(Fruit::Plum).bits == 0b100u);
+    CHECK(FruitMask::Of(Fruit::Apple).bits == 0b001u);
+    CHECK(FruitMask::Of(Fruit::Plum).bits == 0b100u);
+    CHECK(Bitmask<Byte, std::uint8_t>::Of(Byte::Last).bits == 0x80u);
+    CHECK(Bitmask<Widest, std::uint64_t>::Of(Widest::Last).bits == 0x8000'0000'0000'0000u);
 }
 
 TEST_CASE("Bitmask: With and Without change only the named bit")
 {
-    const Bitmask<Fruit> some = Bitmask<Fruit>::Of(Fruit::Apple).With(Fruit::Plum);
+    const FruitMask some = FruitMask::Of(Fruit::Apple).With(Fruit::Plum);
     CHECK(some.Has(Fruit::Apple));
     CHECK_FALSE(some.Has(Fruit::Pear));
     CHECK(some.Has(Fruit::Plum));
 
-    const Bitmask<Fruit> fewer = Bitmask<Fruit>::All().Without(Fruit::Pear);
+    const FruitMask fewer = FruitMask::All().Without(Fruit::Pear);
     CHECK(fewer == some);
     CHECK(fewer.Without(Fruit::Pear) == fewer);
+
+    // A narrow mask is promoted to int by every operation; the result must
+    // still be the byte it started as.
+    const SmallFruitMask small = SmallFruitMask::All().Without(Fruit::Apple);
+    CHECK(small.bits == 0b110u);
+    CHECK_FALSE(small.Has(Fruit::Apple));
+    CHECK(small.With(Fruit::Apple) == SmallFruitMask::All());
 }
 
 TEST_CASE("Bitmask: the default is empty")
 {
-    const Bitmask<Fruit> none{};
+    const FruitMask none{};
     CHECK(none.bits == 0u);
     CHECK_FALSE(none.Has(Fruit::Apple));
 }

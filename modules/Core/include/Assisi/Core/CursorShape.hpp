@@ -37,9 +37,9 @@ enum class CursorShape : uint8_t
     /// standard shape of one.
     Move,
     NotAllowed, ///< over something a drag cannot be dropped on
-    Count
+    Count_
 };
 
-inline constexpr std::size_t kCursorShapeCount = static_cast<std::size_t>(CursorShape::Count);
+inline constexpr std::size_t kCursorShapeCount = static_cast<std::size_t>(CursorShape::Count_);
 
 } // namespace Assisi::Core

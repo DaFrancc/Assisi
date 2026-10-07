@@ -24,7 +24,7 @@ constexpr std::array<NamedEnum<ScreenVerb>, 2> kVerbs{{
     {"hide", ScreenVerb::Hide},
     {"step", ScreenVerb::Step},
 }};
-static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count), "every verb needs a spelling");
+static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count_), "every verb needs a spelling");
 
 /// What opens and closes a call, for the signatures a message spells out.
 constexpr char kCallOpen = '(';
@@ -366,7 +366,7 @@ static_assert(NoTwoAlike(), "an attribute is listed once for each place it appli
 /// case there is unreachable and none is reachable two ways.
 constexpr bool EveryHandledOnce()
 {
-    for (uint32_t handled = 1; handled < static_cast<uint32_t>(HandledAttribute::Count); ++handled)
+    for (uint32_t handled = 1; handled < static_cast<uint32_t>(HandledAttribute::Count_); ++handled)
     {
         const std::ptrdiff_t entries =
             std::ranges::count(kAttributes, static_cast<HandledAttribute>(handled), &AttributeSpec::handled);
@@ -465,7 +465,7 @@ Color &ColorField(Style &style, HandledAttribute colour)
     case HandledAttribute::Name:
     case HandledAttribute::Focus:
     case HandledAttribute::Pattern:
-    case HandledAttribute::Count:
+    case HandledAttribute::Count_:
         break;
     }
     return style.background;
@@ -528,7 +528,7 @@ void Seed(ScreenNode &node)
     case BuiltinWidget::Toggle:
     case BuiltinWidget::ContinuousSlider:
     case BuiltinWidget::SteppedSlider:
-    case BuiltinWidget::Count:
+    case BuiltinWidget::Count_:
         return;
     }
 }

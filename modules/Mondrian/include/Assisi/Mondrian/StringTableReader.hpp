@@ -34,7 +34,7 @@ enum class StringTableReadError : uint8_t
     Invalid,       ///< The bytes were read and are not a usable table.
     NoReader,      ///< No reader is installed.
     DuplicateName, ///< Two listed tables share a name, so a key could mean either.
-    Count
+    Count_
 };
 
 [[nodiscard]] std::string_view ToString(StringTableReadError error) noexcept;

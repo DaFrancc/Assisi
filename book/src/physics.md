@@ -105,6 +105,7 @@ a warning and uses the closest scale the shape can take.
 | `lockedAxes` | Directions the body may not move along or turn around. Locking all three rotations keeps a body upright. |
 | `ccd` | Turn this on for small, fast objects such as bullets, so they cannot pass through a thin wall between two steps. It costs a little more. |
 | `allowSleep` | Whether the body may sleep. A body that has stopped moving is put to sleep: the engine stops simulating it until something touches or pushes it. Leave this on unless the body must keep reacting while still. |
+| `carriesRiders` | Whether a character standing on the body moves with it, turning as it turns. Off by default; see [the character controller](physics-character.md#riding-a-moving-body). |
 
 To stop a moving object for a while, such as one the player picks up, switch
 its `motion` to `Kinematic`, and back to `Dynamic` to let it go. Its mass and

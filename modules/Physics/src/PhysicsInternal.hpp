@@ -287,7 +287,7 @@ class FilterLayerFilter final : public JPH::ObjectLayerFilter
 public:
     FilterLayerFilter(const LayerTable &layers, CollisionFilter filter)
         : _layers(layers), _mask(filter.collidesWith.bits),
-        _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
+        _channelBit(Core::Bitmask<CollisionChannel, std::uint32_t>::Of(filter.channel).bits)
     {
     }
 
@@ -463,7 +463,7 @@ inline JPH::Quat ToJolt(glm::quat rotation)
 }
 
 /// Every degree of freedom, as LockedAxis bits.
-constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count)) - 1u;
+constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count_)) - 1u;
 
 /// The motion a body is built with: static without a RigidBody, and kinematic
 /// when every axis is locked, since Jolt cannot simulate a body with no freedom
@@ -707,7 +707,7 @@ struct PhysicsWorld::Impl
         /// A Collider with a kinematic body of its own, put at its entity's
         /// pose after every step. Answered for by its owner.
         Follower,
-        Count,
+        Count_,
     };
 
     /// Everything this world keeps about one entity, at that entity's index.
@@ -1096,7 +1096,7 @@ private:
         AngularImpulse,
         Wake,
         Sleep,
-        Count,
+        Count_,
     };
 
     /// One gameplay request, waiting for the next step. `point` is read only
@@ -1498,6 +1498,14 @@ private:
         /// add up to, taken by its next step and then cleared.
         JPH::Vec3 push = JPH::Vec3::sZero();
 
+        /// While riding, the feet in the base's frame, taken after the
+        /// character's own sweep and before the bodies are solved.
+        JPH::Vec3 localFeet = JPH::Vec3::sZero();
+
+        /// The base's rotation when localFeet was taken; the carry turns the
+        /// character by how far the base turned since.
+        JPH::Quat baseRotation = JPH::Quat::sIdentity();
+
         JPH::Ref<JPH::CharacterVirtual> character;
         JPH::RefConst<JPH::Shape> standingShape;
         JPH::RefConst<JPH::Shape> crouchingShape;
@@ -1508,6 +1516,14 @@ private:
         glm::vec3 facing{0.f, 0.f, -1.f};
 
         ECS::Entity entity{ECS::NullEntity};
+
+        /// The carrier being ridden, or NullEntity. While it is set the
+        /// character's velocity is relative to the base, and its sweep sees the
+        /// world in the base's frame; see CharacterContacts.
+        ECS::Entity base{ECS::NullEntity};
+
+        /// The base's body, so the sweep's callbacks need no lookup.
+        JPH::BodyID baseBody;
 
         /// What the character's sweep may be stopped by. The Character's mask
         /// minus Trigger: a sensor reports a character but must not block it, and
@@ -1560,8 +1576,11 @@ private:
         /// left the coyote window open.
         bool jumpedSinceGrounded = false;
 
-        bool canPushBodies = true;
-        bool canBePushed = true;
+        /// Set by a riding character's sweep that jumped or ended off its base:
+        /// it is carried one last time with this step's motion, then let go.
+        bool leavingBase = false;
+
+        Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
 
         /// Copies the tuning a step reads from @p character, leaving the
         /// character's motion, timers and stance as they are.
@@ -1602,6 +1621,37 @@ private:
     /// Reads every character's CharacterIntent and sweeps it by one step,
     /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
+
+    /// The carrier under @p record that it may ride: the owner of its ground
+    /// body, when that is a body with RigidBody::carriesRiders and the character
+    /// rides bases. NullEntity otherwise.
+    ECS::Entity CarrierUnder(const CharacterRecord &record) const;
+
+    /// Whether @p record's base still carries it: alive, still the body it
+    /// rode, still a carrier, and the character still rides bases.
+    bool StillCarried(const CharacterRecord &record) const;
+
+    /// Starts @p record riding @p carrier. The caller makes the character's
+    /// velocity relative to the carrier's.
+    void AttachRider(CharacterRecord &record, ECS::Entity carrier);
+
+    /// Stops @p record riding. Its velocity becomes world velocity again, with
+    /// the base's at its feet added while the base's body still exists.
+    void ReleaseRider(CharacterRecord &record);
+
+    /// The world velocity of @p record's base at its feet; zero when it rides
+    /// nothing or the base's body is gone.
+    JPH::Vec3 BaseVelocityAt(const CharacterRecord &record) const;
+
+    /// After a riding character's sweep: takes its feet into the base's frame
+    /// as the base stands before the solve, and marks it leaving when it jumped
+    /// or no longer stands on the base.
+    void RecordRiderPose(CharacterRecord &record, bool jumping);
+
+    /// Moves every riding character with its base by the motion the solve just
+    /// gave the base, turning its facing with the base's yaw unless it opted
+    /// out, and lets go of each one that is leaving.
+    void CarryRiders();
 
     /// Changes @p record's capsule to @p stance's. False when it does not fit,
     /// which in practice means standing up under something too low; nothing
@@ -1651,7 +1701,9 @@ private:
     ///
     /// @p writeRotation is false for characters: the capsule is symmetric about
     /// its up axis, so the simulation has no opinion on facing and overwriting it
-    /// would snap a turning character back to forward every frame.
+    /// would snap a turning character back to forward every frame. The one
+    /// exception is a carry, which turns the facing gameplay left by the base's
+    /// yaw.
     void WritePose(ECS::Entity entity, Pose pose, bool writeRotation);
 
     /// Records that a character touched a body, from inside the character's own
@@ -1679,6 +1731,12 @@ public:
         void OnCharacterContactAdded(const JPH::CharacterVirtual *character, const JPH::CharacterVirtual *other,
                                      const JPH::SubShapeID &subShapeId, JPH::RVec3Arg contactPosition,
                                      JPH::Vec3Arg contactNormal, JPH::CharacterContactSettings &settings) override;
+
+        /// For a riding character, every body's velocity as seen from its base:
+        /// the base itself is still, so friction holds the character on the deck
+        /// and the base is not counted twice by the sweep and the carry.
+        void OnAdjustBodyVelocity(const JPH::CharacterVirtual *character, const JPH::Body &body,
+                                  JPH::Vec3 &linearVelocity, JPH::Vec3 &angularVelocity) override;
 
 private:
         Impl &_owner;

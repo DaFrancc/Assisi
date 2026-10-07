@@ -35,7 +35,7 @@ std::string_view ToString(StringTableReadError error) noexcept
         return "no string table reader is installed";
     case StringTableReadError::DuplicateName:
         return "another listed table has the same name";
-    case StringTableReadError::Count:
+    case StringTableReadError::Count_:
         break;
     }
     return "unknown";

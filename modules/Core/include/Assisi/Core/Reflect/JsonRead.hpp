@@ -89,7 +89,7 @@ struct EnumName
 /// integer value. Generated writers emit the integer.
 ///
 /// A name no enumerator carries is refused, and the log lists the ones that
-/// exist. `Count` is not among them: the generated table omits it, so it is
+/// exist. `Count_` is not among them: the generated table omits it, so it is
 /// refused like any other name the enum does not define.
 ///
 /// An integer is taken as written and not checked against the table.

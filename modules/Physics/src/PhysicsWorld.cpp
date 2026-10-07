@@ -80,7 +80,7 @@ JPH::Ref<JPH::ConvexShape> MakePrimitive(const Collider &collider)
     case ColliderShape::Box:
     case ColliderShape::Convex:
     case ColliderShape::Mesh:
-    case ColliderShape::Count:
+    case ColliderShape::Count_:
         break;
     }
     return new JPH::BoxShape(ClampedBoxHalfExtents(collider.halfExtents));
@@ -121,7 +121,7 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
     case ColliderShape::Box:
     case ColliderShape::Convex:
     case ColliderShape::Mesh:
-    case ColliderShape::Count:
+    case ColliderShape::Count_:
         break;
     }
     return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
@@ -329,7 +329,7 @@ JPH::ObjectLayer LayerTable::LayerFor(CollisionFilter filter, BodyMotion motion)
 
     const JPH::ObjectLayer layer = static_cast<JPH::ObjectLayer>(_entries.size());
     _entries.push_back(LayerEntry{.mask = filter.collidesWith.bits,
-                                  .channelBit = Core::Bitmask<CollisionChannel>::Of(filter.channel).bits,
+                                  .channelBit = Core::Bitmask<CollisionChannel, std::uint32_t>::Of(filter.channel).bits,
                                   .channel = filter.channel,
                                   .motion = motion,
                                   .trigger = filter.channel == CollisionChannel::Trigger});
@@ -340,7 +340,7 @@ JPH::ObjectLayer LayerTable::LayerFor(CollisionFilter filter, BodyMotion motion)
 CollisionFilter LayerTable::FilterOf(JPH::ObjectLayer layer) const
 {
     const LayerEntry &entry = EntryOf(layer);
-    return CollisionFilter{Core::Bitmask<CollisionChannel>{entry.mask}, entry.channel};
+    return CollisionFilter{Core::Bitmask<CollisionChannel, std::uint32_t>{entry.mask}, entry.channel};
 }
 
 JPH::ObjectLayer PhysicsWorld::Impl::LayerFor(CollisionFilter filter, BodyMotion motion)
@@ -490,6 +490,10 @@ void PhysicsWorld::Update(float deltaTime)
     // Before the writeback, so a broken joint's bodies are reported as the
     // step left them and its component is gone by the time anything reads.
     _impl->BreakJoints(deltaTime / static_cast<float>(_impl->collisionSteps));
+
+    // After the solve has moved each base, and before the writeback, so a rider
+    // is written where its base now is rather than a step behind it.
+    _impl->CarryRiders();
 
     // Before the contact events, so a system reacting to them reads the
     // Transforms this step left. The followers after the writeback, since
@@ -709,7 +713,7 @@ void PhysicsWorld::Impl::ApplyBodyRequest(ECS::Entity owner, const BodySlot &slo
     case RequestKind::Sleep:
         bodies.DeactivateBody(slot.body);
         break;
-    case RequestKind::Count:
+    case RequestKind::Count_:
         return;
     }
 

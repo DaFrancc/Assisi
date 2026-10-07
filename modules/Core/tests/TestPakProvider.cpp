@@ -58,7 +58,7 @@ void WriteTestPak(const std::filesystem::path &path, const std::vector<TestSlice
     for (const TestSlice &slice : slices)
     {
         const std::expected<std::vector<std::byte>, PakCodecError> stored =
-            slice.codec < PakCodec::Count ? CompressSlice(slice.codec, slice.bytes)
+            slice.codec < PakCodec::Count_ ? CompressSlice(slice.codec, slice.bytes)
                                           : std::expected<std::vector<std::byte>, PakCodecError>{slice.bytes};
         REQUIRE(stored.has_value());
 
@@ -179,7 +179,7 @@ TEST_CASE("An id the pak does not hold, or a built-in id, is unknown and nothing
 
 TEST_CASE("A slice this build cannot decode is refused, not handed on as garbage")
 {
-    const auto unknownCodec = static_cast<PakCodec>(PakCodec::Count);
+    const auto unknownCodec = static_cast<PakCodec>(PakCodec::Count_);
     const std::vector<TestSlice> slices{
         {.vpath = "encrypted.bin",
          .bytes = Pattern(kSliceBytes, 1),

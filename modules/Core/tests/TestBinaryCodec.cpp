@@ -151,7 +151,7 @@ enum AllTypesField
     PathsValue,
     AssetIdValue,
     AssetIdsValue,
-    Count,
+    Count_,
 };
 
 /// Byte offset of a member, without offsetof: AllTypes holds std::vectors, so it
@@ -252,7 +252,7 @@ ComponentMeta MakeAllTypesMeta()
     // A field added to one list and not the other is the failure this catches:
     // every index below would still compile, and would silently name its
     // neighbour.
-    ASSISI_ASSERT(meta.fields.size() == static_cast<std::size_t>(AllTypesField::Count) + 1u,
+    ASSISI_ASSERT(meta.fields.size() == static_cast<std::size_t>(AllTypesField::Count_) + 1u,
                   "AllTypesField must name every registered field except the transient one");
 
     return meta;

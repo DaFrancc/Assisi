@@ -440,9 +440,9 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
 
     // Jolt's spelling of these is from the body's point of view, which is the
     // opposite of how a character is authored: "can this body push the
-    // character" is the character's canBePushed.
-    settings.mCanPushCharacter   = record.canBePushed;
-    settings.mCanReceiveImpulses = record.canPushBodies;
+    // character" is the character's Pushable.
+    settings.mCanPushCharacter   = record.options.Has(CharacterOption::Pushable);
+    settings.mCanReceiveImpulses = record.options.Has(CharacterOption::PushesBodies);
 
     // The no-lock interface for the same reason RecordCharacterTouch gives:
     // the sweep may hold this body's lock already.
@@ -469,7 +469,7 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
     }
     const CharacterRecord &record = *found;
 
-    settings.mCanPushCharacter = record.canBePushed;
+    settings.mCanPushCharacter = record.options.Has(CharacterOption::Pushable);
 
     // Neither character can be given an impulse: a character is moved by its own
     // step and nothing else, so one shoving the other is gameplay's to express.
@@ -477,6 +477,27 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
 
     _owner.RecordCharacterTouch(*character, other->GetInnerBodyID(), EntityOfUserData(other->GetUserData()),
                                 contactPosition, contactNormal);
+}
+
+void PhysicsWorld::Impl::CharacterContacts::OnAdjustBodyVelocity(const JPH::CharacterVirtual *character,
+                                                                 const JPH::Body &body, JPH::Vec3 &linearVelocity,
+                                                                 JPH::Vec3 &angularVelocity)
+{
+    const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
+    if (found == nullptr || found->base == ECS::NullEntity)
+    {
+        return;
+    }
+
+    // Read live rather than cached, so the base's own velocity cancels exactly:
+    // any remainder would read as the deck creeping under a still character.
+    // No-lock for the reason RecordCharacterTouch gives.
+    const JPH::BodyInterface &bodies = _owner.physicsSystem.GetBodyInterfaceNoLock();
+    const JPH::Vec3 baseLinear = bodies.GetLinearVelocity(found->baseBody);
+    const JPH::Vec3 baseAngular = bodies.GetAngularVelocity(found->baseBody);
+    const JPH::Vec3 offset = JPH::Vec3(body.GetCenterOfMassPosition() - bodies.GetCenterOfMassPosition(found->baseBody));
+    linearVelocity -= baseLinear + baseAngular.Cross(offset);
+    angularVelocity -= baseAngular;
 }
 
 std::span<const ContactEvent> PhysicsWorld::ContactEvents() const

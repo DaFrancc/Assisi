@@ -5,7 +5,6 @@
 
 #include <Assisi/Core/Reflect/BitmaskJson.hpp>
 
-#include <Assisi/Core/Bitmask.hpp>
 #include <Assisi/Core/Reflect/EnumLabels.hpp>
 
 #include <optional>
@@ -80,22 +79,23 @@ std::string AllowedNames(const BitmaskNames &names)
     return allowed;
 }
 
-/// Reads one element of a mask's list into @p out. False when it names no bit.
-bool ReadElement(const nlohmann::json &element, const BitmaskNames &names, std::uint32_t &out)
+/// Reads one element of a mask's list into @p out. False when it names no bit
+/// of the mask.
+bool ReadElement(const nlohmann::json &element, const BitmaskNames &names, std::uint64_t &out)
 {
     if (element.is_string())
     {
         const std::optional<std::uint32_t> bit = BitNamed(element.get<std::string>(), names);
-        if (!bit.has_value())
+        if (!bit.has_value() || *bit >= names.width)
         {
             return false;
         }
-        out |= 1u << *bit;
+        out |= std::uint64_t{1} << *bit;
         return true;
     }
-    if (element.is_number_unsigned() && element.get<std::uint64_t>() < kBitmaskBits)
+    if (element.is_number_unsigned() && element.get<std::uint64_t>() < names.width)
     {
-        out |= 1u << element.get<std::uint32_t>();
+        out |= std::uint64_t{1} << element.get<std::uint32_t>();
         return true;
     }
     return false;
@@ -103,16 +103,16 @@ bool ReadElement(const nlohmann::json &element, const BitmaskNames &names, std::
 
 } // namespace
 
-nlohmann::json BitmaskToJson(std::uint32_t bits, const BitmaskNames &names)
+nlohmann::json BitmaskToJson(std::uint64_t bits, const BitmaskNames &names)
 {
     if (bits == names.all)
     {
         return std::string(kAll);
     }
     nlohmann::json list = nlohmann::json::array();
-    for (std::uint32_t bit = 0; bit < kBitmaskBits; ++bit)
+    for (std::uint32_t bit = 0; bit < names.width; ++bit)
     {
-        if ((bits & (1u << bit)) == 0u)
+        if ((bits & (std::uint64_t{1} << bit)) == 0u)
         {
             continue;
         }
@@ -130,7 +130,7 @@ nlohmann::json BitmaskToJson(std::uint32_t bits, const BitmaskNames &names)
 }
 
 bool ReadBitmask(const nlohmann::json &j, const char *component, const char *field, const BitmaskNames &names,
-                 std::uint32_t &out)
+                 std::uint64_t &out)
 {
     const nlohmann::json *value = nullptr;
     if (!FindField(j, field, value))
@@ -149,7 +149,7 @@ bool ReadBitmask(const nlohmann::json &j, const char *component, const char *fie
         return false;
     }
 
-    std::uint32_t bits = 0;
+    std::uint64_t bits = 0;
     for (const nlohmann::json &element : *value)
     {
         if (!ReadElement(element, names, bits))

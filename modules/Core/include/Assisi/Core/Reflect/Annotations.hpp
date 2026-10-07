@@ -24,8 +24,9 @@
 /// string C++ cannot check is quoted, which today means a system name in
 /// ASYSTEM. reflectgen refuses the other form in both directions.
 ///
-/// A field holding a set of an AENUM's enumerators is a Core::Bitmask<E>, not
-/// an annotated integer; reflectgen reads the enum from the type.
+/// A field holding a set of an AENUM's enumerators is a Core::Bitmask<E, Bits>,
+/// not an annotated integer; reflectgen reads the enum and the width from the
+/// type.
 ///
 /// ── Replication: five gates, three mechanisms ───────────────────────────────
 ///

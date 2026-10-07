@@ -23,7 +23,7 @@ enum class AtlasLayer : std::uint32_t
 {
     Still,
     Moving,
-    Count
+    Count_
 };
 
 [[nodiscard]] constexpr std::uint32_t LayerIndex(AtlasLayer layer)
@@ -112,7 +112,7 @@ bool LocalShadowPass::RebuildTargets()
     nvrhi::TextureDesc desc;
     desc.width = _settings.atlasResolution;
     desc.height = _settings.atlasResolution;
-    desc.arraySize = caching ? LayerIndex(AtlasLayer::Count) : LayerIndex(AtlasLayer::Moving);
+    desc.arraySize = caching ? LayerIndex(AtlasLayer::Count_) : LayerIndex(AtlasLayer::Moving);
     desc.dimension = nvrhi::TextureDimension::Texture2DArray;
     desc.format = DepthFormat(_settings.format);
     desc.isRenderTarget = true;

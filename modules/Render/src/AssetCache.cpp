@@ -93,7 +93,7 @@ struct ChannelDesc
     bool isNormal;
 };
 
-const std::array<ChannelDesc, static_cast<std::size_t>(MaterialChannel::Count)> kChannels = {{
+const std::array<ChannelDesc, static_cast<std::size_t>(MaterialChannel::Count_)> kChannels = {{
     {kWhiteTexture, false},       // baseColor
     {kFlatNormalTexture, true},   // normal
     {kWhiteLinearTexture, false}, // metallic-roughness

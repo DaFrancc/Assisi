@@ -50,7 +50,7 @@ Code uses the aliases, for example a ray that only hits pickups:
 ```cpp
 using namespace Assisi;
 
-const Physics::CollisionFilter pickupsOnly{Core::Bitmask<Physics::CollisionChannel>::Of(Pickup), Bullet};
+const Physics::CollisionFilter pickupsOnly{Core::Bitmask<Physics::CollisionChannel, std::uint32_t>::Of(Pickup), Bullet};
 std::optional<Physics::QueryHit> hit = world.CastRay(eye, forward * 3.f, pickupsOnly, player);
 ```
 

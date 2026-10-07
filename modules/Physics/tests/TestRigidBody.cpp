@@ -140,7 +140,7 @@ TEST_CASE("RigidBody: a locked translation keeps the body from moving along it")
 {
     TestScene test;
     Physics::RigidBody locked;
-    locked.lockedAxes = Core::Bitmask<Physics::LockedAxis>::Of(Physics::LockedAxis::LinearY);
+    locked.lockedAxes = Core::Bitmask<Physics::LockedAxis, std::uint8_t>::Of(Physics::LockedAxis::LinearY);
     const ECS::Entity held = AddBall(test, {0.f, 10.f, 0.f}, locked);
     const ECS::Entity loose = AddBall(test, {10.f, 10.f, 0.f}, Physics::RigidBody{});
     Step(test.world, kSecond);
@@ -153,7 +153,7 @@ TEST_CASE("RigidBody: locked rotations keep the body from turning")
 {
     TestScene test;
     Physics::RigidBody locked = Tuned(0.f);
-    locked.lockedAxes = Core::Bitmask<Physics::LockedAxis>::Of(Physics::LockedAxis::AngularX)
+    locked.lockedAxes = Core::Bitmask<Physics::LockedAxis, std::uint8_t>::Of(Physics::LockedAxis::AngularX)
                             .With(Physics::LockedAxis::AngularY)
                             .With(Physics::LockedAxis::AngularZ);
     const ECS::Entity held = AddBall(test, {0.f, 0.f, 0.f}, locked);

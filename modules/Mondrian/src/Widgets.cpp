@@ -289,7 +289,7 @@ WidgetResponse SteppedSliderInput(const WidgetView &view, Node &node, const Widg
     case WidgetGesture::Wheel:
     case WidgetGesture::Type:
     case WidgetGesture::Edit:
-    case WidgetGesture::Count:
+    case WidgetGesture::Count_:
         break;
     }
     return WidgetResponse::Ignored;
@@ -342,7 +342,7 @@ WidgetResponse ContinuousSliderInput(const WidgetView &view, Node &node, const W
     case WidgetGesture::Wheel:
     case WidgetGesture::Type:
     case WidgetGesture::Edit:
-    case WidgetGesture::Count:
+    case WidgetGesture::Count_:
         break;
     }
     return WidgetResponse::Ignored;
@@ -550,7 +550,7 @@ WidgetResponse ScrollInput(const WidgetView &view, Node &node, const WidgetEvent
         case ScrollGrab::Vertical:
             return DragBar(view, node, Axis::Y, event.pointerDelta.y);
         case ScrollGrab::None:
-        case ScrollGrab::Count:
+        case ScrollGrab::Count_:
             break;
         }
         return std::max(Scroll(view, node, Axis::X, -event.pointerDelta.x / view.scale),
@@ -577,7 +577,7 @@ WidgetResponse ScrollInput(const WidgetView &view, Node &node, const WidgetEvent
     case WidgetGesture::Activate:
     case WidgetGesture::Type:
     case WidgetGesture::Edit:
-    case WidgetGesture::Count:
+    case WidgetGesture::Count_:
         break;
     }
     return WidgetResponse::Ignored;
@@ -598,7 +598,7 @@ WidgetResponse ButtonInput(const WidgetView & /*view*/, Node & /*node*/, const W
     case WidgetGesture::Wheel:
     case WidgetGesture::Type:
     case WidgetGesture::Edit:
-    case WidgetGesture::Count:
+    case WidgetGesture::Count_:
         break;
     }
     return WidgetResponse::Ignored;

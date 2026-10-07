@@ -311,7 +311,7 @@ std::optional<JointSpec> PhysicsWorld::Impl::SpecOf(const JointRecord &record) c
             return SpecOfSwingTwist(*joint);
         }
         break;
-    case JointKind::Count:
+    case JointKind::Count_:
         break;
     }
     return std::nullopt;
@@ -320,7 +320,7 @@ std::optional<JointSpec> PhysicsWorld::Impl::SpecOf(const JointRecord &record) c
 void PhysicsWorld::Impl::RegisterJoints(bool complete)
 {
     // One list per kind, in JointKind order.
-    std::vector<ECS::Entity> changed[static_cast<std::size_t>(JointKind::Count)];
+    std::vector<ECS::Entity> changed[static_cast<std::size_t>(JointKind::Count_)];
     std::vector<ECS::Entity> removed;
     bool logComplete = complete;
     logComplete = CollectJointChanges<FixedJoint>(scene, changeCursor, changed[KindIndex(JointKind::Fixed)], removed) && logComplete;
@@ -361,7 +361,7 @@ void PhysicsWorld::Impl::RegisterJoints(bool complete)
     // and added back in one frame is still one joint.
     for (const ECS::Entity entity : removed)
     {
-        for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(JointKind::Count); ++kind)
+        for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(JointKind::Count_); ++kind)
         {
             const std::map<std::uint64_t, JointRecord>::iterator found =
                 joints.find(JointKey(entity, static_cast<JointKind>(kind)));
@@ -374,7 +374,7 @@ void PhysicsWorld::Impl::RegisterJoints(bool complete)
         }
     }
 
-    for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(JointKind::Count); ++kind)
+    for (std::uint32_t kind = 0; kind < static_cast<std::uint32_t>(JointKind::Count_); ++kind)
     {
         for (const ECS::Entity entity : changed[kind])
         {
@@ -564,7 +564,7 @@ std::pair<uint64_t, uint64_t> PhysicsWorld::Impl::TicksOf(const JointRecord &rec
         return {scene.ChangeTick<DistanceJoint>(owner), 0};
     case JointKind::SwingTwist:
         return {scene.ChangeTick<SwingTwistJoint>(owner), 0};
-    case JointKind::Count:
+    case JointKind::Count_:
         break;
     }
     return {0, 0};
@@ -680,7 +680,7 @@ void PhysicsWorld::Impl::TuneJoint(JointRecord &record, const JointSpec &spec)
     }
     case JointKind::Fixed:
     case JointKind::Point:
-    case JointKind::Count:
+    case JointKind::Count_:
         break;
     }
 }
@@ -743,7 +743,7 @@ JPH::Ref<JPH::TwoBodyConstraintSettings> PhysicsWorld::Impl::MakeJointSettings(J
         return settings;
     }
     case JointKind::SwingTwist:
-    case JointKind::Count:
+    case JointKind::Count_:
         break;
     }
     JPH::SwingTwistConstraintSettings *settings = new JPH::SwingTwistConstraintSettings;
@@ -876,7 +876,7 @@ std::pair<float, float> PhysicsWorld::Impl::JointLoad(const JointRecord &record,
         torque = std::sqrt(twist * twist + swingY * swingY + swingZ * swingZ);
         break;
     }
-    case JointKind::Count:
+    case JointKind::Count_:
         break;
     }
     // A lambda is the impulse of one collision step.
@@ -952,7 +952,7 @@ void PhysicsWorld::Impl::RemoveJointComponent(const JointRecord &record)
     case JointKind::SwingTwist:
         (void)scene.Remove<SwingTwistJoint>(owner);
         break;
-    case JointKind::Count:
+    case JointKind::Count_:
         break;
     }
 }

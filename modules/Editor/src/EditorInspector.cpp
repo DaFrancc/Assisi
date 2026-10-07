@@ -137,6 +137,101 @@ std::int64_t ReadEnumValue(const void *fp, std::uint8_t size, bool signed_)
     }
 }
 
+/// How many bits a Core::Bitmask stored as @p type has, or 0 for a type no
+/// bitmask is stored as.
+std::uint32_t MaskWidth(Assisi::Core::Reflect::FieldType type)
+{
+    using Assisi::Core::Reflect::FieldType;
+    switch (type)
+    {
+    case FieldType::UInt8:  return 8;
+    case FieldType::UInt16: return 16;
+    case FieldType::UInt32: return 32;
+    case FieldType::UInt64: return 64;
+    default:                return 0;
+    }
+}
+
+/// A Core::Bitmask's bits, read from @p fp at exactly the width it is stored
+/// at, as ReadEnumValue reads an enum.
+std::uint64_t ReadMaskBits(const void *fp, std::uint32_t width)
+{
+    switch (width)
+    {
+    case 8:  return *static_cast<const std::uint8_t *>(fp);
+    case 16: return *static_cast<const std::uint16_t *>(fp);
+    case 32: return *static_cast<const std::uint32_t *>(fp);
+    case 64: return *static_cast<const std::uint64_t *>(fp);
+    default: return 0;
+    }
+}
+
+/// Writes @p bits into the Core::Bitmask at @p fp, at its own width.
+void WriteMaskBits(void *fp, std::uint32_t width, std::uint64_t bits)
+{
+    switch (width)
+    {
+    case 8:  *static_cast<std::uint8_t *>(fp) = static_cast<std::uint8_t>(bits); break;
+    case 16: *static_cast<std::uint16_t *>(fp) = static_cast<std::uint16_t>(bits); break;
+    case 32: *static_cast<std::uint32_t *>(fp) = static_cast<std::uint32_t>(bits); break;
+    case 64: *static_cast<std::uint64_t *>(fp) = bits; break;
+    default: break;
+    }
+}
+
+/// @brief A checkbox per offered enumerator of the Core::Bitmask at @p fp.
+/// @return whether a box was toggled.
+bool EditBitmask(void *fp, const Assisi::Core::Reflect::FieldMeta &field)
+{
+    const std::uint32_t width = MaskWidth(field.type);
+    if (width == 0)
+    {
+        ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
+        return false;
+    }
+
+    // A label may name a value past the mask's width; it has no bit to show.
+    std::vector<Assisi::Core::Reflect::EnumConstant> offered = OfferedConstants(field);
+    std::erase_if(offered, [width](const Assisi::Core::Reflect::EnumConstant &constant)
+                  { return constant.value < 0 || constant.value >= static_cast<std::int64_t>(width); });
+
+    std::uint64_t mask = ReadMaskBits(fp, width);
+
+    // Bits with no checkbox are left as they are. Said so when some are set and
+    // some are not, which no checkbox could have done; all set is the default
+    // mask and all clear is nothing worth mentioning.
+    std::uint64_t hidden = width == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << width) - 1u;
+    for (const Assisi::Core::Reflect::EnumConstant &constant : offered)
+    {
+        hidden &= ~(std::uint64_t{1} << static_cast<std::uint32_t>(constant.value));
+    }
+    const int32_t hiddenSet = std::popcount(mask & hidden);
+    const bool mixed = hiddenSet != 0 && hiddenSet != std::popcount(hidden);
+    const std::string label =
+        mixed ? field.name + " (+" + std::to_string(hiddenSet) + " unnamed)###" + field.name : field.name;
+
+    bool edited = false;
+    if (ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        for (const Assisi::Core::Reflect::EnumConstant &constant : offered)
+        {
+            const std::uint64_t bit = std::uint64_t{1} << static_cast<std::uint32_t>(constant.value);
+            bool set = (mask & bit) != 0u;
+            if (ImGui::Checkbox(constant.name.c_str(), &set))
+            {
+                mask = set ? (mask | bit) : (mask & ~bit);
+                edited = true;
+            }
+        }
+        ImGui::TreePop();
+    }
+    if (edited)
+    {
+        WriteMaskBits(fp, width, mask);
+    }
+    return edited;
+}
+
 /// Grows @p data's std::string as ImGui types past its capacity. The return type
 /// is ImGui's callback signature.
 int ResizeString(ImGuiInputTextCallbackData *data)
@@ -282,6 +377,15 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
 {
     using namespace Assisi::Core::Reflect;
 
+    // An unsigned field carrying enumerators is a Core::Bitmask — a set of them,
+    // one bit per enumerator at its own value — rather than a number anyone
+    // would want to type. An enum field holding exactly one of them is told
+    // apart by its non-zero enumSize.
+    if (!field.enumConstants.empty() && field.enumSize == 0)
+    {
+        return EditBitmask(fp, field);
+    }
+
     bool edited = false;
     switch (field.type)
     {
@@ -359,45 +463,6 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     }
     case FieldType::UInt32:
     {
-        // An unsigned field carrying enumerators is a Core::Bitmask — a set of
-        // them, one bit per enumerator at its own value — rather than a number
-        // anyone would want to type. An enum field holding exactly one of them is
-        // told apart by its non-zero enumSize.
-        if (!field.enumConstants.empty() && field.enumSize == 0)
-        {
-            uint32_t &mask = *static_cast<uint32_t *>(fp);
-            const std::vector<Assisi::Core::Reflect::EnumConstant> offered = OfferedConstants(field);
-
-            // Bits with no checkbox are left as they are. Said so when some are
-            // set and some are not, which no checkbox could have done; all set is
-            // the default mask and all clear is nothing worth mentioning.
-            uint32_t hidden = ~0u;
-            for (const Assisi::Core::Reflect::EnumConstant &constant : offered)
-            {
-                hidden &= ~(1u << static_cast<uint32_t>(constant.value));
-            }
-            const int32_t hiddenSet = std::popcount(mask & hidden);
-            const bool mixed = hiddenSet != 0 && hiddenSet != std::popcount(hidden);
-            const std::string label =
-                mixed ? field.name + " (+" + std::to_string(hiddenSet) + " unnamed)###" + field.name : field.name;
-
-            if (ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                for (const auto &constant : offered)
-                {
-                    const uint32_t bit = 1u << static_cast<uint32_t>(constant.value);
-                    bool set = (mask & bit) != 0u;
-                    if (ImGui::Checkbox(constant.name.c_str(), &set))
-                    {
-                        mask = set ? (mask | bit) : (mask & ~bit);
-                        edited = true;
-                    }
-                }
-                ImGui::TreePop();
-            }
-            break;
-        }
-
         const uint32_t minBound = bounds.hasMin ? static_cast<uint32_t>(bounds.minValue) : 0u;
         const uint32_t maxBound = bounds.hasMax ? static_cast<uint32_t>(bounds.maxValue) : UINT32_MAX;
         edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound, nullptr,
@@ -1742,7 +1807,7 @@ void EditorApp::DrawColliderRole()
                               "make it move.");
         break;
     case ColliderRole::Own:
-    case ColliderRole::Count:
+    case ColliderRole::Count_:
         // The body's own shape: the RigidBody beside it already says so.
         break;
     }

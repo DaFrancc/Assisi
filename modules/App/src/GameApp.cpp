@@ -289,7 +289,7 @@ void GameApp::AdvanceBenchmark()
         RequestClose();
         break;
     case BenchmarkPhase::Settling:
-    case BenchmarkPhase::Count:
+    case BenchmarkPhase::Count_:
         break;
     }
 }

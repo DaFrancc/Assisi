@@ -38,7 +38,7 @@ enum class CollisionPieceKind : std::uint8_t
     Sphere,   ///< `USP_`: a sphere fitted around the part.
     Capsule,  ///< `UCP_`: a capsule along the part's longest axis.
     Cylinder, ///< `UCY_`: a cylinder along the part's longest axis.
-    Count,
+    Count_,
 };
 
 /// @brief One piece of a model's collision, in the model's own space.
@@ -102,7 +102,7 @@ enum class CollisionBuildError : std::uint8_t
 
     /// An index names a position the node does not have.
     IndexOutOfRange,
-    Count,
+    Count_,
 };
 
 /// @brief A short human-readable description, for the line a failed import logs.

@@ -36,7 +36,7 @@ enum class ColliderShape : std::uint8_t
     /// The model's exact triangles. Static and kinematic bodies only: on a
     /// dynamic one it is an error, and the body takes Convex instead.
     Mesh,
-    Count,
+    Count_,
 };
 
 /// @brief What kind of thing a body is, for deciding what it interacts with.
@@ -48,7 +48,7 @@ enum class ColliderShape : std::uint8_t
 /// surface opts out of being seen by dropping that channel from its own mask.
 ///
 /// The enumerators are the engine's own channels. The slots between the last of
-/// them and `Count` belong to the game, which takes them with GameChannel and
+/// them and `Count_` belong to the game, which takes them with GameChannel and
 /// names them in CollisionChannelNames.hpp.
 ///
 /// An enumerator's value is its bit position in every mask stored in a level
@@ -69,10 +69,10 @@ enum class CollisionChannel : std::uint8_t
 
     /// One past the last slot: a mask has a bit for every channel, the game's
     /// included.
-    Count = 32,
+    Count_ = 32,
 };
 
-static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) == Core::kBitmaskBits,
+static_assert(static_cast<std::uint32_t>(CollisionChannel::Count_) == Core::kBitmaskWidth<std::uint32_t>,
               "Every bit of a channel mask is a channel, and every channel has a bit.");
 
 /// The first slot after the engine's own channels.
@@ -80,7 +80,7 @@ inline constexpr std::uint32_t kFirstGameChannel = static_cast<std::uint32_t>(Co
 
 /// How many channels a game may take.
 inline constexpr std::uint32_t kGameChannelCount =
-    static_cast<std::uint32_t>(CollisionChannel::Count) - kFirstGameChannel;
+    static_cast<std::uint32_t>(CollisionChannel::Count_) - kFirstGameChannel;
 
 /// Deliberately not constexpr: GameChannel calls it only for an index out of
 /// range, and calling it while evaluating a consteval function is what turns that
@@ -117,13 +117,14 @@ enum class ColliderAttach : std::uint8_t
 
     /// A body of its own that rides along at its entity's pose, adding no mass.
     Body,
-    Count,
+    Count_,
 };
 
 /// @brief Every channel — the mask a body carries unless it narrows it, so a
 /// body defaults to interacting with everything and an author subtracts rather
 /// than having to enumerate.
-inline constexpr Core::Bitmask<CollisionChannel> AllChannels = Core::Bitmask<CollisionChannel>::All();
+inline constexpr Core::Bitmask<CollisionChannel, std::uint32_t> AllChannels =
+    Core::Bitmask<CollisionChannel, std::uint32_t>::All();
 
 /// @brief Which way a RigidBody moves.
 ///
@@ -133,7 +134,7 @@ enum class MotionType : std::uint8_t
 {
     Dynamic,   ///< Moved by the simulation: gravity, collisions, velocity.
     Kinematic, ///< Moved only by its Transform; pushes dynamic bodies and is pushed by nothing.
-    Count,
+    Count_,
 };
 
 /// @brief One degree of freedom a RigidBody can be held in.
@@ -146,7 +147,7 @@ enum class LockedAxis : std::uint8_t
     AngularX,
     AngularY,
     AngularZ,
-    Count,
+    Count_,
 };
 
 /// @brief A collision shape, and what touching it is like.
@@ -209,7 +210,7 @@ struct Collider
 
     /// The channels this collider collides with. Interaction needs both sides
     /// to agree, so clearing a bit here stops the pair whatever the other says.
-    AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
+    AFIELD() Core::Bitmask<CollisionChannel, std::uint32_t> collidesWith = AllChannels;
 
     /// @brief Which channel this collider is on.
     ///
@@ -259,7 +260,7 @@ struct RigidBody
     /// The degrees of freedom the body may not move in. Locking every
     /// rotation keeps a body upright; locking a translation keeps it in a
     /// plane.
-    AFIELD() Core::Bitmask<LockedAxis> lockedAxes;
+    AFIELD() Core::Bitmask<LockedAxis, std::uint8_t> lockedAxes;
 
     AFIELD() MotionType motion = MotionType::Dynamic;
 
@@ -274,6 +275,15 @@ struct RigidBody
     /// including when the volume is moved onto them; one that may sleep learns
     /// about a resting body only when that body is woken.
     AFIELD() bool allowSleep = true;
+
+    /// @brief Whether a character standing on this body moves in its frame.
+    ///
+    /// A character on a carrier is moved with it every step, turning with it,
+    /// so it neither slides on a rocking deck nor lags on a fast one. A body
+    /// that does not carry still lends a character its velocity, which is
+    /// enough for a slow, flat platform. Characters opt out with
+    /// CharacterOption::RidesBases.
+    AFIELD() bool carriesRiders = false;
 };
 
 /// @brief What a RigidBody is doing, after the last step.
@@ -446,7 +456,7 @@ enum class MotorMode : std::uint8_t
 {
     Velocity, ///< At `target` per second, for as long as it has the strength.
     Position, ///< To `target`, springing there and holding.
-    Count,
+    Count_,
 };
 
 /// @brief Turns a HingeJoint by itself: a powered door, a drawbridge, a fan.
@@ -489,7 +499,7 @@ enum class GroundState : std::uint8_t
     OnSteepGround, ///< On a surface too steep to hold; sliding down it.
     NotSupported,  ///< Touching something, held up by none of it.
     InAir,         ///< Touching nothing.
-    Count,
+    Count_,
 };
 
 /// @brief Which of a character's two shapes is current.
@@ -502,7 +512,7 @@ enum class Stance : std::uint8_t
 {
     Standing,
     Crouching,
-    Count,
+    Count_,
 };
 
 /// @brief What a character's last simulation step left behind.
@@ -514,8 +524,8 @@ ACOMP(transient)
 struct CharacterState
 {
     /// Velocity after the step, so an animation graph reads what the character
-    /// actually did rather than what it asked for. Includes the ground's own
-    /// motion when riding a platform.
+    /// actually did rather than what it asked for. World space, including the
+    /// ground's own motion when riding a platform or a base.
     AFIELD() glm::vec3 velocity{0.f};
 
     /// Unit normal of the surface below, pointing up out of it. Zero when
@@ -532,6 +542,10 @@ struct CharacterState
     /// no entity. Check it is still alive before acting on it — the body may
     /// have been destroyed since the step that recorded it.
     AFIELD() ECS::Entity groundEntity{ECS::NullEntity};
+
+    /// The carrier the character is riding, moving in its frame, or NullEntity
+    /// when it rides nothing. See RigidBody::carriesRiders.
+    AFIELD() ECS::Entity baseEntity{ECS::NullEntity};
 
     /// Seconds since the character was last @ref GroundState::OnGround, zero
     /// while it still is. What an animation graph filters a one-frame stair
@@ -579,8 +593,23 @@ enum class BunnyHopPolicy : std::uint8_t
     /// character travelling backwards over the limit is therefore pushed faster
     /// by every jump, which is the accelerated back hop.
     Boost,
-    Count,
+    Count_,
 };
+
+/// @brief Something a character does unless the game turns it off.
+AENUM()
+enum class CharacterOption : std::uint8_t
+{
+    PushesBodies,  ///< Shoves the bodies it walks into.
+    Pushable,      ///< Is shoved by bodies that walk or fall into it.
+    RidesBases,    ///< Moves in the frame of a carrier it stands on; see RigidBody::carriesRiders.
+    TurnsWithBase, ///< While riding, its facing turns with the carrier's yaw.
+    Count_,
+};
+
+/// Every CharacterOption: what a character does by default.
+inline constexpr Core::Bitmask<CharacterOption, std::uint8_t> AllCharacterOptions =
+    Core::Bitmask<CharacterOption, std::uint8_t>::All();
 
 /// @brief A character: the capsule a player or an NPC is, and how it moves.
 ///
@@ -605,7 +634,7 @@ struct Character
 {
     /// The channels this character collides with. Interaction needs both sides to
     /// agree, so clearing a bit here stops the pair whatever the other body says.
-    AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
+    AFIELD() Core::Bitmask<CollisionChannel, std::uint32_t> collidesWith = AllChannels;
 
     AFIELD(min = 0.0) float radius = 0.3f; ///< Capsule radius; half the character's width.
 
@@ -719,14 +748,11 @@ struct Character
     /// What a jump on the landing step does with speed gained in the air.
     AFIELD() BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
 
-    /// Whether this character can shove other bodies at all. Distinct from
-    /// @ref pushStrength being zero only in intent; both are honoured.
-    AFIELD() bool canPushBodies = true;
-
-    /// Whether other bodies can shove this character. False makes it immovable
-    /// by anything but its own movement — what an NPC that must hold its mark
-    /// wants.
-    AFIELD() bool canBePushed = true;
+    /// What the character does; see CharacterOption. Clearing Pushable makes
+    /// it immovable by anything but its own movement, which an NPC that must
+    /// hold its mark wants. Clearing PushesBodies differs from a zero
+    /// @ref pushStrength only in intent; both are honoured.
+    AFIELD() Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
 };
 
 /// @brief What a character is being asked to do.

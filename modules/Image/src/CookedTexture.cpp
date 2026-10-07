@@ -91,7 +91,7 @@ std::expected<DecodedImage, CookedTextureError> ReadCookedTexture(std::span<cons
     {
         return std::unexpected(CookedTextureError::Truncated);
     }
-    if (format >= static_cast<std::uint8_t>(PixelFormat::Count) ||
+    if (format >= static_cast<std::uint8_t>(PixelFormat::Count_) ||
         colorSpace > static_cast<std::uint8_t>(ColorSpace::Linear))
     {
         return std::unexpected(CookedTextureError::Invalid);

@@ -135,7 +135,7 @@ bool ReadCollision(Core::BitReader &reader, CollisionData &collision)
         piece.firstPoint = reader.ReadVarUInt32();
         piece.pointCount = reader.ReadVarUInt32();
         const std::uint8_t kind = reader.ReadUInt8();
-        if (reader.Failed() || kind >= static_cast<std::uint8_t>(CollisionPieceKind::Count) ||
+        if (reader.Failed() || kind >= static_cast<std::uint8_t>(CollisionPieceKind::Count_) ||
             piece.firstPoint > collision.points.size() ||
             piece.pointCount > collision.points.size() - piece.firstPoint)
         {

@@ -74,12 +74,12 @@ TEST_CASE("AppConfig: a name the enum does not define is refused, not defaulted"
     CHECK(cfg.simulateFrom == SimulateFrom::Begin);
 }
 
-TEST_CASE("AppConfig: Count is not a value a field may hold")
+TEST_CASE("AppConfig: Count_ is not a value a field may hold")
 {
     // The trailing enumerator counts the others; the generated name table omits
     // it, so it is refused like any other name the enum does not define.
     const AppConfig cfg = AppConfig::FromJsonText(
-        R"({ "version": 1, "type": "AppConfig", "width": 1920, "simulateFrom": "Count" })");
+        R"({ "version": 1, "type": "AppConfig", "width": 1920, "simulateFrom": "Count_" })");
 
     CHECK(cfg.width == AppConfig{}.width);
 }

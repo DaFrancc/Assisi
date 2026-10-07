@@ -323,7 +323,7 @@ TEST_CASE("ScreenBlob: an enumerator this build does not have is refused")
     {
         ScreenDocument document;
         document.nodes.emplace_back();
-        document.nodes[0].widget = static_cast<BuiltinWidget>(static_cast<uint32_t>(BuiltinWidget::Count) + 3);
+        document.nodes[0].widget = static_cast<BuiltinWidget>(static_cast<uint32_t>(BuiltinWidget::Count_) + 3);
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
         REQUIRE_FALSE(read.has_value());

@@ -28,7 +28,7 @@ enum class DefaultBus : std::uint8_t
     Ambient,
     Ui,
     Voice,
-    Count,
+    Count_,
 };
 
 /// @brief Most buses a layout holds, defaults included. Far above what a game

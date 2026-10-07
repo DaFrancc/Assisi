@@ -103,6 +103,8 @@ class FieldInfo:
     # The AENUM E of a Core::Bitmask<E> field. Distinct from enum_info: the field
     # stores a set of enumerators, not one of them.
     bitmask_info: Optional[EnumInfo] = None
+    # How many bits that Core::Bitmask stores: 8, 16, 32 or 64.
+    bitmask_bits: int = 0
     # Set when cpp_type names an ASTRUCT, which the field holds inline.
     struct_info: Optional['StructInfo'] = None
     # The ASTRUCT a container's leaf element names, resolved as leaf_enum is.
@@ -457,10 +459,10 @@ def parse_enum_constants(body: str) -> list:
     another constant or an expression) is a hard error — reflectgen needs the
     concrete value to serialize by number and to drive the editor combo.
 
-    A trailing `Count` enumerator is dropped. It names how many enumerators
+    A trailing `Count_` enumerator is dropped. It names how many enumerators
     there are, not a value anything may hold, so leaving it in would offer it in
     every editor dropdown and let a level select it. Only the last one is
-    dropped: `Count` anywhere else is an ordinary enumerator that happens to
+    dropped: `Count_` anywhere else is an ordinary enumerator that happens to
     share the name.
     """
     constants: list = []
@@ -482,7 +484,7 @@ def parse_enum_constants(body: str) -> list:
             value = next_value
         constants.append((enum_name, value))
         next_value = value + 1
-    if constants and constants[-1][0] == 'Count':
+    if constants and constants[-1][0] == 'Count_':
         constants.pop()
     return constants
 
@@ -491,15 +493,18 @@ def parse_enum_constants(body: str) -> list:
 # Bitmask (an integer field holding a set of enumerators)
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Core::Bitmask<E> in each spelling a header may use; group 1 is the enum.
-_BITMASK_RE = re.compile(r'^(?:(?:Assisi::)?Core::)?Bitmask\s*<\s*([\w:]+)\s*>$')
+# Core::Bitmask<E, Bits> in each spelling a header may use; group 1 is the
+# enum, group 2 the storage type. The storage is optional here only so that a
+# field missing it gets a message naming the fix: the compiler refuses it too,
+# but this runs first.
+_BITMASK_RE = re.compile(r'^(?:(?:Assisi::)?Core::)?Bitmask\s*<\s*([\w:]+)\s*(?:,\s*([\w:]+)\s*)?>$')
 
-# Core::Bitmask stores its bits in a uint32_t.
-_BITMASK_BITS = 32
+# The storage types Core::BitmaskStorage allows, by their width in bits.
+_BITMASK_STORAGE_BITS = {'uint8_t': 8, 'uint16_t': 16, 'uint32_t': 32, 'uint64_t': 64}
 
 
 def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
-    """Attach the AENUM a Core::Bitmask<E> field is a set of.
+    """Attach the AENUM a Core::Bitmask<E, Bits> field is a set of, and its width.
 
     The field stores one bit per enumerator, at the enumerator's own value, so
     the enum's values are bit indices and must fit the mask's width.
@@ -509,12 +514,26 @@ def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
         raise ValueError(
             f"{header_name}: field '{f.name}' is AFIELD(bitmask = {keyed}). A set of "
             f"enumerators is a field type, not an annotation: declare it "
-            f"Core::Bitmask<{keyed}>, so the compiler knows what its bits mean.")
+            f"Core::Bitmask<{keyed}, std::uint32_t>, so the compiler knows what its bits mean.")
 
     match = _BITMASK_RE.match(f.cpp_type)
     if match is None:
         return
     named = match.group(1)
+
+    storage = match.group(2)
+    if storage is None:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' is a Core::Bitmask<{named}> with no storage "
+            f"type. A Core::Bitmask names how wide it is: Core::Bitmask<{named}, std::uint8_t>, "
+            f"std::uint16_t, std::uint32_t or std::uint64_t.")
+    bare = storage.removeprefix('std::')
+    if bare not in _BITMASK_STORAGE_BITS:
+        raise ValueError(
+            f"{header_name}: field '{f.name}' stores its bitmask in '{storage}'. A "
+            f"Core::Bitmask is stored in one of std::uint8_t, std::uint16_t, "
+            f"std::uint32_t or std::uint64_t.")
+    bits = _BITMASK_STORAGE_BITS[bare]
 
     info = enums.get(named)
     if info is None:
@@ -529,14 +548,15 @@ def _resolve_bitmask(f: FieldInfo, enums: dict, header_name: str) -> None:
 
     highest = max(value for _, value in info.constants)
     lowest  = min(value for _, value in info.constants)
-    if lowest < 0 or highest >= _BITMASK_BITS:
+    if lowest < 0 or highest >= bits:
         raise ValueError(
             f"{header_name}: enum '{named}' has enumerator values in [{lowest}, {highest}], "
-            f"which do not all index a bit of the {_BITMASK_BITS}-bit field '{f.name}'. "
+            f"which do not all index a bit of the {bits}-bit field '{f.name}'. "
             f"A bitmask enum's values are bit positions, so they must be in "
-            f"[0, {_BITMASK_BITS - 1}].")
+            f"[0, {bits - 1}].")
 
     f.bitmask_info = info
+    f.bitmask_bits = bits
 
 
 # ──────────────────────────────────────────────────────────────────────────────

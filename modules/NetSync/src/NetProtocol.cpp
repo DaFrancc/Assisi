@@ -91,12 +91,12 @@ void WriteMessageType(MessageType type, Core::BitWriter &writer)
 MessageType ReadMessageType(Core::BitReader &reader)
 {
     const std::uint32_t raw = reader.ReadBits(kMessageTypeBits);
-    if (!reader.Ok() || raw == 0 || raw >= static_cast<std::uint32_t>(MessageType::Count))
+    if (!reader.Ok() || raw == 0 || raw >= static_cast<std::uint32_t>(MessageType::Count_))
     {
         // An unknown type is not something to skip past: the rest of the packet
         // is unparseable by definition, so latch the failure.
         reader.Invalidate();
-        return MessageType::Count;
+        return MessageType::Count_;
     }
     return static_cast<MessageType>(raw);
 }

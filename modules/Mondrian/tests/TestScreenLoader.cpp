@@ -572,7 +572,7 @@ TEST_CASE("ScreenLoader: a widget this build does not have is named as such")
     document.nodes.emplace_back();
     ScreenNode unknown;
     unknown.parent = 0;
-    unknown.widget = BuiltinWidget::Count;
+    unknown.widget = BuiltinWidget::Count_;
     document.nodes.push_back(unknown);
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded = InstantiateScreen(ui, kScreenPath, document, catalog);

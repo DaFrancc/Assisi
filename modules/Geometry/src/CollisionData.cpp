@@ -33,7 +33,7 @@ struct CollisionPrefix
     CollisionPieceKind kind;
 };
 
-constexpr std::array<CollisionPrefix, static_cast<std::size_t>(CollisionPieceKind::Count)> kPrefixes{{
+constexpr std::array<CollisionPrefix, static_cast<std::size_t>(CollisionPieceKind::Count_)> kPrefixes{{
     {"ucx_", CollisionPieceKind::Hull},
     {"ubx_", CollisionPieceKind::Box},
     {"usp_", CollisionPieceKind::Sphere},
@@ -328,7 +328,7 @@ void FitPrimitive(const Part &part, std::span<const glm::vec3> points, const Nod
         return;
     }
     case CollisionPieceKind::Hull:
-    case CollisionPieceKind::Count:
+    case CollisionPieceKind::Count_:
         return;
     }
 }
@@ -350,7 +350,7 @@ std::string_view ToString(CollisionBuildError error) noexcept
         return "a position or the node's transform is not a number";
     case CollisionBuildError::IndexOutOfRange:
         return "an index names a position the node does not have";
-    case CollisionBuildError::Count:
+    case CollisionBuildError::Count_:
         break;
     }
     return "unknown";

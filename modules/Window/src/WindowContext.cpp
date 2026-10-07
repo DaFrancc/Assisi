@@ -34,7 +34,7 @@ int32_t GlfwCursorShape(Core::CursorShape shape)
     case Core::CursorShape::NotAllowed:
         return GLFW_NOT_ALLOWED_CURSOR;
     case Core::CursorShape::Arrow:
-    case Core::CursorShape::Count:
+    case Core::CursorShape::Count_:
         break;
     }
     return GLFW_ARROW_CURSOR;
@@ -184,7 +184,7 @@ void WindowContext::OnCursorPosition(std::function<void(double, double)> callbac
 
 void WindowContext::SetCursorShape(Core::CursorShape shape)
 {
-    if (_nativeWindowHandle == nullptr || shape == _cursorShape || shape == Core::CursorShape::Count)
+    if (_nativeWindowHandle == nullptr || shape == _cursorShape || shape == Core::CursorShape::Count_)
     {
         return;
     }

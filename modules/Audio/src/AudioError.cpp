@@ -36,7 +36,7 @@ std::string_view ToString(AudioError error) noexcept
         return "a bus is declared twice, or declared with a default bus's name";
     case AudioError::UnknownParentBus:
         return "a bus's parent is not a default bus or one declared before it";
-    case AudioError::Count:
+    case AudioError::Count_:
         break;
     }
     return "unknown audio error";

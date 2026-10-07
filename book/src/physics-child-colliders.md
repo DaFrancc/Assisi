@@ -67,7 +67,7 @@ The capsule a character moves with is a coarse shape. A shot can look for the
 finer hitboxes instead by asking for the `Hitbox` channel only:
 
 ```cpp
-const Physics::CollisionFilter shot{Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Hitbox),
+const Physics::CollisionFilter shot{Core::Bitmask<Physics::CollisionChannel, std::uint32_t>::Of(Physics::CollisionChannel::Hitbox),
                                     Physics::CollisionChannel::Visibility};
 std::optional<Physics::QueryHit> hit = world.CastRay(muzzle, aim * range, shot, shooter);
 if (hit.has_value() && hit->piece == head)

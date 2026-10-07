@@ -408,7 +408,7 @@ const nvrhi::GraphicsPipelineHandle *MeshPass::PipelinesFor(MeshPassStage stage)
     case MeshPassStage::DepthPrepass:    return _prepassPipelines;
     case MeshPassStage::LitAfterPrepass: return _afterPrepassPipelines;
     case MeshPassStage::Lit:
-    case MeshPassStage::Count:           break;
+    case MeshPassStage::Count_:           break;
     }
     return _pipelines;
 }

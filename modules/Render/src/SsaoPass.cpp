@@ -282,7 +282,7 @@ void SsaoPass::RunStep(nvrhi::ICommandList *commandList, Step step) const
         axis = BlurAxis(1, 0);
         break;
     case Step::BlurVertical:
-    case Step::Count:
+    case Step::Count_:
         state.pipeline = _blurPipeline;
         state.framebuffer = _occlusionFramebuffer;
         axis = BlurAxis(0, 1);

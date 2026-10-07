@@ -29,7 +29,7 @@ enum class AssetErrorCode : std::uint8_t
     CorruptAsset,        ///< The file reads, but its contents are not what its format says they should be.
     CorruptArchive,      ///< A pak's header, index or slice does not read as the format says it should.
     WrongType,           ///< The asset was asked for as a type its kind does not load into.
-    Count,
+    Count_,
 };
 
 /// @brief A short human-readable description, for a log line.

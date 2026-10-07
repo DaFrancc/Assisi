@@ -100,7 +100,7 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
             return std::unexpected(ScreenLoadError::MisplacedNode);
         }
 
-        if (static_cast<uint32_t>(node.widget) >= static_cast<uint32_t>(BuiltinWidget::Count))
+        if (static_cast<uint32_t>(node.widget) >= static_cast<uint32_t>(BuiltinWidget::Count_))
         {
             return std::unexpected(ScreenLoadError::UnsupportedWidget);
         }
@@ -152,7 +152,7 @@ NodeId Create(Screen &screen, NodeId parent, const ScreenDocument &document, con
     case BuiltinWidget::TextField:
         return screen.AddTextField(parent, node.lines).node;
     case BuiltinWidget::None:
-    case BuiltinWidget::Count:
+    case BuiltinWidget::Count_:
         break;
     }
     return screen.Add(parent, node.style);
@@ -234,7 +234,7 @@ void ApplyAction(Screen &screen, const std::vector<NodeId> &ids, std::size_t ind
             screen.OnActivate(id, [target = ids[node.target], moves = node.moves](Screen &self)
                               { self.Step(target, moves); });
             return;
-        case ScreenVerb::Count:
+        case ScreenVerb::Count_:
             return;
         }
         return;
@@ -242,7 +242,7 @@ void ApplyAction(Screen &screen, const std::vector<NodeId> &ids, std::size_t ind
         // Resolved in Resolve, which ran before anything was built.
         screen.Tree().SetOnActivate(id, catalog.Find(node.eventName.View())->push);
         return;
-    case ActionKind::Count:
+    case ActionKind::Count_:
         return;
     }
 }
@@ -267,7 +267,7 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "gives two nodes one name";
     case ScreenLoadError::BadTarget:
         return "gives a verb a target it cannot act on";
-    case ScreenLoadError::Count:
+    case ScreenLoadError::Count_:
         break;
     }
     return "unknown";

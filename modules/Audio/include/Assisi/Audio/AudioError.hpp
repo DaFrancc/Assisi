@@ -26,7 +26,7 @@ enum class AudioError : std::uint8_t
     TooManyBuses,        ///< The bus config declares more buses than the mixer holds.
     DuplicateBus,        ///< The bus config names a bus twice, or redeclares a default bus.
     UnknownParentBus,    ///< A declared bus's parent is not a default bus or one declared before it.
-    Count,
+    Count_,
 };
 
 /// @brief A short human-readable description, for a log line.

@@ -46,7 +46,7 @@ enum class AttributeOwner : uint8_t
     Screen,  ///< the root only: what the screen is
     Control, ///< one kind of control: the arguments its own call takes
     AnyNode, ///< every node, the root included
-    Count
+    Count_
 };
 
 /// An attribute ApplyAttributes reads itself, because what it does needs more
@@ -63,7 +63,7 @@ enum class HandledAttribute : uint8_t
     Background,  ///< a colour: each likely mistake has a message of its own
     BorderColor, ///< as Background
     TextColor,   ///< as Background
-    Count
+    Count_
 };
 
 /// What an attribute is written onto: the screen, and the node it is on, which

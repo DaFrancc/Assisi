@@ -24,7 +24,7 @@ enum class NavWrap : uint8_t
 {
     Stop,
     Around,
-    Count
+    Count_
 };
 
 /// @brief Which way Tab order runs.
@@ -32,7 +32,7 @@ enum class TabOrder : uint8_t
 {
     Forward,
     Backward,
-    Count
+    Count_
 };
 
 /// @brief Whether @p id can take focus now: alive, placed, focusable and enabled.

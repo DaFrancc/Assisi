@@ -45,7 +45,7 @@ constexpr float kHeadHalfExtent = 0.2f;
 constexpr float kRayHeight = 10.f;
 constexpr float kRayLength = 20.f;
 
-using ChannelMask = Core::Bitmask<Physics::CollisionChannel>;
+using ChannelMask = Core::Bitmask<Physics::CollisionChannel, std::uint32_t>;
 
 /// A box on the Hitbox channel, the size of a head.
 Physics::Collider Head()

@@ -37,7 +37,7 @@ enum class RemoveResult : uint8_t
     Removed,
     Absent,   ///< The entity did not have the component.
     Required, ///< Refused: another component on the entity requires it.
-    Count
+    Count_
 };
 
 struct Scene

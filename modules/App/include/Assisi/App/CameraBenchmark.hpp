@@ -60,7 +60,7 @@ enum class BenchmarkPhase : std::uint8_t
     WarmingUp,
     Running,
     Finished,
-    Count
+    Count_
 };
 
 /// @brief Drives one benchmark run. See the file comment.

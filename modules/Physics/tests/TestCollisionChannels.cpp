@@ -42,7 +42,7 @@ namespace
 /// Enough steps for a body dropped a couple of metres to land and settle.
 constexpr int32_t kSettleSteps = 240;
 
-Core::Bitmask<Physics::CollisionChannel> AllChannelsBut(Physics::CollisionChannel channel)
+Core::Bitmask<Physics::CollisionChannel, std::uint32_t> AllChannelsBut(Physics::CollisionChannel channel)
 {
     return Physics::AllChannels.Without(channel);
 }
@@ -124,7 +124,7 @@ TEST_CASE("Bodies on the last game channel collide when both masks admit it, and
     // The highest slot, so a filter that kept only some of a mask's bits, or only
     // some of a channel's index, cannot pass by accident.
     constexpr Physics::CollisionChannel kGame = Physics::GameChannel(Physics::kGameChannelCount - 1u);
-    const Core::Bitmask<Physics::CollisionChannel> onlyGame = Core::Bitmask<Physics::CollisionChannel>::Of(kGame);
+    const Core::Bitmask<Physics::CollisionChannel, std::uint32_t> onlyGame = Core::Bitmask<Physics::CollisionChannel, std::uint32_t>::Of(kGame);
 
     SUBCASE("both admit")
     {
@@ -171,7 +171,7 @@ TEST_CASE("A ray aimed at a game channel passes what is not on it")
                  Physics::CollisionFilter{Physics::AllChannels, kTargetChannel});
     test.world.Reconcile();
 
-    const Physics::CollisionFilter ray{Core::Bitmask<Physics::CollisionChannel>::Of(kTargetChannel),
+    const Physics::CollisionFilter ray{Core::Bitmask<Physics::CollisionChannel, std::uint32_t>::Of(kTargetChannel),
                                        Physics::GameChannel(3)};
     const std::optional<Physics::QueryHit> hit = test.world.CastRay({0.f, 0.f, 0.f}, {10.f, 0.f, 0.f}, ray,
                                                                     ECS::NullEntity);
@@ -195,12 +195,12 @@ TEST_CASE("Every body keeps the whole filter it was given, however many distinct
     for (int32_t i = 0; i < kBodies; ++i)
     {
         // Every channel but Trigger, which would make the body a sensor.
-        const uint32_t slot = static_cast<uint32_t>(i) % static_cast<uint32_t>(Physics::CollisionChannel::Count);
+        const uint32_t slot = static_cast<uint32_t>(i) % static_cast<uint32_t>(Physics::CollisionChannel::Count_);
         const Physics::CollisionChannel channel = slot == static_cast<uint32_t>(Physics::CollisionChannel::Trigger)
                                                       ? Physics::GameChannel(0)
                                                       : static_cast<Physics::CollisionChannel>(slot);
         const uint32_t mask = static_cast<uint32_t>(i + 1) * kSpread;
-        const Physics::CollisionFilter filter{Core::Bitmask<Physics::CollisionChannel>{mask}, channel};
+        const Physics::CollisionFilter filter{Core::Bitmask<Physics::CollisionChannel, std::uint32_t>{mask}, channel};
         filters.push_back(filter);
         bodies.push_back(SpawnBox(test.scene, {3.f * static_cast<float>(i), 0.f, 0.f}, {0.5f, 0.5f, 0.5f},
                                   /*isStatic=*/ i % 2 == 0, filter));

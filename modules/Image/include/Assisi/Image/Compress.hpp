@@ -27,7 +27,7 @@ enum class CompressQuality : std::uint8_t
 {
     Fast, ///< For an encode somebody is waiting on.
     Best, ///< For an encode that happens once, offline.
-    Count,
+    Count_,
 };
 
 /// @brief Encode every level of @p source into @p format.

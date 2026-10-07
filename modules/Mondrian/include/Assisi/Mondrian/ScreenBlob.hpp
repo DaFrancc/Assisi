@@ -59,7 +59,7 @@ enum class CookedScreenError : uint8_t
     Truncated,          ///< The bytes ran out inside the payload.
     UnsupportedVersion, ///< A payload version or field layout this build does not read.
     Invalid,            ///< Framed correctly and describing no usable screen.
-    Count
+    Count_
 };
 
 /// @brief A short human-readable description, for a load failure's log line.

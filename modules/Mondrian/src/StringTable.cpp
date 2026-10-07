@@ -62,7 +62,7 @@ std::string_view ToString(CookedStringTableError error) noexcept
         return "a string table layout this build does not read";
     case CookedStringTableError::Invalid:
         return "holds a key twice";
-    case CookedStringTableError::Count:
+    case CookedStringTableError::Count_:
         break;
     }
     return "unknown";

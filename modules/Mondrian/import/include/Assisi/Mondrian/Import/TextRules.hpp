@@ -29,7 +29,7 @@ enum class LiteralText : uint8_t
 {
     Allowed,
     RequiresKey, ///< only a key into a table, except on a debug-only screen
-    Count
+    Count_
 };
 
 /// @brief What a screen's text is checked against.

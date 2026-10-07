@@ -46,7 +46,7 @@ enum class ScreenInput : uint8_t
     NoConsume,          ///< the game reads them as though nothing were shown
     LockedConsumeInput, ///< the screen has them until code hides it; Back does nothing
     ConsumeInput,       ///< the screen has them until Back, which hides it
-    Count
+    Count_
 };
 
 /// @brief Whether the screens below this one on its target are still drawn.
@@ -59,7 +59,7 @@ enum class ScreenBeneath : uint8_t
 {
     NoHide,       ///< what is below is laid out and drawn as usual
     HidesBeneath, ///< what is below cannot be seen, so it is neither laid out nor drawn
-    Count
+    Count_
 };
 
 /// @brief What happens to the world while a screen is shown.
@@ -72,7 +72,7 @@ enum class ScreenPause : uint8_t
 {
     Pause, ///< the world's fixed step is skipped, and its physics with it
     Run,   ///< the world's fixed step runs as usual
-    Count
+    Count_
 };
 
 /// @brief What a screen does, as three answers rather than a name for one

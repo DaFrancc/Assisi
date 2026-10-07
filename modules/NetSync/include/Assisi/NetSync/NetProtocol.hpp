@@ -193,7 +193,7 @@ enum class MessageType : std::uint8_t
     /// an event costume.
     Announcement = 9,
 
-    Count
+    Count_
 };
 
 /// @brief Why a connection was refused.

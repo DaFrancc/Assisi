@@ -27,7 +27,7 @@ enum class InputGrant : uint8_t
     Nothing,    ///< the game has it all; the UI only shows
     Pointer,    ///< the pointer, and the keyboard only while a node that takes it has focus
     Everything, ///< the game gets nothing
-    Count
+    Count_
 };
 
 /// @brief Which device the player used last. The focus ring shows only for
@@ -36,7 +36,7 @@ enum class InputDevice : uint8_t
 {
     Pointer,
     Keys,
-    Count
+    Count_
 };
 
 /// @brief One frame of input, as the host gathered it.
@@ -97,11 +97,11 @@ inline constexpr double kNavRepeatDelaySeconds = 0.4;
 inline constexpr double kNavRepeatIntervalSeconds = 0.1;
 
 /// @brief The one key of its kind being held long enough to repeat, and when it
-/// next acts. Count for none.
+/// next acts. Count_ for none.
 template <typename Key> struct KeyRepeat
 {
     double at = 0.0;
-    Key key = Key::Count;
+    Key key = Key::Count_;
 };
 
 } // namespace Assisi::Mondrian

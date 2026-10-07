@@ -35,7 +35,7 @@ std::string_view ToString(ScreenReadError error) noexcept
         return "the screen is not usable";
     case ScreenReadError::NoReader:
         return "no screen reader is installed";
-    case ScreenReadError::Count:
+    case ScreenReadError::Count_:
         break;
     }
     return "unknown";

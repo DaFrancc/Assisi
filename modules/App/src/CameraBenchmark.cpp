@@ -49,7 +49,7 @@ BenchmarkPhase CameraBenchmark::Advance(bool assetsLoaded, double nowSeconds)
         }
         break;
     case BenchmarkPhase::Finished:
-    case BenchmarkPhase::Count:
+    case BenchmarkPhase::Count_:
         break;
     }
     return _phase;

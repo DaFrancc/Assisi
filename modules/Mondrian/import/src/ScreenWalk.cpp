@@ -448,7 +448,7 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::Action:
         // Read before its parameters are replaced, so never reaches here.
     case HandledAttribute::None:
-    case HandledAttribute::Count:
+    case HandledAttribute::Count_:
         break;
     }
     return {};

@@ -40,7 +40,7 @@ enum class BodyMotion : std::uint8_t
     Static,    ///< Immovable; collides but is never moved by the simulation.
     Dynamic,   ///< Fully simulated; affected by gravity and collisions.
     Kinematic, ///< Moved only by what sets its pose; pushes dynamic bodies and is pushed by nothing.
-    Count,
+    Count_,
 };
 
 /// @brief A position and orientation in world space.
@@ -60,7 +60,7 @@ struct Pose
 /// cast decides what it may hit by the same two-way rule a collision does.
 struct CollisionFilter
 {
-    Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
+    Core::Bitmask<CollisionChannel, std::uint32_t> collidesWith = AllChannels;
 
     CollisionChannel channel = CollisionChannel::World;
 
@@ -112,7 +112,7 @@ enum class ContactPhase : std::uint8_t
     Enter, ///< They were not touching last step and are now.
     Stay,  ///< They were touching last step and still are. Reported only when asked for.
     Exit,  ///< They were touching last step and are not now.
-    Count,
+    Count_,
 };
 
 /// @brief One side of one body pair's contact during the most recent Update().
@@ -169,7 +169,7 @@ enum class JointKind : std::uint8_t
     Slider,     ///< SliderJoint
     Distance,   ///< DistanceJoint
     SwingTwist, ///< SwingTwistJoint
-    Count,
+    Count_,
 };
 
 /// @brief A joint that broke during the most recent Update().

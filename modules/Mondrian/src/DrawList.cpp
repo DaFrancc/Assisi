@@ -30,7 +30,7 @@ QuadBuilder &QuadBuilder::Border(float width, const Math::Color4<Math::ColorSpac
 
 QuadBuilder &QuadBuilder::Corners(float radius, CornerStyle style)
 {
-    for (uint32_t corner = 0; corner < static_cast<uint32_t>(Corner::Count); ++corner)
+    for (uint32_t corner = 0; corner < static_cast<uint32_t>(Corner::Count_); ++corner)
     {
         CornerAt(static_cast<Corner>(corner), radius, style);
     }

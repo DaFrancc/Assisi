@@ -40,7 +40,7 @@ enum class WhenFull : std::uint8_t
     /// The sound that started last fades out and the new one starts.
     ReplaceNewest,
 
-    Count
+    Count_
 };
 
 /// @brief Where an emitter's sounds are heard from.
@@ -53,7 +53,7 @@ enum class EmitterSpace : std::uint8_t
     /// Placed in the world. Heard the same as InEar until the engine positions sounds.
     InWorld,
 
-    Count
+    Count_
 };
 
 /// @brief Plays a sound clip when a PlaySound event names its entity.

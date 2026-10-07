@@ -208,7 +208,7 @@ std::string_view ToString(FontImportError error) noexcept
         return "has a glyph the rasteriser refused";
     case FontImportError::AtlasFull:
         return "has more glyphs than the largest atlas holds";
-    case FontImportError::Count:
+    case FontImportError::Count_:
         break;
     }
     return "unknown";

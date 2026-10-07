@@ -40,7 +40,7 @@ enum class ColorSpace : uint8_t
 {
     Linear, ///< proportional to light; what lighting and blending maths needs
     Srgb,   ///< proportional to perceived brightness; what pickers and hex codes use
-    Count
+    Count_
 };
 
 /// @brief RGB in @p Space.

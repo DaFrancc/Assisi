@@ -30,7 +30,7 @@ enum class PakLayout : std::uint8_t
     Fresh,        ///< No previous pak: every slice back to back, in manifest order.
     FromPrevious, ///< Laid out over the previous pak's placements.
     Compacted,    ///< A previous pak was given, but its layout left too much unused; laid out fresh.
-    Count,
+    Count_,
 };
 
 /// @brief What one pack wrote.
