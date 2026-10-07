@@ -24,7 +24,7 @@ enum class PakCodec : std::uint8_t
     None, ///< Stored as cooked.
     Lz4,  ///< Fast to decompress; the choice when load time matters most.
     Zstd, ///< Smaller than lz4, slower to decompress; the choice when size matters most.
-    Count,
+    Count_,
 };
 
 /// @brief Why a slice could not be compressed or decompressed.
@@ -38,7 +38,7 @@ enum class PakCodecError : std::uint8_t
 /// @brief A short human-readable description, for a load failure's log line.
 [[nodiscard]] std::string_view ToString(PakCodecError error) noexcept;
 
-/// @brief The codec's name as the pack tool spells it, or empty for Count.
+/// @brief The codec's name as the pack tool spells it, or empty for Count_.
 [[nodiscard]] std::string_view ToString(PakCodec codec) noexcept;
 
 /// @brief @p bytes compressed with @p codec, at the codec's highest ratio: a pak

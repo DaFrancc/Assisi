@@ -54,7 +54,7 @@ private:
     {
         Instances,
         Texture,
-        Count
+        Count_
     };
 
     [[nodiscard]] bool BuildLayouts();

@@ -58,7 +58,7 @@ std::string_view ToString(AssetErrorCode code) noexcept
         return "the package is corrupt";
     case AssetErrorCode::WrongType:
         return "the asset was asked for as a type it does not load as";
-    case AssetErrorCode::Count:
+    case AssetErrorCode::Count_:
         break;
     }
     return "unknown";

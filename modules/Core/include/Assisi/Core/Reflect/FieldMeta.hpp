@@ -107,7 +107,7 @@ enum class FieldType : std::uint8_t
     /// Safe to move, unlike every enumerator above it: nothing serializes this and
     /// the protocol names types through FieldTypeName's strings rather than these
     /// values, so appending a type shifts only this.
-    Count,
+    Count_,
 };
 
 struct ContainerSpec;
@@ -214,7 +214,7 @@ struct FieldMeta
     // enumerator, at the enumerator's own value. `enumSize` tells the
     // two apart: non-zero for the enum, zero for the bitmask. Empty otherwise.
     //
-    // A trailing `Count` enumerator is absent: it counts the others rather than
+    // A trailing `Count_` enumerator is absent: it counts the others rather than
     // naming a value, so offering it would let an editor select it.
     std::vector<EnumConstant> enumConstants{};
 

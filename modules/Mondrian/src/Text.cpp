@@ -47,7 +47,7 @@ constexpr uint32_t kSpace = 0x20;
 constexpr uint32_t kNewline = 0x0A;
 
 /// The share of a line's slack that goes before it, by TextAlign.
-constexpr std::array<float, static_cast<std::size_t>(TextAlign::Count)> kSlackBefore{0.f, 0.5f, 1.f};
+constexpr std::array<float, static_cast<std::size_t>(TextAlign::Count_)> kSlackBefore{0.f, 0.5f, 1.f};
 
 GlyphClass Classify(uint32_t codepoint)
 {
@@ -134,7 +134,7 @@ void BreakLines(const ShapedText &shaped, float scale, std::optional<float> wrap
             widthAtBreak = inkEnd;
             break;
         case GlyphClass::Newline:
-        case GlyphClass::Count:
+        case GlyphClass::Count_:
             endLine(i, inkEnd);
             break;
         }
@@ -178,7 +178,7 @@ TextLayout LayoutText(const ShapedText &shaped, const Font &font, float size, st
     ASSISI_ASSERT(size > 0.f && font.pixelSize > 0.f, "LayoutText needs a positive size and a sized font");
     ASSISI_ASSERT(!wrapWidth || (std::isfinite(*wrapWidth) && *wrapWidth > 0.f),
                   "LayoutText's wrap width must be finite and positive; no wrap is nullopt");
-    ASSISI_ASSERT(align < TextAlign::Count, "LayoutText given an alignment that does not exist");
+    ASSISI_ASSERT(align < TextAlign::Count_, "LayoutText given an alignment that does not exist");
 
     TextLayout layout;
     layout.font = &font;

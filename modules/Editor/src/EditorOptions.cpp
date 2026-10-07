@@ -228,7 +228,7 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // Above both halves rather than inside either, because one setting names
     // both: it stays editable with the sun off, for the lamps.
     static const char *const kPcssNames[] = {"Off", "Sun", "Sun + Local Lights"};
-    static_assert(std::size(kPcssNames) == static_cast<std::size_t>(Assisi::Render::ShadowPcss::Count),
+    static_assert(std::size(kPcssNames) == static_cast<std::size_t>(Assisi::Render::ShadowPcss::Count_),
                   "The contact hardening list must name every ShadowPcss.");
     int32_t pcssIndex = static_cast<int32_t>(shadows.pcss);
     if (ImGui::Combo("Contact Hardening", &pcssIndex, kPcssNames, static_cast<int32_t>(std::size(kPcssNames))))
@@ -341,11 +341,11 @@ void EditorOptionsPanel::DrawShadowSettings(const Frame &frame)
     // changes the picture, which is why they are a list with an off entry rather
     // than checkboxes that could be left on by accident.
     static const char *const kShadowDebugNames[] = {"Off", "Cascades", "Occluder Margin", "Filter Taps"};
-    static_assert(std::size(kShadowDebugNames) == std::to_underlying(Assisi::Render::ShadowDebugView::Count),
+    static_assert(std::size(kShadowDebugNames) == std::to_underlying(Assisi::Render::ShadowDebugView::Count_),
                   "The debug view list must name every ShadowDebugView.");
     int debugView = static_cast<int>(frame.renderer.ShadowDebugView());
     if (ImGui::Combo("Shadow View", &debugView, kShadowDebugNames,
-                     static_cast<int>(Assisi::Render::ShadowDebugView::Count)))
+                     static_cast<int>(Assisi::Render::ShadowDebugView::Count_)))
     {
         frame.renderer.SetShadowDebugView(static_cast<Assisi::Render::ShadowDebugView>(debugView));
     }

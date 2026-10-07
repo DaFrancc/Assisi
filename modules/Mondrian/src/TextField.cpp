@@ -588,7 +588,7 @@ WidgetResponse ActionInput(const WidgetView &view, Node &node, const WidgetEvent
     case UiAction::Back:
     case UiAction::Next:
     case UiAction::Previous:
-    case UiAction::Count:
+    case UiAction::Count_:
         break;
     }
     return WidgetResponse::Ignored;
@@ -678,7 +678,7 @@ WidgetResponse FieldInput(const WidgetView &view, Node &node, const WidgetEvent 
         return !typed.empty() && Replace(view, node, typed) ? WidgetResponse::Changed : WidgetResponse::Handled;
     }
     case WidgetGesture::Wheel:
-    case WidgetGesture::Count:
+    case WidgetGesture::Count_:
         break;
     }
     return WidgetResponse::Ignored;
@@ -717,7 +717,7 @@ WidgetResponse EditInput(const WidgetView &view, Node &node, const WidgetEvent &
         return Copy(view, node, TextAbility::Cut);
     case EditKey::Paste:
         return Paste(view, node);
-    case EditKey::Count:
+    case EditKey::Count_:
         break;
     }
     return WidgetResponse::Ignored;

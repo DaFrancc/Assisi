@@ -52,7 +52,7 @@ Mondrian::InputGrant GrantFor(Window::InputMode mode)
     case Window::InputMode::GameAndUi:
         return Mondrian::InputGrant::Pointer;
     case Window::InputMode::Game:
-    case Window::InputMode::Count:
+    case Window::InputMode::Count_:
         break;
     }
     return Mondrian::InputGrant::Nothing;
@@ -152,7 +152,7 @@ void ApplyUiResult(Window::InputContext &input, const Mondrian::InputResult &res
         }
         return;
     case Mondrian::InputGrant::Nothing:
-    case Mondrian::InputGrant::Count:
+    case Mondrian::InputGrant::Count_:
         return;
     }
 }

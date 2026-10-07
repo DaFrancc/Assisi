@@ -32,7 +32,7 @@ enum class FontKind : uint8_t
 {
     /// A signed distance field: 128 on the outline, higher inside.
     Sdf,
-    Count
+    Count_
 };
 
 /// @brief One glyph's image in the atlas and how it sits against the pen.
@@ -102,7 +102,7 @@ enum class CookedFontError : uint8_t
     UnsupportedVersion, ///< A font layout this build does not read.
     Truncated,          ///< The bytes end, or a length claims more than is left.
     Invalid,            ///< Framed correctly, but the contents contradict each other.
-    Count
+    Count_
 };
 
 /// @brief A short human-readable description, for a load failure's log line.

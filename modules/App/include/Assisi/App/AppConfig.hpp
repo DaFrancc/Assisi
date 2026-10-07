@@ -41,7 +41,7 @@ enum class SimulateFrom : std::uint8_t
     /// whole, with nothing popping in behind it.
     Loaded,
 
-    Count
+    Count_
 };
 
 /// @brief The game config document, as it sits on disk.

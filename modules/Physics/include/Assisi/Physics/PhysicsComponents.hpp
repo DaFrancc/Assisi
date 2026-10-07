@@ -36,7 +36,7 @@ enum class ColliderShape : std::uint8_t
     /// The model's exact triangles. Static and kinematic bodies only: on a
     /// dynamic one it is an error, and the body takes Convex instead.
     Mesh,
-    Count,
+    Count_,
 };
 
 /// @brief What kind of thing a body is, for deciding what it interacts with.
@@ -48,7 +48,7 @@ enum class ColliderShape : std::uint8_t
 /// surface opts out of being seen by dropping that channel from its own mask.
 ///
 /// The enumerators are the engine's own channels. The slots between the last of
-/// them and `Count` belong to the game, which takes them with GameChannel and
+/// them and `Count_` belong to the game, which takes them with GameChannel and
 /// names them in CollisionChannelNames.hpp.
 ///
 /// An enumerator's value is its bit position in every mask stored in a level
@@ -69,10 +69,10 @@ enum class CollisionChannel : std::uint8_t
 
     /// One past the last slot: a mask has a bit for every channel, the game's
     /// included.
-    Count = 32,
+    Count_ = 32,
 };
 
-static_assert(static_cast<std::uint32_t>(CollisionChannel::Count) == Core::kBitmaskBits,
+static_assert(static_cast<std::uint32_t>(CollisionChannel::Count_) == Core::kBitmaskBits,
               "Every bit of a channel mask is a channel, and every channel has a bit.");
 
 /// The first slot after the engine's own channels.
@@ -80,7 +80,7 @@ inline constexpr std::uint32_t kFirstGameChannel = static_cast<std::uint32_t>(Co
 
 /// How many channels a game may take.
 inline constexpr std::uint32_t kGameChannelCount =
-    static_cast<std::uint32_t>(CollisionChannel::Count) - kFirstGameChannel;
+    static_cast<std::uint32_t>(CollisionChannel::Count_) - kFirstGameChannel;
 
 /// Deliberately not constexpr: GameChannel calls it only for an index out of
 /// range, and calling it while evaluating a consteval function is what turns that
@@ -117,7 +117,7 @@ enum class ColliderAttach : std::uint8_t
 
     /// A body of its own that rides along at its entity's pose, adding no mass.
     Body,
-    Count,
+    Count_,
 };
 
 /// @brief Every channel — the mask a body carries unless it narrows it, so a
@@ -133,7 +133,7 @@ enum class MotionType : std::uint8_t
 {
     Dynamic,   ///< Moved by the simulation: gravity, collisions, velocity.
     Kinematic, ///< Moved only by its Transform; pushes dynamic bodies and is pushed by nothing.
-    Count,
+    Count_,
 };
 
 /// @brief One degree of freedom a RigidBody can be held in.
@@ -146,7 +146,7 @@ enum class LockedAxis : std::uint8_t
     AngularX,
     AngularY,
     AngularZ,
-    Count,
+    Count_,
 };
 
 /// @brief A collision shape, and what touching it is like.
@@ -446,7 +446,7 @@ enum class MotorMode : std::uint8_t
 {
     Velocity, ///< At `target` per second, for as long as it has the strength.
     Position, ///< To `target`, springing there and holding.
-    Count,
+    Count_,
 };
 
 /// @brief Turns a HingeJoint by itself: a powered door, a drawbridge, a fan.
@@ -489,7 +489,7 @@ enum class GroundState : std::uint8_t
     OnSteepGround, ///< On a surface too steep to hold; sliding down it.
     NotSupported,  ///< Touching something, held up by none of it.
     InAir,         ///< Touching nothing.
-    Count,
+    Count_,
 };
 
 /// @brief Which of a character's two shapes is current.
@@ -502,7 +502,7 @@ enum class Stance : std::uint8_t
 {
     Standing,
     Crouching,
-    Count,
+    Count_,
 };
 
 /// @brief What a character's last simulation step left behind.
@@ -579,7 +579,7 @@ enum class BunnyHopPolicy : std::uint8_t
     /// character travelling backwards over the limit is therefore pushed faster
     /// by every jump, which is the accelerated back hop.
     Boost,
-    Count,
+    Count_,
 };
 
 /// @brief A character: the capsule a player or an NPC is, and how it moves.

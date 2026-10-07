@@ -10,7 +10,7 @@ namespace
 {
 
 /// @brief The default buses' names, in DefaultBus order.
-constexpr std::array<std::string_view, std::to_underlying(DefaultBus::Count)> kDefaultBusNames{
+constexpr std::array<std::string_view, std::to_underlying(DefaultBus::Count_)> kDefaultBusNames{
     "Master", "Music", "SFX", "Ambient", "UI", "Voice",
 };
 

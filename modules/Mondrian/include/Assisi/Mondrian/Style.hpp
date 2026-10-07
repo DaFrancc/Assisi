@@ -39,7 +39,7 @@ enum class LengthUnit : uint8_t
     Vw,      ///< hundredths of the viewport's width
     Vh,      ///< hundredths of the viewport's height
     Em,      ///< multiples of the node's own text size
-    Count
+    Count_
 };
 
 /// @brief A length and what it is measured in.
@@ -94,10 +94,10 @@ enum class Axis : uint8_t
 {
     X,
     Y,
-    Count
+    Count_
 };
 
-inline constexpr std::size_t kAxisCount = static_cast<std::size_t>(Axis::Count);
+inline constexpr std::size_t kAxisCount = static_cast<std::size_t>(Axis::Count_);
 
 /// @brief How a node's size on one axis is decided.
 AENUM()
@@ -106,7 +106,7 @@ enum class SizingKind : uint8_t
     Fit,   ///< just large enough for its content
     Grow,  ///< its content, then a share of whatever its parent has left
     Fixed, ///< exactly its value, in whatever unit it is written
-    Count
+    Count_
 };
 
 /// @brief A node's size on one axis, clamped to [min, max] whatever its kind.
@@ -137,7 +137,7 @@ enum class Direction : uint8_t
 {
     Row,    ///< left to right
     Column, ///< top to bottom
-    Count
+    Count_
 };
 
 /// @brief Where on an axis something sits within the space it has.
@@ -147,7 +147,7 @@ enum class Alignment : uint8_t
     Start,
     Center,
     End,
-    Count
+    Count_
 };
 
 /// @brief Space inside a node's edges, around its content.
@@ -172,7 +172,7 @@ enum class ScrollBarVisibility : uint8_t
     Never,
     WhenNeeded, ///< only while some of the content is out of sight
     Always,
-    Count
+    Count_
 };
 
 /// @brief How the content keeps up with a scroll bar being dragged.
@@ -181,7 +181,7 @@ enum class ScrollBarDrag : uint8_t
 {
     FollowsPointer, ///< the content is where the thumb is, so the hand moving it never leads
     Smoothed,       ///< the content glides after the thumb, as the rest of the scrolling does
-    Count
+    Count_
 };
 
 /// @brief What a floating node is placed against.
@@ -190,7 +190,7 @@ enum class FloatAnchor : uint8_t
 {
     Parent,
     Root,
-    Count
+    Count_
 };
 
 /// @brief Placement outside the parent's flow: the point @p attach of the node

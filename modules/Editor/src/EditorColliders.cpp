@@ -76,7 +76,7 @@ void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &mode
             AddSegment(out, model, color, modelEdges[i], modelEdges[i + 1]);
         }
         break;
-    case ColliderShape::Count:
+    case ColliderShape::Count_:
         break;
     }
 }
@@ -358,7 +358,7 @@ void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
         break;
     case ColliderShape::Convex:
     case ColliderShape::Mesh:
-    case ColliderShape::Count:
+    case ColliderShape::Count_:
         // No unit mesh stands for a model's shape; its edges, drawn on top in
         // the selection colour, are its highlight.
         return;

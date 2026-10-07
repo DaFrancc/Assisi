@@ -319,7 +319,7 @@ namespace
 {
 constexpr const char *kPhaseNames[] = {"Begin",       "Loaded",     "PreUpdate", "FixedUpdate",
                                        "PostFixedUpdate", "Update", "PostUpdate"};
-static_assert(std::size(kPhaseNames) == static_cast<std::size_t>(SystemPhase::Count),
+static_assert(std::size(kPhaseNames) == static_cast<std::size_t>(SystemPhase::Count_),
               "Every SystemPhase needs a name, in the enum's order.");
 } // namespace
 

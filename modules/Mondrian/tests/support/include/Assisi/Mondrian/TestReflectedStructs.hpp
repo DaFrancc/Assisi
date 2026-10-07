@@ -26,7 +26,7 @@ enum class ProbeUnit : uint8_t
 {
     Pixels,
     Share,
-    Count
+    Count_
 };
 
 ASTRUCT()

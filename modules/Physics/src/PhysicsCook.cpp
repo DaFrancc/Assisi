@@ -115,7 +115,7 @@ JPH::ShapeSettings::ShapeResult MakePiece(const Geometry::CollisionModel &model,
         settings.mDensity = density;
         return settings.Create();
     }
-    case Geometry::CollisionPieceKind::Count:
+    case Geometry::CollisionPieceKind::Count_:
         break;
     }
     result.SetError("unknown piece kind");

@@ -31,7 +31,7 @@ std::string_view ToString(FontLoadError error) noexcept
         return "the font is not usable";
     case FontLoadError::NoReader:
         return "no font reader is installed";
-    case FontLoadError::Count:
+    case FontLoadError::Count_:
         break;
     }
     return "unknown";

@@ -52,9 +52,9 @@ std::array<bool, Count> FiredKeys(const std::array<bool, Count> &pressed, const 
     const auto at = [](Key key) { return static_cast<std::size_t>(key); };
     std::array<bool, Count> fired = pressed;
 
-    if (repeat.key != Key::Count && !down[at(repeat.key)])
+    if (repeat.key != Key::Count_ && !down[at(repeat.key)])
     {
-        repeat.key = Key::Count;
+        repeat.key = Key::Count_;
     }
     for (const Key key : repeatable)
     {
@@ -64,7 +64,7 @@ std::array<bool, Count> FiredKeys(const std::array<bool, Count> &pressed, const 
             repeat.at = time + kNavRepeatDelaySeconds;
         }
     }
-    if (repeat.key != Key::Count && !pressed[at(repeat.key)] && time >= repeat.at)
+    if (repeat.key != Key::Count_ && !pressed[at(repeat.key)] && time >= repeat.at)
     {
         fired[at(repeat.key)] = true;
         repeat.at += kNavRepeatIntervalSeconds;
@@ -630,8 +630,8 @@ InputResult Ui::Interact(Screen &screen, const UiInput &input)
                       (input.grant == InputGrant::Pointer && focused != nullptr && focused->takesKeyboard);
     if (!keys || input.keyboardClaimed)
     {
-        _session.repeatAction.key = UiAction::Count;
-        _session.repeatEdit.key = EditKey::Count;
+        _session.repeatAction.key = UiAction::Count_;
+        _session.repeatEdit.key = EditKey::Count_;
         return result;
     }
     result.keyboardTaken = true;
@@ -761,7 +761,7 @@ void Ui::Move(Screen &screen, UiAction action)
             break;
         case UiAction::Accept:
         case UiAction::Back:
-        case UiAction::Count:
+        case UiAction::Count_:
             break;
         }
         if (next)

@@ -123,7 +123,7 @@ std::expected<std::vector<std::byte>, AssetError> PakProvider::Open(AssetId id) 
     // Refused before a byte is read: each of these names bytes this build would
     // misread, and ciphertext decompressed as if it were plain is garbage that
     // might still frame well enough to reach a loader.
-    if (entry.archive != kThisArchive || HasFlag(entry, PakSliceFlag::Encrypted) || entry.codec >= PakCodec::Count)
+    if (entry.archive != kThisArchive || HasFlag(entry, PakSliceFlag::Encrypted) || entry.codec >= PakCodec::Count_)
     {
         return std::unexpected(AssetErrorCode::UnsupportedEncoding);
     }

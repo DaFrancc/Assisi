@@ -86,7 +86,7 @@ enum class QuadKind : uint32_t
     Glyph,     ///< colour times the coverage in the texture's red channel
     Image,     ///< colour times the texture
     NineSlice, ///< an image whose borders keep their size; drawn as Image for now
-    Count
+    Count_
 };
 
 /// The shape of one corner. The values are read by the shader.
@@ -96,7 +96,7 @@ enum class CornerStyle : uint32_t
     Square,
     Rounded,
     Cut, ///< a straight chamfer across the corner
-    Count
+    Count_
 };
 
 /// Corner order in QuadInstance::cornerRadius and the packed style word.
@@ -106,14 +106,14 @@ enum class Corner : uint32_t
     TopRight,
     BottomRight,
     BottomLeft,
-    Count
+    Count_
 };
 
 /// Bits one corner's style takes in QuadInstance::cornerStyles.
 inline constexpr uint32_t kCornerStyleBits = 2;
 inline constexpr uint32_t kCornerStyleMask = (1u << kCornerStyleBits) - 1u;
-static_assert(static_cast<uint32_t>(CornerStyle::Count) <= (1u << kCornerStyleBits));
-static_assert(static_cast<uint32_t>(Corner::Count) * kCornerStyleBits <= 32u);
+static_assert(static_cast<uint32_t>(CornerStyle::Count_) <= (1u << kCornerStyleBits));
+static_assert(static_cast<uint32_t>(Corner::Count_) * kCornerStyleBits <= 32u);
 
 /// @brief @p packed with @p corner's style replaced by @p style.
 [[nodiscard]] constexpr uint32_t PackCornerStyle(uint32_t packed, Corner corner, CornerStyle style)
@@ -149,7 +149,7 @@ struct QuadInstance
     Rect clip = kNoClip;
     Math::Color4<Math::ColorSpace::Srgb> color{1.f, 1.f, 1.f, 1.f};
     Math::Color4<Math::ColorSpace::Srgb> borderColor{0.f, 0.f, 0.f, 0.f};
-    std::array<float, static_cast<std::size_t>(Corner::Count)> cornerRadius{};
+    std::array<float, static_cast<std::size_t>(Corner::Count_)> cornerRadius{};
     float borderWidth = 0.f;
     uint32_t cornerStyles = 0; ///< one CornerStyle per corner, packed by PackCornerStyle
     uint32_t kind = static_cast<uint32_t>(QuadKind::Solid);
@@ -166,7 +166,7 @@ enum class InstanceSlot : uint32_t
     BorderColor,
     CornerRadius,
     Scalars, ///< borderWidth, cornerStyles, kind, transformIndex
-    Count
+    Count_
 };
 
 inline constexpr std::size_t kInstanceSlotBytes = 16;
@@ -176,7 +176,7 @@ inline constexpr std::size_t kInstanceSlotBytes = 16;
     return static_cast<std::size_t>(slot) * kInstanceSlotBytes;
 }
 
-static_assert(sizeof(QuadInstance) == SlotOffset(InstanceSlot::Count));
+static_assert(sizeof(QuadInstance) == SlotOffset(InstanceSlot::Count_));
 static_assert(offsetof(QuadInstance, rect) == SlotOffset(InstanceSlot::Rect));
 static_assert(offsetof(QuadInstance, uv) == SlotOffset(InstanceSlot::Uv));
 static_assert(offsetof(QuadInstance, clip) == SlotOffset(InstanceSlot::Clip));

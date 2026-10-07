@@ -241,7 +241,7 @@ PhysicsWorld::Impl::WantedSlot PhysicsWorld::Impl::WantedFor(ECS::Entity entity)
         return WantedSlot{placement.owner, SlotKind::Follower};
     case ColliderRole::Own:
     case ColliderRole::Static:
-    case ColliderRole::Count:
+    case ColliderRole::Count_:
         break;
     }
     return WantedSlot{ECS::NullEntity, SlotKind::Body};
@@ -311,7 +311,7 @@ void PhysicsWorld::Impl::SyncEntity(ECS::Entity entity)
         }
         break;
     case SlotKind::Empty:
-    case SlotKind::Count:
+    case SlotKind::Count_:
         break;
     }
 
@@ -854,7 +854,7 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
         break;
     }
     case SlotKind::Empty:
-    case SlotKind::Count:
+    case SlotKind::Count_:
         break;
     }
 

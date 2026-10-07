@@ -45,7 +45,7 @@ bool GlyphInsideAtlas(const Glyph &glyph, const Font &font)
 /// frames bytes; this is what says the frame holds a usable font.
 bool IsConsistent(const Font &font)
 {
-    if (font.kind >= FontKind::Count ||
+    if (font.kind >= FontKind::Count_ ||
         font.atlas.size() != static_cast<std::size_t>(font.atlasWidth) * font.atlasHeight)
     {
         return false;
@@ -128,7 +128,7 @@ std::string_view ToString(CookedFontError error) noexcept
         return "the font bytes end part-way through";
     case CookedFontError::Invalid:
         return "the font's tables contradict each other";
-    case CookedFontError::Count:
+    case CookedFontError::Count_:
         break;
     }
     return "unknown";
@@ -214,7 +214,7 @@ std::expected<Font, CookedFontError> ReadCookedFont(std::span<const std::byte> b
     font.atlasHeight   = reader.ReadUInt32();
     // Held as the raw byte until the tables are read, so a truncated blob is
     // reported as truncated whatever its kind byte says.
-    font.kind = static_cast<FontKind>(std::min<uint8_t>(kind, static_cast<uint8_t>(FontKind::Count)));
+    font.kind = static_cast<FontKind>(std::min<uint8_t>(kind, static_cast<uint8_t>(FontKind::Count_)));
 
     const std::optional<uint32_t> atlasBytes = ReadCount(reader, sizeof(uint8_t));
     if (!atlasBytes)

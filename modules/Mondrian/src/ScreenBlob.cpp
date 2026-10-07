@@ -109,7 +109,7 @@ std::string_view ToString(CookedScreenError error) noexcept
         return "a screen layout this build does not read";
     case CookedScreenError::Invalid:
         return "describes no usable screen";
-    case CookedScreenError::Count:
+    case CookedScreenError::Count_:
         break;
     }
     return "unknown";

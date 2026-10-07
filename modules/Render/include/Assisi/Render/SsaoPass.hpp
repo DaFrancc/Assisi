@@ -76,9 +76,9 @@ private:
         Occlusion,
         BlurHorizontal,
         BlurVertical,
-        Count
+        Count_
     };
-    static constexpr uint32_t kStepCount = static_cast<uint32_t>(Step::Count);
+    static constexpr uint32_t kStepCount = static_cast<uint32_t>(Step::Count_);
 
     [[nodiscard]] bool CreateTargets();
     void CreateBindingSets();

@@ -21,7 +21,7 @@ enum class AudioBackend : std::uint8_t
 {
     Default, ///< The platform's best available backend.
     Null,    ///< No hardware: device callbacks run on a timer. For tests and headless runs.
-    Count,
+    Count_,
 };
 
 /// @brief Lists devices and opens them (AudioDevice::Open).

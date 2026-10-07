@@ -132,7 +132,7 @@ enum class Tone : uint8_t
 {
     Plain,
     Loud = 4,
-    Count
+    Count_
 };
 
 /// @brief A value struct holding a pooled string it leaves to its holder's pool,

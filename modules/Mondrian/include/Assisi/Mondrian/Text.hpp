@@ -28,7 +28,7 @@ enum class GlyphClass : uint8_t
     Ink,        ///< drawn, and never a place to break
     Whitespace, ///< a break may follow it; not counted in a line's width at its end
     Newline,    ///< ends its line; has no advance and draws nothing
-    Count
+    Count_
 };
 
 /// @brief One glyph as the shaper produced it.
@@ -53,7 +53,7 @@ enum class TextAlign : uint8_t
     Left,
     Center,
     Right,
-    Count
+    Count_
 };
 
 /// @brief One glyph where layout put it, relative to the block's top-left.

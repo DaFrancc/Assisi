@@ -67,7 +67,7 @@ enum class ScreenLoadError : uint8_t
     /// package or a document built by hand.
     BadTarget,
 
-    Count
+    Count_
 };
 
 [[nodiscard]] std::string_view ToString(ScreenLoadError error) noexcept;

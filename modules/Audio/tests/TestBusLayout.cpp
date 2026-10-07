@@ -26,7 +26,7 @@ BusDeclaration Declare(std::string_view name, std::string_view parent)
 TEST_CASE("The default layout is Master with every other default bus under it")
 {
     const BusLayout layout = BusLayout::Defaults();
-    REQUIRE(layout.Count() == std::to_underlying(DefaultBus::Count));
+    REQUIRE(layout.Count() == std::to_underlying(DefaultBus::Count_));
     CHECK_FALSE(layout.Parent(ToBusId(DefaultBus::Master)).has_value());
     CHECK(layout.FindBus("Master") == ToBusId(DefaultBus::Master));
     CHECK(layout.FindBus("SFX") == ToBusId(DefaultBus::Sfx));

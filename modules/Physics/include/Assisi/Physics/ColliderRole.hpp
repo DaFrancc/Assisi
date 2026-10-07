@@ -33,7 +33,7 @@ enum class ColliderRole : std::uint8_t
     /// ColliderAttach::Body: its own kinematic body, put at its entity's pose
     /// after every step.
     Follower,
-    Count,
+    Count_,
 };
 
 /// @brief A Collider's role, and the entity whose body it answers for.

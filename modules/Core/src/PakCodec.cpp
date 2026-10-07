@@ -133,7 +133,7 @@ std::string_view ToString(PakCodec codec) noexcept
         return "lz4";
     case PakCodec::Zstd:
         return "zstd";
-    case PakCodec::Count:
+    case PakCodec::Count_:
         break;
     }
     return {};
@@ -149,7 +149,7 @@ std::expected<std::vector<std::byte>, PakCodecError> CompressSlice(PakCodec code
         return CompressLz4(bytes);
     case PakCodec::Zstd:
         return CompressZstd(bytes);
-    case PakCodec::Count:
+    case PakCodec::Count_:
         break;
     }
     return std::unexpected(PakCodecError::UnknownCodec);
@@ -170,7 +170,7 @@ std::expected<std::vector<std::byte>, PakCodecError> DecompressSlice(PakCodec co
         return DecompressLz4(bytes, uncompressedSize);
     case PakCodec::Zstd:
         return DecompressZstd(bytes, uncompressedSize);
-    case PakCodec::Count:
+    case PakCodec::Count_:
         break;
     }
     return std::unexpected(PakCodecError::UnknownCodec);

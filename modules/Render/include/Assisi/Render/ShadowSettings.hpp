@@ -87,7 +87,7 @@ enum class ShadowPcss : std::uint8_t
     Off = 0,
     Sun = 1,
     SunAndLocals = 2,
-    Count = 3,
+    Count_ = 3,
 };
 
 /// @brief The widest a contact-hardening search or kernel may reach from its
@@ -707,7 +707,7 @@ struct ShadowSettings
     settings.sun = Sanitized(settings.sun);
     settings.local = Sanitized(settings.local);
     settings.selection = Sanitized(settings.selection);
-    if (settings.pcss >= ShadowPcss::Count)
+    if (settings.pcss >= ShadowPcss::Count_)
     {
         settings.pcss = ShadowSettings{}.pcss;
     }

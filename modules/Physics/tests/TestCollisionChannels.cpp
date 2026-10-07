@@ -195,7 +195,7 @@ TEST_CASE("Every body keeps the whole filter it was given, however many distinct
     for (int32_t i = 0; i < kBodies; ++i)
     {
         // Every channel but Trigger, which would make the body a sensor.
-        const uint32_t slot = static_cast<uint32_t>(i) % static_cast<uint32_t>(Physics::CollisionChannel::Count);
+        const uint32_t slot = static_cast<uint32_t>(i) % static_cast<uint32_t>(Physics::CollisionChannel::Count_);
         const Physics::CollisionChannel channel = slot == static_cast<uint32_t>(Physics::CollisionChannel::Trigger)
                                                       ? Physics::GameChannel(0)
                                                       : static_cast<Physics::CollisionChannel>(slot);

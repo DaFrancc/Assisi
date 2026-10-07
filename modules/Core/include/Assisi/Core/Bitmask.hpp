@@ -24,13 +24,13 @@ namespace Assisi::Core
 /// Bitmask stores its bits in a uint32_t.
 inline constexpr std::uint32_t kBitmaskBits = 32;
 
-/// @brief A scoped enum with a trailing `Count` that fits in a Bitmask.
+/// @brief A scoped enum with a trailing `Count_` that fits in a Bitmask.
 ///
-/// `Count` is what All() is built from, so the full set widens with the enum
+/// `Count_` is what All() is built from, so the full set widens with the enum
 /// instead of needing a matching edit.
 template <typename E>
-concept BitmaskEnum = std::is_scoped_enum_v<E> && requires { E::Count; } &&
-                      static_cast<std::uint32_t>(E::Count) <= kBitmaskBits;
+concept BitmaskEnum = std::is_scoped_enum_v<E> && requires { E::Count_; } &&
+                      static_cast<std::uint32_t>(E::Count_) <= kBitmaskBits;
 
 /// @brief A set of @p E's enumerators; bit N is the enumerator whose value is N.
 ///
@@ -43,10 +43,10 @@ template <BitmaskEnum E> struct Bitmask
     /// @brief The set holding only @p value.
     [[nodiscard]] static constexpr Bitmask Of(E value) { return Bitmask{BitOf(value)}; }
 
-    /// @brief Every enumerator before `Count`.
+    /// @brief Every enumerator before `Count_`.
     [[nodiscard]] static constexpr Bitmask All()
     {
-        constexpr std::uint32_t count = static_cast<std::uint32_t>(E::Count);
+        constexpr std::uint32_t count = static_cast<std::uint32_t>(E::Count_);
         // Shifting a uint32_t by 32 is undefined, so a full-width enum is spelled out.
         if constexpr (count == kBitmaskBits)
         {

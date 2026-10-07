@@ -34,7 +34,7 @@ Span Ahead(const Rect &rect, NavDirection direction)
     case NavDirection::Left:
         return {.start = -(rect.x + rect.width), .end = -rect.x};
     case NavDirection::Right:
-    case NavDirection::Count:
+    case NavDirection::Count_:
         break;
     }
     return {.start = rect.x, .end = rect.x + rect.width};

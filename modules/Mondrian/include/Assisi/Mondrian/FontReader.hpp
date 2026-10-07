@@ -32,7 +32,7 @@ enum class FontLoadError : uint8_t
     Unreadable, ///< The font exists and its bytes could not be read.
     Invalid,    ///< The bytes were read and are not a usable font.
     NoReader,   ///< No reader is installed.
-    Count
+    Count_
 };
 
 [[nodiscard]] std::string_view ToString(FontLoadError error) noexcept;

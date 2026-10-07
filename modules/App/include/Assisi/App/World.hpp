@@ -79,7 +79,7 @@ enum class StartProgress : std::uint8_t
     /// Loaded has run: every asset the world references has settled.
     Loaded,
 
-    Count
+    Count_
 };
 
 /// @brief One resident level: its entities, its physics, and the bookkeeping

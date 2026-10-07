@@ -77,7 +77,7 @@ enum class CookedStringTableError : uint8_t
     Truncated,          ///< The bytes ran out inside the payload.
     UnsupportedVersion, ///< A table layout this build does not read.
     Invalid,            ///< Framed correctly and holding a key twice.
-    Count
+    Count_
 };
 
 /// @brief A short human-readable description, for a load failure's log line.

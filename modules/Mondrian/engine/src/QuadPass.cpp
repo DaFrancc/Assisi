@@ -223,7 +223,7 @@ void QuadPass::Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *frame
         const std::size_t textureIndex =
             entry.texture.value < _textureSets.size() ? entry.texture.value : kWhiteTexture.value;
 
-        state.bindings.resize(static_cast<std::size_t>(BindingSet::Count));
+        state.bindings.resize(static_cast<std::size_t>(BindingSet::Count_));
         state.bindings[static_cast<std::size_t>(BindingSet::Instances)] = _instanceSet;
         state.bindings[static_cast<std::size_t>(BindingSet::Texture)]   = _textureSets[textureIndex];
         commandList->setGraphicsState(state);

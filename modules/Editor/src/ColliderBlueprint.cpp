@@ -34,7 +34,7 @@ Physics::Collider PrimitiveCollider(const Geometry::CollisionPiece &piece)
         break;
     case Geometry::CollisionPieceKind::Box:
     case Geometry::CollisionPieceKind::Hull:
-    case Geometry::CollisionPieceKind::Count:
+    case Geometry::CollisionPieceKind::Count_:
         collider.shape = Physics::ColliderShape::Box;
         break;
     }
@@ -72,7 +72,7 @@ std::string CollisionSummary(const Geometry::CollisionData &collision)
     {
         return "Collision: none authored. Convex uses the hull of the whole model.";
     }
-    constexpr std::size_t kKinds = static_cast<std::size_t>(Geometry::CollisionPieceKind::Count);
+    constexpr std::size_t kKinds = static_cast<std::size_t>(Geometry::CollisionPieceKind::Count_);
     constexpr std::array<std::string_view, kKinds> kSingular{"hull", "box", "sphere", "capsule", "cylinder"};
     constexpr std::array<std::string_view, kKinds> kPlural{"hulls", "boxes", "spheres", "capsules", "cylinders"};
     std::array<std::size_t, kKinds> counts{};

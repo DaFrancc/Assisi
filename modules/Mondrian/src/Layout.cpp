@@ -19,7 +19,7 @@ namespace
 constexpr float kSizeEpsilon = 1.0e-3f;
 
 /// Where Start, Center and End put something, as a fraction of the free space.
-constexpr std::array<float, static_cast<std::size_t>(Alignment::Count)> kAlignFactor{0.f, 0.5f, 1.f};
+constexpr std::array<float, static_cast<std::size_t>(Alignment::Count_)> kAlignFactor{0.f, 0.5f, 1.f};
 
 constexpr Axis kAxes[] = {Axis::X, Axis::Y};
 
@@ -166,7 +166,7 @@ class Layouter
             return length.value / kPercentOf * ViewportSide(_viewport, Axis::Y);
         case LengthUnit::Em:
             return length.value * textSize;
-        case LengthUnit::Count:
+        case LengthUnit::Count_:
             break;
         }
         return 0.f;
@@ -233,7 +233,7 @@ class Layouter
             break;
         case SizingKind::Fit:
         case SizingKind::Grow:
-        case SizingKind::Count:
+        case SizingKind::Count_:
             length = Clamp(index, axis, Component(result.content, axis) + around);
             least = std::min(length, Clamp(index, axis, Component(result.minContent, axis) + around));
             break;
@@ -620,7 +620,7 @@ class Layouter
         case TextHeight::Exactly:
             return BlockHeight(text, edit.lineLimit);
         case TextHeight::Unbounded:
-        case TextHeight::Count:
+        case TextHeight::Count_:
             break;
         }
         return text.height;
@@ -771,7 +771,7 @@ float UiScale(Extent viewport, float userScale, ScaleMatch match)
     case ScaleMatch::Height:
         matched = height / kReferenceHeight;
         break;
-    case ScaleMatch::Count:
+    case ScaleMatch::Count_:
         break;
     }
     return matched * userScale;

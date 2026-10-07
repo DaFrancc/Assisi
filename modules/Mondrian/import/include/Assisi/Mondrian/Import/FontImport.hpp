@@ -31,7 +31,7 @@ enum class FontImportError : uint8_t
     UnreadableFont,  ///< The font file's bytes are not a font.
     RasterizeFailed, ///< The rasteriser refused a glyph.
     AtlasFull,       ///< The glyphs do not fit the largest atlas allowed.
-    Count
+    Count_
 };
 
 /// @brief A short human-readable description, for a cook failure's log line.

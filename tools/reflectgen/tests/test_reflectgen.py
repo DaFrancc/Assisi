@@ -953,23 +953,32 @@ class EnumTest(unittest.TestCase):
 
     def test_trailing_count_enumerator_is_dropped(self):
         src = ("#include <cstdint>\nnamespace N {\n"
-               "AENUM()\nenum class E : uint32_t { A, B, Count };\n"
+               "AENUM()\nenum class E : uint32_t { A, B, Count_ };\n"
                "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
         info = _parse_source(src)[0].fields[0].enum_info
-        # Count says how many there are; it is not a value the field may hold, so
+        # Count_ says how many there are; it is not a value the field may hold, so
         # an editor must not offer it and a codec must not name it.
         self.assertEqual(info.constants, [("A", 0), ("B", 1)])
-        self.assertNotIn('"Count"', reflectgen.generate_cpp(_parse_source(src), "N/C.hpp"))
+        self.assertNotIn('"Count_"', reflectgen.generate_cpp(_parse_source(src), "N/C.hpp"))
 
     def test_count_that_is_not_last_is_kept(self):
         src = ("#include <cstdint>\nnamespace N {\n"
-               "AENUM()\nenum class E : uint32_t { Count, A };\n"
+               "AENUM()\nenum class E : uint32_t { Count_, A };\n"
                "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
-        # Only a trailing Count is the idiom. Elsewhere it is an ordinary
+        # Only a trailing Count_ is the idiom. Elsewhere it is an ordinary
         # enumerator that happens to share the name, and dropping it would
         # silently renumber nothing but hide a real value.
         self.assertEqual(_parse_source(src)[0].fields[0].enum_info.constants,
-                         [("Count", 0), ("A", 1)])
+                         [("Count_", 0), ("A", 1)])
+
+    def test_plain_count_is_an_ordinary_enumerator(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { A, Count };\n"
+               "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        # The marker is the underscore; an enumerator merely named Count is a
+        # value like any other.
+        self.assertEqual(_parse_source(src)[0].fields[0].enum_info.constants,
+                         [("A", 0), ("Count", 1)])
 
 
 class NarrowIntegerTest(unittest.TestCase):
@@ -1002,7 +1011,7 @@ class BitmaskTest(unittest.TestCase):
     _SRC = (
         "#include <cstdint>\n"
         "namespace N {\n"
-        "AENUM()\nenum class Channel : uint8_t { World, Character, Trigger, Count };\n"
+        "AENUM()\nenum class Channel : uint8_t { World, Character, Trigger, Count_ };\n"
         "ACOMP()\nstruct Body { AFIELD() Assisi::Core::Bitmask<Channel> collidesWith{}; };\n"
         "}\n"
     )
@@ -2356,7 +2365,7 @@ class IncludedEnumTest(unittest.TestCase):
 
     _MODE = ("#pragma once\n#include <cstdint>\n"
              "namespace Assisi::Other {\n"
-             "AENUM()\nenum class Mode : std::uint8_t { Near, Far, Count };\n"
+             "AENUM()\nenum class Mode : std::uint8_t { Near, Far, Count_ };\n"
              "}\n")
 
     def _tree(self, files: dict) -> Path:

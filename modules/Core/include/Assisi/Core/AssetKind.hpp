@@ -73,7 +73,7 @@ enum class FormatRole : std::uint8_t
     /// id. Only the engine's compiled shaders; a module cannot declare one.
     Generated,
 
-    Count,
+    Count_,
 };
 
 /// @brief One format a kind handles.

@@ -457,10 +457,10 @@ def parse_enum_constants(body: str) -> list:
     another constant or an expression) is a hard error — reflectgen needs the
     concrete value to serialize by number and to drive the editor combo.
 
-    A trailing `Count` enumerator is dropped. It names how many enumerators
+    A trailing `Count_` enumerator is dropped. It names how many enumerators
     there are, not a value anything may hold, so leaving it in would offer it in
     every editor dropdown and let a level select it. Only the last one is
-    dropped: `Count` anywhere else is an ordinary enumerator that happens to
+    dropped: `Count_` anywhere else is an ordinary enumerator that happens to
     share the name.
     """
     constants: list = []
@@ -482,7 +482,7 @@ def parse_enum_constants(body: str) -> list:
             value = next_value
         constants.append((enum_name, value))
         next_value = value + 1
-    if constants and constants[-1][0] == 'Count':
+    if constants and constants[-1][0] == 'Count_':
         constants.pop()
     return constants
 

@@ -299,7 +299,7 @@ std::string_view ToString(PakLayout layout) noexcept
         return "laid out over the previous pak";
     case PakLayout::Compacted:
         return "compacted: the previous layout left too many gaps";
-    case PakLayout::Count:
+    case PakLayout::Count_:
         break;
     }
     return {};

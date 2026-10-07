@@ -38,16 +38,16 @@ enum class NavDirection : uint8_t
     Down,
     Left,
     Right,
-    Count
+    Count_
 };
 
-inline constexpr std::size_t kNavDirectionCount = static_cast<std::size_t>(NavDirection::Count);
+inline constexpr std::size_t kNavDirectionCount = static_cast<std::size_t>(NavDirection::Count_);
 
 /// @brief Why a node could not take a name.
 enum class NameError : uint8_t
 {
     Taken, ///< another live node on the tree already has it
-    Count
+    Count_
 };
 
 /// @brief One slot: a box with optional text or image.

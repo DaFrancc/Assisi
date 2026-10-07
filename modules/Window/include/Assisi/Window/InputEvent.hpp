@@ -26,7 +26,7 @@ enum class KeyAction : int32_t
     Release,
     Press,
     Repeat, ///< the OS repeating a held key; never sent for a mouse button
-    Count
+    Count_
 };
 
 /// @brief Who input goes to, and whether the cursor is free to reach the UI.
@@ -35,7 +35,7 @@ enum class InputMode : uint8_t
     Game,      ///< the cursor captured and hidden; everything goes to the game
     Ui,        ///< the cursor free; everything goes to the UI and the game sees nothing
     GameAndUi, ///< the cursor free; it works the UI, and the keyboard drives the game
-    Count
+    Count_
 };
 
 /// @brief One mode pushed over the game's own, for taking it off again.
@@ -52,7 +52,7 @@ enum class ConsumedInput : uint8_t
 {
     Skip,    ///< consumed input reads as untouched: what gameplay asks for
     Include, ///< consumed input reads as it happened: what the consumer itself asks for
-    Count
+    Count_
 };
 
 /// @brief The modifier keys held, and the lock states on, when an event happened.

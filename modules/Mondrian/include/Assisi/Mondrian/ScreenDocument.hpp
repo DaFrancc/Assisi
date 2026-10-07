@@ -41,7 +41,7 @@ enum class ActionKind : uint8_t
     None,  ///< nothing; the node is not a control, or is one nobody bound
     Verb,  ///< something the UI does to itself, which needs no game code
     Event, ///< pushes the event named in the node, looked up in the catalog
-    Count
+    Count_
 };
 
 /// @brief What the UI does to itself when a control fires: to the screen the
@@ -55,7 +55,7 @@ enum class ScreenVerb : uint8_t
 {
     Hide, ///< hides the screen this node is on
     Step, ///< moves the target slider as that many arrow-key presses would
-    Count
+    Count_
 };
 
 /// @brief Whether @p verb acts on another node on the screen, which the file
@@ -73,7 +73,7 @@ enum class ScreenVerb : uint8_t
         return false;
     case ScreenVerb::Step:
         return true;
-    case ScreenVerb::Count:
+    case ScreenVerb::Count_:
         break;
     }
     return false;
@@ -88,7 +88,7 @@ enum class ScreenVerb : uint8_t
         return false;
     case ScreenVerb::Step:
         return true;
-    case ScreenVerb::Count:
+    case ScreenVerb::Count_:
         break;
     }
     return false;
@@ -103,7 +103,7 @@ enum class ScreenVerb : uint8_t
         return false;
     case ScreenVerb::Step:
         return widget == BuiltinWidget::ContinuousSlider || widget == BuiltinWidget::SteppedSlider;
-    case ScreenVerb::Count:
+    case ScreenVerb::Count_:
         break;
     }
     return false;

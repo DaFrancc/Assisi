@@ -21,7 +21,7 @@ enum class Fruit : std::uint8_t
     Apple,
     Pear,
     Plum,
-    Count,
+    Count_,
 };
 
 /// Fills every bit, the width at which All() cannot use a shift.
@@ -29,13 +29,13 @@ enum class Wide : std::uint8_t
 {
     First,
     Last = 31,
-    Count,
+    Count_,
 };
 
 enum Unscoped
 {
     UnscopedA,
-    Count,
+    Count_,
 };
 
 enum class NoCount
@@ -47,7 +47,7 @@ enum class TooWide : std::uint8_t
 {
     First,
     Last = 32,
-    Count,
+    Count_,
 };
 
 } // namespace
@@ -66,7 +66,7 @@ static_assert(!Assisi::Core::BitmaskEnum<TooWide>);
 static_assert(!Assisi::Core::BitmaskEnum<std::uint32_t>);
 static_assert(!Assisi::Core::BitmaskEnum<Unscoped>);
 
-TEST_CASE("Bitmask: All is exactly the enumerators before Count")
+TEST_CASE("Bitmask: All is exactly the enumerators before Count_")
 {
     CHECK(Bitmask<Fruit>::All().bits == 0b111u);
     CHECK(Bitmask<Wide>::All().bits == 0xFFFF'FFFFu);

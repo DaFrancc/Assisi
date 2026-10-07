@@ -29,7 +29,7 @@ enum class ScaleMatch : std::uint8_t
     /// A UI pixel is 1/1080 of the viewport's height, for a layout designed down.
     Height,
 
-    Count
+    Count_
 };
 
 } // namespace Assisi::Mondrian

@@ -170,7 +170,7 @@ void RequestPlay(Runtime::AudioEmitter &emitter, std::shared_ptr<const Audio::Pc
         (void)StartSound(emitter, std::move(clip), output);
         return;
     case Runtime::WhenFull::Drop:
-    case Runtime::WhenFull::Count:
+    case Runtime::WhenFull::Count_:
         return;
     }
 }

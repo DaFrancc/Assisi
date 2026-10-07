@@ -51,7 +51,7 @@ enum class PixelFormat : std::uint8_t
     Bc5,   ///< Two channels, 16 bytes per block. Normal maps: X and Y stored, Z reconstructed.
     Bc7,   ///< Four channels, 16 bytes per block. The colour format.
     R8,    ///< Uncompressed, one byte per texel. Data that block compression would blur: a glyph distance field.
-    Count,
+    Count_,
 };
 
 /// @brief Texels along each edge of one compressed block.

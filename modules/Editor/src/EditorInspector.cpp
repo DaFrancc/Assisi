@@ -1742,7 +1742,7 @@ void EditorApp::DrawColliderRole()
                               "make it move.");
         break;
     case ColliderRole::Own:
-    case ColliderRole::Count:
+    case ColliderRole::Count_:
         // The body's own shape: the RigidBody beside it already says so.
         break;
     }

@@ -35,7 +35,7 @@ enum class ScreenReadError : uint8_t
     Unreadable, ///< It exists and its bytes could not be read.
     Invalid,    ///< The bytes were read and are not a usable screen.
     NoReader,   ///< No reader is installed.
-    Count
+    Count_
 };
 
 [[nodiscard]] std::string_view ToString(ScreenReadError error) noexcept;

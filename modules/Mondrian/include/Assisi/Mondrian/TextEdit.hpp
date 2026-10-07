@@ -45,7 +45,7 @@ enum class TextEditing : uint8_t
     None,       ///< text to read: the node is not a field at all
     Selectable, ///< text to read and copy, such as an error code or an address
     Editable,   ///< a field
-    Count
+    Count_
 };
 
 /// @brief Whether a field holds one line or many.
@@ -54,7 +54,7 @@ enum class TextLines : uint8_t
 {
     Single, ///< never wraps, scrolls sideways, and submits on Enter
     Multi,  ///< wraps to its width, grows downwards, and takes a newline on Enter
-    Count
+    Count_
 };
 
 /// @brief How tall a field of many lines is, counted in lines of its own text.
@@ -68,7 +68,7 @@ enum class TextHeight : uint8_t
     Unbounded, ///< grows with what is in it, for as long as that goes on
     UpTo,      ///< grows with what is in it until it reaches its lines, then is full
     Exactly,   ///< always its lines tall, and full at that many
-    Count
+    Count_
 };
 
 /// @brief Whether a field shows what it holds.
@@ -77,7 +77,7 @@ enum class TextMask : uint8_t
 {
     None,
     Dots, ///< one mark per character, for a password
-    Count
+    Count_
 };
 
 /// @brief The things a field can be asked not to allow. Every one is on until
@@ -89,10 +89,10 @@ enum class TextAbility : uint8_t
     Cut,
     Paste,
     Drag, ///< taking hold of what is selected and dropping it somewhere else
-    Count
+    Count_
 };
 
-inline constexpr std::size_t kTextAbilityCount = static_cast<std::size_t>(TextAbility::Count);
+inline constexpr std::size_t kTextAbilityCount = static_cast<std::size_t>(TextAbility::Count_);
 
 /// @brief When a field's pattern is consulted, and what a mismatch costs.
 AENUM()
@@ -109,7 +109,7 @@ enum class TextCheck : uint8_t
     /// Enter, or focus leaving the field, sets its validity. An address can be
     /// typed in peace and judged once it is finished.
     OnCommit,
-    Count
+    Count_
 };
 
 /// @brief How far a press that landed on what is already selected has got
@@ -122,7 +122,7 @@ enum class TextDrag : uint8_t
     /// press that never moves is an ordinary click that puts the caret there.
     Held,
     Moving, ///< the pointer has moved, and the caret shows where the text would land
-    Count
+    Count_
 };
 
 /// @brief Whether a field's text is acceptable, as of the last time anything
@@ -132,7 +132,7 @@ enum class TextValidity : uint8_t
     Unchecked, ///< no pattern, or nothing has been committed yet
     Valid,
     Invalid,
-    Count
+    Count_
 };
 
 /// A field with no length limit, which is every field until one is set.

@@ -16,7 +16,7 @@ enum class DeviceKind : std::uint8_t
 {
     Output,
     Input,
-    Count,
+    Count_,
 };
 
 /// @brief Room for the largest identifier any backend uses.

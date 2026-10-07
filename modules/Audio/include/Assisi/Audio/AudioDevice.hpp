@@ -25,7 +25,7 @@ enum class DeviceState : std::uint8_t
     Stopped, ///< Open and silent: never started, or stopped on request.
     Running, ///< Calling its renderer.
     Lost,    ///< Stopped by the hardware going away; Update is reopening on the default device.
-    Count,
+    Count_,
 };
 
 /// @brief An open output device playing the engine format (AudioFormat.hpp).

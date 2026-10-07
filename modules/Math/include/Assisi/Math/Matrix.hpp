@@ -22,7 +22,7 @@ enum class MatrixColumn : uint8_t
     Up,          ///< Local +Y.
     Back,        ///< Local +Z; forward is its negation.
     Translation, ///< The origin of local space, in world space.
-    Count,
+    Count_,
 };
 
 /// @brief Column @p column of @p matrix, without its w component.

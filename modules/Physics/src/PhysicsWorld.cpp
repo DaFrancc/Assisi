@@ -80,7 +80,7 @@ JPH::Ref<JPH::ConvexShape> MakePrimitive(const Collider &collider)
     case ColliderShape::Box:
     case ColliderShape::Convex:
     case ColliderShape::Mesh:
-    case ColliderShape::Count:
+    case ColliderShape::Count_:
         break;
     }
     return new JPH::BoxShape(ClampedBoxHalfExtents(collider.halfExtents));
@@ -121,7 +121,7 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
     case ColliderShape::Box:
     case ColliderShape::Convex:
     case ColliderShape::Mesh:
-    case ColliderShape::Count:
+    case ColliderShape::Count_:
         break;
     }
     return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
@@ -709,7 +709,7 @@ void PhysicsWorld::Impl::ApplyBodyRequest(ECS::Entity owner, const BodySlot &slo
     case RequestKind::Sleep:
         bodies.DeactivateBody(slot.body);
         break;
-    case RequestKind::Count:
+    case RequestKind::Count_:
         return;
     }
 

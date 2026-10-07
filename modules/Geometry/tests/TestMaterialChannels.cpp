@@ -94,7 +94,7 @@ TEST_CASE("Each channel reads its own texture slot")
 
 TEST_CASE("kMaterialChannels lists every enumerator once")
 {
-    CHECK(kMaterialChannels.size() == static_cast<std::size_t>(MaterialChannel::Count));
+    CHECK(kMaterialChannels.size() == static_cast<std::size_t>(MaterialChannel::Count_));
     for (std::size_t i = 0; i < kMaterialChannels.size(); ++i)
     {
         // Dense and in order, because the render cache indexes its own parallel

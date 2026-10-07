@@ -463,7 +463,7 @@ inline JPH::Quat ToJolt(glm::quat rotation)
 }
 
 /// Every degree of freedom, as LockedAxis bits.
-constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count)) - 1u;
+constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count_)) - 1u;
 
 /// The motion a body is built with: static without a RigidBody, and kinematic
 /// when every axis is locked, since Jolt cannot simulate a body with no freedom
@@ -707,7 +707,7 @@ struct PhysicsWorld::Impl
         /// A Collider with a kinematic body of its own, put at its entity's
         /// pose after every step. Answered for by its owner.
         Follower,
-        Count,
+        Count_,
     };
 
     /// Everything this world keeps about one entity, at that entity's index.
@@ -1096,7 +1096,7 @@ private:
         AngularImpulse,
         Wake,
         Sleep,
-        Count,
+        Count_,
     };
 
     /// One gameplay request, waiting for the next step. `point` is read only
