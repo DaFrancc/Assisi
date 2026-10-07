@@ -1502,6 +1502,14 @@ private:
         /// character's own sweep and before the bodies are solved.
         JPH::Vec3 localFeet = JPH::Vec3::sZero();
 
+        /// World velocity of the ground the character last stood on, so a
+        /// carrier's grip can take up only the speed the carrier has over it.
+        JPH::Vec3 lastGroundVelocity = JPH::Vec3::sZero();
+
+        /// A riding character's world velocity after its sweep: what one that
+        /// stays with other ground keeps while its base changes speed.
+        JPH::Vec3 groundedWorldVelocity = JPH::Vec3::sZero();
+
         /// The base's rotation when localFeet was taken; the carry turns the
         /// character by how far the base turned since.
         JPH::Quat baseRotation = JPH::Quat::sIdentity();
@@ -1567,6 +1575,10 @@ private:
         /// Seconds a pending jump request has left before it is forgotten.
         float jumpBufferRemaining = 0.f;
 
+        /// While riding, seconds left before a rider its carrier no longer
+        /// holds is let go; see Carrier::graceTime.
+        float graceRemaining = 0.f;
+
         Stance stance = Stance::Standing;
 
         BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
@@ -1579,6 +1591,15 @@ private:
         /// Set by a riding character's sweep that jumped or ended off its base:
         /// it is carried one last time with this step's motion, then let go.
         bool leavingBase = false;
+
+        /// Riding the body CharacterIntent::base names, which no carrier rule
+        /// lets go of.
+        bool basedByIntent = false;
+
+        /// Riding, but standing on other ground that it moves with rather than
+        /// the base (CarrierFooting::Ground): the base's change of speed is not
+        /// passed on to it.
+        bool withGround = false;
 
         Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
 
@@ -1623,30 +1644,62 @@ private:
     void StepCharacters(float deltaTime);
 
     /// The carrier under @p record that it may ride: the owner of its ground
-    /// body, when that is a body with RigidBody::carriesRiders and the character
+    /// body, when that is a body with a Carrier and the character
     /// rides bases. NullEntity otherwise.
     ECS::Entity CarrierUnder(const CharacterRecord &record) const;
+
+    /// Whether @p record is inside one of @p carrier's CarrierVolume triggers,
+    /// as the last solve left the overlaps.
+    bool InsideVolumeOf(const CharacterRecord &record, ECS::Entity carrier) const;
+
+    /// The carrier with the highest priority that would take @p record now,
+    /// the lower entity breaking a tie, or NullEntity: the one it stands on if
+    /// @p standing, and any it is inside the volume of that joins by volume.
+    /// One joined by volume and held by touch would let go at once of a rider
+    /// standing on other ground, so it does not take one.
+    ECS::Entity BestCarrierFor(const CharacterRecord &record, bool standing) const;
+
+    /// The priority of @p carrier's Carrier; 0 when it has none.
+    uint8_t PriorityOf(ECS::Entity carrier) const;
+
+    /// Boards @p record onto the best carrier that would take it, when it
+    /// rides none or that carrier outranks the one it rides. @p velocity and
+    /// @p groundVelocity, as the step read them, are made relative to the
+    /// carrier boarded.
+    void BoardBestCarrier(CharacterRecord &record, bool standing, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
+
+    /// Rides @p record on @p wanted, the body its CharacterIntent names, as
+    /// BoardBestCarrier boards a carrier. A body that is gone or static is let
+    /// go and cleared from the intent; a cleared intent hands the rider back to
+    /// its carriers. @return whether the intent decides the base this step.
+    bool RideIntentBase(CharacterRecord &record, ECS::Entity wanted, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
 
     /// Whether @p record's base still carries it: alive, still the body it
     /// rode, still a carrier, and the character still rides bases.
     bool StillCarried(const CharacterRecord &record) const;
 
-    /// Starts @p record riding @p carrier. The caller makes the character's
-    /// velocity relative to the carrier's.
-    void AttachRider(CharacterRecord &record, ECS::Entity carrier);
+    /// Starts @p record riding @p carrier and makes @p velocity, the world
+    /// velocity it is about to steer from, relative to the carrier — taking up
+    /// the carrier's speed over the last ground as far as its grip says.
+    void AttachRider(CharacterRecord &record, ECS::Entity carrier, JPH::Vec3 &velocity);
 
     /// Stops @p record riding. Its velocity becomes world velocity again, with
     /// the base's at its feet added while the base's body still exists.
     void ReleaseRider(CharacterRecord &record);
+
+    /// ReleaseRider, from inside a step that has already read @p velocity and
+    /// @p groundVelocity relative to the base: both go back to the world.
+    void ReleaseMidStep(CharacterRecord &record, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
 
     /// The world velocity of @p record's base at its feet; zero when it rides
     /// nothing or the base's body is gone.
     JPH::Vec3 BaseVelocityAt(const CharacterRecord &record) const;
 
     /// After a riding character's sweep: takes its feet into the base's frame
-    /// as the base stands before the solve, and marks it leaving when it jumped
-    /// or no longer stands on the base.
-    void RecordRiderPose(CharacterRecord &record, bool jumping);
+    /// as the base stands before the solve, and marks it leaving when it
+    /// stands on other ground, or its carrier stopped holding it more than the
+    /// grace time ago. A jump leaves the deck.
+    void RecordRiderPose(CharacterRecord &record, bool jumping, float deltaTime);
 
     /// Moves every riding character with its base by the motion the solve just
     /// gave the base, turning its facing with the base's yaw unless it opted

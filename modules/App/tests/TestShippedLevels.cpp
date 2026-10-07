@@ -117,10 +117,12 @@ TEST_CASE("Every shipped level loads, builds its bodies and simulates")
         App::World world{Assisi::Physics::NoCollisionAssets()};
         REQUIRE(App::LoadLevelSim(world, virtualPath));
 
+        // A piece or a follower answers through its owner's body; HasBody is
+        // false for it by design.
         for (auto [entity, collider] : world.scene.Query<Physics::Collider>())
         {
             (void)collider;
-            CHECK(world.physics.HasBody(entity));
+            CHECK(world.physics.HasBody(world.physics.BodyOf(entity)));
         }
         for (auto [entity, character] : world.scene.Query<Physics::Character>())
         {

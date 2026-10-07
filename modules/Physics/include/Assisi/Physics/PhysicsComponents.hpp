@@ -275,15 +275,72 @@ struct RigidBody
     /// including when the volume is moved onto them; one that may sleep learns
     /// about a resting body only when that body is woken.
     AFIELD() bool allowSleep = true;
+};
 
-    /// @brief Whether a character standing on this body moves in its frame.
-    ///
-    /// A character on a carrier is moved with it every step, turning with it,
-    /// so it neither slides on a rocking deck nor lags on a fast one. A body
-    /// that does not carry still lends a character its velocity, which is
-    /// enough for a slow, flat platform. Characters opt out with
-    /// CharacterOption::RidesBases.
-    AFIELD() bool carriesRiders = false;
+/// @brief How a rider is in touch with a carrier. Each value reaches further
+/// than the one before and includes it.
+AENUM()
+enum class CarrierContact : std::uint8_t
+{
+    Touch,  ///< Standing on one of the carrier's colliders; brushing its side is not enough.
+    Volume, ///< Touch, or inside one of the carrier's CarrierVolume triggers.
+    Count_,
+};
+
+/// @brief What a rider a carrier holds moves with while it stands on ground
+/// that is not the carrier.
+AENUM()
+enum class CarrierFooting : std::uint8_t
+{
+    Ground,  ///< The ground it stands on, as any character does: the carrier sweeps past it.
+    Carrier, ///< The carrier: it stays still in the carrier's frame and slides over the ground.
+    Count_,
+};
+
+/// @brief A body that carries the characters riding it in its own frame.
+///
+/// A rider is moved with its carrier every step, turning with it, so it
+/// neither slides on a rocking deck nor lags on a fast one. A body without one
+/// still lends a character standing on it its velocity, which is enough for a
+/// slow, flat platform. Characters opt out with CharacterOption::RidesBases.
+///
+/// A rider kept while in the air stays in the carrier's frame: it is carried,
+/// steers and falls relative to the carrier, and so turns and speeds up with
+/// it.
+ACOMP(replicable, requires = {RigidBody})
+struct Carrier
+{
+    /// Seconds a rider is kept after @ref hold stops holding it, so a hop or
+    /// a bump does not let go. Standing on anything else lets go at once.
+    AFIELD(min = 0.0) float graceTime = 0.f;
+
+    /// How much of the carrier's horizontal speed, over the ground it last
+    /// stood on, a rider takes up when it boards. At 1 it lands moving with
+    /// the deck as it moved over where it came from; at 0 it keeps its speed
+    /// and slides until friction stops it.
+    AFIELD(min = 0.0, max = 1.0) float grip = 1.f;
+
+    /// What starts a ride.
+    AFIELD() CarrierContact join = CarrierContact::Touch;
+
+    /// What keeps a ride going.
+    AFIELD() CarrierContact hold = CarrierContact::Touch;
+
+    /// What a held rider standing on other ground moves with. Only a rider
+    /// held by its volume, or by gameplay, can be standing on other ground.
+    AFIELD() CarrierFooting footing = CarrierFooting::Ground;
+
+    /// A carrier that would take a rider takes it from one with a lower
+    /// priority. On a tie the rider keeps the one it is on.
+    AFIELD() uint8_t priority = 0;
+};
+
+/// @brief Marks a trigger under a Carrier as the carrier's volume: being inside
+/// it is CarrierContact::Volume. A trigger under a carrier is no volume unless
+/// marked, since it may be a pickup zone or anything else.
+ACOMP(replicable, requires = {Collider})
+struct CarrierVolume
+{
 };
 
 /// @brief What a RigidBody is doing, after the last step.
@@ -544,7 +601,7 @@ struct CharacterState
     AFIELD() ECS::Entity groundEntity{ECS::NullEntity};
 
     /// The carrier the character is riding, moving in its frame, or NullEntity
-    /// when it rides nothing. See RigidBody::carriesRiders.
+    /// when it rides nothing. See Carrier.
     AFIELD() ECS::Entity baseEntity{ECS::NullEntity};
 
     /// Seconds since the character was last @ref GroundState::OnGround, zero
@@ -602,7 +659,7 @@ enum class CharacterOption : std::uint8_t
 {
     PushesBodies,  ///< Shoves the bodies it walks into.
     Pushable,      ///< Is shoved by bodies that walk or fall into it.
-    RidesBases,    ///< Moves in the frame of a carrier it stands on; see RigidBody::carriesRiders.
+    RidesBases,    ///< Rides a Carrier it is in touch with.
     TurnsWithBase, ///< While riding, its facing turns with the carrier's yaw.
     Count_,
 };
@@ -770,6 +827,13 @@ struct CharacterIntent
     /// shorter one for proportionally less. The vertical component is ignored:
     /// going up is @ref jump's business and going down is gravity's.
     AFIELD() glm::vec3 move{0.f};
+
+    /// The body to ride whatever the contact, held for as long as it is set,
+    /// or NullEntity to leave riding to the carriers the character is in touch
+    /// with. Any body with a RigidBody will do, Carrier or not: neither a
+    /// Carrier's rules nor CharacterOption::RidesBases apply to it. The physics
+    /// world clears it when the body is gone or has no RigidBody.
+    AFIELD() ECS::Entity base{ECS::NullEntity};
 
     /// The stance being asked for, held for as long as it is wanted rather than
     /// pulsed. Asking to stand under something too low fails silently and is

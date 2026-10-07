@@ -40,6 +40,7 @@ All four are in `<Assisi/Physics/PhysicsComponents.hpp>`:
 | `RigidBody` | An entity with a `Collider` that should move. | Makes the body dynamic or kinematic, and sets how heavy it is and how it moves. |
 | `BodyState` | Nothing: the engine adds it with `RigidBody`. | Holds the body's current speed and spin, updated after every step. |
 | `Character` | A player or an NPC. | Makes the entity walk, jump and crouch instead of tumbling like a box. See [The character controller](physics-character.md). |
+| `Carrier` | A moving body characters should ride: a boat, a train, a lift. | Moves the characters on it in its own frame. See [Riding a moving body](physics-character.md#riding-a-moving-body). |
 
 ## Try it: a floor and a falling box
 
@@ -105,7 +106,6 @@ a warning and uses the closest scale the shape can take.
 | `lockedAxes` | Directions the body may not move along or turn around. Locking all three rotations keeps a body upright. |
 | `ccd` | Turn this on for small, fast objects such as bullets, so they cannot pass through a thin wall between two steps. It costs a little more. |
 | `allowSleep` | Whether the body may sleep. A body that has stopped moving is put to sleep: the engine stops simulating it until something touches or pushes it. Leave this on unless the body must keep reacting while still. |
-| `carriesRiders` | Whether a character standing on the body moves with it, turning as it turns. Off by default; see [the character controller](physics-character.md#riding-a-moving-body). |
 
 To stop a moving object for a while, such as one the player picks up, switch
 its `motion` to `Kinematic`, and back to `Dynamic` to let it go. Its mass and

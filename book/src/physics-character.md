@@ -83,9 +83,9 @@ It is not enough for a boat that rocks or a train that turns: the velocity a
 character takes is a step old, so it slides across the deck, and on a sharp turn
 it is thrown off.
 
-For those, make the body a **carrier**: set `carriesRiders` on its
-`RigidBody`. A character standing on a carrier **rides** it, and the carrier is
-its **base**:
+For those, make the body a **carrier**: give it a `Carrier` component, beside
+its `RigidBody`. A character on a carrier **rides** it, and the carrier is its
+**base**:
 
 - Each step, the character is first moved with its base, by exactly the
   distance and the turn the base made. Then it moves by its own intent, which
@@ -96,9 +96,71 @@ its **base**:
   stays upright and the view does not roll.
 - `CharacterState.baseEntity` names the base. `velocity` and `groundVelocity`
   stay world velocities, with the base's motion included.
-- The character stops riding when it jumps, leaves the ground, walks onto
-  something else, or is placed somewhere by writing its `Transform`. It keeps
-  its world velocity, so a jump off a moving boat carries the boat's speed.
+- When the ride ends, the character keeps its world velocity, so a jump off a
+  moving boat carries the boat's speed. Writing the character's `Transform`
+  always ends the ride.
+
+The `Carrier` decides when a ride starts and ends:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `join` | `Touch` | What starts a ride: `Touch` or `Volume`, below. |
+| `hold` | `Touch` | What keeps a ride going. A jump leaves the deck, so with `Touch` it ends the ride unless the grace time covers it. |
+| `footing` | `Ground` | What a rider the carrier holds moves with while it stands on ground that is not the carrier — possible when a volume holds it. `Ground`: that ground, as any character does, so the carrier sweeps past it and the ride ends once the volume has gone by. `Carrier`: the carrier, so the rider stays still in its frame and slides over the ground. |
+| `graceTime` | 0 | Seconds a rider is kept after `hold` stops holding it. Standing on anything else ends the ride at once. |
+| `grip` | 1 | How much of the carrier's speed a boarding rider takes up. See below. |
+| `priority` | 0 | When two carriers would take the same rider, the higher one does, even from a carrier the rider is already on. On a tie the rider keeps the one it is on. A ship landing in a hangar that is itself a carrier can take its crew from the hangar this way. |
+
+`join` and `hold` each take one of two values, and the second includes the
+first:
+
+- **`Touch`**: standing on one of the carrier's colliders. Brushing its side is
+  not enough.
+- **`Volume`**: `Touch`, or being inside one of the carrier's volumes, whether
+  standing, jumping or falling.
+
+A **volume** is a trigger under the carrier marked as the carrier's: a child
+entity with a `Collider` on the `Trigger` channel, of any shape, and a
+`CarrierVolume` component, which has no fields. The trigger follows the carrier
+like any trigger under a moving body. A carrier may have several, one per room
+or car. A trigger without `CarrierVolume` is only a trigger, so a pickup zone
+on a ship stays a pickup zone. A volume needs no floor: a rider falling through
+one is carried while it is inside.
+
+While a rider is kept in the air, by a volume or by the grace time, it stays
+in the carrier's frame: it is carried, and it steers and falls relative to the
+carrier. A hop on a turning deck lands where it was aimed, and a deck that
+speeds up takes the rider with it. Keep the grace time short — long enough for
+a hop.
+
+**Grip.** A rider boarding a fast carrier is moving much slower than the deck,
+and without help it slides across it until friction stops it, often off the
+far side. `grip` decides how much of the carrier's speed it takes up when it
+boards, measured against the ground it last stood on. At 1 a rider dropped onto
+a train lands moving with it, and one walking on from a platform keeps walking
+at the same pace across the deck. At 0 it keeps its speed and slides. Only the
+moment of boarding changes; walking and stopping work as always.
+
+| Carrier | `join` | `hold` | `graceTime` |
+|---|---|---|---|
+| A lift, a flatcar | `Touch` | `Touch` | 0 |
+| A boat you can hop about on | `Touch` | `Touch` | 0.5 |
+| A spaceship: everyone inside moves with it | `Volume` | `Volume` | 0 |
+| A train car boarded by landing on its floor, kept while inside | `Touch` | `Volume` | 0 |
+
+**Choosing the base from gameplay.** Set `CharacterIntent.base` to a body, and
+the character rides it whatever it touches, until the field is set back to
+`NullEntity`. Like `stance`, it is held, not a one-step request. The body needs
+a `RigidBody` but no `Carrier`, and no carrier rule or `RidesBases` applies to
+it, so a cutscene can seat a player in a cart nobody else should ride. If the
+body is destroyed, the engine lets the character go and clears the field. A
+game that wants its own rule for which carrier a character rides, say by team,
+writes this field.
+
+```cpp
+scene.GetMut<Physics::CharacterIntent>(player)->base = cart;            // seat
+scene.GetMut<Physics::CharacterIntent>(player)->base = ECS::NullEntity; // let go
+```
 
 Riding needs no `Parent`, and the character keeps none. Only characters ride;
 a crate on a deck stays on it by friction.
