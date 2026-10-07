@@ -549,3 +549,156 @@ TEST_CASE("A hop longer than the grace time lets go in the air, keeping its worl
     }
     CHECK(released);
 }
+
+namespace
+{
+
+/// A carrier volume under @p deck: a trigger box of @p halfExtents centred at
+/// @p local in the deck's frame.
+ECS::Entity AddVolume(TestScene &test, const Deck &deck, glm::vec3 local, glm::vec3 halfExtents)
+{
+    Physics::Collider trigger;
+    trigger.shape = Physics::ColliderShape::Box;
+    trigger.halfExtents = halfExtents;
+    trigger.channel = Physics::CollisionChannel::Trigger;
+    const ECS::Entity volume = AddChildCollider(test.scene, deck.entity, local, trigger);
+    REQUIRE(test.scene.Add(volume, Physics::CarrierVolume{}) != nullptr);
+    return volume;
+}
+
+/// A carrier that starts and keeps a ride by @p join and @p hold, with no
+/// grace time.
+Physics::Carrier CarrierOf(Physics::CarrierContact join, Physics::CarrierContact hold)
+{
+    Physics::Carrier carrier;
+    carrier.join = join;
+    carrier.hold = hold;
+    return carrier;
+}
+
+/// The whole space over the deck, four metres up.
+const glm::vec3 kCabinCentre{0.f, 2.f, 0.f};
+const glm::vec3 kCabinHalfExtents{kDeckHalfWidth, 2.f, kDeckHalfWidth};
+
+/// Hops @p rider and reports whether it stayed based on @p deck at every step
+/// until it landed again.
+bool BasedThroughHop(TestScene &test, const Deck &deck, ECS::Entity rider, float elapsed)
+{
+    Drive(test.scene, rider, glm::vec3(0.f), /*jump=*/ true);
+    bool alwaysBased = true;
+    bool leftGround = false;
+    for (int32_t i = 0; i < kMaxFallSteps; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+        const Physics::CharacterState state = StateOf(test.scene, rider);
+        alwaysBased = alwaysBased && state.baseEntity == deck.entity;
+        leftGround = leftGround || state.ground == Physics::GroundState::InAir;
+        if (leftGround && state.ground == Physics::GroundState::OnGround)
+        {
+            break;
+        }
+    }
+    return leftGround && alwaysBased;
+}
+
+} // namespace
+
+TEST_CASE("A carrier volume takes a rider falling through it, carries it while inside, and lets go below")
+{
+    const glm::vec3 deckVelocity{0.f, 0.f, 2.f};
+
+    /// A volume hanging in the air beside the deck, with nothing under it.
+    const glm::vec3 volumeCentre{2.f * kDeckHalfWidth, 5.f, 0.f};
+    const glm::vec3 volumeHalfExtents{2.f, 2.f, 4.f};
+
+    /// Dropped from above the volume, and judged in the middle of it and
+    /// below it (heights of the feet, in m). The volume's bottom is at 3, and
+    /// below means the whole capsule has cleared it, with a step's fall to
+    /// spare for the overlap to be seen.
+    constexpr float kDropHeight = 9.f;
+    constexpr float kInsideTop = 6.f;
+    constexpr float kInsideBottom = 4.f;
+    constexpr float kBelow = 0.5f;
+
+    /// How closely a carried rider follows the carrier sideways (m).
+    constexpr float kFollowTolerance = 0.05f;
+
+    TestScene test;
+    const Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Volume, Physics::CarrierContact::Volume);
+    const Deck deck = AddDeck(test, deckVelocity, 0.f, carrier);
+    AddVolume(test, deck, volumeCentre - deck.start, volumeHalfExtents);
+    const ECS::Entity rider = AddCharacter(test.scene, {volumeCentre.x, kDropHeight, 0.f});
+
+    float elapsed = 0.f;
+    bool judgedInside = false;
+    bool judgedBelow = false;
+    float riderZ = 0.f;
+    float deckZ = 0.f;
+    for (int32_t i = 0; i < kMaxFallSteps && !judgedBelow; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+        const float height = FeetOf(test, rider).y;
+        const Physics::CharacterState state = StateOf(test.scene, rider);
+        if (height < kInsideTop && height > kInsideBottom)
+        {
+            CHECK(state.baseEntity == deck.entity);
+            if (judgedInside)
+            {
+                // Each step inside moves the rider sideways with the carrier.
+                const float riderMoved = FeetOf(test, rider).z - riderZ;
+                const float deckMoved = test.world.GetBodyPose(deck.entity).position.z - deckZ;
+                CHECK(std::abs(riderMoved - deckMoved) < kFollowTolerance);
+            }
+            judgedInside = true;
+            riderZ = FeetOf(test, rider).z;
+            deckZ = test.world.GetBodyPose(deck.entity).position.z;
+        }
+        if (height < kBelow)
+        {
+            CHECK(state.baseEntity == ECS::NullEntity);
+            CHECK(state.ground == Physics::GroundState::InAir);
+            judgedBelow = true;
+        }
+    }
+    CHECK(judgedInside);
+    CHECK(judgedBelow);
+}
+
+TEST_CASE("A carrier held by its volume keeps a rider through a jump")
+{
+    TestScene test;
+    const Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Volume, Physics::CarrierContact::Volume);
+    const Deck deck = AddDeck(test, glm::vec3(3.f, 0.f, 0.f), 0.f, carrier);
+    AddVolume(test, deck, kCabinCentre, kCabinHalfExtents);
+    const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
+    const float elapsed = RideUntilBased(test, deck, rider, 0.f);
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    CHECK(BasedThroughHop(test, deck, rider, elapsed));
+}
+
+TEST_CASE("A carrier joined by touch and held by its volume takes no rider falling through, only one that lands")
+{
+    /// Dropped from above the cabin, which ends four metres over the deck (m).
+    constexpr float kDropHeight = 6.f;
+
+    TestScene test;
+    const Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Touch, Physics::CarrierContact::Volume);
+    const Deck deck = AddDeck(test, glm::vec3(0.f), 0.f, carrier);
+    AddVolume(test, deck, kCabinCentre, kCabinHalfExtents);
+    const ECS::Entity rider = AddCharacter(test.scene, {0.f, kDropHeight, 0.f});
+
+    float elapsed = 0.f;
+    for (int32_t i = 0; i < kMaxFallSteps && StateOf(test.scene, rider).ground != Physics::GroundState::OnGround; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+        if (StateOf(test.scene, rider).ground == Physics::GroundState::InAir)
+        {
+            CHECK(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
+        }
+    }
+    elapsed = RideUntilBased(test, deck, rider, elapsed);
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    CHECK(BasedThroughHop(test, deck, rider, elapsed));
+}

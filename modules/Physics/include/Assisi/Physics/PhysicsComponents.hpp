@@ -321,6 +321,14 @@ struct Carrier
     AFIELD() uint8_t priority = 0;
 };
 
+/// @brief Marks a trigger under a Carrier as the carrier's volume: being inside
+/// it is CarrierContact::Volume. A trigger under a carrier is no volume unless
+/// marked, since it may be a pickup zone or anything else.
+ACOMP(replicable, requires = {Collider})
+struct CarrierVolume
+{
+};
+
 /// @brief What a RigidBody is doing, after the last step.
 ///
 /// The physics world writes it after every step for each body that moved.

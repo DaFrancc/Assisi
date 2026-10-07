@@ -221,15 +221,24 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         const float risingSpeed = (currentVelocity - groundVelocity).Dot(kCharacterUp);
         const bool standing = onGround && risingSpeed < kMaxRisingSpeedWhileGrounded;
 
-        // Standing on a carrier: from this step on the velocity is relative to
-        // it, and the sweep below already sees it as still.
-        if (standing && record.base == ECS::NullEntity)
+        // Standing on a carrier, or inside the volume of one that boards by it:
+        // from this step on the velocity is relative to it, and the sweep below
+        // already sees it as still.
+        if (record.base == ECS::NullEntity && record.options.Has(CharacterOption::RidesBases))
         {
-            const ECS::Entity carrier = CarrierUnder(record);
+            ECS::Entity carrier = standing ? CarrierUnder(record) : ECS::NullEntity;
+            if (carrier == ECS::NullEntity)
+            {
+                carrier = VolumeCarrierFor(record, standing);
+            }
             if (carrier != ECS::NullEntity)
             {
+                // Standing on the carrier itself, its ground velocity is the
+                // carrier's; on other ground inside a volume it keeps its own.
+                const bool onCarrier = standing && OwnerOf(EntityFor(character.GetGroundBodyID())) == carrier;
+                const JPH::Vec3 worldGround = groundVelocity;
                 AttachRider(record, carrier, currentVelocity);
-                groundVelocity = JPH::Vec3::sZero();
+                groundVelocity = onCarrier ? JPH::Vec3::sZero() : worldGround - BaseVelocityAt(record);
             }
         }
 
@@ -359,6 +368,57 @@ ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) cons
     return owner;
 }
 
+bool PhysicsWorld::Impl::InsideVolumeOf(const CharacterRecord &record, ECS::Entity carrier) const
+{
+    const BodySlot *slot = SlotFor(record.entity);
+    if (slot == nullptr)
+    {
+        return false;
+    }
+    for (const PairKey key : slot->pairKeys)
+    {
+        const PairState &pair = pairs.at(key);
+        const ECS::Entity other = pair.entity1 == record.entity ? pair.entity2 : pair.entity1;
+        if (pair.sensor && scene.Has<CarrierVolume>(other) && OwnerOf(other) == carrier)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+ECS::Entity PhysicsWorld::Impl::VolumeCarrierFor(const CharacterRecord &record, bool standing) const
+{
+    const BodySlot *slot = SlotFor(record.entity);
+    if (slot == nullptr)
+    {
+        return ECS::NullEntity;
+    }
+    for (const PairKey key : slot->pairKeys)
+    {
+        const PairState &pair = pairs.at(key);
+        const ECS::Entity other = pair.entity1 == record.entity ? pair.entity2 : pair.entity1;
+        if (!pair.sensor || !scene.Has<CarrierVolume>(other))
+        {
+            continue;
+        }
+        const ECS::Entity owner = OwnerOf(other);
+        const BodySlot *ownerSlot = SlotFor(owner);
+        const Carrier *carrier = scene.Get<Carrier>(owner);
+        if (ownerSlot == nullptr || ownerSlot->kind != SlotKind::Body || carrier == nullptr ||
+            carrier->join != CarrierContact::Volume)
+        {
+            continue;
+        }
+        if (standing && carrier->hold == CarrierContact::Touch)
+        {
+            continue;
+        }
+        return owner;
+    }
+    return ECS::NullEntity;
+}
+
 bool PhysicsWorld::Impl::StillCarried(const CharacterRecord &record) const
 {
     const BodySlot *slot = SlotFor(record.base);
@@ -418,10 +478,13 @@ void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping, 
 
     // A jump has left the deck on the step it fires, though the sweep may
     // still find the deck under its feet.
+    const Carrier &carrier = *scene.Get<Carrier>(record.base);
     const bool touching = onBase && !jumping;
-    if (touching)
+    const bool held =
+        touching || (carrier.hold == CarrierContact::Volume && InsideVolumeOf(record, record.base));
+    if (held)
     {
-        record.graceRemaining = scene.Get<Carrier>(record.base)->graceTime;
+        record.graceRemaining = carrier.graceTime;
         record.leavingBase = false;
     }
     else if (onGround && !onBase)

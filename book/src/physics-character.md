@@ -104,15 +104,32 @@ The `Carrier` decides when a ride starts and ends:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `join` | `Touch` | What starts a ride. `Touch` is standing on one of the carrier's colliders; brushing its side is not enough. |
+| `join` | `Touch` | What starts a ride: `Touch` or `Volume`, below. |
 | `hold` | `Touch` | What keeps a ride going. A jump leaves the deck, so with `Touch` it ends the ride unless the grace time covers it. |
 | `graceTime` | 0 | Seconds a rider is kept after `hold` stops holding it. Standing on anything else ends the ride at once. |
 | `grip` | 1 | How much of the carrier's speed a boarding rider takes up. See below. |
 
-While a rider is kept in the air by the grace time, it stays in the carrier's
-frame: it is carried, and it steers and falls relative to the carrier. A hop on
-a turning deck lands where it was aimed, and a deck that speeds up takes the
-rider with it. Keep the grace time short — long enough for a hop.
+`join` and `hold` each take one of two values, and the second includes the
+first:
+
+- **`Touch`**: standing on one of the carrier's colliders. Brushing its side is
+  not enough.
+- **`Volume`**: `Touch`, or being inside one of the carrier's volumes, whether
+  standing, jumping or falling.
+
+A **volume** is a trigger under the carrier marked as the carrier's: a child
+entity with a `Collider` on the `Trigger` channel, of any shape, and a
+`CarrierVolume` component, which has no fields. The trigger follows the carrier
+like any trigger under a moving body. A carrier may have several, one per room
+or car. A trigger without `CarrierVolume` is only a trigger, so a pickup zone
+on a ship stays a pickup zone. A volume needs no floor: a rider falling through
+one is carried while it is inside.
+
+While a rider is kept in the air, by a volume or by the grace time, it stays
+in the carrier's frame: it is carried, and it steers and falls relative to the
+carrier. A hop on a turning deck lands where it was aimed, and a deck that
+speeds up takes the rider with it. Keep the grace time short — long enough for
+a hop.
 
 **Grip.** A rider boarding a fast carrier is moving much slower than the deck,
 and without help it slides across it until friction stops it, often off the
@@ -126,6 +143,8 @@ moment of boarding changes; walking and stopping work as always.
 |---|---|---|---|
 | A lift, a flatcar | `Touch` | `Touch` | 0 |
 | A boat you can hop about on | `Touch` | `Touch` | 0.5 |
+| A spaceship: everyone inside moves with it | `Volume` | `Volume` | 0 |
+| A train car boarded by landing on its floor, kept while inside | `Touch` | `Volume` | 0 |
 
 Riding needs no `Parent`, and the character keeps none. Only characters ride;
 a crate on a deck stays on it by friction.

@@ -1635,6 +1635,16 @@ private:
     /// rides bases. NullEntity otherwise.
     ECS::Entity CarrierUnder(const CharacterRecord &record) const;
 
+    /// Whether @p record is inside one of @p carrier's CarrierVolume triggers,
+    /// as the last solve left the overlaps.
+    bool InsideVolumeOf(const CharacterRecord &record, ECS::Entity carrier) const;
+
+    /// A carrier joined by its volume that @p record is inside and that would
+    /// keep it, or NullEntity. One joined by volume and held by touch would let
+    /// go at once of a rider @p standing on other ground, so it does not take
+    /// one.
+    ECS::Entity VolumeCarrierFor(const CharacterRecord &record, bool standing) const;
+
     /// Whether @p record's base still carries it: alive, still the body it
     /// rode, still a carrier, and the character still rides bases.
     bool StillCarried(const CharacterRecord &record) const;
