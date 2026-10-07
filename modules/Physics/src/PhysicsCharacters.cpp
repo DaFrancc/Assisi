@@ -203,6 +203,13 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             ReleaseRider(record);
         }
 
+        // A base driven by its Transform takes its new speed before this step,
+        // and a velocity relative to it would take that change along.
+        if (record.base != ECS::NullEntity && record.withGround)
+        {
+            character.SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
+        }
+
         // Fold in the motion of whatever is underfoot before reading it, or a
         // character on a platform rides last step's velocity. A base reads as
         // still: its motion is the carry's.
@@ -525,8 +532,16 @@ void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrie
     // A body gameplay seats a rider on need not be a Carrier; it grips fully
     // and keeps no grace, since nothing but gameplay lets go of the rider.
     const Carrier *settings = scene.Get<Carrier>(carrier);
-    const float grip = settings == nullptr ? 1.f : settings->grip;
     record.graceRemaining = settings == nullptr ? 0.f : settings->graceTime;
+
+    // Boarded while standing on other ground that it stays with, the rider
+    // takes up none of the carrier's speed: grip there is a shove that the
+    // ground's friction then takes back.
+    const JPH::CharacterVirtual &character = *record.character;
+    const bool onOtherGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround &&
+                               OwnerOf(EntityFor(character.GetGroundBodyID())) != carrier;
+    const bool staysWithGround = settings == nullptr || settings->footing == CarrierFooting::Ground;
+    const float grip = onOtherGround && staysWithGround ? 0.f : (settings == nullptr ? 1.f : settings->grip);
 
     // Relative to the carrier, the rider moves at its world velocity less the
     // carrier's. Grip gives back the carrier's horizontal speed over the last
@@ -565,6 +580,13 @@ void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping, 
     record.baseRotation = bodies.GetRotation(record.baseBody);
     record.localFeet =
         record.baseRotation.Conjugated() * JPH::Vec3(record.character->GetPosition() - basePosition);
+    record.groundedWorldVelocity = record.character->GetLinearVelocity() + BaseVelocityAt(record);
+
+    const JPH::CharacterVirtual &character = *record.character;
+    const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+    const bool onBase = onGround && OwnerOf(EntityFor(character.GetGroundBodyID())) == record.base;
+    const Carrier *settings = scene.Get<Carrier>(record.base);
+    record.withGround = onGround && !onBase && (settings == nullptr || settings->footing == CarrierFooting::Ground);
 
     // Only gameplay lets go of a base it set.
     if (record.basedByIntent)
@@ -573,13 +595,9 @@ void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping, 
         return;
     }
 
-    const JPH::CharacterVirtual &character = *record.character;
-    const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
-    const bool onBase = onGround && OwnerOf(EntityFor(character.GetGroundBodyID())) == record.base;
-
     // A jump has left the deck on the step it fires, though the sweep may
     // still find the deck under its feet.
-    const Carrier &carrier = *scene.Get<Carrier>(record.base);
+    const Carrier &carrier = *settings;
     const bool touching = onBase && !jumping;
     const bool held =
         touching || (carrier.hold == CarrierContact::Volume && InsideVolumeOf(record, record.base));
@@ -632,13 +650,22 @@ void PhysicsWorld::Impl::CarryRiders()
         record.character->SetPosition(feet);
 
         // The velocity is the deck's, held in world axes, so it turns with the
-        // deck; left alone, a walk across a turning deck would curve.
-        record.character->SetLinearVelocity(turned * record.character->GetLinearVelocity());
+        // deck; left alone, a walk across a turning deck would curve. One that
+        // stays with other ground keeps its world velocity instead, so the
+        // base speeding up or turning is not passed on to it as a shove.
+        if (record.withGround)
+        {
+            record.character->SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
+        }
+        else
+        {
+            record.character->SetLinearVelocity(turned * record.character->GetLinearVelocity());
+        }
 
         // Only the yaw: the capsule stays upright on a rocking deck, and so
-        // does the view.
+        // does the view. One that stays with other ground does not turn.
         const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity);
-        if (record.options.Has(CharacterOption::TurnsWithBase) && transform != nullptr)
+        if (record.options.Has(CharacterOption::TurnsWithBase) && !record.withGround && transform != nullptr)
         {
             const glm::quat yaw = YawOf(turned, kCharacterUp);
             WritePose(record.entity,

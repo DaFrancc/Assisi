@@ -1506,6 +1506,10 @@ private:
         /// carrier's grip can take up only the speed the carrier has over it.
         JPH::Vec3 lastGroundVelocity = JPH::Vec3::sZero();
 
+        /// A riding character's world velocity after its sweep: what one that
+        /// stays with other ground keeps while its base changes speed.
+        JPH::Vec3 groundedWorldVelocity = JPH::Vec3::sZero();
+
         /// The base's rotation when localFeet was taken; the carry turns the
         /// character by how far the base turned since.
         JPH::Quat baseRotation = JPH::Quat::sIdentity();
@@ -1591,6 +1595,11 @@ private:
         /// Riding the body CharacterIntent::base names, which no carrier rule
         /// lets go of.
         bool basedByIntent = false;
+
+        /// Riding, but standing on other ground that it moves with rather than
+        /// the base (CarrierFooting::Ground): the base's change of speed is not
+        /// passed on to it.
+        bool withGround = false;
 
         Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
 

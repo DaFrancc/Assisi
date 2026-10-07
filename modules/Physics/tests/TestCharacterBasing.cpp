@@ -865,18 +865,52 @@ TEST_CASE("A carrier's footing decides whether a rider its volume holds moves wi
 {
     constexpr float kSpeed = 3.f;
 
-    /// How close to the second's travel a carried rider must end up (m).
+    /// How close to the second's travel, or to standing still, the rider must
+    /// end up (m).
     constexpr float kTravelTolerance = 0.2f;
-
-    /// The most of that travel a rider moving with the floor may make: grip
-    /// gives it the carrier's speed as it boards, which friction against the
-    /// floor then takes away.
-    constexpr float kGroundedShare = 0.5f;
 
     const std::pair<float, bool> carried = StandUnderSweepingVolume(kSpeed, Physics::CarrierFooting::Carrier);
     CHECK(carried.second);
     CHECK(std::abs(carried.first - kSpeed) < kTravelTolerance);
 
     const std::pair<float, bool> grounded = StandUnderSweepingVolume(kSpeed, Physics::CarrierFooting::Ground);
-    CHECK(grounded.first < kSpeed * kGroundedShare);
+    CHECK(std::abs(grounded.first) < kTravelTolerance);
+}
+
+TEST_CASE("A moving carrier's volume reaching a rider on other ground does not shove it, with ground footing")
+{
+    constexpr float kSpeed = 3.f;
+
+    /// A static floor beside the deck, long along Z, the way the deck travels;
+    /// the volume hangs over it and reaches the rider partway through.
+    constexpr float kFloorHalfWidth = 4.f;
+    constexpr float kFloorHalfLength = 30.f;
+    constexpr float kFloorCentreX = kDeckHalfWidth + kFloorHalfWidth;
+    const glm::vec3 kVolumeCentre{kFloorCentreX, 2.f, 0.f};
+    const glm::vec3 kVolumeHalfExtents{kFloorHalfWidth, 2.f, 2.f};
+
+    /// Where the rider stands, ahead of the volume along its path.
+    constexpr float kRiderZ = 4.f;
+
+    /// How far a rider staying with the floor may move (m).
+    constexpr float kStill = 0.05f;
+
+    TestScene test;
+    const Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Volume, Physics::CarrierContact::Volume);
+    const Deck deck = AddDeck(test, glm::vec3(0.f, 0.f, kSpeed), 0.f, carrier);
+    AddBody(test.scene, {kFloorCentreX, -kDeckHalfThickness, 0.f},
+            Box({kFloorHalfWidth, kDeckHalfThickness, kFloorHalfLength}, true));
+    AddVolume(test, deck, kVolumeCentre - deck.start, kVolumeHalfExtents);
+    const ECS::Entity rider = AddRider(test, {kFloorCentreX, 0.f, kRiderZ});
+    REQUIRE(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
+
+    bool boarded = false;
+    float elapsed = 0.f;
+    for (int32_t i = 0; i < 2 * kStepsPerSecond; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+        boarded = boarded || StateOf(test.scene, rider).baseEntity == deck.entity;
+    }
+    CHECK(boarded);
+    CHECK(std::abs(FeetOf(test, rider).z - kRiderZ) < kStill);
 }
