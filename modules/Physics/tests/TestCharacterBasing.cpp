@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -818,4 +819,64 @@ TEST_CASE("A base gameplay set is let go and cleared when its body is destroyed"
 
     CHECK(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
     CHECK(test.scene.Get<Physics::CharacterIntent>(rider)->base == ECS::NullEntity);
+}
+
+namespace
+{
+
+/// How far along Z a rider standing on a static floor ends up after a second
+/// of a carrier's volume sweeping over it at @p speed, and whether it was
+/// based the whole time.
+std::pair<float, bool> StandUnderSweepingVolume(float speed, Physics::CarrierFooting footing)
+{
+    /// A static floor beside the deck, its top level with the deck's, long
+    /// along Z, which is the way the deck travels.
+    constexpr float kFloorHalfWidth = 4.f;
+    constexpr float kFloorHalfLength = 30.f;
+    constexpr float kFloorCentreX = kDeckHalfWidth + kFloorHalfWidth;
+
+    /// The volume hangs over that floor, around the rider.
+    const glm::vec3 kVolumeCentre{kFloorCentreX, 2.f, 0.f};
+    const glm::vec3 kVolumeHalfExtents{kFloorHalfWidth, 2.f, kDeckHalfWidth};
+
+    TestScene test;
+    Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Volume, Physics::CarrierContact::Volume);
+    carrier.footing = footing;
+    const Deck deck = AddDeck(test, glm::vec3(0.f, 0.f, speed), 0.f, carrier);
+    AddBody(test.scene, {kFloorCentreX, -kDeckHalfThickness, 0.f},
+            Box({kFloorHalfWidth, kDeckHalfThickness, kFloorHalfLength}, true));
+    AddVolume(test, deck, kVolumeCentre - deck.start, kVolumeHalfExtents);
+    const ECS::Entity rider = AddRider(test, {kFloorCentreX, 0.f, 0.f});
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    bool alwaysBased = true;
+    float elapsed = 0.f;
+    for (int32_t i = 0; i < kStepsPerSecond; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+        alwaysBased = alwaysBased && StateOf(test.scene, rider).baseEntity == deck.entity;
+    }
+    return {FeetOf(test, rider).z, alwaysBased};
+}
+
+} // namespace
+
+TEST_CASE("A carrier's footing decides whether a rider its volume holds moves with the ground under it")
+{
+    constexpr float kSpeed = 3.f;
+
+    /// How close to the second's travel a carried rider must end up (m).
+    constexpr float kTravelTolerance = 0.2f;
+
+    /// The most of that travel a rider moving with the floor may make: grip
+    /// gives it the carrier's speed as it boards, which friction against the
+    /// floor then takes away.
+    constexpr float kGroundedShare = 0.5f;
+
+    const std::pair<float, bool> carried = StandUnderSweepingVolume(kSpeed, Physics::CarrierFooting::Carrier);
+    CHECK(carried.second);
+    CHECK(std::abs(carried.first - kSpeed) < kTravelTolerance);
+
+    const std::pair<float, bool> grounded = StandUnderSweepingVolume(kSpeed, Physics::CarrierFooting::Ground);
+    CHECK(grounded.first < kSpeed * kGroundedShare);
 }

@@ -228,6 +228,15 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             BoardBestCarrier(record, standing, currentVelocity, groundVelocity);
         }
 
+        // Standing on other ground, a rider steers against that ground and so
+        // stays with it — unless its carrier's footing says the carrier wins,
+        // when it stays still in the carrier's frame and slides over it.
+        const Carrier *carrier = record.base == ECS::NullEntity ? nullptr : scene.Get<Carrier>(record.base);
+        if (carrier != nullptr && carrier->footing == CarrierFooting::Carrier)
+        {
+            groundVelocity = JPH::Vec3::sZero();
+        }
+
         // After boarding, so the step that walks from a dock onto a deck still
         // remembers the dock.
         if (standing)

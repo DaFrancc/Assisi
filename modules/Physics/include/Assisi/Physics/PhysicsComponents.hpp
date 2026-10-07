@@ -287,6 +287,16 @@ enum class CarrierContact : std::uint8_t
     Count_,
 };
 
+/// @brief What a rider a carrier holds moves with while it stands on ground
+/// that is not the carrier.
+AENUM()
+enum class CarrierFooting : std::uint8_t
+{
+    Ground,  ///< The ground it stands on, as any character does: the carrier sweeps past it.
+    Carrier, ///< The carrier: it stays still in the carrier's frame and slides over the ground.
+    Count_,
+};
+
 /// @brief A body that carries the characters riding it in its own frame.
 ///
 /// A rider is moved with its carrier every step, turning with it, so it
@@ -315,6 +325,10 @@ struct Carrier
 
     /// What keeps a ride going.
     AFIELD() CarrierContact hold = CarrierContact::Touch;
+
+    /// What a held rider standing on other ground moves with. Only a rider
+    /// held by its volume, or by gameplay, can be standing on other ground.
+    AFIELD() CarrierFooting footing = CarrierFooting::Ground;
 
     /// A carrier that would take a rider takes it from one with a lower
     /// priority. On a tie the rider keeps the one it is on.
