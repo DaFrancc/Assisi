@@ -147,6 +147,20 @@ moment of boarding changes; walking and stopping work as always.
 | A spaceship: everyone inside moves with it | `Volume` | `Volume` | 0 |
 | A train car boarded by landing on its floor, kept while inside | `Touch` | `Volume` | 0 |
 
+**Choosing the base from gameplay.** Set `CharacterIntent.base` to a body, and
+the character rides it whatever it touches, until the field is set back to
+`NullEntity`. Like `stance`, it is held, not a one-step request. The body needs
+a `RigidBody` but no `Carrier`, and no carrier rule or `RidesBases` applies to
+it, so a cutscene can seat a player in a cart nobody else should ride. If the
+body is destroyed, the engine lets the character go and clears the field. A
+game that wants its own rule for which carrier a character rides, say by team,
+writes this field.
+
+```cpp
+scene.GetMut<Physics::CharacterIntent>(player)->base = cart;            // seat
+scene.GetMut<Physics::CharacterIntent>(player)->base = ECS::NullEntity; // let go
+```
+
 Riding needs no `Parent`, and the character keeps none. Only characters ride;
 a crate on a deck stays on it by friction.
 

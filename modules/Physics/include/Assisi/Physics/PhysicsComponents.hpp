@@ -814,6 +814,13 @@ struct CharacterIntent
     /// going up is @ref jump's business and going down is gravity's.
     AFIELD() glm::vec3 move{0.f};
 
+    /// The body to ride whatever the contact, held for as long as it is set,
+    /// or NullEntity to leave riding to the carriers the character is in touch
+    /// with. Any body with a RigidBody will do, Carrier or not: neither a
+    /// Carrier's rules nor CharacterOption::RidesBases apply to it. The physics
+    /// world clears it when the body is gone or has no RigidBody.
+    AFIELD() ECS::Entity base{ECS::NullEntity};
+
     /// The stance being asked for, held for as long as it is wanted rather than
     /// pulsed. Asking to stand under something too low fails silently and is
     /// retried every step, so a character stands back up by itself once it walks

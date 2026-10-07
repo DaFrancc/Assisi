@@ -1588,6 +1588,10 @@ private:
         /// it is carried one last time with this step's motion, then let go.
         bool leavingBase = false;
 
+        /// Riding the body CharacterIntent::base names, which no carrier rule
+        /// lets go of.
+        bool basedByIntent = false;
+
         Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
 
         /// Copies the tuning a step reads from @p character, leaving the
@@ -1655,6 +1659,12 @@ private:
     /// carrier boarded.
     void BoardBestCarrier(CharacterRecord &record, bool standing, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
 
+    /// Rides @p record on @p wanted, the body its CharacterIntent names, as
+    /// BoardBestCarrier boards a carrier. A body that is gone or static is let
+    /// go and cleared from the intent; a cleared intent hands the rider back to
+    /// its carriers. @return whether the intent decides the base this step.
+    bool RideIntentBase(CharacterRecord &record, ECS::Entity wanted, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
+
     /// Whether @p record's base still carries it: alive, still the body it
     /// rode, still a carrier, and the character still rides bases.
     bool StillCarried(const CharacterRecord &record) const;
@@ -1667,6 +1677,10 @@ private:
     /// Stops @p record riding. Its velocity becomes world velocity again, with
     /// the base's at its feet added while the base's body still exists.
     void ReleaseRider(CharacterRecord &record);
+
+    /// ReleaseRider, from inside a step that has already read @p velocity and
+    /// @p groundVelocity relative to the base: both go back to the world.
+    void ReleaseMidStep(CharacterRecord &record, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity);
 
     /// The world velocity of @p record's base at its feet; zero when it rides
     /// nothing or the base's body is gone.

@@ -221,9 +221,12 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         const float risingSpeed = (currentVelocity - groundVelocity).Dot(kCharacterUp);
         const bool standing = onGround && risingSpeed < kMaxRisingSpeedWhileGrounded;
 
-        // From this step on the velocity is relative to the carrier boarded, and
+        // From this step on the velocity is relative to the base boarded, and
         // the sweep below already sees it as still.
-        BoardBestCarrier(record, standing, currentVelocity, groundVelocity);
+        if (!RideIntentBase(record, intent.base, currentVelocity, groundVelocity))
+        {
+            BoardBestCarrier(record, standing, currentVelocity, groundVelocity);
+        }
 
         // After boarding, so the step that walks from a dock onto a deck still
         // remembers the dock.
@@ -432,10 +435,7 @@ void PhysicsWorld::Impl::BoardBestCarrier(CharacterRecord &record, bool standing
         {
             return;
         }
-        const JPH::Vec3 oldBase = BaseVelocityAt(record);
-        velocity += oldBase;
-        groundVelocity += oldBase;
-        ReleaseRider(record);
+        ReleaseMidStep(record, velocity, groundVelocity);
     }
 
     // Standing on the carrier itself, its ground velocity is the carrier's;
@@ -446,11 +446,65 @@ void PhysicsWorld::Impl::BoardBestCarrier(CharacterRecord &record, bool standing
     groundVelocity = onCarrier ? JPH::Vec3::sZero() : worldGround - BaseVelocityAt(record);
 }
 
+void PhysicsWorld::Impl::ReleaseMidStep(CharacterRecord &record, JPH::Vec3 &velocity, JPH::Vec3 &groundVelocity)
+{
+    const JPH::Vec3 oldBase = BaseVelocityAt(record);
+    velocity += oldBase;
+    groundVelocity += oldBase;
+    ReleaseRider(record);
+}
+
+bool PhysicsWorld::Impl::RideIntentBase(CharacterRecord &record, ECS::Entity wanted, JPH::Vec3 &velocity,
+                                        JPH::Vec3 &groundVelocity)
+{
+    if (wanted == ECS::NullEntity)
+    {
+        // Handed back to the carriers, which take it again this step if they
+        // hold it; through grip the velocity carries on unbroken.
+        if (record.basedByIntent)
+        {
+            ReleaseMidStep(record, velocity, groundVelocity);
+        }
+        return false;
+    }
+
+    const BodySlot *slot = SlotFor(wanted);
+    if (slot == nullptr || slot->kind != SlotKind::Body)
+    {
+        if (record.basedByIntent)
+        {
+            ReleaseMidStep(record, velocity, groundVelocity);
+        }
+        // Cleared rather than ignored, so gameplay sees the ride is over. The
+        // write marks the intent changed, which is what it is.
+        scene.GetMut<CharacterIntent>(record.entity)->base = ECS::NullEntity;
+        return false;
+    }
+
+    if (record.base != wanted)
+    {
+        if (record.base != ECS::NullEntity)
+        {
+            ReleaseMidStep(record, velocity, groundVelocity);
+        }
+        const bool onBody = OwnerOf(EntityFor(record.character->GetGroundBodyID())) == wanted;
+        const JPH::Vec3 worldGround = groundVelocity;
+        AttachRider(record, wanted, velocity);
+        groundVelocity = onBody ? JPH::Vec3::sZero() : worldGround - BaseVelocityAt(record);
+    }
+    record.basedByIntent = true;
+    return true;
+}
+
 bool PhysicsWorld::Impl::StillCarried(const CharacterRecord &record) const
 {
     const BodySlot *slot = SlotFor(record.base);
-    return record.options.Has(CharacterOption::RidesBases) && slot != nullptr && slot->kind == SlotKind::Body &&
-           slot->body == record.baseBody && scene.Has<Carrier>(record.base);
+    if (slot == nullptr || slot->kind != SlotKind::Body || slot->body != record.baseBody)
+    {
+        return false;
+    }
+    return record.basedByIntent ||
+           (record.options.Has(CharacterOption::RidesBases) && scene.Has<Carrier>(record.base));
 }
 
 void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrier, JPH::Vec3 &velocity)
@@ -459,8 +513,11 @@ void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrie
     record.baseBody = SlotFor(carrier)->body;
     record.leavingBase = false;
 
-    const Carrier &settings = *scene.Get<Carrier>(carrier);
-    record.graceRemaining = settings.graceTime;
+    // A body gameplay seats a rider on need not be a Carrier; it grips fully
+    // and keeps no grace, since nothing but gameplay lets go of the rider.
+    const Carrier *settings = scene.Get<Carrier>(carrier);
+    const float grip = settings == nullptr ? 1.f : settings->grip;
+    record.graceRemaining = settings == nullptr ? 0.f : settings->graceTime;
 
     // Relative to the carrier, the rider moves at its world velocity less the
     // carrier's. Grip gives back the carrier's horizontal speed over the last
@@ -469,7 +526,7 @@ void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrie
     const JPH::Vec3 baseVelocity = BaseVelocityAt(record);
     JPH::Vec3 gained = baseVelocity - record.lastGroundVelocity;
     gained -= kCharacterUp * gained.Dot(kCharacterUp);
-    velocity += settings.grip * gained - baseVelocity;
+    velocity += grip * gained - baseVelocity;
 }
 
 JPH::Vec3 PhysicsWorld::Impl::BaseVelocityAt(const CharacterRecord &record) const
@@ -488,6 +545,7 @@ void PhysicsWorld::Impl::ReleaseRider(CharacterRecord &record)
     record.base = ECS::NullEntity;
     record.baseBody = JPH::BodyID{};
     record.leavingBase = false;
+    record.basedByIntent = false;
     record.graceRemaining = 0.f;
 }
 
@@ -498,6 +556,13 @@ void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping, 
     record.baseRotation = bodies.GetRotation(record.baseBody);
     record.localFeet =
         record.baseRotation.Conjugated() * JPH::Vec3(record.character->GetPosition() - basePosition);
+
+    // Only gameplay lets go of a base it set.
+    if (record.basedByIntent)
+    {
+        record.leavingBase = false;
+        return;
+    }
 
     const JPH::CharacterVirtual &character = *record.character;
     const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;

@@ -755,3 +755,67 @@ TEST_CASE("A carrier of higher priority takes a rider from the one it rides; one
     CHECK(TakenByOverflight(1));
     CHECK_FALSE(TakenByOverflight(0));
 }
+
+TEST_CASE("A base gameplay sets holds through a jump and a fall, on a body with no Carrier, until cleared")
+{
+    const glm::vec3 deckVelocity{3.f, 0.f, 0.f};
+
+    /// Steps the rider is followed falling once it has walked off the deck.
+    constexpr int32_t kFallSteps = kStepsPerSecond / 2;
+
+    /// Enough to walk the six metres to the deck's edge and drop below it.
+    constexpr int32_t kWalkOffSteps = 3 * kStepsPerSecond;
+
+    /// The most a step changes a falling rider's velocity: gravity's share,
+    /// with room to spare (m/s).
+    constexpr float kVelocityStep = 0.5f;
+
+    TestScene test;
+    const Deck deck = AddDeck(test, deckVelocity, 0.f, std::nullopt);
+    const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
+    test.scene.GetMut<Physics::CharacterIntent>(rider)->base = deck.entity;
+    float elapsed = Ride(test, deck, 1, 0.f);
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    CHECK(BasedThroughHop(test, deck, rider, elapsed));
+    elapsed += kStep;
+
+    // Off the deck's far edge, along -Z, which the deck does not travel.
+    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const glm::vec3 off{0.f, 0.f, -walkSpeed};
+    for (int32_t i = 0; i < kWalkOffSteps && FeetOf(test, rider).y > -1.f; ++i)
+    {
+        Drive(test.scene, rider, off, /*jump=*/ false);
+        elapsed = Ride(test, deck, 1, elapsed);
+    }
+    REQUIRE(FeetOf(test, rider).y < -1.f);
+    for (int32_t i = 0; i < kFallSteps; ++i)
+    {
+        Drive(test.scene, rider, glm::vec3(0.f), /*jump=*/ false);
+        elapsed = Ride(test, deck, 1, elapsed);
+        CHECK(StateOf(test.scene, rider).baseEntity == deck.entity);
+    }
+
+    const glm::vec3 before = StateOf(test.scene, rider).velocity;
+    test.scene.GetMut<Physics::CharacterIntent>(rider)->base = ECS::NullEntity;
+    Ride(test, deck, 1, elapsed);
+    CHECK(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
+    CHECK(glm::length(StateOf(test.scene, rider).velocity - before) < kVelocityStep);
+}
+
+TEST_CASE("A base gameplay set is let go and cleared when its body is destroyed")
+{
+    TestScene test;
+    const Deck deck = AddDeck(test, glm::vec3(0.f), 0.f, std::nullopt);
+    const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
+    test.scene.GetMut<Physics::CharacterIntent>(rider)->base = deck.entity;
+    Step(test.world);
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    test.scene.Destroy(deck.entity);
+    test.scene.FlushDestroyed();
+    Step(test.world);
+
+    CHECK(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
+    CHECK(test.scene.Get<Physics::CharacterIntent>(rider)->base == ECS::NullEntity);
+}
