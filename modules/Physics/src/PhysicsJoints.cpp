@@ -45,6 +45,13 @@ constexpr float kMotorSpringFrequency = 2.f;
 /// Critically damped, so a motor reaches its target without swinging past it.
 constexpr float kMotorSpringDamping = 1.f;
 
+/// Solver passes, both velocity and position, for every group of bodies a
+/// joint touches. A pull reaches one more link of a chain each pass, so at the
+/// world's default of 10 velocity and 2 position passes a 16-link chain holding
+/// a heavy body stretches by half its length; at 30 it stretches a few percent.
+/// Groups with no joint keep the world's default.
+constexpr std::uint32_t kJointSolverSteps = 30;
+
 /// Below this length an axis has no direction to build a hinge or a rail on.
 constexpr float kMinAxisLength = 1e-6f;
 
@@ -604,6 +611,8 @@ void PhysicsWorld::Impl::BuildJoint(JointRecord &record, const JointSpec &spec)
     const JointFrame otherEnd = Placed(record.otherFrame, otherPosition, otherRotation);
 
     JPH::Ref<JPH::TwoBodyConstraintSettings> settings = MakeJointSettings(record.kind, otherEnd, ownerEnd, spec);
+    settings->mNumVelocityStepsOverride = kJointSolverSteps;
+    settings->mNumPositionStepsOverride = kJointSolverSteps;
     record.constraint = bodies.CreateConstraint(settings.GetPtr(), body1, body2);
     if (record.constraint == nullptr)
     {

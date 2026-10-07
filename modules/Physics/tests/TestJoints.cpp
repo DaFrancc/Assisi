@@ -586,6 +586,53 @@ TEST_CASE("A chain follows its last link")
     CHECK(PositionOf(test.scene, links[0]).x > 1.f);
 }
 
+TEST_CASE("A long chain swinging a heavy body barely stretches")
+{
+    TestScene test;
+    constexpr int32_t kLinks = 16;
+    constexpr float kGap = 5.f;
+    constexpr float kLinkRadius = 0.15f;
+    constexpr float kSteel = 7800.f;
+    // Four seconds, two full swings down and back.
+    constexpr int32_t kSwingSteps = kSettleSteps * 2;
+    // How much longer than built the chain may pull out: a few percent at the
+    // solver passes joints get, half again its length at the world's default.
+    constexpr float kMostStretch = 1.05f;
+    constexpr float kSpacing = kGap / static_cast<float>(kLinks);
+    constexpr glm::vec3 kAlong{1.f, 0.f, 0.f};
+
+    // The far cube starts level with the fixed one, so it swings down on the
+    // chain and pulls hardest at the bottom.
+    BodySpec cube = Box(glm::vec3(0.5f), /*isStatic=*/ true);
+    cube.collider.density = kSteel;
+    const ECS::Entity fixed = AddBody(test.scene, kPivot, cube);
+    const glm::vec3 face = kPivot + kAlong * 0.5f;
+    ECS::Entity previous = fixed;
+    for (int32_t i = 0; i < kLinks; ++i)
+    {
+        BodySpec ball = Ball(kLinkRadius, /*isStatic=*/ false);
+        ball.collider.density = kSteel;
+        const ECS::Entity link = AddBody(test.scene, face + kAlong * (kSpacing * (static_cast<float>(i) + 0.5f)), ball);
+        REQUIRE(test.scene.Add(link, Physics::PointJoint{.anchor = -kAlong * (kSpacing * 0.5f), .other = previous}) !=
+                nullptr);
+        previous = link;
+    }
+    cube.rigidBody = Physics::RigidBody{};
+    const ECS::Entity swinging = AddBody(test.scene, face + kAlong * (kGap + 0.5f), cube);
+    REQUIRE(test.scene.Add(swinging, Physics::PointJoint{.anchor = -kAlong * 0.5f, .other = previous}) != nullptr);
+
+    const float built = glm::length(PositionOf(test.scene, swinging) - kPivot);
+    float longest = built;
+    for (int32_t i = 0; i < kSwingSteps; ++i)
+    {
+        Step(test.world);
+        longest = std::max(longest, glm::length(PositionOf(test.scene, swinging) - kPivot));
+    }
+
+    CHECK(PositionOf(test.scene, swinging).y < kPivot.y - kGap * 0.5f);
+    CHECK(longest < built * kMostStretch);
+}
+
 // ---------------------------------------------------------------------------
 // Self-collision
 // ---------------------------------------------------------------------------
