@@ -329,7 +329,7 @@ JPH::ObjectLayer LayerTable::LayerFor(CollisionFilter filter, BodyMotion motion)
 
     const JPH::ObjectLayer layer = static_cast<JPH::ObjectLayer>(_entries.size());
     _entries.push_back(LayerEntry{.mask = filter.collidesWith.bits,
-                                  .channelBit = Core::Bitmask<CollisionChannel>::Of(filter.channel).bits,
+                                  .channelBit = Core::Bitmask<CollisionChannel, std::uint32_t>::Of(filter.channel).bits,
                                   .channel = filter.channel,
                                   .motion = motion,
                                   .trigger = filter.channel == CollisionChannel::Trigger});
@@ -340,7 +340,7 @@ JPH::ObjectLayer LayerTable::LayerFor(CollisionFilter filter, BodyMotion motion)
 CollisionFilter LayerTable::FilterOf(JPH::ObjectLayer layer) const
 {
     const LayerEntry &entry = EntryOf(layer);
-    return CollisionFilter{Core::Bitmask<CollisionChannel>{entry.mask}, entry.channel};
+    return CollisionFilter{Core::Bitmask<CollisionChannel, std::uint32_t>{entry.mask}, entry.channel};
 }
 
 JPH::ObjectLayer PhysicsWorld::Impl::LayerFor(CollisionFilter filter, BodyMotion motion)

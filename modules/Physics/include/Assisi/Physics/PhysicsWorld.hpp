@@ -60,7 +60,7 @@ struct Pose
 /// cast decides what it may hit by the same two-way rule a collision does.
 struct CollisionFilter
 {
-    Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
+    Core::Bitmask<CollisionChannel, std::uint32_t> collidesWith = AllChannels;
 
     CollisionChannel channel = CollisionChannel::World;
 

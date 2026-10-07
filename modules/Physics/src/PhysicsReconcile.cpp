@@ -66,7 +66,7 @@ glm::vec3 WorldScaleOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::T
 /// the order Jolt's flags do.
 JPH::EAllowedDOFs AllowedDOFsOf(const RigidBody &rigidBody)
 {
-    const uint32_t free = kAllAxes & ~rigidBody.lockedAxes.bits;
+    const uint32_t free = kAllAxes & ~static_cast<uint32_t>(rigidBody.lockedAxes.bits);
     return free == 0u ? JPH::EAllowedDOFs::All : static_cast<JPH::EAllowedDOFs>(free);
 }
 

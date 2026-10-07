@@ -25,23 +25,27 @@ namespace Assisi::Core::Reflect
 {
 
 /// @brief Everything about a bitmask's enum that naming its bits needs.
+///
+/// The bits travel as a uint64_t whatever the mask's own width, which `width`
+/// records.
 struct BitmaskNames
 {
     std::span<const EnumName> names; ///< The enum's own enumerators.
     std::string_view enumType;       ///< Its qualified name, for EnumLabels.
-    std::uint32_t all = 0;           ///< Every enumerator's bit: what "All" means.
+    std::uint64_t all = 0;           ///< Every enumerator's bit: what "All" means.
+    std::uint32_t width = 0;         ///< How many bits the mask has.
 };
 
 /// @brief @p bits as a file stores it: "All", or the names of the bits set.
-[[nodiscard]] nlohmann::json BitmaskToJson(std::uint32_t bits, const BitmaskNames &names);
+[[nodiscard]] nlohmann::json BitmaskToJson(std::uint64_t bits, const BitmaskNames &names);
 
 /// @brief Reads a bitmask field written as "All" or as a list of names and bit
 /// numbers.
 ///
-/// A name the enum does not have, a bit number outside the mask, or anything
-/// else is refused with the names it could have been. An absent field leaves
-/// @p out alone, as every reader here does.
+/// A name the enum does not have, a bit number outside the mask's width, or
+/// anything else is refused with the names it could have been. An absent field
+/// leaves @p out alone, as every reader here does.
 [[nodiscard]] bool ReadBitmask(const nlohmann::json &j, const char *component, const char *field,
-                               const BitmaskNames &names, std::uint32_t &out);
+                               const BitmaskNames &names, std::uint64_t &out);
 
 } // namespace Assisi::Core::Reflect

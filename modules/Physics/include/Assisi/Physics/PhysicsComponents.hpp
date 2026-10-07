@@ -72,7 +72,7 @@ enum class CollisionChannel : std::uint8_t
     Count_ = 32,
 };
 
-static_assert(static_cast<std::uint32_t>(CollisionChannel::Count_) == Core::kBitmaskBits,
+static_assert(static_cast<std::uint32_t>(CollisionChannel::Count_) == Core::kBitmaskWidth<std::uint32_t>,
               "Every bit of a channel mask is a channel, and every channel has a bit.");
 
 /// The first slot after the engine's own channels.
@@ -123,7 +123,7 @@ enum class ColliderAttach : std::uint8_t
 /// @brief Every channel — the mask a body carries unless it narrows it, so a
 /// body defaults to interacting with everything and an author subtracts rather
 /// than having to enumerate.
-inline constexpr Core::Bitmask<CollisionChannel> AllChannels = Core::Bitmask<CollisionChannel>::All();
+inline constexpr Core::Bitmask<CollisionChannel, std::uint32_t> AllChannels = Core::Bitmask<CollisionChannel, std::uint32_t>::All();
 
 /// @brief Which way a RigidBody moves.
 ///
@@ -209,7 +209,7 @@ struct Collider
 
     /// The channels this collider collides with. Interaction needs both sides
     /// to agree, so clearing a bit here stops the pair whatever the other says.
-    AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
+    AFIELD() Core::Bitmask<CollisionChannel, std::uint32_t> collidesWith = AllChannels;
 
     /// @brief Which channel this collider is on.
     ///
@@ -259,7 +259,7 @@ struct RigidBody
     /// The degrees of freedom the body may not move in. Locking every
     /// rotation keeps a body upright; locking a translation keeps it in a
     /// plane.
-    AFIELD() Core::Bitmask<LockedAxis> lockedAxes;
+    AFIELD() Core::Bitmask<LockedAxis, std::uint8_t> lockedAxes;
 
     AFIELD() MotionType motion = MotionType::Dynamic;
 
@@ -605,7 +605,7 @@ struct Character
 {
     /// The channels this character collides with. Interaction needs both sides to
     /// agree, so clearing a bit here stops the pair whatever the other body says.
-    AFIELD() Core::Bitmask<CollisionChannel> collidesWith = AllChannels;
+    AFIELD() Core::Bitmask<CollisionChannel, std::uint32_t> collidesWith = AllChannels;
 
     AFIELD(min = 0.0) float radius = 0.3f; ///< Capsule radius; half the character's width.
 

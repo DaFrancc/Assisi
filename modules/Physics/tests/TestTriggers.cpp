@@ -130,8 +130,8 @@ TEST_CASE("A trigger only reports the channels its mask admits")
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     world.SetStayEventsReported(true);
 
-    const Core::Bitmask<Physics::CollisionChannel> charactersOnly =
-        Core::Bitmask<Physics::CollisionChannel>::Of(Physics::CollisionChannel::Character);
+    const Core::Bitmask<Physics::CollisionChannel, std::uint32_t> charactersOnly =
+        Core::Bitmask<Physics::CollisionChannel, std::uint32_t>::Of(Physics::CollisionChannel::Character);
     (void)Spawn(scene, {0.f, 2.f, 0.f}, {1.f, 1.f, 1.f}, /*isStatic=*/ true,
                 Physics::CollisionFilter{charactersOnly, Physics::CollisionChannel::Trigger});
 

@@ -155,16 +155,19 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
             'if (!Assisi::Core::Reflect::ReadEnum(j, _comp, "{f}", _names, _n)) return false; '
             '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
     if f.bitmask_info is not None:
-        # A Core::Bitmask is its uint32_t in memory, and the names of the
-        # enumerators it holds on disk — see BitmaskJson.hpp.
+        # A Core::Bitmask is its unsigned integer in memory, and the names of
+        # the enumerators it holds on disk — see BitmaskJson.hpp. The bits are
+        # read and written through a uint64_t whatever the mask's width.
         names = ', '.join(f'{{{{ "{n}", {v} }}}}' for n, v in f.bitmask_info.constants)
         table = ('static constexpr Assisi::Core::Reflect::EnumName _names[] = {{' + names + '}}; '
                  'const Assisi::Core::Reflect::BitmaskNames _mask{{_names, "' + f.bitmask_info.fqn + '", '
-                 'std::remove_cvref_t<decltype({a})>::All().bits}}; ')
+                 'std::remove_cvref_t<decltype({a})>::All().bits, ' + str(f.bitmask_bits) + 'u}}; ')
         return TypeCodegen(
-            'UInt32',
+            f'UInt{f.bitmask_bits}',
             '[&]{{ ' + table + 'return Assisi::Core::Reflect::BitmaskToJson({a}.bits, _mask); }}()',
-            '{{ ' + table + 'if (!Assisi::Core::Reflect::ReadBitmask(j, _comp, "{f}", _mask, {a}.bits)) return false; }}')
+            '{{ ' + table + 'std::uint64_t _bits = {a}.bits; '
+            'if (!Assisi::Core::Reflect::ReadBitmask(j, _comp, "{f}", _mask, _bits)) return false; '
+            '{a}.bits = static_cast<decltype({a}.bits)>(_bits); }}')
     if f.container is not None:
         # One expression either way, whatever the element type or the depth: the
         # templates in ContainerJson.hpp resolve it from the member's own type, so

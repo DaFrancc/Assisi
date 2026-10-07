@@ -1012,7 +1012,7 @@ class BitmaskTest(unittest.TestCase):
         "#include <cstdint>\n"
         "namespace N {\n"
         "AENUM()\nenum class Channel : uint8_t { World, Character, Trigger, Count_ };\n"
-        "ACOMP()\nstruct Body { AFIELD() Assisi::Core::Bitmask<Channel> collidesWith{}; };\n"
+        "ACOMP()\nstruct Body { AFIELD() Assisi::Core::Bitmask<Channel, std::uint32_t> collidesWith{}; };\n"
         "}\n"
     )
 
@@ -1024,9 +1024,10 @@ class BitmaskTest(unittest.TestCase):
                          [("World", 0), ("Character", 1), ("Trigger", 2)])
 
     def test_every_bitmask_spelling_is_recognised(self):
-        for spelling in ("Bitmask<Channel>", "Core::Bitmask<Channel>", "Assisi::Core::Bitmask< Channel >"):
+        for spelling in ("Bitmask<Channel, uint32_t>", "Core::Bitmask<Channel, std::uint32_t>",
+                         "Assisi::Core::Bitmask< Channel , std::uint32_t >"):
             with self.subTest(spelling=spelling):
-                src = self._SRC.replace("Assisi::Core::Bitmask<Channel>", spelling)
+                src = self._SRC.replace("Assisi::Core::Bitmask<Channel, std::uint32_t>", spelling)
                 self.assertIsNotNone(_parse_source(src)[0].fields[0].bitmask_info)
 
     def test_bitmask_emits_its_bits_as_a_uint32_without_an_enum_size(self):
@@ -1038,28 +1039,49 @@ class BitmaskTest(unittest.TestCase):
         # these"; a bitmask that emitted one would be read back as an enum.
         self.assertNotIn(".enumSize", cpp)
 
+    def test_bitmask_field_type_follows_its_storage(self):
+        for storage, width in (("std::uint8_t", 8), ("std::uint16_t", 16), ("std::uint64_t", 64)):
+            with self.subTest(storage=storage):
+                src = self._SRC.replace("std::uint32_t>", f"{storage}>")
+                field = _parse_source(src)[0].fields[0]
+                self.assertEqual(field.bitmask_bits, width)
+                cpp = reflectgen.generate_cpp(_parse_source(src), "N/Body.hpp")
+                self.assertIn(f"FieldType::UInt{width}", cpp)
+                self.assertNotIn("FieldType::UInt32", cpp)
+
+    def test_bitmask_without_a_storage_type_is_rejected_with_the_fix(self):
+        src = self._SRC.replace("Bitmask<Channel, std::uint32_t>", "Bitmask<Channel>")
+        with self.assertRaises(ValueError) as caught:
+            _parse_source(src)
+        self.assertIn("Bitmask<Channel, std::uint8_t>", str(caught.exception))
+
+    def test_bitmask_stored_in_a_type_with_no_field_type_is_rejected(self):
+        src = self._SRC.replace("std::uint32_t>", "unsigned>")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
     def test_bitmask_naming_an_unknown_enum_is_rejected(self):
-        src = self._SRC.replace("Bitmask<Channel>", "Bitmask<NoSuchEnum>")
+        src = self._SRC.replace("Bitmask<Channel,", "Bitmask<NoSuchEnum,")
         with self.assertRaises(ValueError) as caught:
             _parse_source(src)
         self.assertIn("NoSuchEnum", str(caught.exception))
 
     def test_enumerator_too_large_for_the_field_is_rejected(self):
         src = ("#include <cstdint>\nnamespace N {\n"
-               "AENUM()\nenum class E : uint32_t { A = 0, B = 32 };\n"
-               "ACOMP()\nstruct C { AFIELD() Bitmask<E> m{}; };\n}\n")
-        # Bit 32 does not exist in a 32-bit mask; shifting into it is undefined.
+               "AENUM()\nenum class E : uint32_t { A = 0, B = 8 };\n"
+               "ACOMP()\nstruct C { AFIELD() Bitmask<E, std::uint8_t> m{}; };\n}\n")
+        # Bit 8 does not exist in an 8-bit mask; shifting into it is a bit lost.
         with self.assertRaises(ValueError):
             _parse_source(src)
 
     def test_the_bitmask_key_is_refused_in_favour_of_the_type(self):
         # The key made an annotation string the only thing saying what an
         # integer's bits mean; the type says it where the compiler can see it.
-        src = self._SRC.replace("AFIELD() Assisi::Core::Bitmask<Channel> collidesWith{}",
+        src = self._SRC.replace("AFIELD() Assisi::Core::Bitmask<Channel, std::uint32_t> collidesWith{}",
                                 "AFIELD(bitmask = Channel) uint32_t collidesWith = 0")
         with self.assertRaises(ValueError) as caught:
             _parse_source(src)
-        self.assertIn("Bitmask<Channel>", str(caught.exception))
+        self.assertIn("Bitmask<Channel, std::uint32_t>", str(caught.exception))
 
     def _enum_size(self, underlying_decl: str):
         """Parse `enum class E <underlying_decl> { A, B }` and return its EnumInfo."""

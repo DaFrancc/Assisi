@@ -156,9 +156,9 @@ TEST_CASE("A character walking into a body locked on several axes stays finite")
     // which the solver divided by: infinity, then NaN in the body's spin, then
     // in the character.
     using Physics::LockedAxis;
-    const Core::Bitmask<LockedAxis> allLinear =
-        Core::Bitmask<LockedAxis>::Of(LockedAxis::LinearX).With(LockedAxis::LinearY).With(LockedAxis::LinearZ);
-    const Core::Bitmask<LockedAxis> locks[] = {
+    const Core::Bitmask<LockedAxis, std::uint8_t> allLinear =
+        Core::Bitmask<LockedAxis, std::uint8_t>::Of(LockedAxis::LinearX).With(LockedAxis::LinearY).With(LockedAxis::LinearZ);
+    const Core::Bitmask<LockedAxis, std::uint8_t> locks[] = {
         allLinear.With(LockedAxis::AngularX).With(LockedAxis::AngularY),
         allLinear.With(LockedAxis::AngularX).With(LockedAxis::AngularZ),
         allLinear.With(LockedAxis::AngularY).With(LockedAxis::AngularZ),
@@ -171,7 +171,7 @@ TEST_CASE("A character walking into a body locked on several axes stays finite")
     // Walked into from the side, and from the front.
     const glm::vec3 starts[] = {{0.f, 0.f, 2.3f}, {-2.f, 0.f, 0.f}};
 
-    for (const Core::Bitmask<LockedAxis> lock : locks)
+    for (const Core::Bitmask<LockedAxis, std::uint8_t> lock : locks)
     {
         for (const glm::vec3 start : starts)
         {

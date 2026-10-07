@@ -287,7 +287,7 @@ class FilterLayerFilter final : public JPH::ObjectLayerFilter
 public:
     FilterLayerFilter(const LayerTable &layers, CollisionFilter filter)
         : _layers(layers), _mask(filter.collidesWith.bits),
-        _channelBit(Core::Bitmask<CollisionChannel>::Of(filter.channel).bits)
+        _channelBit(Core::Bitmask<CollisionChannel, std::uint32_t>::Of(filter.channel).bits)
     {
     }
 
