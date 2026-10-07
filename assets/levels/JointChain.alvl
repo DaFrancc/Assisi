@@ -1,0 +1,3546 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "Floor",
+      "components": {
+        "Transform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            100.0,
+            0.5,
+            100.0
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        }
+      }
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "colorExpression": 0,
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "intensity": 1.0,
+          "temperatureKelvin": 5778.0,
+          "tintedBySky": true
+        },
+        "Moon": {
+          "atmosphericTint": 0.20000000298023224,
+          "color": [
+            0.75,
+            0.8500000238418579,
+            1.0
+          ],
+          "cycleDays": 29.530000686645508,
+          "diskColor": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "diskIntensity": 2.0,
+          "inclinationDegrees": 5.150000095367432,
+          "intensity": 0.019999999552965164,
+          "nodeAtEpochDegrees": 90.0,
+          "nodeCycleYears": 18.600000381469727,
+          "phaseAtEpoch": 0.25,
+          "sizeDegrees": 0.5
+        },
+        "Skybox": {
+          "airScattering": [
+            0.17520000040531158,
+            0.40779998898506165,
+            1.0
+          ],
+          "airThickness": 0.14000000059604645,
+          "exposure": 10.0,
+          "groundColor": [
+            0.10999999940395355,
+            0.10000000149011612,
+            0.09000000357627869
+          ],
+          "hazeForwardness": 0.7599999904632568,
+          "hazeScattering": [
+            0.004999999888241291,
+            0.004999999888241291,
+            0.004999999888241291
+          ],
+          "minimumAmbient": 0.019999999552965164,
+          "minimumAmbientColor": [
+            0.3499999940395355,
+            0.44999998807907104,
+            0.699999988079071
+          ],
+          "nightColor": [
+            5.999999848427251e-05,
+            9.999999747378752e-05,
+            0.00019999999494757503
+          ],
+          "preset": 0,
+          "skyBounce": 0.20000000298023224,
+          "sunDiskColor": [
+            1.0,
+            0.949999988079071,
+            0.8199999928474426
+          ],
+          "sunDiskIntensity": 20.0,
+          "sunEdgeSoftness": 0.10000000149011612,
+          "sunLimbDarkening": 0.6000000238418579,
+          "sunSizeDegrees": 0.5
+        },
+        "Sun": {
+          "axialTiltDegrees": 23.440000534057617,
+          "bearingDegrees": 0.0,
+          "latitudeDegrees": 45.0
+        },
+        "TimeOfDay": {
+          "day": 0,
+          "dayLengthSeconds": 15.0,
+          "dayOfYear": 0.0,
+          "hour": 9.0,
+          "paused": false,
+          "seasonsPaused": false,
+          "yearLengthDays": 12.0
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "name": "CubeLeft",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RandomLaunch": {
+          "impulse": 60000.0
+        }
+      }
+    },
+    {
+      "name": "Link00",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.34375,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "CubeLeft"
+        }
+      }
+    },
+    {
+      "name": "Link01",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.03125,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link00"
+        }
+      }
+    },
+    {
+      "name": "Link02",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.71875,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link01"
+        }
+      }
+    },
+    {
+      "name": "Link03",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.40625,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link02"
+        }
+      }
+    },
+    {
+      "name": "Link04",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.09375,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link03"
+        }
+      }
+    },
+    {
+      "name": "Link05",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.78125,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link04"
+        }
+      }
+    },
+    {
+      "name": "Link06",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.46875,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link05"
+        }
+      }
+    },
+    {
+      "name": "Link07",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.15625,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link06"
+        }
+      }
+    },
+    {
+      "name": "Link08",
+      "components": {
+        "Transform": {
+          "position": [
+            0.15625,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link07"
+        }
+      }
+    },
+    {
+      "name": "Link09",
+      "components": {
+        "Transform": {
+          "position": [
+            0.46875,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link08"
+        }
+      }
+    },
+    {
+      "name": "Link10",
+      "components": {
+        "Transform": {
+          "position": [
+            0.78125,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link09"
+        }
+      }
+    },
+    {
+      "name": "Link11",
+      "components": {
+        "Transform": {
+          "position": [
+            1.09375,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link10"
+        }
+      }
+    },
+    {
+      "name": "Link12",
+      "components": {
+        "Transform": {
+          "position": [
+            1.40625,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link11"
+        }
+      }
+    },
+    {
+      "name": "Link13",
+      "components": {
+        "Transform": {
+          "position": [
+            1.71875,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link12"
+        }
+      }
+    },
+    {
+      "name": "Link14",
+      "components": {
+        "Transform": {
+          "position": [
+            2.03125,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link13"
+        }
+      }
+    },
+    {
+      "name": "Link15",
+      "components": {
+        "Transform": {
+          "position": [
+            2.34375,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5208333333333334,
+            0.0,
+            0.0
+          ],
+          "other": "Link14"
+        }
+      }
+    },
+    {
+      "name": "CubeRight",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "RigidBody": {},
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RandomLaunch": {
+          "impulse": 60000.0
+        },
+        "PointJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "other": "Link15"
+        }
+      }
+    },
+    {
+      "name": "Fixed_WeldedPairA",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.649519052838329,
+            3.625,
+            -6.0
+          ],
+          "rotation": [
+            0.9659258262890683,
+            0.0,
+            0.0,
+            0.25881904510252074
+          ],
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {}
+      }
+    },
+    {
+      "name": "Fixed_WeldedPairB",
+      "components": {
+        "Transform": {
+          "position": [
+            -8.350480947161671,
+            4.375,
+            -6.0
+          ],
+          "rotation": [
+            0.9659258262890683,
+            0.0,
+            0.0,
+            0.25881904510252074
+          ],
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "FixedJoint": {
+          "other": "Fixed_WeldedPairA"
+        }
+      }
+    },
+    {
+      "name": "Fixed_Shelf",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            1.5,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            0.15,
+            1.0
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "FixedJoint": {}
+      }
+    },
+    {
+      "name": "Fixed_ShelfWeld",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            1.5,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Fixed_ShelfLoad",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            2.0,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {}
+      }
+    },
+    {
+      "name": "Fixed_BreakablePlank",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            1.5,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            0.15,
+            1.0
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "FixedJoint": {
+          "breakForce": 50000.0
+        }
+      }
+    },
+    {
+      "name": "Fixed_BreakableWeld",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            1.5,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Fixed_Breaker",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            6.0,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 7800.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {}
+      }
+    },
+    {
+      "name": "Point_Pendulum",
+      "components": {
+        "Transform": {
+          "position": [
+            -7.0,
+            4.0,
+            -12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "RigidBody": {},
+        "PointJoint": {
+          "anchor": [
+            -4.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Point_PendulumPivot",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.0,
+            4.0,
+            -12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Point_DoubleUpper",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.8,
+            4.5,
+            -12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.4,
+            0.4,
+            0.4
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "RigidBody": {},
+        "PointJoint": {
+          "anchor": [
+            -2.9999999999999996,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Point_DoubleLower",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.8,
+            4.5,
+            -10.8
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.4,
+            0.4,
+            0.4
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "RigidBody": {},
+        "PointJoint": {
+          "anchor": [
+            0.0,
+            0.0,
+            -2.9999999999999982
+          ],
+          "other": "Point_DoubleUpper"
+        }
+      }
+    },
+    {
+      "name": "Point_DoublePivot",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            4.5,
+            -12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Point_CornerBox",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            3.0,
+            -12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "PointJoint": {
+          "anchor": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "Point_CornerPivot",
+      "components": {
+        "Transform": {
+          "position": [
+            3.35,
+            3.35,
+            -11.65
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Hinge_Door",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.0,
+            1.1,
+            -18.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.1,
+            2.0,
+            1.2
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "HingeJoint": {
+          "anchor": [
+            0.0,
+            0.0,
+            -0.5
+          ],
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "minAngle": -100.0,
+          "maxAngle": 100.0,
+          "friction": 30.0
+        }
+      }
+    },
+    {
+      "name": "Hinge_DoorHinge",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.0,
+            1.1,
+            -18.6
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Hinge_Fan",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            3.0,
+            -18.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.5,
+            0.2,
+            0.2
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "HingeJoint": {
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "HingeMotor": {
+          "target": 90.0,
+          "mode": 0
+        }
+      }
+    },
+    {
+      "name": "Hinge_FanAxle",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            3.0,
+            -17.85
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Hinge_Drawbridge",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            0.6,
+            -18.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            0.15,
+            1.2
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "HingeJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "minAngle": -10.0,
+          "maxAngle": 90.0
+        },
+        "HingeMotor": {
+          "target": 60.0,
+          "mode": 1
+        }
+      }
+    },
+    {
+      "name": "Hinge_DrawbridgeHinge",
+      "components": {
+        "Transform": {
+          "position": [
+            1.5,
+            0.6,
+            -18.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Hinge_SpringyFlap",
+      "components": {
+        "Transform": {
+          "position": [
+            9.0,
+            3.0,
+            -18.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.5,
+            0.1,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "HingeJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "minAngle": -30.0,
+          "maxAngle": 30.0,
+          "limitSpringFrequency": 3.0,
+          "limitSpringDamping": 0.1
+        }
+      }
+    },
+    {
+      "name": "Hinge_FlapHinge",
+      "components": {
+        "Transform": {
+          "position": [
+            8.25,
+            3.0,
+            -18.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Slider_Lift",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.0,
+            0.15,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            0.2,
+            2.0
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SliderJoint": {
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "minDistance": 0.0,
+          "maxDistance": 4.0
+        },
+        "SliderMotor": {
+          "target": 3.0,
+          "mode": 1
+        }
+      }
+    },
+    {
+      "name": "Slider_RailBlock",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            3.0,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SliderJoint": {
+          "axis": [
+            0.8944271909999159,
+            -0.4472135954999579,
+            0.0
+          ],
+          "minDistance": -1.5,
+          "maxDistance": 1.5
+        }
+      }
+    },
+    {
+      "name": "Slider_RailTop",
+      "components": {
+        "Transform": {
+          "position": [
+            -4.341640786499874,
+            3.670820393249937,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Slider_RailBottom",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.6583592135001262,
+            2.329179606750063,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Slider_Cabinet",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            0.5,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        }
+      }
+    },
+    {
+      "name": "Slider_Drawer",
+      "components": {
+        "Transform": {
+          "position": [
+            3.6,
+            0.6,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.9,
+            0.3,
+            0.8
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SliderJoint": {
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "other": "Slider_Cabinet",
+          "minDistance": -0.5,
+          "maxDistance": 0.4,
+          "friction": 50.0
+        }
+      }
+    },
+    {
+      "name": "Slider_Bouncer",
+      "components": {
+        "Transform": {
+          "position": [
+            9.0,
+            3.0,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SliderJoint": {
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "minDistance": -0.5,
+          "maxDistance": 0.5,
+          "limitSpringFrequency": 2.0,
+          "limitSpringDamping": 0.05
+        }
+      }
+    },
+    {
+      "name": "Slider_BouncerRest",
+      "components": {
+        "Transform": {
+          "position": [
+            9.0,
+            2.5,
+            -24.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Distance_RopeBall",
+      "components": {
+        "Transform": {
+          "position": [
+            -6.5,
+            4.5,
+            -30.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 1,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "RigidBody": {},
+        "DistanceJoint": {
+          "otherAnchor": [
+            -5.0,
+            0.0,
+            0.0
+          ],
+          "minDistance": 0.0,
+          "maxDistance": 2.5
+        }
+      }
+    },
+    {
+      "name": "Distance_RopeTop",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.0,
+            4.5,
+            -30.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "Distance_RodLow",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            0.25,
+            -30.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {}
+      }
+    },
+    {
+      "name": "Distance_RodHigh",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.5,
+            2.25,
+            -30.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "DistanceJoint": {
+          "otherAnchor": [
+            -3.0,
+            -4.0,
+            0.0
+          ],
+          "other": "Distance_RodLow",
+          "minDistance": 2.5,
+          "maxDistance": 2.5
+        }
+      }
+    },
+    {
+      "name": "Distance_Bungee",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            4.5,
+            -30.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.4,
+            0.4,
+            0.4
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "DistanceJoint": {
+          "otherAnchor": [
+            0.0,
+            1.25,
+            0.0
+          ],
+          "minDistance": 0.0,
+          "maxDistance": 1.0,
+          "limitSpringFrequency": 1.5,
+          "limitSpringDamping": 0.1
+        }
+      }
+    },
+    {
+      "name": "Distance_BungeeTop",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            5.0,
+            -30.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_ShortCone",
+      "components": {
+        "Transform": {
+          "position": [
+            -8.25,
+            3.0,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.5,
+            0.25,
+            0.25
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SwingTwistJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "swingAngle": 30.0,
+          "minTwist": -10.0,
+          "maxTwist": 10.0
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_ShortConePivot",
+      "components": {
+        "Transform": {
+          "position": [
+            -9.0,
+            3.0,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_StiffArm",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.25,
+            3.0,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.5,
+            0.25,
+            0.25
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SwingTwistJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "swingAngle": 80.0,
+          "friction": 800.0
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_StiffArmPivot",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.0,
+            3.0,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_Tail0",
+      "components": {
+        "Transform": {
+          "position": [
+            3.4,
+            3.5,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.75,
+            0.2,
+            0.2
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SwingTwistJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "swingAngle": 20.0,
+          "minTwist": -5.0,
+          "maxTwist": 5.0
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_Tail1",
+      "components": {
+        "Transform": {
+          "position": [
+            4.2,
+            3.5,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.75,
+            0.2,
+            0.2
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SwingTwistJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "swingAngle": 20.0,
+          "minTwist": -5.0,
+          "maxTwist": 5.0,
+          "other": "SwingTwist_Tail0"
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_Tail2",
+      "components": {
+        "Transform": {
+          "position": [
+            5.0,
+            3.5,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.75,
+            0.2,
+            0.2
+          ]
+        },
+        "Collider": {
+          "shape": 0,
+          "channel": 0,
+          "collidesWith": "All",
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "radius": 0.5,
+          "halfHeight": 0.5,
+          "density": 1000.0,
+          "friction": 0.6
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBody": {},
+        "SwingTwistJoint": {
+          "anchor": [
+            -0.5,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "swingAngle": 20.0,
+          "minTwist": -5.0,
+          "maxTwist": 5.0,
+          "other": "SwingTwist_Tail1"
+        }
+      }
+    },
+    {
+      "name": "SwingTwist_TailPivot",
+      "components": {
+        "Transform": {
+          "position": [
+            3.0,
+            3.5,
+            -36.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.12,
+            0.12,
+            0.12
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        }
+      }
+    }
+  ],
+  "instances": [
+    {
+      "name": "BaseGameplay",
+      "source": "blueprints/BaseGameplay.abp",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "Player",
+      "source": "blueprints/Player.abp",
+      "transform": {
+        "position": [
+          0.0,
+          0.05,
+          9.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  ],
+  "systems": [
+    "CaptureCursor",
+    "CursorToggle",
+    "TimeOfDay",
+    "RandomLaunch"
+  ]
+}

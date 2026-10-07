@@ -1144,3 +1144,11 @@ TEST_CASE("a Collider with no RigidBody replicates as a Transform, not as a body
     CHECK(harness.clientScene.Has<Physics::Collider>(mirror));
     CHECK(harness.client.Corrections().applied == 0);
 }
+
+TEST_CASE("A client's world leaves breaking joints to the server")
+{
+    PhysicsHarness harness;
+
+    CHECK(harness.serverPhysics.BreaksJoints());
+    CHECK_FALSE(harness.clientPhysics.BreaksJoints());
+}

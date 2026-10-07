@@ -443,6 +443,7 @@ void PhysicsWorld::Update(float deltaTime)
     // here is what guarantees a consumer sees each one exactly once. Safe without
     // the mutex: no Jolt worker is inside a callback at this point.
     _impl->events.clear();
+    _impl->brokenJoints.clear();
 
     // First, so the step simulates the scene as it is now: bodies for what was
     // added, none for what was destroyed, and every Transform written since the
@@ -485,6 +486,10 @@ void PhysicsWorld::Update(float deltaTime)
         _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jolt.JobSystem());
     }
     _impl->stepping = false;
+
+    // Before the writeback, so a broken joint's bodies are reported as the
+    // step left them and its component is gone by the time anything reads.
+    _impl->BreakJoints(deltaTime / static_cast<float>(_impl->collisionSteps));
 
     // Before the contact events, so a system reacting to them reads the
     // Transforms this step left. The followers after the writeback, since

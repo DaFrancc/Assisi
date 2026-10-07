@@ -47,6 +47,7 @@
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
+#include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <cmath>
@@ -541,6 +542,37 @@ struct CookedShapeKeyHash
     std::size_t operator()(const CookedShapeKey &key) const noexcept;
 };
 
+/// A point and two perpendicular directions: one end of a joint.
+struct JointFrame
+{
+    glm::vec3 point{0.f};
+    glm::vec3 axis{0.f, 1.f, 0.f};
+    glm::vec3 normal{1.f, 0.f, 0.f};
+};
+
+/// Everything a joint component says, whichever kind it is. Angles in
+/// radians, distances in metres.
+struct JointSpec
+{
+    glm::vec3 anchor{0.f};
+    glm::vec3 axis{0.f, 1.f, 0.f};
+    glm::vec3 otherAnchor{0.f};
+    ECS::Entity other{ECS::NullEntity};
+    float minLimit = 0.f;
+    float maxLimit = 0.f;
+    float swing = 0.f;
+    float springFrequency = 0.f;
+    float springDamping = 0.f;
+    float friction = 0.f;
+    float motorTarget = 0.f;
+    float motorMax = 0.f;
+    float breakForce = 0.f;
+    float breakTorque = 0.f;
+    MotorMode motorMode = MotorMode::Velocity;
+    bool hasMotor = false;
+    bool collideConnected = false;
+};
+
 // ---------------------------------------------------------------------------
 // Impl
 // ---------------------------------------------------------------------------
@@ -916,6 +948,138 @@ private:
         ECS::Entity _owner;
         bool _exceptions;
     };
+
+    // --- Joints (PhysicsJoints.cpp) -------------------------------------------
+    //
+    // One record per joint component, built into a Jolt constraint once both
+    // its bodies exist. The other body is Jolt's first, the owner its second,
+    // so an angle or a slide is the owner's, measured against the other.
+
+    struct JointRecord
+    {
+        JPH::Ref<JPH::TwoBodyConstraint> constraint;
+
+        /// The other end as first built, in the other body's own space, or in
+        /// the world's when there is no other body. Kept across rebuilds, so a
+        /// body built again does not move the joint's zero; taken again only
+        /// when the anchor, the axis or the other body is edited.
+        JointFrame otherFrame;
+
+        /// The authored values otherFrame was taken from.
+        glm::vec3 capturedAnchor{0.f};
+        glm::vec3 capturedAxis{0.f};
+        glm::vec3 capturedOtherAnchor{0.f};
+
+        /// Each body's centre of mass in its own space when the constraint was
+        /// built. Jolt holds a constraint's ends relative to it, so one that
+        /// moves since means the constraint must be built again.
+        glm::vec3 centre1{0.f};
+        glm::vec3 centre2{0.f};
+
+        ECS::Entity owner{ECS::NullEntity};
+
+        /// The body the other end is on, NullEntity for the world.
+        ECS::Entity otherBody{ECS::NullEntity};
+        ECS::Entity capturedOther{ECS::NullEntity};
+
+        JPH::BodyID body1;
+        JPH::BodyID body2;
+
+        /// The component's and its motor's change ticks when last applied.
+        uint64_t tick = 0;
+        uint64_t motorTick = 0;
+
+        JointKind kind = JointKind::Fixed;
+        bool captured = false;
+
+        /// Whether `jointedPairs` counts this joint's two bodies.
+        bool pairCounted = false;
+
+        /// Whether why it cannot be built has been logged, so it is said once.
+        bool refusalLogged = false;
+    };
+
+    /// By owner index and then kind, so joints are visited in a fixed order.
+    std::map<std::uint64_t, JointRecord> joints;
+
+    /// Set when something a joint depends on may have changed: a joint
+    /// component or a motor, or a body built, rebuilt, reshaped or destroyed.
+    /// A settled scene leaves it clear, and the joints cost nothing.
+    bool jointsDirty = false;
+
+    /// The pairs of bodies a joint joins that do not collide, by owner, with
+    /// how many joints join each.
+    std::unordered_map<EntityPair, uint32_t, EntityPairHash> jointedPairs;
+
+    /// The joints the last Update() broke.
+    std::vector<JointBroke> brokenJoints;
+
+    /// See PhysicsWorld::SetBreaksJoints.
+    bool breaksJoints = true;
+
+    void MarkJointsDirty() { jointsDirty = jointsDirty || !joints.empty(); }
+
+    /// Adds, refreshes and drops records from the joint components changed and
+    /// removed since the last reconcile, or from every one when @p complete is
+    /// false.
+    void RegisterJoints(bool complete);
+
+    /// Builds, retunes or takes down every joint, when anything it depends on
+    /// may have changed.
+    void SyncJoints();
+
+    void SyncJoint(JointRecord &record);
+
+    /// What @p record's component says now, or nullopt once it is gone.
+    std::optional<JointSpec> SpecOf(const JointRecord &record) const;
+
+    /// The body @p spec's other end is on, or why there is none yet. False
+    /// when the joint cannot be built now.
+    bool ResolveJointBodies(JointRecord &record, const JointSpec &spec);
+
+    /// Builds @p record's constraint from @p spec, taking its other frame first
+    /// if it has none for these authored values.
+    void BuildJoint(JointRecord &record, const JointSpec &spec);
+
+    /// Applies @p spec's limits, springs, friction and motor to the built
+    /// constraint.
+    void TuneJoint(JointRecord &record, const JointSpec &spec);
+
+    /// The Jolt settings for a @p kind joint from @p end1 on the other body to
+    /// @p end2 on the owner, both in world space.
+    static JPH::Ref<JPH::TwoBodyConstraintSettings> MakeJointSettings(JointKind kind, const JointFrame &end1,
+                                                                      const JointFrame &end2, const JointSpec &spec);
+
+    /// @p body's centre of mass in its own space, or zero for the world.
+    glm::vec3 CentreOf(const JPH::BodyID &body) const;
+
+    /// The change ticks of @p record's component and of its motor.
+    std::pair<uint64_t, uint64_t> TicksOf(const JointRecord &record) const;
+
+    /// Takes @p record's constraint out of the simulation, keeping the record.
+    void DetachJoint(JointRecord &record);
+
+    /// DetachJoint for every joint either of whose bodies is @p entity's.
+    /// Before the body goes: Jolt holds the bodies of a constraint by pointer.
+    void DetachJointsTouching(ECS::Entity entity);
+
+    /// Counts or uncounts @p record's bodies in `jointedPairs`.
+    void SetJointedPair(JointRecord &record, bool counted);
+
+    /// Breaks every joint the step just pulled or twisted past its limit.
+    /// @p subStep is the length of one collision step.
+    void BreakJoints(float subStep);
+
+    /// The force and torque @p record's constraint held its bodies with in the
+    /// last collision step of @p subStep.
+    std::pair<float, float> JointLoad(const JointRecord &record, float subStep) const;
+
+    /// Removes @p record's component, and its motor first.
+    void RemoveJointComponent(const JointRecord &record);
+
+    /// Tells the simulation that whether @p a and @p b may collide changed:
+    /// drops what it remembered about the pair and wakes them.
+    void RefreshPair(ECS::Entity a, ECS::Entity b);
 
     // --- Requests (PhysicsWorld.cpp) -------------------------------------------
 

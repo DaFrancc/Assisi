@@ -39,9 +39,9 @@ body.
 | `stance` | `Standing` or `Crouching`. Hold it for as long as it is wanted. |
 
 ```cpp
-for (auto [entity, intent] : scene.QueryMut<Physics::CharacterIntent>())
+for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
 {
-    intent.GetMut().move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
+    intent.move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
 }
 ```
 

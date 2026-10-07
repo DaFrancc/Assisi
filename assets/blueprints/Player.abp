@@ -9,7 +9,7 @@
           "bunnyHopSpeedCap": 1.7,
           "canBePushed": true,
           "canPushBodies": true,
-          "collidesWith": 31,
+          "collidesWith": "All",
           "coyoteTime": 0.1,
           "crouchEyeHeight": 0.9,
           "crouchHalfHeight": 0.3,

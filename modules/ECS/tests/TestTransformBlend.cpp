@@ -76,7 +76,7 @@ TEST_CASE("TransformBlend: a Transform written in a fixed step is drawn alpha of
     CHECK(scene.Get<Transform>(e)->position.x == 10.f);
 }
 
-TEST_CASE("TransformBlend: a write through QueryMut in a fixed step blends like one through GetMut")
+TEST_CASE("TransformBlend: a write through a Mut query element in a fixed step blends like one through GetMut")
 {
     ECS::Scene scene;
     const ECS::Entity e = Spawn(scene, {0.f, 0.f, 0.f});
@@ -84,9 +84,9 @@ TEST_CASE("TransformBlend: a write through QueryMut in a fixed step blends like 
 
     {
         const FixedStepScope step(scene);
-        for (auto [entity, transform] : scene.QueryMut<Transform>())
+        for (auto [entity, transform] : scene.Query<Mut<Transform>>())
         {
-            transform->position = glm::vec3(10.f, 0.f, 0.f);
+            transform.position = glm::vec3(10.f, 0.f, 0.f);
         }
     }
     ECS::SetBlendAlpha(scene, 0.5f);
@@ -444,17 +444,17 @@ TEST_CASE("PropagateTransforms: a second pass at the same alpha resolves nothing
     CHECK(ECS::LastPropagationResolved(scene) == 2u);
 }
 
-TEST_CASE("Mut: writing three fields through one proxy stamps one tick")
+TEST_CASE("Query: writing three fields of a Mut element stamps one tick")
 {
     ECS::Scene scene;
     const ECS::Entity e = Spawn(scene, {0.f, 0.f, 0.f});
     const uint64_t before = scene.CurrentChangeTick();
 
-    for (auto [entity, transform] : scene.QueryMut<Transform>())
+    for (auto [entity, transform] : scene.Query<Mut<Transform>>())
     {
-        transform->position = glm::vec3(1.f);
-        transform->rotation = kQuarterTurn;
-        transform->scale = glm::vec3(2.f);
+        transform.position = glm::vec3(1.f);
+        transform.rotation = kQuarterTurn;
+        transform.scale = glm::vec3(2.f);
     }
 
     CHECK(scene.CurrentChangeTick() == before + 1u);

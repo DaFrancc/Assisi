@@ -34,6 +34,7 @@
     - [Collision channels](physics-channels.md)
     - [How the scene and physics stay in step](physics-scene-sync.md)
     - [Moving bodies from code](physics-moving-bodies.md)
+    - [Joints](physics-joints.md)
     - [Contacts and queries](physics-contacts.md)
     - [The character controller](physics-character.md)
 - [Audio](audio.md)

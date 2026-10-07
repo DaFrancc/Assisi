@@ -191,6 +191,10 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
     StopFinishedSweeps();
     ApplyAskedStances();
 
+    // Last, so every body a joint names is built and placed.
+    RegisterJoints(complete);
+    SyncJoints();
+
     changeCursor = now;
 }
 
@@ -424,6 +428,7 @@ void PhysicsWorld::Impl::CreateBody(ECS::Entity entity, const JPH::ShapeRefC &sh
     slot.motion = motion;
     slot.kind = SlotKind::Body;
     StampTransform(entity);
+    MarkJointsDirty();
     if (motion != BodyMotion::Static)
     {
         Follow(entity.index);
@@ -462,6 +467,12 @@ void PhysicsWorld::Impl::EditBody(ECS::Entity entity, const JPH::ShapeRefC &shap
     if (shape != nullptr)
     {
         bodies.SetShape(slot.body, shape, /*inUpdateMassProperties=*/ false, wake);
+    }
+    // A new shape may move the centre of mass a joint is held about, and a new
+    // motion may make a joint buildable or not.
+    if (shape != nullptr || motion != slot.motion)
+    {
+        MarkJointsDirty();
     }
     if (face.friction != slot.collider.friction)
     {
@@ -693,6 +704,7 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
         {
             // A static body has no mass to update.
             bodies.SetShape(slot->body, shape, /*inUpdateMassProperties=*/ false, wake);
+            MarkJointsDirty();
         }
     }
 
@@ -824,6 +836,10 @@ void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)
     case SlotKind::Body:
     case SlotKind::Follower:
     {
+        if (slot.kind == SlotKind::Body)
+        {
+            DetachJointsTouching(entity);
+        }
         JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
         bodies.RemoveBody(slot.body);
         bodies.DestroyBody(slot.body);
@@ -867,6 +883,19 @@ void PhysicsWorld::Impl::ForgetBodyState(ECS::Entity entity)
 
 void PhysicsWorld::Impl::DestroyAll()
 {
+    // Joints before anything: Jolt holds a constraint's bodies by pointer.
+    for (std::pair<const std::uint64_t, JointRecord> &entry : joints)
+    {
+        if (entry.second.constraint != nullptr)
+        {
+            physicsSystem.RemoveConstraint(entry.second.constraint);
+        }
+    }
+    joints.clear();
+    jointedPairs.clear();
+    jointsDirty = false;
+    brokenJoints.clear();
+
     // Characters first: each owns an inner body that it destroys itself.
     for (std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
     {
