@@ -228,10 +228,16 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             const ECS::Entity carrier = CarrierUnder(record);
             if (carrier != ECS::NullEntity)
             {
-                AttachRider(record, carrier);
-                currentVelocity -= groundVelocity;
+                AttachRider(record, carrier, currentVelocity);
                 groundVelocity = JPH::Vec3::sZero();
             }
+        }
+
+        // After boarding, so the step that walks from a dock onto a deck still
+        // remembers the dock.
+        if (standing)
+        {
+            record.lastGroundVelocity = groundVelocity + BaseVelocityAt(record);
         }
         const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
         const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
@@ -333,7 +339,7 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
 
         if (record.base != ECS::NullEntity)
         {
-            RecordRiderPose(record, jumping);
+            RecordRiderPose(record, jumping, deltaTime);
         }
     }
 }
@@ -346,7 +352,7 @@ ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) cons
     }
     const ECS::Entity owner = OwnerOf(EntityFor(record.character->GetGroundBodyID()));
     const BodySlot *slot = SlotFor(owner);
-    if (slot == nullptr || slot->kind != SlotKind::Body || !slot->rigidBody.carriesRiders)
+    if (slot == nullptr || slot->kind != SlotKind::Body || !scene.Has<Carrier>(owner))
     {
         return ECS::NullEntity;
     }
@@ -357,14 +363,26 @@ bool PhysicsWorld::Impl::StillCarried(const CharacterRecord &record) const
 {
     const BodySlot *slot = SlotFor(record.base);
     return record.options.Has(CharacterOption::RidesBases) && slot != nullptr && slot->kind == SlotKind::Body &&
-           slot->body == record.baseBody && slot->rigidBody.carriesRiders;
+           slot->body == record.baseBody && scene.Has<Carrier>(record.base);
 }
 
-void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrier)
+void PhysicsWorld::Impl::AttachRider(CharacterRecord &record, ECS::Entity carrier, JPH::Vec3 &velocity)
 {
     record.base = carrier;
     record.baseBody = SlotFor(carrier)->body;
     record.leavingBase = false;
+
+    const Carrier &settings = *scene.Get<Carrier>(carrier);
+    record.graceRemaining = settings.graceTime;
+
+    // Relative to the carrier, the rider moves at its world velocity less the
+    // carrier's. Grip gives back the carrier's horizontal speed over the last
+    // ground, so a rider dropped onto a train does not slide and one walking
+    // on from a dock keeps its walk.
+    const JPH::Vec3 baseVelocity = BaseVelocityAt(record);
+    JPH::Vec3 gained = baseVelocity - record.lastGroundVelocity;
+    gained -= kCharacterUp * gained.Dot(kCharacterUp);
+    velocity += settings.grip * gained - baseVelocity;
 }
 
 JPH::Vec3 PhysicsWorld::Impl::BaseVelocityAt(const CharacterRecord &record) const
@@ -383,9 +401,10 @@ void PhysicsWorld::Impl::ReleaseRider(CharacterRecord &record)
     record.base = ECS::NullEntity;
     record.baseBody = JPH::BodyID{};
     record.leavingBase = false;
+    record.graceRemaining = 0.f;
 }
 
-void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping)
+void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping, float deltaTime)
 {
     const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
     const JPH::RVec3 basePosition = bodies.GetPosition(record.baseBody);
@@ -393,12 +412,29 @@ void PhysicsWorld::Impl::RecordRiderPose(CharacterRecord &record, bool jumping)
     record.localFeet =
         record.baseRotation.Conjugated() * JPH::Vec3(record.character->GetPosition() - basePosition);
 
-    // A jump leaves on the step it fires: the sweep may still find the deck
-    // under its feet, and riding on would swallow the jump.
     const JPH::CharacterVirtual &character = *record.character;
-    const bool onBase = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround &&
-                        OwnerOf(EntityFor(character.GetGroundBodyID())) == record.base;
-    record.leavingBase = jumping || !onBase;
+    const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+    const bool onBase = onGround && OwnerOf(EntityFor(character.GetGroundBodyID())) == record.base;
+
+    // A jump has left the deck on the step it fires, though the sweep may
+    // still find the deck under its feet.
+    const bool touching = onBase && !jumping;
+    if (touching)
+    {
+        record.graceRemaining = scene.Get<Carrier>(record.base)->graceTime;
+        record.leavingBase = false;
+    }
+    else if (onGround && !onBase)
+    {
+        // Held to a moving frame while standing on other ground, it would be
+        // dragged across that ground.
+        record.leavingBase = true;
+    }
+    else
+    {
+        record.graceRemaining -= deltaTime;
+        record.leavingBase = record.graceRemaining <= 0.f;
+    }
 }
 
 namespace

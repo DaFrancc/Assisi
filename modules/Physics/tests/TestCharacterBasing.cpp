@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -66,18 +67,21 @@ struct Deck
     float yawRate = 0.f; ///< rad/s.
 };
 
-/// A deck whose top face is at height 0, carrying riders unless @p carries is
-/// false.
-Deck AddDeck(TestScene &test, glm::vec3 velocity, float yawRate, bool carries)
+/// A deck whose top face is at height 0, carrying riders as @p carrier says,
+/// or not at all without one.
+Deck AddDeck(TestScene &test, glm::vec3 velocity, float yawRate, const std::optional<Physics::Carrier> &carrier)
 {
     BodySpec spec = Box({kDeckHalfWidth, kDeckHalfThickness, kDeckHalfWidth}, false);
     spec.rigidBody->motion = Physics::MotionType::Kinematic;
-    spec.rigidBody->carriesRiders = carries;
     Deck deck;
     deck.start = glm::vec3(0.f, -kDeckHalfThickness, 0.f);
     deck.velocity = velocity;
     deck.yawRate = yawRate;
     deck.entity = AddBody(test.scene, deck.start, spec);
+    if (carrier.has_value())
+    {
+        REQUIRE(test.scene.Add(deck.entity, *carrier) != nullptr);
+    }
     return deck;
 }
 
@@ -146,7 +150,7 @@ TEST_CASE("A character standing on a turning, travelling carrier stays where it 
     constexpr int32_t kRideSteps = 3 * kStepsPerSecond;
 
     TestScene test;
-    const Deck deck = AddDeck(test, deckVelocity, kYawRate, /*carries=*/ true);
+    const Deck deck = AddDeck(test, deckVelocity, kYawRate, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {2.f, 0.f, 1.f});
     const glm::vec3 before = OnDeck(test, deck, FeetOf(test, rider));
 
@@ -168,7 +172,7 @@ TEST_CASE("Walking on a turning carrier goes straight across the deck, and the r
     constexpr float kLeastProgress = 2.5f;
 
     TestScene test;
-    const Deck deck = AddDeck(test, deckVelocity, kYawRate, /*carries=*/ true);
+    const Deck deck = AddDeck(test, deckVelocity, kYawRate, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {0.f, 0.f, 3.f});
     const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
     const glm::vec3 before = OnDeck(test, deck, FeetOf(test, rider));
@@ -198,7 +202,7 @@ TEST_CASE("A rider that does not turn with its base is carried and keeps its fac
     character.options = Physics::AllCharacterOptions.Without(Physics::CharacterOption::TurnsWithBase);
 
     TestScene test;
-    const Deck deck = AddDeck(test, glm::vec3(0.f), kYawRate, /*carries=*/ true);
+    const Deck deck = AddDeck(test, glm::vec3(0.f), kYawRate, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {2.f, 0.f, 0.f}, character);
     const glm::vec3 before = OnDeck(test, deck, FeetOf(test, rider));
 
@@ -220,7 +224,7 @@ TEST_CASE("Jumping off a carrier keeps the carrier's velocity")
     constexpr int32_t kAirSteps = 10;
 
     TestScene test;
-    const Deck deck = AddDeck(test, deckVelocity, 0.f, /*carries=*/ true);
+    const Deck deck = AddDeck(test, deckVelocity, 0.f, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
     float elapsed = Ride(test, deck, kRideSteps, 0.f);
     REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
@@ -253,10 +257,11 @@ struct Outcome
     bool based = false;
 };
 
-Outcome RideASecond(glm::vec3 velocity, bool carries, const Physics::Character &character)
+Outcome RideASecond(glm::vec3 velocity, const std::optional<Physics::Carrier> &carrier,
+                    const Physics::Character &character)
 {
     TestScene test;
-    const Deck deck = AddDeck(test, velocity, 0.f, carries);
+    const Deck deck = AddDeck(test, velocity, 0.f, carrier);
     const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f}, character);
 
     Outcome outcome;
@@ -280,7 +285,7 @@ TEST_CASE("A body that does not carry, or a rider that does not ride, leaves the
     /// that does not carry still rides it by taking its velocity.
     constexpr float kLeftBehindAtMost = 0.5f;
 
-    const Outcome plain = RideASecond(deckVelocity, /*carries=*/ false, Physics::Character{});
+    const Outcome plain = RideASecond(deckVelocity, std::nullopt, Physics::Character{});
     CHECK_FALSE(plain.based);
     CHECK(std::abs(plain.feet.x - deckVelocity.x) < kLeftBehindAtMost);
 
@@ -288,7 +293,7 @@ TEST_CASE("A body that does not carry, or a rider that does not ride, leaves the
     // does not carry.
     Physics::Character optedOut;
     optedOut.options = Physics::AllCharacterOptions.Without(Physics::CharacterOption::RidesBases);
-    const Outcome declined = RideASecond(deckVelocity, /*carries=*/ true, optedOut);
+    const Outcome declined = RideASecond(deckVelocity, Physics::Carrier{}, optedOut);
     CHECK_FALSE(declined.based);
     CHECK(declined.feet == plain.feet);
 }
@@ -307,7 +312,7 @@ TEST_CASE("Walking off a carrier onto other ground lets go of it without a jump 
     constexpr float kMostPerStepFactor = 1.5f;
 
     TestScene test;
-    const Deck deck = AddDeck(test, glm::vec3(0.f), 0.f, /*carries=*/ true);
+    const Deck deck = AddDeck(test, glm::vec3(0.f), 0.f, Physics::Carrier{});
     AddBody(test.scene, {kFloorCentreX, -kDeckHalfThickness, 0.f},
             Box({kFloorHalfWidth, kDeckHalfThickness, kDeckHalfWidth}, true));
     const ECS::Entity rider = AddRider(test, {kDeckHalfWidth - 1.f, 0.f, 0.f});
@@ -338,7 +343,7 @@ TEST_CASE("A rider placed somewhere else by gameplay lets go of its carrier and 
     const glm::vec3 placed{0.f, 20.f, 0.f};
 
     TestScene test;
-    const Deck deck = AddDeck(test, deckVelocity, 0.f, /*carries=*/ true);
+    const Deck deck = AddDeck(test, deckVelocity, 0.f, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
     const float elapsed = Ride(test, deck, kRideSteps, 0.f);
     REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
@@ -349,4 +354,198 @@ TEST_CASE("A rider placed somewhere else by gameplay lets go of its carrier and 
     const Physics::CharacterState state = StateOf(test.scene, rider);
     CHECK(state.baseEntity == ECS::NullEntity);
     CHECK(std::abs(state.velocity.x - deckVelocity.x) < kCarriedSpeedTolerance);
+}
+
+namespace
+{
+
+/// Most steps a dropped or hopping rider is given to come down.
+constexpr int32_t kMaxFallSteps = 2 * kStepsPerSecond;
+
+/// Rides @p deck until @p rider is based on it, at most kMaxFallSteps.
+/// @return the seconds elapsed after them.
+float RideUntilBased(TestScene &test, const Deck &deck, ECS::Entity rider, float elapsed)
+{
+    for (int32_t i = 0; i < kMaxFallSteps && StateOf(test.scene, rider).baseEntity != deck.entity; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+    }
+    return elapsed;
+}
+
+/// How far a rider dropped from rest onto a deck travelling at @p velocity
+/// slides across it in the second after it boards.
+float SlideAfterBoarding(glm::vec3 velocity, float grip)
+{
+    /// Height above the deck the rider is dropped from (m).
+    constexpr float kDropHeight = 1.f;
+
+    Physics::Carrier carrier;
+    carrier.grip = grip;
+
+    TestScene test;
+    const Deck deck = AddDeck(test, velocity, 0.f, carrier);
+    const ECS::Entity rider = AddCharacter(test.scene, {0.f, kDropHeight, 0.f});
+    const float elapsed = RideUntilBased(test, deck, rider, 0.f);
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    const glm::vec3 boarded = OnDeck(test, deck, FeetOf(test, rider));
+    Ride(test, deck, kStepsPerSecond, elapsed);
+    const glm::vec3 slid = OnDeck(test, deck, FeetOf(test, rider)) - boarded;
+    return glm::length(glm::vec2(slid.x, slid.z));
+}
+
+/// Where in the deck's frame a rider standing @p local on a deck turning at
+/// @p yawRate lands after a hop, relative to where it took off.
+glm::vec3 HopOnTurningDeck(float yawRate, float graceTime, glm::vec3 local)
+{
+    /// Steps ridden before the hop, so the rider is moving with the deck.
+    constexpr int32_t kRideBeforeHop = kStepsPerSecond / 2;
+
+    /// Steps the hop is given to leave the deck before landing is looked for.
+    constexpr int32_t kLeaveSteps = 5;
+
+    Physics::Carrier carrier;
+    carrier.graceTime = graceTime;
+
+    TestScene test;
+    const Deck deck = AddDeck(test, glm::vec3(0.f), yawRate, carrier);
+    const ECS::Entity rider = AddRider(test, local);
+    float elapsed = Ride(test, deck, kRideBeforeHop, 0.f);
+    const glm::vec3 tookOff = OnDeck(test, deck, FeetOf(test, rider));
+
+    Drive(test.scene, rider, glm::vec3(0.f), /*jump=*/ true);
+    elapsed = Ride(test, deck, kLeaveSteps, elapsed);
+    REQUIRE(StateOf(test.scene, rider).ground == Physics::GroundState::InAir);
+    for (int32_t i = 0; i < kMaxFallSteps && StateOf(test.scene, rider).ground != Physics::GroundState::OnGround; ++i)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+    }
+    REQUIRE(StateOf(test.scene, rider).ground == Physics::GroundState::OnGround);
+    return OnDeck(test, deck, FeetOf(test, rider)) - tookOff;
+}
+
+} // namespace
+
+TEST_CASE("A carrier with full grip takes a boarding rider up to its speed; with none the rider slides")
+{
+    const glm::vec3 deckVelocity{6.f, 0.f, 0.f};
+
+    /// Far less than the metre and more a rider landing at 6 m/s slides
+    /// before friction stops it.
+    constexpr float kGrippedSlide = 0.05f;
+    constexpr float kUngrippedSlide = 0.5f;
+
+    CHECK(SlideAfterBoarding(deckVelocity, 1.f) < kGrippedSlide);
+    CHECK(SlideAfterBoarding(deckVelocity, 0.f) > kUngrippedSlide);
+}
+
+TEST_CASE("Walking from a dock onto a passing carrier keeps the walk, relative to the deck")
+{
+    const glm::vec3 deckVelocity{0.f, 0.f, 3.f};
+
+    /// A static dock beside the deck's +X edge, its top level with the deck's.
+    constexpr float kDockHalfWidth = 3.f;
+    constexpr float kDockCentreX = kDeckHalfWidth + kDockHalfWidth;
+
+    /// Where the rider starts on the dock, a metre from the deck.
+    constexpr float kStartX = kDeckHalfWidth + 1.f;
+
+    /// Steps after boarding before the velocity is judged, so it is not the
+    /// boarding step itself.
+    constexpr int32_t kStepsAfterBoarding = 5;
+
+    /// How close the deck-relative velocity must be to the walk (m/s).
+    constexpr float kWalkTolerance = 0.3f;
+
+    TestScene test;
+    const Deck deck = AddDeck(test, deckVelocity, 0.f, Physics::Carrier{});
+    AddBody(test.scene, {kDockCentreX, -kDeckHalfThickness, 0.f},
+            Box({kDockHalfWidth, kDeckHalfThickness, kDeckHalfWidth}, true));
+    const ECS::Entity rider = AddRider(test, {kStartX, 0.f, 0.f});
+    REQUIRE(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
+
+    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const glm::vec3 west{-walkSpeed, 0.f, 0.f};
+    float elapsed = 0.f;
+    for (int32_t i = 0; i < kMaxFallSteps && StateOf(test.scene, rider).baseEntity != deck.entity; ++i)
+    {
+        Drive(test.scene, rider, west, /*jump=*/ false);
+        elapsed = Ride(test, deck, 1, elapsed);
+    }
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+    for (int32_t i = 0; i < kStepsAfterBoarding; ++i)
+    {
+        Drive(test.scene, rider, west, /*jump=*/ false);
+        elapsed = Ride(test, deck, 1, elapsed);
+    }
+
+    const glm::vec3 relative = StateOf(test.scene, rider).velocity - deckVelocity;
+    CHECK(std::abs(relative.x - west.x) < kWalkTolerance);
+    CHECK(std::abs(relative.z) < kWalkTolerance);
+}
+
+TEST_CASE("A carrier's grace time keeps a hopping rider in its frame, so the hop lands where it left")
+{
+    const float kYawRate = glm::radians(90.f);
+    const glm::vec3 local{2.f, 0.f, 0.f};
+
+    /// Longer than the hop's half a second in the air.
+    constexpr float kLongGrace = 1.f;
+
+    /// How far from its take-off point a carried hop may land (m), and how far
+    /// a hop flown straight while the deck turns lands at least.
+    constexpr float kCarriedHop = 0.1f;
+    constexpr float kUncarriedHop = 0.3f;
+
+    CHECK(glm::length(HopOnTurningDeck(kYawRate, kLongGrace, local)) < kCarriedHop);
+    CHECK(glm::length(HopOnTurningDeck(kYawRate, 0.f, local)) > kUncarriedHop);
+}
+
+TEST_CASE("A hop longer than the grace time lets go in the air, keeping its world velocity")
+{
+    const glm::vec3 deckVelocity{3.f, 0.f, 0.f};
+    constexpr float kGraceTime = 0.1f;
+    constexpr int32_t kGraceSteps = static_cast<int32_t>(kGraceTime * kStepsPerSecond);
+
+    /// Steps into the hop that are well inside the grace time, and steps past
+    /// its end by which the rider must have been let go.
+    constexpr int32_t kInsideGrace = kGraceSteps / 2;
+    constexpr int32_t kPastGrace = kGraceSteps + 2;
+
+    /// The most a step changes a falling rider's velocity: gravity's share,
+    /// with room to spare (m/s).
+    constexpr float kVelocityStep = 0.5f;
+
+    Physics::Carrier carrier;
+    carrier.graceTime = kGraceTime;
+
+    TestScene test;
+    const Deck deck = AddDeck(test, deckVelocity, 0.f, carrier);
+    const ECS::Entity rider = AddRider(test, {0.f, 0.f, 0.f});
+    float elapsed = Ride(test, deck, kStepsPerSecond / 2, 0.f);
+    REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
+
+    Drive(test.scene, rider, glm::vec3(0.f), /*jump=*/ true);
+    glm::vec3 previous = StateOf(test.scene, rider).velocity;
+    bool released = false;
+    for (int32_t step = 1; step <= kPastGrace; ++step)
+    {
+        elapsed = Ride(test, deck, 1, elapsed);
+        const Physics::CharacterState state = StateOf(test.scene, rider);
+        if (step == kInsideGrace)
+        {
+            CHECK(state.ground != Physics::GroundState::OnGround);
+            CHECK(state.baseEntity == deck.entity);
+        }
+        if (!released && state.baseEntity == ECS::NullEntity)
+        {
+            released = true;
+            CHECK(step > kInsideGrace);
+            CHECK(state.ground == Physics::GroundState::InAir);
+            CHECK(glm::length(state.velocity - previous) < kVelocityStep);
+        }
+        previous = state.velocity;
+    }
+    CHECK(released);
 }

@@ -83,9 +83,9 @@ It is not enough for a boat that rocks or a train that turns: the velocity a
 character takes is a step old, so it slides across the deck, and on a sharp turn
 it is thrown off.
 
-For those, make the body a **carrier**: set `carriesRiders` on its
-`RigidBody`. A character standing on a carrier **rides** it, and the carrier is
-its **base**:
+For those, make the body a **carrier**: give it a `Carrier` component, beside
+its `RigidBody`. A character on a carrier **rides** it, and the carrier is its
+**base**:
 
 - Each step, the character is first moved with its base, by exactly the
   distance and the turn the base made. Then it moves by its own intent, which
@@ -96,9 +96,36 @@ its **base**:
   stays upright and the view does not roll.
 - `CharacterState.baseEntity` names the base. `velocity` and `groundVelocity`
   stay world velocities, with the base's motion included.
-- The character stops riding when it jumps, leaves the ground, walks onto
-  something else, or is placed somewhere by writing its `Transform`. It keeps
-  its world velocity, so a jump off a moving boat carries the boat's speed.
+- When the ride ends, the character keeps its world velocity, so a jump off a
+  moving boat carries the boat's speed. Writing the character's `Transform`
+  always ends the ride.
+
+The `Carrier` decides when a ride starts and ends:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `join` | `Touch` | What starts a ride. `Touch` is standing on one of the carrier's colliders; brushing its side is not enough. |
+| `hold` | `Touch` | What keeps a ride going. A jump leaves the deck, so with `Touch` it ends the ride unless the grace time covers it. |
+| `graceTime` | 0 | Seconds a rider is kept after `hold` stops holding it. Standing on anything else ends the ride at once. |
+| `grip` | 1 | How much of the carrier's speed a boarding rider takes up. See below. |
+
+While a rider is kept in the air by the grace time, it stays in the carrier's
+frame: it is carried, and it steers and falls relative to the carrier. A hop on
+a turning deck lands where it was aimed, and a deck that speeds up takes the
+rider with it. Keep the grace time short — long enough for a hop.
+
+**Grip.** A rider boarding a fast carrier is moving much slower than the deck,
+and without help it slides across it until friction stops it, often off the
+far side. `grip` decides how much of the carrier's speed it takes up when it
+boards, measured against the ground it last stood on. At 1 a rider dropped onto
+a train lands moving with it, and one walking on from a platform keeps walking
+at the same pace across the deck. At 0 it keeps its speed and slides. Only the
+moment of boarding changes; walking and stopping work as always.
+
+| Carrier | `join` | `hold` | `graceTime` |
+|---|---|---|---|
+| A lift, a flatcar | `Touch` | `Touch` | 0 |
+| A boat you can hop about on | `Touch` | `Touch` | 0.5 |
 
 Riding needs no `Parent`, and the character keeps none. Only characters ride;
 a crate on a deck stays on it by friction.
