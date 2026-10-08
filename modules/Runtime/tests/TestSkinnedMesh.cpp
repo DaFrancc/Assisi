@@ -137,3 +137,61 @@ TEST_CASE("SkinnedMesh: saved and loaded by presence, bringing its MeshRenderer"
     CHECK(skinned->pose.empty());
     CHECK(loaded.Get<Runtime::MeshRenderer>(first) != nullptr);
 }
+
+TEST_CASE("SkinnedMesh: an instance that holds no range yet draws its MeshRenderer's mesh")
+{
+    Render::MeshBuffer mesh;
+    mesh.SetId(kFirstMesh);
+    Runtime::MeshRenderer renderer;
+    renderer.meshBuffer = &mesh;
+    const SkinnedMesh skinned;
+
+    CHECK(Runtime::DrawnMesh(renderer, &skinned) == &mesh);
+    CHECK(Runtime::DrawnMesh(renderer, nullptr) == &mesh);
+}
+
+TEST_CASE("SkinnedMesh: an instance holding a range draws its own copy, not the shared mesh")
+{
+    // Drawn from the shared mesh, every instance would show the bind pose, and
+    // two instances would group into one draw at one vertex range.
+    constexpr uint32_t kPosedBase = 500;
+    constexpr uint32_t kPosedId = 77;
+    Render::MeshBuffer mesh;
+    mesh.SetId(kFirstMesh);
+    Runtime::MeshRenderer renderer;
+    renderer.meshBuffer = &mesh;
+    SkinnedMesh skinned;
+    skinned.posed = mesh.PosedInstance(kPosedBase, kPosedId);
+
+    const Render::MeshBuffer *drawn = Runtime::DrawnMesh(renderer, &skinned);
+    REQUIRE(drawn == &skinned.posed);
+    CHECK(drawn->VertexBase() == kPosedBase);
+    CHECK(drawn->Id() == kPosedId);
+    CHECK(drawn->IndexBase() == mesh.IndexBase());
+}
+
+TEST_CASE("SkinnedMesh: binding a different mesh lets the posed copy go")
+{
+    // Kept, the copy would go on drawing the old mesh's range under the new mesh.
+    const Skeleton skeleton = Chain(2);
+    SkinnedMesh skinned;
+    (void)BindPose(skinned, skeleton, kFirstMesh);
+    skinned.posed = Render::MeshBuffer{}.PosedInstance(100, 9);
+
+    (void)BindPose(skinned, skeleton, kFirstMesh);
+    CHECK(skinned.posed.Id() == 9);
+
+    (void)BindPose(skinned, skeleton, kSecondMesh);
+    CHECK(skinned.posed.Id() == 0);
+}
+
+TEST_CASE("SkinnedMesh: unbinding lets the posed copy go")
+{
+    const Skeleton skeleton = Chain(2);
+    SkinnedMesh skinned;
+    (void)BindPose(skinned, skeleton, kFirstMesh);
+    skinned.posed = Render::MeshBuffer{}.PosedInstance(100, 9);
+
+    Runtime::UnbindSkinnedMesh(skinned);
+    CHECK(skinned.posed.Id() == 0);
+}

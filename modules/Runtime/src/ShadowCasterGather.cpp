@@ -13,6 +13,7 @@
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 namespace Assisi::Runtime
 {
@@ -129,9 +130,28 @@ template <typename Visit> void ForEachMovingCaster(Assisi::ECS::Scene &scene,
         }
         const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(entity);
         const MeshRenderer *meshRenderer = scene.Get<MeshRenderer>(entity);
-        if (world != nullptr && meshRenderer != nullptr)
+        if (world == nullptr || meshRenderer == nullptr)
         {
-            visit(entity, *world, *meshRenderer);
+            continue;
+        }
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedMesh>(entity));
+        if (mesh != nullptr)
+        {
+            visit(entity, *world, *meshRenderer, *mesh);
+        }
+    }
+}
+
+/// @brief Calls @p visit for every entity in @p scene with a mesh to draw, with
+///        the mesh it draws as.
+template <typename Visit> void ForEachCaster(Assisi::ECS::Scene &scene, Visit &&visit)
+{
+    for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
+    {
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
+        if (mesh != nullptr)
+        {
+            visit(entity, world, meshRenderer, *mesh);
         }
     }
 }
@@ -164,15 +184,14 @@ void SunShadowCasterGather::Gather(Assisi::ECS::Scene &scene, Assisi::Render::Sh
     ASSISI_ASSERT(lodSelector == nullptr || lodSelector->ShadowViewCount() == _viewCount,
                   "LodSelector::SetShadowViews must describe the views being gathered for");
 
+    _mobility = &mobility;
+    _lodSelector = lodSelector;
     const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
-                         const MeshRenderer &meshRenderer)
-                     { AddCaster(entity, world.matrix, meshRenderer, mobility, lodSelector); };
+                         const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
+                     { AddCaster(entity, world.matrix, meshRenderer, mesh); };
     if (_stillViews > 0u)
     {
-        for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
-        {
-            add(entity, world, meshRenderer);
-        }
+        ForEachCaster(scene, add);
     }
     else
     {
@@ -188,17 +207,17 @@ void SunShadowCasterGather::Gather(Assisi::ECS::Scene &scene, Assisi::Render::Sh
 }
 
 void SunShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::mat4 &world,
-                                      const MeshRenderer &meshRenderer, Assisi::Render::ShadowCasterMobility &mobility,
-                                      LodSelector *lodSelector)
+                                      const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
 {
-    const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
-    if (mesh == nullptr || !meshRenderer.castsShadows)
+    if (!meshRenderer.castsShadows)
     {
         return;
     }
+    Assisi::Render::ShadowCasterMobility &mobility = *_mobility;
+    LodSelector *lodSelector = _lodSelector;
 
     const Assisi::Geometry::BoundingSphere worldSphere =
-        Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world);
+        Assisi::Geometry::TransformedBoundingSphere(mesh.LocalBounds(), world);
 
     // Swept down-light against each view's volume, once, here. The same
     // rejection made per view is one the frustum test would have reached only
@@ -228,10 +247,10 @@ void SunShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::mat
 
     const Assisi::Render::ShadowCasterMotion motion =
         still ? Assisi::Render::ShadowCasterMotion::Still : Assisi::Render::ShadowCasterMotion::Moving;
-    const ShadowCasterSource source{*mesh, meshRenderer, world, worldSphere};
-    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+    const ShadowCasterSource source{mesh, meshRenderer, world, worldSphere};
+    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), worldSphere) : 0u;
     const std::uint32_t coarser =
-        lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh->Lods(), worldSphere, level) & viewMask
+        lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh.Lods(), worldSphere, level) & viewMask
                                : 0u;
 
     // At most two copies, each masked to the views that draw it, so every
@@ -257,14 +276,17 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
     {
         const MeshRenderer *meshRenderer = scene.Get<MeshRenderer>(entity);
         const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(entity);
-        if (meshRenderer == nullptr || world == nullptr || !meshRenderer->castsShadows ||
-            meshRenderer->meshBuffer == nullptr)
+        if (meshRenderer == nullptr || world == nullptr || !meshRenderer->castsShadows)
         {
             continue; // it moved, but nothing it does reaches a shadow map
         }
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedMesh>(entity));
+        if (mesh == nullptr)
+        {
+            continue;
+        }
         out.push_back(Assisi::Render::ShadowMover{
-                ShadowCasterId(entity),
-                Assisi::Geometry::TransformedBoundingSphere(meshRenderer->meshBuffer->LocalBounds(), world->matrix),
+                ShadowCasterId(entity), Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world->matrix),
                 Assisi::Render::ShadowPoseHash(world->matrix)});
     }
 }
@@ -298,17 +320,16 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
     // rest, so every one of them is taken to want its still casters.
     _stillRequests = stillRequests.size() == lightVolumes.size() ? stillRequests : std::span<const std::uint8_t>{};
 
+    _mobility = &mobility;
+    _lodSelector = lodSelector;
     const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
-                         const MeshRenderer &meshRenderer)
-                     { AddCaster(entity, world.matrix, meshRenderer, mobility, lodSelector); };
+                         const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
+                     { AddCaster(entity, world.matrix, meshRenderer, mesh); };
     const bool anyStill = _stillRequests.empty() ||
                           std::ranges::any_of(_stillRequests, [](std::uint8_t wanted) { return wanted != 0u; });
     if (anyStill)
     {
-        for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
-        {
-            add(entity, world, meshRenderer);
-        }
+        ForEachCaster(scene, add);
         return;
     }
 
@@ -319,14 +340,14 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
 }
 
 void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::mat4 &world,
-                                        const MeshRenderer &meshRenderer,
-                                        Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector)
+                                        const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
 {
-    const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
-    if (mesh == nullptr || !meshRenderer.castsShadows)
+    if (!meshRenderer.castsShadows)
     {
         return;
     }
+    Assisi::Render::ShadowCasterMobility &mobility = *_mobility;
+    LodSelector *lodSelector = _lodSelector;
 
     const std::uint64_t casterId = ShadowCasterId(entity);
     const Assisi::Render::ShadowCasterMotion motion = mobility.IsDynamic(casterId)
@@ -335,7 +356,7 @@ void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::m
     const bool still = motion == Assisi::Render::ShadowCasterMotion::Still;
 
     const Assisi::Geometry::BoundingSphere worldSphere =
-        Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world);
+        Assisi::Geometry::TransformedBoundingSphere(mesh.LocalBounds(), world);
 
     // Recorded per caster rather than per light because the atlas's rows index
     // the *sorted* caster span, and the sort has not happened yet.
@@ -381,8 +402,8 @@ void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::m
     // separate casters and each needs its own row, and they all reach exactly
     // the lights the entity's sphere did.
     const std::size_t before = _casters.size();
-    const ShadowCasterSource source{*mesh, meshRenderer, world, worldSphere};
-    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+    const ShadowCasterSource source{mesh, meshRenderer, world, worldSphere};
+    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), worldSphere) : 0u;
     EmitShadowCasters(source, ~0u, level, motion, _casters);
     for (std::size_t emitted = before; emitted < _casters.size(); ++emitted)
     {

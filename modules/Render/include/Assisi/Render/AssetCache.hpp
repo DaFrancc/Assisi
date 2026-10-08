@@ -48,6 +48,7 @@
 #include <Assisi/Render/GeometryArena.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
+#include <Assisi/Render/SkinScratch.hpp>
 #include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Render
@@ -81,6 +82,19 @@ public:
     /// pointer stays valid until Clear(). Poll again (see HasPendingLoads) until a
     /// loading mesh becomes non-null.
     const MeshBuffer *ResolveMesh(const Core::AssetId &id);
+
+    /// @brief Keeps @p posed — one skinned instance of @p source — drawing from a
+    ///        range of the arena that is its own, for this frame.
+    ///
+    /// A @p posed that already holds a range keeps it; otherwise it gets a free
+    /// range of the right size, or a new one, under a new mesh id. False when
+    /// @p source cannot be posed (no skin), leaving @p posed untouched. A range
+    /// not kept by the next EndSkinFrame is free for the next instance.
+    bool KeepPosedInstance(const MeshBuffer &source, MeshBuffer &posed);
+
+    /// @brief Ends a frame of KeepPosedInstance calls: every range nothing kept
+    ///        becomes free.
+    void EndSkinFrame();
 
     /// @brief Resolves a texture id in an explicit colour space and format. The
     /// cache is keyed on all three, so the same image can be resident as an sRGB
@@ -361,6 +375,8 @@ private:
     // (GPU-driven stage C). MeshBuffers hold ranges into this, not their own
     // buffers. Reset by Clear() (wholesale free).
     GeometryArena _arena;
+    // Which arena ranges hold posed instances' vertices, and whose they are.
+    SkinScratch _skinScratch;
 
     // Bindless material-texture table (GPU-driven stage D). Every resolved
     // Texture is written here once and keys materials by index. The handles are
@@ -490,8 +506,7 @@ private:
         Geometry::MeshData data;
         std::vector<Core::AssetId> slotMaterials;
         nvrhi::BufferHandle staging;
-        uint32_t vertexCount = 0;
-        uint32_t indexCount  = 0;
+        GeometryArena::StagedLayout layout; ///< What staging holds, counted before the release.
     };
 
     /// @brief A load queued but not yet started — stored as data (not a thunk) so

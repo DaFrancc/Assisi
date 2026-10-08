@@ -89,11 +89,18 @@ inline constexpr uint32_t kUnboundMesh = 0;
 /// not kUnboundMesh all three hold one entry per joint; while it is, they are
 /// empty and the mesh draws unskinned.
 ///
+/// `posed` is what the entity draws as once its mesh can be posed: a copy of the
+/// MeshRenderer's mesh with a vertex range of its own, which the skinning pass
+/// fills from `palette` every frame, a mesh id of its own and bounds that follow
+/// the pose. Its id is 0 until it holds a range, and DrawnMesh then answers with
+/// the MeshRenderer's mesh instead.
+///
 /// Replicable so a remote copy of the entity carries one too. Nothing in it is
 /// sent: every machine poses its own copy from state that is already replicated.
 ACOMP(replicable, requires = {MeshRenderer})
 struct SkinnedMesh
 {
+    AFIELD(transient) Assisi::Render::MeshBuffer posed;
     AFIELD(transient) std::vector<Geometry::JointTransform> pose;
     AFIELD(transient) std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
     AFIELD(transient) std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.

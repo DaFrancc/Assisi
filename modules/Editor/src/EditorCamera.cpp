@@ -11,6 +11,7 @@
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 #include <cmath>
 #include <limits>
@@ -280,9 +281,11 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     // sphere at the origin for a mesh-less entity.
     Assisi::Geometry::BoundingSphere world;
     const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
-    if (mrc != nullptr && mrc->meshBuffer != nullptr && mrc->meshBuffer->LocalBounds().radius > 0.f)
+    const Assisi::Render::MeshBuffer *mesh =
+        mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedMesh>(entity)) : nullptr;
+    if (mesh != nullptr && mesh->LocalBounds().radius > 0.f)
     {
-        world = Assisi::Geometry::TransformedBoundingSphere(mrc->meshBuffer->LocalBounds(), placement->matrix);
+        world = Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), placement->matrix);
     }
     else
     {

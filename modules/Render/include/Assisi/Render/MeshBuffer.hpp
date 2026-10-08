@@ -19,6 +19,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
@@ -59,13 +61,17 @@ public:
         Geometry::EnsureSubMeshTables(meshData);
 
         _indexCount = static_cast<uint32_t>(meshData.Indices.size());
+        _vertexCount = static_cast<uint32_t>(meshData.Vertices.size());
 
-        const GeometryArena::Range range =
-            arena.Allocate(meshData.Vertices.data(), static_cast<uint32_t>(meshData.Vertices.size()),
-                           meshData.Indices.data(), static_cast<uint32_t>(meshData.Indices.size()), sharedList);
+        const GeometryArena::Range range = arena.Allocate(meshData.Vertices, meshData.Indices, sharedList);
         _arena = &arena;
         _vertexBase = range.vertexBase;
         _indexBase = range.indexBase;
+        _skinCount = static_cast<uint32_t>(meshData.Skin.size());
+        if (_skinCount > 0)
+        {
+            _skinBase = arena.AllocateSkin(meshData.Skin, sharedList);
+        }
 
         // Read the bounds the import worker already fit (EnsureMeshBounds) rather
         // than re-walking the vertex array here — three passes over a large mesh is
@@ -78,7 +84,7 @@ public:
         _subMeshes = std::move(meshData.SubMeshes);
         _lods = std::move(meshData.Lods);
         _materials = std::move(meshData.Materials);
-        _skeleton = std::move(meshData.Skeleton);
+        KeepSkeleton(std::move(meshData.Skeleton));
         // Vertex/index data is deliberately not retained (see file comment).
     }
 
@@ -93,14 +99,16 @@ public:
     /// main-thread publish O(mesh bytes). Free-threaded — `mapBuffer` on a buffer
     /// whose previous submit has retired takes no GPU wait.
     ///
-    /// Layout: vertices at offset 0, then indices — what
-    /// GeometryArena::AllocateStaged expects. nvrhi rejects `writeBuffer` on a
-    /// mappable buffer, so the fill goes through map + memcpy + unmap by necessity.
+    /// Layout: vertices at offset 0, then indices, then skins — what
+    /// GeometryArena::AllocateStaged expects, and what StagedLayoutOf describes.
+    /// nvrhi rejects `writeBuffer` on a mappable buffer, so the fill goes through
+    /// map + memcpy + unmap by necessity.
     static bool StageMeshGeometry(nvrhi::IDevice *device, nvrhi::IBuffer *staging,
                                   const Geometry::MeshData &meshData)
     {
         const uint64_t vertexBytes = MeshVertexBytes(meshData);
         const uint64_t indexBytes = MeshIndexBytes(meshData);
+        const uint64_t skinBytes = MeshSkinBytes(meshData);
         if (staging == nullptr || vertexBytes + indexBytes == 0)
         {
             return false;
@@ -119,6 +127,11 @@ public:
         {
             std::memcpy(static_cast<std::byte *>(mapped) + vertexBytes, meshData.Indices.data(), indexBytes);
         }
+        if (skinBytes > 0)
+        {
+            std::memcpy(static_cast<std::byte *>(mapped) + vertexBytes + indexBytes, meshData.Skin.data(),
+                        skinBytes);
+        }
         device->unmapBuffer(staging);
         return true;
     }
@@ -131,10 +144,22 @@ public:
     {
         return meshData.Indices.size() * sizeof(uint32_t);
     }
+    static uint64_t MeshSkinBytes(const Geometry::MeshData &meshData)
+    {
+        return meshData.Skin.size() * sizeof(Geometry::VertexSkin);
+    }
     /// @brief Staging-buffer size a staged upload of @p meshData needs.
     static uint64_t MeshStagingBytes(const Geometry::MeshData &meshData)
     {
-        return MeshVertexBytes(meshData) + MeshIndexBytes(meshData);
+        return MeshVertexBytes(meshData) + MeshIndexBytes(meshData) + MeshSkinBytes(meshData);
+    }
+    /// @brief The parts StageMeshGeometry writes for @p meshData, for the upload
+    ///        that copies them out again.
+    static GeometryArena::StagedLayout StagedLayoutOf(const Geometry::MeshData &meshData)
+    {
+        return GeometryArena::StagedLayout{.vertexCount = static_cast<uint32_t>(meshData.Vertices.size()),
+                                           .indexCount = static_cast<uint32_t>(meshData.Indices.size()),
+                                           .skinCount = static_cast<uint32_t>(meshData.Skin.size())};
     }
 
     /// @brief Upload from a staging buffer the worker already filled (see
@@ -143,17 +168,20 @@ public:
     /// main-thread memcpy, so this is O(1) in mesh size.
     ///
     /// @p meshData supplies only the metadata (submesh/LOD/material tables, bounds,
-    /// index count); its Vertices/Indices may already have been released by the
-    /// worker once staged.
+    /// skeleton); its Vertices/Indices/Skin may already have been released by the
+    /// worker once staged, which is why @p layout carries the counts.
     void UploadStaged(GeometryArena &arena, Geometry::MeshData meshData, nvrhi::IBuffer *staging,
-                      uint32_t vertexCount, uint32_t indexCount, nvrhi::ICommandList *commandList)
+                      const GeometryArena::StagedLayout &layout, nvrhi::ICommandList *commandList)
     {
-        _indexCount = indexCount;
+        _indexCount = layout.indexCount;
+        _vertexCount = layout.vertexCount;
 
-        const GeometryArena::Range range = arena.AllocateStaged(staging, vertexCount, indexCount, commandList);
+        const GeometryArena::Range range = arena.AllocateStaged(staging, layout, commandList);
         _arena = &arena;
         _vertexBase = range.vertexBase;
         _indexBase = range.indexBase;
+        _skinBase = range.skinBase;
+        _skinCount = range.skinCount;
 
         // Bounds were fit on the import worker (EnsureMeshBounds); the vertex data
         // may be gone by now, so they must already be present — unlike Upload(),
@@ -163,7 +191,29 @@ public:
         _subMeshes = std::move(meshData.SubMeshes);
         _lods = std::move(meshData.Lods);
         _materials = std::move(meshData.Materials);
-        _skeleton = std::move(meshData.Skeleton);
+        KeepSkeleton(std::move(meshData.Skeleton));
+    }
+
+    /// @brief A copy of this mesh that draws from its own @p vertexBase range
+    ///        under its own @p id — what one skinned instance draws as.
+    ///
+    /// Everything else is this mesh's: the same indices, submeshes, materials
+    /// and skeleton (shared, not copied). The id keeps the instance apart from
+    /// every other in each place that groups draws by mesh, since two instances
+    /// of one mesh in different poses are different geometry.
+    [[nodiscard]] MeshBuffer PosedInstance(uint32_t vertexBase, uint32_t id) const
+    {
+        MeshBuffer instance = *this;
+        instance._vertexBase = vertexBase;
+        instance._id = id;
+        return instance;
+    }
+
+    /// @brief Replaces the bounds, for an instance whose pose moved them.
+    void SetLocalBounds(const Geometry::BoundingSphere &sphere, const Geometry::Aabb &aabb)
+    {
+        _localBounds = sphere;
+        _localAabb = aabb;
     }
 
     /// @brief The arena's shared vertex/index buffers (null until Upload). Read
@@ -179,6 +229,14 @@ public:
     /// submesh's IndexOffset to form startIndexLocation.
     uint32_t IndexBase() const { return _indexBase; }
     uint32_t IndexCount() const { return _indexCount; }
+    uint32_t VertexCount() const { return _vertexCount; }
+
+    /// @brief Whether the mesh has joint weights for every vertex, so the
+    ///        skinning pass can pose it.
+    bool HasSkin() const { return _skinCount > 0 && _skinCount == _vertexCount; }
+    /// @brief The mesh's first VertexSkin in the arena's skin buffer.
+    uint32_t SkinBase() const { return _skinBase; }
+    nvrhi::IBuffer *SkinBuffer() const { return _arena != nullptr ? _arena->SkinBuffer() : nullptr; }
 
     /// @brief Stable, process-unique id assigned by AssetCache at upload (never
     /// reused; survives Clear()). 0 = unassigned. Symmetric with Material::Id —
@@ -207,17 +265,32 @@ public:
     const std::vector<Geometry::MaterialData> &Materials() const { return _materials; }
 
     /// @brief The joints a skinned mesh is bound to. Empty for a static mesh.
-    const Geometry::Skeleton &Skeleton() const { return _skeleton; }
+    const Geometry::Skeleton &Skeleton() const { return _skeleton != nullptr ? *_skeleton : EmptySkeleton(); }
 
 private:
+    static const Geometry::Skeleton &EmptySkeleton()
+    {
+        static const Geometry::Skeleton empty;
+        return empty;
+    }
+
+    void KeepSkeleton(Geometry::Skeleton skeleton)
+    {
+        _skeleton = skeleton.Empty() ? nullptr : std::make_shared<const Geometry::Skeleton>(std::move(skeleton));
+    }
+
+    // Shared by every posed instance of the mesh, which all copy this handle.
+    std::shared_ptr<const Geometry::Skeleton> _skeleton;
     // The arena that owns this mesh's geometry, and where the mesh landed in it.
     // A pointer (not a raw buffer handle) so an arena grow/compaction that swaps
     // the underlying buffer is picked up automatically. Null until Upload().
-    Geometry::Skeleton _skeleton;
     const GeometryArena *_arena = nullptr;
     uint32_t _vertexBase = 0;             ///< Base offset into the arena, in vertices.
     uint32_t _indexBase = 0;              ///< Base offset into the arena, in indices.
     uint32_t _indexCount = 0;
+    uint32_t _vertexCount = 0;
+    uint32_t _skinBase = 0;               ///< Into the arena's skin buffer, in VertexSkins.
+    uint32_t _skinCount = 0;
     uint32_t _id = 0;             ///< Assigned by AssetCache; 0 until then.
     Geometry::BoundingSphere _localBounds;
     Geometry::Aabb _localAabb;

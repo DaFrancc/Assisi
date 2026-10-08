@@ -2,6 +2,8 @@
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 #include <Assisi/Geometry/Pose.hpp>
+#include <Assisi/Render/AssetCache.hpp>
+#include <Assisi/Render/MeshSkinner.hpp>
 
 namespace Assisi::Runtime
 {
@@ -19,6 +21,8 @@ const Geometry::Skeleton *BindPose(SkinnedMesh &skinned, const Geometry::Skeleto
         skinned.jointModel.assign(skeleton.JointCount(), glm::mat4(1.f));
         skinned.palette.assign(skeleton.JointCount(), glm::mat4(1.f));
         skinned.boundMeshId = meshId;
+        // The old mesh's range is let go by no longer being kept.
+        skinned.posed = Render::MeshBuffer{};
     }
     return &skeleton;
 }
@@ -44,12 +48,22 @@ void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
     Geometry::SkinningPalette(*skeleton, skinned.jointModel, skinned.palette);
 }
 
-void EvaluateScenePoses(ECS::Scene &scene)
+void EvaluateScenePoses(ECS::Scene &scene, Render::AssetCache &cache)
 {
     for (auto [entity, skinned, renderer] : scene.Query<Mut<SkinnedMesh>, MeshRenderer>())
     {
         EvaluateSkinnedMesh(skinned, renderer);
+        if (skinned.boundMeshId == kUnboundMesh)
+        {
+            continue;
+        }
+        // A mesh with a skeleton but no weights draws as it is.
+        if (!cache.KeepPosedInstance(*renderer.meshBuffer, skinned.posed))
+        {
+            skinned.posed = Render::MeshBuffer{};
+        }
     }
+    cache.EndSkinFrame();
 }
 
 void UnbindSkinnedMesh(SkinnedMesh &skinned)
@@ -58,6 +72,37 @@ void UnbindSkinnedMesh(SkinnedMesh &skinned)
     skinned.jointModel.clear();
     skinned.palette.clear();
     skinned.boundMeshId = kUnboundMesh;
+    skinned.posed = Render::MeshBuffer{};
+}
+
+const Render::MeshBuffer *DrawnMesh(const MeshRenderer &renderer, const SkinnedMesh *skinned)
+{
+    if (skinned != nullptr && skinned->posed.Id() != 0)
+    {
+        return &skinned->posed;
+    }
+    return renderer.meshBuffer;
+}
+
+const Render::MeshBuffer *GatherPosedInstances(const ECS::Scene &scene, Render::SkinBatch &batch)
+{
+    batch.Reset();
+    const Render::MeshBuffer *anyMesh = nullptr;
+    for (auto [entity, skinned, renderer] : scene.Query<SkinnedMesh, MeshRenderer>())
+    {
+        const Render::MeshBuffer *source = renderer.meshBuffer;
+        if (source == nullptr || skinned.posed.Id() == 0 || skinned.palette.size() != source->Skeleton().JointCount())
+        {
+            continue;
+        }
+        anyMesh = source;
+        batch.Add(Render::SkinDispatch{.sourceVertexBase = source->VertexBase(),
+                                       .posedVertexBase = skinned.posed.VertexBase(),
+                                       .vertexCount = source->VertexCount(),
+                                       .skinBase = source->SkinBase()},
+                  skinned.palette);
+    }
+    return anyMesh;
 }
 
 } // namespace Assisi::Runtime

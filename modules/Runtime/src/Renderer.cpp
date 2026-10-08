@@ -14,6 +14,7 @@
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 namespace Assisi::Runtime
 {
@@ -60,7 +61,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
         for (auto [entity, worldMatrix, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
             const glm::mat4 &world = worldMatrix.matrix;
-            const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+            const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
             if (mesh == nullptr)
             {
                 continue;
@@ -165,7 +166,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
         for (auto [entity, worldMatrix, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
             const glm::mat4 &world = worldMatrix.matrix;
-            const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+            const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
             if (mesh == nullptr)
             {
                 continue;

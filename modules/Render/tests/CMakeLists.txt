@@ -4,6 +4,7 @@ add_executable(Assisi-Render-Tests
   TestIndirectLighting.cpp
   TestLocalShadowCache.cpp
   TestLocalShadowViews.cpp
+  TestMeshSkinner.cpp
   TestPostProcessChain.cpp
   TestShadowAtlas.cpp
   TestShadowCadence.cpp
@@ -12,6 +13,7 @@ add_executable(Assisi-Render-Tests
   TestShadowImportance.cpp
   TestShadowSettings.cpp
   TestShadowViews.cpp
+  TestSkinScratch.cpp
   TestSky.cpp
   TestSpecularIbl.cpp
   TestSsao.cpp

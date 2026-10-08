@@ -1028,7 +1028,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // always meant to be.
     // Poses first, in edit mode too: what follows a joint is placed from where the
     // joint is this frame.
-    Assisi::Runtime::EvaluateScenePoses(*_scene);
+    Assisi::Runtime::EvaluateScenePoses(*_scene, _assetCache);
     _world->propagationTick = Assisi::ECS::PropagateTransforms(*_scene, _world->propagationTick);
 
     // A play session looks through the scene's active camera when it has one, so

@@ -13,6 +13,7 @@
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 namespace Assisi::Editor
 {
@@ -317,15 +318,15 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
     // thing selected it is that thing, so an ordinary click gets the active colour.
     const glm::vec3 color = entity == _activeHighlight ? kActiveSelectionOutline : kSelectionOutline;
 
-    if (renderer != nullptr && renderer->meshBuffer != nullptr)
+    const Render::MeshBuffer *mesh =
+        renderer != nullptr ? Runtime::DrawnMesh(*renderer, scene.Get<Runtime::SkinnedMesh>(entity)) : nullptr;
+    if (mesh != nullptr)
     {
         // The level the mesh pass drew this entity at, not a second opinion: a
         // border traced around a finer silhouette than the one on screen reads as
         // a halo.
         _outlinePass.Draw(frame, viewProjection,
-                          OutlinePass::OutlineItem{renderer->meshBuffer, world,
-                                                   sceneRenderer.DrawnLodLevel(entity, *renderer->meshBuffer,
-                                                                               world)},
+                          OutlinePass::OutlineItem{mesh, world, sceneRenderer.DrawnLodLevel(entity, *mesh, world)},
                           color);
     }
     else if (placementIcon)
