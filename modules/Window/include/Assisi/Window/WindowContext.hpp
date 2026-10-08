@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -32,15 +33,15 @@ using NativeCursorHandle = GLFWcursor;
 /// @brief Width and height of a window or framebuffer, in pixels.
 struct WindowSize
 {
-    int Width = 0;  ///< Pixel width.
-    int Height = 0; ///< Pixel height.
+    int32_t Width = 0;  ///< Pixel width.
+    int32_t Height = 0; ///< Pixel height.
 };
 
 /// @brief Parameters passed to the WindowContext constructor.
 struct WindowConfiguration
 {
-    int Width = 1280;             ///< Initial window width in pixels.
-    int Height = 720;             ///< Initial window height in pixels.
+    int32_t Width = 1280;             ///< Initial window width in pixels.
+    int32_t Height = 720;             ///< Initial window height in pixels.
     const char *Title = "Assisi"; ///< Window title bar text.
 
     /// @brief Create without a title bar or borders.
@@ -134,7 +135,7 @@ class WindowContext
     // -------------------------------------------------------------------------
 
     /// @brief Subscribe to framebuffer-resize events (new size in pixels).
-    void OnFramebufferSize(std::function<void(int width, int height)> callback);
+    void OnFramebufferSize(std::function<void(int32_t width, int32_t height)> callback);
 
     /// @brief Subscribe to scroll-wheel events (x/y offsets, y is the vertical wheel).
     void OnScroll(std::function<void(double xOffset, double yOffset)> callback);
@@ -194,12 +195,12 @@ class WindowContext
 
     // GLFW C-callback trampolines: recover the WindowContext from the user
     // pointer and dispatch to the subscriber lists.
-    static void FramebufferSizeTrampoline(GLFWwindow *window, int width, int height);
+    static void FramebufferSizeTrampoline(GLFWwindow *window, int32_t width, int32_t height);
     static void ScrollTrampoline(GLFWwindow *window, double xOffset, double yOffset);
     static void WindowRefreshTrampoline(GLFWwindow *window);
-    static void KeyTrampoline(GLFWwindow *window, int key, int scancode, int action, int mods);
-    static void CharacterTrampoline(GLFWwindow *window, unsigned int codepoint);
-    static void MouseButtonTrampoline(GLFWwindow *window, int button, int action, int mods);
+    static void KeyTrampoline(GLFWwindow *window, int32_t key, int32_t scancode, int32_t action, int32_t mods);
+    static void CharacterTrampoline(GLFWwindow *window, uint32_t codepoint);
+    static void MouseButtonTrampoline(GLFWwindow *window, int32_t button, int32_t action, int32_t mods);
     static void CursorPositionTrampoline(GLFWwindow *window, double x, double y);
 
     /// @brief Keeps GLFW alive for at least as long as this window.
@@ -211,7 +212,7 @@ class WindowContext
     /// @brief True after successful window creation.
     bool _isValid = false;
 
-    std::vector<std::function<void(int, int)>> _framebufferSizeCallbacks;
+    std::vector<std::function<void(int32_t, int32_t)>> _framebufferSizeCallbacks;
     std::vector<std::function<void(double, double)>> _scrollCallbacks;
     std::vector<std::function<void()>> _windowRefreshCallbacks;
     std::vector<std::function<void(const KeyEvent &)>> _keyCallbacks;
