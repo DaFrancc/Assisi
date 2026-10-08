@@ -955,26 +955,49 @@ bool ReadInfluenceSet(const fastgltf::Asset &asset, const fastgltf::Primitive &p
    positive weights, renormalized, joints remapped into skeleton order. A vertex
    with no weight at all follows joint 0. Returns false when a weighted influence
    names a joint the skin does not have. */
-bool ResolveInfluences(InfluenceList list, std::span<const uint32_t> remap, VertexSkin &out, SkinReadNotes &notes)
+bool ResolveInfluences(const InfluenceList &list, std::span<const uint32_t> remap, VertexSkin &out,
+                       SkinReadNotes &notes)
 {
-    Influence *const begin = list.items.data();
-    Influence *const end = std::remove_if(begin, begin + list.count, [](const Influence &item) { return !(item.weight > 0.f); });
-    const uint32_t used = static_cast<uint32_t>(end - begin);
-    for (const Influence *item = begin; item != end; ++item)
+    // Index loops over the fixed-size array rather than std::sort over a pointer
+    // range: with the range's end opaque, GCC's -O3 array-bounds analysis cannot
+    // see that it stays inside the array, and warns.
+    std::array<Influence, kMaxReadInfluences> used{};
+    uint32_t usedCount = 0;
+    for (uint32_t index = 0; index < kMaxReadInfluences && index < list.count; ++index)
     {
-        if (item->joint >= remap.size())
+        const Influence &item = list.items[index];
+        if (!(item.weight > 0.f))
+        {
+            continue;
+        }
+        if (item.joint >= remap.size())
         {
             return false;
         }
+        used[usedCount++] = item;
     }
-    std::sort(begin, end, [](const Influence &a, const Influence &b) { return a.weight > b.weight; });
 
-    const uint32_t kept = std::min(used, kMaxInfluences);
-    notes.droppedInfluences = notes.droppedInfluences || used > kMaxInfluences;
+    const uint32_t kept = std::min(usedCount, kMaxInfluences);
+    notes.droppedInfluences = notes.droppedInfluences || usedCount > kMaxInfluences;
+
+    // Selection sort of the largest `kept` to the front: at most eight entries.
+    for (uint32_t slot = 0; slot < kept; ++slot)
+    {
+        uint32_t largest = slot;
+        for (uint32_t index = slot + 1; index < usedCount; ++index)
+        {
+            if (used[index].weight > used[largest].weight)
+            {
+                largest = index;
+            }
+        }
+        std::swap(used[slot], used[largest]);
+    }
+
     float total = 0.f;
     for (uint32_t slot = 0; slot < kept; ++slot)
     {
-        total += begin[slot].weight;
+        total += used[slot].weight;
     }
 
     out = VertexSkin{};
@@ -985,8 +1008,8 @@ bool ResolveInfluences(InfluenceList list, std::span<const uint32_t> remap, Vert
     }
     for (uint32_t slot = 0; slot < kept; ++slot)
     {
-        out.Weights[static_cast<int32_t>(slot)] = begin[slot].weight / total;
-        out.Joints[static_cast<int32_t>(slot)] = remap[begin[slot].joint];
+        out.Weights[static_cast<int32_t>(slot)] = used[slot].weight / total;
+        out.Joints[static_cast<int32_t>(slot)] = remap[used[slot].joint];
     }
     for (uint32_t slot = kept; slot < kMaxInfluences; ++slot)
     {
