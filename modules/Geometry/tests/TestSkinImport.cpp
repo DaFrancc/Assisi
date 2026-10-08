@@ -23,6 +23,7 @@
 #include <Assisi/Geometry/MeshValidate.hpp>
 #include <Assisi/Math/GLM.hpp>
 
+#include "GltfFixture.hpp"
 #include "LogCapture.hpp"
 
 using Assisi::Core::AssetSystem;
@@ -37,91 +38,26 @@ namespace fs = std::filesystem;
 namespace
 {
 
-/// glTF accessor component types.
-constexpr uint32_t kFloat         = 5126;
-constexpr uint32_t kUnsignedByte  = 5121;
-constexpr uint32_t kUnsignedShort = 5123;
-
-/// glTF requires every accessor to start on a multiple of its component size;
-/// four covers every type these fixtures use.
-constexpr std::size_t kViewAlignment = 4;
+using GltfFixture::kFloat;
+using GltfFixture::kUnsignedByte;
+using GltfFixture::kUnsignedShort;
 
 /// The −90° turn about X a Z-up exporter puts on its root joint, as a quaternion.
 constexpr float kQuarterTurnComponent = 0.70710678f;
 
-uint32_t ComponentsOf(std::string_view type)
-{
-    if (type == "MAT4")
-    {
-        return 16;
-    }
-    if (type == "VEC4")
-    {
-        return 4;
-    }
-    if (type == "VEC3")
-    {
-        return 3;
-    }
-    return 1;
-}
+/// The asset root and file stem every skin fixture writes.
+constexpr std::string_view kRootName = "assisi_skin_import_test";
+constexpr std::string_view kStem = "skin";
 
-/// The binary buffer of a fixture glTF and the accessors over it, built in the
-/// order a test adds them so the test can name each accessor by the index Add
-/// returns.
-class GltfBuffer
+/// Writes the fixture's `skin.gltf` and `skin.bin`. @p sceneKeys holds the
+/// "scenes", "nodes", "meshes" and "skins" members.
+class GltfBuffer : public GltfFixture::GltfBuffer
 {
 public:
-    template <typename T>
-    uint32_t Add(const std::vector<T> &values, uint32_t componentType, std::string_view type,
-                 std::string_view extraKeys = {})
-    {
-        while (_bytes.size() % kViewAlignment != 0)
-        {
-            _bytes.push_back(std::byte{0});
-        }
-        const std::size_t offset = _bytes.size();
-        const std::size_t length = values.size() * sizeof(T);
-        _bytes.resize(offset + length);
-        std::memcpy(_bytes.data() + offset, values.data(), length);
-
-        const uint32_t index = _accessorCount++;
-        const char *separator = index == 0 ? "" : ",";
-        _views += std::format(R"({}{{"buffer":0,"byteOffset":{},"byteLength":{}}})", separator, offset, length);
-        _accessors += std::format(R"({}{{"bufferView":{},"componentType":{},"count":{},"type":"{}"{}}})", separator,
-                                  index, componentType, values.size() / ComponentsOf(type), type, extraKeys);
-        return index;
-    }
-
-    /// Writes `skin.gltf` and `skin.bin` into a fresh asset root. @p sceneKeys
-    /// holds the "scenes", "nodes", "meshes" and "skins" members.
     fs::path Write(std::string_view sceneKeys) const
     {
-        const fs::path root = fs::temp_directory_path() / "assisi_skin_import_test";
-        fs::remove_all(root);
-        fs::create_directories(root);
-
-        const std::string gltf =
-            std::format(R"({{"asset":{{"version":"2.0"}},"scene":0,{},"buffers":[{{"uri":"skin.bin","byteLength":{}}}],)"
-                        R"("bufferViews":[{}],"accessors":[{}]}})",
-                        sceneKeys, _bytes.size(), _views, _accessors);
-        {
-            std::ofstream file(root / "skin.gltf", std::ios::binary);
-            file.write(gltf.data(), static_cast<std::streamsize>(gltf.size()));
-        }
-        {
-            std::ofstream file(root / "skin.bin", std::ios::binary);
-            file.write(reinterpret_cast<const char *>(_bytes.data()), static_cast<std::streamsize>(_bytes.size()));
-        }
-        REQUIRE(AssetSystem::SetRoot(root).has_value());
-        return root;
+        return GltfFixture::GltfBuffer::Write(kRootName, kStem, sceneKeys);
     }
-
-private:
-    std::vector<std::byte> _bytes;
-    std::string _views;
-    std::string _accessors;
-    uint32_t _accessorCount = 0;
 };
 
 std::vector<float> Floats(const glm::mat4 &matrix)

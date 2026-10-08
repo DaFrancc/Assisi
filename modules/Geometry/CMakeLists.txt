@@ -12,7 +12,13 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/DefaultMeshes.hpp"
     "include/Assisi/Geometry/MeshValidate.hpp"
     "include/Assisi/Geometry/MaterialFile.hpp"
+    "include/Assisi/Geometry/AnimationClip.hpp"
+    "include/Assisi/Geometry/AnimationFile.hpp"
+    "include/Assisi/Geometry/AnimationSampling.hpp"
   PRIVATE
+    "src/AnimationPayload.cpp"
+    "src/AnimationPayload.hpp"
+    "src/AnimationSampling.cpp"
     "src/CollisionData.cpp"
     "src/CookedMesh.cpp"
     "src/MeshValidate.cpp"
@@ -49,7 +55,12 @@ target_sources(Assisi-GeometryImport
   PUBLIC
     "include/Assisi/Geometry/MeshImporter.hpp"
     "include/Assisi/Geometry/AssetImport.hpp"
+    "include/Assisi/Geometry/AnimationImport.hpp"
   PRIVATE
+    "src/AnimationCooking.cpp"
+    "src/AnimationExtract.cpp"
+    "src/GltfAnimation.cpp"
+    "src/GltfAnimation.hpp"
     "src/GltfSource.cpp"
     "src/GltfSource.hpp"
     "src/MeshImporter.cpp"
@@ -66,6 +77,15 @@ target_link_libraries(Assisi-GeometryImport
 )
 
 add_library(Assisi::GeometryImport ALIAS Assisi-GeometryImport)
+
+# The animation kind loads in every build; cooking a clip file parses glTF, so
+# its step links the import library a shipped game never does.
+assisi_asset_kind(
+  TARGET      Assisi-Geometry
+  LOAD        src/AnimationKind.cpp
+  COOK        src/AnimationCook.cpp
+  COOK_TARGET Assisi-GeometryImport
+)
 
 # MaterialData is an AASSET: reflectgen emits its AssetTypeRegistry registration
 # (serialize/deserialize for .amat). The generated OBJECT library inherits
