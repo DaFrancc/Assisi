@@ -37,17 +37,62 @@ Things to know about the model:
 - **Joints need different names.** Animations find joints by name, so two
   joints with the same name are refused.
 
+## Playing a clip
+
+A **clip** is one recorded movement, such as a walk or a jump. Tools usually
+export a character's clips inside its model file, often dozens in one file. The
+engine wants one clip per file, so you take them out first:
+
+1. Put the model file, with its animations, in `assets/`.
+2. In the asset browser, right-click it and choose **Extract animations**.
+   Each animation becomes its own file beside the model, named
+   `<model>_<animation>.glb`, such as `UAL1_Walk_Loop.glb`. These are ordinary
+   glTF files that open in Blender.
+3. Give your character entity an `AnimationPlayer`, and set its `clip` to one of
+   those files.
+4. Add the `AnimationPlayers` system to the level. It is what plays them.
+5. Press Play. The clip plays while the game runs, not while you edit.
+
+`AnimationPlayer` has three settings:
+
+| Setting | What it does |
+|---|---|
+| `clip` | The clip file to play. |
+| `speed` | 1 plays at the speed the clip was made at, 2 twice as fast, a negative number backwards. |
+| `loop` | On, the clip starts again from the top when it ends. Off, it stops on its last frame. |
+
+Things to know about clips:
+
+- **Clips find joints by name.** A clip plays on any model whose joints have the
+  same names as the joints it moves, so one walk works for every character built
+  on the same skeleton. Joints the clip names that the model lacks are skipped,
+  and the log says which, once per character.
+- **Extracting again updates the clips.** After re-exporting the model, extract
+  again: the clip files are rewritten and everything using them keeps working. A
+  clip renamed in your tool becomes a new file, and a clip you deleted leaves its
+  old file behind for you to delete.
+- **Only Extract animations writes clip files.** Importing a model never does,
+  so a model's animations take no space until you ask for them.
+- **Some animations can't play yet.** Curves stored as cubic splines, and
+  animations of blend shapes (morph targets), are left out when you extract, with
+  a warning naming them. Re-export with linear keys, which Blender does by
+  default, and leave blend shapes out.
+
 ## Example: turning a joint from code
 
 The pose is a list with one entry per joint. Each entry is the joint's position,
 rotation and scale relative to its parent joint, so turning a shoulder turns the
 whole arm.
 
+A playing clip writes the joints it moves every Update, so code that adjusts one
+of them runs afterwards, in PostUpdate. Joints the clip doesn't move are yours in
+any stage.
+
 ```cpp
 #include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
-void LookLeftSystem(Assisi::App::SystemContext &ctx)
+ASYSTEM(PostUpdate, name = "LookLeft") void LookLeftSystem(Assisi::App::SystemContext &ctx)
 {
     using namespace Assisi;
 
@@ -72,7 +117,8 @@ void LookLeftSystem(Assisi::App::SystemContext &ctx)
 - `FindJoint` gives a joint's position in the list, or `kNoJoint` when the
   skeleton has no joint with that name.
 - A joint keeps the value you give it until something changes it again. It goes
-  back to the rest pose only if the entity's mesh changes.
+  back to the rest pose only when the entity's mesh changes, or its
+  `AnimationPlayer` starts another clip.
 - Write to `pose` only. `SkinnedMesh` also holds `jointModel` (where each joint
   ends up, relative to the entity) and `palette` (what the renderer uses to move
   the vertices). The engine works both out from `pose` every frame, in the

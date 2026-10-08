@@ -19,11 +19,14 @@
 /// code that names it that way.
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Geometry/AnimationClip.hpp>
+#include <Assisi/Geometry/AnimationSampling.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Material.hpp>
@@ -109,6 +112,34 @@ struct SkinnedMesh
     /// Whether the last evaluation changed the palette, which moves the mesh's
     /// shadow though its transform stays where it was.
     AFIELD(transient) bool poseChanged = false;
+};
+
+/// @brief Plays an animation clip on its entity's SkinnedMesh.
+///
+/// `clip` is an animation asset: a clip file Extract animations wrote, or any
+/// `.glb` holding one animation. Each Update the player moves `time` on by the
+/// frame's time times `speed`, wrapping it when `loop` is set and holding the
+/// last frame when not, and writes the clip's joints into the pose.
+///
+/// The pose goes back to rest only when the clip or the mesh changes, so a joint
+/// the clip does not move keeps whatever code writes to it. One it does move is
+/// written every Update, so code that adjusts it on top of the clip runs after,
+/// in PostUpdate.
+///
+/// Replicable: a remote copy plays the same clip at the same speed. Its time is
+/// its own, so two machines can be a moment apart in the cycle.
+ACOMP(replicable, requires = {SkinnedMesh})
+struct AnimationPlayer
+{
+    AFIELD(transient) std::shared_ptr<const Geometry::AnimationClip> loaded; ///< The clip as last resolved.
+    AFIELD(transient) Geometry::ClipBinding binding; ///< `loaded`'s tracks matched to the mesh's joints.
+    AFIELD() Core::AssetId clip;
+    AFIELD(transient) Core::AssetId boundClip; ///< The `clip` that `binding` and `time` belong to.
+    AFIELD() float speed = 1.f;                ///< 1 plays at the speed it was authored; negative plays backwards.
+    AFIELD(transient) float time = 0.f;        ///< Seconds into the clip.
+    AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The mesh `binding` was made for.
+    AFIELD() bool loop = true;
+    AFIELD(transient) bool warned = false; ///< Whether this binding's missing joints were reported.
 };
 
 /// @brief Projection and activation parameters for a camera entity.

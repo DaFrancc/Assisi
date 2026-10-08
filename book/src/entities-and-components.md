@@ -59,6 +59,7 @@ to entities in the editor, but it helps to know what they are.
 | `Parent` | `<Assisi/ECS/Hierarchy.hpp>` | Attaches an entity to another, so it moves with it. |
 | `MeshRenderer` | `<Assisi/Runtime/Components.hpp>` | Draws a mesh with materials. |
 | `SkinnedMesh` | `<Assisi/Runtime/Components.hpp>` | Holds the pose of a rigged mesh: where each of its joints is. See [Animation](animation.md). |
+| `AnimationPlayer` | `<Assisi/Runtime/Components.hpp>` | Plays an animation clip on the entity's `SkinnedMesh`. See [Playing a clip](animation.md#playing-a-clip). |
 | `Camera` | `<Assisi/Runtime/Components.hpp>` | A camera. The one with `isActive` set is the one you see through. |
 | `DirectionalLight`, `PointLight`, `SpotLight` | `<Assisi/Runtime/LightComponents.hpp>` | Lights. |
 | `Collider` | `<Assisi/Physics/PhysicsComponents.hpp>` | A collision shape. On its own, static geometry. See [Physics](physics.md). |
