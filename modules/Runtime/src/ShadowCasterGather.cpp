@@ -280,14 +280,18 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
         {
             continue; // it moved, but nothing it does reaches a shadow map
         }
-        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedMesh>(entity));
+        const SkinnedMesh *skinned = scene.Get<SkinnedMesh>(entity);
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, skinned);
         if (mesh == nullptr)
         {
             continue;
         }
+        const std::uint64_t poseHash = skinned != nullptr
+                                           ? Assisi::Render::ShadowPoseHash(world->matrix, skinned->paletteHash)
+                                           : Assisi::Render::ShadowPoseHash(world->matrix);
         out.push_back(Assisi::Render::ShadowMover{
                 ShadowCasterId(entity), Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world->matrix),
-                Assisi::Render::ShadowPoseHash(world->matrix)});
+                poseHash});
     }
 }
 

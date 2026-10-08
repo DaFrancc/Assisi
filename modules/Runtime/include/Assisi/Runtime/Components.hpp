@@ -104,7 +104,11 @@ struct SkinnedMesh
     AFIELD(transient) std::vector<Geometry::JointTransform> pose;
     AFIELD(transient) std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
     AFIELD(transient) std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.
+    AFIELD(transient) uint64_t paletteHash = 0; ///< Of `palette`'s bytes; 0 before the first evaluation.
     AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The MeshBuffer::Id the vectors are sized for.
+    /// Whether the last evaluation changed the palette, which moves the mesh's
+    /// shadow though its transform stays where it was.
+    AFIELD(transient) bool poseChanged = false;
 };
 
 /// @brief Projection and activation parameters for a camera entity.

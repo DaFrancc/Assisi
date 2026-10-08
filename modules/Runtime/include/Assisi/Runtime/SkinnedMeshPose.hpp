@@ -37,6 +37,11 @@ const Geometry::Skeleton *BindSkinnedMesh(SkinnedMesh &skinned, const MeshRender
 /// @brief Binds, then writes `jointModel` and `palette` from `pose`.
 void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer);
 
+/// @brief Hashes @p skinned's palette and sets `poseChanged` to whether it
+///        differs from the last evaluation's. The first evaluation after a bind
+///        is no change: nothing has been drawn at another pose yet.
+void NotePoseChange(SkinnedMesh &skinned);
+
 /// @brief EvaluateSkinnedMesh for every entity in @p scene that has one, and
 ///        keeps each one's posed copy holding a vertex range of its own in
 ///        @p cache. Runs every frame before transforms propagate.

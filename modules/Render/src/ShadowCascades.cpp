@@ -51,6 +51,14 @@ std::uint64_t ShadowPoseHash(const glm::mat4 &world)
     return Core::ContentHash64(bytes);
 }
 
+std::uint64_t ShadowPoseHash(const glm::mat4 &world, std::uint64_t shapeHash)
+{
+    std::array<std::byte, sizeof(glm::mat4) + sizeof(shapeHash)> bytes{};
+    std::memcpy(bytes.data(), &world, sizeof(world));
+    std::memcpy(bytes.data() + sizeof(world), &shapeHash, sizeof(shapeHash));
+    return Core::ContentHash64(bytes);
+}
+
 float PracticalSplitDistance(float nearZ, float farZ, std::uint32_t index, std::uint32_t count, float lambda)
 {
     const float safeNear = std::max(nearZ, kMinNearZ);

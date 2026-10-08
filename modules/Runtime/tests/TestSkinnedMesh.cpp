@@ -195,3 +195,36 @@ TEST_CASE("SkinnedMesh: unbinding lets the posed copy go")
     Runtime::UnbindSkinnedMesh(skinned);
     CHECK(skinned.posed.Id() == 0);
 }
+
+TEST_CASE("SkinnedMesh: a pose that moves a joint is a change, the same pose again is not")
+{
+    // Every frame that reported a change would hold the mesh's shadow out of
+    // every cache; one that missed a change would leave the shadow behind.
+    const Skeleton skeleton = Chain(2);
+    SkinnedMesh skinned;
+    (void)BindPose(skinned, skeleton, kFirstMesh);
+
+    Runtime::NotePoseChange(skinned);
+    CHECK_FALSE(skinned.poseChanged);
+    Runtime::NotePoseChange(skinned);
+    CHECK_FALSE(skinned.poseChanged);
+
+    skinned.palette[1] = glm::translate(glm::mat4(1.f), glm::vec3(0.f, 0.f, 1.f));
+    Runtime::NotePoseChange(skinned);
+    CHECK(skinned.poseChanged);
+    Runtime::NotePoseChange(skinned);
+    CHECK_FALSE(skinned.poseChanged);
+}
+
+TEST_CASE("SkinnedMesh: the first pose after binding another mesh is not a change")
+{
+    const Skeleton skeleton = Chain(2);
+    SkinnedMesh skinned;
+    (void)BindPose(skinned, skeleton, kFirstMesh);
+    Runtime::NotePoseChange(skinned);
+
+    (void)BindPose(skinned, Chain(3), kSecondMesh);
+    skinned.palette[2] = glm::translate(glm::mat4(1.f), glm::vec3(0.f, 0.f, 1.f));
+    Runtime::NotePoseChange(skinned);
+    CHECK_FALSE(skinned.poseChanged);
+}

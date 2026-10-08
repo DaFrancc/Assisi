@@ -67,6 +67,11 @@ struct ShadowMover
 /// @brief The ShadowMover::poseHash of a caster drawn at @p world.
 [[nodiscard]] std::uint64_t ShadowPoseHash(const glm::mat4 &world);
 
+/// @brief The ShadowMover::poseHash of a caster drawn at @p world whose own
+///        shape is @p shapeHash — a skinned mesh, whose pose changes its shadow
+///        where its transform stays put.
+[[nodiscard]] std::uint64_t ShadowPoseHash(const glm::mat4 &world, std::uint64_t shapeHash);
+
 /// @brief How much larger than its slice's sphere a cascade's map is, as a
 /// fraction of the radius.
 ///

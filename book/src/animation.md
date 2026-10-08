@@ -78,6 +78,23 @@ void LookLeftSystem(Assisi::App::SystemContext &ctx)
   the vertices). The engine works both out from `pose` every frame, in the
   editor too, so anything you write there is replaced.
 
-The mesh does not bend on screen yet. The pose is worked out and kept up to
-date, but drawing a skinned mesh in its pose is still to come; until then it is
-drawn in its rest pose.
+The mesh bends on screen in the same frame you write the pose, and so does its
+shadow.
+
+## How a pose reaches the screen
+
+Each frame, before anything is drawn, the GPU moves every skinned entity's
+vertices into its pose. Each entity gets its own copy of its mesh's vertices for
+this, so two characters using the same model can stand in different poses. From
+there on a posed character is drawn, culled and shadowed like any other mesh.
+
+What that means for you:
+
+- **Each character costs memory for its vertices.** A 10,000-vertex character
+  takes about half a megabyte for its posed copy. When a character is removed,
+  the next character with the same model reuses its copy.
+- **Culling follows the pose.** When an arm reaches out past the edge of the
+  screen, the character is still drawn while the arm is in view.
+- **A character that keeps changing pose keeps its shadow redrawn.** A
+  character in a pose that doesn't change for a while has its shadow kept, like
+  any object that has stopped moving.

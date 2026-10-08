@@ -1,6 +1,9 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
+#include <span>
+
+#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/MeshSkinner.hpp>
@@ -23,6 +26,8 @@ const Geometry::Skeleton *BindPose(SkinnedMesh &skinned, const Geometry::Skeleto
         skinned.boundMeshId = meshId;
         // The old mesh's range is let go by no longer being kept.
         skinned.posed = Render::MeshBuffer{};
+        skinned.paletteHash = 0;
+        skinned.poseChanged = false;
     }
     return &skeleton;
 }
@@ -46,6 +51,7 @@ void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
     }
     Geometry::JointModelTransforms(*skeleton, skinned.pose, skinned.jointModel);
     Geometry::SkinningPalette(*skeleton, skinned.jointModel, skinned.palette);
+    NotePoseChange(skinned);
 
     // Culled by where the pose puts it: the bind pose's bounds would cull a
     // raised arm the moment the body left the screen.
@@ -57,6 +63,14 @@ void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
             skinned.posed.SetLocalBounds(Geometry::SphereAround(bounds), bounds);
         }
     }
+}
+
+void NotePoseChange(SkinnedMesh &skinned)
+{
+    const std::span<const glm::mat4> palette = skinned.palette;
+    const uint64_t hash = Core::ContentHash64(std::as_bytes(palette));
+    skinned.poseChanged = skinned.paletteHash != 0 && hash != skinned.paletteHash;
+    skinned.paletteHash = hash;
 }
 
 void EvaluateScenePoses(ECS::Scene &scene, Render::AssetCache &cache)
@@ -82,6 +96,8 @@ void UnbindSkinnedMesh(SkinnedMesh &skinned)
     skinned.palette.clear();
     skinned.boundMeshId = kUnboundMesh;
     skinned.posed = Render::MeshBuffer{};
+    skinned.paletteHash = 0;
+    skinned.poseChanged = false;
 }
 
 const Render::MeshBuffer *DrawnMesh(const MeshRenderer &renderer, const SkinnedMesh *skinned)
