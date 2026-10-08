@@ -50,6 +50,8 @@ target_sources(Assisi-GeometryImport
     "include/Assisi/Geometry/MeshImporter.hpp"
     "include/Assisi/Geometry/AssetImport.hpp"
   PRIVATE
+    "src/GltfSource.cpp"
+    "src/GltfSource.hpp"
     "src/MeshImporter.cpp"
     "src/AssetImport.cpp"
 )
