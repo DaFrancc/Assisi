@@ -46,9 +46,9 @@ struct ExtractedAnimations
     uint32_t skipped = 0;
 };
 
-/// @brief Writes every animation in @p gltfVirtualPath as
-///        `<model>_<animation>.glb` beside it: that animation and the joints it
-///        moves, with their rest transforms, and no mesh.
+/// @brief Writes every animation in @p gltfVirtualPath as `<animation>.glb` in
+///        a `<model>_animations` folder beside it: that animation and the joints
+///        it moves, with their rest transforms, and no mesh.
 ///
 /// Each file gets a sidecar naming it an "animation". A file written before is
 /// overwritten and keeps its sidecar, so its id, and everything that plays it,

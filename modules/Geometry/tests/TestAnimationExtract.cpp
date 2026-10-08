@@ -171,8 +171,8 @@ TEST_CASE("Animation extract: each animation becomes a clip file of its own, an 
     CHECK(extracted->written == 2);
     CHECK(extracted->skipped == 0);
 
-    const std::optional<Assisi::Core::AssetSidecar> walk = SidecarOf(root / "rig_walk.glb");
-    const std::optional<Assisi::Core::AssetSidecar> idle = SidecarOf(root / "rig_idle.glb");
+    const std::optional<Assisi::Core::AssetSidecar> walk = SidecarOf(root / "rig_animations/walk.glb");
+    const std::optional<Assisi::Core::AssetSidecar> idle = SidecarOf(root / "rig_animations/idle.glb");
     REQUIRE(walk.has_value());
     REQUIRE(idle.has_value());
     REQUIRE(walk->uses.size() == 1);
@@ -187,7 +187,7 @@ TEST_CASE("Animation extract: a clip file carries the joints it moves, their par
     const fs::path root = WriteTwoAnimationRig();
     REQUIRE(ExtractGltfAnimations(kSource).has_value());
 
-    const std::string json = JsonChunkOf(Read("rig_walk.glb"));
+    const std::string json = JsonChunkOf(Read("rig_animations/walk.glb"));
     // The knee, and every node above it, so the clip is a whole rig in Blender.
     CHECK(json.find(R"("name":"knee")") != std::string::npos);
     CHECK(json.find(R"("name":"hip")") != std::string::npos);
@@ -206,7 +206,7 @@ TEST_CASE("Animation extract: a clip file cooks and loads back into its keys")
     const fs::path root = WriteTwoAnimationRig();
     REQUIRE(ExtractGltfAnimations(kSource).has_value());
 
-    const AnimationClip walk = CookAndLoad("rig_walk.glb");
+    const AnimationClip walk = CookAndLoad("rig_animations/walk.glb");
     CHECK(walk.Name == "walk");
     CHECK(walk.Duration == doctest::Approx(2.f));
     const JointTrack *knee = TrackFor(walk, "knee");
@@ -221,7 +221,7 @@ TEST_CASE("Animation extract: a clip file cooks and loads back into its keys")
     CHECK(x.z == doctest::Approx(-1.f));
     CHECK(x.x == doctest::Approx(0.f).epsilon(1e-5));
 
-    const AnimationClip idle = CookAndLoad("rig_idle.glb");
+    const AnimationClip idle = CookAndLoad("rig_animations/idle.glb");
     CHECK(idle.Duration == doctest::Approx(0.5f));
     const JointTrack *hip = TrackFor(idle, "hip");
     REQUIRE(hip != nullptr);
@@ -237,7 +237,7 @@ TEST_CASE("Animation extract: extracting again rewrites the clips and keeps thei
     // Kept, every player naming a clip still finds it after the model is re-exported.
     const fs::path root = WriteTwoAnimationRig();
     REQUIRE(ExtractGltfAnimations(kSource).has_value());
-    const std::optional<Assisi::Core::AssetSidecar> before = SidecarOf(root / "rig_walk.glb");
+    const std::optional<Assisi::Core::AssetSidecar> before = SidecarOf(root / "rig_animations/walk.glb");
     REQUIRE(before.has_value());
 
     GltfBuffer buffer;
@@ -245,10 +245,10 @@ TEST_CASE("Animation extract: extracting again rewrites the clips and keeps thei
     buffer.WriteInto(root, kStem, RigNodes() + "," + animations);
     REQUIRE(ExtractGltfAnimations(kSource).has_value());
 
-    const std::optional<Assisi::Core::AssetSidecar> after = SidecarOf(root / "rig_walk.glb");
+    const std::optional<Assisi::Core::AssetSidecar> after = SidecarOf(root / "rig_animations/walk.glb");
     REQUIRE(after.has_value());
     CHECK(after->guid == before->guid);
-    CHECK(CookAndLoad("rig_walk.glb").Duration == doctest::Approx(3.f));
+    CHECK(CookAndLoad("rig_animations/walk.glb").Duration == doctest::Approx(3.f));
     fs::remove_all(root);
 }
 
@@ -264,8 +264,8 @@ TEST_CASE("Animation extract: two animations of one name get two files")
     const std::expected<ExtractedAnimations, AnimationExtractError> extracted = ExtractGltfAnimations(kSource);
     REQUIRE(extracted.has_value());
     CHECK(extracted->written == 2);
-    CHECK(fs::exists(root / "rig_walk.glb"));
-    CHECK(fs::exists(root / "rig_walk_1.glb"));
+    CHECK(fs::exists(root / "rig_animations/walk.glb"));
+    CHECK(fs::exists(root / "rig_animations/walk_1.glb"));
     fs::remove_all(root);
 }
 
@@ -284,8 +284,8 @@ TEST_CASE("Animation extract: an animation that cannot play is left out, and the
     REQUIRE(extracted.has_value());
     CHECK(extracted->written == 1);
     CHECK(extracted->skipped == 1);
-    CHECK(fs::exists(root / "rig_walk.glb"));
-    CHECK_FALSE(fs::exists(root / "rig_idle.glb"));
+    CHECK(fs::exists(root / "rig_animations/walk.glb"));
+    CHECK_FALSE(fs::exists(root / "rig_animations/idle.glb"));
     fs::remove_all(root);
 }
 
@@ -316,7 +316,7 @@ TEST_CASE("Animation extract: key times that do not increase are left out")
     REQUIRE(extracted.has_value());
     CHECK(extracted->written == 1);
     CHECK(extracted->skipped == 1);
-    CHECK_FALSE(fs::exists(root / "rig_walk.glb"));
+    CHECK_FALSE(fs::exists(root / "rig_animations/walk.glb"));
     fs::remove_all(root);
 }
 
@@ -355,7 +355,7 @@ TEST_CASE("Animation load: a payload cut short, or of another version, is refuse
 {
     const fs::path root = WriteTwoAnimationRig();
     REQUIRE(ExtractGltfAnimations(kSource).has_value());
-    std::expected<std::vector<std::byte>, Assisi::Core::AssetError> cooked = CookAnimation(Read("rig_walk.glb"));
+    std::expected<std::vector<std::byte>, Assisi::Core::AssetError> cooked = CookAnimation(Read("rig_animations/walk.glb"));
     REQUIRE(cooked.has_value());
     REQUIRE(LoadAnimation(*cooked).has_value());
 

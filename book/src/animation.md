@@ -45,9 +45,10 @@ engine wants one clip per file, so you take them out first:
 
 1. Put the model file, with its animations, in `assets/`.
 2. In the asset browser, right-click it and choose **Extract animations**.
-   Each animation becomes its own file beside the model, named
-   `<model>_<animation>.glb`, such as `UAL1_Walk_Loop.glb`. These are ordinary
-   glTF files that open in Blender.
+   Each animation becomes its own file in a folder beside the model, named
+   `<model>_animations`: `UAL1.glb`'s walk becomes
+   `UAL1_animations/Walk_Loop.glb`. These are ordinary glTF files that open in
+   Blender.
 3. Give your character entity an `AnimationPlayer`, and set its `clip` to one of
    those files.
 4. Add the `AnimationPlayers` system to the level. It is what plays them.

@@ -25,6 +25,9 @@ namespace
 
 namespace fs = std::filesystem;
 
+/// What follows the model's name in the folder its clips are written to.
+constexpr std::string_view kClipFolderSuffix = "_animations";
+
 /// A name as a filename component: anything but `[A-Za-z0-9._-]` becomes '_',
 /// and nothing becomes "clip".
 std::string SafeName(std::string_view name)
@@ -71,15 +74,14 @@ bool EnsureSidecar(const fs::path &clipFile)
     return stream.good();
 }
 
-/// The file animation @p index is written to: `<model>_<name>.glb`, or with the
+/// The file animation @p index is written to: `<name>.glb`, or with the
 /// animation's position appended when an earlier one took that name.
-std::string ClipFileName(std::string_view stem, std::string_view name, std::size_t index,
-                         std::unordered_set<std::string> &taken)
+std::string ClipFileName(std::string_view name, std::size_t index, std::unordered_set<std::string> &taken)
 {
-    std::string file = std::format("{}_{}.glb", stem, SafeName(name));
+    std::string file = std::format("{}.glb", SafeName(name));
     if (!taken.insert(file).second)
     {
-        file = std::format("{}_{}_{}.glb", stem, SafeName(name), index);
+        file = std::format("{}_{}.glb", SafeName(name), index);
         taken.insert(file);
     }
     return file;
@@ -117,15 +119,20 @@ std::expected<ExtractedAnimations, AnimationExtractError> ExtractGltfAnimations(
         return std::unexpected(AnimationExtractError::NoAnimations);
     }
 
-    const fs::path directory = sourceFile->parent_path();
-    const std::string stem = StemOf(gltfVirtualPath);
+    const fs::path directory = sourceFile->parent_path() / std::format("{}{}", StemOf(gltfVirtualPath), kClipFolderSuffix);
+    std::error_code madeDirectory;
+    fs::create_directories(directory, madeDirectory);
+    if (madeDirectory)
+    {
+        return std::unexpected(AnimationExtractError::WriteFailed);
+    }
     std::unordered_set<std::string> taken;
     ExtractedAnimations extracted;
     for (std::size_t index = 0; index < source->animations.size(); ++index)
     {
         // Named before it can be skipped, so a file keeps its name whether or
         // not an earlier animation of the same name plays.
-        const std::string file = ClipFileName(stem, source->animations[index].name, index, taken);
+        const std::string file = ClipFileName(source->animations[index].name, index, taken);
         const std::expected<GltfClip, AnimationReadError> clip = ReadGltfAnimation(*source, index);
         if (!clip)
         {
