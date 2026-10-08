@@ -16,6 +16,12 @@ model was built in, before anything moves it, is its **rest pose**.
 2. In the editor, give an entity a `MeshRenderer` whose `mesh` is that file.
 3. Add a `SkinnedMesh` to the same entity. It starts in the model's rest pose.
 
+The editor draws the skeleton over the model: a line for each bone and a small
+cross at each joint, in blue, or in the selection colours when the entity is
+selected. Hover over a joint to see its name. The **Skeletons** checkbox in the
+F11 options panel turns this off; like collider outlines, it is hidden while
+the game is playing.
+
 `SkinnedMesh` has nothing to edit in the inspector. It is saved with the level
 so the entity stays skinned, but the pose itself is not saved: it is set again
 every time the level loads.

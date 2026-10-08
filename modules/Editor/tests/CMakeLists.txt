@@ -15,6 +15,7 @@ add_executable(Assisi-Editor-Tests
   TestInstanceHistory.cpp
   TestOutlinePicking.cpp
   TestPrePlayState.cpp
+  TestSkeletonOverlay.cpp
   TestSystemSearch.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
@@ -24,6 +25,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/SkeletonOverlay.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SystemSearch.cpp"
 )
 
