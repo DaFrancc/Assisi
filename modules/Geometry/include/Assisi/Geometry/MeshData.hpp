@@ -124,12 +124,32 @@ struct MeshData
     bool BoundsComputed = false;
 };
 
-/// @brief Fits an AABB around the vertices referenced by an index range
-///        (`Indices[indexOffset .. indexOffset+indexCount)`) — i.e. a submesh.
-///        Out-of-range or empty input returns a zero AABB at the origin.
-inline Aabb ComputeAabb(const MeshData &meshData, size_t indexOffset, size_t indexCount)
+/// @brief True when `Indices[indexOffset .. indexOffset+indexCount)` is a
+///        non-empty range of the index array and every index in it names a
+///        vertex — the precondition for dereferencing the range.
+inline bool IsFittableIndexRange(const MeshData &meshData, size_t indexOffset, size_t indexCount)
 {
     if (indexCount == 0 || indexOffset + indexCount > meshData.Indices.size())
+    {
+        return false;
+    }
+    for (size_t i = indexOffset; i < indexOffset + indexCount; ++i)
+    {
+        if (meshData.Indices[i] >= meshData.Vertices.size())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// @brief Fits an AABB around the vertices referenced by an index range
+///        (`Indices[indexOffset .. indexOffset+indexCount)`) — i.e. a submesh.
+///        Out-of-range or empty input, or an index that names no vertex,
+///        returns a zero AABB at the origin.
+inline Aabb ComputeAabb(const MeshData &meshData, size_t indexOffset, size_t indexCount)
+{
+    if (!IsFittableIndexRange(meshData, indexOffset, indexCount))
     {
         return {};
     }
@@ -167,10 +187,11 @@ inline Aabb ComputeAabb(const MeshData &meshData)
 ///        range (a submesh). Centre is the range AABB's midpoint; radius is the
 ///        exact farthest-vertex distance, so the sphere encloses every
 ///        referenced vertex (never under-culls) while staying tighter than an
-///        AABB half-diagonal. Out-of-range or empty input returns a zero sphere.
+///        AABB half-diagonal. Out-of-range or empty input, or an index that
+///        names no vertex, returns a zero sphere.
 inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData, size_t indexOffset, size_t indexCount)
 {
-    if (indexCount == 0 || indexOffset + indexCount > meshData.Indices.size())
+    if (!IsFittableIndexRange(meshData, indexOffset, indexCount))
     {
         return {};
     }

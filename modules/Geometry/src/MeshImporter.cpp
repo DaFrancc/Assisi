@@ -430,14 +430,17 @@ void WarnDroppedAttributes(const fastgltf::Primitive &primitive, std::string_vie
 
 /* Appends one primitive's geometry to @p out, baking @p model / @p normalMatrix
    into positions and directions. Updates @p allHaveTangents / @p allHaveUv so the
-   caller knows whether tangents must be regenerated after the merge. */
-void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &primitive, const glm::mat4 &model,
+   caller knows whether tangents must be regenerated after the merge. Returns
+   false when an index names a vertex past the primitive's own: past the merged
+   array it is an out-of-bounds read for every consumer, and short of that it
+   silently stitches triangles onto the next primitive's vertices. */
+bool AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &primitive, const glm::mat4 &model,
                      const glm::mat3 &normalMatrix, MeshData &out, bool &allHaveTangents, bool &allHaveUv)
 {
     const fastgltf::Attribute *positionAttr = primitive.findAttribute("POSITION");
     if (positionAttr == primitive.attributes.end())
     {
-        return; // POSITION is mandatory in glTF; a primitive without it is not drawable.
+        return true; // POSITION is mandatory in glTF; a primitive without it is not drawable.
     }
 
     const size_t baseVertex   = out.Vertices.size();
@@ -507,12 +510,18 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
     {
         const fastgltf::Accessor &indexAccessor = asset.accessors[*primitive.indicesAccessor];
         const size_t firstIndex    = out.Indices.size();
+        bool allInRange = true;
         out.Indices.reserve(firstIndex + indexAccessor.count);
         fastgltf::iterateAccessor<std::uint32_t>(
             asset, indexAccessor, [&](std::uint32_t index)
                 {
+                    allInRange = allInRange && index < posAccessor.count;
                     out.Indices.push_back(static_cast<uint32_t>(baseVertex) + index);
                 });
+        if (!allInRange)
+        {
+            return false;
+        }
         if (mirrored)
         {
             // Swap the 2nd/3rd index of every triangle we just appended to restore CCW
@@ -522,6 +531,7 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
                 std::swap(out.Indices[i + 1], out.Indices[i + 2]);
         }
     }
+    return true;
 }
 
 /* One primitive occurrence in the scene: which primitive, with what baked
@@ -614,6 +624,8 @@ std::string_view ToString(MeshImportError error) noexcept
         return "cancelled (superseded)";
     case MeshImportError::InvalidCollision:
         return "a collision node cannot be built";
+    case MeshImportError::IndexOutOfRange:
+        return "an index names a vertex its primitive does not have";
     }
     return "unknown error";
 }
@@ -774,8 +786,12 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
             const PrimitiveRecord &record = records[i];
             WarnDroppedAttributes(*record.primitive, virtualPath, warnings);
             const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(record.model)));
-            AppendPrimitive(asset, *record.primitive, record.model, normalMatrix, merged, allHaveTangents,
-                            allHaveUv);
+            if (!AppendPrimitive(asset, *record.primitive, record.model, normalMatrix, merged, allHaveTangents,
+                                 allHaveUv))
+            {
+                Core::Log::Error("MeshImporter: '{}': {}.", virtualPath, ToString(MeshImportError::IndexOutOfRange));
+                return std::unexpected(MeshImportError::IndexOutOfRange);
+            }
         }
 
         const uint32_t indexCount = static_cast<uint32_t>(merged.Indices.size()) - indexOffset;

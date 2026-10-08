@@ -49,6 +49,7 @@ enum class MeshImportError : std::uint8_t
     NoGeometry,         ///< Parsed successfully but produced no triangles.
     Cancelled,          ///< Superseded before the import ran (a newer load epoch); no work done.
     InvalidCollision,   ///< A collision node cannot be built; the log names it and why.
+    IndexOutOfRange,    ///< A primitive's index names a vertex the primitive does not have.
 };
 
 /// @brief A short human-readable name for a MeshImportError (for logs).
