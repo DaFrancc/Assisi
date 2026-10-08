@@ -12,7 +12,8 @@
 /// Every byte read — the file itself *and* any external glTF buffers it
 /// references — goes through Core::AssetSystem, so the asset-root escape
 /// protection is never bypassed. The importer produces one MeshData with node
-/// world transforms baked in, bucketed into SubMeshes by (LOD, material):
+/// world transforms baked in — except for a skinned mesh, whose vertices stay in
+/// bind space beside its Skeleton — bucketed into SubMeshes by (LOD, material):
 /// same-material primitives within a LOD merge into one submesh; the authored
 /// LOD convention is a `*_LOD<n>` node- or mesh-name suffix. A node whose node
 /// or mesh name starts with a collision prefix (see CollisionData.hpp) is not
@@ -50,6 +51,11 @@ enum class MeshImportError : std::uint8_t
     Cancelled,          ///< Superseded before the import ran (a newer load epoch); no work done.
     InvalidCollision,   ///< A collision node cannot be built; the log names it and why.
     IndexOutOfRange,    ///< A primitive's index names a vertex the primitive does not have.
+    MultipleSkins,      ///< Mesh nodes are bound to more than one skin.
+    MixedSkinning,      ///< Some mesh nodes are skinned and some are not.
+    InvalidSkin,        ///< A skin's joints cannot form one skeleton; the log names it and why.
+    JointOutOfRange,    ///< A vertex names a joint its skin does not have.
+    DuplicateJointName, ///< Two joints share a name, so a clip could not tell them apart.
 };
 
 /// @brief A short human-readable name for a MeshImportError (for logs).

@@ -16,10 +16,16 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
+#include <format>
+#include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -136,7 +142,6 @@ struct ImportWarnings
 {
     bool secondUvSet = false;
     bool vertexColor = false;
-    bool skinning = false;
     bool alphaBlend = false;
     bool embeddedImage = false;
     bool secondaryTexCoord = false;
@@ -419,13 +424,6 @@ void WarnDroppedAttributes(const fastgltf::Primitive &primitive, std::string_vie
         warnings.vertexColor = true;
         Core::Log::Warn("MeshImporter: '{}' has vertex colors (COLOR_0); they are not imported.", virtualPath);
     }
-    if (!warnings.skinning && primitive.findAttribute("JOINTS_0") != primitive.attributes.end())
-    {
-        warnings.skinning = true;
-        Core::Log::Warn("MeshImporter: '{}' has skinning data (JOINTS_0/WEIGHTS_0); skinning is not supported - "
-                        "importing the bind pose.",
-                        virtualPath);
-    }
 }
 
 /* Appends one primitive's geometry to @p out, baking @p model / @p normalMatrix
@@ -539,13 +537,91 @@ bool AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
    (phase 1), then bucketed by (lod, material slot) into submeshes (phase 2). */
 struct PrimitiveRecord
 {
-    const fastgltf::Primitive *primitive = nullptr;
     glm::mat4 model{1.f};
+    const fastgltf::Primitive *primitive = nullptr;
     uint32_t lodIndex = 0;     // dense index into the sorted distinct LOD levels
     uint32_t materialSlot = 0; // dense slot in first-appearance order
+    bool skinned = false;      // bound to the file's skin, so model is identity
 };
 
 constexpr size_t kNoMaterial = static_cast<size_t>(-1);
+
+/* Cooked skin records name joints in 16 bits. */
+constexpr size_t kMaxJoints = std::numeric_limits<uint16_t>::max();
+
+/* glTF carries influences four at a time, in JOINTS_n/WEIGHTS_n; two sets are read. */
+constexpr uint32_t kInfluencesPerSet = 4;
+constexpr uint32_t kInfluenceSets = 2;
+constexpr uint32_t kMaxReadInfluences = kInfluencesPerSet * kInfluenceSets;
+
+constexpr int32_t kNoNode = -1;
+
+/* Each node's parent node, or kNoNode for a scene root. */
+std::vector<int32_t> BuildNodeParents(const fastgltf::Asset &asset)
+{
+    std::vector<int32_t> parents(asset.nodes.size(), kNoNode);
+    for (size_t node = 0; node < asset.nodes.size(); ++node)
+    {
+        for (const size_t child : asset.nodes[node].children)
+        {
+            if (child < parents.size())
+            {
+                parents[child] = static_cast<int32_t>(node);
+            }
+        }
+    }
+    return parents;
+}
+
+JointTransform LocalTransformOf(const fastgltf::Node &node)
+{
+    fastgltf::math::fvec3 translation(0.f);
+    fastgltf::math::fquat rotation(0.f, 0.f, 0.f, 1.f);
+    fastgltf::math::fvec3 scale(1.f);
+    if (const fastgltf::TRS *trs = std::get_if<fastgltf::TRS>(&node.transform))
+    {
+        translation = trs->translation;
+        rotation = trs->rotation;
+        scale = trs->scale;
+    }
+    else if (const fastgltf::math::fmat4x4 *matrix = std::get_if<fastgltf::math::fmat4x4>(&node.transform))
+    {
+        fastgltf::math::decomposeTransformMatrix(*matrix, scale, rotation, translation);
+    }
+
+    JointTransform local;
+    local.Rotation.w = rotation.w();
+    local.Rotation.x = rotation.x();
+    local.Rotation.y = rotation.y();
+    local.Rotation.z = rotation.z();
+    local.Translation = glm::vec3(translation[0], translation[1], translation[2]);
+    local.Scale = glm::vec3(scale[0], scale[1], scale[2]);
+    return local;
+}
+
+/* Every node the scene traversal reaches, and the drawable and collision
+   records it collects from them. */
+struct SceneCollection
+{
+    std::vector<PrimitiveRecord> records;
+    std::vector<uint32_t> rawLodLevels;     // parallel to records until densified
+    std::vector<size_t> slotKeys;           // slot -> glTF material index (or kNoMaterial)
+    std::vector<CollisionNode> collisionNodes;
+    std::vector<glm::mat4> nodeWorlds;      // by node index; meaningful where reached
+    std::vector<bool> reached;              // by node index
+    std::vector<size_t> skins;              // distinct skins the mesh nodes are bound to
+    const fastgltf::Asset *asset = nullptr;
+    uint32_t skinnedNodes = 0;
+    uint32_t unskinnedNodes = 0;
+
+    explicit SceneCollection(const fastgltf::Asset &source)
+        : nodeWorlds(source.nodes.size(), glm::mat4(1.f)), reached(source.nodes.size(), false), asset(&source)
+    {
+    }
+
+    void Visit(const fastgltf::Node &node, const glm::mat4 &world);
+    uint32_t SlotFor(size_t materialKey);
+};
 
 /* The collision a node's name asks for, and the name that asked: the node's
    own first, then its mesh's, as LodLevelFor reads them. */
@@ -604,6 +680,349 @@ bool BuildCollision(std::span<const CollisionNode> nodes, std::string_view virtu
     return true;
 }
 
+uint32_t SceneCollection::SlotFor(size_t materialKey)
+{
+    if (const std::vector<size_t>::iterator found = std::ranges::find(slotKeys, materialKey); found != slotKeys.end())
+    {
+        return static_cast<uint32_t>(found - slotKeys.begin());
+    }
+    slotKeys.push_back(materialKey);
+    return static_cast<uint32_t>(slotKeys.size() - 1);
+}
+
+void SceneCollection::Visit(const fastgltf::Node &node, const glm::mat4 &world)
+{
+    const size_t nodeIndex = static_cast<size_t>(&node - asset->nodes.data());
+    nodeWorlds[nodeIndex] = world;
+    reached[nodeIndex] = true;
+    if (!node.meshIndex.has_value())
+    {
+        return;
+    }
+    if (std::optional<CollisionNode> collision = CollisionNodeFor(node, *asset, *node.meshIndex))
+    {
+        collision->world = world;
+        for (const fastgltf::Primitive &primitive : asset->meshes[*node.meshIndex].primitives)
+        {
+            AppendCollisionPrimitive(*asset, primitive, *collision);
+        }
+        collisionNodes.push_back(std::move(*collision));
+        return;
+    }
+
+    // glTF places a skinned mesh by its joints and ignores the node's own
+    // transform, so nothing is baked into its vertices.
+    const bool skinned = node.skinIndex.has_value();
+    if (skinned)
+    {
+        ++skinnedNodes;
+        if (std::ranges::find(skins, *node.skinIndex) == skins.end())
+        {
+            skins.push_back(*node.skinIndex);
+        }
+    }
+    else
+    {
+        ++unskinnedNodes;
+    }
+
+    const uint32_t lodLevel = LodLevelFor(node, *asset, *node.meshIndex);
+    for (const fastgltf::Primitive &primitive : asset->meshes[*node.meshIndex].primitives)
+    {
+        const size_t materialKey = primitive.materialIndex.has_value() ? *primitive.materialIndex : kNoMaterial;
+        records.push_back(PrimitiveRecord{.model = skinned ? glm::mat4(1.f) : world, .primitive = &primitive,
+                                          .lodIndex = lodLevel, .materialSlot = SlotFor(materialKey),
+                                          .skinned = skinned});
+        rawLodLevels.push_back(lodLevel);
+    }
+}
+
+/* A skin's joints as one skeleton, and where each joint of the file's listing
+   landed in it. */
+struct BuiltSkeleton
+{
+    Geometry::Skeleton skeleton;
+    std::vector<uint32_t> remap; // file joint index -> skeleton joint index
+};
+
+/* The skin's joints in the order a pose is built: each joint's children after
+   it, roots and siblings in the order the file lists them. Refuses a skin whose
+   joints are not all reached by the scene, or whose roots hang under different
+   nodes — RootTransform is one matrix. */
+std::expected<std::vector<uint32_t>, std::string> OrderJoints(const fastgltf::Skin &skin,
+                                                              const SceneCollection &scene,
+                                                              std::span<const int32_t> nodeParents,
+                                                              int32_t &rootParent)
+{
+    const size_t jointCount = skin.joints.size();
+    std::unordered_map<size_t, uint32_t> jointOfNode;
+    for (uint32_t joint = 0; joint < jointCount; ++joint)
+    {
+        const size_t node = skin.joints[joint];
+        if (node >= scene.reached.size() || !scene.reached[node])
+        {
+            return std::unexpected(std::format("joint {} is not in the scene", joint));
+        }
+        if (!jointOfNode.emplace(node, joint).second)
+        {
+            return std::unexpected(std::format("node {} is listed as a joint twice", node));
+        }
+    }
+
+    std::vector<std::vector<uint32_t>> children(jointCount);
+    std::vector<uint32_t> roots;
+    std::optional<int32_t> sharedParent;
+    for (uint32_t joint = 0; joint < jointCount; ++joint)
+    {
+        const int32_t parentNode = nodeParents[skin.joints[joint]];
+        const std::unordered_map<size_t, uint32_t>::const_iterator parentJoint =
+            parentNode == kNoNode ? jointOfNode.end() : jointOfNode.find(static_cast<size_t>(parentNode));
+        if (parentJoint != jointOfNode.end())
+        {
+            children[parentJoint->second].push_back(joint);
+            continue;
+        }
+        if (sharedParent.has_value() && *sharedParent != parentNode)
+        {
+            return std::unexpected(std::string{"its root joints hang under different nodes"});
+        }
+        sharedParent = parentNode;
+        roots.push_back(joint);
+    }
+    rootParent = sharedParent.value_or(kNoNode);
+
+    std::vector<uint32_t> order;
+    order.reserve(jointCount);
+    std::vector<uint32_t> pending(roots.rbegin(), roots.rend());
+    while (!pending.empty())
+    {
+        const uint32_t joint = pending.back();
+        pending.pop_back();
+        order.push_back(joint);
+        pending.insert(pending.end(), children[joint].rbegin(), children[joint].rend());
+    }
+    return order;
+}
+
+std::vector<glm::mat4> ReadInverseBinds(const fastgltf::Asset &asset, const fastgltf::Skin &skin)
+{
+    std::vector<glm::mat4> inverseBinds(skin.joints.size(), glm::mat4(1.f));
+    if (!skin.inverseBindMatrices.has_value())
+    {
+        return inverseBinds;
+    }
+    const fastgltf::Accessor &accessor = asset.accessors[*skin.inverseBindMatrices];
+    if (accessor.count != skin.joints.size())
+    {
+        return {};
+    }
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::fmat4x4>(
+        asset, accessor, [&](fastgltf::math::fmat4x4 matrix, size_t index) { inverseBinds[index] = ToGlm(matrix); });
+    return inverseBinds;
+}
+
+std::unexpected<MeshImportError> InvalidSkin(std::string_view virtualPath, const fastgltf::Skin &skin,
+                                             std::string_view reason)
+{
+    Core::Log::Error("MeshImporter: '{}': skin '{}': {}.", virtualPath, std::string_view{skin.name}, reason);
+    return std::unexpected(MeshImportError::InvalidSkin);
+}
+
+/* Builds the skeleton of skin @p skinIndex, logging why when it cannot. */
+std::expected<BuiltSkeleton, MeshImportError> BuildSkeleton(const fastgltf::Asset &asset, size_t skinIndex,
+                                                            const SceneCollection &scene,
+                                                            std::string_view virtualPath)
+{
+    const fastgltf::Skin &skin = asset.skins[skinIndex];
+    if (skin.joints.empty())
+    {
+        return InvalidSkin(virtualPath, skin, "it has no joints");
+    }
+    if (skin.joints.size() > kMaxJoints)
+    {
+        return InvalidSkin(virtualPath, skin,
+                           std::format("it has {} joints, more than the {} a skeleton can have", skin.joints.size(),
+                                       kMaxJoints));
+    }
+    const std::vector<glm::mat4> inverseBinds = ReadInverseBinds(asset, skin);
+    if (inverseBinds.empty())
+    {
+        return InvalidSkin(virtualPath, skin, "its inverse bind matrices are not one per joint");
+    }
+
+    const std::vector<int32_t> nodeParents = BuildNodeParents(asset);
+    int32_t rootParent = kNoNode;
+    const std::expected<std::vector<uint32_t>, std::string> order =
+        OrderJoints(skin, scene, nodeParents, rootParent);
+    if (!order)
+    {
+        return InvalidSkin(virtualPath, skin, order.error());
+    }
+
+    BuiltSkeleton built;
+    built.remap.assign(skin.joints.size(), 0);
+    std::vector<int32_t> skeletonJointOfNode(asset.nodes.size(), kNoParent);
+    for (uint32_t index = 0; index < order->size(); ++index)
+    {
+        built.remap[(*order)[index]] = index;
+        skeletonJointOfNode[skin.joints[(*order)[index]]] = static_cast<int32_t>(index);
+    }
+
+    Geometry::Skeleton &skeleton = built.skeleton;
+    skeleton.RootTransform = rootParent == kNoNode ? glm::mat4(1.f) : scene.nodeWorlds[static_cast<size_t>(rootParent)];
+    std::unordered_set<std::string_view> names;
+    for (const uint32_t fileJoint : *order)
+    {
+        const fastgltf::Node &node = asset.nodes[skin.joints[fileJoint]];
+        const std::string_view name{node.name};
+        if (!names.insert(name).second)
+        {
+            Core::Log::Error("MeshImporter: '{}': skin '{}': two joints are named '{}'.", virtualPath,
+                             std::string_view{skin.name}, name);
+            return std::unexpected(MeshImportError::DuplicateJointName);
+        }
+        const int32_t parentNode = nodeParents[skin.joints[fileJoint]];
+        skeleton.Names.emplace_back(name);
+        skeleton.Parents.push_back(parentNode == kNoNode ? kNoParent
+                                                         : skeletonJointOfNode[static_cast<size_t>(parentNode)]);
+        skeleton.RestLocal.push_back(LocalTransformOf(node));
+        skeleton.InverseBind.push_back(inverseBinds[fileJoint]);
+    }
+    return built;
+}
+
+/* What reading one primitive's influences ran into that is worth a warning. */
+struct SkinReadNotes
+{
+    bool droppedInfluences = false;
+    bool zeroWeight = false;
+};
+
+struct Influence
+{
+    float weight = 0.f;
+    uint32_t joint = 0;
+};
+
+/* A vertex's influences from every attribute set, before any is dropped. */
+struct InfluenceList
+{
+    std::array<Influence, kMaxReadInfluences> items{};
+    uint32_t count = 0;
+};
+
+/* Adds set @p set's influences to @p lists, one per vertex. A set that is
+   absent adds nothing; a set with only one of its two attributes, or with a
+   count other than the vertices', is refused. */
+bool ReadInfluenceSet(const fastgltf::Asset &asset, const fastgltf::Primitive &primitive, uint32_t set,
+                      std::vector<InfluenceList> &lists)
+{
+    const fastgltf::Attribute *joints = primitive.findAttribute(std::format("JOINTS_{}", set));
+    const fastgltf::Attribute *weights = primitive.findAttribute(std::format("WEIGHTS_{}", set));
+    const bool hasJoints = joints != primitive.attributes.end();
+    const bool hasWeights = weights != primitive.attributes.end();
+    if (!hasJoints && !hasWeights)
+    {
+        return set != 0;
+    }
+    if (!hasJoints || !hasWeights)
+    {
+        return false;
+    }
+    const fastgltf::Accessor &jointAccessor = asset.accessors[joints->accessorIndex];
+    const fastgltf::Accessor &weightAccessor = asset.accessors[weights->accessorIndex];
+    if (jointAccessor.count != lists.size() || weightAccessor.count != lists.size())
+    {
+        return false;
+    }
+
+    std::vector<fastgltf::math::u16vec4> jointValues(lists.size());
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::u16vec4>(
+        asset, jointAccessor, [&](fastgltf::math::u16vec4 value, size_t index) { jointValues[index] = value; });
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
+        asset, weightAccessor, [&](fastgltf::math::fvec4 value, size_t index)
+            {
+                for (uint32_t slot = 0; slot < kInfluencesPerSet; ++slot)
+                {
+                    InfluenceList &list = lists[index];
+                    list.items[list.count++] = Influence{.weight = value[slot], .joint = jointValues[index][slot]};
+                }
+            });
+    return true;
+}
+
+/* Turns one vertex's influences into a VertexSkin: the kMaxInfluences largest
+   positive weights, renormalized, joints remapped into skeleton order. A vertex
+   with no weight at all follows joint 0. Returns false when a weighted influence
+   names a joint the skin does not have. */
+bool ResolveInfluences(InfluenceList list, std::span<const uint32_t> remap, VertexSkin &out, SkinReadNotes &notes)
+{
+    Influence *const begin = list.items.data();
+    Influence *const end = std::remove_if(begin, begin + list.count, [](const Influence &item) { return !(item.weight > 0.f); });
+    const uint32_t used = static_cast<uint32_t>(end - begin);
+    for (const Influence *item = begin; item != end; ++item)
+    {
+        if (item->joint >= remap.size())
+        {
+            return false;
+        }
+    }
+    std::sort(begin, end, [](const Influence &a, const Influence &b) { return a.weight > b.weight; });
+
+    const uint32_t kept = std::min(used, kMaxInfluences);
+    notes.droppedInfluences = notes.droppedInfluences || used > kMaxInfluences;
+    float total = 0.f;
+    for (uint32_t slot = 0; slot < kept; ++slot)
+    {
+        total += begin[slot].weight;
+    }
+
+    out = VertexSkin{};
+    if (kept == 0)
+    {
+        notes.zeroWeight = true;
+        return true;
+    }
+    for (uint32_t slot = 0; slot < kept; ++slot)
+    {
+        out.Weights[static_cast<int32_t>(slot)] = begin[slot].weight / total;
+        out.Joints[static_cast<int32_t>(slot)] = remap[begin[slot].joint];
+    }
+    for (uint32_t slot = kept; slot < kMaxInfluences; ++slot)
+    {
+        out.Weights[static_cast<int32_t>(slot)] = 0.f;
+    }
+    return true;
+}
+
+/* Appends one skinned primitive's skin, one entry for each vertex AppendPrimitive
+   just appended (the vertices past mesh.Skin's end). */
+std::expected<SkinReadNotes, MeshImportError> AppendPrimitiveSkin(const fastgltf::Asset &asset,
+                                                                  const fastgltf::Primitive &primitive,
+                                                                  std::span<const uint32_t> remap, MeshData &mesh)
+{
+    const size_t firstVertex = mesh.Skin.size();
+    std::vector<InfluenceList> lists(mesh.Vertices.size() - firstVertex);
+    for (uint32_t set = 0; set < kInfluenceSets; ++set)
+    {
+        if (!ReadInfluenceSet(asset, primitive, set, lists))
+        {
+            return std::unexpected(MeshImportError::InvalidSkin);
+        }
+    }
+
+    SkinReadNotes notes;
+    mesh.Skin.resize(mesh.Vertices.size());
+    for (size_t vertex = 0; vertex < lists.size(); ++vertex)
+    {
+        if (!ResolveInfluences(lists[vertex], remap, mesh.Skin[firstVertex + vertex], notes))
+        {
+            return std::unexpected(MeshImportError::JointOutOfRange);
+        }
+    }
+    return notes;
+}
+
 } // namespace
 
 std::string_view ToString(MeshImportError error) noexcept
@@ -626,6 +1045,16 @@ std::string_view ToString(MeshImportError error) noexcept
         return "a collision node cannot be built";
     case MeshImportError::IndexOutOfRange:
         return "an index names a vertex its primitive does not have";
+    case MeshImportError::MultipleSkins:
+        return "mesh nodes are bound to more than one skin";
+    case MeshImportError::MixedSkinning:
+        return "some mesh nodes are skinned and some are not";
+    case MeshImportError::InvalidSkin:
+        return "a skin's joints cannot form one skeleton";
+    case MeshImportError::JointOutOfRange:
+        return "a vertex names a joint its skin does not have";
+    case MeshImportError::DuplicateJointName:
+        return "two joints share a name";
     }
     return "unknown error";
 }
@@ -678,54 +1107,41 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
 
     // --- Phase 1: collect (primitive, world transform, LOD level, material) records
     // in traversal order, plus the raw LOD levels and glTF material keys seen. ---
-    std::vector<PrimitiveRecord> records;
-    std::vector<uint32_t>        rawLodLevels; // parallel to records until densified
-    std::vector<size_t>          slotKeys;     // slot -> glTF material index (or kNoMaterial)
-    std::vector<CollisionNode>   collisionNodes;
-
-    fastgltf::iterateSceneNodes(
-        asset, sceneIndex, fastgltf::math::fmat4x4(),
-        [&](fastgltf::Node &node, fastgltf::math::fmat4x4 worldMatrix)
-        {
-            if (!node.meshIndex.has_value())
-            {
-                return;
-            }
-            const glm::mat4 model = ToGlm(worldMatrix);
-            if (std::optional<CollisionNode> collision = CollisionNodeFor(node, asset, *node.meshIndex))
-            {
-                collision->world = model;
-                for (const fastgltf::Primitive &primitive : asset.meshes[*node.meshIndex].primitives)
-                {
-                    AppendCollisionPrimitive(asset, primitive, *collision);
-                }
-                collisionNodes.push_back(std::move(*collision));
-                return;
-            }
-            const uint32_t lodLevel = LodLevelFor(node, asset, *node.meshIndex);
-            for (const fastgltf::Primitive &primitive : asset.meshes[*node.meshIndex].primitives)
-            {
-                const size_t materialKey =
-                    primitive.materialIndex.has_value() ? *primitive.materialIndex : kNoMaterial;
-                uint32_t slot = 0;
-                if (const auto found = std::ranges::find(slotKeys, materialKey); found != slotKeys.end())
-                {
-                    slot = static_cast<uint32_t>(found - slotKeys.begin());
-                }
-                else
-                {
-                    slot = static_cast<uint32_t>(slotKeys.size());
-                    slotKeys.push_back(materialKey);
-                }
-                records.push_back(PrimitiveRecord{.primitive = &primitive, .model = model, .lodIndex = lodLevel,
-                                                  .materialSlot = slot});
-                rawLodLevels.push_back(lodLevel);
-            }
-        });
+    SceneCollection scene{asset};
+    fastgltf::iterateSceneNodes(asset, sceneIndex, fastgltf::math::fmat4x4(),
+                                [&scene](fastgltf::Node &node, fastgltf::math::fmat4x4 worldMatrix)
+                                { scene.Visit(node, ToGlm(worldMatrix)); });
+    std::vector<PrimitiveRecord> &records = scene.records;
+    const std::vector<uint32_t> &rawLodLevels = scene.rawLodLevels;
+    const std::vector<size_t> &slotKeys = scene.slotKeys;
 
     if (records.empty())
     {
         return std::unexpected(MeshImportError::NoGeometry);
+    }
+
+    // One skeleton per mesh: a second skin, or a static part beside a skinned
+    // one, would need its own.
+    if (scene.skinnedNodes > 0 && scene.unskinnedNodes > 0)
+    {
+        Core::Log::Error("MeshImporter: '{}': {}.", virtualPath, ToString(MeshImportError::MixedSkinning));
+        return std::unexpected(MeshImportError::MixedSkinning);
+    }
+    if (scene.skins.size() > 1)
+    {
+        Core::Log::Error("MeshImporter: '{}': {}.", virtualPath, ToString(MeshImportError::MultipleSkins));
+        return std::unexpected(MeshImportError::MultipleSkins);
+    }
+    BuiltSkeleton skeleton;
+    if (!scene.skins.empty())
+    {
+        std::expected<BuiltSkeleton, MeshImportError> built =
+            BuildSkeleton(asset, scene.skins.front(), scene, virtualPath);
+        if (!built)
+        {
+            return std::unexpected(built.error());
+        }
+        skeleton = std::move(*built);
     }
 
     // Densify LOD levels: distinct authored levels, ascending, become Lods[0..n).
@@ -759,6 +1175,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
 
     MeshData merged;
     ImportWarnings warnings;
+    SkinReadNotes skinNotes;
     bool allHaveTangents = true;
     bool allHaveUv       = true;
 
@@ -792,6 +1209,22 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
                 Core::Log::Error("MeshImporter: '{}': {}.", virtualPath, ToString(MeshImportError::IndexOutOfRange));
                 return std::unexpected(MeshImportError::IndexOutOfRange);
             }
+            if (record.skinned)
+            {
+                const std::expected<SkinReadNotes, MeshImportError> read =
+                    AppendPrimitiveSkin(asset, *record.primitive, skeleton.remap, merged);
+                if (!read)
+                {
+                    Core::Log::Error("MeshImporter: '{}': {}.", virtualPath,
+                                     read.error() == MeshImportError::InvalidSkin
+                                         ? "a skinned primitive's JOINTS_n/WEIGHTS_n are missing or do not match "
+                                     "its vertices"
+                                         : ToString(read.error()));
+                    return std::unexpected(read.error());
+                }
+                skinNotes.droppedInfluences = skinNotes.droppedInfluences || read->droppedInfluences;
+                skinNotes.zeroWeight = skinNotes.zeroWeight || read->zeroWeight;
+            }
         }
 
         const uint32_t indexCount = static_cast<uint32_t>(merged.Indices.size()) - indexOffset;
@@ -823,9 +1256,23 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         return std::unexpected(MeshImportError::NoGeometry);
     }
 
-    if (!BuildCollision(collisionNodes, virtualPath, merged.Collision))
+    if (!BuildCollision(scene.collisionNodes, virtualPath, merged.Collision))
     {
         return std::unexpected(MeshImportError::InvalidCollision);
+    }
+
+    if (!skeleton.skeleton.Empty())
+    {
+        merged.Skeleton = std::move(skeleton.skeleton);
+    }
+    if (skinNotes.droppedInfluences)
+    {
+        Core::Log::Warn("MeshImporter: '{}' binds vertices to more than {} joints; the {} largest weights are kept.",
+                        virtualPath, kMaxInfluences, kMaxInfluences);
+    }
+    if (skinNotes.zeroWeight)
+    {
+        Core::Log::Warn("MeshImporter: '{}' has skinned vertices with no weight; they follow joint 0.", virtualPath);
     }
 
     // Material slot table: extract each used glTF material; a primitive with no

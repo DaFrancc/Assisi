@@ -15,6 +15,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -52,6 +53,20 @@ struct RecordingSink final : Core::Sink
         return false;
     }
 
+    [[nodiscard]] std::size_t Count(std::string_view needle) const
+    {
+        const std::lock_guard lock{_mutex};
+        std::size_t count = 0;
+        for (const std::string &message : _messages)
+        {
+            if (message.find(needle) != std::string::npos)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
 private:
     mutable std::mutex _mutex;
     std::vector<std::string> _messages;
@@ -76,6 +91,9 @@ public:
     LogCapture() { InstalledSink().Clear(); }
 
     [[nodiscard]] bool Mentions(std::string_view needle) const { return InstalledSink().Mentions(needle); }
+
+    /// How many lines mention @p needle — for a warning meant to appear once per file.
+    [[nodiscard]] std::size_t Count(std::string_view needle) const { return InstalledSink().Count(needle); }
 };
 
 } // namespace Assisi::Tests

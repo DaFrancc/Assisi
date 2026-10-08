@@ -12,6 +12,8 @@
 
 #include <doctest/doctest.h>
 
+#include <expected>
+
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshValidate.hpp>
 
@@ -221,4 +223,112 @@ TEST_CASE("Every error has a description")
     CHECK(ToString(MeshValidationError::IndexOutOfRange) != "is invalid");
     CHECK(ToString(MeshValidationError::LodThresholdNotDescending) != "is invalid");
     CHECK(ToString(MeshValidationError::MaterialSlotOutOfRange) != "is invalid");
+    CHECK(ToString(MeshValidationError::SkinSizeMismatch) != "is invalid");
+    CHECK(ToString(MeshValidationError::SkinWithoutSkeleton) != "is invalid");
+    CHECK(ToString(MeshValidationError::SkeletonWithoutSkin) != "is invalid");
+    CHECK(ToString(MeshValidationError::SkeletonTablesMismatch) != "is invalid");
+    CHECK(ToString(MeshValidationError::JointOrder) != "is invalid");
+    CHECK(ToString(MeshValidationError::JointOutOfRange) != "is invalid");
+    CHECK(ToString(MeshValidationError::WeightsNotNormalized) != "is invalid");
+    CHECK(ToString(MeshValidationError::DuplicateJointName) != "is invalid");
+}
+
+namespace
+{
+
+/// MakeTwoLodMesh bound to a two-joint skeleton: every vertex follows the root,
+/// except vertex 1, which is split between root and child.
+MeshData MakeSkinnedMesh()
+{
+    MeshData mesh = MakeTwoLodMesh();
+    mesh.Skin.resize(mesh.Vertices.size());
+    mesh.Skin[1].Weights = {0.25f, 0.75f, 0.f, 0.f};
+    mesh.Skin[1].Joints  = {0u, 1u, 0u, 0u};
+
+    mesh.Skeleton.Names       = {"root", "child"};
+    mesh.Skeleton.Parents     = {Assisi::Geometry::kNoParent, 0};
+    mesh.Skeleton.RestLocal   = {Assisi::Geometry::JointTransform{}, Assisi::Geometry::JointTransform{}};
+    mesh.Skeleton.InverseBind = {glm::mat4(1.f), glm::mat4(1.f)};
+    return mesh;
+}
+
+void CheckRefused(const MeshData &mesh, MeshValidationError expected)
+{
+    const std::expected<void, MeshValidationError> result = ValidateMesh(mesh);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == expected);
+}
+
+} // namespace
+
+TEST_CASE("A well-formed skinned mesh validates")
+{
+    CHECK(ValidateMesh(MakeSkinnedMesh()).has_value());
+}
+
+TEST_CASE("A skin array that is not one entry per vertex is refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skin.pop_back();
+    CheckRefused(mesh, MeshValidationError::SkinSizeMismatch);
+}
+
+TEST_CASE("Skinned vertices with no skeleton are refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skeleton = {};
+    CheckRefused(mesh, MeshValidationError::SkinWithoutSkeleton);
+}
+
+TEST_CASE("A skeleton with no skinned vertices is refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skin.clear();
+    CheckRefused(mesh, MeshValidationError::SkeletonWithoutSkin);
+}
+
+TEST_CASE("Skeleton tables of different lengths are refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skeleton.InverseBind.pop_back();
+    CheckRefused(mesh, MeshValidationError::SkeletonTablesMismatch);
+}
+
+TEST_CASE("A joint whose parent comes after it is refused")
+{
+    // A pose is built in one forward pass, so a parent read after its child has
+    // not been computed yet.
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skeleton.Parents = {1, Assisi::Geometry::kNoParent};
+    CheckRefused(mesh, MeshValidationError::JointOrder);
+}
+
+TEST_CASE("A vertex naming a joint the skeleton does not have is refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skin[3].Joints.z = 2;
+    mesh.Skin[3].Weights = {0.5f, 0.f, 0.5f, 0.f};
+    CheckRefused(mesh, MeshValidationError::JointOutOfRange);
+}
+
+TEST_CASE("A vertex whose weights do not sum to one is refused")
+{
+    MeshData mesh        = MakeSkinnedMesh();
+    mesh.Skin[2].Weights = {0.5f, 0.f, 0.f, 0.f};
+    CheckRefused(mesh, MeshValidationError::WeightsNotNormalized);
+}
+
+TEST_CASE("A vertex with a negative weight is refused even when the sum is one")
+{
+    MeshData mesh        = MakeSkinnedMesh();
+    mesh.Skin[2].Weights = {1.5f, -0.5f, 0.f, 0.f};
+    mesh.Skin[2].Joints  = {0u, 1u, 0u, 0u};
+    CheckRefused(mesh, MeshValidationError::WeightsNotNormalized);
+}
+
+TEST_CASE("Two joints with the same name are refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skeleton.Names[1] = "root";
+    CheckRefused(mesh, MeshValidationError::DuplicateJointName);
 }
