@@ -25,6 +25,7 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/TimeOfDay.hpp"
   PRIVATE
     "src/AssetResolve.cpp"
+    "src/AnimationPlayback.cpp"
     "src/SkinnedMeshPose.cpp"
     "src/Blueprint.cpp"
     "src/Camera.cpp"

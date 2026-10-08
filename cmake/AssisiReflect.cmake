@@ -400,8 +400,11 @@ endfunction()
 # into a second OBJECT library, gathered only by assisi_link_asset_cook_steps(),
 # which the cook tool and the editor call and a game does not: a shipped game
 # never cooks, so it never links cook code.
+#
+# COOK_TARGET, optional, is what the cook step links instead of TARGET, for a
+# kind whose cooking needs a library the game must not link (a parser).
 function(assisi_asset_kind)
-    cmake_parse_arguments(_ARG "" "TARGET" "LOAD;COOK" ${ARGN})
+    cmake_parse_arguments(_ARG "" "TARGET;COOK_TARGET" "LOAD;COOK" ${ARGN})
     if(NOT _ARG_TARGET)
         message(FATAL_ERROR "assisi_asset_kind: TARGET is required")
     endif()
@@ -415,9 +418,13 @@ function(assisi_asset_kind)
     set_property(GLOBAL APPEND PROPERTY ASSISI_REFLECT_OBJECT_TARGETS "${_load_target}")
 
     if(_ARG_COOK)
+        set(_cook_links "${_ARG_TARGET}")
+        if(_ARG_COOK_TARGET)
+            set(_cook_links "${_ARG_COOK_TARGET}")
+        endif()
         set(_cook_target "${_ARG_TARGET}-AssetCook")
         add_library("${_cook_target}" OBJECT ${_ARG_COOK})
-        target_link_libraries("${_cook_target}" PRIVATE "${_ARG_TARGET}")
+        target_link_libraries("${_cook_target}" PRIVATE "${_cook_links}")
         set_property(GLOBAL APPEND PROPERTY ASSISI_ASSET_COOK_OBJECT_TARGETS "${_cook_target}")
     endif()
 endfunction()

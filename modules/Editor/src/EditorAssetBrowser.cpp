@@ -9,6 +9,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Geometry/AnimationImport.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -534,21 +535,32 @@ void EditorApp::RescanAssetBrowser()
     std::sort(_assetBrowserMaterials.begin(), _assetBrowserMaterials.end());
 }
 
-void EditorApp::DrawUseAsMenu(const std::string &vpath)
+namespace
+{
+
+/// The kinds that read @p vpath's format; "Use as" is a choice only with two.
+std::vector<const Assisi::Core::AssetKind *> KindsReading(const std::string &vpath)
+{
+    return Assisi::Core::AssetKindRegistry::Instance().KindsReading(Assisi::Core::ExtensionOf(vpath));
+}
+
+} // namespace
+
+void EditorApp::DrawAssetMenu(const std::string &vpath)
 {
     // Writing a sidecar is authoring, which a restricted viewer never does.
-    if (IsRestrictedViewer())
+    if (IsRestrictedViewer() || KindsReading(vpath).size() < 2 || !ImGui::BeginPopupContextItem("##useas"))
     {
         return;
     }
-    // A choice needs two kinds that read the format; with one there is none.
-    const std::vector<const Assisi::Core::AssetKind *> readers =
-        Assisi::Core::AssetKindRegistry::Instance().KindsReading(Assisi::Core::ExtensionOf(vpath));
+    DrawUseAsItems(vpath);
+    ImGui::EndPopup();
+}
+
+void EditorApp::DrawUseAsItems(const std::string &vpath)
+{
+    const std::vector<const Assisi::Core::AssetKind *> readers = KindsReading(vpath);
     if (readers.size() < 2)
-    {
-        return;
-    }
-    if (!ImGui::BeginPopupContextItem("##useas"))
     {
         return;
     }
@@ -565,7 +577,22 @@ void EditorApp::DrawUseAsMenu(const std::string &vpath)
             UseFileAs(vpath, kind->name);
         }
     }
-    ImGui::EndPopup();
+}
+
+void EditorApp::ExtractAnimations(const std::string &vpath)
+{
+    const std::expected<Assisi::Geometry::ExtractedAnimations, Assisi::Geometry::AnimationExtractError> extracted =
+        Assisi::Geometry::ExtractGltfAnimations(vpath);
+    if (!extracted)
+    {
+        Assisi::Core::Log::Warn("Extract animations: '{}': {}.", vpath, Assisi::Geometry::ToString(extracted.error()));
+        return;
+    }
+    Assisi::Core::Log::Info("Extract animations: '{}' gave {} clip(s), {} left out.", vpath, extracted->written,
+                            extracted->skipped);
+    ReimportAssets();
+    GetAssets().Clear();
+    _assetBrowserDirty = true;
 }
 
 void EditorApp::UseFileAs(const std::string &vpath, const std::string &kindName)
@@ -754,7 +781,7 @@ void EditorApp::DrawAssetBrowser()
             ImGui::TextWrapped("%s", img.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
-            DrawUseAsMenu(vpath);
+            DrawAssetMenu(vpath);
             ImGui::PopID();
 
             if (clicked)
@@ -782,7 +809,8 @@ void EditorApp::DrawAssetBrowser()
             ImGui::TextWrapped("%s", mesh.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
-            DrawUseAsMenu(vpath);
+            // One menu per tile: two would open on the same click, and ImGui
+            // shows only one of them.
             DrawModelActionsMenu(vpath);
             ImGui::PopID();
 
@@ -824,7 +852,7 @@ void EditorApp::DrawAssetBrowser()
             ImGui::TextDisabled("%s", file.second.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndGroup();
-            DrawUseAsMenu(vpath);
+            DrawAssetMenu(vpath);
             ImGui::PopID();
 
             if (clicked)

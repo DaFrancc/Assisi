@@ -70,6 +70,16 @@ void EditorApp::DrawModelActionsMenu(const std::string &vpath)
             ImGui::SetTooltip("The model's collision is a single collider already; there is nothing to break apart.");
         }
     }
+    if (ImGui::MenuItem("Extract animations"))
+    {
+        ExtractAnimations(vpath);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Writes each of the model's animations beside it as a clip file of its own.");
+    }
+    ImGui::Separator();
+    DrawUseAsItems(vpath);
     ImGui::EndPopup();
 }
 
