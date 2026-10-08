@@ -442,8 +442,16 @@ WindowSize WindowContext::GetFramebufferSize() const
 namespace
 {
 /// The monitor whose area holds @p window's centre, or the primary one.
+///
+/// Wayland gives a window no position on the desktop, and asking for one is an
+/// error GLFW reports on every call, so there it is always the primary one.
 GLFWmonitor *MonitorHolding(GLFWwindow *window)
 {
+    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+    {
+        return glfwGetPrimaryMonitor();
+    }
+
     int32_t windowX = 0;
     int32_t windowY = 0;
     int32_t windowWidth = 0;
