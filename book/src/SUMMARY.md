@@ -38,6 +38,7 @@
     - [Contacts and queries](physics-contacts.md)
     - [The character controller](physics-character.md)
 - [Audio](audio.md)
+- [Animation](animation.md)
 - [Levels and blueprints](levels-and-blueprints.md)
 
 # Shipping

@@ -13,7 +13,8 @@
 ///
 /// The CPU vertex/index data is NOT retained after upload — bounds live in the
 /// submesh table, and any future CPU consumer (mesh colliders, editor picking)
-/// re-imports or opts in at resolve time.
+/// re-imports or opts in at resolve time. The skeleton is kept: a pose is built
+/// against it every frame.
 
 #include <cstddef>
 #include <cstdint>
@@ -77,6 +78,7 @@ public:
         _subMeshes = std::move(meshData.SubMeshes);
         _lods = std::move(meshData.Lods);
         _materials = std::move(meshData.Materials);
+        _skeleton = std::move(meshData.Skeleton);
         // Vertex/index data is deliberately not retained (see file comment).
     }
 
@@ -161,6 +163,7 @@ public:
         _subMeshes = std::move(meshData.SubMeshes);
         _lods = std::move(meshData.Lods);
         _materials = std::move(meshData.Materials);
+        _skeleton = std::move(meshData.Skeleton);
     }
 
     /// @brief The arena's shared vertex/index buffers (null until Upload). Read
@@ -203,10 +206,14 @@ public:
     ///        materials). Indexed by SubMesh::MaterialSlot.
     const std::vector<Geometry::MaterialData> &Materials() const { return _materials; }
 
+    /// @brief The joints a skinned mesh is bound to. Empty for a static mesh.
+    const Geometry::Skeleton &Skeleton() const { return _skeleton; }
+
 private:
     // The arena that owns this mesh's geometry, and where the mesh landed in it.
     // A pointer (not a raw buffer handle) so an arena grow/compaction that swaps
     // the underlying buffer is picked up automatically. Null until Upload().
+    Geometry::Skeleton _skeleton;
     const GeometryArena *_arena = nullptr;
     uint32_t _vertexBase = 0;             ///< Base offset into the arena, in vertices.
     uint32_t _indexBase = 0;              ///< Base offset into the arena, in indices.

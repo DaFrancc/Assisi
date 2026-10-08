@@ -18,11 +18,13 @@
 /// nvrhi; it is re-exported below as Runtime::Transform for the render-facing
 /// code that names it that way.
 
+#include <cstdint>
 #include <vector>
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -71,6 +73,31 @@ struct MeshRenderer
 
     AFIELD(transient) const Assisi::Render::MeshBuffer *meshBuffer = nullptr;
     AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
+};
+
+/// @brief The SkinnedMesh::boundMeshId of a component no skeleton is bound to.
+///        The asset cache never gives a mesh this id.
+inline constexpr uint32_t kUnboundMesh = 0;
+
+/// @brief Poses the skinned mesh its entity's MeshRenderer draws.
+///
+/// `pose` is each joint's transform relative to its parent, and is what code,
+/// clips and IK write. It starts at the skeleton's rest pose and is reset only
+/// when the mesh changes, so a value written stays until something writes it
+/// again. `jointModel` and `palette` are written from it every frame before
+/// transforms propagate; read them, never write them. Whenever `boundMeshId` is
+/// not kUnboundMesh all three hold one entry per joint; while it is, they are
+/// empty and the mesh draws unskinned.
+///
+/// Replicable so a remote copy of the entity carries one too. Nothing in it is
+/// sent: every machine poses its own copy from state that is already replicated.
+ACOMP(replicable, requires = {MeshRenderer})
+struct SkinnedMesh
+{
+    AFIELD(transient) std::vector<Geometry::JointTransform> pose;
+    AFIELD(transient) std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
+    AFIELD(transient) std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.
+    AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The MeshBuffer::Id the vectors are sized for.
 };
 
 /// @brief Projection and activation parameters for a camera entity.

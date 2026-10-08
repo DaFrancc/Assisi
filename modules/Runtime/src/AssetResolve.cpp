@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Runtime/AssetResolve.hpp>
 
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -36,6 +38,13 @@ void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
 {
     for (auto [entity, meshRenderer] : scene.Query<Mut<MeshRenderer>>())
         ResolveMeshRendererAssets(meshRenderer, cache);
+
+    // Bound here as well as before each evaluation, so a freshly loaded skinned
+    // mesh holds its rest pose before anything reads it.
+    for (auto [entity, skinned, meshRenderer] : scene.Query<Mut<SkinnedMesh>, MeshRenderer>())
+    {
+        (void)BindSkinnedMesh(skinned, meshRenderer);
+    }
 }
 
 void ClearSceneAssetBindings(ECS::Scene &scene)
@@ -44,6 +53,10 @@ void ClearSceneAssetBindings(ECS::Scene &scene)
     {
         meshRenderer.meshBuffer = nullptr;
         meshRenderer.materials.clear();
+    }
+    for (auto [entity, skinned] : scene.Query<Mut<SkinnedMesh>>())
+    {
+        UnbindSkinnedMesh(skinned);
     }
 }
 
