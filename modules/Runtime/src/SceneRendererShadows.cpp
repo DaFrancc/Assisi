@@ -93,6 +93,16 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     // entity a RenderOffset moves, are caught the same way.
     _movedEntities.clear();
     scene.ChangedSince<ECS::WorldMatrix>(_lastMoverTick, _movedEntities);
+    // A skinned mesh posing where it stands moves its shadow without moving its
+    // matrix. Its change ticks cannot say so: evaluation writes it every frame,
+    // changed or not.
+    for (auto [entity, skinned] : scene.Query<SkinnedMesh>())
+    {
+        if (skinned.poseChanged && std::ranges::find(_movedEntities, entity) == _movedEntities.end())
+        {
+            _movedEntities.push_back(entity);
+        }
+    }
 
     // The mobility table holds casters by handle across frames, so a caster
     // that has since been destroyed, or lost what made it one, must be let go

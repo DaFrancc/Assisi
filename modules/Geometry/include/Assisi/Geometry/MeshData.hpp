@@ -83,6 +83,10 @@ struct Skeleton
     std::vector<int32_t> Parents;           ///< Index of each joint's parent, or kNoParent.
     std::vector<JointTransform> RestLocal;  ///< Each joint's rest transform relative to its parent.
     std::vector<glm::mat4> InverseBind;     ///< Model space to each joint's space at bind time.
+    /// Around the bind-pose vertices each joint moves, in model space; empty
+    /// (IsEmpty) for a joint that moves none. Fit at import, so the bounds of
+    /// any pose come from these and the palette alone.
+    std::vector<Aabb> JointBounds;
 
     [[nodiscard]] uint32_t JointCount() const { return static_cast<uint32_t>(Names.size()); }
     [[nodiscard]] bool Empty() const { return Names.empty(); }

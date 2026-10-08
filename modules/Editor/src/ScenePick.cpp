@@ -5,6 +5,7 @@
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -169,11 +170,12 @@ std::optional<Geometry::Aabb> MeshPickBounds(const ECS::Scene &scene, ECS::Entit
     {
         return std::nullopt;
     }
-    if (mrc->meshBuffer == nullptr)
+    const Render::MeshBuffer *mesh = Runtime::DrawnMesh(*mrc, scene.Get<Runtime::SkinnedMesh>(entity));
+    if (mesh == nullptr)
     {
         return kFallbackPickBounds;
     }
-    return PickableBounds(mrc->meshBuffer->LocalAabb());
+    return PickableBounds(mesh->LocalAabb());
 }
 
 ECS::Entity PickEntityInScene(ECS::Scene &scene, const PickRay &ray, float iconHalf, PickBoundsLookup boundsOf,

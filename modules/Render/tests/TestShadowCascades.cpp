@@ -1119,3 +1119,19 @@ TEST_CASE("A caster's classification agrees with the sweep it stands for")
         }
     }
 }
+
+TEST_CASE("A caster that changes shape where it stands changes its shadow's signature")
+{
+    // A skinned mesh posing in place keeps its matrix and, often, its sphere; a
+    // signature that missed its shape would keep a layer that shows the old pose.
+    const glm::mat4 world = glm::translate(glm::mat4(1.f), glm::vec3(1.f, 2.f, 3.f));
+    constexpr std::uint64_t kOnePose = 11;
+    constexpr std::uint64_t kAnotherPose = 12;
+    ShadowMover before{.casterId = 7, .worldSphere = {.center = glm::vec3(1.f), .radius = 1.f}};
+    ShadowMover after = before;
+    before.poseHash = ShadowPoseHash(world, kOnePose);
+    after.poseHash = ShadowPoseHash(world, kAnotherPose);
+
+    CHECK(ShadowMoverSignature(before) != ShadowMoverSignature(after));
+    CHECK(ShadowPoseHash(world, kOnePose) == ShadowPoseHash(world, kOnePose));
+}

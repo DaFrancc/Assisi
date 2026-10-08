@@ -16,6 +16,7 @@
 
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshValidate.hpp>
+#include <Assisi/Geometry/Pose.hpp>
 
 using Assisi::Geometry::LodRange;
 using Assisi::Geometry::MeshData;
@@ -249,6 +250,7 @@ MeshData MakeSkinnedMesh()
     mesh.Skeleton.Parents     = {Assisi::Geometry::kNoParent, 0};
     mesh.Skeleton.RestLocal   = {Assisi::Geometry::JointTransform{}, Assisi::Geometry::JointTransform{}};
     mesh.Skeleton.InverseBind = {glm::mat4(1.f), glm::mat4(1.f)};
+    mesh.Skeleton.JointBounds = Assisi::Geometry::FitJointBounds(mesh.Vertices, mesh.Skin, 2);
     return mesh;
 }
 
@@ -292,6 +294,23 @@ TEST_CASE("Skeleton tables of different lengths are refused")
     MeshData mesh = MakeSkinnedMesh();
     mesh.Skeleton.InverseBind.pop_back();
     CheckRefused(mesh, MeshValidationError::SkeletonTablesMismatch);
+}
+
+TEST_CASE("A skeleton without joint bounds is refused")
+{
+    MeshData mesh = MakeSkinnedMesh();
+    mesh.Skeleton.JointBounds.clear();
+    CheckRefused(mesh, MeshValidationError::SkeletonTablesMismatch);
+}
+
+TEST_CASE("Joint bounds that leave out a vertex the joint moves are refused")
+{
+    // Culled from bounds like these, a pose that swings that vertex out of view
+    // of the rest would vanish while part of it is still on screen.
+    MeshData mesh = MakeSkinnedMesh();
+    // Moved after the bounds were fit, so they no longer hold it.
+    mesh.Vertices[1].Position += glm::vec3(10.f);
+    CheckRefused(mesh, MeshValidationError::JointBoundsMissVertex);
 }
 
 TEST_CASE("A joint whose parent comes after it is refused")

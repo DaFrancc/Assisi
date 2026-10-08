@@ -643,8 +643,7 @@ AssetCache::LoadAndStageMesh(AssetCache &cache, Core::AssetId id, std::uint64_t 
 
     MeshLoadBundle bundle;
     bundle.slotMaterials = std::move(loaded->slotMaterials);
-    bundle.vertexCount = static_cast<uint32_t>(imported->Vertices.size());
-    bundle.indexCount  = static_cast<uint32_t>(imported->Indices.size());
+    bundle.layout = MeshBuffer::StagedLayoutOf(*imported);
 
     // Copy the geometry into a GPU staging buffer HERE, on the worker — this is the
     // bulk memcpy that would otherwise land on the main thread inside writeBuffer
@@ -669,6 +668,8 @@ AssetCache::LoadAndStageMesh(AssetCache &cache, Core::AssetId id, std::uint64_t 
         imported->Vertices.shrink_to_fit();
         imported->Indices.clear();
         imported->Indices.shrink_to_fit();
+        imported->Skin.clear();
+        imported->Skin.shrink_to_fit();
     }
     bundle.data = std::move(*imported);
     return bundle;
@@ -712,8 +713,9 @@ void AssetCache::OnMeshLoaded(Core::AssetId id, std::uint64_t epoch,
     }
     // Enqueue the publish (O(1)); the id stays in _meshLoading until PublishMesh
     // makes it resident, so HasPendingLoads / re-resolve keep treating it as pending.
-    const std::size_t bytes = static_cast<std::size_t>(imported->vertexCount) * sizeof(Geometry::Vertex) +
-                              static_cast<std::size_t>(imported->indexCount) * sizeof(uint32_t);
+    const std::size_t bytes = static_cast<std::size_t>(imported->layout.vertexCount) * sizeof(Geometry::Vertex) +
+                              static_cast<std::size_t>(imported->layout.indexCount) * sizeof(uint32_t) +
+                              static_cast<std::size_t>(imported->layout.skinCount) * sizeof(Geometry::VertexSkin);
     _pendingPublishes.push_back(PendingPublish{.isMaterial = false,
                                                .id         = id,
                                                .epoch      = epoch,
@@ -830,8 +832,8 @@ void AssetCache::PublishMesh(PendingPublish &publish)
     {
         // The worker already copied the geometry into a GPU staging buffer, so this
         // records two copyBuffers — O(1) in mesh size, no main-thread memcpy.
-        buffer.UploadStaged(_arena, std::move(publish.mesh.data), publish.mesh.staging, publish.mesh.vertexCount,
-                            publish.mesh.indexCount, BeginUpload());
+        buffer.UploadStaged(_arena, std::move(publish.mesh.data), publish.mesh.staging, publish.mesh.layout,
+                            BeginUpload());
         // Hand the buffer to the batch so FlushUploads can park it behind an event
         // query and recycle it, instead of letting it be destroyed by a later GC.
         _batchStaging.push_back(std::move(publish.mesh.staging));
@@ -844,6 +846,37 @@ void AssetCache::PublishMesh(PendingPublish &publish)
         buffer.Upload(_arena, std::move(publish.mesh.data), BeginUpload());
     }
     buffer.SetId(_nextMeshId++);
+}
+
+bool AssetCache::KeepPosedInstance(const MeshBuffer &source, MeshBuffer &posed)
+{
+    if (!source.HasSkin())
+    {
+        return false;
+    }
+    if (posed.Id() != 0 && _skinScratch.Claim(posed.VertexBase(), posed.Id()))
+    {
+        return true;
+    }
+
+    const uint32_t id = _nextMeshId++;
+    const uint32_t vertexCount = source.VertexCount();
+    std::optional<uint32_t> vertexBase = _skinScratch.Reuse(vertexCount, id);
+    if (!vertexBase.has_value())
+    {
+        vertexBase = _arena.AllocateVertices(vertexCount, BeginUpload());
+        _skinScratch.Add(*vertexBase, vertexCount, id);
+        // Submitted now, not at the next pump: a grow's copy of the arena must
+        // land before this frame's draws read the grown buffer.
+        FlushUploads();
+    }
+    posed = source.PosedInstance(*vertexBase, id);
+    return true;
+}
+
+void AssetCache::EndSkinFrame()
+{
+    _skinScratch.EndFrame();
 }
 
 void AssetCache::PublishMaterial(PendingPublish &publish)
@@ -1254,6 +1287,7 @@ void AssetCache::Clear()
 
     _meshes.clear();
     _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.
+    _skinScratch.Clear();
 
     // Hand out slots from 0 again; the default textures re-register via
     // BuildFallbackMaterial below and overwrite the low slots in place. Stale

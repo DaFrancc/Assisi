@@ -58,6 +58,8 @@ target_sources(Assisi-Render
     "src/LocalShadowPass.cpp"
     "src/Material.cpp"
     "src/MeshCuller.cpp"
+    "src/MeshSkinner.cpp"
+    "src/SkinScratch.cpp"
     "src/FrameCapture.cpp"
     "src/Frustum.cpp"
     "src/GpuMarker.cpp"

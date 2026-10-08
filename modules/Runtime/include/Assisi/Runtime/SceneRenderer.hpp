@@ -25,6 +25,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Render/MeshPass.hpp>
+#include <Assisi/Render/MeshSkinner.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowCadence.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
@@ -374,6 +375,10 @@ private:
     /// comes back empty and would tell the second half that nothing moved.
     void UpdateShadowMovers(ECS::Scene &scene);
 
+    /// @brief Records the skinning pass: every posed instance's vertices written
+    ///        from its palette, for every later pass to draw.
+    void SkinPosedInstances(const Render::RenderFrame &frame, const ECS::Scene &scene);
+
     /// @brief Redraw every kept cascade and atlas tile on the next frame.
     void ForgetKeptShadows();
 
@@ -459,6 +464,9 @@ private:
     // path uses them only when _gpuCulling is on (else the CPU path runs).
     Render::MeshCuller _meshCuller;
     Render::CullTableBuilder _cullBuilder;
+    // Poses skinned instances before anything draws them.
+    Render::MeshSkinner _meshSkinner;
+    Render::SkinBatch _skinBatch;
     // Every shadow map's depth drawing, and the sun's cascades over it. The
     // renderer is separate because the local-light atlas draws through the same
     // one, into the same view table, from the same instance buffer.

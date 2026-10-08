@@ -47,6 +47,7 @@ enum class MeshValidationError : std::uint8_t
     JointOutOfRange,      ///< A vertex names a joint the skeleton does not have.
     WeightsNotNormalized, ///< A vertex's weights are negative or do not sum to one.
     DuplicateJointName,   ///< Two joints share a name.
+    JointBoundsMissVertex, ///< A joint's bounds leave out a vertex it moves, so a pose could cull it.
 };
 
 /// @brief A short human-readable description, for the line a cook failure prints.

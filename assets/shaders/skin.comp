@@ -1,0 +1,93 @@
+#version 460 core
+
+/// skin.comp
+/// Poses one skinned instance. One thread per vertex: reads the mesh's
+/// bind-pose vertex and its joint weights, blends the instance's palette by
+/// them, and writes the posed vertex to the instance's own range of the same
+/// arena vertex buffer.
+///
+/// Normals and tangents move by the blended matrix's upper 3×3 and are
+/// renormalised. That is exact for rotation and uniform scale; a joint scaled
+/// unevenly would need the inverse transpose, which authored rigs do not use.
+///
+/// Dispatch: ceil(vertexCount / 64) workgroups of local_size_x = 64.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Geometry::VertexSkin.
+struct VertexSkin
+{
+    vec4 weights;
+    uvec4 joints;
+};
+
+// A Geometry::Vertex is twelve tightly packed 32-bit words, so it is addressed
+// word by word: a struct of vec3s would take std430's padding.
+#define VERTEX_WORDS 12u
+#define POSITION_WORD 0u
+#define NORMAL_WORD 3u
+#define UV_WORD 6u
+#define TANGENT_WORD 8u
+
+// Influences per vertex (Geometry::kMaxInfluences).
+#define MAX_INFLUENCES 4
+
+// ---- Bindings ---- (SRV +0, UAV +384; see cluster_cull.comp)
+
+layout(std430, binding = 0) readonly buffer Skins { VertexSkin skins[]; };
+layout(std430, binding = 1) readonly buffer Palettes { mat4 palettes[]; };
+layout(std430, binding = 384) buffer Vertices { float vertexWords[]; };
+
+// Render::SkinDispatch.
+layout(push_constant) uniform SkinPush
+{
+    uint sourceVertexBase;
+    uint posedVertexBase;
+    uint vertexCount;
+    uint skinBase;
+    uint paletteBase;
+} pc;
+
+vec3 ReadVec3(uint word)
+{
+    return vec3(vertexWords[word], vertexWords[word + 1u], vertexWords[word + 2u]);
+}
+
+void WriteVec3(uint word, vec3 value)
+{
+    vertexWords[word] = value.x;
+    vertexWords[word + 1u] = value.y;
+    vertexWords[word + 2u] = value.z;
+}
+
+void main()
+{
+    uint vertex = gl_GlobalInvocationID.x;
+    if (vertex >= pc.vertexCount)
+    {
+        return;
+    }
+
+    VertexSkin skin = skins[pc.skinBase + vertex];
+    mat4 blended = mat4(0.0);
+    for (int i = 0; i < MAX_INFLUENCES; ++i)
+    {
+        blended += skin.weights[i] * palettes[pc.paletteBase + skin.joints[i]];
+    }
+    mat3 linear = mat3(blended);
+
+    uint source = (pc.sourceVertexBase + vertex) * VERTEX_WORDS;
+    uint posed = (pc.posedVertexBase + vertex) * VERTEX_WORDS;
+
+    vec3 position = (blended * vec4(ReadVec3(source + POSITION_WORD), 1.0)).xyz;
+    vec3 normal = normalize(linear * ReadVec3(source + NORMAL_WORD));
+    vec3 tangent = normalize(linear * ReadVec3(source + TANGENT_WORD));
+
+    WriteVec3(posed + POSITION_WORD, position);
+    WriteVec3(posed + NORMAL_WORD, normal);
+    vertexWords[posed + UV_WORD] = vertexWords[source + UV_WORD];
+    vertexWords[posed + UV_WORD + 1u] = vertexWords[source + UV_WORD + 1u];
+    WriteVec3(posed + TANGENT_WORD, tangent);
+    // Handedness is a sign, not a direction: carried through as it is.
+    vertexWords[posed + TANGENT_WORD + 3u] = vertexWords[source + TANGENT_WORD + 3u];
+}

@@ -14,6 +14,7 @@
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
 namespace Assisi::Runtime
 {
@@ -194,7 +195,24 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
     }
 
+    // Non-fatal too: skinned meshes then draw whatever their ranges last held.
+    if (!_meshSkinner.Initialize(_device))
+    {
+        Core::Log::Warn("SceneRenderer: skinning unavailable (skin compute pipeline failed to build).");
+    }
+
     return true;
+}
+
+void SceneRenderer::SkinPosedInstances(const Render::RenderFrame &frame, const ECS::Scene &scene)
+{
+    const Render::MeshBuffer *anyMesh = GatherPosedInstances(scene, _skinBatch);
+    if (anyMesh == nullptr)
+    {
+        return;
+    }
+    ASSISI_PROFILE_GPU_PASS(frame.commandList, "skin");
+    _meshSkinner.Dispatch(frame.commandList, _skinBatch, anyMesh->VertexBuffer(), anyMesh->SkinBuffer());
 }
 
 void SceneRenderer::RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection)
@@ -249,6 +267,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         ASSISI_PROFILE_SCOPE("propagate-transforms");
         propagationTick = ECS::PropagateTransforms(scene, propagationTick);
     }
+
+    // Before every pass that draws geometry: the shadows and the main pass both
+    // read the posed vertices.
+    SkinPosedInstances(frame, scene);
 
     const glm::mat4 projection =
         ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));

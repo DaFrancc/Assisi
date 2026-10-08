@@ -29,6 +29,7 @@
 #include <Assisi/Editor/Overlay/LinePass.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <algorithm>
@@ -244,11 +245,14 @@ void EditorApp::SubmitColliderWireframes()
             // Entity mesh silhouette, if the body has a visible mesh. Full world
             // matrix here, so it hugs the rendered mesh — scale and parenting
             // included.
-            if (const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
-                mrc != nullptr && mrc->meshBuffer != nullptr)
+            const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
+            const Assisi::Render::MeshBuffer *mesh =
+                mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedMesh>(entity))
+                               : nullptr;
+            if (mesh != nullptr)
             {
                 const glm::mat4 &world = _scene->Get<Assisi::ECS::WorldMatrix>(entity)->matrix;
-                _overlays.SubmitOutline(mrc->meshBuffer, world, outlineColor);
+                _overlays.SubmitOutline(mesh, world, outlineColor);
             }
         }
     }

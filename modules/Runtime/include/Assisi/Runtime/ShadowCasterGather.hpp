@@ -116,9 +116,13 @@ public:
 
 private:
     void AddCaster(Assisi::ECS::Entity entity, const glm::mat4 &world, const MeshRenderer &meshRenderer,
-                   Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+                   const Assisi::Render::MeshBuffer &mesh);
 
     ShadowCasterGather _result;
+    // The gather in progress's mobility table and level selector, valid during
+    // Gather.
+    Assisi::Render::ShadowCasterMobility *_mobility = nullptr;
+    LodSelector *_lodSelector = nullptr;
     /// Room for every cascade twice: once as a still layer, once as a read slice.
     std::array<Assisi::Geometry::BoundingSphere, Assisi::Render::kMaxSunShadowViews> _volumes{};
     glm::vec3 _lightDirection{0.f, -1.f, 0.f};
@@ -181,7 +185,7 @@ private:
     /// Test one entity against this gather's lights and emit its casters with
     /// the lights they reach.
     void AddCaster(Assisi::ECS::Entity entity, const glm::mat4 &world, const MeshRenderer &meshRenderer,
-                   Assisi::Render::ShadowCasterMobility &mobility, LodSelector *lodSelector);
+                   const Assisi::Render::MeshBuffer &mesh);
 
     std::vector<Assisi::Render::ShadowCaster> _casters;
 
@@ -189,6 +193,9 @@ private:
     // (empty: all of them). Views of the caller's spans, valid during Gather.
     std::span<const Assisi::Geometry::BoundingSphere> _lightVolumes;
     std::span<const std::uint8_t> _stillRequests;
+    // And its mobility table and level selector.
+    Assisi::Render::ShadowCasterMobility *_mobility = nullptr;
+    LodSelector *_lodSelector = nullptr;
 
     // Light indices, concatenated: `_casterStart[i]` to `_casterStart[i + 1]` is
     // caster i's row. `_index`'s rows are this, inverted.
