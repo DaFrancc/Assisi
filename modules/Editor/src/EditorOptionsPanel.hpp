@@ -46,6 +46,7 @@ public:
         /// What the options fall back to where the player has not chosen.
         const App::AppConfig &config;
         bool &showEditorOverlays;
+        bool &showSkeletons;
 
         int32_t fps;
         double cpuFrameMs;

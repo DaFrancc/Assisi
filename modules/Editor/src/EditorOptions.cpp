@@ -1063,6 +1063,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // (EditorConfig::enableEditorVisuals, --no-editor-visuals).
         ImGui::Checkbox("Editor Overlays", &frame.showEditorOverlays);
 
+        // Skinned meshes' skeletons, with joint names on hover. Under the switch
+        // above, which still clears them with the rest.
+        ImGui::Checkbox("Skeletons", &frame.showSkeletons);
+
         // Screen-size LOD selection. Off pins every instance to LOD0, which is
         // what the renderer drew before selection existed and the A/B against
         // the whole feature; the bias is the quality dial, above 1 holding a

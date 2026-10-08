@@ -577,6 +577,19 @@ class EditorApp : public Assisi::App::Application
     void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::Collider &desc,
                                const glm::vec3 &color);
 
+    // --- Skeleton visualisation ---
+    /// @brief Draw every posed skinned mesh's skeleton on top of the scene: a line
+    /// per bone and a cross per joint, the selection in its colours.
+    void SubmitSkeletons();
+
+    /// @brief Name the joint under the cursor in a tooltip, when skeletons are
+    /// drawn and the cursor is over the viewport rather than a panel.
+    void DrawSkeletonJointTooltip();
+
+    /// @brief Whether skeletons are drawn this frame: the same rule collider
+    /// wireframes follow, plus their own checkbox.
+    [[nodiscard]] bool SkeletonsShown() const;
+
     // --- Light visualisation ---
     /// @brief Draw every light's reach as an overlay: a point light's sphere, a
     /// spot's two cones, a directional light's arrow.
@@ -1717,6 +1730,9 @@ class EditorApp : public Assisi::App::Application
     /// across colliders and frames so drawing them allocates nothing.
     std::vector<glm::vec3> _colliderModelEdges;
 
+    /// SubmitSkeletons' line batch, reused across frames.
+    std::vector<LineVertex> _skeletonLines;
+
     // The same split for the light gizmos, and separate batches rather than
     // shared ones because a light's reach and a body's collider are unrelated
     // overlays that happen to be drawn the same way — sharing would make either
@@ -1874,6 +1890,10 @@ class EditorApp : public Assisi::App::Application
     // or a screenshot. Purely editor-side (it skips the submissions); whether the
     // passes exist at all is EditorConfig::enableEditorVisuals.
     bool _showEditorOverlays = true;
+
+    // F11 "Skeletons" checkbox: draws skinned meshes' skeletons. Under the
+    // overlays switch above, so that one still clears everything.
+    bool _showSkeletons = true;
 
     // --- Play control (game-control window, F5/F6/F7) ---
     // Physics and any game-logic systems tick only while Playing; the editor

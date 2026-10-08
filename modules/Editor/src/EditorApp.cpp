@@ -98,6 +98,7 @@ void EditorApp::DrawOptionsWindow()
                                               .options = GetOptions(),
                                               .config = GetConfig(),
                                               .showEditorOverlays = _showEditorOverlays,
+                                              .showSkeletons = _showSkeletons,
                                               .fps = GetFps(),
                                               .cpuFrameMs = GetCpuFrameMs(),
                                               .gpuFrameMs = GetGpuFrameMs(),
@@ -992,6 +993,8 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         ASSISI_PROFILE_SCOPE("collider-wireframes");
         SubmitColliderWireframes();
 
+        SubmitSkeletons();
+
         // A light's reach, on the same terms and in the same batch pass: it is
         // the only thing in the viewport that says what a radius or a cone angle
         // actually covers.
@@ -1820,6 +1823,7 @@ void EditorApp::DrawPanels()
         ASSISI_PROFILE_SCOPE("panel/gizmo");
         DrawTransformGizmo();
     }
+    DrawSkeletonJointTooltip();
 
     // Blueprint mode hides the panels that act on *the level* — play control, the
     // network, level open/save, placement — because the level is not what is in
